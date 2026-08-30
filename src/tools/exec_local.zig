@@ -25,15 +25,41 @@ const Drain = struct {
     }
 
     /// Join the head and the tail with one notice between them. The result comes from `scratch`.
+    /// Each end stops on a byte, so the notice counts the codepoint the cap cut in half.
     fn text(self: *Drain, scratch: std.mem.Allocator) error{OutOfMemory}![]const u8 {
         if (self.dropped == 0) return self.head.items;
+        const head = headFloor(self.head.items);
+        const tail = tailCeil(self.tail.items);
+        const trimmed = (self.head.items.len - head.len) + (self.tail.items.len - tail.len);
         var joined: std.ArrayList(u8) = .empty;
-        try joined.appendSlice(scratch, self.head.items);
-        try joined.print(scratch, "\n[The tool dropped {d} bytes here.]\n", .{self.dropped});
-        try joined.appendSlice(scratch, self.tail.items);
+        try joined.appendSlice(scratch, head);
+        try joined.print(scratch, "\n[The tool dropped {d} bytes here.]\n", .{self.dropped + trimmed});
+        try joined.appendSlice(scratch, tail);
         return joined.toOwnedSlice(scratch);
     }
 };
+
+/// Drop the trailing bytes of a codepoint the head cap cut. These helpers remove the half a cap
+/// splits; `exec` replaces the bytes that are invalid for any other reason.
+fn headFloor(bytes: []const u8) []const u8 {
+    var i = bytes.len;
+    var back: usize = 0;
+    // A codepoint uses at most 4 bytes, so at most 3 continuation bytes follow its start byte.
+    while (i > 0 and back < 4) : (back += 1) {
+        i -= 1;
+        if (bytes[i] & 0xC0 == 0x80) continue;
+        const need = std.unicode.utf8ByteSequenceLength(bytes[i]) catch return bytes[0..i];
+        return if (bytes.len - i >= need) bytes else bytes[0..i];
+    }
+    return bytes;
+}
+
+/// Drop the leading continuation bytes of a codepoint the tail cap cut.
+fn tailCeil(bytes: []const u8) []const u8 {
+    var i: usize = 0;
+    while (i < bytes.len and i < 4 and bytes[i] & 0xC0 == 0x80) : (i += 1) {}
+    return bytes[i..];
+}
 
 /// Run `spec` and return its output. The caller must validate `spec`; this function returns an error
 /// instead of an assertion, because the seam is reachable from any backend caller.
@@ -239,6 +265,32 @@ test "exec keeps the head and the tail of a long stream" {
     const marker = std.mem.indexOf(u8, res.stdout, "dropped").?;
     const tail = res.stdout[marker..];
     try testing.expect(std.mem.indexOf(u8, tail, "abcdefgh") != null);
+}
+
+test "a cap that splits a codepoint drops the half instead of the whole end" {
+    // The head stops inside a three-byte codepoint, so only that codepoint goes.
+    try testing.expectEqualStrings("ok", headFloor("ok\xe6\x96"));
+    try testing.expectEqualStrings("ok\u{65b0}", headFloor("ok\u{65b0}"));
+    // A trailing byte that starts nothing valid also goes.
+    try testing.expectEqualStrings("ok", headFloor("ok\xff"));
+
+    // The tail starts on continuation bytes, so those bytes go.
+    try testing.expectEqualStrings("ok", tailCeil("\x96\xb0ok"));
+    try testing.expectEqualStrings("\u{65b0}ok", tailCeil("\u{65b0}ok"));
+
+    // An empty end and a whole ASCII end both stay as they are.
+    try testing.expectEqualStrings("", headFloor(""));
+    try testing.expectEqualStrings("", tailCeil(""));
+    try testing.expectEqualStrings("plain", tailCeil("plain"));
+
+    // A complete sequence stays whole even when it is invalid, because `exec` replaces it.
+    try testing.expectEqualStrings("\xed\xa0\x80", headFloor("\xed\xa0\x80")); // a surrogate
+    try testing.expectEqualStrings("\xf5ok", tailCeil("\xf5ok")); // past U+10FFFF
+
+    // A four-byte codepoint sits at the scan bound on both ends.
+    try testing.expectEqualStrings("a", headFloor("a\xf0\x9f\x98")); // cut before its last byte
+    try testing.expectEqualStrings("a\u{1f600}", headFloor("a\u{1f600}"));
+    try testing.expectEqualStrings("ok", tailCeil("\x9f\x98\x80ok"));
 }
 
 test "exec kills the whole process group at the deadline" {

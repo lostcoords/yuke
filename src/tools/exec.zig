@@ -51,12 +51,36 @@ fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: t.ToolHost,
 /// Build the model-visible text: the output, then the errors, then the outcome.
 /// A command can print these same markers, so the model must not treat them as proof. The wire has
 /// no structured field for a tool result today; see docs/plan.md.
+/// Keep every valid codepoint and replace each invalid byte with U+FFFD.
+/// The transcript holds text, but a command prints any bytes.
+fn appendText(out: std.mem.Allocator, buf: *std.ArrayList(u8), raw: []const u8) error{OutOfMemory}!void {
+    var i: usize = 0;
+    while (i < raw.len) {
+        const need = std.unicode.utf8ByteSequenceLength(raw[i]) catch {
+            try buf.appendSlice(out, replacement);
+            i += 1;
+            continue;
+        };
+        if (raw.len - i < need or !std.unicode.utf8ValidateSlice(raw[i..][0..need])) {
+            try buf.appendSlice(out, replacement);
+            i += 1;
+            continue;
+        }
+        try buf.appendSlice(out, raw[i..][0..need]);
+        i += need;
+    }
+}
+
+/// U+FFFD stands for one byte the decoder cannot read.
+const replacement = &std.unicode.replacement_character_utf8;
+
 fn render(out: std.mem.Allocator, r: t.ExecResult, timeout_ms: u32) error{OutOfMemory}![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
-    try buf.appendSlice(out, r.stdout);
+    try appendText(out, &buf, r.stdout);
     if (r.stderr.len != 0) {
         try endLine(out, &buf);
-        try buf.print(out, "[stderr]\n{s}", .{r.stderr});
+        try buf.appendSlice(out, "[stderr]\n");
+        try appendText(out, &buf, r.stderr);
     }
     const empty = buf.items.len == 0;
     try endLine(out, &buf);
@@ -135,6 +159,60 @@ test "exec ends every section on its own line" {
     var both: FakeHost = .{ .result = .{ .stdout = "o\n", .stderr = "e\n", .outcome = .{ .exited = 1 } } };
     const pair = try tool.execute(a, a, both.host(), "{\"command\":\"x\"}");
     try testing.expectEqualStrings("o\n[stderr]\ne\n[exit code: 1]", pair.text);
+}
+
+// A command can print any bytes. `iconv -c` on an EUC-JP page left a cut codepoint, and the
+// request carried a byte array instead of a string, which the provider refused.
+test "exec replaces invalid bytes and keeps every valid codepoint" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // A three-byte codepoint that stops after two bytes.
+    var cut: FakeHost = .{ .result = .{ .stdout = "ok\xe6\x96", .stderr = "", .outcome = .{ .exited = 0 } } };
+    const res = try tool.execute(a, a, cut.host(), "{\"command\":\"x\"}");
+    try testing.expectEqualStrings("ok\u{FFFD}\u{FFFD}\n[exit code: 0]", res.text);
+    try testing.expect(std.unicode.utf8ValidateSlice(res.text));
+
+    // Japanese text stays whole, and a stray byte beside it becomes one replacement.
+    var mixed: FakeHost = .{ .result = .{ .stdout = "\u{65b0}\u{520a}\xff!", .stderr = "", .outcome = .{ .exited = 0 } } };
+    const kept = try tool.execute(a, a, mixed.host(), "{\"command\":\"x\"}");
+    try testing.expectEqualStrings("\u{65b0}\u{520a}\u{FFFD}!\n[exit code: 0]", kept.text);
+
+    // stderr passes through the same filter.
+    var err: FakeHost = .{ .result = .{ .stdout = "", .stderr = "\xc3", .outcome = .{ .exited = 1 } } };
+    const both = try tool.execute(a, a, err.host(), "{\"command\":\"x\"}");
+    try testing.expectEqualStrings("[stderr]\n\u{FFFD}\n[exit code: 1]", both.text);
+}
+
+// Every shape the decoder refuses becomes one replacement for each byte it cannot read.
+test "exec replaces every kind of invalid sequence" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const cases = [_]struct { raw: []const u8, want: []const u8 }{
+        .{ .raw = "\xc0\xaf", .want = "\u{FFFD}\u{FFFD}" }, // an overlong slash
+        .{ .raw = "\x80", .want = "\u{FFFD}" }, // a lone continuation byte
+        .{ .raw = "\xc1", .want = "\u{FFFD}" }, // a lead byte no codepoint uses
+        .{ .raw = "\xf5\x80\x80\x80", .want = "\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}" }, // past U+10FFFF
+        .{ .raw = "\xed\xa0\x80", .want = "\u{FFFD}\u{FFFD}\u{FFFD}" }, // a surrogate
+        .{ .raw = "\xff\xfe", .want = "\u{FFFD}\u{FFFD}" }, // bytes UTF-8 never uses
+        .{ .raw = "a\xe6", .want = "a\u{FFFD}" }, // a sequence cut at the end
+        .{ .raw = "\u{1f600}", .want = "\u{1f600}" }, // a whole four-byte codepoint stays
+    };
+    for (cases) |case| {
+        var host: FakeHost = .{ .result = .{ .stdout = case.raw, .stderr = "", .outcome = .{ .exited = 0 } } };
+        const res = try tool.execute(a, a, host.host(), "{\"command\":\"x\"}");
+        const want = try std.fmt.allocPrint(a, "{s}\n[exit code: 0]", .{case.want});
+        try testing.expectEqualStrings(want, res.text);
+        try testing.expect(std.unicode.utf8ValidateSlice(res.text));
+    }
+
+    // An empty stream states the empty result rather than a replacement.
+    var none: FakeHost = .{ .result = .{ .stdout = "", .stderr = "", .outcome = .{ .exited = 0 } } };
+    const empty = try tool.execute(a, a, none.host(), "{\"command\":\"x\"}");
+    try testing.expectEqualStrings("[no output]\n[exit code: 0]", empty.text);
 }
 
 test "exec states an empty result" {
