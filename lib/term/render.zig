@@ -263,3 +263,66 @@ test "a render write error forces a full redraw" {
     try r.render(&out.writer);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "A") != null);
 }
+
+test "a repeat render of the same screen with a visible cursor writes nothing" {
+    const io = std.testing.io;
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+
+    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer deinit_writer.deinit();
+    defer r.deinit(&deinit_writer.writer);
+
+    var setup: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer setup.deinit();
+    try r.resize(&setup.writer, .{ .rows = 2, .cols = 4, .x_pixel = 0, .y_pixel = 0 });
+
+    // A visible cursor must not force the render preamble when the cells stay unchanged.
+    const win = r.window();
+    win.fill(.{ .char = .{ .grapheme = "A", .width = 1 } });
+    win.showCursor(1, 1);
+
+    var first: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer first.deinit();
+    try r.render(&first.writer);
+    try std.testing.expect(first.written().len > 0);
+
+    win.fill(.{ .char = .{ .grapheme = "A", .width = 1 } });
+    win.showCursor(1, 1);
+    var second: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer second.deinit();
+    try r.render(&second.writer);
+    try std.testing.expectEqual(@as(usize, 0), second.written().len);
+}
+
+test "a secondary cursor list is freed after a reset" {
+    const io = std.testing.io;
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+
+    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer deinit_writer.deinit();
+    defer r.deinit(&deinit_writer.writer);
+
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try r.resize(&out.writer, .{ .rows = 2, .cols = 4, .x_pixel = 0, .y_pixel = 0 });
+
+    r.vx.caps.multi_cursor = true;
+    const win = r.window();
+    win.fill(.{ .char = .{ .grapheme = "A", .width = 1 } });
+    win.showCursor(0, 0);
+
+    // A render adopts the list, so the reset after it must free the copy the state still owns.
+    try r.vx.addTerminalSecondaryCursor(std.testing.allocator, 1, 1);
+    try r.render(&out.writer);
+    try r.vx.resetAllTerminalSecondaryCursors(std.testing.allocator);
+
+    // A second list over the first must not leak the one the state replaced.
+    try r.vx.addTerminalSecondaryCursor(std.testing.allocator, 1, 1);
+    try r.render(&out.writer);
+    try r.vx.addTerminalSecondaryCursor(std.testing.allocator, 0, 2);
+    try r.render(&out.writer);
+}

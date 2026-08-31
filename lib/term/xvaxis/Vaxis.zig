@@ -400,8 +400,9 @@ pub fn render(self: *Vaxis, tty: *std.Io.Writer) !void {
     const cursor_pos_changed = self.screen.cursor_vis and
         (self.screen.cursor.row != self.state.cursor.row or
             self.screen.cursor.col != self.state.cursor.col);
-    const cursor_secondary_changed = self.screen.cursor_vis and
-        std.meta.eql(self.screen.cursor_secondary, self.state.cursor_secondary);
+    // Upstream libvaxis omits this `!` and forces the preamble on every visible-cursor frame.
+    const cursor_secondary_changed = self.screen.cursor_vis and self.caps.multi_cursor and
+        !std.meta.eql(self.screen.cursor_secondary, self.state.cursor_secondary);
     const needs_render = self.refresh or
         cursor_vis_changed or
         cursor_shape_changed or
@@ -826,7 +827,8 @@ pub fn render(self: *Vaxis, tty: *std.Io.Writer) !void {
         self.state.cursor.row = cursor_pos.row;
         self.state.cursor.col = cursor_pos.col;
     }
-    if (self.screen.cursor_vis and self.caps.multi_cursor) {
+    // Send the secondary cursor list when the list changes or when the cursor becomes visible.
+    if (self.caps.multi_cursor and self.screen.cursor_vis and (cursor_secondary_changed or cursor_vis_changed)) {
         try tty.print(ctlseqs.reset_secondary_cursors, .{});
         for (self.screen.cursor_secondary) |cur|
             try tty.print(ctlseqs.show_secondary_cursor, .{ cur.row + 1, cur.col + 1 });
@@ -1122,13 +1124,15 @@ pub fn setTerminalCursorSecondaryColor(self: *Vaxis, tty: *std.Io.Writer, rgb: [
 }
 
 pub fn resetAllTerminalSecondaryCursors(self: *Vaxis, alloc: std.mem.Allocator) error{OutOfMemory}!void {
-    if (self.state.prev_cursor_secondary.ptr != self.state.cursor_secondary.ptr) {
+    if (self.state.prev_cursor_secondary.ptr != self.state.cursor_secondary.ptr)
         alloc.free(self.state.prev_cursor_secondary);
-        self.state.prev_cursor_secondary = &.{};
-    }
+    self.state.prev_cursor_secondary = &.{};
     if (self.screen.cursor_secondary.ptr != self.state.cursor_secondary.ptr)
         alloc.free(self.screen.cursor_secondary);
     self.screen.cursor_secondary = &.{};
+    // A rendered list leaves `state` as the only owner, so the reset frees it here.
+    alloc.free(self.state.cursor_secondary);
+    self.state.cursor_secondary = &.{};
 }
 
 pub fn addTerminalSecondaryCursor(self: *Vaxis, alloc: std.mem.Allocator, y: u16, x: u16) error{OutOfMemory}!void {
