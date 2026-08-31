@@ -26,7 +26,7 @@ import { transcriptVim } from "yuke:transcript-vim";
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "session" }>} NativeSessionEvent */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "index" }>} NativeIndexEvent */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "conn" }> & { workspaces?: readonly Wire.Workspace[] }} NativeConnEvent */
-/** @typedef {{ nextRetryAt: number, remoteRetryAt: Record<string, number>, roster: DeviceInfo[], rosterTried: boolean, onStart: () => void, attempt: () => void, dialLocal: () => void, loadRoster: () => void, dialRemotes: () => void, scheduleRetry: () => void, needsTick: () => { periodMs: number } | null, tick: () => void }} ConnectionService */
+/** @typedef {{ nextRetryAt: number, remoteRetryAt: Record<string, number>, roster: DeviceInfo[], rosterTried: boolean, onStart: () => void, attempt: () => void, dialLocal: () => void, loadRoster: () => void, dialableKey: (d: DeviceInfo) => string | null, dialRemotes: () => void, scheduleRetry: () => void, needsTick: () => { periodMs: number } | null, tick: () => void }} ConnectionService */
 
 // The ":" command line: the prompt links to Normal; an unmatched word shows in red. Seed each group
 // alone, so a theme that set one first keeps it.
@@ -1096,8 +1096,8 @@ function openCommandLine() {
 }
 
 // --- daemon connection --------------------------------------------------------------------
-const READY_POLL_MS = 1000;
-const RETRY_POLL_MS = 500;
+// The retry tick repaints the sidebar countdown, which changes once per second.
+const RETRY_POLL_MS = 1000;
 
 const NO_RETRY = {
   device_not_found: true,
@@ -1157,15 +1157,22 @@ const connection = {
     );
   },
 
+  // Return the key of a remote to dial, including one that still waits for its retry time.
+  /** @param {DeviceInfo} d @returns {string | null} */
+  dialableKey(d) {
+    if (!d || d.is_self || !d.static_public_key) return null;
+    const key = "remote:" + d.device_id;
+    if (client.connectionState(key) !== "disconnected") return null;
+    if (!d.online && !this.remoteRetryAt[key]) return null;
+    return key;
+  },
+
   dialRemotes() {
     if (config.daemon.autoConnect === false) return;
     const now = Date.now();
     for (const d of this.roster) {
-      if (!d || d.is_self || !d.static_public_key) continue;
-      const key = "remote:" + d.device_id;
-      const st = client.connectionState(key);
-      if (st !== "disconnected") continue;
-      if (!d.online && !this.remoteRetryAt[key]) continue;
+      const key = this.dialableKey(d);
+      if (!key) continue;
       if (this.remoteRetryAt[key] && now < this.remoteRetryAt[key]) continue;
       this.remoteRetryAt[key] = 0;
       try {
@@ -1189,11 +1196,13 @@ const connection = {
     this.nextRetryAt = Date.now() + config.daemon.retryMs;
   },
 
+  // Ask for a tick only while a connection attempt or a retry stays open.
   needsTick() {
-    const st = client.connectionState(LOCAL);
-    if (st === "ready") return { periodMs: READY_POLL_MS };
-    if (st === "connecting" || st === "closing") return { periodMs: RETRY_POLL_MS };
-    if (config.daemon.autoConnect !== false || this.nextRetryAt > 0) return { periodMs: RETRY_POLL_MS };
+    if (config.daemon.autoConnect === false) return null;
+    if (client.connectionState(LOCAL) === "disconnected") return { periodMs: RETRY_POLL_MS };
+    for (const d of this.roster) {
+      if (this.dialableKey(d)) return { periodMs: RETRY_POLL_MS };
+    }
     return null;
   },
 
