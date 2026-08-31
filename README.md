@@ -14,8 +14,9 @@ git config core.hooksPath .githooks
 ## Commands
 
 ```sh
-zig build test          # build and run the wire tests
-zig build               # install yuke (TUI by default; --daemon starts the server)
+zig build test          # build and run all tests
+zig build test-js       # run the QuickJS host tests
+zig build               # compile yuke
 zig build gen-schema    # regenerate schema/wire.json from the Zig types
 zig build sqlgen -- --migrations <dir> --queries <dir> --queries-out <file>
 ```
