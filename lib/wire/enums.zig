@@ -2,7 +2,8 @@
 
 const std = @import("std");
 
-pub const AuthFlow = enum { browser, device_code };
+/// The daemon supports the device-code flow only.
+pub const AuthFlow = enum { device_code };
 
 pub const AuthCredentialKind = enum { api_key, oauth };
 

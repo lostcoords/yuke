@@ -14,7 +14,6 @@ pub const limits = struct {
     pub const max_api_key_bytes: u64 = 65536;
     pub const max_auth_flows: u64 = 8;
     pub const max_auth_providers: u64 = 64;
-    pub const max_auth_url_bytes: u64 = 4096;
     pub const max_auth_user_code_bytes: u64 = 128;
     pub const max_blob_bytes: u64 = 67108864;
     pub const max_catalog_models: u64 = 4096;

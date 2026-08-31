@@ -80,11 +80,6 @@ export interface AuthLoginParams {
   readonly flow: AuthFlow;
 }
 
-export interface AuthLoginResultBrowser {
-  readonly login_id: LoginId;
-  readonly auth_url: string;
-}
-
 export interface AuthLoginResultDeviceCode {
   readonly login_id: LoginId;
   readonly verification_url: string;
@@ -918,7 +913,7 @@ export interface ViewText {
   readonly language?: string;
 }
 
-export type AuthFlow = "browser" | "device_code";
+export type AuthFlow = "device_code";
 
 export type AuthCredentialKind = "api_key" | "oauth";
 
@@ -972,7 +967,7 @@ export type MediaSource = ({ readonly type: "blob" } & MediaBlob);
 
 export type AuthLoginOutcome = { readonly type: "succeeded" } | { readonly type: "canceled" } | ({ readonly type: "failed" } & AuthLoginOutcomeFailed);
 
-export type AuthLoginResult = ({ readonly type: "browser" } & AuthLoginResultBrowser) | ({ readonly type: "device_code" } & AuthLoginResultDeviceCode);
+export type AuthLoginResult = ({ readonly type: "device_code" } & AuthLoginResultDeviceCode);
 
 export type CatalogListResult = ({ readonly type: "unchanged" } & CatalogListResultUnchanged) | ({ readonly type: "full" } & CatalogListResultFull);
 

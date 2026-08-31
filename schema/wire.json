@@ -10,7 +10,6 @@
     "max_api_key_bytes": 65536,
     "max_auth_flows": 8,
     "max_auth_providers": 64,
-    "max_auth_url_bytes": 4096,
     "max_auth_user_code_bytes": 128,
     "max_blob_bytes": 67108864,
     "max_catalog_models": 4096,
@@ -674,22 +673,6 @@
         {
           "name": "flow",
           "type": "AuthFlow",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "AuthLoginResultBrowser",
-      "doc": "The daemon returns these browser authorization details only to the connection that sent the request.",
-      "fields": [
-        {
-          "name": "login_id",
-          "type": "LoginId",
-          "presence": "required"
-        },
-        {
-          "name": "auth_url",
-          "type": "string",
           "presence": "required"
         }
       ]
@@ -3662,10 +3645,6 @@
       "discriminator": "type",
       "arms": [
         {
-          "tag": "browser",
-          "type": "AuthLoginResultBrowser"
-        },
-        {
           "tag": "device_code",
           "type": "AuthLoginResultDeviceCode"
         }
@@ -4205,12 +4184,9 @@
   "enumerations": [
     {
       "name": "AuthFlow",
+      "doc": "The daemon supports the device-code flow only.",
       "numeric": false,
       "values": [
-        {
-          "name": "browser",
-          "wire": "browser"
-        },
         {
           "name": "device_code",
           "wire": "device_code"

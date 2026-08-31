@@ -18,7 +18,6 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "AuthLoginSummary", .field = "login_id", .alias = "LoginId" },
     .{ .owner = "AuthProvider", .field = "provider_id", .alias = "ProviderId" },
     .{ .owner = "AuthLoginParams", .field = "provider_id", .alias = "ProviderId" },
-    .{ .owner = "AuthLoginResultBrowser", .field = "login_id", .alias = "LoginId" },
     .{ .owner = "AuthLoginResultDeviceCode", .field = "login_id", .alias = "LoginId" },
     .{ .owner = "AuthCancelLoginParams", .field = "login_id", .alias = "LoginId" },
     .{ .owner = "AuthRemoveParams", .field = "provider_id", .alias = "ProviderId" },

@@ -64,7 +64,6 @@ pub const AuthLoginParams = struct {
 
 /// This result identifies the mechanism that the daemon started for `auth.login`.
 pub const AuthLoginResult = union(enum) {
-    browser: AuthLoginResultBrowser,
     device_code: AuthLoginResultDeviceCode,
 
     /// Decode a tagged wire union from JSON.
@@ -77,12 +76,6 @@ pub const AuthLoginResult = union(enum) {
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         return tagged.stringify(@This(), self, jw);
     }
-};
-
-/// The daemon returns these browser authorization details only to the connection that sent the request.
-pub const AuthLoginResultBrowser = struct {
-    login_id: ids.LoginId,
-    auth_url: []const u8,
 };
 
 /// The daemon returns these device authorization details only to the connection that sent the request.
