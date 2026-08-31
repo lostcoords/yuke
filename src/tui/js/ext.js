@@ -282,9 +282,9 @@ export class Context {
     return this.scope.effect(() => command.add(predicate, scoped));
   }
 
-  /** @param {KeyBindings} bindings @param {string} [ctx] @returns {Disposer} */
-  keymap(bindings, ctx) {
-    return this.scope.effect(() => keymap.add(bindings, ctx));
+  /** @param {KeyBindings} bindings @param {string} [ctx] @param {Parameters<typeof keymap.add>[2]} [opts] @returns {Disposer} */
+  keymap(bindings, ctx, opts) {
+    return this.scope.effect(() => keymap.add(bindings, ctx, opts));
   }
 
   /** @param {ContextFlags} flags @returns {Disposer} */

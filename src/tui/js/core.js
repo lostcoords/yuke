@@ -26,10 +26,10 @@ import { term } from "yuke:term";
 /** @typedef {{ t: "atom", name: string } | { t: "eq", name: string, value: string, neg: boolean } | { t: "not", x: ContextNode } | { t: "and", a: ContextNode, b: ContextNode } | { t: "or", a: ContextNode, b: ContextNode }} ContextNode */
 /** @typedef {string | (() => string | null | undefined)} ContextFlag */
 /** @typedef {{ source: string, node: ContextNode, atoms: string[] }} ContextExpr */
-/** @typedef {{ fn: KeyBinding, context: ContextExpr | null, order: number }} KeyEntry */
+/** @typedef {{ fn: KeyBinding, context: ContextExpr | null, order: number, pending: "chord" | "operator" }} KeyEntry */
 /** @typedef {{ stroke: string, kind: "chord" | "operator", at: number, ev: Extract<HostEvent, { type: "key" }> | null, holder: { pending: string | null } | null }} Pending */
 /** @typedef {{ [name: string]: KeyEntry[] }} KeyMap */
-/** @typedef {{ map: KeyMap, prefixes: Record<string, string[]>, pending: Pending | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string) => () => void, _rebuildPrefixes: () => void, _armable: (prefix: string) => boolean, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, arm: (stroke: string, kind: "chord" | "operator", ev?: Extract<HostEvent, { type: "key" }> | null, holder?: { pending: string | null } | null) => void, disarm: (kind: "chord" | "operator") => string, pendingLabel: () => string, needsTick: () => { periodMs: number } | null, tick: () => void, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
+/** @typedef {{ map: KeyMap, prefixes: Record<string, string[]>, pending: Pending | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string, opts?: { pending?: "chord" | "operator" }) => () => void, _rebuildPrefixes: () => void, _armKind: (prefix: string) => "chord" | "operator" | null, owns: () => boolean, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, arm: (stroke: string, kind: "chord" | "operator", ev?: Extract<HostEvent, { type: "key" }> | null, holder?: { pending: string | null } | null) => void, disarm: (kind: "chord" | "operator") => string, pendingLabel: () => string, needsTick: () => { periodMs: number } | null, tick: () => void, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
 /** @typedef {{ side?: "left" | "right", order?: number, render: () => string | null | undefined }} StatusSegment */
 /** @typedef {{ side: "left" | "right", order: number, render: () => string | null | undefined }} StatusEntry */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -733,9 +733,10 @@ export const keymap = {
   _seq: 0,
 
   // Register bindings under one context and return a disposer.
-  /** @param {Record<string, KeyBinding | KeyBinding[]>} bindings @param {string} [ctx] @returns {() => void} */
-  add(bindings, ctx) {
+  /** @param {Record<string, KeyBinding | KeyBinding[]>} bindings @param {string} [ctx] @param {{ pending?: "chord" | "operator" }} [opts] @returns {() => void} */
+  add(bindings, ctx, opts) {
     const expr = ctx ? parseContext(ctx) : null;
+    const kind = opts && opts.pending === "operator" ? "operator" : "chord";
     /** @type {Array<[string, KeyEntry]>} */
     const added = [];
     for (const seq in bindings) {
@@ -744,7 +745,7 @@ export const keymap = {
       /** @type {KeyBinding[]} */
       const list = Array.isArray(value) ? value.slice() : [value];
       /** @type {KeyEntry[]} */
-      const fresh = list.map((fn) => ({ fn, context: expr, order: ++this._seq }));
+      const fresh = list.map((fn) => ({ fn, context: expr, order: ++this._seq, pending: kind }));
       const prev = this.map[key];
       this.map[key] = prev ? fresh.concat(prev) : fresh;
       for (const e of fresh) added.push([key, e]);
@@ -811,24 +812,30 @@ export const keymap = {
       keys.push(key);
     }
     const p = this.pending;
-    if (p && p.kind === "chord" && !this.prefixes[p.stroke]) {
+    if (p && p.holder === null && !this.prefixes[p.stroke]) {
       this.pending = null;
       root.syncTick();
     }
   },
 
-  // True when a chord under `prefix` matches here, so an inactive binding never swallows a key.
-  /** @param {string} prefix @returns {boolean} */
-  _armable(prefix) {
+  // How a sequence under `prefix` waits here, or null when none matches the active context.
+  /** @param {string} prefix @returns {"chord" | "operator" | null} */
+  _armKind(prefix) {
     const keys = this.prefixes[prefix];
-    if (!keys) return false;
+    if (!keys) return null;
     const depths = currentDepths();
     for (const key of keys) {
       for (const e of this.map[key] || []) {
-        if (!e.context || matchContext(e.context.node, depths)) return true;
+        if (!e.context || matchContext(e.context.node, depths)) return e.pending;
       }
     }
-    return false;
+    return null;
+  },
+
+  // True while the keymap itself waits for the rest of a sequence.
+  /** @returns {boolean} */
+  owns() {
+    return this.pending !== null && this.pending.holder === null;
   },
 
   // Arm a pending stroke of `kind`.
@@ -879,15 +886,16 @@ export const keymap = {
   onKey(ev) {
     const s = strokeOf(ev);
     if (!s) return false;
-    const p = this.pending;
-    if (p && p.kind === "chord") {
+    if (this.owns()) {
+      const p = /** @type {Pending} */ (this.pending);
       this.pending = null;
       const chord = p.stroke + " " + s;
       if (!this._perform(chord, ev)) this._perform(p.stroke + " " + stripCtrl(s), ev);
       return true;
     }
-    if (this._armable(s)) {
-      this.arm(s, "chord", ev);
+    const kind = this._armKind(s);
+    if (kind) {
+      this.arm(s, kind, ev);
       return true;
     }
     return this._perform(s, ev);
@@ -1825,9 +1833,8 @@ export class RootView {
     if (ev.type === "key" || ev.type === "paste") {
       if (ev.type === "key" && ev.event === "release") return;
       if (!consumedByOverlay("onKey")) {
-        // Only a chord takes the key from the view. An operator waits for a motion the view reads.
-        const chording = keymap.pending !== null && keymap.pending.kind === "chord";
-        const viewTakes = !chording && callHook(this.active, "onKey", ev);
+        // The keymap keeps the key only while it waits for a sequence it armed itself.
+        const viewTakes = !keymap.owns() && callHook(this.active, "onKey", ev);
         if (!viewTakes && ev.type === "key") keymap.onKey(ev);
       }
     } else if (ev.type === "mouse") {

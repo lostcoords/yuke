@@ -3,25 +3,31 @@ import {
   command,
   root,
   Emitter,
-  strokeOf,
-  isTextKey,
-  takePrefix,
-  armPrefix,
   prevGrapheme,
   nextGrapheme,
   nextWordStart,
   prevWordStart,
   nextWordEnd,
 } from "yuke:core";
-import { Composer } from "yuke:ui";
+import { ChatView, Composer } from "yuke:ui";
 import { register, chatView } from "yuke:vim";
 
 /** @typedef {import("yuke:ui").Composer} ComposerType */
 /** @typedef {"insert" | "normal"} ComposerMode */
-/** @typedef {{ mode: ComposerMode, pending: string }} ComposerVimState */
+/** @typedef {{ mode: ComposerMode }} ComposerVimState */
 /** @typedef {{ start: number, end: number }} LineBounds */
 
 const NORMAL_PROMPT = "▪ ";
+
+// The context every normal-mode binding shares.
+const NORMAL_MODE = "composer_vim == normal";
+
+// The keys normal mode binds. `normalKey` holds what each one does.
+const NORMAL_KEYS = [
+  "h", "l", "j", "k", "0", "^", "$", "w", "b", "e", "G",
+  "i", "a", "I", "A", "o", "O", "x", "s", "D", "C", "p", "P",
+  "left", "right", "up", "down", "enter", ":",
+];
 /** @type {WeakMap<ComposerType, ComposerVimState>} */
 const states = new WeakMap();
 
@@ -32,7 +38,7 @@ let bus = new Emitter();
 function stateOf(c) {
   let s = states.get(c);
   if (!s) {
-    s = { mode: "insert", pending: "" };
+    s = { mode: "insert" };
     states.set(c, s);
   }
   return s;
@@ -49,7 +55,6 @@ export function setComposerMode(c, mode) {
   const s = stateOf(c);
   if (s.mode === mode) return;
   s.mode = mode;
-  s.pending = "";
   if (mode === "normal") c.input.caret = clamp(c.input.text, c.input.caret);
   bus.emit("mode", mode);
   root.invalidate();
@@ -185,11 +190,6 @@ function normalKey(c, k) {
       return to(c, clamp(text, nextWordEnd(text, t.caret)));
     case "G":
       return to(c, clamp(text, text.length));
-    case "g":
-    case "d":
-    case "c":
-      armPrefix(stateOf(c), k);
-      return true;
     case "i":
       return enter(c, t.caret);
     case "a":
@@ -245,17 +245,36 @@ export const composerVim = {
 
     ctx.keymap({ esc: "composer-vim:normal" });
 
-    ctx.advise(Composer.prototype, "onKey", "around", /** @this {ComposerType} @param {(ev: HostEvent) => boolean} inner @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */ function (inner, ev) {
-      if (composerMode(this) !== "normal") return inner(ev);
-      const k = strokeOf(ev);
-      const first = takePrefix(stateOf(this));
-      if (first) {
-        if (pair(this, first, k)) return true;
-        // An unknown second key still runs, so `gh` moves as `h`.
-      }
-      if (normalKey(this, k)) return true;
-      return isTextKey(ev);
+    // The mode reaches the keymap as a flag, so every binding below gates on it.
+    ctx.context({ composer_vim: () => composerMode(chatComposer()) || "" });
+
+    // Normal mode gives every key to the keymap, so neither the composer nor the transcript takes it.
+    ctx.advise(ChatView.prototype, "onKey", "around", /** @this {{ composer: ComposerType }} @param {(ev: HostEvent) => boolean} inner @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */ function (inner, ev) {
+      return composerMode(this.composer) === "normal" ? false : inner(ev);
     });
+
+    /** @param {string} k @returns {() => boolean} */
+    const motion = (k) => () => {
+      const c = chatComposer();
+      return c ? normalKey(c, k) : false;
+    };
+    /** @type {Record<string, () => boolean>} */
+    const normal = {};
+    for (const k of NORMAL_KEYS) normal[k] = motion(k);
+    ctx.keymap(normal, NORMAL_MODE);
+
+    /** @param {(c: ComposerType) => boolean} fn @returns {() => boolean} */
+    const edit = (fn) => () => {
+      const c = chatComposer();
+      return c ? fn(c) : false;
+    };
+    // `gg` is a mapping, so it waits. `dd` and `cc` are operators, so they hold for their motion.
+    ctx.keymap({ "g g": edit((c) => pair(c, "g", "g")) }, NORMAL_MODE);
+    ctx.keymap(
+      { "d d": edit((c) => pair(c, "d", "d")), "c c": edit((c) => pair(c, "c", "c")) },
+      NORMAL_MODE,
+      { pending: "operator" },
+    );
 
     ctx.advise(Composer.prototype, "_prompt", "around", /** @this {ComposerType} @param {() => string} inner @returns {string} */ function (inner) {
       return composerMode(this) === "normal" ? NORMAL_PROMPT : inner();

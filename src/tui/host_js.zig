@@ -796,12 +796,12 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  root.setRoot(new Node(pane));
         \\  root.focusView(pane);
         \\  const off = keymap.add({ "f6 x": () => true }, "chat");
-        \\  check("prefix-context-off", keymap._armable("f6") === false);
+        \\  check("prefix-context-off", keymap._armKind("f6") === null);
         \\  root.onEvent({ type: "key", code: "f6", char: "", event: "press", text: "", mods: 0 });
         \\  check("prefix-falls-through", seen.join(",") === "f6" && keymap.pending === null);
         \\  off();
         \\  const on = keymap.add({ "f6 x": () => true }, "bare");
-        \\  check("prefix-context-on", keymap._armable("f6") === true);
+        \\  check("prefix-context-on", keymap._armKind("f6") === "chord");
         \\  on();
         \\  root.setRoot(null);
         \\}
@@ -1369,10 +1369,12 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
         \\
         \\const v = new ChatView({ textOf: () => "" });
         \\root.setRoot(new Node(v));
+        \\root.focusView(v);
         \\const off = plugins.use(composerVim);
         \\const t = v.composer.input;
         \\const key = (ch) => ({ type: "key", code: "char", char: ch, text: ch, event: "press", mods: 0 });
-        \\const press = (str) => { for (const ch of str) v.composer.onKey(key(ch)); };
+        \\// The keys go through the real dispatch, so the bindings and the context both run.
+        \\const press = (str) => { for (const ch of str) root.onEvent(key(ch)); };
         \\
         \\t.setText("alpha bravo charlie");
         \\setComposerMode(v.composer, "normal");
@@ -1433,8 +1435,11 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
         \\press("jx");
         \\check("x-blank-line", t.text === "a\n\nb");
         \\
-        \\// A bare letter never reaches the keymap, so no stray key runs a command.
-        \\check("swallow", v.composer.onKey(key("z")) === true);
+        \\// An unbound letter inserts nothing in normal mode and runs no command.
+        \\t.setText("abc");
+        \\setComposerMode(v.composer, "normal");
+        \\press("z");
+        \\check("swallow", t.text === "abc");
         \\check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "", text: "", event: "press", mods: 0 }) === false);
         \\
         \\// "i" types again, and an unload leaves the composer plain.
