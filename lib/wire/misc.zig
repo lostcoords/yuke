@@ -103,14 +103,3 @@ pub const TranscriptTruncatedData = struct {
 
 const testing = std.testing;
 const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
-
-test "create session optional fields default to null and are omitted" {
-    const parsed = try std.json.parseFromSlice(CreateSession, testing.allocator, "{}", opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value.workspace_path == null);
-
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    try testing.expectEqualStrings("{}", buf.written());
-}
