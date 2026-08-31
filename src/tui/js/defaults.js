@@ -22,25 +22,13 @@ import { transcriptVim } from "yuke:transcript-vim";
 /** @typedef {{ m: { id: number, type: string }, i: number, text: string }} MessagePickerItem */
 /** @typedef {{ id: number, lang: string, text: string, i: number }} CodeBlockRow */
 /** @typedef {{ connKey: string, sessionId: string | null, creating: boolean, gen: number, open: (connKey: string, id?: string | null) => void, send: (text: string) => boolean, interrupt: () => void, reload: () => void, active: (id: number) => void, startChat: (text: string) => boolean, newChat: () => void, close: () => void }} ChatSession */
-/** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} CmdlineStyleGroup */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "session" }>} NativeSessionEvent */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "index" }>} NativeIndexEvent */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "conn" }> & { workspaces?: readonly Wire.Workspace[] }} NativeConnEvent */
 /** @typedef {{ nextRetryAt: number, remoteRetryAt: Record<string, number>, roster: DeviceInfo[], rosterTried: boolean, onStart: () => void, attempt: () => void, dialLocal: () => void, loadRoster: () => void, dialableKey: (d: DeviceInfo) => string | null, dialRemotes: () => void, scheduleRetry: () => void, needsTick: () => { periodMs: number } | null, tick: () => void }} ConnectionService */
 
-// The ":" command line: the prompt links to Normal; an unmatched word shows in red. Seed each group
-// alone, so a theme that set one first keeps it.
-const CMDLINE_GROUPS = { YukeCmdline: { link: "Normal" }, YukeCmdlineErr: { fg: "danger", bold: true } };
-const cmdlineGroups = /** @type {Record<string, CmdlineStyleGroup>} */ (CMDLINE_GROUPS);
-let seededCmdline = false;
-for (const name in cmdlineGroups) {
-  if (!(name in style.groups)) {
-    const group = /** @type {CmdlineStyleGroup} */ (cmdlineGroups[name]);
-    style.groups[name] = group;
-    seededCmdline = true;
-  }
-}
-if (seededCmdline) style.invalidate();
+// The ":" command line: the prompt links to Normal; an unmatched word shows in red.
+style.add({ YukeCmdline: { link: "Normal" }, YukeCmdlineErr: { fg: "danger", bold: true } });
 
 // The sidebar's share of the width in the default row split.
 const SIDEBAR_RATIO = 0.28;
@@ -404,13 +392,13 @@ const notice = {
 };
 
 // Clear the notice before each key press dispatches. A key release must not clear a fresh notice.
-events.on("key", /** @param {Extract<HostEvent, { type: "key" }>} ev */ (ev => {
+events.on("key.press", /** @param {Extract<HostEvent, { type: "key" }>} ev */ (ev => {
   if (ev.event === "press") notice.clear();
 }));
 
 // Report every copy, wherever it came from. OSC 52 has no acknowledgement, so a byte count means
 // the sequence left this process, not that the terminal accepted it.
-events.on("copy", /** @param {{ text: string, bytes: number, what: string }} e */ (e => {
+events.on("clipboard.copied", /** @param {{ text: string, bytes: number, what: string }} e */ (e => {
   if (!e) return;
   if (e.text === "") notice.show("nothing to copy");
   else if (e.bytes < 0) notice.show("too large to copy · over " + term.clipboardMax + " bytes");
@@ -707,14 +695,14 @@ const chatSession = {
   },
 };
 
-events.on("session", /** @param {NativeSessionEvent} ev */ (ev => {
+events.on("session.changed", /** @param {NativeSessionEvent} ev */ (ev => {
   if (!ev || ev.connKey !== chatSession.connKey || ev.sessionId !== chatSession.sessionId) return;
   if (ev.kind === "gone") chatSession.close();
   else if (ev.kind === "active") chatSession.active(/** @type {number} */ (ev.id));
   else chatSession.reload();
 }));
 
-events.on("index", /** @param {NativeIndexEvent} ev */ (ev => {
+events.on("index.changed", /** @param {NativeIndexEvent} ev */ (ev => {
   if (!ev || !ev.connKey) return;
   const f = feeds.get(ev.connKey);
   if (!f) return;
@@ -722,7 +710,7 @@ events.on("index", /** @param {NativeIndexEvent} ev */ (ev => {
   root.invalidate();
 }));
 
-events.on("conn", /** @param {NativeConnEvent} ev */ (ev => {
+events.on("conn.changed", /** @param {NativeConnEvent} ev */ (ev => {
   if (!ev || !ev.key) return;
   if (ev.kind === "ready") {
     loadCatalog(ev.key);
@@ -741,7 +729,7 @@ events.on("conn", /** @param {NativeConnEvent} ev */ (ev => {
       },
       () => root.invalidate(),
     );
-    if (ev.key === LOCAL) events.emit("daemon:ready");
+    if (ev.key === LOCAL) events.emit("daemon.ready");
     if (chatSession.connKey === ev.key && chatSession.sessionId && client.sessionRev(ev.key, chatSession.sessionId) < 0) {
       chatSession.open(ev.key, chatSession.sessionId);
     }
@@ -839,17 +827,6 @@ function openExplorer(startPath) {
 // --- command palette ----------------------------------------------------------------------
 // A picker over the command registry: it lists the commands the current context allows and runs
 // the chosen one.
-/** @param {{ predicate: ((...args: any[]) => unknown) | null } | null | undefined} cmd @returns {boolean} */
-function commandAvailable(cmd) {
-  if (!cmd || !cmd.predicate) return true;
-  try {
-    const r = cmd.predicate();
-    return Array.isArray(r) ? !!r[0] : !!r;
-  } catch (_e) {
-    return true;
-  }
-}
-
 // The first stroke bound to `name`, for the palette's hint column.
 /** @param {string} name @returns {string} */
 function keyHint(name) {
@@ -863,7 +840,7 @@ function keyHint(name) {
 function openPalette() {
   const cmds = Object.keys(command.map)
     .sort()
-    .filter((name) => commandAvailable(command.map[name]))
+    .filter((name) => command.available(name))
     .map((name) => ({ name: name, hint: keyHint(name) }));
 
   return ui.pick({
@@ -1009,7 +986,7 @@ function firstLine(s) {
 function commandShortNames() {
   const names = Object.create(null);
   for (const full in command.map) {
-    if (!commandAvailable(command.map[full])) continue;
+    if (!command.available(full)) continue;
     const short = full.slice(full.lastIndexOf(":") + 1);
     if (!names[short]) names[short] = full;
   }

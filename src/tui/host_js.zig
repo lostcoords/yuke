@@ -182,7 +182,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { command, keymap, events, status, Emitter } from "yuke:core";
+        \\import { command, keymap, events, status, style, root, Emitter } from "yuke:core";
         \\import { Scope, Context, advice, services, plugins } from "yuke:ext";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -212,7 +212,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\// A throwing teardown reports on the bus and never stops the rest.
         \\{
         \\  const seen = [];
-        \\  const off = events.on("ext:error", (e, name) => seen.push(name));
+        \\  const off = events.on("ext.error", (e, name) => seen.push(name));
         \\  const s = new Scope("t3");
         \\  s.effect(() => () => { throw new Error("boom"); });
         \\  s.effect(() => () => seen.push("after"));
@@ -247,10 +247,10 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  const s = new Scope("t5");
         \\  const ctx = new Context(s, "p5");
         \\  let got = 0;
-        \\  ctx.on("evt5", () => got++);
-        \\  events.emit("evt5");
+        \\  ctx.on("ui.tick", () => got++);
+        \\  events.emit("ui.tick", null);
         \\  s.dispose();
-        \\  events.emit("evt5");
+        \\  events.emit("ui.tick", null);
         \\  check("ctx-on-dispose", got === 1);
         \\}
         \\
@@ -427,6 +427,235 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  check("status-unload", status.side("right") === "r");
         \\}
         \\
+        \\
+        \\// A later registration shadows an earlier one; its dispose uncovers what it hid.
+        \\{
+        \\  const seen = [];
+        \\  const offA = command.add(null, { "test:shadow": () => seen.push("a") });
+        \\  const offB = command.add(null, { "test:shadow": () => seen.push("b") });
+        \\  command.perform("test:shadow");
+        \\  offB();
+        \\  command.perform("test:shadow");
+        \\  offA();
+        \\  const gone = !command.map["test:shadow"] && !command.perform("test:shadow");
+        \\  check("command-shadow", seen.join(",") === "b,a" && gone);
+        \\}
+        \\
+        \\// A shadowing entry its gate rejects falls through to the entry below it.
+        \\{
+        \\  const seen = [];
+        \\  let allow = false;
+        \\  const offA = command.add(null, { "test:gate": () => seen.push("base") });
+        \\  const offB = command.add(() => allow, { "test:gate": () => seen.push("top") });
+        \\  const r1 = command.perform("test:gate");
+        \\  allow = true;
+        \\  const r2 = command.perform("test:gate");
+        \\  check("command-fallthrough", r1 && r2 && JSON.stringify(seen) === JSON.stringify(["base", "top"]));
+        \\  check("command-available", command.available("test:gate") && !command.available("test:absent"));
+        \\  allow = false;
+        \\  offA();
+        \\  check("command-unavailable", !command.available("test:gate"));
+        \\  offB();
+        \\}
+        \\
+        \\// style.add seeds only an absent name, invalidates a cached miss, and reverts on dispose.
+        \\{
+        \\  const missed = style.resolve("TestSeed").bold === undefined;
+        \\  const off = style.add({ TestSeed: { fg: "fg", bold: true }, Normal: { fg: "danger" } });
+        \\  const seeded = style.resolve("TestSeed").bold === true;
+        \\  const kept = style.groups.Normal.fg === "fg";
+        \\  off();
+        \\  const reverted = !("TestSeed" in style.groups) && style.resolve("TestSeed").bold === undefined;
+        \\  check("style-add", missed && seeded && kept && reverted && style.groups.Normal.fg === "fg");
+        \\}
+        \\
+        \\// A plugin's highlight groups unload with the plugin.
+        \\{
+        \\  const stop = plugins.use({ name: "theme", apply: (c) => { c.style({ PluginGroup: { fg: "fg", bold: true } }); } });
+        \\  const on = style.resolve("PluginGroup").bold === true;
+        \\  stop();
+        \\  check("style-plugin", on && !("PluginGroup" in style.groups) && style.resolve("PluginGroup").bold === undefined);
+        \\}
+        \\
+        \\// A disposer runs once; a second call leaves a later registration of the same name alone.
+        \\{
+        \\  const offA = command.add(null, { "test:twice": () => {} });
+        \\  offA();
+        \\  const offB = command.add(null, { "test:twice": () => {} });
+        \\  offA();
+        \\  check("command-dispose-twice", command.map["test:twice"].length === 1);
+        \\  offB();
+        \\}
+        \\
+        \\// Every gate shape resolves: a bare boolean, [true], [true, x], and [false].
+        \\{
+        \\  const got = [];
+        \\  const off = [
+        \\    command.add(() => true, { "test:g1": (...a) => got.push("g1:" + a.length) }),
+        \\    command.add(() => [true], { "test:g2": (...a) => got.push("g2:" + a.length) }),
+        \\    command.add(() => [true, "x"], { "test:g3": (...a) => got.push("g3:" + a[0]) }),
+        \\    command.add(() => [false], { "test:g4": () => got.push("g4") }),
+        \\  ];
+        \\  command.perform("test:g1", 1);
+        \\  command.perform("test:g2", 1);
+        \\  command.perform("test:g3", 1);
+        \\  const ran4 = command.perform("test:g4", 1);
+        \\  check("command-gate-shapes", got.join(",") === "g1:1,g2:1,g3:x" && !ran4);
+        \\  for (const f of off) f();
+        \\}
+        \\
+        \\// A throwing gate lists as available, and the throw still escapes perform.
+        \\{
+        \\  const off = command.add(() => { throw new Error("gate"); }, { "test:boom": () => {} });
+        \\  const listed = command.available("test:boom");
+        \\  const threw = throws(() => command.perform("test:boom"));
+        \\  check("command-gate-throw", listed && threw);
+        \\  off();
+        \\}
+        \\
+        \\
+        \\// A second provider hides the first; its withdrawal reveals the one below.
+        \\{
+        \\  const seen = [];
+        \\  const offEvt = events.on("service:stack", (v) => seen.push(v === undefined ? "none" : v));
+        \\  const offA = services.provide("stack", "a");
+        \\  const offB = services.provide("stack", "b");
+        \\  const hid = services.get("stack") === "b";
+        \\  offB();
+        \\  const revealed = services.get("stack") === "a";
+        \\  offA();
+        \\  check("service-stack", hid && revealed && services.get("stack") === undefined);
+        \\  check("service-events", seen.join(",") === "a,b,a,none");
+        \\  offEvt();
+        \\}
+        \\
+        \\// Two plugins want one group name: the first owns it and an unload cannot strip the second.
+        \\{
+        \\  const first = { fg: "fg", bold: true };
+        \\  const stopA = plugins.use({ name: "thA", apply: (c) => { c.style({ Shared: first }); } });
+        \\  const stopB = plugins.use({ name: "thB", apply: (c) => { c.style({ Shared: { fg: "danger" } }); } });
+        \\  stopA();
+        \\  check("style-collision", style.groups.Shared === first && style.resolve("Shared").bold === true);
+        \\  stopB();
+        \\  check("style-collision-clean", !("Shared" in style.groups));
+        \\}
+        \\
+        \\// An inherited property name is not an existing group.
+        \\{
+        \\  const off = style.add({ toString: { fg: "danger", bold: true } });
+        \\  const seeded = style.resolve("toString").bold === true;
+        \\  off();
+        \\  check("style-own-property", seeded && !("toString" in style.groups) && style.groups.Normal.fg === "fg");
+        \\}
+        \\
+        \\// The core bus is closed: a core name must be declared, and a plugin name needs a namespace.
+        \\{
+        \\  check("bus-typo", throws(() => events.emit("ui.tik", null)));
+        \\  check("bus-typo-on", throws(() => events.on("sesion.changed", () => {})));
+        \\  check("bus-plugin-rejected", throws(() => events.emit("myplugin:thing", 1)));
+        \\  check("bus-service-family", !throws(() => events.emit("service:anything", 1)));
+        \\}
+        \\
+        \\// A later binding wins, and a binding that declines falls through to the one below.
+        \\{
+        \\  const ran = [];
+        \\  const kev = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+        \\  const offA = keymap.add({ "ctrl+alt+t": () => { ran.push("a"); return true; } });
+        \\  const offB = keymap.add({ "ctrl+alt+t": () => { ran.push("b"); return false; } });
+        \\  keymap.onKey(kev({ char: "t", mods: 6 }));
+        \\  offB();
+        \\  offB();
+        \\  keymap.onKey(kev({ char: "t", mods: 6 }));
+        \\  check("keymap-newest-first", ran.join(",") === "b,a,a");
+        \\  offA();
+        \\  check("keymap-clean", !keymap.map["ctrl+alt+t"]);
+        \\}
+        \\
+        \\// Two providers of one value stay apart, so a disposer withdraws its own registration.
+        \\{
+        \\  const same = { v: 1 };
+        \\  const offA = services.provide("dup", same);
+        \\  const offB = services.provide("dup", same);
+        \\  offB();
+        \\  const still = services.get("dup") === same;
+        \\  offB();
+        \\  const held = services.get("dup") === same;
+        \\  offA();
+        \\  check("service-identity", still && held && services.get("dup") === undefined);
+        \\}
+        \\
+        \\// A disposer runs once, so a repeat call cannot strip a live holder.
+        \\{
+        \\  const offA = style.add({ Held: { fg: "fg", bold: true } });
+        \\  const offB = style.add({ Held: { fg: "danger" } });
+        \\  offA();
+        \\  offA();
+        \\  check("style-dispose-once", style.resolve("Held").bold === true);
+        \\  offB();
+        \\  check("style-dispose-last", !("Held" in style.groups));
+        \\}
+        \\
+        \\// An inherited object name is not a declared event, and a family needs a real suffix.
+        \\{
+        \\  check("bus-inherited", throws(() => events.emit("toString", 1)));
+        \\  check("bus-inherited-on", throws(() => events.on("constructor", () => {})));
+        \\  check("bus-family-empty", throws(() => events.emit("service:", 1)));
+        \\}
+        \\
+        \\// Every entry point validates, and every declared name is accepted.
+        \\{
+        \\  check("bus-once-typo", throws(() => events.once("ui.tik", () => {})));
+        \\  check("bus-bail-typo", throws(() => events.bail("ui.tik")));
+        \\  const core = ["ui.start", "ui.closed", "ui.resize", "ui.tick", "key.press", "mouse.input",
+        \\    "paste.input", "focus.changed", "clipboard.copied", "session.changed", "index.changed",
+        \\    "conn.changed", "daemon.ready", "status.error", "ext.error"];
+        \\  const bad = core.filter((n) => throws(() => events.on(n, () => {})()));
+        \\  check("bus-core-declared:" + bad.join("|"), bad.length === 0);
+        \\}
+        \\
+        \\// A host event reaches the core name it maps to, and one throwing listener spares the rest.
+        \\{
+        \\  const seen = [];
+        \\  const offs = [
+        \\    events.on("key.press", () => { throw new Error("listener"); }),
+        \\    events.on("key.press", () => seen.push("key")),
+        \\    events.on("mouse.input", () => seen.push("mouse")),
+        \\    events.on("ui.tick", () => seen.push("tick")),
+        \\    events.on("focus.changed", () => seen.push("focus")),
+        \\    events.on("paste.input", () => seen.push("paste")),
+        \\    events.on("ui.resize", () => seen.push("resize")),
+        \\    events.on("ui.start", () => seen.push("start")),
+        \\  ];
+        \\  root.onEvent({ type: "start" });
+        \\  root.onEvent({ type: "resize", w: 80, h: 24 });
+        \\  root.onEvent({ type: "key", code: "char", char: "x", text: "", event: "press", mods: 0 });
+        \\  root.onEvent({ type: "mouse", col: 1, row: 1, button: "left", event: "press", mods: 0, count: 1 });
+        \\  root.onEvent({ type: "paste", text: "p" });
+        \\  root.onEvent({ type: "focus", focused: true });
+        \\  root.onEvent({ type: "tick" });
+        \\  check("root-event-names", JSON.stringify(seen) === JSON.stringify(["start", "resize", "key", "mouse", "paste", "focus", "tick"]));
+        \\  for (const f of offs) f();
+        \\}
+        \\
+        \\// A provider disposed below the top leaves the live provider in place.
+        \\{
+        \\  const offA = services.provide("rev", "a");
+        \\  const offB = services.provide("rev", "b");
+        \\  offA();
+        \\  const live = services.get("rev") === "b";
+        \\  offB();
+        \\  check("service-reverse", live && services.get("rev") === undefined);
+        \\}
+        \\
+        \\// A modified binding folds shift away, so the stroke an event makes is the stroke that matches.
+        \\{
+        \\  let ran = 0;
+        \\  const kev2 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+        \\  const off = keymap.add({ "ctrl+shift+g": () => { ran++; return true; } });
+        \\  keymap.onKey(kev2({ char: "g", shifted: "G", mods: 5 }));
+        \\  check("stroke-ctrl-shift", ran === 1);
+        \\  off();
+        \\}
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "ext.js");
     try expectJs(host, "ok");
@@ -439,7 +668,7 @@ test "yuke:core config validates and TextInput inserts committed text" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { config, defineConfig, TextInput, modalKey } from "yuke:core";
+        \\import { config, defineConfig, TextInput, strokeOf, keymap, command } from "yuke:core";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
@@ -455,15 +684,36 @@ test "yuke:core config validates and TextInput inserts committed text" {
         \\throws(() => defineConfig({ daemon: { host: "9.9.9.9", retryMs: -1 } }));
         \\check("cfg-atomic", config.daemon.host === before);
         \\
-        \\// modalKey separates G from g under both keyboard protocols.
-        \\const mk = (o) => modalKey(Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o));
-        \\check("modal-legacy-shift", mk({ char: "G", mods: 1 }) === "G");
-        \\check("modal-kitty-shift", mk({ char: "g", shifted: "G", mods: 1 }) === "G");
-        \\check("modal-plain", mk({ char: "g" }) === "g");
-        \\check("modal-kitty-colon", mk({ char: ";", shifted: ":", mods: 1 }) === ":");
-        \\check("modal-chord", mk({ char: "d", mods: 4 }) === "ctrl+d");
-        \\check("modal-named", mk({ code: "tab" }) === "tab");
+        \\// strokeOf separates G from g under both keyboard protocols.
+        \\const kev = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+        \\const mk = (o) => strokeOf(kev(o));
+        \\check("stroke-legacy-shift", mk({ char: "G", mods: 1 }) === "G");
+        \\check("stroke-kitty-shift", mk({ char: "g", shifted: "G", mods: 1 }) === "G");
+        \\check("stroke-plain", mk({ char: "g" }) === "g");
+        \\check("stroke-kitty-colon", mk({ char: ";", shifted: ":", mods: 1 }) === ":");
+        \\check("stroke-chord", mk({ char: "d", mods: 4 }) === "ctrl+d");
+        \\check("stroke-named", mk({ code: "tab" }) === "tab");
         \\
+        \\
+        \\// A written binding folds the way an event folds, so the keymap can bind an uppercase key.
+        \\{
+        \\  const ran = [];
+        \\  const off = keymap.add({ G: () => { ran.push("G"); return true; }, g: () => { ran.push("g"); return true; } });
+        \\  keymap.onKey(kev({ char: "G", mods: 1 }));
+        \\  keymap.onKey(kev({ char: "g" }));
+        \\  check("keymap-case", ran.join(",") === "G,g");
+        \\  off();
+        \\}
+        \\
+        \\// `shift+g` names the same stroke as `G`, and another modifier folds the case away.
+        \\{
+        \\  const ran = [];
+        \\  const off = keymap.add({ "shift+g": () => { ran.push("shift"); return true; }, "ctrl+G": () => { ran.push("ctrl"); return true; } });
+        \\  keymap.onKey(kev({ char: "g", shifted: "G", mods: 1 }));
+        \\  keymap.onKey(kev({ char: "g", mods: 4 }));
+        \\  check("keymap-shift-alias", ran.join(",") === "shift,ctrl");
+        \\  off();
+        \\}
         \\// TextInput uses committed text before the folded key.
         \\const key = (o) => Object.assign({ type: "key", code: "char", event: "press", char: "", text: "", mods: 0 }, o);
         \\const insert = (evs) => { const ti = new TextInput(); for (const e of evs) ti.onKey(e); return ti.text; };

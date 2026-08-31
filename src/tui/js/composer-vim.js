@@ -2,8 +2,8 @@
 import {
   command,
   root,
-  events,
-  modalKey,
+  Emitter,
+  strokeOf,
   isTextKey,
   takePrefix,
   armPrefix,
@@ -24,6 +24,9 @@ import { register, chatView } from "yuke:vim";
 const NORMAL_PROMPT = "▪ ";
 /** @type {WeakMap<ComposerType, ComposerVimState>} */
 const states = new WeakMap();
+
+// Each load owns its bus, so a listener never carries across an unload.
+let bus = new Emitter();
 
 /** @param {ComposerType} c @returns {ComposerVimState} */
 function stateOf(c) {
@@ -48,7 +51,7 @@ export function setComposerMode(c, mode) {
   s.mode = mode;
   s.pending = "";
   if (mode === "normal") c.input.caret = clamp(c.input.text, c.input.caret);
-  events.emit("composer-vim:mode", mode);
+  bus.emit("mode", mode);
   root.invalidate();
 }
 
@@ -231,6 +234,7 @@ export const composerVim = {
   name: "composer-vim",
   /** @param {import("yuke:ext").Context} ctx @returns {() => void} */
   apply(ctx) {
+    bus = new Emitter();
     const inChat = () => chatComposer() != null;
 
     ctx.command(inChat, {
@@ -243,7 +247,7 @@ export const composerVim = {
 
     ctx.advise(Composer.prototype, "onKey", "around", /** @this {ComposerType} @param {(ev: HostEvent) => boolean} inner @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */ function (inner, ev) {
       if (composerMode(this) !== "normal") return inner(ev);
-      const k = modalKey(ev);
+      const k = strokeOf(ev);
       const first = takePrefix(stateOf(this));
       if (first) {
         if (pair(this, first, k)) return true;
@@ -278,6 +282,7 @@ export const composerVim = {
     } });
 
     ctx.provide("composer-vim", {
+      bus,
       mode: () => composerMode(chatComposer()),
       isNormal: () => inChat() && composerMode(chatComposer()) === "normal",
     });

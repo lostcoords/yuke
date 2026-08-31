@@ -1,6 +1,6 @@
 // yuke:ext — the plugin runtime. A Scope owns revertible effects, a Context is the plugin's
 // registration surface, `advice` wraps methods, and `plugins` loads and unloads.
-import { command, keymap, events, status } from "yuke:core";
+import { command, keymap, events, status, style } from "yuke:core";
 
 /** @typedef {() => void} Disposer */
 /** @typedef {() => unknown} Effect */
@@ -16,6 +16,7 @@ import { command, keymap, events, status } from "yuke:core";
 /** @typedef {Parameters<typeof command.add>[1]} CommandMap */
 /** @typedef {Parameters<typeof keymap.add>[0]} KeyBindings */
 /** @typedef {Parameters<typeof status.add>[0]} StatusSegment */
+/** @typedef {Parameters<typeof style.add>[0]} StyleGroups */
 /** @typedef {(ctx: Context, config: unknown) => unknown} PluginApply */
 /** @typedef {PluginApply & { pluginName?: string }} PluginFunction */
 /** @typedef {{ name?: string, apply: PluginApply }} PluginObject */
@@ -73,7 +74,7 @@ export class Scope {
         d();
       } catch (e) {
         // A silent teardown failure hides a plugin bug, so report it on the shared bus.
-        events.emit("ext:error", e, this.name);
+        events.emit("ext.error", e, this.name);
       }
     }
   }
@@ -213,26 +214,36 @@ function adviceRestore(obj, prop, rec) {
 
 // --- services: one provider per name ---
 export const services = {
-  /** @type {Record<string, unknown>} */
+  /** @type {Record<string, Array<{ value: unknown }>>} */
   _map: Object.create(null),
 
-  // Register `value` and return a disposer. Both the arrival and the withdrawal emit an event.
+  // Register `value` and return a disposer. A provider stacks, so a withdrawal reveals the one it hid.
   /** @param {string} name @param {unknown} value @returns {Disposer} */
   provide(name, value) {
-    this._map[name] = value;
+    const list = this._map[name] || (this._map[name] = []);
+    // The entry identifies the registration, so two providers of one value stay apart.
+    const entry = { value };
+    list.unshift(entry);
     events.emit("service:" + name, value);
 
+    let done = false;
     return () => {
-      if (this._map[name] === value) {
-        delete this._map[name];
-        events.emit("service:" + name, undefined);
-      }
+      if (done) return;
+      done = true;
+      const at = list.indexOf(entry);
+      if (at < 0) return;
+      list.splice(at, 1);
+      if (list.length === 0) delete this._map[name];
+      // Only a withdrawal of the live provider changes what `get` answers.
+      const top = list[0];
+      if (at === 0) events.emit("service:" + name, top ? top.value : undefined);
     };
   },
 
   /** @param {string} name @returns {unknown} */
   get(name) {
-    return this._map[name];
+    const top = (this._map[name] || [])[0];
+    return top ? top.value : undefined;
   },
 };
 
@@ -270,14 +281,19 @@ export class Context {
     return this.scope.effect(() => command.add(predicate, scoped));
   }
 
-  /** @param {KeyBindings} bindings @param {boolean} [overwrite] @returns {Disposer} */
-  keymap(bindings, overwrite) {
-    return this.scope.effect(() => keymap.add(bindings, overwrite));
+  /** @param {KeyBindings} bindings @returns {Disposer} */
+  keymap(bindings) {
+    return this.scope.effect(() => keymap.add(bindings));
   }
 
   /** @param {StatusSegment} seg @returns {Disposer} */
   status(seg) {
     return this.scope.effect(() => status.add(seg));
+  }
+
+  /** @param {StyleGroups} groups @returns {Disposer} */
+  style(groups) {
+    return this.scope.effect(() => style.add(groups));
   }
 
   /** @param {object} obj @param {string} prop @param {string} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */

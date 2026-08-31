@@ -38,22 +38,19 @@ import { style } from "yuke:core";
 /** @typedef {{raw: string, width: number | null, rows: Row[] | null}} CacheEntry */
 
 // Register the Markdown groups once.
-if (!style.groups.MdText) {
-  Object.assign(style.groups, {
-    MdText: { link: "Normal" },
-    MdStrong: { fg: "fg", bold: true },
-    MdEm: { fg: "fg", italic: true },
-    MdStrongEm: { fg: "fg", bold: true, italic: true },
-    MdCode: { fg: "fg", dim: true },
-    MdHeading: { fg: "fg", bold: true },
-    MdQuote: { fg: "fg", dim: true },
-    MdCodeBlock: { fg: "fg", dim: true },
-    MdRule: { fg: "fg", dim: true },
-    MdListMark: { fg: "fg", dim: true },
-    MdTableBorder: { fg: "fg", dim: true },
-  });
-  style.invalidate();
-}
+style.add({
+  MdText: { link: "Normal" },
+  MdStrong: { fg: "fg", bold: true },
+  MdEm: { fg: "fg", italic: true },
+  MdStrongEm: { fg: "fg", bold: true, italic: true },
+  MdCode: { fg: "fg", dim: true },
+  MdHeading: { fg: "fg", bold: true },
+  MdQuote: { fg: "fg", dim: true },
+  MdCodeBlock: { fg: "fg", dim: true },
+  MdRule: { fg: "fg", dim: true },
+  MdListMark: { fg: "fg", dim: true },
+  MdTableBorder: { fg: "fg", dim: true },
+});
 
 const FENCE = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE = /^( {0,3})(`{3,}|~{3,})[ \t]*$/;

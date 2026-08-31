@@ -3,8 +3,14 @@
 import { native } from "yuke:client-native";
 import { events } from "yuke:core";
 
+// This table maps a native client event type to its core event name.
+const CLIENT_TO_CORE_EVENT = { session: "session.changed", index: "index.changed", conn: "conn.changed" };
+
 // The native emits connection events on the owner. Send them to the shared bus.
-native.setEventSink((ev) => events.emit(ev.type, ev));
+native.setEventSink((ev) => {
+  const name = CLIENT_TO_CORE_EVENT[ev.type];
+  if (name) events.emit(name, ev);
+});
 
 export class ClientError extends Error {
   /** @param {unknown} code */

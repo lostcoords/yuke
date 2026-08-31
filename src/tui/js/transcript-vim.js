@@ -1,6 +1,6 @@
 // yuke:transcript-vim — opt-in cursor and yank keys for the transcript.
 import { term } from "yuke:term";
-import { root, copy, modalKey, caretAtCol, takePrefix, armPrefix, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
+import { root, copy, strokeOf, caretAtCol, takePrefix, armPrefix, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
 import { ChatView } from "yuke:ui";
 import { register, chatView } from "yuke:vim";
 
@@ -317,7 +317,7 @@ export const transcriptVim = {
       if (!s.cursor) seed(this, s);
       const active = /** @type {{ cursor: Position }} */ (s);
       reanchor(t, s);
-      const k = modalKey(ev);
+      const k = strokeOf(ev);
       const first = takePrefix(s);
       if (first === "g") {
         if (k === "g" && toEnd(t, s, false)) {

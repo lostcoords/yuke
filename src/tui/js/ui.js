@@ -1,7 +1,7 @@
 // yuke:ui — the widget kit over yuke:core. List/Pager/Window are classes to subclass or patch.
 // `ui` exports the pickers. Editor policy lives in yuke:core; presentation lives here.
 import { term } from "yuke:term";
-import { text, fill, clip, root, strokeOf, modalKey, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme, takePrefix, armPrefix, style, config, isWheel } from "yuke:core";
+import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme, takePrefix, armPrefix, style, config, isWheel } from "yuke:core";
 import { Document, isLinear } from "yuke:md";
 
 /** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
@@ -69,14 +69,7 @@ const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
   TxToolContext: { fg: "fg", dim: true },
   TxThought: { fg: "fg", dim: true, italic: true },
 });
-let seededGroups = false;
-for (const name in UI_GROUPS) {
-  if (!(name in style.groups)) {
-    style.groups[name] = /** @type {StyleGroup} */ (UI_GROUPS[name]);
-    seededGroups = true;
-  }
-}
-if (seededGroups) style.invalidate();
+style.add(UI_GROUPS);
 
 // Default page jump before a draw sets the real page height.
 const PAGE_FALLBACK = 10;
@@ -120,7 +113,7 @@ function navAction(k) {
 
 /** @param {Chord} chord @param {Extract<HostEvent, { type: "key" }>} ev @param {Record<string, () => void>} map @returns {boolean} */
 function applyNav(chord, ev, map) {
-  const k = modalKey(ev);
+  const k = strokeOf(ev);
   const first = takePrefix(chord);
   const act = first === "g" && k === "g" ? "top" : navAction(k);
   if (act === "pending_g") {

@@ -2,7 +2,7 @@ import { term } from "yuke:term";
 
 /** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
 /** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
-/** @typedef {{ palette: Record<string, import("yuke:term").Color>, groups: Record<string, StyleGroup>, _cache: Record<string, import("yuke:term").Style>, resolve: (name: string) => import("yuke:term").Style, invalidate: () => void }} StyleConfig */
+/** @typedef {{ palette: Record<string, import("yuke:term").Color>, groups: Record<string, StyleGroup>, _refs: Record<string, number>, _cache: Record<string, import("yuke:term").Style>, add: (groups: Record<string, StyleGroup>) => () => void, resolve: (name: string) => import("yuke:term").Style, invalidate: () => void }} StyleConfig */
 /** @typedef {{ host: string, port: number, autoConnect: boolean, retryMs: number }} DaemonConfig */
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
 /** @typedef {{ daemon: DaemonConfig, mouse: MouseConfig }} Config */
@@ -19,11 +19,11 @@ import { term } from "yuke:term";
 /** @typedef {(...args: any[]) => unknown} CommandAction */
 /** @typedef {(...args: any[]) => boolean | [boolean, ...any[]]} CommandPredicate */
 /** @typedef {{ predicate: CommandPredicate | null, perform: CommandAction }} CommandEntry */
-/** @typedef {{ [name: string]: CommandEntry }} CommandMap */
-/** @typedef {{ map: CommandMap, add: (predicate: string | CommandPredicate | null, map: Record<string, CommandAction>) => () => void, perform: (name: string, ...args: any[]) => boolean }} CommandRegistry */
+/** @typedef {{ [name: string]: CommandEntry[] }} CommandMap */
+/** @typedef {{ map: CommandMap, add: (predicate: string | CommandPredicate | null, map: Record<string, CommandAction>) => () => void, perform: (name: string, ...args: any[]) => boolean, available: (name: string) => boolean }} CommandRegistry */
 /** @typedef {string | ((ev: HostEvent) => boolean | void)} KeyBinding */
 /** @typedef {{ [name: string]: KeyBinding[] }} KeyMap */
-/** @typedef {{ map: KeyMap, prefixes: Record<string, boolean>, pending: string | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, overwrite?: boolean) => () => void, _rebuildPrefixes: () => void, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _perform: (cmds: KeyBinding[] | undefined, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
+/** @typedef {{ map: KeyMap, prefixes: Record<string, boolean>, pending: string | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>) => () => void, _rebuildPrefixes: () => void, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _perform: (cmds: KeyBinding[] | undefined, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
 /** @typedef {{ side?: "left" | "right", order?: number, render: () => string | null | undefined }} StatusSegment */
 /** @typedef {{ side: "left" | "right", order: number, render: () => string | null | undefined }} StatusEntry */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -127,7 +127,7 @@ export const style = {
     bg: "reset",
     danger: "red",
   },
-  groups: {
+  groups: Object.assign(Object.create(null), {
     Normal: { fg: "fg", bg: "bg" },
     Comment: { fg: "fg", dim: true },
     YukeBrand: { fg: "fg", bold: true },
@@ -142,8 +142,45 @@ export const style = {
     YukeEmpty: { fg: "fg", dim: true },
     YukeHint: { fg: "fg", dim: true },
     YukeBar: { fg: "fg", dim: true },
-  },
+  }),
+  /** @type {Record<string, number>} */
+  _refs: Object.create(null),
   _cache: Object.create(null),
+
+  // Register absent groups and return a disposer that drops each group after its last reference.
+  /** @param {Record<string, StyleGroup>} groups @returns {() => void} */
+  add(groups) {
+    /** @type {string[]} */
+    const held = [];
+    for (const name in groups) {
+      const refs = this._refs[name];
+      if (!(name in this.groups)) {
+        this.groups[name] = /** @type {StyleGroup} */ (groups[name]);
+        this._refs[name] = 1;
+        held.push(name);
+      } else if (refs !== undefined) {
+        // A group the map held before any `add`, such as a built-in, takes no reference.
+        this._refs[name] = refs + 1;
+        held.push(name);
+      }
+    }
+    if (held.length === 0) return () => {};
+    this.invalidate();
+
+    return once(() => {
+      for (const name of held) {
+        const refs = this._refs[name];
+        if (refs !== undefined && refs > 1) {
+          this._refs[name] = refs - 1;
+          continue;
+        }
+        delete this._refs[name];
+        delete this.groups[name];
+      }
+      this.invalidate();
+    });
+  },
+
   resolve(name) {
     const cached = this._cache[name];
     if (cached) return cached;
@@ -382,38 +419,92 @@ export function caretAtCol(s, row, col) {
   return row.end;
 }
 
+// Wrap a disposer so a second call does nothing.
+/** @param {() => void} fn @returns {() => void} */
+function once(fn) {
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    fn();
+  };
+}
+
 // A command has a predicate and an action. A string predicate matches the active view.
 /** @type {CommandRegistry} */
 export const command = {
   map: Object.create(null),
 
+  // Register a batch under one predicate; a later registration shadows an earlier one.
   add(predicate, map) {
     const pred = normalizePredicate(predicate);
     /** @type {Array<[string, CommandEntry]>} */
     const added = [];
     for (const name in map) {
       const entry = { predicate: pred, perform: /** @type {CommandAction} */ (map[name]) };
-      this.map[name] = entry;
+      const list = this.map[name] || (this.map[name] = []);
+      list.unshift(entry);
       added.push([name, entry]);
     }
-    return () => {
+    return once(() => {
       for (const [name, entry] of added) {
-        if (this.map[name] === entry) delete this.map[name];
+        const list = this.map[name];
+        if (!list) continue;
+        const i = list.indexOf(entry);
+        if (i >= 0) list.splice(i, 1);
+        if (list.length === 0) delete this.map[name];
       }
-    };
+    });
   },
 
+  // A rejected predicate lets the next entry run.
   perform(name, ...args) {
-    const cmd = this.map[name];
-    if (!cmd) return false;
-    const res = cmd.predicate ? cmd.predicate(...args) : true;
-    const avail = Array.isArray(res) ? res[0] : res;
-    if (!avail) return false;
-    const extra = Array.isArray(res) && res.length > 1 ? res.slice(1) : args;
-    cmd.perform(...extra);
+    const found = selectCommand(this.map[name], args);
+    if (!found) return false;
+    found.entry.perform(...found.args);
     return true;
   },
+
+  // A throwing predicate counts as available, so one bad predicate never empties a listing.
+  available(name) {
+    return isAvailable(this.map[name]);
+  },
 };
+
+// Return the newest entry whose predicate accepts, with the arguments to run it with.
+/** @param {CommandEntry[] | undefined} list @param {any[]} args @returns {{ entry: CommandEntry, args: any[] } | null} */
+function selectCommand(list, args) {
+  if (!list) return null;
+  for (const entry of list) {
+    const call = evalPredicate(entry, args);
+    if (call !== null) return { entry, args: call };
+  }
+  return null;
+}
+
+// Report whether an entry would run, without the allocation a selection needs.
+/** @param {CommandEntry[] | undefined} list @returns {boolean} */
+function isAvailable(list) {
+  if (!list) return false;
+  for (const entry of list) {
+    try {
+      if (evalPredicate(entry, []) !== null) return true;
+    } catch (_e) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Evaluate one predicate and return the arguments to run with, or null when it rejects.
+/** @param {CommandEntry} entry @param {any[]} args @returns {any[] | null} */
+function evalPredicate(entry, args) {
+  if (!entry.predicate) return args;
+  const res = entry.predicate(...args);
+  if (!Array.isArray(res)) return res ? args : null;
+  if (!res[0]) return null;
+  return res.length > 1 ? res.slice(1) : args;
+}
 
 /** @param {string | CommandPredicate | null} predicate @returns {CommandPredicate | null} */
 function normalizePredicate(predicate) {
@@ -431,7 +522,8 @@ export const keymap = {
   prefixes: Object.create(null),
   pending: null,
 
-  add(bindings, overwrite) {
+  // Register bindings newest first and return a disposer. A binding that declines falls through.
+  add(bindings) {
     /** @type {Array<[string, KeyBinding]>} */
     const added = [];
     for (const seq in bindings) {
@@ -439,12 +531,12 @@ export const keymap = {
       const value = /** @type {KeyBinding | KeyBinding[]} */ (bindings[seq]);
       /** @type {KeyBinding[]} */
       const list = Array.isArray(value) ? value.slice() : [value];
-      if (overwrite || !this.map[key]) this.map[key] = list;
-      else this.map[key] = list.concat(this.map[key]);
+      const prev = this.map[key];
+      this.map[key] = prev ? list.concat(prev) : list;
       for (const h of list) added.push([key, h]);
     }
     this._rebuildPrefixes();
-    return () => {
+    return once(() => {
       for (const [key, h] of added) {
         const cur = this.map[key];
         if (!cur) continue;
@@ -453,7 +545,7 @@ export const keymap = {
         if (cur.length === 0) delete this.map[key];
       }
       this._rebuildPrefixes();
-    };
+    });
   },
 
   _rebuildPrefixes() {
@@ -523,31 +615,40 @@ function joinStroke(mods, token) {
   return parts.join("+");
 }
 
+// The stroke a binding matches. A char key carries its own case, so `G` and `g` differ.
 /** @param {Extract<HostEvent, { type: "key" }>} ev @returns {string} */
 export function strokeOf(ev) {
   const m = ev.mods | 0;
-  let token;
+  const ctrl = (m & MOD_CTRL) !== 0;
+  const alt = (m & MOD_ALT) !== 0;
+  const sup = (m & MOD_SUPER) !== 0;
   let shift = (m & MOD_SHIFT) !== 0;
+  let token;
   if (ev.code === "char") {
-    token = (ev.char || "").toLowerCase();
-    shift = false;
+    token = ev.char || "";
+    if (!token) return "";
+    if (ctrl || alt || sup) {
+      // A terminal cannot report ctrl+G apart from ctrl+g, so another modifier folds the case.
+      token = token.toLowerCase();
+      shift = false;
+    } else {
+      // The kitty protocol reports the shifted form apart; a legacy terminal sends the shifted char.
+      if (shift) token = ev.shifted || token.toUpperCase();
+      shift = false;
+    }
   } else {
     token = ev.code;
   }
   if (!token) return "";
-  return joinStroke(
-    { ctrl: !!(m & MOD_CTRL), alt: !!(m & MOD_ALT), super: !!(m & MOD_SUPER), shift },
-    token,
-  );
+  return joinStroke({ ctrl, alt, super: sup, shift }, token);
 }
 
-// Write `text` to the system clipboard and report the byte count, or -1 when it is too large.
-// The `copy` event carries the outcome, so the app owns the message the user reads.
+// Write `text` to the clipboard, emit `clipboard.copied`, and return the byte count or -1.
 /** @param {string | null | undefined} text @param {string | undefined} what @returns {number} */
 export function copy(text, what) {
   const s = text == null ? "" : String(text);
   const bytes = s === "" ? 0 : term.copy(s);
-  events.emit("copy", { what: what || "text", text: s, bytes });
+  events.emit("clipboard.copied", { what: what || "text", text: s, bytes });
   return bytes;
 }
 
@@ -562,21 +663,6 @@ export function takePrefix(holder) {
 /** @param {{ pending: string | null }} holder @param {string} key @returns {void} */
 export function armPrefix(holder, key) {
   holder.pending = key;
-}
-
-// The key a modal layer reads. `strokeOf` folds a letter's case, so `G` needs the raw character.
-// A chord keeps its stroke, so ctrl+d never reads as a letter.
-/** @param {Extract<HostEvent, { type: "key" }>} ev @returns {string} */
-export function modalKey(ev) {
-  const m = ev.mods | 0;
-  if (ev.code === "char" && ev.char && (m & (MOD_CTRL | MOD_ALT | MOD_SUPER)) === 0) {
-    // The kitty protocol reports the base key and its shifted form apart. A legacy terminal sends
-    // the shifted character itself.
-    if ((m & MOD_SHIFT) !== 0 && ev.shifted) return ev.shifted;
-    if (ev.char !== ev.char.toLowerCase()) return ev.char;
-    if ((m & MOD_SHIFT) !== 0) return ev.char.toUpperCase();
-  }
-  return strokeOf(ev);
 }
 
 // Return committed text. Use the folded key only for an unmodified legacy event.
@@ -594,14 +680,26 @@ export function isTextKey(ev) {
   return textOf(ev) !== "";
 }
 
+// Fold a written binding the way `strokeOf` folds an event, so the two always agree.
 /** @param {string} stroke @returns {string} */
 function normalizeStroke(stroke) {
-  const parts = String(stroke).toLowerCase().split("+");
-  const token = /** @type {string} */ (parts.pop());
+  const parts = String(stroke).split("+");
+  let token = /** @type {string} */ (parts.pop() ?? "");
   const mods = /** @type {{ ctrl: boolean, alt: boolean, super: boolean, shift: boolean } & Record<string, boolean>} */ ({ ctrl: false, alt: false, super: false, shift: false });
   for (const p of parts) {
-    if (p === "control") mods.ctrl = true;
-    else if (p in mods) mods[p] = true;
+    const name = p.toLowerCase();
+    if (name === "control") mods.ctrl = true;
+    else if (name in mods) mods[name] = true;
+  }
+  // A named key such as `tab` has no case. A char key keeps its own, and shift folds into it.
+  if (token.length > 1) token = token.toLowerCase();
+  else if (mods.ctrl || mods.alt || mods.super) {
+    token = token.toLowerCase();
+    mods.shift = false;
+  }
+  else if (mods.shift) {
+    token = token.toUpperCase();
+    mods.shift = false;
   }
   return joinStroke(mods, token);
 }
@@ -819,16 +917,63 @@ export function caretCol(w, prompt, before) {
   return Math.min(w - 1, term.measure(prompt + before));
 }
 
+// The core bus accepts these declared names and the `service:` family.
+const CORE_EVENTS = Object.assign(Object.create(null), {
+  "ui.start": 1,
+  "ui.closed": 1,
+  "ui.resize": 1,
+  "ui.tick": 1,
+  "key.press": 1,
+  "mouse.input": 1,
+  "paste.input": 1,
+  "focus.changed": 1,
+  "clipboard.copied": 1,
+  "session.changed": 1,
+  "index.changed": 1,
+  "conn.changed": 1,
+  "daemon.ready": 1,
+  "status.error": 1,
+  "ext.error": 1,
+  "service:*": 1,
+});
+
+// This table maps a host event type to its core event name.
+const HOST_TO_CORE_EVENT = {
+  start: "ui.start",
+  input_closed: "ui.closed",
+  resize: "ui.resize",
+  tick: "ui.tick",
+  key: "key.press",
+  mouse: "mouse.input",
+  paste: "paste.input",
+  focus: "focus.changed",
+};
+
 export class Emitter {
-  constructor() {
+  /** @param {Record<string, number> | null} [names] */
+  constructor(names) {
     /** @type {ListenerMap} */
     this._hooks = Object.create(null);
+    /** @type {Record<string, number> | null} */
+    this._names = names || null;
+    // A declared name that ends in `*` opens a family, such as `service:<name>`.
+    /** @type {string[]} */
+    this._families = names ? Object.keys(names).filter((n) => n.endsWith("*")).map((n) => n.slice(0, -1)) : [];
     /** @type {((error: unknown, name: string) => void) | null} */
     this.onError = null;
   }
 
+  // Reject a name a closed bus does not declare, so a typo fails at the call and not in silence.
+  /** @param {string} name @returns {void} */
+  _check(name) {
+    if (!this._names || this._names[name]) return;
+    for (const f of this._families) if (name.length > f.length && name.indexOf(f) === 0) return;
+    throw new Error("unknown event: " + name);
+  }
+
   /** @param {string} name @param {(...args: any[]) => unknown} fn @param {{ prepend?: boolean } | undefined} [opts] @returns {() => void} */
   on(name, fn, opts) {
+    this._check(name);
     const list = this._hooks[name] || (this._hooks[name] = []);
     if (opts && opts.prepend) list.unshift(fn);
     else list.push(fn);
@@ -849,6 +994,7 @@ export class Emitter {
 
   /** @param {string} name @param {...any} args @returns {void} */
   emit(name, ...args) {
+    this._check(name);
     const list = this._hooks[name];
     if (!list) return;
     for (const fn of list.slice()) {
@@ -865,6 +1011,7 @@ export class Emitter {
 
   /** @param {string} name @param {...any} args @returns {unknown} */
   bail(name, ...args) {
+    this._check(name);
     const list = this._hooks[name];
     if (!list) return undefined;
     for (const fn of list.slice()) {
@@ -875,7 +1022,7 @@ export class Emitter {
   }
 }
 
-export const events = new Emitter();
+export const events = new Emitter(CORE_EVENTS);
 
 export class View {
   constructor() {
@@ -1038,10 +1185,10 @@ export const status = {
     const entry = { side, order, render: seg.render };
     this._list.push(entry);
     this._list.sort((a, b) => a.order - b.order);
-    return () => {
+    return once(() => {
       const i = this._list.indexOf(entry);
       if (i >= 0) this._list.splice(i, 1);
-    };
+    });
   },
 
   // The text of one side. A segment that renders nothing drops out of the join.
@@ -1056,7 +1203,7 @@ export const status = {
       try {
         t = seg.render();
       } catch (e) {
-        events.emit("status:error", e);
+        events.emit("status.error", e);
       }
       if (t) out.push(String(t));
     }
@@ -1320,7 +1467,8 @@ export class RootView {
 
   /** @param {RootEvent} ev @returns {void} */
   onEvent(ev) {
-    events.emit(ev.type, ev);
+    const name = HOST_TO_CORE_EVENT[ev.type];
+    if (name) events.emit(name, ev);
     if (ev.type === "input_closed") {
       term.setNeedsTick(false);
       term.quit();
