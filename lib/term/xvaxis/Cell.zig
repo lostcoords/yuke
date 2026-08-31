@@ -85,39 +85,19 @@ pub const Style = struct {
     invisible: bool = false,
     strikethrough: bool = false,
 
+    /// Do not fold the flags into a packed struct: that compare makes the render diff four times slower.
     pub fn eql(a: Style, b: Style) bool {
-        const SGRBits = packed struct {
-            bold: bool,
-            dim: bool,
-            italic: bool,
-            blink: bool,
-            reverse: bool,
-            invisible: bool,
-            strikethrough: bool,
-        };
-        const a_sgr: SGRBits = .{
-            .bold = a.bold,
-            .dim = a.dim,
-            .italic = a.italic,
-            .blink = a.blink,
-            .reverse = a.reverse,
-            .invisible = a.invisible,
-            .strikethrough = a.strikethrough,
-        };
-        const b_sgr: SGRBits = .{
-            .bold = b.bold,
-            .dim = b.dim,
-            .italic = b.italic,
-            .blink = b.blink,
-            .reverse = b.reverse,
-            .invisible = b.invisible,
-            .strikethrough = b.strikethrough,
-        };
-        return a_sgr == b_sgr and
+        return a.bold == b.bold and
+            a.dim == b.dim and
+            a.italic == b.italic and
+            a.blink == b.blink and
+            a.reverse == b.reverse and
+            a.invisible == b.invisible and
+            a.strikethrough == b.strikethrough and
+            a.ul_style == b.ul_style and
             Color.eql(a.fg, b.fg) and
             Color.eql(a.bg, b.bg) and
-            Color.eql(a.ul, b.ul) and
-            a.ul_style == b.ul_style;
+            Color.eql(a.ul, b.ul);
     }
 };
 
@@ -222,4 +202,38 @@ pub const Color = union(enum) {
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+test "Style.eql detects a change in every style field" {
+    const base: Style = .{};
+    try std.testing.expect(Style.eql(base, .{}));
+
+    // Each changed field must break equality.
+    try std.testing.expect(!Style.eql(base, .{ .bold = true }));
+    try std.testing.expect(!Style.eql(base, .{ .dim = true }));
+    try std.testing.expect(!Style.eql(base, .{ .italic = true }));
+    try std.testing.expect(!Style.eql(base, .{ .blink = true }));
+    try std.testing.expect(!Style.eql(base, .{ .reverse = true }));
+    try std.testing.expect(!Style.eql(base, .{ .invisible = true }));
+    try std.testing.expect(!Style.eql(base, .{ .strikethrough = true }));
+    try std.testing.expect(!Style.eql(base, .{ .ul_style = .single }));
+    try std.testing.expect(!Style.eql(base, .{ .fg = .{ .index = 1 } }));
+    try std.testing.expect(!Style.eql(base, .{ .bg = .{ .index = 1 } }));
+    try std.testing.expect(!Style.eql(base, .{ .ul = .{ .index = 1 } }));
+
+    // Each color field compares the variant and the value, not only the presence of a color.
+    inline for (.{ "fg", "bg", "ul" }) |field| {
+        var index_a: Style = .{};
+        var index_b: Style = .{};
+        var rgb_a: Style = .{};
+        var rgb_b: Style = .{};
+        @field(index_a, field) = .{ .index = 1 };
+        @field(index_b, field) = .{ .index = 2 };
+        @field(rgb_a, field) = .{ .rgb = .{ 1, 2, 3 } };
+        @field(rgb_b, field) = .{ .rgb = .{ 1, 2, 4 } };
+        try std.testing.expect(!Style.eql(index_a, index_b));
+        try std.testing.expect(!Style.eql(rgb_a, rgb_b));
+        try std.testing.expect(!Style.eql(index_a, rgb_a));
+        try std.testing.expect(Style.eql(rgb_a, rgb_a));
+    }
 }
