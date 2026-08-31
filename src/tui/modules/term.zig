@@ -333,12 +333,22 @@ fn ensureFrame(host: *Host) void {
 }
 
 fn measureUtf8(s: []const u8) i32 {
+    // Printable ASCII has one cell per byte.
+    if (isSingleCellAscii(s)) return @intCast(s.len);
     var total: i32 = 0;
     var it = term_pkg.unicode.graphemeIterator(s);
     while (it.next()) |g| {
         total +|= @intCast(term_pkg.gwidth.gwidth(g.bytes(s), .unicode));
     }
     return total;
+}
+
+/// Return true when every byte is printable ASCII, which spans `0x20` through `0x7e`.
+fn isSingleCellAscii(s: []const u8) bool {
+    for (s) |c| {
+        if (!std.ascii.isPrint(c)) return false;
+    }
+    return true;
 }
 
 fn utf16Len(s: []const u8) i32 {
@@ -530,9 +540,50 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
+
+    // Printable ASCII takes the byte-length path, so both ends of the range must measure as one.
     try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
         \\import { term } from "yuke:term";
-        \\const s = "a中e\u0301𝄞";
+        \\let ascii = "";
+        \\for (let c = 0x20; c <= 0x7e; c++) ascii += String.fromCharCode(c);
+        \\globalThis.result = (
+        \\  term.measure("") === 0 &&
+        \\  term.measure("a") === 1 &&
+        \\  term.measure(" ") === 1 &&
+        \\  term.measure("~") === 1 &&
+        \\  term.measure("hello world") === 11 &&
+        \\  term.measure(ascii) === ascii.length &&
+        \\  ascii.length === 95
+        \\) ? 1 : 0;
+    ));
+
+    // A control byte has no cell, so a byte count of these strings would report a width too wide.
+    try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
+        \\import { term } from "yuke:term";
+        \\globalThis.result = (
+        \\  term.measure("\u001f") === 0 &&
+        \\  term.measure("\u007f") === 0 &&
+        \\  term.measure("\t") === 0 &&
+        \\  term.measure("\r\n") === 0 &&
+        \\  term.measure("a\u007fb") === 2 &&
+        \\  term.measure("a\tb") === 2 &&
+        \\  term.measure("a\u4e2d") === 3
+        \\) ? 1 : 0;
+    ));
+
+    // A wide character, an astral character, and a combining mark keep their own widths.
+    try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
+        \\import { term } from "yuke:term";
+        \\globalThis.result = (
+        \\  term.measure("\u4e2d") === 2 &&
+        \\  "\ud834\udd1e".length === 2 && term.measure("\ud834\udd1e") === 1
+        \\) ? 1 : 0;
+    ));
+
+    // CRLF is one grapheme, so a byte count would measure it wrong; graphemes report the clusters.
+    try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
+        \\import { term } from "yuke:term";
+        \\const s = "a\u4e2de\u0301\ud834\udd1e";
         \\const gs = term.graphemes(s);
         \\let out = "";
         \\let w = 0;
@@ -541,13 +592,10 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
         \\  w += gs[k + 2];
         \\}
         \\globalThis.result = (
-        \\  term.measure("") === 0 &&
-        \\  term.measure("a") === 1 &&
-        \\  term.measure("中") === 2 &&
-        \\  "𝄞".length === 2 && term.measure("𝄞") === 1 &&
         \\  gs instanceof Int32Array &&
         \\  out === s &&
-        \\  w === term.measure(s)
+        \\  w === term.measure(s) &&
+        \\  term.graphemes("\r\n").length === 3
         \\) ? 1 : 0;
     ));
 }
