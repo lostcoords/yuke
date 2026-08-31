@@ -1776,7 +1776,9 @@ export class RootView {
     if (ev.type === "key" || ev.type === "paste") {
       if (ev.type === "key" && ev.event === "release") return;
       if (!consumedByOverlay("onKey")) {
-        const viewTakes = !keymap.pending && callHook(this.active, "onKey", ev);
+        // Only a chord takes the key from the view. An operator waits for a motion the view reads.
+        const chording = keymap.pending !== null && keymap.pending.kind === "chord";
+        const viewTakes = !chording && callHook(this.active, "onKey", ev);
         if (!viewTakes && ev.type === "key") keymap.onKey(ev);
       }
     } else if (ev.type === "mouse") {

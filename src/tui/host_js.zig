@@ -764,6 +764,25 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  check("cfg-chord-bad", throws(() => defineConfig({ keymap: { chordMs: 0 } })) && config.keymap.chordMs === 250);
         \\  defineConfig({ keymap: { chordMs: 1000 } });
         \\}
+        \\
+        \\// A chord skips the view, but an armed operator must still let the view read its motion.
+        \\{
+        \\  const seen = [];
+        \\  class OpPane extends View {
+        \\    get name() { return "oppane"; }
+        \\    draw() {}
+        \\    onKey(ev) { seen.push(ev.char); return true; }
+        \\  }
+        \\  const pane = new OpPane();
+        \\  root.setRoot(new Node(pane));
+        \\  root.focusView(pane);
+        \\  const holder = { pending: "" };
+        \\  armPrefix(holder, "d");
+        \\  root.onEvent({ type: "key", code: "char", char: "w", event: "press", text: "w", mods: 0 });
+        \\  check("pend-operator-routes-to-view", seen.join(",") === "w");
+        \\  takePrefix(holder);
+        \\  root.setRoot(null);
+        \\}
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "ext.js");
     try expectJs(host, "ok");
