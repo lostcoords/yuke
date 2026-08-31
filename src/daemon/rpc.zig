@@ -127,8 +127,9 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             return .{ .ok = .{ .id = request.id, .result = .{ .catalog_list_result = result } } };
         },
         .@"catalog.refresh" => {
-            const refreshed = try state.refreshCloud();
-            const result: wire.catalog.CatalogRefreshResult = .{ .catalog_rev = refreshed.catalog_rev };
+            // The fetch runs on the scheduler, so this answers now and `catalog.changed` reports the result.
+            state.requestCatalogRefresh();
+            const result: wire.catalog.CatalogRefreshResult = .{ .catalog_rev = state.catalog.revision };
             return .{ .ok = .{ .id = request.id, .result = .{ .catalog_refresh_result = result } } };
         },
         .@"session.resync" => {

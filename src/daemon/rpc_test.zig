@@ -9,6 +9,7 @@ const catalog_store = @import("../catalog/store.zig");
 const connection = @import("connection.zig");
 const run_task = @import("run_task.zig");
 const rpc = @import("rpc.zig");
+const scheduler_mod = @import("scheduler.zig");
 
 const zio = @import("zio");
 const zqlite = @import("zqlite");
@@ -2089,17 +2090,29 @@ test "catalog.list serves an empty catalog before the first sync" {
     try std.testing.expectEqualSlices(u8, &@as([64]u8, @splat(0)), &result.full.catalog_rev.raw);
 }
 
-test "catalog.refresh dispatches the cloud refresh" {
+test "catalog.refresh answers at once and never waits for the network" {
+    // A scheduler fetch would reject this malformed base URL.
     var fixture = try TestState.initBare("not a url");
     defer fixture.deinit();
+
+    // Install a real scheduler, so the handler exercises the wake path instead of a null pointer.
+    var scheduler: scheduler_mod.Scheduler = .init(&fixture.state);
+    fixture.state.scheduler = &scheduler;
+    scheduler.catalog.due = .fromNow(fixture.state.io, .{ .raw = .fromMilliseconds(60_000), .clock = .boot });
+    try std.testing.expect(!scheduler.catalog.isDue(fixture.state.io));
 
     var buffer: [1024]u8 = undefined;
     const framed = try call(&fixture,
         \\{"id":"refresh-1","method":"catalog.refresh","params":{}}
     , &buffer);
     const payload = try responsePayload(framed);
-    try std.testing.expect(std.mem.indexOf(u8, payload, "\"code\":-32603") != null);
-    try std.testing.expect(std.mem.indexOf(u8, payload, "not implemented") == null);
+    // The handler queues the fetch, so the reply carries the current revision.
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"error\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "catalog_rev") != null);
+
+    // The request woke the scheduler and pulled the catalog job forward.
+    try std.testing.expect(scheduler.wake.isSet());
+    try std.testing.expect(scheduler.catalog.isDue(fixture.state.io));
 }
 
 test "a local provider changes the catalog before the first cloud sync" {

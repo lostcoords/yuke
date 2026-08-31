@@ -11,6 +11,7 @@ const paths = @import("../paths/paths.zig");
 const cloud = @import("../cloud/cloud.zig");
 const provider = @import("../provider/provider.zig");
 const daemon_config = @import("config.zig");
+const scheduler_mod = @import("scheduler.zig");
 const connection = @import("connection.zig");
 const InstanceLock = @import("InstanceLock.zig");
 const State = @import("State.zig");
@@ -74,8 +75,7 @@ pub fn run(init: std.process.Init) !void {
     };
     defer state.deinit();
 
-    // Load the user providers. An invalid file fails startup. An absent file leaves the cloud catalog.
-    // State owns the path from here, because `auth.set_api_key` writes the same file.
+    // State owns this path, because an invalid file fails startup and `auth.set_api_key` rewrites it.
     state.providers_path = try configFilePath(init.gpa, init.environ_map, "providers.json");
     if (state.providers_path) |path| {
         var loaded = try provider.config.load(init.gpa, io, path);
@@ -100,10 +100,16 @@ pub fn run(init: std.process.Init) !void {
     _ = try state.rebuildCatalog();
 
     // Fetch the cloud documents off the request path. The daemon must answer before the network does.
+    var scheduler: scheduler_mod.Scheduler = .init(&state);
+    state.scheduler = &scheduler;
     var maintenance: std.Io.Group = .init;
-    defer maintenance.cancel(io);
-    maintenance.concurrent(io, cloudTask, .{&state}) catch |err| {
-        std.log.warn("cloud refresh not started: {t}", .{err});
+    // The cancel joins the task, and the pointer goes with it, so no later caller can reach it.
+    defer {
+        maintenance.cancel(io);
+        state.scheduler = null;
+    }
+    maintenance.concurrent(io, scheduler_mod.Scheduler.run, .{&scheduler}) catch |err| {
+        std.log.warn("the scheduler did not start: {t}", .{err});
     };
 
     std.log.info("daemon store at {s}", .{config.db_path});
@@ -159,18 +165,6 @@ fn readDevice(arena: std.mem.Allocator, io: std.Io, data_dir: ?[]const u8) ?clou
         std.log.warn("cannot read the device credential: {t}", .{err});
         return null;
     };
-}
-
-/// Refresh the public catalog and the account bundle once at startup.
-fn cloudTask(state: *State) void {
-    const refreshed = state.refreshCloud() catch |err| {
-        std.log.warn("cloud refresh failed: {t}", .{err});
-        return;
-    };
-    switch (refreshed.status) {
-        .current => std.log.info("cloud documents are current", .{}),
-        .catalog_unavailable => std.log.warn("the control plane has not synced its catalog yet", .{}),
-    }
 }
 
 /// Create the data directory with mode 0700 on POSIX, and default permissions on Windows.

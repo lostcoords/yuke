@@ -15,6 +15,7 @@ const cloud_fetch = @import("../cloud/fetch.zig");
 const catalog_fetch = @import("../catalog/fetch.zig");
 const catalog_store = @import("../catalog/store.zig");
 const provider_registry = @import("registry.zig");
+const scheduler_mod = @import("scheduler.zig");
 const host = @import("../host/host.zig");
 const retry = @import("../provider/retry.zig");
 const session_runtime = @import("session_runtime.zig");
@@ -40,11 +41,12 @@ cloud_base_url: []u8,
 cloud_credential: ?[]u8 = null,
 device_id: ?[]u8 = null, // The enrolled device id. `/identity` reports it, and it holds no secret.
 cloud_bundle: ?bundle.Snapshot = null, // The account bundle stays in memory, because it holds live credentials.
-cloud_refresh_mutex: std.Io.Mutex = .init,
 catalog: provider_registry.Registry, // One merged snapshot serves catalog reads and provider requests.
 defaults: daemon_config.Defaults = .{}, // Defaults seed a new session's model and system prompt.
 config_owner: ?daemon_config.Loaded = null, // The daemon owns the yuked.json arena when present.
 env: *const std.process.Environ.Map, // This pointer borrows the process environment for key lookup.
+scheduler: ?*scheduler_mod.Scheduler = null, // The app stores this pointer while the maintenance task runs.
+fetching: bool = false, // One control-plane fetch at a time. Two would race the stored ETag.
 providers_path: ?[]u8 = null, // State owns this path and frees it in deinit. Null means no config directory.
 run_group: std.Io.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
@@ -219,82 +221,62 @@ pub const RefreshStatus = enum {
     catalog_unavailable,
 };
 
-pub const RefreshResult = struct {
-    catalog_rev: wire.ids.CatalogRev,
-    status: RefreshStatus,
-};
-
-/// Fetch the public catalog and the account bundle. Only one check runs at a time.
-pub fn refreshCloud(self: *State) !RefreshResult {
-    try self.cloud_refresh_mutex.lock(self.io);
-    defer self.cloud_refresh_mutex.unlock(self.io);
-    const status = try self.refreshCloudLocked();
-    return .{ .catalog_rev = self.catalog.revision, .status = status };
-}
-
-fn refreshCloudLocked(self: *State) !RefreshStatus {
+/// Fetch the public catalog and install it. The scheduler owns the cadence.
+pub fn refreshCatalogOnce(self: *State) !RefreshStatus {
     std.debug.assert(self.cloud_base_url.len != 0);
 
-    var first_error: ?anyerror = null;
-    var rebuild = false;
-    var status: RefreshStatus = .current;
-    // The ETag of the fetched catalog. It commits only after the live snapshot holds those rows.
-    var pending_etag: ?[]const u8 = null;
+    // A second fetch would read the same stored ETag and install its response out of order.
+    std.debug.assert(!self.fetching);
+    self.fetching = true;
+    defer self.fetching = false;
+
     var etag_buf: [catalog_fetch.max_etag_bytes]u8 = undefined;
-    const catalog_outcome = catalog_fetch.refreshCatalog(self.gpa, &self.cloud_client, &self.db, self.cloud_base_url, &etag_buf) catch |err| blk: {
-        // A shutdown cancel must stop the refresh. A later request would delay the shutdown again.
-        if (err == error.Canceled) return err;
-        first_error = err;
-        break :blk null;
-    };
-    if (catalog_outcome) |outcome| switch (outcome) {
-        .updated => |value| {
-            rebuild = true;
-            pending_etag = value;
+    const outcome = try catalog_fetch.refreshCatalog(self.gpa, &self.cloud_client, &self.db, self.cloud_base_url, &etag_buf);
+    switch (outcome) {
+        .unchanged => return .current,
+        .unavailable => return .catalog_unavailable,
+        .updated => |etag| {
+            const changed = try self.rebuildCatalog();
+            // The stored ETag means the live snapshot holds that document, so it commits first.
+            try catalog_store.setEtag(&self.db, etag);
+            if (changed) self.announceCatalogChanged();
+            return .current;
         },
+    }
+}
+
+/// Fetch the account bundle and install it. A daemon with no credential has nothing to fetch.
+pub fn refreshBundleOnce(self: *State) !void {
+    std.debug.assert(self.cloud_base_url.len != 0);
+
+    const credential = self.cloud_credential orelse return;
+    // A second fetch would hold this ETag while the first install frees the arena behind it.
+    std.debug.assert(!self.fetching);
+    self.fetching = true;
+    defer self.fetching = false;
+
+    const etag = if (self.cloud_bundle) |*loaded| loaded.etag else "";
+    const outcome = try cloud_fetch.refreshProviders(self.gpa, &self.cloud_client, self.cloud_base_url, credential, etag);
+    switch (outcome) {
         .unchanged => {},
-        .unavailable => status = .catalog_unavailable,
-    };
-
-    var next_bundle: ?bundle.Snapshot = null;
-    defer if (next_bundle) |*loaded| loaded.deinit();
-    if (self.cloud_credential) |credential| {
-        const etag = if (self.cloud_bundle) |*loaded| loaded.etag else "";
-        const providers_outcome = cloud_fetch.refreshProviders(
-            self.gpa,
-            &self.cloud_client,
-            self.cloud_base_url,
-            credential,
-            etag,
-        ) catch |err| blk: {
-            // A shutdown cancel must stop the refresh here too.
-            if (err == error.Canceled) return err;
-            if (first_error == null) first_error = err;
-            break :blk null;
-        };
-        if (providers_outcome) |outcome| switch (outcome) {
-            .unchanged => {},
-            .updated => |loaded| {
-                next_bundle = loaded;
-                rebuild = true;
-            },
-        };
+        .updated => |loaded| {
+            var next = loaded;
+            errdefer next.deinit();
+            if (try self.installCloudBundle(&next)) self.announceCatalogChanged();
+        },
     }
+}
 
-    var changed = false;
-    if (rebuild) {
-        if (next_bundle) |*loaded| {
-            changed = try self.installCloudBundle(loaded);
-            next_bundle = null;
-        } else {
-            changed = try self.rebuildCatalog();
-        }
-        // The stored ETag means the live snapshot holds that document, so it commits last.
-        if (pending_etag) |value| try catalog_store.setEtag(&self.db, value);
+/// Report when the soonest ACTIVE account token expires, because a dead grant keeps a stale expiry.
+pub fn bundleExpiryMillis(self: *const State) ?u64 {
+    const loaded = self.cloud_bundle orelse return null;
+    var soonest: ?u64 = null;
+    for (loaded.document.providers) |p| {
+        if (p.auth.status != .active) continue;
+        const at = p.auth.expires_at_ms orelse continue;
+        if (soonest == null or at < soonest.?) soonest = at;
     }
-    if (changed) self.announceCatalogChanged();
-    if (first_error) |err| return err;
-    return status;
+    return soonest;
 }
 
 /// Install one bundle after the merged replacement is ready. State takes ownership of `next_bundle`.
@@ -347,6 +329,11 @@ pub fn announceCatalogChanged(self: *State) void {
     };
     defer self.gpa.free(bytes);
     self.registry.publishAll(bytes);
+}
+
+/// Ask the scheduler for a catalog fetch now. The caller returns before the network answers.
+pub fn requestCatalogRefresh(self: *State) void {
+    if (self.scheduler) |s| s.requestCatalog();
 }
 
 /// Publish one provider's new authentication state. A null `kind` means the daemon holds no credential.
