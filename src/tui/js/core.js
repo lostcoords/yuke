@@ -25,11 +25,11 @@ import { term } from "yuke:term";
 /** @typedef {string | ((ev: HostEvent) => boolean | void)} KeyBinding */
 /** @typedef {{ t: "atom", name: string } | { t: "eq", name: string, value: string, neg: boolean } | { t: "not", x: ContextNode } | { t: "and", a: ContextNode, b: ContextNode } | { t: "or", a: ContextNode, b: ContextNode }} ContextNode */
 /** @typedef {string | (() => string | null | undefined)} ContextFlag */
-/** @typedef {{ source: string, node: ContextNode }} ContextExpr */
+/** @typedef {{ source: string, node: ContextNode, atoms: string[] }} ContextExpr */
 /** @typedef {{ fn: KeyBinding, context: ContextExpr | null, order: number }} KeyEntry */
-/** @typedef {{ stroke: string, kind: "chord" | "operator", at: number, ev: Extract<HostEvent, { type: "key" }> | null }} Pending */
+/** @typedef {{ stroke: string, kind: "chord" | "operator", at: number, ev: Extract<HostEvent, { type: "key" }> | null, holder: { pending: string | null } | null }} Pending */
 /** @typedef {{ [name: string]: KeyEntry[] }} KeyMap */
-/** @typedef {{ map: KeyMap, prefixes: Record<string, boolean>, pending: Pending | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string) => () => void, _rebuildPrefixes: () => void, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, arm: (stroke: string, kind: "chord" | "operator", ev?: Extract<HostEvent, { type: "key" }> | null) => void, disarm: (kind: "chord" | "operator") => string, pendingLabel: () => string, needsTick: () => { periodMs: number } | null, tick: () => void, _matchFor: (expr: ContextExpr, depths: Record<string, number>) => boolean, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
+/** @typedef {{ map: KeyMap, prefixes: Record<string, string[]>, pending: Pending | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string) => () => void, _rebuildPrefixes: () => void, _armable: (prefix: string) => boolean, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, arm: (stroke: string, kind: "chord" | "operator", ev?: Extract<HostEvent, { type: "key" }> | null, holder?: { pending: string | null } | null) => void, disarm: (kind: "chord" | "operator") => string, pendingLabel: () => string, needsTick: () => { periodMs: number } | null, tick: () => void, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
 /** @typedef {{ side?: "left" | "right", order?: number, render: () => string | null | undefined }} StatusSegment */
 /** @typedef {{ side: "left" | "right", order: number, render: () => string | null | undefined }} StatusEntry */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -54,7 +54,7 @@ export const config = {
     retryMs: 5000,
   },
   keymap: {
-    // The wait for the rest of a chord. An operator never waits, so this bounds a prefix only.
+    // The maximum wait in milliseconds for the next stroke of a chord.
     chordMs: 1000,
   },
 };
@@ -536,7 +536,7 @@ function normalizePredicate(predicate) {
 }
 
 // The active context: an ordered atom stack plus the flags plugins set.
-// A deeper atom wins a binding, so `composer` beats `chat` and `chat` beats an unscoped binding.
+// A deeper atom wins, so `composer` beats `chat` and `chat` beats an unscoped binding.
 export const context = {
   /** @type {Record<string, ContextFlag>} */
   _flags: Object.create(null),
@@ -590,24 +590,28 @@ export const context = {
 /** @param {string[]} out @param {ViewLike | Overlay | null} view @returns {void} */
 function pushAtoms(out, view) {
   if (!view) return;
-  const own = /** @type {string[] | null} */ (callHook(view, "contexts"));
-  if (Array.isArray(own)) {
-    for (const name of own) out.push(name);
-    return;
+  /** @type {unknown} */
+  let own;
+  try {
+    own = typeof view.contexts === "function" ? view.contexts() : undefined;
+  } catch (_e) {
+    own = undefined;
   }
-  if (view.name) out.push(view.name);
+  const names = Array.isArray(own) ? own : [view.name];
+  for (const raw of names) {
+    // Keep a usable name only. A reserved or repeated atom would move another atom's depth.
+    if (typeof raw !== "string" || raw === "" || raw === "root" || raw === "overlay") continue;
+    if (out.indexOf(raw) < 0) out.push(raw);
+  }
 }
 
-/** @type {Record<string, ContextExpr>} */
-const CONTEXT_CACHE = Object.create(null);
-
-// Parse a context expression once and keep it. The grammar is `!`, `==`, `!=`, `&&`, `||`, and `()`.
+// Parse one context expression over `!`, `==`, `!=`, `&&`, `||`, and `()`.
 /** @param {string} source @returns {ContextExpr} */
 export function parseContext(source) {
-  const hit = CONTEXT_CACHE[source];
-  if (hit) return hit;
-
-  const tokens = String(source).match(/&&|\|\||==|!=|[()!]|[A-Za-z_][\w-]*/g) || [];
+  const text = String(source);
+  const tokens = text.match(/&&|\|\||==|!=|[()!]|[A-Za-z_][\w-]*/g) || [];
+  // The scan drops what it cannot read, so compare the tokens with the source before it parses.
+  if (tokens.join("") !== text.replace(/\s+/g, "")) throw new Error("context: bad syntax in " + text);
   let at = 0;
   const peek = () => tokens[at];
   const take = () => tokens[at++];
@@ -655,9 +659,10 @@ export function parseContext(source) {
 
   const node = parseOr();
   if (at !== tokens.length) throw new Error("context: trailing " + tokens[at] + " in " + source);
-  const expr = { source: String(source), node };
-  CONTEXT_CACHE[source] = expr;
-  return expr;
+  /** @type {string[]} */
+  const atoms = [];
+  collectAtoms(node, atoms);
+  return { source: text, node, atoms };
 }
 
 // Test one node against the atom depths and the flags.
@@ -679,21 +684,42 @@ function matchContext(n, depths) {
   }
 }
 
-// The deepest atom the node names that the stack holds. A flag adds no depth.
-/** @param {ContextNode} n @param {Record<string, number>} depths @returns {number} */
-function depthOf(n, depths) {
+// Collect the atom names a node tests. A flag and a negation name no atom.
+/** @param {ContextNode} n @param {string[]} out @returns {void} */
+function collectAtoms(n, out) {
   switch (n.t) {
-    case "atom": {
-      const d = depths[n.name];
-      return d === undefined ? 0 : d;
-    }
+    case "atom":
+      out.push(n.name);
+      return;
     case "eq":
-      return 0;
+      return;
     case "not":
-      return 0;
+      return;
     default:
-      return Math.max(depthOf(n.a, depths), depthOf(n.b, depths));
+      collectAtoms(n.a, out);
+      collectAtoms(n.b, out);
   }
+}
+
+// Return the depth of the deepest atom the expression names that the stack holds.
+/** @param {ContextExpr} expr @param {Record<string, number>} depths @returns {number} */
+function depthOf(expr, depths) {
+  let depth = 0;
+  for (const name of expr.atoms) {
+    const d = depths[name];
+    if (d !== undefined && d > depth) depth = d;
+  }
+  return depth;
+}
+
+// The atom depth index for the active context.
+/** @returns {Record<string, number>} */
+function currentDepths() {
+  const stack = context.stack();
+  /** @type {Record<string, number>} */
+  const depths = Object.create(null);
+  for (let i = 0; i < stack.length; i++) depths[/** @type {string} */ (stack[i])] = i;
+  return depths;
 }
 
 // New bindings run before old bindings. A space separates chord strokes.
@@ -736,15 +762,22 @@ export const keymap = {
     });
   },
 
-  // The entries a stroke offers here, deepest context first and newest first within one depth.
+  // Return the entries a stroke offers here, by deepest matching atom and then newest first.
   /** @param {string} stroke @returns {KeyEntry[]} */
   candidates(stroke) {
     const entries = this.map[stroke];
     if (!entries) return [];
-    const stack = context.stack();
-    /** @type {Record<string, number>} */
-    const depths = Object.create(null);
-    for (let i = 0; i < stack.length; i++) depths[/** @type {string} */ (stack[i])] = i;
+    // The common stroke carries no context, so it skips the stack walk entirely.
+    let scoped = false;
+    for (const e of entries) {
+      if (e.context) {
+        scoped = true;
+        break;
+      }
+    }
+    if (!scoped) return entries.slice();
+
+    const depths = currentDepths();
 
     /** @type {Array<{ entry: KeyEntry, depth: number }>} */
     const hits = [];
@@ -754,16 +787,10 @@ export const keymap = {
         continue;
       }
       if (!matchContext(e.context.node, depths)) continue;
-      hits.push({ entry: e, depth: depthOf(e.context.node, depths) });
+      hits.push({ entry: e, depth: depthOf(e.context, depths) });
     }
     hits.sort((a, b) => b.depth - a.depth || b.entry.order - a.entry.order);
     return hits.map((h) => h.entry);
-  },
-
-  // Test one parsed expression against the current stack. The tests use this to check the grammar.
-  /** @param {ContextExpr} expr @param {Record<string, number>} depths @returns {boolean} */
-  _matchFor(expr, depths) {
-    return matchContext(expr.node, depths);
   },
 
   // Report the binding a stroke runs here and the bindings it shadows.
@@ -778,44 +805,68 @@ export const keymap = {
     this.prefixes = Object.create(null);
     for (const key in this.map) {
       const sp = key.indexOf(" ");
-      if (sp > 0) this.prefixes[key.slice(0, sp)] = true;
+      if (sp <= 0) continue;
+      const head = key.slice(0, sp);
+      const keys = this.prefixes[head] || (this.prefixes[head] = []);
+      keys.push(key);
     }
     const p = this.pending;
-    if (p && p.kind === "chord" && !this.prefixes[p.stroke]) this.pending = null;
+    if (p && p.kind === "chord" && !this.prefixes[p.stroke]) {
+      this.pending = null;
+      root.syncTick();
+    }
   },
 
-  // Arm a pending key. A chord waits `config.keymap.chordMs`; an operator waits for its motion.
-  /** @param {string} stroke @param {"chord" | "operator"} kind @param {Extract<HostEvent, { type: "key" }> | null} [ev] @returns {void} */
-  arm(stroke, kind, ev) {
-    this.pending = { stroke, kind, at: Date.now(), ev: ev || null };
-    root.syncTick();
+  // True when a chord under `prefix` matches here, so an inactive binding never swallows a key.
+  /** @param {string} prefix @returns {boolean} */
+  _armable(prefix) {
+    const keys = this.prefixes[prefix];
+    if (!keys) return false;
+    const depths = currentDepths();
+    for (const key of keys) {
+      for (const e of this.map[key] || []) {
+        if (!e.context || matchContext(e.context.node, depths)) return true;
+      }
+    }
+    return false;
   },
 
-  // Clear a pending key of `kind` and report the stroke it held.
+  // Arm a pending stroke of `kind`.
+  /** @param {string} stroke @param {"chord" | "operator"} kind @param {Extract<HostEvent, { type: "key" }> | null} [ev] @param {{ pending: string | null } | null} [holder] @returns {void} */
+  arm(stroke, kind, ev, holder) {
+    this.pending = { stroke, kind, at: Date.now(), ev: ev || null, holder: holder || null };
+  },
+
+  // Clear a pending stroke of `kind` and return the stroke it held.
   /** @param {"chord" | "operator"} kind @returns {string} */
   disarm(kind) {
     const p = this.pending;
     if (!p || p.kind !== kind) return "";
     this.pending = null;
-    root.syncTick();
     return p.stroke;
   },
 
-  // The keys the user typed so far, for the status bar. Vim calls this the command line display.
+  // Return the pending stroke for the status bar.
   /** @returns {string} */
   pendingLabel() {
     const p = this.pending;
-    return p ? p.stroke : "";
+    if (!p) return "";
+    // A vim layer can clear its own prefix, so drop a mirror the holder no longer holds.
+    if (p.kind === "operator" && p.holder && !p.holder.pending) {
+      this.pending = null;
+      return "";
+    }
+    return p.stroke;
   },
 
-  // Only a chord waits. An operator keeps its motion open, the way vim keeps `d` open.
+  // Request a timer only for a pending chord, because an operator keeps its motion open.
   /** @returns {{ periodMs: number } | null} */
   needsTick() {
     const p = this.pending;
     return p && p.kind === "chord" ? { periodMs: config.keymap.chordMs } : null;
   },
 
-  // The wait ended, so run the prefix on its own when a binding claims it.
+  // Run the prefix on its own after the chord wait ends.
   /** @returns {void} */
   tick() {
     const p = this.pending;
@@ -823,7 +874,6 @@ export const keymap = {
     if (Date.now() - p.at < config.keymap.chordMs) return;
     this.pending = null;
     if (p.ev) this._perform(p.stroke, p.ev);
-    root.syncTick();
   },
 
   onKey(ev) {
@@ -832,19 +882,18 @@ export const keymap = {
     const p = this.pending;
     if (p && p.kind === "chord") {
       this.pending = null;
-      root.syncTick();
       const chord = p.stroke + " " + s;
       if (!this._perform(chord, ev)) this._perform(p.stroke + " " + stripCtrl(s), ev);
       return true;
     }
-    if (this.prefixes[s]) {
+    if (this._armable(s)) {
       this.arm(s, "chord", ev);
       return true;
     }
     return this._perform(s, ev);
   },
 
-  // Run the first candidate that claims the key. A binding that returns false lets the next run.
+  // Run the candidates in order until one claims the stroke.
   /** @param {string} stroke @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
   _perform(stroke, ev) {
     for (const e of this.candidates(stroke)) {
@@ -928,7 +977,7 @@ export function copy(text, what) {
 export function takePrefix(holder) {
   const first = holder.pending || "";
   holder.pending = "";
-  // The vim layers keep their own prefix. Mirror it so the status bar reports one pending key.
+  // Temporary bridge: mirror the vim prefix into `keymap.pending` until the vim layers take bindings.
   if (first) keymap.disarm("operator");
   return first;
 }
@@ -936,7 +985,7 @@ export function takePrefix(holder) {
 /** @param {{ pending: string | null }} holder @param {string} key @returns {void} */
 export function armPrefix(holder, key) {
   holder.pending = key;
-  keymap.arm(key, "operator", null);
+  keymap.arm(key, "operator", null, holder);
 }
 
 // Return committed text. Use the folded key only for an unmodified legacy event.

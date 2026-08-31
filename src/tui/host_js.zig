@@ -265,7 +265,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\// keymap.add removes the bind and clears a prefix nothing uses.
         \\{
         \\  const off = keymap.add({ "ctrl+x g": () => true });
-        \\  const hadPrefix = keymap.prefixes["ctrl+x"] === true;
+        \\  const hadPrefix = keymap.prefixes["ctrl+x"].length === 1;
         \\  off();
         \\  check("keymap-dispose", hadPrefix && !keymap.map["ctrl+x g"] && !keymap.prefixes["ctrl+x"]);
         \\}
@@ -711,14 +711,17 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\{
         \\  const off = context.set({ m: "a" });
         \\  root.setRoot(null);
-        \\  const truthy = (src) => { const e = parseContext(src); const st = context.stack(); const d = Object.create(null);
-        \\    for (let i = 0; i < st.length; i++) d[st[i]] = i; return keymap._matchFor(e, d); };
+        \\  const truthy = (src) => { const off = keymap.add({ f9: () => true }, src);
+        \\    const n = keymap.candidates("f9").length; off(); return n === 1; };
         \\  check("ctx-parse-root", truthy("root") && !truthy("chat"));
         \\  check("ctx-parse-not", truthy("!chat") && !truthy("!root"));
         \\  check("ctx-parse-or", truthy("chat || root") && !truthy("chat || nope"));
         \\  check("ctx-parse-eq", truthy("m == a") && truthy("m != b") && !truthy("m == b"));
-        \\  check("ctx-parse-group", truthy("(chat || root) && m == a"));
-        \\  check("ctx-parse-bad", throws(() => parseContext("chat &&")) && throws(() => parseContext("(chat")));
+        \\  check("ctx-parse-group", truthy("(chat || root) && m == a") && !truthy("(chat || root) && m == b") &&
+        \\    truthy("root || chat && m == b"));
+        \\  check("ctx-parse-bad", throws(() => parseContext("chat &&")) && throws(() => parseContext("(chat")) &&
+        \\    throws(() => parseContext("chat ||")) && throws(() => parseContext("m !=")) &&
+        \\    throws(() => parseContext("!")) && throws(() => parseContext("chat)")));
         \\  off();
         \\}
         \\
@@ -782,6 +785,112 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  check("pend-operator-routes-to-view", seen.join(",") === "w");
         \\  takePrefix(holder);
         \\  root.setRoot(null);
+        \\}
+        \\
+        \\// A chord whose context does not match must not swallow the prefix or the key after it.
+        \\{
+        \\  const seen = [];
+        \\  // The view declines, so the key reaches the keymap and the arming path runs.
+        \\  class Bare extends View { get name() { return "bare"; } draw() {} onKey(ev) { seen.push(ev.code || ev.char); return false; } }
+        \\  const pane = new Bare();
+        \\  root.setRoot(new Node(pane));
+        \\  root.focusView(pane);
+        \\  const off = keymap.add({ "f6 x": () => true }, "chat");
+        \\  check("prefix-context-off", keymap._armable("f6") === false);
+        \\  root.onEvent({ type: "key", code: "f6", char: "", event: "press", text: "", mods: 0 });
+        \\  check("prefix-falls-through", seen.join(",") === "f6" && keymap.pending === null);
+        \\  off();
+        \\  const on = keymap.add({ "f6 x": () => true }, "bare");
+        \\  check("prefix-context-on", keymap._armable("f6") === true);
+        \\  on();
+        \\  root.setRoot(null);
+        \\}
+        \\
+        \\// The parser rejects a source it cannot read whole, so a typo never matches something else.
+        \\{
+        \\  check("parse-drop-punct", throws(() => parseContext("chat?")));
+        \\  check("parse-drop-at", throws(() => parseContext("chat && @leaf")));
+        \\  check("parse-drop-unicode", throws(() => parseContext("a == café")));
+        \\}
+        \\
+        \\// A view atom must be a usable name, and a throwing hook must not stop a key.
+        \\{
+        \\  class Junk extends View { contexts() { return ["root", "", "dup", "dup", null, "ok"]; } draw() {} }
+        \\  const junk = new Junk();
+        \\  root.setRoot(new Node(junk));
+        \\  root.focusView(junk);
+        \\  check("atoms-sanitized", JSON.stringify(context.stack()) === JSON.stringify(["root", "dup", "ok"]));
+        \\  // A throwing hook falls back to the view name, so a broken plugin keeps the view reachable.
+        \\  class Boom extends View { get name() { return "boom"; } contexts() { throw new Error("no"); } draw() {} }
+        \\  const boom = new Boom();
+        \\  root.setRoot(new Node(boom));
+        \\  root.focusView(boom);
+        \\  check("atoms-throw-safe", JSON.stringify(context.stack()) === JSON.stringify(["root", "boom"]));
+        \\  root.setRoot(null);
+        \\}
+        \\
+        \\// A vim layer can clear its own prefix, so the status label must not keep a stale mirror.
+        \\{
+        \\  const holder = { pending: "" };
+        \\  armPrefix(holder, "y");
+        \\  check("bridge-label", keymap.pendingLabel() === "y");
+        \\  holder.pending = "";
+        \\  check("bridge-label-heals", keymap.pendingLabel() === "" && keymap.pending === null);
+        \\}
+        \\
+        \\// A flag-only context has depth 0, so registration order decides against an unscoped binding.
+        \\{
+        \\  const offFlag = context.set({ m: "a" });
+        \\  const kev6 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+        \\  const first = [];
+        \\  const a1 = keymap.add({ f7: () => { first.push("flag"); return true; } }, "m == a");
+        \\  const a2 = keymap.add({ f7: () => { first.push("bare"); return true; } });
+        \\  keymap.onKey(kev6({ code: "f7" }));
+        \\  a1(); a2();
+        \\  const second = [];
+        \\  const b1 = keymap.add({ f7: () => { second.push("bare"); return true; } });
+        \\  const b2 = keymap.add({ f7: () => { second.push("flag"); return true; } }, "m == a");
+        \\  keymap.onKey(kev6({ code: "f7" }));
+        \\  b1(); b2();
+        \\  check("ctx-depth-tie", first.join(",") === "bare" && second.join(",") === "flag");
+        \\  offFlag();
+        \\}
+        \\
+        \\// An overlay deepens the stack, so a binding on the overlay outranks one on the pane below.
+        \\{
+        \\  class Pane2 extends View { get name() { return "pane2"; } draw() {} }
+        \\  const pane = new Pane2();
+        \\  root.setRoot(new Node(pane));
+        \\  root.focusView(pane);
+        \\  const ran = [];
+        \\  const kev7 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+        \\  const offs = [
+        \\    keymap.add({ f8: () => { ran.push("pane"); return true; } }, "pane2"),
+        \\    keymap.add({ f8: () => { ran.push("over"); return true; } }, "overlay"),
+        \\  ];
+        \\  keymap.onKey(kev7({ code: "f8" }));
+        \\  const layer = { rect: { x: 0, y: 0, w: 1, h: 1 }, draw() {} };
+        \\  root.pushOverlay(layer);
+        \\  keymap.onKey(kev7({ code: "f8" }));
+        \\  root.popOverlay(layer);
+        \\  check("ctx-overlay", ran.join(",") === "pane,over");
+        \\  for (const f of offs) f();
+        \\  root.setRoot(null);
+        \\}
+        \\
+        \\// The keymap runs as a tick service, so a real tick event ends the chord wait.
+        \\{
+        \\  const ran = [];
+        \\  const kev8 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+        \\  const offs = [
+        \\    keymap.add({ "f10 x": () => { ran.push("chord"); return true; } }),
+        \\    keymap.add({ f10: () => { ran.push("prefix"); return true; } }),
+        \\  ];
+        \\  keymap.onKey(kev8({ code: "f10" }));
+        \\  keymap.pending.at -= 2000;
+        \\  root.onEvent({ type: "tick" });
+        \\  check("keymap-tick-service", ran.join(",") === "prefix" && keymap.pending === null);
+        \\  for (const f of offs) f();
         \\}
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "ext.js");
@@ -2424,11 +2533,19 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
 
     // the command registry and the vim toggle are wired.
     try host.evalModule(
-        \\import { command, root } from "yuke:core";
+        \\import { command, root, status, keymap, armPrefix, takePrefix } from "yuke:core";
         \\import { plugins } from "yuke:ext";
         \\import { term } from "yuke:term";
         \\import { SessionList, sidebar, chat } from "yuke:defaults";
         \\const fail = [];
+        \\// The status bar reports a pending key, the way vim reports one with showcmd.
+        \\{
+        \\  const holder = { pending: "" };
+        \\  armPrefix(holder, "d");
+        \\  if (status.side("right").indexOf("d") < 0) fail.push("showcmd-on");
+        \\  takePrefix(holder);
+        \\  if (status.side("right").indexOf("d") >= 0) fail.push("showcmd-off");
+        \\}
         \\command.perform("ui:palette");
         \\if (root.overlays.length !== 1) fail.push("palette");
         \\root.popOverlay();
