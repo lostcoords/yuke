@@ -1359,7 +1359,7 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { root, Node } from "yuke:core";
+        \\import { root, Node, View, keymap } from "yuke:core";
         \\import { plugins } from "yuke:ext";
         \\import { ChatView } from "yuke:ui";
         \\import { composerVim, setComposerMode, composerMode } from "yuke:composer-vim";
@@ -1441,6 +1441,58 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
         \\press("z");
         \\check("swallow", t.text === "abc");
         \\check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "", text: "", event: "press", mods: 0 }) === false);
+        \\
+        \\// The motions run as bindings, so a binding under the same context reaches the same keys.
+        \\{
+        \\  let hits = 0;
+        \\  const off = keymap.add({ z: () => { hits++; return true; } }, "chat && composer_vim == normal");
+        \\  t.setText("abc");
+        \\  setComposerMode(v.composer, "normal");
+        \\  press("z");
+        \\  check("normal-uses-keymap", hits === 1);
+        \\  off();
+        \\}
+        \\
+        \\// An unresolved sequence runs its second stroke on its own rather than dropping it.
+        \\{
+        \\  t.setText("abc def");
+        \\  setComposerMode(v.composer, "normal");
+        \\  press("$");
+        \\  const at = t.caret;
+        \\  press("dh");
+        \\  check("operator-fallthrough", t.caret === at - 1 && t.text === "abc def");
+        \\}
+        \\
+        \\// Esc reaches its binding while an operator waits, so a mode always has an exit.
+        \\{
+        \\  setComposerMode(v.composer, "normal");
+        \\  press("d");
+        \\  check("operator-armed", keymap.pending !== null);
+        \\  root.onEvent({ type: "key", code: "esc", char: "", text: "", event: "press", mods: 0 });
+        \\  check("operator-esc", keymap.pending === null);
+        \\}
+        \\
+        \\// Insert mode still inserts through the real dispatch.
+        \\{
+        \\  t.setText("");
+        \\  setComposerMode(v.composer, "insert");
+        \\  press("hi");
+        \\  check("insert-inserts", t.text === "hi");
+        \\}
+        \\
+        \\// The bindings stay off a pane that is not the chat, even while the chat holds normal mode.
+        \\{
+        \\  class Side extends View { get name() { return "side"; } draw() {} }
+        \\  const side = new Side();
+        \\  t.setText("abc");
+        \\  setComposerMode(v.composer, "normal");
+        \\  root.setRoot(Node.branch("row", new Node(side), new Node(v), 0.5));
+        \\  root.focusView(side);
+        \\  press("x");
+        \\  check("normal-needs-chat", t.text === "abc");
+        \\  root.setRoot(new Node(v));
+        \\  root.focusView(v);
+        \\}
         \\
         \\// "i" types again, and an unload leaves the composer plain.
         \\press("i");

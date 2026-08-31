@@ -818,7 +818,7 @@ export const keymap = {
     }
   },
 
-  // How a sequence under `prefix` waits here, or null when none matches the active context.
+  // Return how a sequence under `prefix` waits, or null when no active context matches.
   /** @param {string} prefix @returns {"chord" | "operator" | null} */
   _armKind(prefix) {
     const keys = this.prefixes[prefix];
@@ -832,7 +832,7 @@ export const keymap = {
     return null;
   },
 
-  // True while the keymap itself waits for the rest of a sequence.
+  // Return true while the keymap waits for the rest of a sequence.
   /** @returns {boolean} */
   owns() {
     return this.pending !== null && this.pending.holder === null;
@@ -890,8 +890,10 @@ export const keymap = {
       const p = /** @type {Pending} */ (this.pending);
       this.pending = null;
       const chord = p.stroke + " " + s;
-      if (!this._perform(chord, ev)) this._perform(p.stroke + " " + stripCtrl(s), ev);
-      return true;
+      if (this._perform(chord, ev)) return true;
+      if (this._perform(p.stroke + " " + stripCtrl(s), ev)) return true;
+      // The sequence did not resolve, so the second stroke runs on its own.
+      return this._perform(s, ev);
     }
     const kind = this._armKind(s);
     if (kind) {
@@ -1004,11 +1006,6 @@ export function textOf(ev) {
   if (ev.text) return ev.text;
   if (((ev.mods | 0) & (MOD_CTRL | MOD_ALT | MOD_SUPER)) !== 0) return "";
   return ev.char || "";
-}
-
-/** @param {HostEvent} ev @returns {boolean} */
-export function isTextKey(ev) {
-  return textOf(ev) !== "";
 }
 
 // Fold a written binding the way `strokeOf` folds an event, so the two always agree.
@@ -1832,8 +1829,10 @@ export class RootView {
     });
     if (ev.type === "key" || ev.type === "paste") {
       if (ev.type === "key" && ev.event === "release") return;
+      // A paste completes no sequence, so it ends the wait rather than leaving it armed.
+      if (ev.type === "paste" && keymap.owns()) keymap.pending = null;
       if (!consumedByOverlay("onKey")) {
-        // The keymap keeps the key only while it waits for a sequence it armed itself.
+        // The keymap owns each event only while it waits for a sequence it armed.
         const viewTakes = !keymap.owns() && callHook(this.active, "onKey", ev);
         if (!viewTakes && ev.type === "key") keymap.onKey(ev);
       }

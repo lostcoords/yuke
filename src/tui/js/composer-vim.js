@@ -19,10 +19,10 @@ import { register, chatView } from "yuke:vim";
 
 const NORMAL_PROMPT = "▪ ";
 
-// The context every normal-mode binding shares.
-const NORMAL_MODE = "composer_vim == normal";
+// The context every normal-mode binding shares. The `chat` atom keeps them off another pane.
+const NORMAL_MODE = "chat && composer_vim == normal";
 
-// The keys normal mode binds. `normalKey` holds what each one does.
+// Normal mode maps these strokes to `normalKey`.
 const NORMAL_KEYS = [
   "h", "l", "j", "k", "0", "^", "$", "w", "b", "e", "G",
   "i", "a", "I", "A", "o", "O", "x", "s", "D", "C", "p", "P",
@@ -245,10 +245,10 @@ export const composerVim = {
 
     ctx.keymap({ esc: "composer-vim:normal" });
 
-    // The mode reaches the keymap as a flag, so every binding below gates on it.
+    // The plugin exposes the mode as a flag, so each binding gates on it.
     ctx.context({ composer_vim: () => composerMode(chatComposer()) || "" });
 
-    // Normal mode gives every key to the keymap, so neither the composer nor the transcript takes it.
+    // Normal mode routes each event to the keymap, so no pane inside the chat handles it.
     ctx.advise(ChatView.prototype, "onKey", "around", /** @this {{ composer: ComposerType }} @param {(ev: HostEvent) => boolean} inner @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */ function (inner, ev) {
       return composerMode(this.composer) === "normal" ? false : inner(ev);
     });
@@ -268,7 +268,7 @@ export const composerVim = {
       const c = chatComposer();
       return c ? fn(c) : false;
     };
-    // `gg` is a mapping, so it waits. `dd` and `cc` are operators, so they hold for their motion.
+    // `gg` is a chord, while `dd` and `cc` are operators that never expire.
     ctx.keymap({ "g g": edit((c) => pair(c, "g", "g")) }, NORMAL_MODE);
     ctx.keymap(
       { "d d": edit((c) => pair(c, "d", "d")), "c c": edit((c) => pair(c, "c", "c")) },
