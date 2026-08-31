@@ -182,7 +182,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { command, keymap, events, status, style, root, context, parseContext, Emitter, View, Node } from "yuke:core";
+        \\import { command, keymap, events, status, style, root, context, parseContext, config, defineConfig, armPrefix, takePrefix, Emitter, View, Node } from "yuke:core";
         \\import { Scope, Context, advice, services, plugins } from "yuke:ext";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -720,6 +720,49 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  check("ctx-parse-group", truthy("(chat || root) && m == a"));
         \\  check("ctx-parse-bad", throws(() => parseContext("chat &&")) && throws(() => parseContext("(chat")));
         \\  off();
+        \\}
+        \\
+        \\// A chord waits, then runs the prefix alone. An operator waits without a bound.
+        \\{
+        \\  const ran = [];
+        \\  const kev5 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+        \\  const offs = [
+        \\    keymap.add({ "f5 x": () => { ran.push("chord"); return true; } }),
+        \\    keymap.add({ f5: () => { ran.push("prefix"); return true; } }),
+        \\  ];
+        \\  keymap.onKey(kev5({ code: "f5" }));
+        \\  check("pend-armed", keymap.pending.kind === "chord" && keymap.pendingLabel() === "f5");
+        \\  check("pend-ticks", keymap.needsTick().periodMs === 1000);
+        \\  // The rest of the chord arrives before the wait ends.
+        \\  keymap.onKey(kev5({ char: "x" }));
+        \\  check("pend-chord-first", ran.join(",") === "chord" && keymap.pending === null);
+        \\
+        \\  // Nothing follows, so the wait ends and the prefix runs on its own.
+        \\  keymap.onKey(kev5({ code: "f5" }));
+        \\  keymap.pending.at -= 2000;
+        \\  keymap.tick();
+        \\  check("pend-timeout", ran.join(",") === "chord,prefix" && keymap.pending === null);
+        \\  for (const f of offs) f();
+        \\}
+        \\
+        \\// An operator never times out, and the status bar reports it.
+        \\{
+        \\  const holder = { pending: "" };
+        \\  armPrefix(holder, "d");
+        \\  check("pend-operator", keymap.pending.kind === "operator" && keymap.pendingLabel() === "d");
+        \\  check("pend-operator-no-tick", keymap.needsTick() === null);
+        \\  keymap.pending.at -= 60000;
+        \\  keymap.tick();
+        \\  check("pend-operator-holds", keymap.pending !== null && keymap.pendingLabel() === "d");
+        \\  check("pend-operator-taken", takePrefix(holder) === "d" && keymap.pending === null);
+        \\}
+        \\
+        \\// The chord wait is configurable and validated.
+        \\{
+        \\  defineConfig({ keymap: { chordMs: 250 } });
+        \\  check("cfg-chord", config.keymap.chordMs === 250);
+        \\  check("cfg-chord-bad", throws(() => defineConfig({ keymap: { chordMs: 0 } })) && config.keymap.chordMs === 250);
+        \\  defineConfig({ keymap: { chordMs: 1000 } });
         \\}
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "ext.js");

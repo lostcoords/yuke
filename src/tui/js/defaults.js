@@ -496,6 +496,8 @@ function tokenLabel(n) {
 }
 
 status.add({ side: "left", order: 0, render: () => notice.text });
+// Vim calls this showcmd: the keys typed so far, while a chord or an operator waits.
+status.add({ side: "right", order: -1, render: () => keymap.pendingLabel() });
 status.add({
   side: "right",
   order: 10,

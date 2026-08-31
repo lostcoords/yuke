@@ -5,8 +5,9 @@ import { term } from "yuke:term";
 /** @typedef {{ palette: Record<string, import("yuke:term").Color>, groups: Record<string, StyleGroup>, _refs: Record<string, number>, _cache: Record<string, import("yuke:term").Style>, add: (groups: Record<string, StyleGroup>) => () => void, resolve: (name: string) => import("yuke:term").Style, invalidate: () => void }} StyleConfig */
 /** @typedef {{ host: string, port: number, autoConnect: boolean, retryMs: number }} DaemonConfig */
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
-/** @typedef {{ daemon: DaemonConfig, mouse: MouseConfig }} Config */
-/** @typedef {{ daemon?: Partial<DaemonConfig>, mouse?: Partial<MouseConfig> }} ConfigPatch */
+/** @typedef {{ chordMs: number }} KeymapConfig */
+/** @typedef {{ daemon: DaemonConfig, mouse: MouseConfig, keymap: KeymapConfig }} Config */
+/** @typedef {{ daemon?: Partial<DaemonConfig>, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig> }} ConfigPatch */
 /** @typedef {(value: unknown) => true | string} ConfigValidator */
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
@@ -26,8 +27,9 @@ import { term } from "yuke:term";
 /** @typedef {string | (() => string | null | undefined)} ContextFlag */
 /** @typedef {{ source: string, node: ContextNode }} ContextExpr */
 /** @typedef {{ fn: KeyBinding, context: ContextExpr | null, order: number }} KeyEntry */
+/** @typedef {{ stroke: string, kind: "chord" | "operator", at: number, ev: Extract<HostEvent, { type: "key" }> | null }} Pending */
 /** @typedef {{ [name: string]: KeyEntry[] }} KeyMap */
-/** @typedef {{ map: KeyMap, prefixes: Record<string, boolean>, pending: string | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string) => () => void, _rebuildPrefixes: () => void, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, _matchFor: (expr: ContextExpr, depths: Record<string, number>) => boolean, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
+/** @typedef {{ map: KeyMap, prefixes: Record<string, boolean>, pending: Pending | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string) => () => void, _rebuildPrefixes: () => void, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, arm: (stroke: string, kind: "chord" | "operator", ev?: Extract<HostEvent, { type: "key" }> | null) => void, disarm: (kind: "chord" | "operator") => string, pendingLabel: () => string, needsTick: () => { periodMs: number } | null, tick: () => void, _matchFor: (expr: ContextExpr, depths: Record<string, number>) => boolean, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
 /** @typedef {{ side?: "left" | "right", order?: number, render: () => string | null | undefined }} StatusSegment */
 /** @typedef {{ side: "left" | "right", order: number, render: () => string | null | undefined }} StatusEntry */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -51,6 +53,10 @@ export const config = {
     autoConnect: true,
     retryMs: 5000,
   },
+  keymap: {
+    // The wait for the rest of a chord. An operator never waits, so this bounds a prefix only.
+    chordMs: 1000,
+  },
 };
 
 // Merge a user config and return it for a default export.
@@ -60,7 +66,7 @@ export function defineConfig(partial) {
     throw new TypeError("defineConfig expects a config object");
   }
   for (const key of Object.keys(partial)) {
-    if (key !== "daemon" && key !== "mouse") {
+    if (key !== "daemon" && key !== "mouse" && key !== "keymap") {
       throw new TypeError("defineConfig: unknown key " + key);
     }
   }
@@ -68,6 +74,8 @@ export function defineConfig(partial) {
   const mouse = partial.mouse;
   if (daemon !== undefined) applyConfigPatch(/** @type {Record<string, unknown>} */ (config.daemon), DAEMON_FIELDS, /** @type {Record<string, unknown>} */ (daemon), "daemon");
   if (mouse !== undefined) applyConfigPatch(/** @type {Record<string, unknown>} */ (config.mouse), MOUSE_FIELDS, /** @type {Record<string, unknown>} */ (mouse), "mouse");
+  const km = partial.keymap;
+  if (km !== undefined) applyConfigPatch(/** @type {Record<string, unknown>} */ (config.keymap), KEYMAP_FIELDS, /** @type {Record<string, unknown>} */ (km), "keymap");
   return partial;
 }
 
@@ -91,6 +99,14 @@ const MOUSE_FIELDS = {
   scrollLines: (v) => {
     const scrollLines = /** @type {number} */ (v);
     return (Number.isInteger(scrollLines) && scrollLines >= 1 && scrollLines <= 20) || "mouse.scrollLines must be an integer 1..20";
+  },
+};
+
+/** @type {ConfigValidators} */
+const KEYMAP_FIELDS = {
+  chordMs: (v) => {
+    const chordMs = /** @type {number} */ (v);
+    return (Number.isInteger(chordMs) && chordMs >= 1 && chordMs <= 10000) || "keymap.chordMs must be an integer 1..10000";
   },
 };
 
@@ -685,6 +701,7 @@ function depthOf(n, depths) {
 export const keymap = {
   map: Object.create(null),
   prefixes: Object.create(null),
+  /** @type {Pending | null} */
   pending: null,
 
   _seq: 0,
@@ -763,21 +780,65 @@ export const keymap = {
       const sp = key.indexOf(" ");
       if (sp > 0) this.prefixes[key.slice(0, sp)] = true;
     }
-    if (this.pending && !this.prefixes[this.pending]) this.pending = null;
+    const p = this.pending;
+    if (p && p.kind === "chord" && !this.prefixes[p.stroke]) this.pending = null;
+  },
+
+  // Arm a pending key. A chord waits `config.keymap.chordMs`; an operator waits for its motion.
+  /** @param {string} stroke @param {"chord" | "operator"} kind @param {Extract<HostEvent, { type: "key" }> | null} [ev] @returns {void} */
+  arm(stroke, kind, ev) {
+    this.pending = { stroke, kind, at: Date.now(), ev: ev || null };
+    root.syncTick();
+  },
+
+  // Clear a pending key of `kind` and report the stroke it held.
+  /** @param {"chord" | "operator"} kind @returns {string} */
+  disarm(kind) {
+    const p = this.pending;
+    if (!p || p.kind !== kind) return "";
+    this.pending = null;
+    root.syncTick();
+    return p.stroke;
+  },
+
+  // The keys the user typed so far, for the status bar. Vim calls this the command line display.
+  /** @returns {string} */
+  pendingLabel() {
+    const p = this.pending;
+    return p ? p.stroke : "";
+  },
+
+  // Only a chord waits. An operator keeps its motion open, the way vim keeps `d` open.
+  /** @returns {{ periodMs: number } | null} */
+  needsTick() {
+    const p = this.pending;
+    return p && p.kind === "chord" ? { periodMs: config.keymap.chordMs } : null;
+  },
+
+  // The wait ended, so run the prefix on its own when a binding claims it.
+  /** @returns {void} */
+  tick() {
+    const p = this.pending;
+    if (!p || p.kind !== "chord") return;
+    if (Date.now() - p.at < config.keymap.chordMs) return;
+    this.pending = null;
+    if (p.ev) this._perform(p.stroke, p.ev);
+    root.syncTick();
   },
 
   onKey(ev) {
     const s = strokeOf(ev);
     if (!s) return false;
-    if (this.pending) {
-      const prefix = this.pending;
+    const p = this.pending;
+    if (p && p.kind === "chord") {
       this.pending = null;
-      const chord = prefix + " " + s;
-      if (!this._perform(chord, ev)) this._perform(prefix + " " + stripCtrl(s), ev);
+      root.syncTick();
+      const chord = p.stroke + " " + s;
+      if (!this._perform(chord, ev)) this._perform(p.stroke + " " + stripCtrl(s), ev);
       return true;
     }
     if (this.prefixes[s]) {
-      this.pending = s;
+      this.arm(s, "chord", ev);
       return true;
     }
     return this._perform(s, ev);
@@ -867,12 +928,15 @@ export function copy(text, what) {
 export function takePrefix(holder) {
   const first = holder.pending || "";
   holder.pending = "";
+  // The vim layers keep their own prefix. Mirror it so the status bar reports one pending key.
+  if (first) keymap.disarm("operator");
   return first;
 }
 
 /** @param {{ pending: string | null }} holder @param {string} key @returns {void} */
 export function armPrefix(holder, key) {
   holder.pending = key;
+  keymap.arm(key, "operator", null);
 }
 
 // Return committed text. Use the folded key only for an unmodified legacy event.
@@ -1730,6 +1794,8 @@ export function quit() {
 
 // A bare key never quits. A stray key in a modal layer must not end the session.
 command.add(null, { quit });
+
+root.addService(keymap);
 
 globalThis.onEvent = (ev) => root.onEvent(ev);
 globalThis.flushFrame = () => root.flush();
