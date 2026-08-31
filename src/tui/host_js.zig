@@ -182,7 +182,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { command, keymap, events, status, style, root, Emitter } from "yuke:core";
+        \\import { command, keymap, events, status, style, root, context, parseContext, Emitter, View, Node } from "yuke:core";
         \\import { Scope, Context, advice, services, plugins } from "yuke:ext";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -654,6 +654,71 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  const off = keymap.add({ "ctrl+shift+g": () => { ran++; return true; } });
         \\  keymap.onKey(kev2({ char: "g", shifted: "G", mods: 5 }));
         \\  check("stroke-ctrl-shift", ran === 1);
+        \\  off();
+        \\}
+        \\
+        \\// A view contributes its atoms, and the stack orders them from the root outward.
+        \\{
+        \\  class Pane extends View { get name() { return "pane"; } draw() {} }
+        \\  class Split extends View { contexts() { return ["chat", "composer"]; } draw() {} }
+        \\  const pane = new Pane();
+        \\  root.setRoot(new Node(pane));
+        \\  root.focusView(pane);
+        \\  check("ctx-stack-name", JSON.stringify(context.stack()) === JSON.stringify(["root", "pane"]));
+        \\  const split = new Split();
+        \\  root.setRoot(new Node(split));
+        \\  root.focusView(split);
+        \\  check("ctx-stack-atoms", JSON.stringify(context.stack()) === JSON.stringify(["root", "chat", "composer"]));
+        \\
+        \\  // A deeper atom wins, and an unscoped binding sits below every scoped one.
+        \\  const ran = [];
+        \\  const kev3 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+        \\  const offs = [
+        \\    keymap.add({ F1: () => { ran.push("bare"); return true; } }),
+        \\    keymap.add({ F1: () => { ran.push("chat"); return true; } }, "chat"),
+        \\    keymap.add({ F1: () => { ran.push("composer"); return true; } }, "composer"),
+        \\  ];
+        \\  keymap.onKey(kev3({ code: "f1" }));
+        \\  check("ctx-depth-wins", ran.join(",") === "composer");
+        \\  const d = keymap.describe("f1");
+        \\  check("ctx-describe", d.winner.context === "composer" && d.shadowed.length === 2 &&
+        \\    d.shadowed[0].context === "chat" && d.shadowed[1].context === "");
+        \\  offs[2]();
+        \\  keymap.onKey(kev3({ code: "f1" }));
+        \\  check("ctx-uncover", ran.join(",") === "composer,chat");
+        \\  for (const f of offs) f();
+        \\  root.setRoot(null);
+        \\}
+        \\
+        \\// A flag matches by value, and a function flag resolves at match time.
+        \\{
+        \\  let mode = "insert";
+        \\  const off = context.set({ vim: () => mode, fixed: "on" });
+        \\  const ran = [];
+        \\  const kev4 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+        \\  const offKey = keymap.add({ F2: () => { ran.push(mode); return true; } }, "vim == normal && fixed == on");
+        \\  keymap.onKey(kev4({ code: "f2" }));
+        \\  check("ctx-flag-absent", ran.length === 0);
+        \\  mode = "normal";
+        \\  keymap.onKey(kev4({ code: "f2" }));
+        \\  check("ctx-flag-live", ran.join(",") === "normal");
+        \\  offKey();
+        \\  off();
+        \\  check("ctx-flag-disposed", context.flag("vim") === undefined && context.flag("fixed") === undefined);
+        \\}
+        \\
+        \\// The expression grammar covers negation, alternation, inequality, and grouping.
+        \\{
+        \\  const off = context.set({ m: "a" });
+        \\  root.setRoot(null);
+        \\  const truthy = (src) => { const e = parseContext(src); const st = context.stack(); const d = Object.create(null);
+        \\    for (let i = 0; i < st.length; i++) d[st[i]] = i; return keymap._matchFor(e, d); };
+        \\  check("ctx-parse-root", truthy("root") && !truthy("chat"));
+        \\  check("ctx-parse-not", truthy("!chat") && !truthy("!root"));
+        \\  check("ctx-parse-or", truthy("chat || root") && !truthy("chat || nope"));
+        \\  check("ctx-parse-eq", truthy("m == a") && truthy("m != b") && !truthy("m == b"));
+        \\  check("ctx-parse-group", truthy("(chat || root) && m == a"));
+        \\  check("ctx-parse-bad", throws(() => parseContext("chat &&")) && throws(() => parseContext("(chat")));
         \\  off();
         \\}
         \\globalThis.result = fail.length ? fail.join(",") : "ok";

@@ -12,7 +12,7 @@ import { term } from "yuke:term";
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
 /** @typedef {{ text: string, w: number }} TextPiece */
 /** @typedef {{ at: number, cls: number }} GraphemeCell */
-/** @typedef {{ rect: Rect, draw: (...args: any[]) => unknown, name?: string, update?: () => void, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: Extract<HostEvent, { type: "mouse" }>) => boolean, onFocus?: () => void, needsTick?: () => { periodMs: number } | null, tick?: () => void, cursor?: () => { x: number, y: number, visible: boolean } | null, modal?: boolean }} ViewLike */
+/** @typedef {{ rect: Rect, draw: (...args: any[]) => unknown, name?: string, update?: () => void, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: Extract<HostEvent, { type: "mouse" }>) => boolean, onFocus?: () => void, contexts?: () => string[], needsTick?: () => { periodMs: number } | null, tick?: () => void, cursor?: () => { x: number, y: number, visible: boolean } | null, modal?: boolean }} ViewLike */
 /** @typedef {Omit<ViewLike, "rect"> & { rect?: Rect }} Overlay */
 /** @typedef {{ onStart?: () => void, needsTick?: () => { periodMs: number } | null, tick?: () => void }} ServiceLike */
 /** @typedef {{ type: "leaf" | "split", parent: Node | null, rect: Rect, view: ViewLike | null, kind: "row" | "col" | null, a: Node | null, b: Node | null, ratio: number }} NodeShape */
@@ -22,8 +22,12 @@ import { term } from "yuke:term";
 /** @typedef {{ [name: string]: CommandEntry[] }} CommandMap */
 /** @typedef {{ map: CommandMap, add: (predicate: string | CommandPredicate | null, map: Record<string, CommandAction>) => () => void, perform: (name: string, ...args: any[]) => boolean, available: (name: string) => boolean }} CommandRegistry */
 /** @typedef {string | ((ev: HostEvent) => boolean | void)} KeyBinding */
-/** @typedef {{ [name: string]: KeyBinding[] }} KeyMap */
-/** @typedef {{ map: KeyMap, prefixes: Record<string, boolean>, pending: string | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>) => () => void, _rebuildPrefixes: () => void, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _perform: (cmds: KeyBinding[] | undefined, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
+/** @typedef {{ t: "atom", name: string } | { t: "eq", name: string, value: string, neg: boolean } | { t: "not", x: ContextNode } | { t: "and", a: ContextNode, b: ContextNode } | { t: "or", a: ContextNode, b: ContextNode }} ContextNode */
+/** @typedef {string | (() => string | null | undefined)} ContextFlag */
+/** @typedef {{ source: string, node: ContextNode }} ContextExpr */
+/** @typedef {{ fn: KeyBinding, context: ContextExpr | null, order: number }} KeyEntry */
+/** @typedef {{ [name: string]: KeyEntry[] }} KeyMap */
+/** @typedef {{ map: KeyMap, prefixes: Record<string, boolean>, pending: string | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string) => () => void, _rebuildPrefixes: () => void, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, _matchFor: (expr: ContextExpr, depths: Record<string, number>) => boolean, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
 /** @typedef {{ side?: "left" | "right", order?: number, render: () => string | null | undefined }} StatusSegment */
 /** @typedef {{ side: "left" | "right", order: number, render: () => string | null | undefined }} StatusEntry */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -515,6 +519,167 @@ function normalizePredicate(predicate) {
   return predicate;
 }
 
+// The active context: an ordered atom stack plus the flags plugins set.
+// A deeper atom wins a binding, so `composer` beats `chat` and `chat` beats an unscoped binding.
+export const context = {
+  /** @type {Record<string, ContextFlag>} */
+  _flags: Object.create(null),
+
+  // Set flags and return a disposer that restores what each name held before.
+  // A function value resolves at match time, so a plugin reports a live mode without an update.
+  /** @param {Record<string, ContextFlag>} flags @returns {() => void} */
+  set(flags) {
+    /** @type {Array<[string, ContextFlag | undefined]>} */
+    const prev = [];
+    for (const name in flags) {
+      prev.push([name, this._flags[name]]);
+      this._flags[name] = /** @type {ContextFlag} */ (flags[name]);
+    }
+    return once(() => {
+      for (const [name, was] of prev) {
+        if (was === undefined) delete this._flags[name];
+        else this._flags[name] = was;
+      }
+    });
+  },
+
+  // The value of one flag. A throwing provider reads as absent, so it never breaks a key.
+  /** @param {string} name @returns {string | undefined} */
+  flag(name) {
+    const v = this._flags[name];
+    if (typeof v !== "function") return v;
+    try {
+      const out = v();
+      return out == null ? undefined : String(out);
+    } catch (_e) {
+      return undefined;
+    }
+  },
+
+  // The atom stack, root first. The index of an atom is its depth.
+  /** @returns {string[]} */
+  stack() {
+    const out = ["root"];
+    pushAtoms(out, root.active);
+    const top = root.overlays.length ? root.overlays[root.overlays.length - 1] : null;
+    if (top) {
+      out.push("overlay");
+      pushAtoms(out, top);
+    }
+    return out;
+  },
+};
+
+// Add the atoms a view declares, or its name when it declares none.
+/** @param {string[]} out @param {ViewLike | Overlay | null} view @returns {void} */
+function pushAtoms(out, view) {
+  if (!view) return;
+  const own = /** @type {string[] | null} */ (callHook(view, "contexts"));
+  if (Array.isArray(own)) {
+    for (const name of own) out.push(name);
+    return;
+  }
+  if (view.name) out.push(view.name);
+}
+
+/** @type {Record<string, ContextExpr>} */
+const CONTEXT_CACHE = Object.create(null);
+
+// Parse a context expression once and keep it. The grammar is `!`, `==`, `!=`, `&&`, `||`, and `()`.
+/** @param {string} source @returns {ContextExpr} */
+export function parseContext(source) {
+  const hit = CONTEXT_CACHE[source];
+  if (hit) return hit;
+
+  const tokens = String(source).match(/&&|\|\||==|!=|[()!]|[A-Za-z_][\w-]*/g) || [];
+  let at = 0;
+  const peek = () => tokens[at];
+  const take = () => tokens[at++];
+
+  /** @returns {ContextNode} */
+  const parsePrimary = () => {
+    const t = take();
+    if (t === undefined) throw new Error("context: unexpected end of " + source);
+    if (t === "!") return { t: "not", x: parsePrimary() };
+    if (t === "(") {
+      const inner = parseOr();
+      if (take() !== ")") throw new Error("context: missing ) in " + source);
+      return inner;
+    }
+    if (!/^[A-Za-z_]/.test(t)) throw new Error("context: unexpected " + t + " in " + source);
+    const op = peek();
+    if (op === "==" || op === "!=") {
+      take();
+      const value = take();
+      if (value === undefined) throw new Error("context: missing value in " + source);
+      return { t: "eq", name: t, value, neg: op === "!=" };
+    }
+    return { t: "atom", name: t };
+  };
+
+  /** @returns {ContextNode} */
+  const parseAnd = () => {
+    let a = parsePrimary();
+    while (peek() === "&&") {
+      take();
+      a = { t: "and", a, b: parsePrimary() };
+    }
+    return a;
+  };
+
+  /** @returns {ContextNode} */
+  const parseOr = () => {
+    let a = parseAnd();
+    while (peek() === "||") {
+      take();
+      a = { t: "or", a, b: parseAnd() };
+    }
+    return a;
+  };
+
+  const node = parseOr();
+  if (at !== tokens.length) throw new Error("context: trailing " + tokens[at] + " in " + source);
+  const expr = { source: String(source), node };
+  CONTEXT_CACHE[source] = expr;
+  return expr;
+}
+
+// Test one node against the atom depths and the flags.
+/** @param {ContextNode} n @param {Record<string, number>} depths @returns {boolean} */
+function matchContext(n, depths) {
+  switch (n.t) {
+    case "atom":
+      return depths[n.name] !== undefined;
+    case "eq": {
+      const got = context.flag(n.name);
+      return n.neg ? got !== n.value : got === n.value;
+    }
+    case "not":
+      return !matchContext(n.x, depths);
+    case "and":
+      return matchContext(n.a, depths) && matchContext(n.b, depths);
+    default:
+      return matchContext(n.a, depths) || matchContext(n.b, depths);
+  }
+}
+
+// The deepest atom the node names that the stack holds. A flag adds no depth.
+/** @param {ContextNode} n @param {Record<string, number>} depths @returns {number} */
+function depthOf(n, depths) {
+  switch (n.t) {
+    case "atom": {
+      const d = depths[n.name];
+      return d === undefined ? 0 : d;
+    }
+    case "eq":
+      return 0;
+    case "not":
+      return 0;
+    default:
+      return Math.max(depthOf(n.a, depths), depthOf(n.b, depths));
+  }
+}
+
 // New bindings run before old bindings. A space separates chord strokes.
 /** @type {KeymapRegistry} */
 export const keymap = {
@@ -522,30 +687,74 @@ export const keymap = {
   prefixes: Object.create(null),
   pending: null,
 
-  // Register bindings newest first and return a disposer. A binding that declines falls through.
-  add(bindings) {
-    /** @type {Array<[string, KeyBinding]>} */
+  _seq: 0,
+
+  // Register bindings under one context and return a disposer.
+  /** @param {Record<string, KeyBinding | KeyBinding[]>} bindings @param {string} [ctx] @returns {() => void} */
+  add(bindings, ctx) {
+    const expr = ctx ? parseContext(ctx) : null;
+    /** @type {Array<[string, KeyEntry]>} */
     const added = [];
     for (const seq in bindings) {
       const key = normalizeSeq(seq);
       const value = /** @type {KeyBinding | KeyBinding[]} */ (bindings[seq]);
       /** @type {KeyBinding[]} */
       const list = Array.isArray(value) ? value.slice() : [value];
+      /** @type {KeyEntry[]} */
+      const fresh = list.map((fn) => ({ fn, context: expr, order: ++this._seq }));
       const prev = this.map[key];
-      this.map[key] = prev ? list.concat(prev) : list;
-      for (const h of list) added.push([key, h]);
+      this.map[key] = prev ? fresh.concat(prev) : fresh;
+      for (const e of fresh) added.push([key, e]);
     }
     this._rebuildPrefixes();
     return once(() => {
-      for (const [key, h] of added) {
+      for (const [key, e] of added) {
         const cur = this.map[key];
         if (!cur) continue;
-        const i = cur.indexOf(h);
+        const i = cur.indexOf(e);
         if (i >= 0) cur.splice(i, 1);
         if (cur.length === 0) delete this.map[key];
       }
       this._rebuildPrefixes();
     });
+  },
+
+  // The entries a stroke offers here, deepest context first and newest first within one depth.
+  /** @param {string} stroke @returns {KeyEntry[]} */
+  candidates(stroke) {
+    const entries = this.map[stroke];
+    if (!entries) return [];
+    const stack = context.stack();
+    /** @type {Record<string, number>} */
+    const depths = Object.create(null);
+    for (let i = 0; i < stack.length; i++) depths[/** @type {string} */ (stack[i])] = i;
+
+    /** @type {Array<{ entry: KeyEntry, depth: number }>} */
+    const hits = [];
+    for (const e of entries) {
+      if (!e.context) {
+        hits.push({ entry: e, depth: 0 });
+        continue;
+      }
+      if (!matchContext(e.context.node, depths)) continue;
+      hits.push({ entry: e, depth: depthOf(e.context.node, depths) });
+    }
+    hits.sort((a, b) => b.depth - a.depth || b.entry.order - a.entry.order);
+    return hits.map((h) => h.entry);
+  },
+
+  // Test one parsed expression against the current stack. The tests use this to check the grammar.
+  /** @param {ContextExpr} expr @param {Record<string, number>} depths @returns {boolean} */
+  _matchFor(expr, depths) {
+    return matchContext(expr.node, depths);
+  },
+
+  // Report the binding a stroke runs here and the bindings it shadows.
+  /** @param {string} stroke @returns {{ stroke: string, winner: { binding: KeyBinding, context: string } | null, shadowed: Array<{ binding: KeyBinding, context: string }> }} */
+  describe(stroke) {
+    const key = normalizeSeq(stroke);
+    const list = this.candidates(key).map((e) => ({ binding: e.fn, context: e.context ? e.context.source : "" }));
+    return { stroke: key, winner: list.length ? /** @type {{ binding: KeyBinding, context: string }} */ (list[0]) : null, shadowed: list.slice(1) };
   },
 
   _rebuildPrefixes() {
@@ -563,23 +772,24 @@ export const keymap = {
     if (this.pending) {
       const prefix = this.pending;
       this.pending = null;
-      this._perform(this.map[prefix + " " + s] || this.map[prefix + " " + stripCtrl(s)], ev);
+      const chord = prefix + " " + s;
+      if (!this._perform(chord, ev)) this._perform(prefix + " " + stripCtrl(s), ev);
       return true;
     }
     if (this.prefixes[s]) {
       this.pending = s;
       return true;
     }
-    return this._perform(this.map[s], ev);
+    return this._perform(s, ev);
   },
 
-  /** @param {KeyBinding[] | undefined} cmds @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
-  _perform(cmds, ev) {
-    if (!cmds) return false;
-    for (const c of cmds) {
-      if (typeof c === "function") {
-        if (c(ev) !== false) return true;
-      } else if (command.perform(c, ev)) {
+  // Run the first candidate that claims the key. A binding that returns false lets the next run.
+  /** @param {string} stroke @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
+  _perform(stroke, ev) {
+    for (const e of this.candidates(stroke)) {
+      if (typeof e.fn === "function") {
+        if (e.fn(ev) !== false) return true;
+      } else if (command.perform(e.fn, ev)) {
         return true;
       }
     }

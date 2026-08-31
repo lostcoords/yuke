@@ -832,7 +832,7 @@ function openExplorer(startPath) {
 function keyHint(name) {
   for (const stroke in keymap.map) {
     const list = keymap.map[stroke];
-    if (list && list.indexOf(name) >= 0) return stroke;
+    if (list && list.some((e) => e.fn === name)) return stroke;
   }
   return "";
 }

@@ -1,6 +1,6 @@
 // yuke:ext — the plugin runtime. A Scope owns revertible effects, a Context is the plugin's
 // registration surface, `advice` wraps methods, and `plugins` loads and unloads.
-import { command, keymap, events, status, style } from "yuke:core";
+import { command, keymap, events, status, style, context } from "yuke:core";
 
 /** @typedef {() => void} Disposer */
 /** @typedef {() => unknown} Effect */
@@ -17,6 +17,7 @@ import { command, keymap, events, status, style } from "yuke:core";
 /** @typedef {Parameters<typeof keymap.add>[0]} KeyBindings */
 /** @typedef {Parameters<typeof status.add>[0]} StatusSegment */
 /** @typedef {Parameters<typeof style.add>[0]} StyleGroups */
+/** @typedef {Parameters<typeof context.set>[0]} ContextFlags */
 /** @typedef {(ctx: Context, config: unknown) => unknown} PluginApply */
 /** @typedef {PluginApply & { pluginName?: string }} PluginFunction */
 /** @typedef {{ name?: string, apply: PluginApply }} PluginObject */
@@ -281,9 +282,14 @@ export class Context {
     return this.scope.effect(() => command.add(predicate, scoped));
   }
 
-  /** @param {KeyBindings} bindings @returns {Disposer} */
-  keymap(bindings) {
-    return this.scope.effect(() => keymap.add(bindings));
+  /** @param {KeyBindings} bindings @param {string} [ctx] @returns {Disposer} */
+  keymap(bindings, ctx) {
+    return this.scope.effect(() => keymap.add(bindings, ctx));
+  }
+
+  /** @param {ContextFlags} flags @returns {Disposer} */
+  context(flags) {
+    return this.scope.effect(() => context.set(flags));
   }
 
   /** @param {StatusSegment} seg @returns {Disposer} */
