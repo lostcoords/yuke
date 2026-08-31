@@ -96,7 +96,7 @@ export interface AuthLoginSummary {
   readonly flow: AuthFlow;
 }
 
-export interface AuthLogoutParams {
+export interface AuthRemoveParams {
   readonly provider_id: ProviderId;
 }
 
@@ -229,6 +229,7 @@ export interface ModelCost {
 export interface ModelInfo {
   readonly id: ModelId;
   readonly provider: string;
+  readonly selector: string;
   readonly name: string;
   readonly context_window?: number;
   readonly max_output_tokens?: number;
@@ -923,13 +924,13 @@ export type AuthCredentialKind = "api_key" | "oauth";
 
 export type BroadcastName = "session.summary_changed" | "session.activity_changed" | "session.removed" | "workspace.created" | "workspace.removed" | "permission.rules_changed" | "catalog.changed" | "auth.login_finished" | "auth.changed" | "notice" | "message.committed" | "run.started" | "run.done" | "config.changed" | "transcript.truncated" | "message.started" | "message.discarded" | "message.part_added" | "message.part_delta" | "message.part_finalized" | "tool.state_changed" | "tool.output_delta" | "input.queued" | "input.canceled" | "session.deltas_shed";
 
-export type ErrorCode = -32602 | -32600 | -32601 | -31000 | -31001 | -31002 | -31003 | -31004 | -31005 | -31006 | -31009 | -31010 | -31011 | -31012 | -31013 | -31014 | -31015 | -31016 | -31017 | -31018 | -31019 | -31020 | -32603 | -31021;
+export type ErrorCode = -32602 | -32600 | -32601 | -31000 | -31001 | -31002 | -31003 | -31004 | -31005 | -31006 | -31009 | -31010 | -31011 | -31012 | -31013 | -31014 | -31015 | -31016 | -31017 | -31018 | -31019 | -31020 | -31022 | -31023 | -32603 | -31021;
 
 export type RunErrorCode = "provider" | "protocol" | "network" | "timeout" | "rate_limited" | "quota_exhausted" | "auth" | "unknown_model" | "unsupported_reasoning" | "max_rounds" | "context_overflow" | "runtime" | "internal";
 
 export type Capability = "blob_upload";
 
-export type MethodName = "initialize" | "session.list" | "session.create" | "session.patch" | "session.remove" | "session.fork" | "session.compact" | "session.rewind" | "session.send_input" | "session.cancel_input" | "session.cancel_run" | "session.resync" | "session.history" | "permission.decide" | "session.config" | "subscription.set" | "catalog.list" | "catalog.refresh" | "auth.list" | "auth.set_api_key" | "auth.login" | "auth.cancel_login" | "auth.logout" | "fs.stat" | "fs.browse" | "workspace.remove" | "workspace.skills" | "permission.rules" | "permission.forget";
+export type MethodName = "initialize" | "session.list" | "session.create" | "session.patch" | "session.remove" | "session.fork" | "session.compact" | "session.rewind" | "session.send_input" | "session.cancel_input" | "session.cancel_run" | "session.resync" | "session.history" | "permission.decide" | "session.config" | "subscription.set" | "catalog.list" | "catalog.refresh" | "auth.list" | "auth.set_api_key" | "auth.login" | "auth.cancel_login" | "auth.remove" | "fs.stat" | "fs.browse" | "workspace.remove" | "workspace.skills" | "permission.rules" | "permission.forget";
 
 export type NoticeLevel = "info" | "warn" | "error";
 
@@ -957,7 +958,7 @@ export type ProviderProtocol = "anthropic_messages" | "openai_chat" | "openai_re
 
 export type ProviderSource = "cloud" | "local";
 
-export type ProviderState = "ready" | "needs_login";
+export type ProviderState = "ready" | "needs_credential" | "needs_route" | "expired" | "revoked";
 
 export type SkillScope = "project" | "personal";
 
@@ -999,7 +1000,7 @@ export type ToolState = { readonly type: "pending" } | { readonly type: "waiting
 
 export type View = ({ readonly type: "text" } & ViewText) | ({ readonly type: "markdown" } & ViewMarkdown) | ({ readonly type: "json" } & ViewJson) | ({ readonly type: "diff" } & ViewDiff) | ({ readonly type: "image" } & ViewImage);
 
-export type RequestParams = InitializeParams | SessionListParams | CreateSession | SessionPatchParams | SessionRemoveParams | SessionForkParams | SessionCompactParams | SessionRewindParams | SessionSendInputParams | SessionCancelInputParams | SessionCancelRunParams | SessionResyncParams | SessionHistoryParams | PermissionDecideParams | SessionConfigParams | SubscriptionSetParams | CatalogListParams | Empty | AuthSetApiKeyParams | AuthLoginParams | AuthCancelLoginParams | AuthLogoutParams | FsStatParams | FsBrowseParams | WorkspaceRef | PermissionForgetParams;
+export type RequestParams = InitializeParams | SessionListParams | CreateSession | SessionPatchParams | SessionRemoveParams | SessionForkParams | SessionCompactParams | SessionRewindParams | SessionSendInputParams | SessionCancelInputParams | SessionCancelRunParams | SessionResyncParams | SessionHistoryParams | PermissionDecideParams | SessionConfigParams | SubscriptionSetParams | CatalogListParams | Empty | AuthSetApiKeyParams | AuthLoginParams | AuthCancelLoginParams | AuthRemoveParams | FsStatParams | FsBrowseParams | WorkspaceRef | PermissionForgetParams;
 
 export type ResponseResult = InitializeResult | SessionListResult | SessionResult | Empty | SessionCompactResult | SessionSendInputResult | SessionCancelInputResult | SessionCancelRunResult | SessionResyncResult | SessionHistoryResult | SessionConfigResult | CatalogListResult | CatalogRefreshResult | AuthListResult | AuthLoginResult | FsStatResult | FsBrowseResult | WorkspaceRemoveResult | WorkspaceSkillsResult | PermissionRulesResult;
 

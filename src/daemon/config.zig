@@ -10,14 +10,12 @@ const max_file_bytes = 256 << 10;
 
 /// The daemon defaults. Each string borrows the `Loaded` arena.
 pub const Defaults = struct {
-    small_model: ?[]const []const u8 = null, // The small, fast models serve auxiliary calls, such as a session title.
     system_prompt: ?[]const u8 = null,
 };
 
 // The parser ignores unknown fields for forward compatibility. It rejects duplicate keys.
 const FileDoc = struct {
     version: u32,
-    small_model: ?[]const []const u8 = null,
     system_prompt: ?[]const u8 = null,
     allowed_origins: ?[]const []const u8 = null,
 };
@@ -62,7 +60,7 @@ pub fn loadBytes(gpa: Allocator, bytes: []const u8) !Loaded {
 
     if (doc.version != 1) return error.BadVersion;
     // The daemon does not validate a model selector. A client validates it before it sends the request.
-    out.defaults = .{ .small_model = doc.small_model, .system_prompt = doc.system_prompt };
+    out.defaults = .{ .system_prompt = doc.system_prompt };
     if (doc.allowed_origins) |origins| {
         // An origin holds a scheme, a host, and an optional port. A browser never sends more.
         for (origins) |origin| {
@@ -98,32 +96,19 @@ const testing = std.testing;
 
 test "loadBytes reads the defaults" {
     var loaded = try loadBytes(testing.allocator,
-        \\{"version":1,"small_model":["prov/mini","prov/mini2"],"system_prompt":"be brief"}
+        \\{"version":1,"system_prompt":"be brief"}
     );
     defer loaded.deinit();
-    try testing.expectEqual(@as(usize, 2), loaded.defaults.small_model.?.len);
-    try testing.expectEqualStrings("prov/mini", loaded.defaults.small_model.?[0]);
-    try testing.expectEqualStrings("prov/mini2", loaded.defaults.small_model.?[1]);
     try testing.expectEqualStrings("be brief", loaded.defaults.system_prompt.?);
 }
 
 test "loadBytes copies values out of the input" {
-    const bytes = try testing.allocator.dupe(u8, "{\"version\":1,\"small_model\":[\"prov/mini\"],\"system_prompt\":\"be brief\"}");
+    const bytes = try testing.allocator.dupe(u8, "{\"version\":1,\"system_prompt\":\"be brief\"}");
     defer testing.allocator.free(bytes);
     var loaded = try loadBytes(testing.allocator, bytes);
     defer loaded.deinit();
     @memset(bytes, 'x');
-    try testing.expectEqualStrings("prov/mini", loaded.defaults.small_model.?[0]);
     try testing.expectEqualStrings("be brief", loaded.defaults.system_prompt.?);
-}
-
-test "loadBytes accepts a minimal document" {
-    var loaded = try loadBytes(testing.allocator,
-        \\{"version":1}
-    );
-    defer loaded.deinit();
-    try testing.expect(loaded.defaults.small_model == null);
-    try testing.expect(loaded.defaults.system_prompt == null);
 }
 
 test "loadBytes reads the allowed origins" {

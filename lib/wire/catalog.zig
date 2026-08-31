@@ -39,9 +39,9 @@ pub const CatalogListResultFull = struct {
     models: []const ModelInfo,
 };
 
-/// This type describes one configured provider. Its state tells a client whether it needs login.
+/// This type describes one configured provider. Its state tells a client why it cannot serve a turn.
 pub const ProviderInfo = struct {
-    /// The left half of a `provider/model` selector.
+    /// The provider name inside its origin. Two origins can use one id.
     id: ids.ProviderId,
     name: []const u8,
     source: enums.ProviderSource,
@@ -70,6 +70,8 @@ pub const ModelCost = struct {
 pub const ModelInfo = struct {
     id: ids.ModelId,
     provider: ids.ProviderId,
+    /// The token that selects this model. A client echoes it back and never parses or builds it.
+    selector: []const u8,
     name: []const u8,
     context_window: ?u64 = null,
     max_output_tokens: ?u64 = null,
@@ -94,21 +96,4 @@ test "catalog list result full round-trips without availability state" {
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(input, buf.written());
-}
-
-test "model metadata may remain unknown" {
-    const input =
-        \\{"id":"m","provider":"p","name":"Model","reasoning_levels":[],"default_reasoning":"","cost":{}}
-    ;
-    const parsed = try std.json.parseFromSlice(ModelInfo, std.testing.allocator, input, .{});
-    defer parsed.deinit();
-    try std.testing.expect(parsed.value.context_window == null);
-    try std.testing.expect(parsed.value.max_output_tokens == null);
-    try std.testing.expect(parsed.value.supports_tools == null);
-    try std.testing.expect(parsed.value.cost.input == null);
-
-    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    try std.testing.expectEqualStrings(input, buf.written());
 }

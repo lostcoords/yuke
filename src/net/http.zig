@@ -1,10 +1,8 @@
-//! One JSON request and one bounded JSON response over HTTPS. The control plane answers with a
-//! small document, so the caller owns the response buffer and the transport never allocates it.
+//! One JSON request and one bounded JSON response. The caller owns the response buffer.
 
 const std = @import("std");
 
-/// Size the buffer for a control-plane document that carries no catalog.
-/// A problem document and a credential stay far below this. The catalog caller sizes its own buffer.
+/// Size the buffer for a control-plane document. The catalog caller sizes its own.
 pub const max_response_bytes = 64 * 1024;
 
 pub const Error = error{
@@ -12,6 +10,13 @@ pub const Error = error{
     BadUrl,
     /// The server sent more than `max_response_bytes`.
     ResponseTooLarge,
+    /// The request passed its timeout. The caller degrades, because the control plane is optional.
+    CloudTimeout,
+};
+
+/// This timeout covers one control-plane request, from the name lookup to the last body byte.
+pub const default_timeout: std.Io.Timeout = .{
+    .duration = .{ .clock = .awake, .raw = .fromMilliseconds(60_000) },
 };
 
 pub const Response = struct {
@@ -47,18 +52,53 @@ pub const status_not_modified = 304;
 /// One HTTPS client for the whole login. It keeps the connection alive between the polls.
 pub const Client = struct {
     inner: std.http.Client,
+    /// This timeout applies to every request. `.none` removes it, which suits a local-server test.
+    timeout: std.Io.Timeout,
 
-    pub fn init(gpa: std.mem.Allocator, io: std.Io) Client {
-        return .{ .inner = .{ .allocator = gpa, .io = io } };
+    pub fn init(gpa: std.mem.Allocator, io: std.Io, timeout: std.Io.Timeout) Client {
+        return .{ .inner = .{ .allocator = gpa, .io = io }, .timeout = timeout };
     }
 
     pub fn deinit(self: *Client) void {
         self.inner.deinit();
     }
 
-    /// POST `body` as JSON to `url` and read the response into `out`.
-    /// The client refuses a redirect, because a credential must never reach another origin.
+    /// POST `body` as JSON to `url` and read the response into `out`, under the client timeout.
     pub fn postJson(self: *Client, url: []const u8, body: []const u8, out: []u8) !Response {
+        switch (self.timeout) {
+            .none => return self.sendJson(url, body, out),
+            else => {},
+        }
+        const io = self.inner.io;
+        var done: std.Io.Event = .unset;
+        var future = try io.concurrent(postLeg, .{ self, url, body, out, &done });
+        done.waitTimeout(io, self.timeout) catch |err| {
+            // The cancel joins the child, so the child cannot write `out` after this returns.
+            _ = future.cancel(io) catch undefined;
+            return if (err == error.Timeout) Error.CloudTimeout else err;
+        };
+        return future.await(io);
+    }
+
+    /// GET `req.url` under the client timeout, and send `If-None-Match` when the caller holds a document.
+    pub fn get(self: *Client, req: GetRequest) !Get {
+        switch (self.timeout) {
+            .none => return self.sendGet(req),
+            else => {},
+        }
+        const io = self.inner.io;
+        var done: std.Io.Event = .unset;
+        var future = try io.concurrent(getLeg, .{ self, req, &done });
+        done.waitTimeout(io, self.timeout) catch |err| {
+            // The cancel joins the child, so the child cannot write the caller buffers after this returns.
+            _ = future.cancel(io) catch undefined;
+            return if (err == error.Timeout) Error.CloudTimeout else err;
+        };
+        return future.await(io);
+    }
+
+    /// The client refuses a redirect, because a credential must never reach another origin.
+    fn sendJson(self: *Client, url: []const u8, body: []const u8, out: []u8) !Response {
         std.debug.assert(out.len != 0); // The caller owns a response buffer.
 
         const uri = std.Uri.parse(url) catch return error.BadUrl;
@@ -87,9 +127,8 @@ pub const Client = struct {
         return .{ .status = @intFromEnum(result.status), .body = writer.buffered() };
     }
 
-    /// GET `req.url`, and send `If-None-Match` when the caller holds a document.
     /// The client advertises gzip, so a compressed document inflates here.
-    pub fn get(self: *Client, req: GetRequest) !Get {
+    fn sendGet(self: *Client, req: GetRequest) !Get {
         std.debug.assert(req.body_out.len != 0); // The caller owns a response buffer.
 
         const uri = std.Uri.parse(req.url) catch return error.BadUrl;
@@ -98,10 +137,7 @@ pub const Client = struct {
             try std.mem.concat(self.inner.allocator, u8, &.{ "Bearer ", req.bearer })
         else
             null;
-        defer if (authorization) |value| {
-            std.crypto.secureZero(u8, value);
-            self.inner.allocator.free(value);
-        };
+        defer if (authorization) |value| self.inner.allocator.free(value);
 
         var extra: [3]std.http.Header = undefined;
         extra[0] = .{ .name = "accept", .value = "application/json, application/problem+json" };
@@ -117,8 +153,7 @@ pub const Client = struct {
 
         var request = self.inner.request(.GET, uri, .{
             .redirect_behavior = .not_allowed, // Never send the credential to another origin.
-            // A decompressed body can leave the transfer stream short of its end, and a pooled
-            // connection then stalls the next request. One connection per check costs nothing here.
+            // A short decompressed stream stalls the next request on a pooled connection.
             .keep_alive = false,
             .extra_headers = extra[0..extra_len],
         }) catch |err| return mapRequestError(err);
@@ -151,6 +186,18 @@ pub const Client = struct {
     }
 };
 
+/// Run one GET in a child task. The parent waits for it, so the caller buffers stay valid.
+fn getLeg(self: *Client, req: GetRequest, done: *std.Io.Event) !Get {
+    defer done.set(self.inner.io);
+    return self.sendGet(req);
+}
+
+/// Run one POST in a child task. The parent waits for it, so `out` stays valid.
+fn postLeg(self: *Client, url: []const u8, body: []const u8, out: []u8, done: *std.Io.Event) !Response {
+    defer done.set(self.inner.io);
+    return self.sendJson(url, body, out);
+}
+
 /// Copy the first value of `name` into `out`. An absent or oversize header gives an empty value.
 fn copyHeader(head: *const std.http.Client.Response.Head, name: []const u8, out: []u8) []const u8 {
     var it = head.iterateHeaders();
@@ -173,7 +220,7 @@ fn mapRequestError(err: anyerror) anyerror {
 const testing = std.testing;
 
 test "postJson rejects a url that is not a request target" {
-    var client: Client = .init(testing.allocator, testing.io);
+    var client: Client = .init(testing.allocator, testing.io, .none);
     defer client.deinit();
 
     var out: [64]u8 = undefined;

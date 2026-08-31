@@ -11,7 +11,7 @@ const draft = @import("domain").draft;
 const Session = @import("domain").session.Session;
 const database = @import("../database/database.zig");
 const turn_context = @import("turn_context.zig");
-const provider_catalog = @import("provider_catalog.zig");
+const registry = @import("registry.zig");
 const tools = @import("../tools/tool.zig");
 const tool_registry = @import("../tools/registry.zig");
 const retry = @import("../provider/retry.zig");
@@ -333,7 +333,7 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
 
     // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
     const resolved = state.catalog.resolveModel(model) orelse return error.UnknownModel;
-    const request = try resolvedRequest(arena, slot, transcript, resolved);
+    const request = try resolvedRequest(arena, state.env, slot, transcript, resolved);
     const body = try state.route_transport.open(arena, request, info);
     std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
@@ -347,13 +347,13 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
 
 /// Resolve the session level against the model. An unset level omits the control.
 fn reasoningFor(
-    model: *const provider_catalog.ModelView,
+    model: *const registry.ModelSpec,
     level: []const u8,
     output_limit: u32,
 ) provider.ir.ReasoningControl {
     if (level.len == 0) return .default;
     if (std.mem.eql(u8, level, "off")) return .off;
-    if (model.anthropic_adaptive) return .adaptive;
+    if (model.dialect.anthropic_adaptive) return .adaptive;
     if (thinkingBudget(model, level, output_limit)) |tokens| return .{ .budget = tokens };
     return if (std.meta.stringToEnum(provider.ir.Effort, level)) |effort| .{ .effort = effort } else .default;
 }
@@ -362,13 +362,16 @@ fn reasoningFor(
 const thinking_budget_min: u64 = 1024;
 
 /// Size the budget for a level. Thinking shares the output ceiling, so the answer keeps a part.
-fn thinkingBudget(model: *const provider_catalog.ModelView, level: []const u8, output_limit: u32) ?u64 {
-    if (model.reasoning_budget_min == null and model.reasoning_budget_max == null) return null;
+fn thinkingBudget(model: *const registry.ModelSpec, level: []const u8, output_limit: u32) ?u64 {
+    const bounds = switch (model.dialect.reasoning_budget) {
+        .unsupported => return null,
+        .range => |range| range,
+    };
 
     const cap: u64 = output_limit;
     var budget: u64 = if (std.mem.eql(u8, level, "max")) cap / 4 * 3 else cap / 2;
-    if (model.reasoning_budget_max) |maximum| budget = @min(budget, maximum);
-    if (model.reasoning_budget_min) |minimum| {
+    if (bounds.max.optional()) |maximum| budget = @min(budget, maximum);
+    if (bounds.min.optional()) |minimum| {
         if (minimum > 0) budget = @max(budget, @as(u64, @intCast(minimum)));
     }
     budget = @max(budget, thinking_budget_min);
@@ -379,15 +382,19 @@ fn thinkingBudget(model: *const provider_catalog.ModelView, level: []const u8, o
 /// Build the real provider request. It sets the run protocol, the endpoint URL, and the auth headers.
 fn resolvedRequest(
     arena: std.mem.Allocator,
+    env: *const std.process.Environ.Map,
     slot: *RunSlot,
     transcript: []const wire.message.Message,
-    r: provider_catalog.Match,
+    r: registry.Match,
 ) !provider.transport.Request {
     // A provider the merge could not complete has no route, so it cannot serve a turn.
-    const route = r.provider.route orelse return error.UnknownModel;
+    const route = switch (r.provider.availability) {
+        .ready => |ready| ready,
+        .unavailable => return error.UnknownModel,
+    };
     slot.protocol = route.instance.protocol;
 
-    const output_limit = if (r.model.max_output_tokens) |limit|
+    const output_limit = if (r.model.limits.max_output_tokens.optional()) |limit|
         std.math.cast(u32, limit) orelse max_output_tokens
     else
         max_output_tokens;
@@ -398,14 +405,16 @@ fn resolvedRequest(
         .tools = tool_registry.declarations,
         .max_output_tokens = output_limit,
         .reasoning = reasoningFor(r.model, slot.config.reasoning, output_limit),
-        .thinking_format = r.model.thinking_format,
-        .reasoning_replay = r.model.reasoning_replay,
-        .max_tokens_field = r.model.max_tokens_field,
-        .responses_dialect = if (route.instance.auth == .codex_oauth) .codex else .standard,
+        .thinking_format = r.model.dialect.thinking_format,
+        .reasoning_replay = r.model.dialect.reasoning_replay,
+        .max_tokens_field = r.model.dialect.max_tokens_field,
+        .responses_dialect = route.instance.responses_dialect,
     }, .{ .protocol = route.instance.protocol, .model = slot.config.model });
 
+    // The run reads the credential now, so a rotated environment key needs no rebuild.
+    const secret = registry.credential(route.credential, env) orelse return error.MissingCredential;
     var auth: std.ArrayList(provider.transport.Header) = .empty;
-    try provider.resolve.authHeaders(arena, &route.instance, route.secret, &auth);
+    try provider.resolve.authHeaders(arena, &route.instance, secret, &auth);
 
     return .{
         .url = try provider.resolve.endpointUrl(arena, &route.instance),
@@ -912,40 +921,39 @@ fn emptyPart(part_id: event.BlockId, kind: event.BlockKind) message.AssistantPar
 }
 
 test "an unset level omits the control and off disables it" {
-    const model: provider_catalog.ModelView = .{ .id = "m", .upstream_id = "m", .name = "m" };
+    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m" };
     try std.testing.expectEqual(provider.ir.ReasoningControl.default, reasoningFor(&model, "", 8192));
     try std.testing.expectEqual(provider.ir.ReasoningControl.off, reasoningFor(&model, "off", 8192));
 }
 
 test "an adaptive row resolves to adaptive for every level that is not off" {
-    const model: provider_catalog.ModelView = .{ .id = "m", .upstream_id = "m", .name = "m", .anthropic_adaptive = true };
+    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .dialect = .{ .anthropic_adaptive = true } };
     try std.testing.expectEqual(provider.ir.ReasoningControl.adaptive, reasoningFor(&model, "high", 8192));
     try std.testing.expectEqual(provider.ir.ReasoningControl.off, reasoningFor(&model, "off", 8192));
 }
 
 test "a budget row sizes the budget from the output ceiling" {
-    const model: provider_catalog.ModelView = .{
+    const model: registry.ModelSpec = .{
         .id = "m",
         .upstream_id = "m",
         .name = "m",
-        .reasoning_budget_min = 1024,
-        .reasoning_budget_max = 32000,
+        .dialect = .{ .reasoning_budget = .from(1024, 32000) },
     };
     try std.testing.expectEqual(@as(u64, 6144), reasoningFor(&model, "max", 8192).budget);
     try std.testing.expectEqual(@as(u64, 4096), reasoningFor(&model, "high", 8192).budget);
 }
 
 test "a budget is clamped by the feed bounds and refused when it reaches the ceiling" {
-    const capped: provider_catalog.ModelView = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_budget_max = 2000 };
+    const capped: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .dialect = .{ .reasoning_budget = .from(null, 2000) } };
     try std.testing.expectEqual(@as(u64, 2000), reasoningFor(&capped, "high", 8192).budget);
 
     // A budget that reaches the ceiling falls back to the effort control.
-    const tiny: provider_catalog.ModelView = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_budget_min = 1024 };
+    const tiny: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .dialect = .{ .reasoning_budget = .from(1024, null) } };
     try std.testing.expectEqual(provider.ir.Effort.high, reasoningFor(&tiny, "high", 1024).effort);
 }
 
 test "a level the model never listed omits the control" {
-    const model: provider_catalog.ModelView = .{ .id = "m", .upstream_id = "m", .name = "m" };
+    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m" };
     try std.testing.expectEqual(provider.ir.ReasoningControl.default, reasoningFor(&model, "turbo", 8192));
     try std.testing.expectEqual(provider.ir.Effort.high, reasoningFor(&model, "high", 8192).effort);
 }

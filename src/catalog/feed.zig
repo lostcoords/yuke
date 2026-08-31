@@ -1,26 +1,24 @@
-//! Decode the public provider catalog. The document describes every known provider, so most rows
-//! carry no route. This file performs no input and no output, and never asserts on the document.
+//! Decode the public provider catalog. This file never asserts on the document.
 
 const std = @import("std");
 const wire = @import("wire");
 const provider = @import("../provider/provider.zig");
 
 const instance = provider.instance;
+const model = provider.model;
 
 /// The document version this decoder accepts.
 pub const version = 1;
 
-const max_id_bytes = 128;
+const max_id_bytes = wire.ids.max_selector_part_bytes;
 const max_name_bytes = 256;
 const max_url_bytes = 2048;
-/// The revision is a SHA-512 digest in lowercase hexadecimal, which is what `wire.ids.CatalogRev` holds.
-const rev_hex_len = 128;
 const max_providers = 4096;
 const max_models = 65536;
 
 pub const Error = error{InvalidDocument};
 
-pub const AuthKind = enum { api_key, oauth };
+pub const AuthKind = model.AuthKind;
 
 /// The public authentication description. It names the scheme and never carries a credential.
 pub const Auth = struct {
@@ -31,19 +29,8 @@ pub const Auth = struct {
     flow: ?[]const u8 = null,
 };
 
-/// The feed does not always publish a limit, so the schema keeps both nullable.
-pub const Limits = struct {
-    context_window: ?u64,
-    max_output_tokens: ?u64,
-};
-
-/// A price the feed omits stays null. Many models publish no cache price.
-pub const Cost = struct {
-    input: ?f64,
-    output: ?f64,
-    cache_read: ?f64,
-    cache_write: ?f64,
-};
+pub const Limits = model.LimitsPatch;
+pub const Cost = model.CostPatch;
 
 /// The catalog publishes model capabilities. The request-shape rules stay in the provider layer.
 pub const Flags = struct {
@@ -69,15 +56,13 @@ pub const Model = struct {
     cost: Cost,
     flags: Flags,
     reasoning: bool,
-    /// The feed writes a null level to mean "no effort at all", so a level itself is nullable.
-    /// The set is open: a new level must degrade, not fail.
+    /// A null level means no effort. The set is open, so a new name must degrade.
     reasoning_levels: []const ?[]const u8,
     /// A release stage such as `beta`. A generally available model leaves it null.
     status: ?[]const u8,
 };
 
-/// One catalog provider. A provider with no route keeps a null protocol, so a picker can still
-/// name it and say that yuke cannot call it.
+/// One catalog provider. A provider with no route keeps a null protocol and stays nameable.
 pub const Provider = struct {
     id: []const u8,
     name: []const u8,
@@ -87,11 +72,6 @@ pub const Provider = struct {
     cache: instance.CachePolicy,
     headers: []const instance.Header,
     models: []const Model,
-
-    /// Return true when the catalog describes a provider that yuke can call.
-    pub fn routable(self: Provider) bool {
-        return self.protocol != null and self.base_url != null and self.auth != null;
-    }
 };
 
 pub const Document = struct {
@@ -100,16 +80,15 @@ pub const Document = struct {
     providers: []const Provider,
 };
 
-// A new cloud field must not break an older daemon, so the decoder ignores unknown members.
-// The decoder requires every named member, so a removed field fails loudly.
-const parse_options: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+// The decoder ignores an unknown member and rejects a missing field that has no default.
+const parse_options: std.json.ParseOptions = .{ .ignore_unknown_fields = true, .allocate = .alloc_always };
 
 /// Decode the catalog document. The result borrows `arena`.
 pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
     const doc = std.json.parseFromSliceLeaky(Document, arena, body, parse_options) catch return error.InvalidDocument;
 
     if (doc.version != version) return error.InvalidDocument;
-    if (!validRev(doc.catalog_rev)) return error.InvalidDocument;
+    if (!wire.ids.CatalogRev.validText(doc.catalog_rev)) return error.InvalidDocument;
     if (doc.providers.len > max_providers) return error.InvalidDocument;
 
     var models: usize = 0;
@@ -122,6 +101,8 @@ pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
 
         // A route needs every part. A row that names a protocol without a target is malformed.
         if (p.protocol != null and p.base_url == null) return error.InvalidDocument;
+        // `std.http.Client` asserts on a malformed header, so a bad one must never reach a route.
+        if (!instance.validHeaders(p.headers)) return error.InvalidDocument;
 
         if (p.auth) |auth| switch (auth.kind) {
             .api_key => if (auth.header == null) return error.InvalidDocument,
@@ -131,23 +112,13 @@ pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
         models += p.models.len;
         if (models > max_models) return error.InvalidDocument;
         for (p.models, 0..) |m, j| {
-            // A model id is the right half of a selector, so it may hold a slash.
-            if (!bounded(m.id, max_id_bytes)) return error.InvalidDocument;
+            // A model id is the right half of a selector, so it may hold a slash but no space.
+            if (!wire.ids.isSelectorTail(m.id)) return error.InvalidDocument;
             if (!bounded(m.upstream_id, max_id_bytes)) return error.InvalidDocument;
             for (p.models[0..j]) |prev| if (std.mem.eql(u8, prev.id, m.id)) return error.InvalidDocument;
         }
     }
     return doc;
-}
-
-/// The revision must fit `wire.ids.CatalogRev`, so a drifted format fails at the boundary.
-pub fn validRev(value: []const u8) bool {
-    if (value.len != rev_hex_len) return false;
-    for (value) |c| switch (c) {
-        '0'...'9', 'a'...'f' => {},
-        else => return false,
-    };
-    return true;
 }
 
 fn bounded(value: []const u8, max: usize) bool {
@@ -167,8 +138,7 @@ const routable_document =
     \\ "reasoning_levels":["low","high"],"status":null}]}]}
 ;
 
-// OpenRouter names 408 of its models `vendor/model`. The selector splits on the first slash,
-// so the model half keeps its own.
+// OpenRouter names its models `vendor/model`, and the model half of a selector keeps that slash.
 test "a model id with a slash decodes" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -192,7 +162,7 @@ test "decode reads a routable provider" {
     try testing.expectEqual(@as(usize, 1), doc.providers.len);
 
     const p = doc.providers[0];
-    try testing.expect(p.routable());
+    try testing.expect(p.protocol != null and p.auth != null);
     try testing.expectEqual(instance.Protocol.anthropic_messages, p.protocol.?);
     try testing.expectEqual(instance.CachePolicy.ephemeral, p.cache);
     try testing.expectEqual(instance.ApiKeyHeader.x_api_key, p.auth.?.header.?);
@@ -251,7 +221,7 @@ test "decode keeps an unroutable provider visible" {
         \\ "cache":"unsupported","headers":[],"models":[]}]}
     );
     const p = doc.providers[0];
-    try testing.expect(!p.routable());
+    try testing.expect(p.protocol == null);
     try testing.expectEqualStrings("Someone", p.name);
 }
 

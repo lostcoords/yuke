@@ -1,11 +1,10 @@
-//! Run the `yuke login` device-code enrollment. This file owns the clock, the terminal, and
-//! the durable files. The rules that decide the next step live in `poller.zig`.
+//! Run the `yuke login` device-code enrollment, which owns the clock, the terminal, and the files.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const cli = @import("../cli.zig");
 const paths = @import("../paths/paths.zig");
-const http = @import("http.zig");
+const http = @import("../net/http.zig");
 const identity = @import("identity.zig");
 const poller = @import("poller.zig");
 const protocol = @import("protocol.zig");
@@ -75,7 +74,6 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, opts
 
     // The device key pins the Noise handshake, so a replacement keeps the key that peers know.
     var device_secret: ?[identity.secret_length]u8 = null;
-    defer if (device_secret) |*s| std.crypto.secureZero(u8, s);
     if (want_device) {
         device_secret = if (stored_device) |held| held.secret else null;
         if (device_secret == null) device_secret = try identity.generateSecret(io);
@@ -83,7 +81,6 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, opts
 
     // A token session presents only a bearer credential, so it needs no key.
     var session_secret: ?[identity.secret_length]u8 = null;
-    defer if (session_secret) |*s| std.crypto.secureZero(u8, s);
     if (want_session and kind == .cli) {
         session_secret = if (stored_session) |held| held.secret else null;
         if (session_secret == null) session_secret = try identity.generateSecret(io);
@@ -99,12 +96,11 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, opts
     var name_buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
     const name = opts.name orelse hostName(env, &name_buf) orelse fallback_name;
 
-    var client: http.Client = .init(gpa, io);
+    var client: http.Client = .init(gpa, io, http.default_timeout);
     defer client.deinit();
 
     const buf = try gpa.alloc(u8, http.max_response_bytes);
     defer gpa.free(buf);
-    defer std.crypto.secureZero(u8, buf); // The buffer holds the credential of the approved poll.
 
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
@@ -134,14 +130,12 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, opts
 
     const poll_body = try protocol.encodePoll(gpa, start.device_code);
     defer gpa.free(poll_body);
-    defer std.crypto.secureZero(u8, poll_body); // The body holds the secret device code.
 
     const credential = try awaitApproval(io, &client, &arena, poll_url, poll_body, buf, start, intent);
 
     // The control plane approved, so the durable files may now change.
     if (want_device) {
-        var stored = identity.encodeSecret(device_secret.?);
-        defer std.crypto.secureZero(u8, &stored);
+        const stored = identity.encodeSecret(device_secret.?);
         try identity.writeMeta(io, dir, .device, identity.Device{
             .device_id = credential.device_id,
             .credential = credential.credential,
@@ -152,8 +146,7 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, opts
         try print(io, "Enrolled daemon {s} (relay {s}).\n", .{ credential.device_id, credential.relay_url });
     }
     if (want_session) {
-        var stored: ?[identity.key_b64_length]u8 = if (session_secret) |secret| identity.encodeSecret(secret) else null;
-        defer if (stored) |*key| std.crypto.secureZero(u8, key);
+        const stored: ?[identity.key_b64_length]u8 = if (session_secret) |secret| identity.encodeSecret(secret) else null;
         try identity.writeMeta(io, dir, .session, identity.Session{
             .session_id = credential.session_id,
             .credential = credential.sessionCredential(),
@@ -192,7 +185,7 @@ fn requestStart(
     };
 }
 
-/// Poll until the grant reaches a terminal state. `arena` resets after each poll.
+/// Poll until the grant is terminal. `arena` resets each poll, and the result borrows the last one.
 fn awaitApproval(
     io: std.Io,
     client: *http.Client,
@@ -242,8 +235,7 @@ fn awaitApproval(
     }
 }
 
-/// Return the milliseconds since `base`. The boot clock counts suspended time where the
-/// platform supports it, because the grant expires on the server's own wall clock.
+/// Return the milliseconds since `base`, from the boot clock, because the server times the grant.
 fn elapsedMs(io: std.Io, base: std.Io.Timestamp) u64 {
     const elapsed = base.durationTo(std.Io.Timestamp.now(io, .boot));
     return @intCast(@max(elapsed.toMilliseconds(), 0));

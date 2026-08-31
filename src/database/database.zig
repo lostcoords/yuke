@@ -6,7 +6,6 @@ const sql = @import("sql");
 const zqlite = @import("zqlite");
 const queries_gen = @import("queries_gen.zig");
 
-pub const catalog = @import("catalog.zig");
 pub const workspace = @import("workspace.zig");
 pub const session = @import("session.zig");
 pub const event = @import("event.zig");

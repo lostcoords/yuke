@@ -1,5 +1,4 @@
-//! Generate and persist the enrolled principals. One principal is one JSON file that holds its
-//! credential and its X25519 private key, so a single atomic replacement commits the whole identity.
+//! Persist each enrolled principal as one JSON file, so its credential and key commit together.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -60,11 +59,9 @@ pub const Session = struct {
     schema_version: u32,
 };
 
-/// Return a fresh X25519 private key. It fails rather than falls back to weaker randomness,
-/// because this key is the long-term identity of the machine.
+/// Return a fresh X25519 private key, and reject a seed that has no valid public key.
 pub fn generateSecret(io: std.Io) ![secret_length]u8 {
     var secret: [secret_length]u8 = undefined;
-    errdefer std.crypto.secureZero(u8, &secret);
     try io.randomSecure(&secret);
     // Reject the rare seed that has no valid public key. The caller then sees a plain error.
     _ = X25519.recoverPublicKey(secret) catch return error.KeyInvalid;
@@ -114,7 +111,6 @@ pub const Stored = struct {
 };
 
 /// Read `principal`. An absent or malformed principal gives null, so a later login repairs it.
-/// The caller wipes the key.
 pub fn read(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, comptime T: type, principal: Principal) ?Stored {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
@@ -124,14 +120,10 @@ pub fn read(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, comptime T: typ
     return .{ .secret = decodeSecret(meta.identity_key) catch return null };
 }
 
-/// Write the metadata of `principal`. The file replaces its target in one step, so the
-/// credential and its key always commit together.
+/// Write `principal` metadata as one atomic replacement, so the credential and key commit together.
 pub fn writeMeta(io: std.Io, dir: std.Io.Dir, principal: Principal, value: anytype) !void {
-    // A growing writer frees its old buffer without clearing it, so the document goes in a
-    // fixed buffer that this function wipes.
+    // The fixed buffer bounds one document, so an oversized value fails instead of growing.
     var buf: [max_meta_bytes]u8 = undefined;
-    defer std.crypto.secureZero(u8, &buf);
-
     var json: std.Io.Writer = .fixed(&buf);
     std.json.Stringify.value(value, .{}, &json) catch return error.MetaTooLarge;
     try writePrivateFile(io, dir, principal.file(), json.buffered());
@@ -159,8 +151,7 @@ pub fn readMeta(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, comptime 
     return out;
 }
 
-/// Create the file with private permissions, write it, and replace the target in one step.
-/// The temporary file lives beside the target, so the replacement never crosses a file system.
+/// Write a private temporary file beside the target, then replace the target in one step.
 fn writePrivateFile(io: std.Io, dir: std.Io.Dir, name: []const u8, data: []const u8) !void {
     std.debug.assert(name.len != 0);
     std.debug.assert(data.len != 0);
@@ -173,16 +164,15 @@ fn writePrivateFile(io: std.Io, dir: std.Io.Dir, name: []const u8, data: []const
     var atomic = try dir.createFileAtomic(io, name, .{ .permissions = permissions, .replace = true });
     defer atomic.deinit(io);
 
-    // A file that already exists keeps its old mode, so set the mode again.
+    // The temporary file decides the final mode, so set it before the replacement.
     if (builtin.os.tag != .windows) try atomic.file.setPermissions(io, permissions);
 
     var buf: [1024]u8 = undefined;
-    defer std.crypto.secureZero(u8, &buf); // The buffer holds key bytes.
     var writer = atomic.file.writer(io, &buf);
     try writer.interface.writeAll(data);
     try writer.interface.flush();
 
-    // `replace` does not flush the contents, so sync the file before it becomes visible.
+    // `replace` renames without a flush, so sync first to put the contents on stable storage.
     try atomic.file.sync(io);
     try atomic.replace(io);
 }

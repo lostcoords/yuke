@@ -13,6 +13,7 @@ const domain_session = @import("domain").session;
 const paths = @import("../paths/paths.zig");
 const host_mod = @import("../host/host.zig");
 const local_host = @import("../host/local.zig");
+const provider_config = @import("../provider/config/providers.zig");
 
 const session_store = database.session;
 const workspace_store = database.workspace;
@@ -155,6 +156,104 @@ pub fn catalogList(state: *State, _: std.mem.Allocator, params: wire.catalog.Cat
         .providers = state.catalog.providers,
         .models = state.catalog.models,
     } };
+}
+
+/// Handle auth.list: report the credential state of every local provider.
+/// The cloud owns account credentials, so the account bundle is not listed here.
+pub fn authList(state: *State, arena: std.mem.Allocator, _: wire.misc.Empty) !wire.auth.AuthListResult {
+    var out: std.ArrayList(wire.auth.AuthProvider) = .empty;
+    const loaded = state.providers orelse return .{ .providers = &.{} };
+    for (loaded.providers) |p| try out.append(arena, .{
+        .provider_id = p.id,
+        .credential_kind = credentialKind(p),
+        // Local OAuth is stage 10, so no local provider offers a login flow yet.
+        .login_flows = &.{},
+    });
+    return .{ .providers = out.items };
+}
+
+/// Handle auth.set_api_key: store one literal key and rebuild the snapshot.
+/// The entry keeps every other field, so a hand-written route survives a key change.
+pub fn authSetApiKey(state: *State, arena: std.mem.Allocator, params: wire.auth.AuthSetApiKeyParams) !wire.misc.Empty {
+    const path = state.providers_path orelse return error.NoConfigDirectory;
+    if (!wire.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
+    if (params.api_key.len == 0) return error.BadApiKey;
+
+    var next: std.ArrayList(provider_config.LocalProvider) = .empty;
+    var replaced = false;
+    if (state.providers) |loaded| for (loaded.providers) |p| {
+        if (std.mem.eql(u8, p.id, params.provider_id)) {
+            var updated = p;
+            updated.auth = .{
+                .header = if (p.auth) |a| a.header else null,
+                .source = .{ .literal = params.api_key },
+            };
+            try next.append(arena, updated);
+            replaced = true;
+        } else try next.append(arena, p);
+    };
+    // A provider the file does not name yet needs only an id and a key; the catalog completes it.
+    if (!replaced) try next.append(arena, .{ .id = params.provider_id, .auth = .{ .source = .{ .literal = params.api_key } } });
+
+    try writeProviders(state, path, next.items);
+    state.announceAuthChanged(params.provider_id, .api_key);
+    return .{};
+}
+
+/// Handle auth.remove: drop the credential the daemon holds for one provider.
+/// The entry stays when it carries route or model configuration, so a hand-written file survives.
+pub fn authRemove(state: *State, arena: std.mem.Allocator, params: wire.auth.AuthRemoveParams) !wire.misc.Empty {
+    const path = state.providers_path orelse return error.NoConfigDirectory;
+    if (!wire.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
+    const loaded = state.providers orelse return error.UnknownProvider;
+
+    var next: std.ArrayList(provider_config.LocalProvider) = .empty;
+    var found = false;
+    for (loaded.providers) |p| {
+        if (!std.mem.eql(u8, p.id, params.provider_id)) {
+            try next.append(arena, p);
+            continue;
+        }
+        found = true;
+        // The entry holds nothing else, so it goes with its credential.
+        if (onlyCredential(p)) continue;
+        var kept = p;
+        // A route that presents no credential keeps that shape; another one now wants a key.
+        if (p.auth) |a| kept.auth = .{ .header = a.header };
+        try next.append(arena, kept);
+    }
+    if (!found) return error.UnknownProvider;
+
+    try writeProviders(state, path, next.items);
+    state.announceAuthChanged(params.provider_id, null);
+    return .{};
+}
+
+/// Report which credential one entry holds. An entry that holds none reports null.
+fn credentialKind(p: provider_config.LocalProvider) ?wire.enums.AuthCredentialKind {
+    const auth = p.auth orelse return null;
+    return if (auth.source == null) null else .api_key;
+}
+
+/// Report whether an entry carries only its credential, so removing that leaves nothing to keep.
+fn onlyCredential(p: provider_config.LocalProvider) bool {
+    if (p.base_url != null or p.protocol != null or p.cache != null) return false;
+    if (p.responses_dialect != null or p.headers != null or p.models.len != 0) return false;
+    // A keyless entry states that the route needs nothing, so it is configuration.
+    const auth = p.auth orelse return false;
+    // A named header and a declared want are both configuration the user wrote.
+    return auth.header == null and auth.source != null;
+}
+
+/// Render the layer, parse it, then write it. A document that cannot load never reaches the file.
+fn writeProviders(state: *State, path: []const u8, providers: []const provider_config.LocalProvider) !void {
+    const bytes = try provider_config.serialize(state.gpa, providers);
+    defer state.gpa.free(bytes);
+
+    var next = try provider_config.loadBytes(state.gpa, bytes);
+    errdefer next.deinit();
+    try provider_config.writeFileBytes(state.io, path, bytes);
+    if (try state.installProviders(&next)) state.announceCatalogChanged();
 }
 
 /// Handle session.config: return one config revision and the session's system prompt.

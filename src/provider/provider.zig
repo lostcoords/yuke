@@ -15,6 +15,7 @@ pub const request_anthropic = @import("request/anthropic.zig");
 pub const request_openai_chat = @import("request/openai_chat.zig");
 pub const request_openai_responses = @import("request/openai_responses.zig");
 
+pub const model = @import("model.zig");
 pub const instance = @import("instance/instance.zig");
 pub const resolve = @import("instance/resolve.zig");
 pub const config = @import("config/providers.zig");

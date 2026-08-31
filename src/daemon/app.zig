@@ -18,12 +18,10 @@ const State = @import("State.zig");
 // The timeout wakes a stalled provider read. Cancellation also interrupts the read.
 const provider_idle_timeout = std.Io.Duration.fromMilliseconds(60_000);
 
-// zio.debug_io breaks the WebSocket upgrade in zio v0.16.0. Keep it disabled.
-
 // Use this port for the front door. A proxy terminates TLS before remote web clients connect.
 const default_port = 9853;
 
-// The device credential and its key fit this buffer. A larger file fails the read and keeps no secret.
+// The device credential and its key fit this buffer. A larger file fails the read.
 const secret_buffer_bytes = 16 * 1024;
 
 const open_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
@@ -56,10 +54,9 @@ pub fn run(init: std.process.Init) !void {
     defer http_transport.deinit();
 
     const conn = try zqlite.open(config.db_path, open_flags);
-    // The buffer holds every byte the credential read allocates. The scope zeroes it on each path.
+    // The fixed buffer bounds the read, and State.init copies the credential before the buffer ends.
     var state = state: {
         var secrets: [secret_buffer_bytes]u8 = undefined;
-        defer std.crypto.secureZero(u8, &secrets);
         var fixed: std.heap.FixedBufferAllocator = .init(&secrets);
         const device = readDevice(fixed.allocator(), io, data_dir);
         break :state try State.init(.{
@@ -78,9 +75,9 @@ pub fn run(init: std.process.Init) !void {
     defer state.deinit();
 
     // Load the user providers. An invalid file fails startup. An absent file leaves the cloud catalog.
-    const providers_path = try configFilePath(init.gpa, init.environ_map, "providers.json");
-    defer if (providers_path) |path| init.gpa.free(path);
-    if (providers_path) |path| {
+    // State owns the path from here, because `auth.set_api_key` writes the same file.
+    state.providers_path = try configFilePath(init.gpa, init.environ_map, "providers.json");
+    if (state.providers_path) |path| {
         var loaded = try provider.config.load(init.gpa, io, path);
         if (loaded.providers.len > 0) {
             state.providers = loaded;
@@ -113,16 +110,14 @@ pub fn run(init: std.process.Init) !void {
     try http.serve(&state);
 }
 
-/// Join a file name under the config directory. `configDir` already ends with the app directory.
-/// Return null when no config directory exists. The caller owns the result.
+/// Join a file name under the config directory, or null when none exists. The caller owns it.
 fn configFilePath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map, name: []const u8) !?[]u8 {
     const base = try paths.configDir(gpa, env) orelse return null;
     defer gpa.free(base);
     return try std.fs.path.join(gpa, &.{ base, name });
 }
 
-/// Resolve the data directory and create it.
-/// Return null when no data directory path exists. The caller owns the returned path.
+/// Resolve and create the data directory, or null when no path exists. The caller owns it.
 fn resolveDataDir(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !?[]u8 {
     const base = try paths.dataDir(gpa, env) orelse return null;
     errdefer gpa.free(base);
@@ -137,8 +132,7 @@ fn dbPathZ(gpa: std.mem.Allocator, base: []const u8) ![:0]u8 {
     return try gpa.dupeZ(u8, file);
 }
 
-/// Take the single-instance lock. A daemon without a data directory takes no lock.
-/// Report the conflict, because a bare error name does not tell the user what to do.
+/// Take the single-instance lock, and report a conflict with a message the user can act on.
 fn lockInstance(gpa: std.mem.Allocator, io: std.Io, data_dir: ?[]const u8) !?InstanceLock {
     const base = data_dir orelse {
         std.log.warn("no data directory: the daemon takes no single-instance lock", .{});
@@ -153,8 +147,7 @@ fn lockInstance(gpa: std.mem.Allocator, io: std.Io, data_dir: ?[]const u8) !?Ins
     return held;
 }
 
-/// Read the stored device credential. A daemon without one still starts and serves local providers.
-/// The caller owns the buffer and must zero it, because a failed parse can leave a partial secret.
+/// Read the stored device credential. `State.init` copies it before the read buffer ends.
 fn readDevice(arena: std.mem.Allocator, io: std.Io, data_dir: ?[]const u8) ?cloud.identity.Device {
     const data_path = data_dir orelse return null;
     var dir = std.Io.Dir.cwd().openDir(io, data_path, .{}) catch |err| {
@@ -170,15 +163,17 @@ fn readDevice(arena: std.mem.Allocator, io: std.Io, data_dir: ?[]const u8) ?clou
 
 /// Refresh the public catalog and the account bundle once at startup.
 fn cloudTask(state: *State) void {
-    _ = state.refreshCloud() catch |err| {
+    const refreshed = state.refreshCloud() catch |err| {
         std.log.warn("cloud refresh failed: {t}", .{err});
         return;
     };
-    std.log.info("cloud documents are current", .{});
+    switch (refreshed.status) {
+        .current => std.log.info("cloud documents are current", .{}),
+        .catalog_unavailable => std.log.warn("the control plane has not synced its catalog yet", .{}),
+    }
 }
 
-/// Create the data directory. Give a new POSIX directory mode 0700 and keep current permissions.
-/// Windows uses its default permissions.
+/// Create the data directory with mode 0700 on POSIX, and default permissions on Windows.
 fn ensureDataDir(io: std.Io, dir: []const u8) !void {
     const cwd = std.Io.Dir.cwd();
     if (builtin.os.tag == .windows) return cwd.createDirPath(io, dir);

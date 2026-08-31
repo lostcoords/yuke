@@ -206,7 +206,7 @@
     },
     {
       "name": "auth.list",
-      "doc": "List authentication providers and logins.",
+      "doc": "List the local providers and the credential each one holds.",
       "params": "Empty",
       "result": "AuthListResult",
       "direction": "clientToServer",
@@ -237,9 +237,9 @@
       "paramsOptional": false
     },
     {
-      "name": "auth.logout",
-      "doc": "Log out of a provider.",
-      "params": "AuthLogoutParams",
+      "name": "auth.remove",
+      "doc": "Remove the credential the daemon holds for a provider.",
+      "params": "AuthRemoveParams",
       "result": "Empty",
       "direction": "clientToServer",
       "paramsOptional": false
@@ -732,8 +732,8 @@
       ]
     },
     {
-      "name": "AuthLogoutParams",
-      "doc": "These are the parameters for `auth.logout`.",
+      "name": "AuthRemoveParams",
+      "doc": "These are the parameters for `auth.remove`. It removes a local credential; OAuth waits for stage 10.",
       "fields": [
         {
           "name": "provider_id",
@@ -1104,11 +1104,11 @@
     },
     {
       "name": "ProviderInfo",
-      "doc": "This type describes one configured provider. Its state tells a client whether it needs login.",
+      "doc": "This type describes one configured provider. Its state tells a client why it cannot serve a turn.",
       "fields": [
         {
           "name": "id",
-          "doc": "The left half of a `provider/model` selector.",
+          "doc": "The provider name inside its origin. Two origins can use one id.",
           "type": "string",
           "presence": "required"
         },
@@ -1188,6 +1188,12 @@
         },
         {
           "name": "provider",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "selector",
+          "doc": "The token that selects this model. A client echoes it back and never parses or builds it.",
           "type": "string",
           "presence": "required"
         },
@@ -4017,7 +4023,7 @@
           "type": "AuthCancelLoginParams"
         },
         {
-          "type": "AuthLogoutParams"
+          "type": "AuthRemoveParams"
         },
         {
           "type": "FsStatParams"
@@ -4450,6 +4456,14 @@
           "wire": "-31020"
         },
         {
+          "name": "not_implemented",
+          "wire": "-31022"
+        },
+        {
+          "name": "unknown_provider",
+          "wire": "-31023"
+        },
+        {
           "name": "internal",
           "wire": "-32603"
         },
@@ -4626,7 +4640,7 @@
         {
           "name": "auth.list",
           "wire": "auth.list",
-          "doc": "List authentication providers and logins."
+          "doc": "List the local providers and the credential each one holds."
         },
         {
           "name": "auth.set_api_key",
@@ -4644,9 +4658,9 @@
           "doc": "Cancel an active login flow."
         },
         {
-          "name": "auth.logout",
-          "wire": "auth.logout",
-          "doc": "Log out of a provider."
+          "name": "auth.remove",
+          "wire": "auth.remove",
+          "doc": "Remove the credential the daemon holds for a provider."
         },
         {
           "name": "fs.stat",
@@ -4920,7 +4934,7 @@
     },
     {
       "name": "ProviderState",
-      "doc": "Report whether a configured provider can serve a request now.",
+      "doc": "Report whether a configured provider can serve a request now, and why it cannot.",
       "numeric": false,
       "values": [
         {
@@ -4928,8 +4942,24 @@
           "wire": "ready"
         },
         {
-          "name": "needs_login",
-          "wire": "needs_login"
+          "name": "needs_credential",
+          "wire": "needs_credential",
+          "doc": "No credential reached the daemon."
+        },
+        {
+          "name": "needs_route",
+          "wire": "needs_route",
+          "doc": "A routing field is missing, so the daemon cannot build a request."
+        },
+        {
+          "name": "expired",
+          "wire": "expired",
+          "doc": "The grant expired. The user must authenticate again."
+        },
+        {
+          "name": "revoked",
+          "wire": "revoked",
+          "doc": "The control plane revoked the grant."
         }
       ]
     },

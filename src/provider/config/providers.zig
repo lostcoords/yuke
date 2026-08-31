@@ -1,11 +1,9 @@
-//! Load the strict `providers.json` user file into the local provider layer.
-//! A field the file omits stays null here. The merge fills it from the catalog, so an entry that
-//! names only an id and a key is complete. The owner zeroes each literal key.
+//! Load and write the strict `providers.json` file. An omitted field stays null for the merge.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const wire = @import("wire");
 const instance = @import("../instance/instance.zig");
-const resolve = @import("../instance/resolve.zig");
 
 const Allocator = std.mem.Allocator;
 const EnvMap = std.process.Environ.Map;
@@ -27,7 +25,8 @@ pub const Error = error{
     BadHeaderName,
     BadHeaderValue,
     HeaderConflict,
-    MissingCredential,
+    BadPath,
+    AmbiguousCredential,
     FileTooLarge,
     NotRegularFile,
     InsecurePermissions,
@@ -35,35 +34,24 @@ pub const Error = error{
 
 // The file schema is strict. The std.json parser rejects unknown fields, duplicate keys, and invalid union shapes.
 
-/// Name the source of a local API key. The owner clears each literal key.
+/// Name where a local API key comes from. An absent source means the daemon holds none.
 pub const CredentialSource = union(enum) {
     env: []const u8,
     literal: []const u8,
 };
 
-const FileApiKey = struct {
-    header: instance.ApiKeyHeader,
-    source: CredentialSource,
-};
+/// The file writes the credential in the shape the resolved layer already uses.
+const FileApiKey = LocalAuth;
 
 const FileAuth = struct {
     api_key: FileApiKey,
 };
 
-const FileHeader = struct {
-    name: []const u8,
-    value: []const u8,
-};
+/// The file writes a header and a model in the shapes the provider layer already defines.
+const FileHeader = instance.Header;
+const FileModel = instance.ModelBinding;
 
-const FileModel = struct {
-    id: []const u8,
-    upstream_id: []const u8,
-    limits: instance.Limits,
-    cost: instance.Cost = .{},
-    flags: instance.ModelFlags = .{},
-};
-
-/// The file shape. Only `id` and one credential are required; the catalog supplies the rest.
+/// The file shape. Only `id` is required, and a catalog row can supply an absent routing field.
 const FileProvider = struct {
     id: []const u8,
     base_url: ?[]const u8 = null,
@@ -73,6 +61,8 @@ const FileProvider = struct {
     /// The short form. It is a literal key, and the catalog names the header.
     api_key: ?[]const u8 = null,
     cache: ?instance.CachePolicy = null,
+    /// A host that speaks the Codex flavor of the Responses API sets this.
+    responses_dialect: ?instance.ResponsesDialect = null,
     headers: ?[]const FileHeader = null,
     models: []const FileModel = &.{},
 };
@@ -82,68 +72,132 @@ const FileDoc = struct {
     providers: []const FileProvider = &.{},
 };
 
-/// The arena owns every non-secret string. The owner stores and zeroes each literal key separately.
+/// The arena owns every value, including a literal key, so one teardown frees the whole layer.
 pub const Loaded = struct {
     arena: std.heap.ArenaAllocator,
-    gpa: Allocator,
     providers: []LocalProvider = &.{},
-    literals: std.ArrayList([]u8) = .empty,
 
     pub fn deinit(self: *Loaded) void {
-        for (self.literals.items) |lit| {
-            std.crypto.secureZero(u8, lit);
-            self.gpa.free(lit);
-        }
-        self.literals.deinit(self.gpa);
         self.arena.deinit();
         self.* = undefined;
     }
 };
 
-/// Read `path` and resolve it. An absent file returns an empty layer. An invalid file returns an error.
-/// `path` must be absolute. The daemon builds it from the config directory.
+/// Read and resolve the absolute `path`. An absent file gives an empty layer.
 pub fn load(gpa: Allocator, io: std.Io, path: []const u8) !Loaded {
     const raw = readSecureFile(gpa, io, path) catch |err| switch (err) {
         error.FileNotFound => return empty(gpa),
         else => |e| return e,
     };
-    // The raw bytes may hold a literal key. Zero and free the raw bytes after the parse copies every value.
-    defer {
-        std.crypto.secureZero(u8, raw);
-        gpa.free(raw);
-    }
+    defer gpa.free(raw);
     return loadBytes(gpa, raw);
 }
 
-/// Parse and resolve one document. The caller owns and zeroes `bytes`. `alloc_always` copies each value.
+/// Parse and resolve one document. `alloc_always` copies each value, so `bytes` is never aliased.
 pub fn loadBytes(gpa: Allocator, bytes: []const u8) !Loaded {
     if (bytes.len > max_file_bytes) return error.FileTooLarge;
-    // Parse into a private scratch buffer. Zero every parsed copy on success or failure.
-    const scratch = try gpa.alloc(u8, bytes.len * 8 + 4096);
-    defer {
-        std.crypto.secureZero(u8, scratch);
-        gpa.free(scratch);
-    }
-    var fba = std.heap.FixedBufferAllocator.init(scratch);
-    const doc = std.json.parseFromSliceLeaky(FileDoc, fba.allocator(), bytes, .{
+
+    var out: Loaded = empty(gpa);
+    errdefer out.deinit();
+    const arena = out.arena.allocator();
+
+    const doc = try std.json.parseFromSliceLeaky(FileDoc, arena, bytes, .{
         .allocate = .alloc_always,
         .ignore_unknown_fields = false,
         .duplicate_field_behavior = .@"error",
-    }) catch |err| switch (err) {
-        error.OutOfMemory => return error.FileTooLarge, // The scratch holds eight times the input; a denser document is hostile.
-        else => |e| return e,
-    };
+    });
 
     if (doc.version != 1) return error.BadVersion;
-    return resolveDoc(gpa, doc, bytes);
+
+    const providers = try arena.alloc(LocalProvider, doc.providers.len);
+    for (doc.providers, 0..) |fp, i| {
+        for (doc.providers[0..i]) |prev| {
+            if (std.mem.eql(u8, prev.id, fp.id)) return error.DuplicateProvider;
+        }
+        providers[i] = try resolveProvider(fp);
+    }
+    out.providers = providers;
+    return out;
 }
 
 fn empty(gpa: Allocator) Loaded {
-    return .{ .arena = std.heap.ArenaAllocator.init(gpa), .gpa = gpa };
+    return .{ .arena = std.heap.ArenaAllocator.init(gpa) };
 }
 
-/// Open the file without symlink traversal. Reject non-regular files and files readable by the group or other users.
-/// Read the file into a size-limited buffer.
+/// Replace the absolute `path` with the document for `providers`, so no reader sees a partial file.
+pub fn write(gpa: Allocator, io: std.Io, path: []const u8, providers: []const LocalProvider) !void {
+    const bytes = try serialize(gpa, providers);
+    defer gpa.free(bytes);
+    try writeFileBytes(io, path, bytes);
+}
+
+/// Render the layer as one document. A caller parses it first, so a write cannot strand the file.
+pub fn serialize(gpa: Allocator, providers: []const LocalProvider) ![]u8 {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+
+    const doc: FileDoc = .{ .version = 1, .providers = try fileProviders(arena.allocator(), providers) };
+    var json: std.Io.Writer.Allocating = .init(arena.allocator());
+    try std.json.Stringify.value(doc, .{ .emit_null_optional_fields = false, .whitespace = .indent_2 }, &json.writer);
+    return gpa.dupe(u8, json.written());
+}
+
+/// Replace the absolute `path` with `bytes`. The caller renders and validates the document first.
+/// The parent directory is created when it is absent, so a first write on a clean machine works.
+pub fn writeFileBytes(io: std.Io, path: []const u8, bytes: []const u8) !void {
+    const parent = std.fs.path.dirname(path) orelse return error.BadPath;
+    const name = std.fs.path.basename(path);
+    if (name.len == 0) return error.BadPath;
+
+    const permissions: std.Io.File.Permissions = if (builtin.os.tag == .windows)
+        .default_dir
+    else
+        .fromMode(0o700);
+    var dir = try std.Io.Dir.cwd().createDirPathOpen(io, parent, .{ .permissions = permissions });
+    defer dir.close(io);
+    try writePrivateFile(io, dir, name, bytes);
+}
+
+/// Project the layer onto the file shape. The writer emits the long credential form only.
+fn fileProviders(arena: Allocator, providers: []const LocalProvider) Allocator.Error![]const FileProvider {
+    const out = try arena.alloc(FileProvider, providers.len);
+    for (providers, 0..) |p, i| out[i] = .{
+        .id = p.id,
+        .base_url = p.base_url,
+        .protocol = p.protocol,
+        .auth = if (p.auth) |a| .{ .api_key = a } else null,
+        .cache = p.cache,
+        .responses_dialect = p.responses_dialect,
+        .headers = p.headers,
+        .models = p.models,
+    };
+    return out;
+}
+
+/// Write a private file beside the target, then replace the target in one step.
+fn writePrivateFile(io: std.Io, dir: std.Io.Dir, name: []const u8, data: []const u8) !void {
+    const permissions: std.Io.File.Permissions = if (builtin.os.tag == .windows)
+        .default_file
+    else
+        .fromMode(0o600);
+
+    var atomic = try dir.createFileAtomic(io, name, .{ .permissions = permissions, .replace = true });
+    defer atomic.deinit(io);
+
+    // The temporary file decides the final mode, so set it before the replacement.
+    if (builtin.os.tag != .windows) try atomic.file.setPermissions(io, permissions);
+
+    var buf: [4096]u8 = undefined;
+    var writer = atomic.file.writer(io, &buf);
+    try writer.interface.writeAll(data);
+    try writer.interface.flush();
+
+    // `replace` renames without a flush, so sync first to put the contents on stable storage.
+    try atomic.file.sync(io);
+    try atomic.replace(io);
+}
+
+/// Read a size-limited regular file. Reject a target symlink, and on POSIX reject group and other access.
 fn readSecureFile(gpa: Allocator, io: std.Io, path: []const u8) ![]u8 {
     const file = try std.Io.Dir.openFileAbsolute(io, path, .{ .follow_symlinks = false });
     defer file.close(io);
@@ -155,102 +209,71 @@ fn readSecureFile(gpa: Allocator, io: std.Io, path: []const u8) ![]u8 {
     if (st.size > max_file_bytes) return error.FileTooLarge;
 
     var buf: [4096]u8 = undefined;
-    defer std.crypto.secureZero(u8, &buf); // The reader buffer may hold key bytes.
     var reader = file.reader(io, &buf);
     const raw = try gpa.alloc(u8, @intCast(st.size));
-    errdefer {
-        std.crypto.secureZero(u8, raw);
-        gpa.free(raw);
-    }
+    errdefer gpa.free(raw);
     try reader.interface.readSliceAll(raw);
     return raw;
 }
 
-/// Validate the document and copy it into local provider values. `source_json` is the raw file.
-fn resolveDoc(gpa: Allocator, doc: FileDoc, source_json: []const u8) !Loaded {
-    var out: Loaded = empty(gpa);
-    errdefer out.deinit();
-    const arena = out.arena.allocator();
-
-    var providers = try arena.alloc(LocalProvider, doc.providers.len);
-    for (doc.providers, 0..) |fp, i| {
-        for (doc.providers[0..i]) |prev| {
-            if (std.mem.eql(u8, prev.id, fp.id)) return error.DuplicateProvider;
-        }
-        providers[i] = try resolveProvider(&out, arena, fp, source_json);
-    }
-    out.providers = providers;
-    return out;
-}
-
-fn resolveProvider(out: *Loaded, arena: Allocator, fp: FileProvider, source_json: []const u8) !LocalProvider {
+/// Validate one entry and project it onto the local provider layer. Every value borrows the arena.
+fn resolveProvider(fp: FileProvider) Error!LocalProvider {
     if (fp.id.len == 0) return error.EmptyId;
     if (!wire.ids.isSelectorPart(fp.id)) return error.BadId;
     if (fp.base_url) |url| try checkUrl(url);
-    // Exactly one credential form. Both or neither leaves the entry ambiguous.
-    if ((fp.auth == null) == (fp.api_key == null)) return error.MissingCredential;
+    // Two credential forms leave the entry ambiguous. Neither form means the route needs no credential.
+    if (fp.auth != null and fp.api_key != null) return error.AmbiguousCredential;
 
-    const header: ?instance.ApiKeyHeader = if (fp.auth) |a| a.api_key.header else null;
-    const file_source: CredentialSource = if (fp.auth) |a| a.api_key.source else .{ .literal = fp.api_key.? };
+    // An absent `auth` block means the route presents no credential. The short form is always literal.
+    const auth: ?LocalAuth = if (fp.auth) |a| blk: {
+        if (a.api_key.source) |source| switch (source) {
+            .env => |name| if (!validEnvName(name)) return error.BadEnvName,
+            .literal => |value| try checkLiteral(value),
+        };
+        break :blk a.api_key;
+    } else if (fp.api_key) |value| blk: {
+        try checkLiteral(value);
+        break :blk .{ .source = .{ .literal = value } };
+    } else null;
+    const header: ?instance.ApiKeyHeader = if (auth) |a| a.header else null;
 
-    const source: CredentialSource = switch (file_source) {
-        .env => |name| blk: {
-            if (!validEnvName(name)) return error.BadEnvName;
-            break :blk .{ .env = try arena.dupe(u8, name) };
-        },
-        .literal => |value| blk: {
-            if (value.len == 0 or value.len > max_literal_bytes or !cleanLiteral(value)) return error.BadLiteral;
-            // An escaped JSON value leaves key bytes in the scanner stack that we cannot zero. A plain literal never reaches that decode path.
-            if (std.mem.indexOf(u8, source_json, value) == null) return error.BadLiteral;
-            const owned = try out.gpa.dupe(u8, value);
-            // Add `owned` to `literals` before later checks. The out.deinit call frees it after an error.
-            out.literals.append(out.gpa, owned) catch |err| {
-                std.crypto.secureZero(u8, owned);
-                out.gpa.free(owned);
-                return err;
-            };
-            break :blk .{ .literal = owned };
-        },
+    if (fp.headers) |file_headers| for (file_headers, 0..) |fh, i| {
+        if (!instance.validHeaderName(fh.name)) return error.BadHeaderName;
+        if (!instance.validHeaderValue(fh.value)) return error.BadHeaderValue;
+        for (file_headers[0..i]) |prev| {
+            if (std.ascii.eqlIgnoreCase(prev.name, fh.name)) return error.HeaderConflict;
+        }
+        // A pinned header must not collide with the header the credential generates.
+        if (header) |h| {
+            const generated = (instance.AuthMechanism{ .api_key = h }).headerName().?;
+            if (std.ascii.eqlIgnoreCase(fh.name, generated)) return error.HeaderConflict;
+        }
     };
 
-    const headers: ?[]const instance.Header = if (fp.headers) |file_headers| blk: {
-        const resolved = try arena.alloc(instance.Header, file_headers.len);
-        for (file_headers, 0..) |fh, i| {
-            if (!validHeaderName(fh.name)) return error.BadHeaderName;
-            if (!cleanHeaderValue(fh.value)) return error.BadHeaderValue;
-            // A header the file pins must not collide with the one the credential generates.
-            // An unknown header is checked again when the merge resolves it.
-            if (header) |h| if (std.ascii.eqlIgnoreCase(fh.name, generatedHeaderName(h))) return error.HeaderConflict;
-            resolved[i] = .{ .name = try arena.dupe(u8, fh.name), .value = try arena.dupe(u8, fh.value) };
-        }
-        break :blk resolved;
-    } else null;
-
-    const models = try arena.alloc(instance.ModelBinding, fp.models.len);
     for (fp.models, 0..) |fm, i| {
         if (fm.id.len == 0) return error.EmptyId;
-        if (!wire.ids.isSelectorPart(fm.id)) return error.BadId;
+        if (!wire.ids.isSelectorTail(fm.id)) return error.BadId;
         for (fp.models[0..i]) |prev| {
             if (std.mem.eql(u8, prev.id, fm.id)) return error.DuplicateModel;
         }
-        models[i] = .{
-            .id = try arena.dupe(u8, fm.id),
-            .upstream_id = try arena.dupe(u8, fm.upstream_id),
-            .limits = fm.limits,
-            .cost = fm.cost,
-            .flags = fm.flags,
-        };
     }
 
     return .{
-        .id = try arena.dupe(u8, fp.id),
-        .base_url = if (fp.base_url) |url| try arena.dupe(u8, url) else null,
+        .id = fp.id,
+        .base_url = fp.base_url,
         .protocol = fp.protocol,
-        .auth = .{ .header = header, .source = source },
+        .auth = auth,
         .cache = fp.cache,
-        .headers = headers,
-        .models = models,
+        .responses_dialect = fp.responses_dialect,
+        .headers = fp.headers,
+        .models = fp.models,
     };
+}
+
+/// A literal key holds no control byte, because a control byte breaks a header line.
+fn checkLiteral(value: []const u8) Error!void {
+    if (value.len == 0 or value.len > max_literal_bytes) return error.BadLiteral;
+    for (value) |c| if (std.ascii.isControl(c)) return error.BadLiteral;
 }
 
 /// Accept an absolute HTTP or HTTPS URL with a host. Reject userinfo, a query, and a fragment.
@@ -271,70 +294,35 @@ fn validEnvName(name: []const u8) bool {
     return true;
 }
 
-/// A literal key holds no control byte. A control byte breaks a header line or a log.
-fn cleanLiteral(value: []const u8) bool {
-    for (value) |c| if (std.ascii.isControl(c)) return false;
-    return true;
-}
-
-fn generatedHeaderName(header: instance.ApiKeyHeader) []const u8 {
-    return switch (header) {
-        .x_api_key => "x-api-key",
-        .authorization_bearer => "Authorization",
-    };
-}
-
-/// RFC 9110 defines the field-name token characters.
-fn isTchar(c: u8) bool {
-    return switch (c) {
-        '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~' => true,
-        '0'...'9', 'A'...'Z', 'a'...'z' => true,
-        else => false,
-    };
-}
-
-fn validHeaderName(name: []const u8) bool {
-    if (name.len == 0) return false;
-    for (name) |c| if (!isTchar(c)) return false;
-    return true;
-}
-
-/// A header value holds no control byte except a tab. This rejects CR, LF, NUL, and DEL.
-fn cleanHeaderValue(value: []const u8) bool {
-    for (value) |c| if (c != '\t' and std.ascii.isControl(c)) return false;
-    return true;
-}
-
 /// The credential of a local provider. The header is null when the catalog must name it.
 pub const LocalAuth = struct {
+    /// The catalog names the header when the file omits it.
     header: ?instance.ApiKeyHeader = null,
-    source: CredentialSource,
+    /// Null means the route wants an API key and the daemon holds none.
+    source: ?CredentialSource = null,
 };
 
-/// One `providers.json` entry, still unresolved. The merge fills every null from the catalog.
+/// One `providers.json` entry before the merge. A catalog row can fill a null route field.
 pub const LocalProvider = struct {
     id: []const u8,
     base_url: ?[]const u8 = null,
     protocol: ?instance.Protocol = null,
-    auth: LocalAuth,
+    /// Null means the route presents no credential at all.
+    auth: ?LocalAuth = null,
     cache: ?instance.CachePolicy = null,
+    responses_dialect: ?instance.ResponsesDialect = null,
     headers: ?[]const instance.Header = null,
     models: []const instance.ModelBinding = &.{},
 };
 
-pub const ResolveError = error{MissingCredential};
-
-/// Resolve one credential from the process environment or a literal key.
-/// The result borrows the key. Never log the key.
-pub fn resolveApiKey(source: CredentialSource, env: ?*const EnvMap) ResolveError!resolve.Secret {
-    const key = switch (source) {
-        .env => |name| (if (env) |e| e.get(name) else null) orelse return error.MissingCredential,
-        .literal => |bytes| bytes,
-    };
-    return .{ .api_key = key };
-}
-
 const testing = std.testing;
+
+/// Build the absolute `providers.json` path inside a temporary directory.
+fn tmpPath(tmp: *std.testing.TmpDir, buf: []u8) ![]const u8 {
+    const len = try tmp.dir.realPath(testing.io, buf);
+    const name = try std.fmt.bufPrint(buf[len..], "/providers.json", .{});
+    return buf[0 .. len + name.len];
+}
 
 fn wrapProvider(comptime provider_json: []const u8) []const u8 {
     return "{\"version\":1,\"providers\":[" ++ provider_json ++ "]}";
@@ -354,46 +342,10 @@ test "load a provider with an env api key and one model" {
     const p = loaded.providers[0];
     try testing.expectEqualStrings("minimax", p.id);
     try testing.expectEqual(instance.Protocol.anthropic_messages, p.protocol.?);
-    try testing.expectEqualStrings("MINIMAX_API_KEY", p.auth.source.env);
+    try testing.expectEqualStrings("MINIMAX_API_KEY", p.auth.?.source.?.env);
     try testing.expectEqualStrings("anthropic-version", p.headers.?[0].name);
     try testing.expectEqualStrings("local", p.models[0].id);
     try testing.expectEqual(@as(u64, 8192), p.models[0].limits.max_output_tokens);
-}
-
-test "a literal api key resolves without touching the environment" {
-    const json = wrapProvider(
-        \\{"id":"local","base_url":"http://127.0.0.1:8080/v1","protocol":"openai_chat",
-        \\ "auth":{"api_key":{"header":"authorization_bearer","source":{"literal":"sk-secret-value"}}}}
-    );
-    var loaded = try loadBytes(testing.allocator, json);
-    defer loaded.deinit();
-
-    var env = EnvMap.init(testing.allocator);
-    defer env.deinit();
-    const secret = try resolveApiKey(loaded.providers[0].auth.source, &env);
-    try testing.expectEqualStrings("sk-secret-value", secret.api_key);
-}
-
-test "an env api key resolves from the process environment" {
-    const json = wrapProvider(
-        \\{"id":"minimax","base_url":"https://api.minimax.io/anthropic","protocol":"anthropic_messages",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"MINIMAX_API_KEY"}}}}
-    );
-    var loaded = try loadBytes(testing.allocator, json);
-    defer loaded.deinit();
-
-    var env = EnvMap.init(testing.allocator);
-    defer env.deinit();
-    try env.put("MINIMAX_API_KEY", "sk-from-env");
-    const secret = try resolveApiKey(loaded.providers[0].auth.source, &env);
-    try testing.expectEqualStrings("sk-from-env", secret.api_key);
-
-    var absent = try loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"ABSENT_KEY_NAME"}}}}
-    ));
-    defer absent.deinit();
-    try testing.expectError(error.MissingCredential, resolveApiKey(absent.providers[0].auth.source, &env));
 }
 
 test "the strict schema rejects an unknown field" {
@@ -488,21 +440,61 @@ test "bad header names, values, and auth collisions are rejected" {
     )));
 }
 
-test "a literal written with a json escape is rejected" {
-    // The decoded value is "sk-Abc" but the source escapes it, so it never appears plainly.
-    try testing.expectError(error.BadLiteral, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-\u0041bc"}}}}
+test "an entry with a route and no credential is keyless" {
+    var loaded = try loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat"}
+    ));
+    defer loaded.deinit();
+
+    const p = loaded.providers[0];
+    try testing.expect(p.auth == null); // No auth block at all means the route presents no credential.
+
+}
+
+test "an api-key block with no source means the daemon holds no key" {
+    var loaded = try loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"anthropic","auth":{"api_key":{"header":"x_api_key"}}}
+    ));
+    defer loaded.deinit();
+
+    const p = loaded.providers[0];
+    // The block states the mechanism, and the absent source states that no value is held.
+    try testing.expect(p.auth != null);
+    try testing.expect(p.auth.?.source == null);
+    try testing.expectEqual(instance.ApiKeyHeader.x_api_key, p.auth.?.header.?);
+}
+
+test "a keyless entry and an empty credential write back differently" {
+    var loaded = try loadBytes(testing.allocator,
+        \\{"version":1,"providers":[
+        \\ {"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat"},
+        \\ {"id":"anthropic","auth":{"api_key":{"header":"x_api_key"}}}]}
+    );
+    defer loaded.deinit();
+
+    const bytes = try serialize(testing.allocator, loaded.providers);
+    defer testing.allocator.free(bytes);
+    var again = try loadBytes(testing.allocator, bytes);
+    defer again.deinit();
+
+    try testing.expect(again.providers[0].auth == null); // The route presents no credential.
+    try testing.expect(again.providers[1].auth != null); // The route wants a key.
+    try testing.expect(again.providers[1].auth.?.source == null);
+}
+
+test "two credential forms are ambiguous" {
+    try testing.expectError(error.AmbiguousCredential, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"x","api_key":"k",
+        \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}
     )));
 }
 
-test "a literal key is freed once when a later check fails" {
-    // The code appends the literal key before the header check fails. Cleanup frees the key once.
-    try testing.expectError(error.HeaderConflict, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-secret"}}},
-        \\ "headers":[{"name":"X-Api-Key","value":"injected"}]}
-    )));
+test "the shipped sample file is valid" {
+    const bytes = @embedFile("providers.sample.json");
+    var loaded = try loadBytes(testing.allocator, bytes);
+    defer loaded.deinit();
+    try testing.expectEqual(@as(usize, 2), loaded.providers.len);
+    try testing.expect(loaded.providers[1].auth == null); // The local server needs no key.
 }
 
 test "a missing providers array yields an empty layer" {
@@ -517,4 +509,59 @@ test "a missing file yields an empty layer" {
     var loaded = try load(testing.allocator, threaded.io(), "/nonexistent/yuke-test/providers.json");
     defer loaded.deinit();
     try testing.expectEqual(@as(usize, 0), loaded.providers.len);
+}
+
+test "the writer round-trips the layer through the file schema" {
+    const io = testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var loaded = try loadBytes(testing.allocator,
+        \\{"version":1,"providers":[
+        \\ {"id":"minimax","base_url":"https://api.minimax.io/anthropic","protocol":"anthropic_messages",
+        \\  "auth":{"api_key":{"header":"x_api_key","source":{"env":"MINIMAX_API_KEY"}}},
+        \\  "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
+        \\  "models":[{"id":"m","upstream_id":"MiniMax-Text","limits":{"context_window":200000,"max_output_tokens":8192}}]},
+        \\ {"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat"},
+        \\ {"id":"codex","base_url":"https://chatgpt.com/backend-api/codex","protocol":"openai_responses",
+        \\  "responses_dialect":"codex","api_key":"sk-literal"}]}
+    );
+    defer loaded.deinit();
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try tmpPath(&tmp, &path_buf);
+    try write(testing.allocator, io, path, loaded.providers);
+
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const bytes = try tmp.dir.readFileAlloc(io, "providers.json", arena.allocator(), .limited(max_file_bytes));
+
+    var again = try loadBytes(testing.allocator, bytes);
+    defer again.deinit();
+
+    try testing.expectEqual(loaded.providers.len, again.providers.len);
+    try testing.expectEqualStrings("MINIMAX_API_KEY", again.providers[0].auth.?.source.?.env);
+    try testing.expectEqual(instance.ApiKeyHeader.x_api_key, again.providers[0].auth.?.header.?);
+    try testing.expectEqualStrings("anthropic-version", again.providers[0].headers.?[0].name);
+    try testing.expectEqualStrings("m", again.providers[0].models[0].id);
+    // A keyless entry survives the round trip, so the writer never invents a credential.
+    try testing.expect(again.providers[1].auth == null);
+    // The short form is read once and written back in the long form.
+    try testing.expectEqualStrings("sk-literal", again.providers[2].auth.?.source.?.literal);
+    try testing.expectEqual(instance.ResponsesDialect.codex, again.providers[2].responses_dialect.?);
+}
+
+test "the written file is private" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    try write(testing.allocator, io, try tmpPath(&tmp, &path_buf), &.{});
+    const file = try tmp.dir.openFile(io, "providers.json", .{});
+    defer file.close(io);
+    const st = try file.stat(io);
+    const mode: u64 = @intCast(st.permissions.toMode());
+    try testing.expectEqual(@as(u64, 0), mode & 0o077);
 }

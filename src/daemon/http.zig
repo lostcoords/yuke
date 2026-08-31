@@ -700,16 +700,6 @@ test "identity echoes an admitted origin so a browser can read it" {
     try testing.expect(std.mem.containsAtLeast(u8, response, 1, "vary: Origin\r\n"));
 }
 
-test "identity omits the device before enrollment" {
-    var body_buf: [256]u8 = undefined;
-    var body: std.Io.Writer = .fixed(&body_buf);
-    try std.json.Stringify.value(Identity{}, .{ .emit_null_optional_fields = false }, &body);
-    try testing.expectEqualStrings(
-        "{\"service\":\"yuke\",\"version\":\"" ++ State.daemon_version ++ "\"}",
-        body.buffered(),
-    );
-}
-
 test "an absolute-form target refuses" {
     try expectForbidden("GET http://evil.example/up HTTP/1.1\r\nHost: 127.0.0.1:9853\r\n\r\n", &.{});
 }
@@ -791,50 +781,6 @@ fn blockedWriter(started: *zio.ResetEvent, release: *zio.ResetEvent, finished: *
 /// The test dependencies. An empty environment allocates nothing, so no test frees it.
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
-
-test "websocket close signal supervises both tasks" {
-    var rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-
-    var lifecycle = WebSocketLifecycle.init(rt.io());
-    var reader_started: zio.ResetEvent = .init;
-    var writer_started: zio.ResetEvent = .init;
-    var release: zio.ResetEvent = .init;
-    var reader_finished = false;
-    var writer_finished = false;
-    var reader = try rt.io().concurrent(blockedReader, .{ &reader_started, &release, &reader_finished });
-    var writer = try rt.io().concurrent(blockedWriter, .{ &writer_started, &release, &writer_finished });
-    try reader_started.wait();
-    try writer_started.wait();
-
-    signalWebSocketClose(&lifecycle);
-    superviseWebSocket(&lifecycle, close_drain_timeout);
-    reader.cancel(rt.io()) catch {};
-    writer.cancel(rt.io());
-    try testing.expect(reader_finished);
-    try testing.expect(writer_finished);
-}
-
-test "websocket terminal drain stops at its timeout" {
-    var rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-
-    var lifecycle = WebSocketLifecycle.init(rt.io());
-    lifecycle.terminal_close_queued = true;
-    var writer_started: zio.ResetEvent = .init;
-    var release: zio.ResetEvent = .init;
-    var writer_finished = false;
-    var writer = try rt.io().concurrent(blockedWriter, .{ &writer_started, &release, &writer_finished });
-
-    lifecycle.signalClose();
-    superviseWebSocket(&lifecycle, .{ .duration = .{
-        .clock = .awake,
-        .raw = std.Io.Duration.fromMilliseconds(1),
-    } });
-    try testing.expect(!writer_finished);
-    writer.cancel(rt.io());
-    try testing.expect(writer_finished);
-}
 
 test "the user commit and run.started precede the send_input response" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });

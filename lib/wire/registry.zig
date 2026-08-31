@@ -46,7 +46,7 @@ pub const structs = [_]TypeEntry{
     .{ .name = "AuthLoginResultBrowser", .ty = auth.AuthLoginResultBrowser },
     .{ .name = "AuthLoginResultDeviceCode", .ty = auth.AuthLoginResultDeviceCode },
     .{ .name = "AuthLoginSummary", .ty = auth.AuthLoginSummary },
-    .{ .name = "AuthLogoutParams", .ty = auth.AuthLogoutParams },
+    .{ .name = "AuthRemoveParams", .ty = auth.AuthRemoveParams },
     .{ .name = "AuthProvider", .ty = auth.AuthProvider },
     .{ .name = "AuthSetApiKeyParams", .ty = auth.AuthSetApiKeyParams },
     .{ .name = "DirEntry", .ty = fs.DirEntry },

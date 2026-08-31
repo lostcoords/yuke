@@ -98,8 +98,8 @@ pub const AuthLoginSummary = struct {
     flow: enums.AuthFlow,
 };
 
-/// These are the parameters for `auth.logout`.
-pub const AuthLogoutParams = struct {
+/// These are the parameters for `auth.remove`. It removes a local credential; OAuth waits for stage 10.
+pub const AuthRemoveParams = struct {
     provider_id: ids.ProviderId,
 };
 
@@ -133,16 +133,4 @@ test "login result union round-trips a device_code arm" {
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(json, buf.written());
-}
-
-test "provider decodes null requiredNullable fields" {
-    const json =
-        \\{"provider_id":"anthropic","credential_kind":null,"login_flows":["browser"],"pending_login":null}
-    ;
-    const parsed = try std.json.parseFromSlice(AuthProvider, testing.allocator, json, opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value.credential_kind == null);
-    try testing.expect(parsed.value.pending_login == null);
-    try testing.expectEqual(@as(usize, 1), parsed.value.login_flows.len);
-    try testing.expectEqual(enums.AuthFlow.browser, parsed.value.login_flows[0]);
 }

@@ -24,14 +24,6 @@ pub const SetEtag = sql.ExecQuery(
     },
 );
 
-pub const SetRev = sql.ExecQuery(
-    \\INSERT OR REPLACE INTO catalog_meta (k, v) VALUES ('rev', :v);
-,
-    struct {
-        v: []const u8,
-    },
-);
-
 pub const SelectProvider = sql.OptionalQuery(
     \\SELECT data FROM catalog_providers WHERE id = :id;
 ,
@@ -45,15 +37,6 @@ pub const SelectProvider = sql.OptionalQuery(
 
 pub const GetEtag = sql.OptionalQuery(
     \\SELECT v FROM catalog_meta WHERE k = 'etag';
-,
-    struct {},
-    struct {
-        v: []const u8,
-    },
-);
-
-pub const GetRev = sql.OptionalQuery(
-    \\SELECT v FROM catalog_meta WHERE k = 'rev';
 ,
     struct {},
     struct {
@@ -851,10 +834,8 @@ pub const Queries = struct {
     delete_providers: DeleteProviders,
     insert_provider: InsertProvider,
     set_etag: SetEtag,
-    set_rev: SetRev,
     select_provider: SelectProvider,
     get_etag: GetEtag,
-    get_rev: GetRev,
     insert_config: InsertConfig,
     advance_config: AdvanceConfig,
     config_by_revision: ConfigByRevision,

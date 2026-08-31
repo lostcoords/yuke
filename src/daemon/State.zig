@@ -1,5 +1,4 @@
-//! Daemon-global state. One reactor executor owns it for the daemon lifetime.
-//! Keep the per-connection state separate.
+//! Daemon-global state that one reactor executor owns. Per-connection state stays separate.
 
 const std = @import("std");
 const zio = @import("zio");
@@ -11,9 +10,11 @@ const util = @import("../util.zig");
 const provider = @import("../provider/provider.zig");
 const bundle = @import("../cloud/bundle.zig");
 const cloud_endpoint = @import("../cloud/endpoint.zig");
-const cloud_http = @import("../cloud/http.zig");
-const cloud_sync = @import("../cloud/sync.zig");
-const provider_catalog = @import("provider_catalog.zig");
+const cloud_http = @import("../net/http.zig");
+const cloud_fetch = @import("../cloud/fetch.zig");
+const catalog_fetch = @import("../catalog/fetch.zig");
+const catalog_store = @import("../catalog/store.zig");
+const provider_registry = @import("registry.zig");
 const host = @import("../host/host.zig");
 const retry = @import("../provider/retry.zig");
 const session_runtime = @import("session_runtime.zig");
@@ -33,24 +34,24 @@ home: []const u8, // The default workspace root. A create that omits a workspace
 sessions: session_runtime.Sessions, // The daemon stores live per-session state, keyed by session id.
 registry: connection.Registry, // The registry tracks live connections and the reverse subscription index.
 route_transport: provider.transport.Transport, // Every resolved route opens its response through this transport.
-providers: ?provider.config.Loaded = null, // The daemon owns the loaded providers.json layer when present.
+providers: ?provider.config.Loaded = null, // The daemon owns this layer. Replace it only through installProviders.
 cloud_client: cloud_http.Client,
 cloud_base_url: []u8,
 cloud_credential: ?[]u8 = null,
 device_id: ?[]u8 = null, // The enrolled device id. `/identity` reports it, and it holds no secret.
 cloud_bundle: ?bundle.Snapshot = null, // The account bundle stays in memory, because it holds live credentials.
 cloud_refresh_mutex: std.Io.Mutex = .init,
-catalog: provider_catalog.Catalog, // One merged snapshot serves catalog reads and provider requests.
+catalog: provider_registry.Registry, // One merged snapshot serves catalog reads and provider requests.
 defaults: daemon_config.Defaults = .{}, // Defaults seed a new session's model and system prompt.
 config_owner: ?daemon_config.Loaded = null, // The daemon owns the yuked.json arena when present.
 env: *const std.process.Environ.Map, // This pointer borrows the process environment for key lookup.
+providers_path: ?[]u8 = null, // State owns this path and frees it in deinit. Null means no config directory.
 run_group: std.Io.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
 tool_host: ?host.Host = null,
 retry_policy: retry.Policy = .{}, // A test shortens the delays. Production keeps the defaults.
 retry_budget: u8 = 8, // Retry permits for one whole run. // A test injects a tool host; production builds a LocalHost per run.
-/// The session index revision. It counts each published `session.summary_changed`.
-/// It lives in memory, so a restart returns it to zero.
+/// The in-memory session index revision. It counts each `session.summary_changed`, and a restart clears it.
 session_revision: u64 = 0,
 
 /// The daemon stores its configuration here.
@@ -83,10 +84,7 @@ fn dupeCloud(gpa: std.mem.Allocator, options: InitOptions) !struct { []u8, ?[]u8
     const base_url = try gpa.dupe(u8, options.cloud_base_url);
     errdefer gpa.free(base_url);
     const credential = if (options.cloud_credential) |value| try gpa.dupe(u8, value) else null;
-    errdefer if (credential) |value| {
-        std.crypto.secureZero(u8, value);
-        gpa.free(value);
-    };
+    errdefer if (credential) |value| gpa.free(value);
     const device_id = if (options.device_id) |value| try gpa.dupe(u8, value) else null;
     return .{ base_url, credential, device_id };
 }
@@ -111,7 +109,7 @@ pub fn init(options: InitOptions) !State {
         .route_transport = options.route_transport,
         .sessions = session_runtime.Sessions.init(gpa),
         .registry = connection.Registry.init(gpa),
-        .cloud_client = .init(gpa, options.io),
+        .cloud_client = .init(gpa, options.io, cloud_http.default_timeout),
         .cloud_base_url = cloud_base_url,
         .cloud_credential = cloud_credential,
         .device_id = device_id,
@@ -129,8 +127,7 @@ pub fn init(options: InitOptions) !State {
     return self;
 }
 
-/// Return the live runtime for a session and seed its projection from SQLite once.
-/// The caller must know the session exists. A durable event then folds onto the hydrated cursors.
+/// Return the live runtime of a known session, and seed its projection from SQLite once.
 pub fn activate(self: *State, session_id: wire.ids.SessionId) !*session_runtime.SessionRuntime {
     const rt = try self.sessions.getOrCreate(session_id);
     if (!rt.hydrated) {
@@ -145,8 +142,7 @@ pub fn activate(self: *State, session_id: wire.ids.SessionId) !*session_runtime.
     return rt;
 }
 
-/// Load the committed window, the configs, the durable cursors, and the pending inputs into a session.
-/// SQLite stays authoritative. The daemon caches the recent tail so resync serializes the projection.
+/// Hydrate one session from SQLite, and cache its recent tail so a resync can serialize it.
 pub fn hydrateSession(self: *State, session: *domain_session.Session) !void {
     std.debug.assert(session.active == null and session.queue.depth() == 0);
     std.debug.assert(session.committed.list.items.len == 0 and session.configs.map.count() == 0);
@@ -190,11 +186,9 @@ pub fn deinit(self: *State) void {
     self.sessions.deinit();
     self.catalog.deinit();
     if (self.cloud_bundle) |*loaded| loaded.deinit();
-    if (self.cloud_credential) |credential| {
-        std.crypto.secureZero(u8, credential);
-        self.gpa.free(credential);
-    }
+    if (self.cloud_credential) |credential| self.gpa.free(credential);
     if (self.device_id) |id| self.gpa.free(id);
+    if (self.providers_path) |path| self.gpa.free(path);
     self.gpa.free(self.cloud_base_url);
     self.cloud_client.deinit();
     if (self.providers) |*p| p.deinit();
@@ -204,9 +198,9 @@ pub fn deinit(self: *State) void {
 
 /// Replace the merged provider snapshot. Build the replacement before the live snapshot changes.
 pub fn rebuildCatalog(self: *State) !bool {
-    const next = try provider_catalog.Catalog.load(self.gpa, &self.db, .{
+    const next = try provider_registry.Registry.load(self.gpa, &self.db, .{
         .local = if (self.providers) |*loaded| loaded else null,
-        .cloud = if (self.cloud_bundle) |*loaded| loaded.document else null,
+        .account = if (self.cloud_bundle) |*loaded| loaded.document else null,
         .env = self.env,
     });
 
@@ -217,40 +211,64 @@ pub fn rebuildCatalog(self: *State) !bool {
     return changed;
 }
 
+/// Report what one cloud refresh achieved.
+pub const RefreshStatus = enum {
+    /// The stored documents match the control plane.
+    current,
+    /// The control plane answered without a catalog.
+    catalog_unavailable,
+};
+
+pub const RefreshResult = struct {
+    catalog_rev: wire.ids.CatalogRev,
+    status: RefreshStatus,
+};
+
 /// Fetch the public catalog and the account bundle. Only one check runs at a time.
-pub fn refreshCloud(self: *State) !wire.ids.CatalogRev {
+pub fn refreshCloud(self: *State) !RefreshResult {
     try self.cloud_refresh_mutex.lock(self.io);
     defer self.cloud_refresh_mutex.unlock(self.io);
-    try self.refreshCloudLocked();
-    return self.catalog.revision;
+    const status = try self.refreshCloudLocked();
+    return .{ .catalog_rev = self.catalog.revision, .status = status };
 }
 
-fn refreshCloudLocked(self: *State) !void {
+fn refreshCloudLocked(self: *State) !RefreshStatus {
     std.debug.assert(self.cloud_base_url.len != 0);
 
     var first_error: ?anyerror = null;
     var rebuild = false;
-    const catalog_outcome = cloud_sync.refreshCatalog(self.gpa, &self.cloud_client, &self.db, self.cloud_base_url) catch |err| blk: {
+    var status: RefreshStatus = .current;
+    // The ETag of the fetched catalog. It commits only after the live snapshot holds those rows.
+    var pending_etag: ?[]const u8 = null;
+    var etag_buf: [catalog_fetch.max_etag_bytes]u8 = undefined;
+    const catalog_outcome = catalog_fetch.refreshCatalog(self.gpa, &self.cloud_client, &self.db, self.cloud_base_url, &etag_buf) catch |err| blk: {
+        // A shutdown cancel must stop the refresh. A later request would delay the shutdown again.
+        if (err == error.Canceled) return err;
         first_error = err;
         break :blk null;
     };
     if (catalog_outcome) |outcome| switch (outcome) {
-        .updated => rebuild = true,
+        .updated => |value| {
+            rebuild = true;
+            pending_etag = value;
+        },
         .unchanged => {},
-        .unavailable => std.log.warn("catalog not synced by the control plane yet", .{}),
+        .unavailable => status = .catalog_unavailable,
     };
 
     var next_bundle: ?bundle.Snapshot = null;
     defer if (next_bundle) |*loaded| loaded.deinit();
     if (self.cloud_credential) |credential| {
         const etag = if (self.cloud_bundle) |*loaded| loaded.etag else "";
-        const providers_outcome = cloud_sync.refreshProviders(
+        const providers_outcome = cloud_fetch.refreshProviders(
             self.gpa,
             &self.cloud_client,
             self.cloud_base_url,
             credential,
             etag,
         ) catch |err| blk: {
+            // A shutdown cancel must stop the refresh here too.
+            if (err == error.Canceled) return err;
             if (first_error == null) first_error = err;
             break :blk null;
         };
@@ -271,16 +289,19 @@ fn refreshCloudLocked(self: *State) !void {
         } else {
             changed = try self.rebuildCatalog();
         }
+        // The stored ETag means the live snapshot holds that document, so it commits last.
+        if (pending_etag) |value| try catalog_store.setEtag(&self.db, value);
     }
     if (changed) self.announceCatalogChanged();
     if (first_error) |err| return err;
+    return status;
 }
 
-/// Install one bundle only after the merged replacement is ready.
+/// Install one bundle after the merged replacement is ready. State takes ownership of `next_bundle`.
 fn installCloudBundle(self: *State, next_bundle: *bundle.Snapshot) !bool {
-    const next_catalog = try provider_catalog.Catalog.load(self.gpa, &self.db, .{
+    const next_catalog = try provider_registry.Registry.load(self.gpa, &self.db, .{
         .local = if (self.providers) |*loaded| loaded else null,
-        .cloud = next_bundle.document,
+        .account = next_bundle.document,
         .env = self.env,
     });
 
@@ -292,6 +313,25 @@ fn installCloudBundle(self: *State, next_bundle: *bundle.Snapshot) !bool {
     next_bundle.* = undefined;
     previous_catalog.deinit();
     if (previous_bundle) |*loaded| loaded.deinit();
+    return changed;
+}
+
+/// Install one providers layer after the replacement is ready, because a direct assignment frees live routes.
+pub fn installProviders(self: *State, next: *provider.config.Loaded) !bool {
+    const next_catalog = try provider_registry.Registry.load(self.gpa, &self.db, .{
+        .local = next,
+        .account = if (self.cloud_bundle) |*loaded| loaded.document else null,
+        .env = self.env,
+    });
+
+    const changed = !std.mem.eql(u8, &self.catalog.revision.raw, &next_catalog.revision.raw);
+    var previous_catalog = self.catalog;
+    var previous_providers = self.providers;
+    self.catalog = next_catalog;
+    self.providers = next.*;
+    next.* = undefined;
+    previous_catalog.deinit();
+    if (previous_providers) |*loaded| loaded.deinit();
     return changed;
 }
 
@@ -309,6 +349,24 @@ pub fn announceCatalogChanged(self: *State) void {
     self.registry.publishAll(bytes);
 }
 
+/// Publish one provider's new authentication state. A null `kind` means the daemon holds no credential.
+pub fn announceAuthChanged(self: *State, provider_id: []const u8, kind: ?wire.enums.AuthCredentialKind) void {
+    const note: wire.rpc.Notification = .{
+        .method = .@"auth.changed",
+        .params = .{ .auth_changed_data = .{ .provider = .{
+            .provider_id = provider_id,
+            .credential_kind = kind,
+            .login_flows = &.{},
+        } } },
+    };
+    const bytes = connection.frameNotification(self.gpa, note) catch |err| {
+        std.log.warn("cannot frame auth.changed: {t}", .{err});
+        return;
+    };
+    defer self.gpa.free(bytes);
+    self.registry.publishAll(bytes);
+}
+
 /// Return wall-clock milliseconds since the Unix epoch. See util.nowMillis for the clock rules.
 pub fn nowMillis(self: *const State) u64 {
     return util.nowMillis(self.io);
@@ -319,8 +377,7 @@ pub fn newId(self: *const State) [16]u8 {
     return util.newId(self.io);
 }
 
-/// Draw a jitter value in [0, 1) for one retry delay.
-/// A UUIDv7 pins its version and variant bits, so this reads only bytes that stay random.
+/// Draw a retry jitter in [0, 1) from the UUIDv7 bytes that stay random.
 pub fn jitter(self: *const State) f64 {
     const id = self.newId();
     // Bytes 9..16 hold 56 random bits. Byte 8 carries the variant, so it must not take part.
@@ -350,7 +407,7 @@ test "a cloud bundle and its etag install as one snapshot" {
     defer state.deinit();
 
     var snapshot = try bundle.Snapshot.init(std.testing.allocator,
-        \\{"version":1,"catalog_rev":null,"providers":[{"id":"acme","public_id":"p1","name":"Acme",
+        \\{"version":1,"catalog_rev":null,"providers":[{"id":"acme","name":"Acme",
         \\ "base_url":"https://acme.example/v1","protocol":"openai_chat","cache":"unsupported","headers":[],
         \\ "auth":{"kind":"api_key","header":"authorization_bearer","status":"active","api_key":"secret"},
         \\ "models":[{"id":"m","upstream_id":"upstream-m","name":"Model","limits":{"context_window":null,"max_output_tokens":null},
@@ -365,10 +422,10 @@ test "a cloud bundle and its etag install as one snapshot" {
     try std.testing.expect(changed);
     try std.testing.expectEqualStrings("etag-1", state.cloud_bundle.?.etag);
     try std.testing.expectEqualStrings("secret", state.cloud_bundle.?.document.providers[0].auth.api_key.?);
-    const resolved = state.catalog.resolveModel("acme/m").?;
-    try std.testing.expectEqual(wire.enums.ProviderSource.cloud, resolved.provider.source);
-    try std.testing.expect(resolved.provider.route != null);
-    try std.testing.expect(resolved.model.supports_tools == null);
+    const resolved = state.catalog.resolveModel("cloud:acme/m").?;
+    try std.testing.expectEqual(wire.enums.ProviderSource.cloud, resolved.provider.origin);
+    try std.testing.expect(resolved.provider.availability == .ready);
+    try std.testing.expect(resolved.model.caps.tools == .unknown);
 }
 
 test "init restores durable pending input into the runtime queue" {

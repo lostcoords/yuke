@@ -5,8 +5,6 @@ const wire = @import("wire");
 const wss = @import("websocket").server;
 const State = @import("State.zig");
 const handlers = @import("handlers.zig");
-const cloud_catalog = @import("../cloud/catalog.zig");
-const catalog_store = @import("../database/catalog.zig");
 const connection = @import("connection.zig");
 const run_task = @import("run_task.zig");
 
@@ -129,7 +127,8 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             return .{ .ok = .{ .id = request.id, .result = .{ .catalog_list_result = result } } };
         },
         .@"catalog.refresh" => {
-            const result: wire.catalog.CatalogRefreshResult = .{ .catalog_rev = try state.refreshCloud() };
+            const refreshed = try state.refreshCloud();
+            const result: wire.catalog.CatalogRefreshResult = .{ .catalog_rev = refreshed.catalog_rev };
             return .{ .ok = .{ .id = request.id, .result = .{ .catalog_refresh_result = result } } };
         },
         .@"session.resync" => {
@@ -165,9 +164,31 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             };
             return .{ .ok = .{ .id = request.id, .result = .{ .fs_browse_result = result } } };
         },
+        .@"auth.list" => {
+            const result = try handlers.authList(state, arena, request.params.empty);
+            return .{ .ok = .{ .id = request.id, .result = .{ .auth_list_result = result } } };
+        },
+        .@"auth.set_api_key" => {
+            const result = handlers.authSetApiKey(state, arena, request.params.auth_set_api_key_params) catch |err| switch (err) {
+                error.BadProviderId => return errorResponse(request.id, .bad_request, "the provider id is not a selector part"),
+                error.BadApiKey => return errorResponse(request.id, .bad_request, "the api key is empty"),
+                error.NoConfigDirectory => return errorResponse(request.id, .internal, "no config directory holds providers.json"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .empty = result } } };
+        },
+        .@"auth.remove" => {
+            const result = handlers.authRemove(state, arena, request.params.auth_remove_params) catch |err| switch (err) {
+                error.BadProviderId => return errorResponse(request.id, .bad_request, "the provider id is not a selector part"),
+                error.UnknownProvider => return errorResponse(request.id, .unknown_provider, "unknown provider"),
+                error.NoConfigDirectory => return errorResponse(request.id, .internal, "no config directory holds providers.json"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .empty = result } } };
+        },
         inline else => |method| {
             comptime assertUnimplemented(method);
-            return errorResponse(request.id, .unknown_method, "not implemented");
+            return errorResponse(request.id, .not_implemented, "not implemented");
         },
     }
 }
@@ -181,11 +202,8 @@ const unimplemented = [_]wire.enums.MethodName{
     .@"permission.decide",
     .@"permission.rules",
     .@"permission.forget",
-    .@"auth.list",
-    .@"auth.set_api_key",
     .@"auth.login",
     .@"auth.cancel_login",
-    .@"auth.logout",
     .@"workspace.remove",
     .@"workspace.skills",
 };

@@ -1,30 +1,20 @@
-//! The provider catalog snapshot. One row holds one provider and its models, because the
-//! executable catalog is small. The catalog names credentials; it never holds one.
+//! The catalog snapshot. One row holds one provider and its models, and never a credential.
 
 const std = @import("std");
-const cloud_catalog = @import("../cloud/catalog.zig");
-const Database = @import("database.zig").Database;
+const cloud_catalog = @import("feed.zig");
+const Database = @import("../database/database.zig").Database;
 
 pub const Provider = cloud_catalog.Provider;
-
-const rev_one = "0123456789abcdef" ** 8;
-const rev_two = "fedcba9876543210" ** 8;
 
 const stringify_opts: std.json.Stringify.Options = .{ .emit_null_optional_fields = true };
 const parse_opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
-/// Replace the snapshot in one transaction. The rows, the revision, and the etag commit together.
-/// `scratch` holds each JSON blob until SQLite copies it.
+/// Replace the stored rows in one transaction. The caller stores the ETag later.
 pub fn replace(
     db: *Database,
     scratch: std.mem.Allocator,
     rows: []const Provider,
-    revision: []const u8,
-    etag_value: []const u8,
 ) !void {
-    // The decoder accepts only a sha-512 hex digest, so a stored revision always converts back.
-    std.debug.assert(revision.len == 128);
-
     var tx = try db.begin();
     defer tx.deinit();
 
@@ -34,23 +24,18 @@ pub fn replace(
         defer scratch.free(data);
         try db.queries.insert_provider.exec(.{ .id = p.id, .data = data });
     }
-    try db.queries.set_rev.exec(.{ .v = revision });
-    try db.queries.set_etag.exec(.{ .v = etag_value });
-
     try tx.commit();
 }
 
-/// Load every provider into `arena` in id order. The result borrows `arena`.
 /// Return the stored row for one provider id, or null. The result borrows `arena`.
 pub fn provider(db: *Database, arena: std.mem.Allocator, id: []const u8) !?Provider {
     const row = (try db.queries.select_provider.maybeOne(arena, .{ .id = id })) orelse return null;
     return try std.json.parseFromSliceLeaky(Provider, arena, row.value.data, parse_opts);
 }
 
-/// Return the stored revision from `arena`, or null. The result borrows `arena`.
-pub fn rev(db: *Database, arena: std.mem.Allocator) !?[]const u8 {
-    const row = (try db.queries.get_rev.maybeOne(arena, .{})) orelse return null;
-    return row.value.v;
+/// Store the ETag of the document that the live snapshot holds.
+pub fn setEtag(db: *Database, value: []const u8) !void {
+    try db.queries.set_etag.exec(.{ .v = value });
 }
 
 /// Return the stored etag from `arena`, or null. A conditional request sends it.
@@ -94,11 +79,12 @@ test "a snapshot round-trips a provider with its models" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    try replace(&db, a, &.{sample("acme", &.{one_model})}, rev_one, "etag-1");
+    try replace(&db, a, &.{sample("acme", &.{one_model})});
+    try setEtag(&db, "etag-1");
 
     const got = (try provider(&db, a, "acme")).?;
     try testing.expectEqualStrings("acme", got.id);
-    try testing.expect(got.routable());
+    try testing.expect(got.protocol != null and got.auth != null);
 
     const m = got.models[0];
     try testing.expectEqualStrings("upstream-1", m.upstream_id);
@@ -107,7 +93,6 @@ test "a snapshot round-trips a provider with its models" {
     try testing.expectEqualStrings("beta", m.status.?);
     try testing.expectEqualStrings("high", m.reasoning_levels[1].?);
 
-    try testing.expectEqualStrings(rev_one, (try rev(&db, a)).?);
     try testing.expectEqualStrings("etag-1", (try etag(&db, a)).?);
 }
 
@@ -118,16 +103,16 @@ test "a second replace overwrites the prior snapshot" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    try replace(&db, a, &.{ sample("p1", &.{}), sample("p2", &.{}) }, rev_one, "e1");
-    try replace(&db, a, &.{sample("p2", &.{})}, rev_two, "e2");
+    try replace(&db, a, &.{ sample("p1", &.{}), sample("p2", &.{}) });
+    try replace(&db, a, &.{sample("p2", &.{})});
+    try setEtag(&db, "e2");
 
     try testing.expect((try provider(&db, a, "p1")) == null); // The replace dropped the old row.
     try testing.expectEqualStrings("p2", (try provider(&db, a, "p2")).?.id);
-    try testing.expectEqualStrings(rev_two, (try rev(&db, a)).?);
     try testing.expectEqualStrings("e2", (try etag(&db, a)).?);
 }
 
-test "an empty snapshot reads back with no revision" {
+test "an empty snapshot reads back with no rows" {
     var db = try Database.openTest();
     defer db.deinit();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
@@ -135,7 +120,6 @@ test "an empty snapshot reads back with no revision" {
     const a = arena.allocator();
 
     try testing.expect((try provider(&db, a, "acme")) == null);
-    try testing.expect((try rev(&db, a)) == null);
     try testing.expect((try etag(&db, a)) == null);
 }
 
@@ -150,9 +134,9 @@ test "an unroutable provider survives storage" {
     row.protocol = null;
     row.base_url = null;
     row.auth = null;
-    try replace(&db, a, &.{row}, rev_one, "e1");
+    try replace(&db, a, &.{row});
 
     const got = (try provider(&db, a, "unrouted")).?;
-    try testing.expect(!got.routable());
+    try testing.expect(got.protocol == null);
     try testing.expectEqualStrings("unrouted", got.id);
 }

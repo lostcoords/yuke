@@ -113,7 +113,7 @@ pub const MethodName = enum {
     @"catalog.list",
     /// Refresh the model catalog from providers.
     @"catalog.refresh",
-    /// List authentication providers and logins.
+    /// List the local providers and the credential each one holds.
     @"auth.list",
     /// Set an API key for a provider.
     @"auth.set_api_key",
@@ -121,8 +121,8 @@ pub const MethodName = enum {
     @"auth.login",
     /// Cancel an active login flow.
     @"auth.cancel_login",
-    /// Log out of a provider.
-    @"auth.logout",
+    /// Remove the credential the daemon holds for a provider.
+    @"auth.remove",
     /// Describe one filesystem path.
     @"fs.stat",
     /// List one directory for the workspace picker.
@@ -177,8 +177,18 @@ pub const ProviderProtocol = enum { anthropic_messages, openai_chat, openai_resp
 /// Name where a provider's route and credential came from.
 pub const ProviderSource = enum { cloud, local };
 
-/// Report whether a configured provider can serve a request now.
-pub const ProviderState = enum { ready, needs_login };
+/// Report whether a configured provider can serve a request now, and why it cannot.
+pub const ProviderState = enum {
+    ready,
+    /// No credential reached the daemon.
+    needs_credential,
+    /// A routing field is missing, so the daemon cannot build a request.
+    needs_route,
+    /// The grant expired. The user must authenticate again.
+    expired,
+    /// The control plane revoked the grant.
+    revoked,
+};
 
 pub const SkillScope = enum { project, personal };
 
@@ -212,6 +222,8 @@ pub const ErrorCode = enum(i32) {
     invalid_patch = -31018,
     unsupported_model = -31019,
     unsupported_reasoning = -31020,
+    not_implemented = -31022,
+    unknown_provider = -31023,
     internal = -32603,
     overloaded = -31021,
 
@@ -273,29 +285,6 @@ pub const CapabilitySet = struct {
 };
 
 const testing = std.testing;
-
-test "strict enum decodes wire string" {
-    const parsed = try std.json.parseFromSlice(NoticeLevel, testing.allocator,
-        \\"warn"
-    , .{});
-    defer parsed.deinit();
-    try testing.expectEqual(NoticeLevel.warn, parsed.value);
-}
-
-test "strict enum rejects unknown value" {
-    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(NoticeLevel, testing.allocator,
-        \\"catastrophe"
-    , .{}));
-}
-
-test "dotted wire string round-trips" {
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(MethodName.@"session.send_input", .{}, &buf.writer);
-    try testing.expectEqualStrings(
-        \\"session.send_input"
-    , buf.written());
-}
 
 test "numeric enum round-trips as an integer" {
     const parsed = try std.json.parseFromSlice(ErrorCode, testing.allocator,

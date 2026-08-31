@@ -458,7 +458,7 @@ function loadCatalog(connKey) {
 /** @param {string} connKey @param {string | null | undefined} modelId @returns {number} */
 function contextWindowOf(connKey, modelId) {
   if (!modelId) return 0;
-  const m = catalogOf(connKey).models.find((x) => x.provider + "/" + x.id === modelId);
+  const m = catalogOf(connKey).models.find((x) => x.selector === modelId);
   return m && m.context_window ? m.context_window : 0;
 }
 
@@ -469,7 +469,7 @@ const chatDefaults = { model: null, reasoning: "" };
 
 /** @param {Wire.ModelInfo} model @param {string} reasoning @returns {void} */
 function chooseModel(model, reasoning) {
-  chatDefaults.model = model.provider + "/" + model.id;
+  chatDefaults.model = model.selector;
   chatDefaults.reasoning = reasoning;
   notice.show("model · " + model.name + (reasoning ? " · " + reasoning : ""));
   root.invalidate();
@@ -932,8 +932,9 @@ function openModelPicker() {
       notice.show("no model in the catalog");
       return null;
     }
+    // The daemon owns the selector format. The picker keys on it and never builds one.
     /** @param {Wire.ModelInfo} m @returns {string} */
-    const qualified = (m) => m.provider + "/" + m.id;
+    const qualified = (m) => m.selector;
     const p = ui.pick({
       title: "select a model",
       footer: "type to filter · ↵ select · esc close",

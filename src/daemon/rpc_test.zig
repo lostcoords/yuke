@@ -4,8 +4,8 @@ const std = @import("std");
 const wire = @import("wire");
 const State = @import("State.zig");
 const handlers = @import("handlers.zig");
-const cloud_catalog = @import("../cloud/catalog.zig");
-const catalog_store = @import("../database/catalog.zig");
+const cloud_catalog = @import("../catalog/feed.zig");
+const catalog_store = @import("../catalog/store.zig");
 const connection = @import("connection.zig");
 const run_task = @import("run_task.zig");
 const rpc = @import("rpc.zig");
@@ -29,7 +29,7 @@ var fixture_env: std.process.Environ.Map = .init(std.testing.allocator);
 /// Every fixture starts with this canned transport. A test can replace the state transport.
 var fixture_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
 
-/// A test uses this provider to resolve `mock/fast` through the production catalog.
+/// A test uses this provider to resolve `local:mock/fast` through the production catalog.
 const fixture_providers =
     \\{"version":1,"providers":[{"id":"mock","base_url":"https://mock.invalid/v1","protocol":"anthropic_messages",
     \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-mock"}}},
@@ -600,7 +600,7 @@ test "a completed run drains every queued input into one next run" {
     defer fixture.deinit();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/drain", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/drain", .model = "local:mock/fast" });
     const first = try sendText(&fixture, a, sid, "one");
     try std.testing.expect(first == .started);
     const second = try sendText(&fixture, a, sid, "two");
@@ -631,7 +631,7 @@ test "a completed run drains every queued input into one next run" {
     try std.testing.expectEqual(@as(u64, 0), snap.usage_input_total);
     try std.testing.expectEqual(@as(u64, 16), snap.usage_output_total);
     // The committed assistant record carries the session's configured model.
-    try std.testing.expectEqualStrings("mock/fast", history[1].assistant.provenance.?.model);
+    try std.testing.expectEqualStrings("local:mock/fast", history[1].assistant.provenance.?.model);
 }
 
 test "a durable queue starts before a new idle input" {
@@ -639,7 +639,7 @@ test "a durable queue starts before a new idle input" {
     defer fixture.deinit();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resume", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resume", .model = "local:mock/fast" });
     const old_content = [_]wire.content.ContentPart{.{ .text = .{ .text = "old" } }};
     const new_content = [_]wire.content.ContentPart{.{ .text = .{ .text = "new" } }};
     try fixture.state.db.conn.execNoArgs("BEGIN IMMEDIATE");
@@ -671,7 +671,7 @@ test "a faulted runtime retains the old open-run fence" {
     defer fixture.deinit();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/fault", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/fault", .model = "local:mock/fast" });
     const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "first" } }};
     const old = try engine_run.beginTurn(&fixture.state.db, fixture.state.io, a, sid.raw, &content, 0);
     const rt = try fixture.state.sessions.getOrCreate(sid);
@@ -692,7 +692,7 @@ test "cancel input and cancel run preserve exact durable outcomes" {
     defer fixture.deinit();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/cancel", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/cancel", .model = "local:mock/fast" });
     const started = (try sendText(&fixture, a, sid, "input")).started;
     const queued_one = (try sendText(&fixture, a, sid, "input")).queued;
     const queued_two = (try sendText(&fixture, a, sid, "input")).queued;
@@ -809,7 +809,7 @@ test "cancel run interrupts a blocked provider read" {
 
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/block", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/block", .model = "local:mock/fast" });
     const started = (try sendText(&fixture, a, sid, "hi")).started;
 
     // The run parks in the read. A separate task cancels it during the read.
@@ -861,7 +861,7 @@ test "resync during a run serializes the live draft" {
     fixture.state.route_transport = blocking.transportFor();
 
     const a = fixture.allocator();
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-live", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-live", .model = "local:mock/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
 
     var driver = try fixture.rt.spawn(resyncWhileBlocked, .{ &fixture.state, sid, &entered, &gate });
@@ -879,7 +879,7 @@ test "the live draft is reachable from the runtime during a run" {
 
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/reach", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/reach", .model = "local:mock/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
 
     // A driver inspects the runtime while the run parks in the provider read.
@@ -893,7 +893,7 @@ test "activation hydrates the committed window and the durable cursor" {
     defer fixture.deinit();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/hydrate", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/hydrate", .model = "local:mock/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -912,7 +912,7 @@ test "resync of an idle session returns its committed window" {
     defer fixture.deinit();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-idle", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-idle", .model = "local:mock/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -937,7 +937,7 @@ test "resync limits the window to the newest page" {
     defer fixture.deinit();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-page", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-page", .model = "local:mock/fast" });
     // Two turns commit four messages.
     inline for (.{ "one", "two" }) |text| {
         const content = [_]wire.content.ContentPart{.{ .text = .{ .text = text } }};
@@ -957,7 +957,7 @@ test "resync validates the limit and the session id" {
     defer fixture.deinit();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-bad", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-bad", .model = "local:mock/fast" });
     try std.testing.expectError(error.BadRequest, handlers.sessionResync(&fixture.state, a, .{ .session_id = sid, .limit = 0 }));
     try std.testing.expectError(error.BadRequest, handlers.sessionResync(&fixture.state, a, .{ .session_id = sid, .limit = wire.meta.limits.max_page_size + 1 }));
     const missing: wire.ids.SessionId = .bytes(@splat(9));
@@ -981,7 +981,7 @@ test "a reasoning block stop finalizes the signature into the committed message"
     fixture.state.route_transport = canned.transport();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/reason", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/reason", .model = "local:mock/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
@@ -1026,7 +1026,7 @@ const cached_reply =
 /// Install `seq`, run one full turn, and return when the session settles.
 fn runOneTurn(fixture: *TestState, a: std.mem.Allocator, path: []const u8, seq: *provider.transport.ScriptedTransport) !wire.ids.SessionId {
     fixture.state.route_transport = seq.transport();
-    const sid = try createSession(fixture, a, .{ .workspace_path = path, .model = "mock/fast" });
+    const sid = try createSession(fixture, a, .{ .workspace_path = path, .model = "local:mock/fast" });
     _ = try sendText(fixture, a, sid, "hi");
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -1113,7 +1113,7 @@ test "a turn announces its activity and its summary" {
     fixture.state.route_transport = seq.transport();
     // Register before the session exists, so the create announcement also lands in the outbox.
     try fixture.register();
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/gauge-activity", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/gauge-activity", .model = "local:mock/fast" });
     try fixture.subscribe(sid);
     _ = try sendText(&fixture, a, sid, "hi");
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
@@ -1167,7 +1167,7 @@ test "a tool_use round commits, then a second round streams the final answer" {
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = root, .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = root, .model = "local:mock/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
@@ -1285,7 +1285,7 @@ test "a tool round runs its calls one at a time in provider order" {
     var gated: GatedHost = .{ .gates = &gates };
     fixture.state.tool_host = gated.host();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/batch", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/batch", .model = "local:mock/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
 
     var driver = try fixture.rt.spawn(gatedBatchDriver, .{ &fixture.state, sid, &gates });
@@ -1338,7 +1338,7 @@ test "cancel run cancels the blocked tool call and every pending one" {
     var gated: GatedHost = .{ .gates = &gates }; // No gate opens, so the first call stays blocked.
     fixture.state.tool_host = gated.host();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/batch-cancel", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/batch-cancel", .model = "local:mock/fast" });
     const started = (try sendText(&fixture, a, sid, "hi")).started;
 
     var driver = try fixture.rt.spawn(cancelBlockedBatchDriver, .{ &fixture.state, sid, started.run_id, &gates });
@@ -1380,7 +1380,7 @@ test "cancel run keeps a finished tool and cancels the blocked one" {
     var gated: GatedHost = .{ .gates = &gates }; // Only gate a opens, so the second call blocks.
     fixture.state.tool_host = gated.host();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/batch-mixed", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/batch-mixed", .model = "local:mock/fast" });
     const started = (try sendText(&fixture, a, sid, "hi")).started;
 
     var driver = try fixture.rt.spawn(cancelOneDoneDriver, .{ &fixture.state, sid, started.run_id, &gates });
@@ -1424,7 +1424,7 @@ test "an input queued while tools run drains only after the turn commits" {
     var gated: GatedHost = .{ .gates = &gates };
     fixture.state.tool_host = gated.host();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/steer", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/steer", .model = "local:mock/fast" });
     try std.testing.expect((try sendText(&fixture, a, sid, "hi")) == .started);
 
     var driver = try fixture.rt.spawn(steerWhileToolRuns, .{ &fixture.state, sid, &gates });
@@ -1473,7 +1473,7 @@ test "an input queued while the provider streams drains after the turn" {
     fixture.state.route_transport = transport_impl.transportFor();
 
     const a = fixture.allocator();
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/steer-stream", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/steer-stream", .model = "local:mock/fast" });
     try std.testing.expect((try sendText(&fixture, a, sid, "hi")) == .started);
 
     var driver = try fixture.rt.spawn(steerWhileStreaming, .{ &fixture.state, sid, &entered, &gate });
@@ -1496,7 +1496,7 @@ test "the queue rejects input past the max" {
     defer fixture.deinit();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/queue-full", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/queue-full", .model = "local:mock/fast" });
     // Start a run; it stays active while the test fills the queue synchronously.
     try std.testing.expect((try sendText(&fixture, a, sid, "0")) == .started);
 
@@ -1531,7 +1531,7 @@ test "a finite max_rounds ends the turn after the capped tool round" {
     var gated: GatedHost = .{ .gates = &gates };
     fixture.state.tool_host = gated.host();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/max-rounds", .model = "mock/fast", .max_rounds = 1 });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/max-rounds", .model = "local:mock/fast", .max_rounds = 1 });
     _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
@@ -1567,7 +1567,7 @@ test "max_rounds of 2 allows a tool round then a final answer" {
     var gated: GatedHost = .{ .gates = &gates };
     fixture.state.tool_host = gated.host();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/max-rounds-2", .model = "mock/fast", .max_rounds = 2 });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/max-rounds-2", .model = "local:mock/fast", .max_rounds = 2 });
     _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
@@ -1594,7 +1594,7 @@ test "max_rounds of 1 does not cap a plain text turn" {
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
     fixture.state.route_transport = seq.transport();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/max-rounds-text", .model = "mock/fast", .max_rounds = 1 });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/max-rounds-text", .model = "local:mock/fast", .max_rounds = 1 });
     _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
@@ -1725,7 +1725,7 @@ test "a resync snapshot reconstructs the live draft" {
     fixture.state.route_transport = transport_impl.transportFor();
 
     const a = fixture.allocator();
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-live-draft", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-live-draft", .model = "local:mock/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
 
     var driver = try fixture.rt.spawn(resyncInstallAtPark, .{ &fixture.state, sid, &entered, &gate });
@@ -1743,7 +1743,7 @@ test "a client fold of the published stream matches the daemon session" {
     fixture.state.route_transport = transport_impl.transportFor();
 
     const a = fixture.allocator();
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/conform", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/conform", .model = "local:mock/fast" });
     // Subscribe before the input starts the run, so the fold sees every frame from the first one.
     try fixture.register();
     try fixture.subscribe(sid);
@@ -1820,7 +1820,7 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
     defer capture.deinit();
     fixture.state.route_transport = capture.transportFor();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/prov", .model = "acme/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/prov", .model = "local:acme/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
@@ -1831,11 +1831,11 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
     // The body carries the exact upstream model rather than the session-qualified name.
     const sent = try std.json.parseFromSliceLeaky(std.json.Value, a, capture.body.items, .{});
     try std.testing.expectEqualStrings("acme-fast-1", sent.object.get("model").?.string);
-    try std.testing.expect(std.mem.indexOf(u8, capture.body.items, "acme/fast") == null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.body.items, "local:acme/fast") == null);
     // The committed assistant message records the resolved protocol and the session model.
     const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
     try std.testing.expectEqual(wire.enums.ProviderProtocol.anthropic_messages, history[1].assistant.provenance.?.protocol);
-    try std.testing.expectEqualStrings("acme/fast", history[1].assistant.provenance.?.model);
+    try std.testing.expectEqualStrings("local:acme/fast", history[1].assistant.provenance.?.model);
 }
 
 // A stream prefix that reaches the client. It opens a text block and sends one delta.
@@ -1848,7 +1848,7 @@ const started_text =
 fn runScripted(fixture: *TestState, a: std.mem.Allocator, name: []const u8, script: *provider.transport.ScriptedTransport) !wire.ids.SessionId {
     fixture.state.route_transport = script.transport();
     fixture.state.retry_policy = .{ .base_ms = 0, .cap_ms = 0 }; // No test waits for a real delay.
-    const sid = try createSession(fixture, a, .{ .workspace_path = name, .model = "mock/fast" });
+    const sid = try createSession(fixture, a, .{ .workspace_path = name, .model = "local:mock/fast" });
     _ = try sendText(fixture, a, sid, "hi");
     try launchUntilIdle(&fixture.state, sid);
     return sid;
@@ -1981,7 +1981,7 @@ test "a resync during a retry delay reports the retry" {
     // A real delay keeps the retry state observable while the driver resyncs.
     fixture.state.retry_policy = .{ .base_ms = 200, .cap_ms = 200 };
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/retry-activity", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/retry-activity", .model = "local:mock/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
 
     var driver = try fixture.rt.spawn(resyncDuringRetry, .{ &fixture.state, sid });
@@ -2059,7 +2059,7 @@ test "a cancel during a retry delay stops before the next attempt" {
     // A long delay proves the cancel interrupts the wait instead of outliving it.
     fixture.state.retry_policy = .{ .base_ms = 30_000, .cap_ms = 30_000 };
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/retry-cancel", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/retry-cancel", .model = "local:mock/fast" });
     const started = (try sendText(&fixture, a, sid, "hi")).started;
 
     var driver = try fixture.rt.spawn(cancelDuringRetryDelay, .{ &fixture.state, sid, started.run_id });
@@ -2141,7 +2141,7 @@ test "catalog.list projects stored models and honors a matching revision" {
         \\ "reasoning_levels":[null,"low","medium"],"status":null}]}]}
     , "REV", rev_hex);
     const parsed = try cloud_catalog.decode(a, raw_doc);
-    try catalog_store.replace(&fixture.state.db, a, parsed.providers, parsed.catalog_rev, "etag-1");
+    try catalog_store.replace(&fixture.state.db, a, parsed.providers);
 
     // A catalog row alone is not offered; a local key makes it a configured provider.
     fixture.state.providers = try cloud_catalog_test_local(); // State.deinit frees this.
@@ -2185,7 +2185,7 @@ fn createRelated(
         .workspace_id = snap.workspace_id,
         .origin = @tagName(origin),
         .profile = "default",
-        .model = "mock/fast",
+        .model = "local:mock/fast",
         .reasoning = "",
         .config_rev = 0,
         .permission = "normal",
@@ -2226,7 +2226,7 @@ test "session.remove deletes the session and cascades its transcript" {
 
     const sid = try createSession(&fixture, a, .{
         .workspace_path = "/remove",
-        .model = "mock/fast",
+        .model = "local:mock/fast",
         .system_prompt = "be brief",
     });
     _ = try sendText(&fixture, a, sid, "hi");
@@ -2342,7 +2342,7 @@ test "session.remove rejects a session with an active run" {
     fixture.state.route_transport = blocking.transportFor();
     const a = fixture.allocator();
 
-    const sid = try createSession(&fixture, a, .{ .workspace_path = "/busy", .model = "mock/fast" });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/busy", .model = "local:mock/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
     var driver = try fixture.rt.spawn(removeWhileBlocked, .{ &fixture.state, sid, &entered, &gate });
     try driver.join();
@@ -2394,7 +2394,7 @@ test "a busy child blocks the cascade and leaves the whole tree" {
     fixture.state.route_transport = blocking.transportFor();
     const a = fixture.allocator();
 
-    const root = try createSession(&fixture, a, .{ .workspace_path = "/busy-tree", .model = "mock/fast" });
+    const root = try createSession(&fixture, a, .{ .workspace_path = "/busy-tree", .model = "local:mock/fast" });
     const child = try createRelated(&fixture.state, a, root, .child);
     _ = try sendText(&fixture, a, child, "hi");
     var driver = try fixture.rt.spawn(removeWhileChildBlocked, .{ &fixture.state, root, child, &entered, &gate });
@@ -2540,7 +2540,7 @@ test "session.create announces a new workspace once" {
     try std.testing.expectEqual(@as(usize, 1), created);
 }
 
-test "an unimplemented method reports unknown_method and reads no other params" {
+test "an unimplemented method reports not_implemented and reads no other params" {
     var fixture = try TestState.init();
     defer fixture.deinit();
 
@@ -2549,7 +2549,7 @@ test "an unimplemented method reports unknown_method and reads no other params" 
     const frames = [_][]const u8{
         \\{"id":"1","method":"session.patch","params":{"session_id":"00000000000000000000000000000000","patch":{}}}
         ,
-        \\{"id":"2","method":"auth.logout","params":{"provider_id":"x"}}
+        \\{"id":"2","method":"auth.cancel_login","params":{"login_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}
         ,
         \\{"id":"3","method":"permission.decide","params":{"session_id":"00000000000000000000000000000000","message_id":1,"part_id":0,"option_id":"allow_once"}}
         ,
@@ -2559,7 +2559,7 @@ test "an unimplemented method reports unknown_method and reads no other params" 
     for (frames) |frame| {
         var buffer: [2048]u8 = undefined;
         const written = try call(&fixture, frame, &buffer);
-        try std.testing.expect(std.mem.indexOf(u8, written, "\"code\":-32601") != null);
+        try std.testing.expect(std.mem.indexOf(u8, written, "\"code\":-31022") != null);
     }
 }
 
@@ -2623,4 +2623,136 @@ test "listDir keeps one page whatever the directory order" {
     try std.testing.expectEqual(@as(usize, 3), page.entries.len);
     try std.testing.expectEqualStrings("d001", page.entries[0].name);
     try std.testing.expectEqualStrings("d003", page.entries[2].name);
+}
+
+/// Point one fixture at a `providers.json` inside a temporary directory.
+const AuthFile = struct {
+    tmp: std.testing.TmpDir,
+    path_buf: [std.fs.max_path_bytes]u8 = undefined,
+
+    fn init(self: *AuthFile, state: *State) !void {
+        self.* = .{ .tmp = std.testing.tmpDir(.{}) };
+        errdefer self.tmp.cleanup();
+        const len = try self.tmp.dir.realPath(std.testing.io, &self.path_buf);
+        const joined = try std.fmt.bufPrint(self.path_buf[len..], "/providers.json", .{});
+        state.providers_path = try state.gpa.dupe(u8, self.path_buf[0 .. len + joined.len]);
+    }
+    fn deinit(self: *AuthFile) void {
+        self.tmp.cleanup();
+    }
+};
+
+test "auth.set_api_key creates an entry, auth.list reports it, auth.remove drops it" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), (try handlers.authList(&fixture.state, a, .{})).providers.len);
+
+    _ = try handlers.authSetApiKey(&fixture.state, a, .{ .provider_id = "acme", .api_key = "sk-one" });
+    const listed = try handlers.authList(&fixture.state, a, .{});
+    try std.testing.expectEqual(@as(usize, 1), listed.providers.len);
+    try std.testing.expectEqualStrings("acme", listed.providers[0].provider_id);
+    try std.testing.expectEqual(wire.enums.AuthCredentialKind.api_key, listed.providers[0].credential_kind.?);
+
+    // The key reached the file, so a restart reads the same credential.
+    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
+    defer reloaded.deinit();
+    try std.testing.expectEqualStrings("sk-one", reloaded.providers[0].auth.?.source.?.literal);
+
+    // The live snapshot routes the new provider, so the write reached the registry too.
+    try std.testing.expectEqual(@as(usize, 1), fixture.state.catalog.providers.len);
+    try std.testing.expectEqualStrings("acme", fixture.state.catalog.providers[0].id);
+
+    _ = try handlers.authRemove(&fixture.state, a, .{ .provider_id = "acme" });
+    try std.testing.expectEqual(@as(usize, 0), (try handlers.authList(&fixture.state, a, .{})).providers.len);
+    // The removal reached the file, so a change that touched only memory would fail here.
+    var after = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
+    defer after.deinit();
+    try std.testing.expectEqual(@as(usize, 0), after.providers.len);
+}
+
+test "auth.set_api_key replaces the key and keeps every other field" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    var seeded = try provider.config.loadBytes(std.testing.allocator,
+        \\{"version":1,"providers":[{"id":"acme","base_url":"https://pinned.example/v1","protocol":"openai_chat",
+        \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-old"}}},
+        \\ "models":[{"id":"m","upstream_id":"u","limits":{"context_window":10,"max_output_tokens":10}}]}]}
+    );
+    try provider.config.write(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?, seeded.providers);
+    _ = try fixture.state.installProviders(&seeded);
+
+    _ = try handlers.authSetApiKey(&fixture.state, a, .{ .provider_id = "acme", .api_key = "sk-new" });
+
+    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
+    defer reloaded.deinit();
+    const p = reloaded.providers[0];
+    try std.testing.expectEqualStrings("sk-new", p.auth.?.source.?.literal);
+    try std.testing.expectEqualStrings("https://pinned.example/v1", p.base_url.?);
+    try std.testing.expectEqual(provider.instance.ApiKeyHeader.x_api_key, p.auth.?.header.?);
+    try std.testing.expectEqualStrings("m", p.models[0].id);
+
+    // The live route presents the new key, so a write that skipped installProviders fails here.
+    const match = fixture.state.catalog.resolveModel("local:acme/m").?;
+    try std.testing.expectEqualStrings("sk-new", match.provider.availability.ready.credential.literal);
+}
+
+test "auth.remove keeps a configured entry and only drops its credential" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    var seeded = try provider.config.loadBytes(std.testing.allocator,
+        \\{"version":1,"providers":[
+        \\ {"id":"acme","base_url":"https://pinned.example/v1","protocol":"openai_chat",
+        \\  "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-old"}}},
+        \\  "models":[{"id":"m","upstream_id":"u","limits":{"context_window":10,"max_output_tokens":10}}]},
+        \\ {"id":"plain","api_key":"sk-plain"}]}
+    );
+    try provider.config.write(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?, seeded.providers);
+    _ = try fixture.state.installProviders(&seeded);
+
+    _ = try handlers.authRemove(&fixture.state, a, .{ .provider_id = "acme" });
+    _ = try handlers.authRemove(&fixture.state, a, .{ .provider_id = "plain" });
+
+    var after = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
+    defer after.deinit();
+
+    // The entry that carried only a key is gone; the configured one keeps its route and models.
+    try std.testing.expectEqual(@as(usize, 1), after.providers.len);
+    const kept = after.providers[0];
+    try std.testing.expectEqualStrings("acme", kept.id);
+    try std.testing.expectEqualStrings("https://pinned.example/v1", kept.base_url.?);
+    try std.testing.expectEqualStrings("m", kept.models[0].id);
+    try std.testing.expect(kept.auth.?.source == null); // The credential went, the mechanism stayed.
+    try std.testing.expectEqual(provider.instance.ApiKeyHeader.x_api_key, kept.auth.?.header.?);
+
+    // The live snapshot reports the provider as configurable rather than hiding it.
+    try std.testing.expectEqual(wire.enums.ProviderState.needs_credential, fixture.state.catalog.providers[0].state);
+}
+
+test "auth rejects a bad id and an unknown provider" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    try std.testing.expectError(error.BadProviderId, handlers.authSetApiKey(&fixture.state, a, .{ .provider_id = "bad/id", .api_key = "k" }));
+    try std.testing.expectError(error.BadApiKey, handlers.authSetApiKey(&fixture.state, a, .{ .provider_id = "acme", .api_key = "" }));
+    try std.testing.expectError(error.UnknownProvider, handlers.authRemove(&fixture.state, a, .{ .provider_id = "absent" }));
+    try std.testing.expectError(error.BadProviderId, handlers.authRemove(&fixture.state, a, .{ .provider_id = "bad/id" }));
 }

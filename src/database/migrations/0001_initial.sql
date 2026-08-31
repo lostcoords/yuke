@@ -42,7 +42,7 @@ CREATE TABLE sessions (
     source_id         BLOB    CHECK (source_id IS NULL OR length(source_id) = 16), -- wire.SessionId
 
     profile    TEXT NOT NULL CHECK (length(profile)   <= 64),
-    model      TEXT NOT NULL CHECK (length(model)     <= 128),
+    model      TEXT NOT NULL CHECK (length(CAST(model AS BLOB)) <= 288),
     reasoning  TEXT NOT NULL CHECK (length(reasoning) <= 32),
     config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991), -- wire.ConfigRev
     permission TEXT NOT NULL CHECK (permission IN ('strict', 'normal', 'yolo')),
@@ -135,7 +135,7 @@ CREATE TABLE messages (
     config_rev INTEGER CHECK (config_rev IS NULL OR config_rev BETWEEN 0 AND 9007199254740991), -- wire.ConfigRev
 
     -- Store the model that answers the turn. Leave it null until the engine records it.
-    model    TEXT CHECK (model    IS NULL OR length(model)    <= 128),
+    model    TEXT CHECK (model    IS NULL OR length(CAST(model AS BLOB)) <= 288),
     protocol TEXT CHECK (protocol IS NULL OR length(protocol) <= 32),
 
     finish TEXT CHECK (finish IS NULL OR
@@ -188,7 +188,7 @@ CREATE TABLE session_configs (
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- wire.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
     config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991), -- wire.ConfigRev
-    model      TEXT NOT NULL CHECK (length(model)     <= 128),
+    model      TEXT NOT NULL CHECK (length(CAST(model AS BLOB)) <= 288),
     reasoning  TEXT NOT NULL CHECK (length(reasoning) <= 32),
 
     PRIMARY KEY (session_id, config_rev)
