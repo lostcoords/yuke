@@ -64,6 +64,9 @@ opts: Options = .{},
 /// if we should redraw the entire screen on the next render
 refresh: bool = false,
 
+/// True after a scaled cell sets a skip flag on `screen_last`.
+skip_pending: bool = false,
+
 /// blocks the main thread until a DA1 query has been received, or the
 /// futex times out
 query_futex: atomic.Value(u32) = atomic.Value(u32).init(0),
@@ -455,9 +458,12 @@ pub fn render(self: *Vaxis, tty: *std.Io.Writer) !void {
         }
     };
 
-    // Reset skip flag on all last_screen cells
-    for (self.screen_last.buf) |*last_cell| {
-        last_cell.skip = false;
+    // Reset the skip flag on all `screen_last` cells.
+    if (self.skip_pending) {
+        for (self.screen_last.buf) |*last_cell| {
+            last_cell.skip = false;
+        }
+        self.skip_pending = false;
     }
 
     if (needs_render) {
@@ -527,6 +533,7 @@ pub fn render(self: *Vaxis, tty: *std.Io.Writer) !void {
             assert(cell.char.width > 0);
             const cols = cell.scale.scale * cell.char.width;
             const rows = cell.scale.scale;
+            self.skip_pending = true;
             for (0..rows) |skipped_row| {
                 for (0..cols) |skipped_col| {
                     if (skipped_row == 0 and skipped_col == 0) {
