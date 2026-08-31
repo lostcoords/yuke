@@ -15,10 +15,9 @@ const EnumEntry = struct { name: []const u8, ty: type, numeric: bool };
 const AliasUse = struct { owner: []const u8, field: []const u8, alias: []const u8 };
 
 const alias_uses = [_]AliasUse{
-    .{ .owner = "AuthLoginSummary", .field = "login_id", .alias = "LoginId" },
     .{ .owner = "AuthProvider", .field = "provider_id", .alias = "ProviderId" },
     .{ .owner = "AuthLoginParams", .field = "provider_id", .alias = "ProviderId" },
-    .{ .owner = "AuthLoginResultDeviceCode", .field = "login_id", .alias = "LoginId" },
+    .{ .owner = "AuthLoginResult", .field = "login_id", .alias = "LoginId" },
     .{ .owner = "AuthCancelLoginParams", .field = "login_id", .alias = "LoginId" },
     .{ .owner = "AuthRemoveParams", .field = "provider_id", .alias = "ProviderId" },
     .{ .owner = "AuthSetApiKeyParams", .field = "provider_id", .alias = "ProviderId" },

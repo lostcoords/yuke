@@ -8,7 +8,7 @@
     "max_activity_retry_message_bytes": 1024,
     "max_agents": 256,
     "max_api_key_bytes": 65536,
-    "max_auth_flows": 8,
+    "max_auth_flows": 1,
     "max_auth_providers": 64,
     "max_auth_user_code_bytes": 128,
     "max_blob_bytes": 67108864,
@@ -439,7 +439,7 @@
     },
     {
       "name": "session.deltas_shed",
-      "doc": "The daemon dropped live deltas. The client must resync the session.",
+      "doc": "The daemon drops live deltas, so the client must resync the session.",
       "params": "SessionDeltasShedData",
       "direction": "serverToClient"
     }
@@ -620,6 +620,27 @@
       ]
     },
     {
+      "name": "AuthLoginResult",
+      "doc": "The daemon returns these device authorization details only to the connection that sent the request.",
+      "fields": [
+        {
+          "name": "login_id",
+          "type": "LoginId",
+          "presence": "required"
+        },
+        {
+          "name": "verification_url",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "user_code",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
       "name": "AuthLoginFinishedData",
       "doc": "This payload describes `auth.login_finished`.",
       "fields": [
@@ -669,54 +690,12 @@
           "name": "provider_id",
           "type": "ProviderId",
           "presence": "required"
-        },
-        {
-          "name": "flow",
-          "type": "AuthFlow",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "AuthLoginResultDeviceCode",
-      "doc": "The daemon returns these device authorization details only to the connection that sent the request.",
-      "fields": [
-        {
-          "name": "login_id",
-          "type": "LoginId",
-          "presence": "required"
-        },
-        {
-          "name": "verification_url",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "user_code",
-          "type": "string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "AuthLoginSummary",
-      "doc": "This type identifies one daemon-owned login attempt. It contains no OAuth secret.",
-      "fields": [
-        {
-          "name": "login_id",
-          "type": "LoginId",
-          "presence": "required"
-        },
-        {
-          "name": "flow",
-          "type": "AuthFlow",
-          "presence": "required"
         }
       ]
     },
     {
       "name": "AuthRemoveParams",
-      "doc": "These are the parameters for `auth.remove`. It removes a local credential; OAuth waits for stage 10.",
+      "doc": "These parameters select the local credential to remove. OAuth waits for stage 10.",
       "fields": [
         {
           "name": "provider_id",
@@ -743,17 +722,12 @@
           "name": "login_flows",
           "type": "[]AuthFlow",
           "presence": "required"
-        },
-        {
-          "name": "pending_login",
-          "type": "AuthLoginSummary",
-          "presence": "optional"
         }
       ]
     },
     {
       "name": "AuthSetApiKeyParams",
-      "doc": "These are write-only parameters for `auth.set_api_key`. The wire state never returns or retains the key.",
+      "doc": "These `auth.set_api_key` parameters carry a key that the wire never returns.",
       "fields": [
         {
           "name": "provider_id",
@@ -3640,17 +3614,6 @@
       ]
     },
     {
-      "name": "AuthLoginResult",
-      "doc": "This result identifies the mechanism that the daemon started for `auth.login`.",
-      "discriminator": "type",
-      "arms": [
-        {
-          "tag": "device_code",
-          "type": "AuthLoginResultDeviceCode"
-        }
-      ]
-    },
-    {
       "name": "CatalogListResult",
       "doc": "This result reports a catalog unchanged since `since_rev`, or a full catalog snapshot.",
       "discriminator": "type",
@@ -4334,7 +4297,7 @@
         {
           "name": "session.deltas_shed",
           "wire": "session.deltas_shed",
-          "doc": "The daemon dropped live deltas. The client must resync the session."
+          "doc": "The daemon drops live deltas, so the client must resync the session."
         }
       ]
     },
@@ -4925,7 +4888,7 @@
         {
           "name": "needs_route",
           "wire": "needs_route",
-          "doc": "A routing field is missing, so the daemon cannot build a request."
+          "doc": "A route field is missing, so the daemon cannot build a request."
         },
         {
           "name": "expired",

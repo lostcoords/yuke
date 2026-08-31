@@ -59,39 +59,16 @@ pub const AuthLoginOutcomeSucceeded = struct {};
 /// These are the parameters for `auth.login`.
 pub const AuthLoginParams = struct {
     provider_id: ids.ProviderId,
-    flow: enums.AuthFlow,
-};
-
-/// This result identifies the mechanism that the daemon started for `auth.login`.
-pub const AuthLoginResult = union(enum) {
-    device_code: AuthLoginResultDeviceCode,
-
-    /// Decode a tagged wire union from JSON.
-    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
-        return tagged.jsonParse(@This(), a, s, o);
-    }
-    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
-        return tagged.fromValue(@This(), a, v, o);
-    }
-    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
-        return tagged.stringify(@This(), self, jw);
-    }
 };
 
 /// The daemon returns these device authorization details only to the connection that sent the request.
-pub const AuthLoginResultDeviceCode = struct {
+pub const AuthLoginResult = struct {
     login_id: ids.LoginId,
     verification_url: []const u8,
     user_code: []const u8,
 };
 
-/// This type identifies one daemon-owned login attempt. It contains no OAuth secret.
-pub const AuthLoginSummary = struct {
-    login_id: ids.LoginId,
-    flow: enums.AuthFlow,
-};
-
-/// These are the parameters for `auth.remove`. It removes a local credential; OAuth waits for stage 10.
+/// These parameters select the local credential to remove. OAuth waits for stage 10.
 pub const AuthRemoveParams = struct {
     provider_id: ids.ProviderId,
 };
@@ -101,29 +78,10 @@ pub const AuthProvider = struct {
     provider_id: ids.ProviderId,
     credential_kind: ?enums.AuthCredentialKind = null,
     login_flows: []const enums.AuthFlow,
-    pending_login: ?AuthLoginSummary = null,
 };
 
-/// These are write-only parameters for `auth.set_api_key`. The wire state never returns or retains the key.
+/// These `auth.set_api_key` parameters carry a key that the wire never returns.
 pub const AuthSetApiKeyParams = struct {
     provider_id: ids.ProviderId,
     api_key: []const u8,
 };
-
-const testing = std.testing;
-const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
-
-test "login result union round-trips a device_code arm" {
-    const json =
-        \\{"type":"device_code","login_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","verification_url":"https://example.com/device","user_code":"ABCD-1234"}
-    ;
-    const parsed = try std.json.parseFromSlice(AuthLoginResult, testing.allocator, json, opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value == .device_code);
-    try testing.expectEqualStrings("ABCD-1234", parsed.value.device_code.user_code);
-
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    try testing.expectEqualStrings(json, buf.written());
-}

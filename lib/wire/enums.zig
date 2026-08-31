@@ -56,7 +56,7 @@ pub const BroadcastName = enum {
     @"input.queued",
     /// The daemon canceled a queued input.
     @"input.canceled",
-    /// The daemon dropped live deltas. The client must resync the session.
+    /// The daemon drops live deltas, so the client must resync the session.
     @"session.deltas_shed",
 };
 
@@ -183,7 +183,7 @@ pub const ProviderState = enum {
     ready,
     /// No credential reached the daemon.
     needs_credential,
-    /// A routing field is missing, so the daemon cannot build a request.
+    /// A route field is missing, so the daemon cannot build a request.
     needs_route,
     /// The grant expired. The user must authenticate again.
     expired,

@@ -59,6 +59,12 @@ export interface AuthListResult {
   readonly providers: readonly AuthProvider[];
 }
 
+export interface AuthLoginResult {
+  readonly login_id: LoginId;
+  readonly verification_url: string;
+  readonly user_code: string;
+}
+
 export interface AuthLoginFinishedData {
   readonly login_id: LoginId;
   readonly provider_id: ProviderId;
@@ -77,18 +83,6 @@ export interface AuthLoginOutcomeSucceeded {
 
 export interface AuthLoginParams {
   readonly provider_id: ProviderId;
-  readonly flow: AuthFlow;
-}
-
-export interface AuthLoginResultDeviceCode {
-  readonly login_id: LoginId;
-  readonly verification_url: string;
-  readonly user_code: string;
-}
-
-export interface AuthLoginSummary {
-  readonly login_id: LoginId;
-  readonly flow: AuthFlow;
 }
 
 export interface AuthRemoveParams {
@@ -99,7 +93,6 @@ export interface AuthProvider {
   readonly provider_id: ProviderId;
   readonly credential_kind?: AuthCredentialKind;
   readonly login_flows: readonly AuthFlow[];
-  readonly pending_login?: AuthLoginSummary;
 }
 
 export interface AuthSetApiKeyParams {
@@ -966,8 +959,6 @@ export type ContentPart = ({ readonly type: "text" } & ContentText) | ({ readonl
 export type MediaSource = ({ readonly type: "blob" } & MediaBlob);
 
 export type AuthLoginOutcome = { readonly type: "succeeded" } | { readonly type: "canceled" } | ({ readonly type: "failed" } & AuthLoginOutcomeFailed);
-
-export type AuthLoginResult = ({ readonly type: "device_code" } & AuthLoginResultDeviceCode);
 
 export type CatalogListResult = ({ readonly type: "unchanged" } & CatalogListResultUnchanged) | ({ readonly type: "full" } & CatalogListResultFull);
 
