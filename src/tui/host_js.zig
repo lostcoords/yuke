@@ -2637,8 +2637,7 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\if (!!plugins.get("composer-vim") === before) fail.push("vim-toggle");
         \\command.perform("composer-vim:toggle");
         \\// An active, working row keeps both the activity mark and the "▸" active cue.
-        \\const sl = new SessionList();
-        \\sl.active = { connKey: "local", sessionId: "z" };
+        \\const sl = new SessionList({ activeSession: () => ({ connKey: "local", sessionId: "z" }) });
         \\const row = { connKey: "local", id: "z", session: { updated_at_ms: Date.now(), model: "m" }, activity: { state: { type: "working" } }, workspace: null };
         \\const line0 = sl._format(row).lines[0];
         \\if (line0.marker !== "●" || !line0.text.startsWith("▸ ")) fail.push("active-mark");
@@ -2737,7 +2736,28 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\  const right = status.side("right");
         \\  if (right.indexOf("wired-model") < 0) fail.push("catalog-entry-wired");
         \\  if (right.indexOf("2.5k ctx") < 0) fail.push("catalog-usage-wired");
+        \\  // Nobody tells the sidebar which session is open; it asks, so the mark follows the chat.
+        \\  const marked = sidebar._format({ connKey: "local", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null });
+        \\  if (!marked.lines[0].text.startsWith("▸ ")) fail.push("active-mark-follows-chat");
+        \\  // The same session id on another connection is a different session.
+        \\  const other = sidebar._format({ connKey: "remote:x", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null });
+        \\  if (other.lines[0].text.startsWith("▸ ")) fail.push("active-mark-needs-conn");
+        \\  // A different session on the same connection is a different session too.
+        \\  const sibling = sidebar._format({ connKey: "local", id: "other", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null });
+        \\  if (sibling.lines[0].text.startsWith("▸ ")) fail.push("active-mark-needs-id");
+        \\
+        \\  // The real callback must reach the chat; the mark then follows without anyone pushing it.
         \\  chatSession.sessionId = null;
+        \\  sidebar.open({ connKey: "local", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null }, "key");
+        \\  if (chatSession.sessionId !== "probe") fail.push("sidebar-open-reaches-chat");
+        \\  if (!sidebar._format({ connKey: "local", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null }).lines[0].text.startsWith("▸ ")) fail.push("open-marks-row");
+        \\
+        \\  // Closing the session clears the mark, which the old push never did.
+        \\  chatSession.close();
+        \\  if (sidebar._format({ connKey: "local", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null }).lines[0].text.startsWith("▸ ")) fail.push("close-clears-mark");
+        \\  chatSession.sessionId = null;
+        \\  const unmarked = sidebar._format({ connKey: "local", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null });
+        \\  if (unmarked.lines[0].text.startsWith("▸ ")) fail.push("active-mark-clears-with-chat");
         \\  feed.clear();
         \\}
         \\globalThis.result = fail.length ? fail.join(",") : "ok";

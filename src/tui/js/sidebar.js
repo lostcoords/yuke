@@ -6,7 +6,8 @@ import * as client from "yuke:client";
 /** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
 /** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */
 /** @typedef {{ connKey: string, id: string, title: string, activity: FeedActivity, session: Wire.Session, workspace: Wire.Workspace | null, deviceName: string }} SessionRow */
-/** @typedef {{ onOpen?: (connKey: string, id: string, src: string) => void, statusLabel?: () => string }} SessionListOptions */
+/** @typedef {{ connKey: string, sessionId: string }} OpenSession */
+/** @typedef {{ onOpen?: (connKey: string, id: string, src: string) => void, statusLabel?: () => string, activeSession?: () => OpenSession | null }} SessionListOptions */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "index" }>} NativeIndexEvent */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "conn" }> & { workspaces?: readonly Wire.Workspace[] }} NativeConnEvent */
 /** @typedef {{ method: string, params: any }} BroadcastEvent */
@@ -258,17 +259,12 @@ export class SessionList {
     this.onOpen = opts.onOpen || null;
     this._rev = -1;
     this.statusLabel = opts.statusLabel || (() => "");
-    this.active = null;
+    this.activeSession = opts.activeSession || (() => null);
   }
 
   /** @returns {string} */
   get name() {
     return "sessions";
-  }
-
-  /** @returns {string | null} */
-  get activeId() {
-    return this.active ? this.active.sessionId : null;
   }
 
   /** @returns {void} */
@@ -316,7 +312,6 @@ export class SessionList {
   /** @param {SessionRow | null} row @param {string} src @returns {void} */
   open(row, src) {
     if (!row) return;
-    this.active = { connKey: row.connKey, sessionId: row.id };
     if (this.onOpen) this.onOpen(row.connKey, row.id, src);
   }
 
@@ -324,7 +319,8 @@ export class SessionList {
   // prefixes its title with "▸", so the mark and the active cue stay independent.
   /** @param {SessionRow} row @returns {import("yuke:ui").ListItem} */
   _format(row) {
-    const active = this.active && this.active.connKey === row.connKey && this.active.sessionId === row.id;
+    const open = this.activeSession();
+    const active = !!open && open.connKey === row.connKey && open.sessionId === row.id;
     const mark = activityMark(row.activity);
     return {
       lines: [

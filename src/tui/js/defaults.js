@@ -16,7 +16,6 @@ import { transcriptVim } from "yuke:transcript-vim";
 /** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */
 /** @typedef {{ connKey: string, id: string, title: string, activity: FeedActivity, session: Wire.Session, workspace: Wire.Workspace | null, deviceName: string }} SessionRow */
 /** @typedef {{ method: string, params: any }} BroadcastEvent */
-/** @typedef {{ onOpen?: (connKey: string, id: string, src: string) => void }} SessionListOptions */
 /** @typedef {{ workspace_path?: string, profile?: string, model?: string, reasoning?: string, system_prompt?: string, permission?: Wire.PermissionMode, max_rounds?: number }} CreateSessionDraft */
 /** @typedef {{ is_self?: boolean, static_public_key?: string, device_id: string, online?: boolean, name?: string }} DeviceInfo */
 /** @typedef {{ key: string, notice: true, text: string, up?: never, dest?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, up: true, dest: string, notice?: never, text?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, name: string, path: string, is_git_repo?: boolean, notice?: never, up?: never, dest?: never, text?: never }} ExplorerRow */
@@ -219,7 +218,6 @@ const chatSession = {
     this.sessionId = null;
     this.connKey = LOCAL;
     chat.transcript.setOutline([], null);
-    sidebar.active = null;
     root.focusView(chat);
     root.invalidate();
   },
@@ -263,6 +261,7 @@ function deviceName(connKey) {
 
 const sidebar = new SessionList({
   statusLabel: connectionLabel,
+  activeSession: () => (chatSession.sessionId ? { connKey: chatSession.connKey, sessionId: chatSession.sessionId } : null),
   onOpen: (connKey, id, src) => {
     chatSession.open(connKey, id);
     if (src !== "key") root.focusView(chat);
@@ -360,7 +359,6 @@ function openSessionFinder() {
     filterText: r => rowLabel(r),
     format: r => ({ text: rowLabel(r), right: activityMark(r.activity) }),
     onAccept: r => {
-      sidebar.active = { connKey: r.connKey, sessionId: r.id };
       sidebar.list.selectedKey = rowKey(r);
       chatSession.open(r.connKey, r.id);
     },
