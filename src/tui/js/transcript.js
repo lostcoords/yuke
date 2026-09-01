@@ -93,8 +93,9 @@ export class Pager {
 
   /** @param {number} delta @returns {void} */
   scrollBy(delta) {
-    this.scroll = Math.min(Math.max(0, this.scroll + delta), this._maxScroll());
-    this.stuck = this.atBottom();
+    const max = this._maxScroll();
+    this.scroll = Math.min(Math.max(0, this.scroll + delta), max);
+    this.stuck = this.scroll >= max;
   }
 
   // Scroll the least that puts row `index` on the screen, and refresh `stuck` so an unfold cannot jump to the tail.
@@ -104,8 +105,9 @@ export class Pager {
     let next = this.scroll;
     if (index < next) next = index;
     else if (index >= next + this._h) next = index - this._h + 1;
-    this.scroll = Math.min(Math.max(0, next), this._maxScroll());
-    this.stuck = this.atBottom();
+    const max = this._maxScroll();
+    this.scroll = Math.min(Math.max(0, next), max);
+    this.stuck = this.scroll >= max;
   }
 
   /** @param {RowSource} source @returns {void} */
@@ -122,9 +124,9 @@ export class Pager {
   // Keep the scroll offset in range as the row count changes. A scroll to the tail re-sticks.
   /** @returns {void} */
   _clamp() {
-    this.scroll = Math.min(Math.max(0, this.scroll), this._maxScroll());
-    if (this.stuck) this.scroll = this._maxScroll();
-    else if (this.atBottom()) this.stuck = true;
+    const max = this._maxScroll();
+    this.scroll = this.stuck ? max : Math.min(Math.max(0, this.scroll), max);
+    if (this.scroll >= max) this.stuck = true;
   }
 
   /** @param {Rect} rect @returns {void} */
@@ -393,17 +395,15 @@ function defaultExpanded(state) {
   return t === "running" || t === "error" || t === "denied" || t === "canceled";
 }
 
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @returns {string} */
-function toolHeaderSource(part) {
+/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {string} summary @returns {string} */
+function toolHeaderSource(part, summary) {
   const name = String(part.name || "tool");
-  const summary = toolSummary(part.arguments);
   return summary ? name + " " + summary : name;
 }
 
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {boolean} expanded @param {number} width @returns {TranscriptRow} */
-function toolHeaderRow(part, expanded, width) {
+/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {boolean} expanded @param {number} width @param {string} summary @returns {TranscriptRow} */
+function toolHeaderRow(part, expanded, width, summary) {
   const name = String(part.name || "tool");
-  const summary = toolSummary(part.arguments);
   const state = part.state || {};
   const kind = toolStateKind(state);
   const duration = /** @type {{ duration_ms?: number }} */ (state);
@@ -553,8 +553,10 @@ function reasoningRows(part, width, expanded, live, doc) {
 
 /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {boolean} expanded @returns {{ rows: TranscriptRow[], source: string }} */
 function toolRows(part, width, expanded) {
-  const header = toolHeaderRow(part, expanded, width);
-  const headerSrc = toolHeaderSource(part);
+  // `toolSummary` parses the arguments, so the row and the source share one result.
+  const summary = toolSummary(part.arguments);
+  const header = toolHeaderRow(part, expanded, width, summary);
+  const headerSrc = toolHeaderSource(part, summary);
   const rows = /** @type {TranscriptRow[]} */ ([header]);
   let source = headerSrc;
   if (!expanded) return { rows, source };
