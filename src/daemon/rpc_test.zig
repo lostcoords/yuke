@@ -2686,6 +2686,37 @@ const AuthFile = struct {
     }
 };
 
+test "an api-key write keeps the grant of every other entry" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    // A hand-written grant stands in for a finished login, because no login flow exists yet.
+    fixture.state.providers = try provider.config.loadBytes(std.testing.allocator,
+        \\{"version":1,"providers":[{"id":"codex",
+        \\ "auth":{"oauth":{"access_token":"tok","refresh_token":"ref","account_id":"acct"}}}]}
+    );
+
+    _ = try handlers.authSetApiKey(&fixture.state, a, .{ .provider_id = "acme", .api_key = "sk-one" });
+
+    // The write rewrites the whole file, so a projection that drops the arm loses this grant.
+    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
+    defer reloaded.deinit();
+    try std.testing.expectEqual(@as(usize, 2), reloaded.providers.len);
+    const grant = reloaded.providers[0].auth.?.oauth;
+    try std.testing.expectEqualStrings("tok", grant.access_token);
+    try std.testing.expectEqualStrings("ref", grant.refresh_token.?);
+    try std.testing.expectEqualStrings("acct", grant.account_id.?);
+
+    // auth.list names the arm, so a client can tell a grant from a key.
+    const listed = try handlers.authList(&fixture.state, a, .{});
+    try std.testing.expectEqual(@as(usize, 2), listed.providers.len);
+    try std.testing.expectEqual(wire.enums.AuthCredentialKind.oauth, listed.providers[0].credential_kind.?);
+}
+
 test "auth.set_api_key creates an entry, auth.list reports it, auth.remove drops it" {
     var fixture = try TestState.initBare(null);
     defer fixture.deinit();
@@ -2705,7 +2736,7 @@ test "auth.set_api_key creates an entry, auth.list reports it, auth.remove drops
     // The key reached the file, so a restart reads the same credential.
     var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
     defer reloaded.deinit();
-    try std.testing.expectEqualStrings("sk-one", reloaded.providers[0].auth.?.source.?.literal);
+    try std.testing.expectEqualStrings("sk-one", reloaded.providers[0].auth.?.api_key.source.?.literal);
 
     // The live snapshot routes the new provider, so the write reached the registry too.
     try std.testing.expectEqual(@as(usize, 1), fixture.state.catalog.providers.len);
@@ -2740,9 +2771,9 @@ test "auth.set_api_key replaces the key and keeps every other field" {
     var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
     defer reloaded.deinit();
     const p = reloaded.providers[0];
-    try std.testing.expectEqualStrings("sk-new", p.auth.?.source.?.literal);
+    try std.testing.expectEqualStrings("sk-new", p.auth.?.api_key.source.?.literal);
     try std.testing.expectEqualStrings("https://pinned.example/v1", p.base_url.?);
-    try std.testing.expectEqual(provider.instance.ApiKeyHeader.x_api_key, p.auth.?.header.?);
+    try std.testing.expectEqual(provider.instance.ApiKeyHeader.x_api_key, p.auth.?.api_key.header.?);
     try std.testing.expectEqualStrings("m", p.models[0].id);
 
     // The live route presents the new key, so a write that skipped installProviders fails here.
@@ -2780,8 +2811,8 @@ test "auth.remove keeps a configured entry and only drops its credential" {
     try std.testing.expectEqualStrings("acme", kept.id);
     try std.testing.expectEqualStrings("https://pinned.example/v1", kept.base_url.?);
     try std.testing.expectEqualStrings("m", kept.models[0].id);
-    try std.testing.expect(kept.auth.?.source == null); // The credential went, the mechanism stayed.
-    try std.testing.expectEqual(provider.instance.ApiKeyHeader.x_api_key, kept.auth.?.header.?);
+    try std.testing.expect(kept.auth.?.api_key.source == null); // The credential went, the mechanism stayed.
+    try std.testing.expectEqual(provider.instance.ApiKeyHeader.x_api_key, kept.auth.?.api_key.header.?);
 
     // The live snapshot reports the provider as configurable rather than hiding it.
     try std.testing.expectEqual(wire.enums.ProviderState.needs_credential, fixture.state.catalog.providers[0].state);

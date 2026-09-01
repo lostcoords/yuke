@@ -184,16 +184,19 @@ pub fn authSetApiKey(state: *State, arena: std.mem.Allocator, params: wire.auth.
     if (state.providers) |loaded| for (loaded.providers) |p| {
         if (std.mem.eql(u8, p.id, params.provider_id)) {
             var updated = p;
-            updated.auth = .{
-                .header = if (p.auth) |a| a.header else null,
+            updated.auth = .{ .api_key = .{
+                .header = if (p.auth) |a| switch (a) {
+                    .api_key => |key| key.header,
+                    .oauth => null,
+                } else null,
                 .source = .{ .literal = params.api_key },
-            };
+            } };
             try next.append(arena, updated);
             replaced = true;
         } else try next.append(arena, p);
     };
     // A provider the file does not name yet needs only an id and a key; the catalog completes it.
-    if (!replaced) try next.append(arena, .{ .id = params.provider_id, .auth = .{ .source = .{ .literal = params.api_key } } });
+    if (!replaced) try next.append(arena, .{ .id = params.provider_id, .auth = .{ .api_key = .{ .source = .{ .literal = params.api_key } } } });
 
     try writeProviders(state, path, next.items);
     state.announceAuthChanged(params.provider_id, .api_key);
@@ -219,7 +222,10 @@ pub fn authRemove(state: *State, arena: std.mem.Allocator, params: wire.auth.Aut
         if (onlyCredential(p)) continue;
         var kept = p;
         // A route that presents no credential keeps that shape; another one now wants a key.
-        if (p.auth) |a| kept.auth = .{ .header = a.header };
+        if (p.auth) |a| kept.auth = switch (a) {
+            .api_key => |key| .{ .api_key = .{ .header = key.header } },
+            .oauth => null,
+        };
         try next.append(arena, kept);
     }
     if (!found) return error.UnknownProvider;
@@ -231,8 +237,10 @@ pub fn authRemove(state: *State, arena: std.mem.Allocator, params: wire.auth.Aut
 
 /// Report which credential one entry holds. An entry that holds none reports null.
 fn credentialKind(p: provider_config.LocalProvider) ?wire.enums.AuthCredentialKind {
-    const auth = p.auth orelse return null;
-    return if (auth.source == null) null else .api_key;
+    return switch (p.auth orelse return null) {
+        .api_key => |key| if (key.source == null) null else .api_key,
+        .oauth => .oauth,
+    };
 }
 
 /// Report whether an entry carries only its credential, so removing that leaves nothing to keep.
@@ -240,9 +248,11 @@ fn onlyCredential(p: provider_config.LocalProvider) bool {
     if (p.base_url != null or p.protocol != null or p.cache != null) return false;
     if (p.responses_dialect != null or p.headers != null or p.models.len != 0) return false;
     // A keyless entry states that the route needs nothing, so it is configuration.
-    const auth = p.auth orelse return false;
     // A named header and a declared want are both configuration the user wrote.
-    return auth.header == null and auth.source != null;
+    return switch (p.auth orelse return false) {
+        .api_key => |key| key.header == null and key.source != null,
+        .oauth => true,
+    };
 }
 
 /// Render the layer, parse it, then write it. A document that cannot load never reaches the file.

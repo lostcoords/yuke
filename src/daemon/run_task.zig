@@ -333,7 +333,7 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
 
     // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
     const resolved = state.catalog.resolveModel(model) orelse return error.UnknownModel;
-    const request = try resolvedRequest(arena, state.env, slot, transcript, resolved);
+    const request = try resolvedRequest(arena, state.env, state.nowMillis(), slot, transcript, resolved);
     const body = try state.route_transport.open(arena, request, info);
     std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
@@ -383,6 +383,7 @@ fn thinkingBudget(model: *const registry.ModelSpec, level: []const u8, output_li
 fn resolvedRequest(
     arena: std.mem.Allocator,
     env: *const std.process.Environ.Map,
+    now_ms: u64,
     slot: *RunSlot,
     transcript: []const wire.message.Message,
     r: registry.Match,
@@ -412,7 +413,7 @@ fn resolvedRequest(
     }, .{ .protocol = route.instance.protocol, .model = slot.config.model });
 
     // The run reads the credential now, so a rotated environment key needs no rebuild.
-    const secret = registry.credential(route.credential, env) orelse return error.MissingCredential;
+    const secret = registry.credential(route.credential, env, now_ms) orelse return error.MissingCredential;
     var auth: std.ArrayList(provider.transport.Header) = .empty;
     try provider.resolve.authHeaders(arena, &route.instance, secret, &auth);
 

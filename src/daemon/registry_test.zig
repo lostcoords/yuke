@@ -257,6 +257,73 @@ test "resolveModel finds a model through the merged list" {
     try testing.expect(registry.findModel(rows, "cloud:acme/cm") == null); // The row is local, not cloud.
 }
 
+/// A catalog row for a provider the daemon logs into itself. The row names the flow.
+fn oauthCatalogRow(id: []const u8, flow: []const u8) feed.Provider {
+    return .{
+        .id = id,
+        .name = id,
+        .base_url = "https://api.example/v1",
+        .protocol = .openai_responses,
+        .auth = .{ .kind = .oauth, .flow = flow },
+        .cache = .unsupported,
+        .headers = &.{},
+        .models = &.{},
+    };
+}
+
+test "a local codex grant routes with a bearer and its account header" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"version":1,"providers":[{"id":"codex",
+        \\ "auth":{"oauth":{"access_token":"tok","account_id":"acct"}}}]}
+    );
+    defer loaded.deinit();
+
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")} });
+    const route = rows[0].availability.ready;
+    // The file stores only the grant, so the catalog row is what selects this shape.
+    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.instance.auth.api_key);
+    try testing.expectEqual(instance.ResponsesDialect.codex, route.instance.responses_dialect);
+    try testing.expectEqualStrings("tok", route.credential.oauth.grant.access_token);
+    try testing.expectEqualStrings("ChatGPT-Account-ID", route.credential.oauth.grant.headers[0].name);
+    try testing.expectEqualStrings("acct", route.credential.oauth.grant.headers[0].value);
+}
+
+test "a catalog row the daemon cannot build leaves the grant unroutable" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"version":1,"providers":[{"id":"other","auth":{"oauth":{"access_token":"tok"}}}]}
+    );
+    defer loaded.deinit();
+
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("other", "wat")} });
+    try testing.expectEqual(wire.enums.ProviderState.needs_route, rows[0].availability.state());
+}
+
+test "a lapsed grant presents no credential to a run" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"version":1,"providers":[{"id":"xai",
+        \\ "auth":{"oauth":{"access_token":"tok","expires_at_ms":1000}}}]}
+    );
+    defer loaded.deinit();
+
+    var env = EnvMap.init(testing.allocator);
+    defer env.deinit();
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("xai", "xai")}, .env = &env });
+    const route = rows[0].availability.ready;
+
+    // The run reads the clock, so a grant that lapses needs no catalog rebuild.
+    try testing.expect(credential(route.credential, &env, 999) != null);
+    try testing.expect(credential(route.credential, &env, 1000) == null);
+}
+
 test "a cloud oauth provider routes with its access token" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -275,9 +342,9 @@ test "a cloud oauth provider routes with its access token" {
     // Every grant is a bearer, so the flow selects only the identity header and the dialect.
     try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.instance.auth.api_key);
     try testing.expectEqual(instance.ResponsesDialect.codex, route.instance.responses_dialect);
-    try testing.expectEqualStrings("tok", route.credential.oauth.access_token);
-    try testing.expectEqualStrings("ChatGPT-Account-ID", route.credential.oauth.headers[0].name);
-    try testing.expectEqualStrings("acct", route.credential.oauth.headers[0].value);
+    try testing.expectEqualStrings("tok", route.credential.oauth.grant.access_token);
+    try testing.expectEqualStrings("ChatGPT-Account-ID", route.credential.oauth.grant.headers[0].name);
+    try testing.expectEqualStrings("acct", route.credential.oauth.grant.headers[0].value);
 }
 
 test "an entry that names a key and holds none needs a credential" {
@@ -356,7 +423,7 @@ test "an empty environment value is no credential" {
 
     const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &env });
     try testing.expectEqual(wire.enums.ProviderState.needs_credential, rows[0].availability.state());
-    try testing.expect(credential(.{ .env = "EMPTY_KEY" }, &env) == null);
+    try testing.expect(credential(.{ .env = "EMPTY_KEY" }, &env, 0) == null);
 }
 
 test "an environment credential resolves through the production path" {
@@ -377,5 +444,5 @@ test "an environment credential resolves through the production path" {
     const route = rows[0].availability.ready;
     // The row names the variable, and the run reads it again when it starts.
     try testing.expectEqualStrings("ACME_KEY", route.credential.env);
-    try testing.expectEqualStrings("sk-from-env", credential(route.credential, &env).?.api_key);
+    try testing.expectEqualStrings("sk-from-env", credential(route.credential, &env, 0).?.api_key);
 }

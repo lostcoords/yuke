@@ -27,6 +27,8 @@ pub const Error = error{
     HeaderConflict,
     BadPath,
     AmbiguousCredential,
+    /// An oauth arm carries no access token, so it can present no bearer.
+    EmptyGrant,
     FileTooLarge,
     NotRegularFile,
     InsecurePermissions,
@@ -40,12 +42,8 @@ pub const CredentialSource = union(enum) {
     literal: []const u8,
 };
 
-/// The file writes the credential in the shape the resolved layer already uses.
-const FileApiKey = LocalAuth;
-
-const FileAuth = struct {
-    api_key: FileApiKey,
-};
+/// A `union(enum)` renders as one tagged key, so an api_key entry keeps the shape it always had.
+const FileAuth = LocalAuth;
 
 /// The file writes a header and a model in the shapes the provider layer already defines.
 const FileHeader = instance.Header;
@@ -165,7 +163,7 @@ fn fileProviders(arena: Allocator, providers: []const LocalProvider) Allocator.E
         .id = p.id,
         .base_url = p.base_url,
         .protocol = p.protocol,
-        .auth = if (p.auth) |a| .{ .api_key = a } else null,
+        .auth = p.auth,
         .cache = p.cache,
         .responses_dialect = p.responses_dialect,
         .headers = p.headers,
@@ -226,16 +224,29 @@ fn resolveProvider(fp: FileProvider) Error!LocalProvider {
 
     // An absent `auth` block means the route presents no credential. The short form is always literal.
     const auth: ?LocalAuth = if (fp.auth) |a| blk: {
-        if (a.api_key.source) |source| switch (source) {
-            .env => |name| if (!validEnvName(name)) return error.BadEnvName,
-            .literal => |value| try checkLiteral(value),
-        };
-        break :blk a.api_key;
+        switch (a) {
+            .api_key => |key| if (key.source) |source| switch (source) {
+                .env => |name| if (!validEnvName(name)) return error.BadEnvName,
+                .literal => |value| try checkLiteral(value),
+            },
+            // A grant reaches a request as a header value, so it obeys the literal rules.
+            .oauth => |grant| {
+                if (grant.access_token.len == 0) return error.EmptyGrant;
+                try checkLiteral(grant.access_token);
+                if (grant.refresh_token) |token| try checkLiteral(token);
+                if (grant.account_id) |id| try checkLiteral(id);
+            },
+        }
+        break :blk a;
     } else if (fp.api_key) |value| blk: {
         try checkLiteral(value);
-        break :blk .{ .source = .{ .literal = value } };
+        break :blk .{ .api_key = .{ .source = .{ .literal = value } } };
     } else null;
-    const header: ?instance.ApiKeyHeader = if (auth) |a| a.header else null;
+    // Only an API-key route lets the file name the header. A grant always presents a bearer.
+    const header: ?instance.ApiKeyHeader = if (auth) |a| switch (a) {
+        .api_key => |key| key.header,
+        .oauth => .authorization_bearer,
+    } else null;
 
     if (fp.headers) |file_headers| for (file_headers, 0..) |fh, i| {
         if (!instance.validHeaderName(fh.name)) return error.BadHeaderName;
@@ -294,12 +305,28 @@ fn validEnvName(name: []const u8) bool {
     return true;
 }
 
-/// The credential of a local provider. The header is null when the catalog must name it.
-pub const LocalAuth = struct {
+/// The API-key credential of a local provider. The header is null when the catalog must name it.
+pub const LocalApiKey = struct {
     /// The catalog names the header when the file omits it.
     header: ?instance.ApiKeyHeader = null,
     /// Null means the route wants an API key and the daemon holds none.
     source: ?CredentialSource = null,
+};
+
+/// The durable residue of one login. The file never stores a device code, a code, or a verifier.
+pub const Grant = struct {
+    access_token: []const u8,
+    refresh_token: ?[]const u8 = null,
+    /// Unix milliseconds. A run at or past this reports a missing credential.
+    expires_at_ms: ?u64 = null,
+    /// Codex pins this as `ChatGPT-Account-Id`. It is not a secret.
+    account_id: ?[]const u8 = null,
+};
+
+/// One route presents one credential, so these arms never coexist.
+pub const LocalAuth = union(enum) {
+    api_key: LocalApiKey,
+    oauth: Grant,
 };
 
 /// One `providers.json` entry before the merge. A catalog row can fill a null route field.
@@ -328,6 +355,31 @@ fn wrapProvider(comptime provider_json: []const u8) []const u8 {
     return "{\"version\":1,\"providers\":[" ++ provider_json ++ "]}";
 }
 
+test "a grant round-trips through the writer" {
+    var loaded = try loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"codex","auth":{"oauth":{"access_token":"tok","refresh_token":"ref",
+        \\ "expires_at_ms":123,"account_id":"acct"}}}
+    ));
+    defer loaded.deinit();
+
+    const bytes = try serialize(testing.allocator, loaded.providers);
+    defer testing.allocator.free(bytes);
+    var again = try loadBytes(testing.allocator, bytes);
+    defer again.deinit();
+
+    const grant = again.providers[0].auth.?.oauth;
+    try testing.expectEqualStrings("tok", grant.access_token);
+    try testing.expectEqualStrings("ref", grant.refresh_token.?);
+    try testing.expectEqual(@as(?u64, 123), grant.expires_at_ms);
+    try testing.expectEqualStrings("acct", grant.account_id.?);
+}
+
+test "an oauth arm with no access token is refused" {
+    try testing.expectError(error.EmptyGrant, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"codex","auth":{"oauth":{"access_token":""}}}
+    )));
+}
+
 test "load a provider with an env api key and one model" {
     const json = wrapProvider(
         \\{"id":"minimax","base_url":"https://api.minimax.io/anthropic","protocol":"anthropic_messages",
@@ -342,7 +394,7 @@ test "load a provider with an env api key and one model" {
     const p = loaded.providers[0];
     try testing.expectEqualStrings("minimax", p.id);
     try testing.expectEqual(instance.Protocol.anthropic_messages, p.protocol.?);
-    try testing.expectEqualStrings("MINIMAX_API_KEY", p.auth.?.source.?.env);
+    try testing.expectEqualStrings("MINIMAX_API_KEY", p.auth.?.api_key.source.?.env);
     try testing.expectEqualStrings("anthropic-version", p.headers.?[0].name);
     try testing.expectEqualStrings("local", p.models[0].id);
     try testing.expectEqual(@as(u64, 8192), p.models[0].limits.max_output_tokens);
@@ -460,8 +512,8 @@ test "an api-key block with no source means the daemon holds no key" {
     const p = loaded.providers[0];
     // The block states the mechanism, and the absent source states that no value is held.
     try testing.expect(p.auth != null);
-    try testing.expect(p.auth.?.source == null);
-    try testing.expectEqual(instance.ApiKeyHeader.x_api_key, p.auth.?.header.?);
+    try testing.expect(p.auth.?.api_key.source == null);
+    try testing.expectEqual(instance.ApiKeyHeader.x_api_key, p.auth.?.api_key.header.?);
 }
 
 test "a keyless entry and an empty credential write back differently" {
@@ -479,7 +531,7 @@ test "a keyless entry and an empty credential write back differently" {
 
     try testing.expect(again.providers[0].auth == null); // The route presents no credential.
     try testing.expect(again.providers[1].auth != null); // The route wants a key.
-    try testing.expect(again.providers[1].auth.?.source == null);
+    try testing.expect(again.providers[1].auth.?.api_key.source == null);
 }
 
 test "two credential forms are ambiguous" {
@@ -540,14 +592,14 @@ test "the writer round-trips the layer through the file schema" {
     defer again.deinit();
 
     try testing.expectEqual(loaded.providers.len, again.providers.len);
-    try testing.expectEqualStrings("MINIMAX_API_KEY", again.providers[0].auth.?.source.?.env);
-    try testing.expectEqual(instance.ApiKeyHeader.x_api_key, again.providers[0].auth.?.header.?);
+    try testing.expectEqualStrings("MINIMAX_API_KEY", again.providers[0].auth.?.api_key.source.?.env);
+    try testing.expectEqual(instance.ApiKeyHeader.x_api_key, again.providers[0].auth.?.api_key.header.?);
     try testing.expectEqualStrings("anthropic-version", again.providers[0].headers.?[0].name);
     try testing.expectEqualStrings("m", again.providers[0].models[0].id);
     // A keyless entry survives the round trip, so the writer never invents a credential.
     try testing.expect(again.providers[1].auth == null);
     // The short form is read once and written back in the long form.
-    try testing.expectEqualStrings("sk-literal", again.providers[2].auth.?.source.?.literal);
+    try testing.expectEqualStrings("sk-literal", again.providers[2].auth.?.api_key.source.?.literal);
     try testing.expectEqual(instance.ResponsesDialect.codex, again.providers[2].responses_dialect.?);
 }
 

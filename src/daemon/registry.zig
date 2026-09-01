@@ -23,16 +23,23 @@ pub const Route = struct {
     credential: CredentialSource,
 };
 
+/// A stored grant and the moment it lapses. A run reads both, so a rebuild is not needed.
+pub const OAuthSource = struct {
+    grant: provider.resolve.Credential.OAuth,
+    /// Unix milliseconds. A run at or past this reports a missing credential.
+    expires_at_ms: ?u64 = null,
+};
+
 /// Name where a run reads the credential. An environment key is read again for every run.
 pub const CredentialSource = union(enum) {
     none,
     env: []const u8,
     literal: []const u8,
-    oauth: provider.resolve.Credential.OAuth,
+    oauth: OAuthSource,
 };
 
 /// Resolve the credential of one run. A named variable the process lost gives null.
-pub fn credential(source: CredentialSource, env: ?*const EnvMap) ?provider.resolve.Credential {
+pub fn credential(source: CredentialSource, env: ?*const EnvMap, now_ms: u64) ?provider.resolve.Credential {
     return switch (source) {
         .none => .none,
         .env => |name| blk: {
@@ -41,7 +48,11 @@ pub fn credential(source: CredentialSource, env: ?*const EnvMap) ?provider.resol
             break :blk if (value.len == 0) null else .{ .api_key = value };
         },
         .literal => |key| .{ .api_key = key },
-        .oauth => |grant| .{ .oauth = grant },
+        .oauth => |stored| blk: {
+            // A lapsed grant reports a missing credential, so no run sends a dead bearer.
+            if (stored.expires_at_ms) |at| if (now_ms >= at) break :blk null;
+            break :blk .{ .oauth = stored.grant };
+        },
     };
 }
 
@@ -167,7 +178,7 @@ fn appendLocal(arena: std.mem.Allocator, out: *std.ArrayList(Provider), sources:
     const loaded = sources.local orelse return;
     for (loaded.providers) |p| {
         const from_catalog = findCatalog(sources.catalog, p.id);
-        const availability = localAvailability(p, from_catalog, sources.env);
+        const availability = localAvailability(arena, p, from_catalog, sources.env);
         try out.append(arena, .{
             .id = p.id,
             .name = if (from_catalog) |c| c.name else p.id,
@@ -198,6 +209,7 @@ fn appendAccount(arena: std.mem.Allocator, out: *std.ArrayList(Provider), docume
 
 /// Resolve the local credential, then complete the route from the catalog template.
 fn localAvailability(
+    arena: std.mem.Allocator,
     p: provider.config.LocalProvider,
     from_catalog: ?feed.Provider,
     env: ?*const EnvMap,
@@ -209,20 +221,37 @@ fn localAvailability(
 
     var mechanism: instance.AuthMechanism = .none;
     var source: CredentialSource = .none;
-    if (p.auth) |auth| {
-        const header = auth.header orelse (if (catalog_auth) |a| a.header else null) orelse return .{ .unavailable = .needs_route };
-        mechanism = .{ .api_key = header };
-        // The entry names an API-key route and holds no value, so the user must supply one.
-        const from_file = auth.source orelse return .{ .unavailable = .needs_credential };
-        switch (from_file) {
-            .env => |name| {
-                // An empty value is no value, so it must not reach a request as a blank header.
-                const value = (if (env) |e| e.get(name) else null) orelse return .{ .unavailable = .needs_credential };
-                if (value.len == 0) return .{ .unavailable = .needs_credential };
-                source = .{ .env = name };
-            },
-            .literal => |key| source = .{ .literal = key },
-        }
+    var dialect = p.responses_dialect orelse .standard;
+    if (p.auth) |auth| switch (auth) {
+        .api_key => |key| {
+            const header = key.header orelse (if (catalog_auth) |a| a.header else null) orelse return .{ .unavailable = .needs_route };
+            mechanism = .{ .api_key = header };
+            // The entry names an API-key route and holds no value, so the user must supply one.
+            const from_file = key.source orelse return .{ .unavailable = .needs_credential };
+            switch (from_file) {
+                .env => |name| {
+                    // An empty value is no value, so it must not reach a request as a blank header.
+                    const value = (if (env) |e| e.get(name) else null) orelse return .{ .unavailable = .needs_credential };
+                    if (value.len == 0) return .{ .unavailable = .needs_credential };
+                    source = .{ .env = name };
+                },
+                .literal => |literal| source = .{ .literal = literal },
+            }
+        },
+        .oauth => |grant| {
+            // The catalog states how a provider authenticates. The file only stores the grant.
+            const flow = (if (catalog_auth) |a| a.flow else null) orelse return .{ .unavailable = .needs_route };
+            // Every grant is a bearer, so the flow selects only the identity header and the dialect.
+            mechanism = .{ .api_key = .authorization_bearer };
+            if (std.mem.eql(u8, flow, "codex")) {
+                const account = grant.account_id orelse return .{ .unavailable = .needs_credential };
+                const pinned = arena.dupe(instance.Header, &.{.{ .name = "ChatGPT-Account-ID", .value = account }}) catch return .{ .unavailable = .needs_route };
+                dialect = .codex;
+                source = .{ .oauth = .{ .grant = .{ .access_token = grant.access_token, .headers = pinned }, .expires_at_ms = grant.expires_at_ms } };
+            } else if (std.mem.eql(u8, flow, "xai")) {
+                source = .{ .oauth = .{ .grant = .{ .access_token = grant.access_token }, .expires_at_ms = grant.expires_at_ms } };
+            } else return .{ .unavailable = .needs_route }; // A flow this daemon cannot build.
+        },
     } else if (catalog_auth != null) {
         // The file names no credential and the catalog says the provider needs one.
         return .{ .unavailable = .needs_credential };
@@ -241,7 +270,7 @@ fn localAvailability(
             .auth = mechanism,
             .headers = headers,
             .cache = p.cache orelse (if (from_catalog) |c| c.cache else .unsupported),
-            .responses_dialect = p.responses_dialect orelse .standard,
+            .responses_dialect = dialect,
         },
         .credential = source,
     } };
@@ -275,9 +304,9 @@ fn accountAvailability(arena: std.mem.Allocator, p: bundle.Provider) !Availabili
                 const account = p.auth.account_id orelse return .{ .unavailable = .needs_route };
                 const headers = try arena.dupe(instance.Header, &.{.{ .name = "ChatGPT-Account-ID", .value = account }});
                 dialect = .codex;
-                source = .{ .oauth = .{ .access_token = token, .headers = headers } };
+                source = .{ .oauth = .{ .grant = .{ .access_token = token, .headers = headers } } };
             } else if (std.mem.eql(u8, flow, "xai")) {
-                source = .{ .oauth = .{ .access_token = token } };
+                source = .{ .oauth = .{ .grant = .{ .access_token = token } } };
             } else return .{ .unavailable = .needs_route }; // A flow this daemon cannot build.
         },
     }
