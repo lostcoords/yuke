@@ -1,6 +1,6 @@
 // yuke:catalog — the model catalog per connection, and the model a new chat starts with.
 import { root } from "yuke:core";
-import * as client from "yuke:client";
+import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { newestLocalModelSession } from "yuke:sidebar";
 

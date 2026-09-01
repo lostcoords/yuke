@@ -2577,7 +2577,7 @@ test "yuke:client wraps the native and rejects an unimplemented connect" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import * as client from "yuke:client";
+        \\import { client } from "yuke:client";
         \\const surface = ["connect", "disconnect", "connectionState", "connections", "devices", "sessionList",
         \\  "sessionOpen", "sessionClose", "sessionRev", "sessionResync", "sessionOutline", "sessionText", "sessionParts",
         \\  "sessionSendInput", "sessionCancelRun", "fsBrowse"].every((k) => typeof client[k] === "function");
@@ -3922,6 +3922,92 @@ test "the palette hints only the strokes that run the command here" {
         \\offA(); offB(); offC(); offD(); offCmd();
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "hint.js");
+    try expectJs(host, "ok");
+}
+
+test "the catalog stores a full reply and keeps the models on unchanged" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // `client` is one object, so a test replaces the one method the branch calls.
+    try host.evalModule(
+        \\import { client } from "yuke:client";
+        \\import { catalogOf, loadCatalog } from "yuke:catalog";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\const sent = [];
+        \\client.catalogList = (connKey, sinceRev) => {
+        \\  sent.push(sinceRev);
+        \\  return Promise.resolve({ type: "full", catalog_rev: "r1", models: [{ selector: "m1", name: "m1" }] });
+        \\};
+        \\await loadCatalog("k1");
+        \\const c = catalogOf("k1");
+        \\check("full-stores-models", c.models.length === 1 && c.models[0].selector === "m1");
+        \\check("full-stores-rev", c.rev === "r1");
+        \\check("load-clears-loading", c.loading === false);
+        \\
+        \\// The second load sends the stored revision, and an unchanged reply keeps what the catalog holds.
+        \\client.catalogList = (connKey, sinceRev) => { sent.push(sinceRev); return Promise.resolve({ type: "unchanged" }); };
+        \\await loadCatalog("k1");
+        \\check("unchanged-keeps-models", c.models.length === 1 && c.rev === "r1");
+        \\check("sends-since-rev", sent.length === 2 && sent[0] === null && sent[1] === "r1");
+        \\
+        \\// A rejected list leaves the catalog as it was and still clears the flag.
+        \\client.catalogList = () => Promise.reject(new Error("offline"));
+        \\await loadCatalog("k1");
+        \\check("refusal-keeps-models", c.models.length === 1 && c.rev === "r1" && c.loading === false);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "catload.js");
+    try expectJs(host, "ok");
+}
+
+test "the explorer turns one fs.browse page into rows" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { client } from "yuke:client";
+        \\import { command, root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { explorerPlugin } from "yuke:explorer";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\plugins.use(explorerPlugin);
+        \\
+        \\let asked = null;
+        \\client.fsBrowse = (connKey, params) => {
+        \\  asked = params;
+        \\  return Promise.resolve({
+        \\    path: "/w", parent: "/", next_cursor: "c1",
+        \\    entries: [{ name: "a", path: "/w/a", is_git_repo: true }, { name: "b", path: "/w/b" }],
+        \\  });
+        \\};
+        \\command.perform("app:explorer");
+        \\await Promise.resolve();
+        \\await Promise.resolve();
+        \\const rows = root.overlays[root.overlays.length - 1].content.list.items;
+        \\check("browses-the-default-root", asked != null && asked.path === undefined);
+        \\// A parent leads the page, the entries follow, and a cursor adds the truncation notice.
+        \\check("parent-row-first", rows[0].up === true && rows[0].dest === "/");
+        \\check("entry-rows", rows[1].path === "/w/a" && rows[1].is_git_repo === true && rows[2].path === "/w/b");
+        \\check("cursor-adds-notice", rows[3].notice === true && rows.length === 4);
+        \\
+        \\// A refusal replaces the page with one notice instead of leaving the old rows.
+        \\client.fsBrowse = () => Promise.reject(new Error("offline"));
+        \\root.overlays[root.overlays.length - 1].content.keymap.left();
+        \\await Promise.resolve();
+        \\await Promise.resolve();
+        \\const after = root.overlays[root.overlays.length - 1].content.list.items;
+        \\check("refusal-shows-one-notice", after.length === 1 && after[0].notice === true);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "explore.js");
     try expectJs(host, "ok");
 }
 

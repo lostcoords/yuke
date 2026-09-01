@@ -2,7 +2,7 @@
 import { keymap, copy, clip, text, Node, root, quit, config } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, NAV_KEYS } from "yuke:ui";
-import * as client from "yuke:client";
+import { client } from "yuke:client";
 import { noticePlugin } from "yuke:notice";
 import { commandUiPlugin } from "yuke:command-ui";
 import { explorerPlugin } from "yuke:explorer";

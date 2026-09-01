@@ -1,7 +1,7 @@
 // yuke:explorer — a filesystem picker that walks directories and reports the chosen path.
 import { root } from "yuke:core";
 import { ui } from "yuke:ui";
-import * as client from "yuke:client";
+import { client } from "yuke:client";
 
 const LOCAL = client.LOCAL;
 

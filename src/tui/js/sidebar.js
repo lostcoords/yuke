@@ -1,7 +1,7 @@
 // yuke:sidebar — the session list beside the chat, with one DeviceFeed per connection.
 import { text, clip, root, strokeOf } from "yuke:core";
 import { List } from "yuke:ui";
-import * as client from "yuke:client";
+import { client } from "yuke:client";
 
 /** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
 /** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */

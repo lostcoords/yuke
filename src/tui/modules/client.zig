@@ -1437,7 +1437,7 @@ test "a connect to a closed port rejects" {
     host.client.bind(&ch);
 
     const boot = try std.fmt.allocPrintSentinel(alloc,
-        \\import * as client from "yuke:client";
+        \\import {{ client }} from "yuke:client";
         \\globalThis.failed = 0;
         \\client.connect({{ host: "127.0.0.1", port: {d} }}).then(
         \\  () => {{ globalThis.failed = 2; }},
@@ -1483,7 +1483,7 @@ test "connect and request round-trip over a mock daemon" {
     host.client.bind(&ch);
 
     const boot = try std.fmt.allocPrintSentinel(alloc,
-        \\import * as client from "yuke:client";
+        \\import {{ client }} from "yuke:client";
         \\globalThis.connected = 0;
         \\globalThis.listOk = 0;
         \\globalThis.stateReady = () => (client.connectionState("local") === "ready" ? 1 : 0);

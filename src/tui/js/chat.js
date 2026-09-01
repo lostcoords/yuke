@@ -3,7 +3,7 @@ import { root, config, copy, events } from "yuke:core";
 import { term } from "yuke:term";
 import { ui } from "yuke:ui";
 import { ChatView } from "yuke:transcript";
-import * as client from "yuke:client";
+import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { feedItem } from "yuke:sidebar";
 import { catalogOf, loadCatalog, chooseModel, defaultModel } from "yuke:catalog";

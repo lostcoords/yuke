@@ -35,32 +35,32 @@ function clientError(reason) {
 }
 
 // The key of the connection to the daemon on this machine.
-export const LOCAL = "local";
+const LOCAL = "local";
 
 /** @param {Parameters<typeof native.connect>[0]} options @returns {ReturnType<typeof native.connect>} */
-export function connect(options) {
+function connect(options) {
   return native.connect(options).catch((reason) => {
     throw clientError(reason);
   });
 }
 
 /** @param {string} connKey @returns {void} */
-export function disconnect(connKey) {
+function disconnect(connKey) {
   native.disconnect(connKey);
 }
 
 /** @param {string} connKey @returns {import("yuke:client-native").ConnState} */
-export function connectionState(connKey) {
+function connectionState(connKey) {
   return native.state(connKey);
 }
 
 /** @returns {ReturnType<typeof native.connections>} */
-export function connections() {
+function connections() {
   return native.connections();
 }
 
 /** @returns {ReturnType<typeof native.devices>} */
-export function devices() {
+function devices() {
   return native.devices().catch((reason) => {
     throw clientError(reason);
   });
@@ -100,7 +100,7 @@ function request(connKey, method, params) {
  * @param {Wire.SessionListParams} [params]
  * @returns {Promise<Wire.SessionListResult>}
  */
-export function sessionList(connKey, params = {}) {
+function sessionList(connKey, params = {}) {
   return request(connKey, "session.list", {
     scope: { type: "all" },
     population: { type: "top_level" },
@@ -111,24 +111,24 @@ export function sessionList(connKey, params = {}) {
 
 // Mount a replica for (connKey, sessionId). Idempotent. It needs a resync before it folds.
 /** @param {string} connKey @param {string} sessionId @returns {void} */
-export function sessionOpen(connKey, sessionId) {
+function sessionOpen(connKey, sessionId) {
   native.sessionOpen(connKey, sessionId);
 }
 
 /** @param {string} connKey @param {string} sessionId @returns {void} */
-export function sessionClose(connKey, sessionId) {
+function sessionClose(connKey, sessionId) {
   native.sessionClose(connKey, sessionId);
 }
 
 // The change counter for that pair, or -1 when it is not mounted.
 /** @param {string} connKey @param {string} sessionId @returns {number} */
-export function sessionRev(connKey, sessionId) {
+function sessionRev(connKey, sessionId) {
   return native.sessionRev(connKey, sessionId);
 }
 
 // Install the ordered cut, so broadcasts fold again for that pair.
 /** @param {string} connKey @param {string} sessionId @returns {Promise<void>} */
-export function sessionResync(connKey, sessionId) {
+function sessionResync(connKey, sessionId) {
   return native.sessionResync(connKey, sessionId).catch((reason) => {
     throw clientError(reason);
   });
@@ -140,13 +140,13 @@ export function sessionResync(connKey, sessionId) {
  * @param {string} sessionId
  * @returns {import("yuke:client-native").SessionOutline}
  */
-export function sessionOutline(connKey, sessionId) {
+function sessionOutline(connKey, sessionId) {
   return JSON.parse(native.sessionOutline(connKey, sessionId));
 }
 
 // The concatenated text of one message (committed or the draft), "" when absent.
 /** @param {string} connKey @param {string} sessionId @param {number} messageId @returns {string} */
-export function sessionText(connKey, sessionId, messageId) {
+function sessionText(connKey, sessionId, messageId) {
   return native.sessionText(connKey, sessionId, messageId);
 }
 
@@ -157,7 +157,7 @@ export function sessionText(connKey, sessionId, messageId) {
  * @param {number} messageId
  * @returns {Wire.AssistantPart[]}
  */
-export function sessionParts(connKey, sessionId, messageId) {
+function sessionParts(connKey, sessionId, messageId) {
   return JSON.parse(native.sessionParts(connKey, sessionId, messageId));
 }
 
@@ -168,7 +168,7 @@ export function sessionParts(connKey, sessionId, messageId) {
  * @param {string} text
  * @returns {Promise<Wire.SessionSendInputResult>}
  */
-export function sessionSendInput(connKey, id, text) {
+function sessionSendInput(connKey, id, text) {
   return request(connKey, "session.send_input", {
     session_id: id,
     input: { type: "content", content: [{ type: "text", text }] },
@@ -182,7 +182,7 @@ export function sessionSendInput(connKey, id, text) {
  * @param {boolean} [clearQueue]
  * @returns {Promise<Wire.SessionCancelRunResult>}
  */
-export function sessionCancelRun(connKey, id, clearQueue = false) {
+function sessionCancelRun(connKey, id, clearQueue = false) {
   return request(connKey, "session.cancel_run", {
     session_id: id,
     ...(clearQueue ? { clear_queue: true } : {}),
@@ -195,7 +195,7 @@ export function sessionCancelRun(connKey, id, clearQueue = false) {
  * @param {Wire.CreateSession} params
  * @returns {Promise<Wire.SessionResult>}
  */
-export function sessionCreate(connKey, params) {
+function sessionCreate(connKey, params) {
   return request(connKey, "session.create", params);
 }
 
@@ -205,7 +205,7 @@ export function sessionCreate(connKey, params) {
  * @param {Wire.CatalogRev | null | undefined} sinceRev
  * @returns {Promise<Wire.CatalogListResult>}
  */
-export function catalogList(connKey, sinceRev) {
+function catalogList(connKey, sinceRev) {
   return request(connKey, "catalog.list", sinceRev ? { since_rev: sinceRev } : {});
 }
 
@@ -215,6 +215,29 @@ export function catalogList(connKey, sinceRev) {
  * @param {Wire.FsBrowseParams} [params]
  * @returns {Promise<Wire.FsBrowseResult>}
  */
-export function fsBrowse(connKey, params = {}) {
+function fsBrowse(connKey, params = {}) {
   return request(connKey, "fs.browse", params);
 }
+
+// One object carries the whole surface, so a test or a plugin can replace a single method.
+export const client = {
+  LOCAL,
+  connect,
+  disconnect,
+  connectionState,
+  connections,
+  devices,
+  sessionList,
+  sessionOpen,
+  sessionClose,
+  sessionRev,
+  sessionResync,
+  sessionOutline,
+  sessionText,
+  sessionParts,
+  sessionSendInput,
+  sessionCancelRun,
+  sessionCreate,
+  catalogList,
+  fsBrowse,
+};
