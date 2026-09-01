@@ -60,16 +60,29 @@ pub const status_not_modified = 304;
 /// One name and value of a urlencoded form.
 pub const Field = struct { name: []const u8, value: []const u8 };
 
-pub const FormRequest = struct {
+/// What one OAuth request sends. Codex mixes both encodings between its own calls.
+pub const Payload = union(enum) {
+    form: []const Field,
+    json: []const u8,
+
+    fn contentType(self: Payload) []const u8 {
+        return switch (self) {
+            .form => "application/x-www-form-urlencoded",
+            .json => "application/json",
+        };
+    }
+};
+
+pub const PostRequest = struct {
     url: []const u8,
-    fields: []const Field,
+    payload: Payload,
     /// The body lands here. Its length bounds the response.
     body_out: []u8,
     /// One deadline covers the whole request. The connect marker, not the clock, classifies it.
     timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(30_000) } },
 };
 
-const FormLeg = struct {
+const PostLeg = struct {
     /// The child sets this once the connect ends, so a failure after it may have reached the server.
     connected: std.Io.Event = .unset,
     done: std.Io.Event = .unset,
@@ -123,16 +136,20 @@ pub const Client = struct {
         return future.await(io);
     }
 
-    /// POST a urlencoded form. Only a failure before the send reports `PreFlight`.
-    pub fn postForm(self: *Client, req: FormRequest) !Response {
+    /// POST one OAuth request. Only a failure before the send reports `PreFlight`.
+    pub fn post(self: *Client, req: PostRequest) !Response {
         std.debug.assert(req.body_out.len != 0); // The caller owns a response buffer.
         std.debug.assert(req.body_out.len <= max_oauth_response_bytes);
         const io = self.inner.io;
-        const body = try encodeForm(self.inner.allocator, req.fields);
+        // A JSON payload is already encoded, so only a form needs a buffer of its own.
+        const body = switch (req.payload) {
+            .form => |fields| try encodeForm(self.inner.allocator, fields),
+            .json => |bytes| try self.inner.allocator.dupe(u8, bytes),
+        };
         defer self.inner.allocator.free(body);
 
-        var leg: FormLeg = .{};
-        var future = try io.concurrent(formLeg, .{ self, req, body, &leg });
+        var leg: PostLeg = .{};
+        var future = try io.concurrent(postGrantLeg, .{ self, req, body, &leg });
         leg.done.waitTimeout(io, req.timeout) catch |err| {
             // The cancel joins the child, so the connect marker now holds its final value.
             _ = future.cancel(io) catch undefined;
@@ -144,7 +161,7 @@ pub const Client = struct {
     }
 
     /// The client refuses a redirect, because a credential must never reach another origin.
-    fn sendForm(self: *Client, req: FormRequest, body: []u8, leg: *FormLeg) !Response {
+    fn sendGrant(self: *Client, req: PostRequest, body: []u8, leg: *PostLeg) !Response {
         const io = self.inner.io;
         const uri = std.Uri.parse(req.url) catch {
             leg.connected.set(io);
@@ -157,7 +174,7 @@ pub const Client = struct {
                 // A failed write leaves the pooled connection dirty, so never reuse this one.
                 .keep_alive = false,
                 .headers = .{
-                    .content_type = .{ .override = "application/x-www-form-urlencoded" },
+                    .content_type = .{ .override = req.payload.contentType() },
                     .accept_encoding = .omit,
                 },
                 .extra_headers = &.{.{ .name = "accept", .value = "application/json" }},
@@ -289,10 +306,10 @@ fn postLeg(self: *Client, url: []const u8, body: []const u8, out: []u8, done: *s
     return self.sendJson(url, body, out);
 }
 
-/// Run one form POST in a child task. The parent waits for it, so the caller buffers stay valid.
-fn formLeg(self: *Client, req: FormRequest, body: []u8, leg: *FormLeg) !Response {
+/// Run one OAuth POST in a child task. The parent waits for it, so the caller buffers stay valid.
+fn postGrantLeg(self: *Client, req: PostRequest, body: []u8, leg: *PostLeg) !Response {
     defer leg.done.set(self.inner.io);
-    return self.sendForm(req, body, leg);
+    return self.sendGrant(req, body, leg);
 }
 
 /// Encode `fields` as `application/x-www-form-urlencoded`. The caller owns the result.
@@ -405,6 +422,7 @@ const FormClient = struct {
     io: std.Io = undefined,
     port: u16 = undefined,
     out_len: usize = 4096,
+    payload: Payload = .{ .form = &.{.{ .name = "grant_type", .value = "refresh_token" }} },
     timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(30_000) } },
     status: u16 = 0,
     err: ?anyerror = null,
@@ -423,9 +441,9 @@ fn postFormOnceInner(c: *FormClient) !void {
     const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/token", .{c.port});
     const out = try c.gpa.alloc(u8, c.out_len);
     defer c.gpa.free(out);
-    const response = try client.postForm(.{
+    const response = try client.post(.{
         .url = url,
-        .fields = &.{.{ .name = "grant_type", .value = "refresh_token" }},
+        .payload = c.payload,
         .body_out = out,
         .timeout = c.timeout,
     });
@@ -458,6 +476,27 @@ test "a form post sends the urlencoded content type" {
     try testing.expectEqual(@as(?anyerror, null), client.err);
     try testing.expectEqual(@as(u16, 200), client.status);
     try testing.expectEqualStrings("application/x-www-form-urlencoded", server.seen_type[0..server.seen_type_len]);
+}
+
+test "a json post sends its own content type and classifies the same way" {
+    var server: FormServer = .{ .mode = .reply };
+    var client: FormClient = .{ .payload = .{ .json = "{\"grant_type\":\"refresh_token\"}" } };
+    try exchangeForm(&server, &client);
+
+    try testing.expectEqual(@as(?anyerror, null), client.err);
+    try testing.expectEqualStrings("application/json", server.seen_type[0..server.seen_type_len]);
+}
+
+test "a json post that times out after the send is ambiguous, like a form" {
+    // Codex refreshes with JSON, so the rotating token needs the same guard the form path has.
+    var server: FormServer = .{ .mode = .stall };
+    var client: FormClient = .{
+        .payload = .{ .json = "{}" },
+        .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(50) } },
+    };
+    try exchangeForm(&server, &client);
+
+    try testing.expectEqual(@as(?anyerror, Error.Ambiguous), client.err);
 }
 
 test "a form post refuses a redirect instead of sending the credential onward" {
