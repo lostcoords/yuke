@@ -273,11 +273,6 @@ export class SessionList {
     this.list.setItems(mergedRows());
   }
 
-  /** @returns {SessionRow | null} */
-  current() {
-    return this.list.selected();
-  }
-
   // The keymap drives this widget, so a nav key needs no handler here.
   /** @returns {import("yuke:core").NavTarget} */
   navTarget() {

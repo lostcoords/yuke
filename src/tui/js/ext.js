@@ -21,10 +21,7 @@ import { command, keymap, route, slots, events, status, style, context, root } f
 /** @typedef {Parameters<typeof style.add>[0]} StyleGroups */
 /** @typedef {Parameters<typeof context.set>[0]} ContextFlags */
 /** @typedef {(ctx: Context, config: unknown) => unknown} PluginApply */
-/** @typedef {PluginApply & { pluginName?: string }} PluginFunction */
-/** @typedef {{ name?: string, apply: PluginApply }} PluginObject */
-/** @typedef {PluginFunction | PluginObject} Plugin */
-/** @typedef {{ name: string, apply: PluginApply }} PluginDefinition */
+/** @typedef {{ name: string, apply: PluginApply }} Plugin */
 
 const NOOP = () => {};
 
@@ -373,18 +370,12 @@ export class Context {
 }
 
 // --- plugin registry ---
-// A plugin is a function `apply(ctx, config)` or an object `{ name, apply }`.
-/** @param {Plugin} plugin @returns {PluginDefinition} */
-function resolvePlugin(plugin) {
-  if (typeof plugin === "function") {
-    const fn = /** @type {PluginFunction} */ (plugin);
-    return { name: fn.pluginName || fn.name || "plugin", apply: fn };
-  }
-  if (plugin && typeof plugin.apply === "function") {
-    return { name: plugin.name || "plugin", apply: plugin.apply };
-  }
-
-  throw new TypeError("invalid plugin: expected a function or an object with an apply method");
+// A plugin is `{ name, apply }`. The name keys the registry and prefixes every command, so it is required.
+/** @param {Plugin} plugin @returns {void} */
+function checkPlugin(plugin) {
+  const ok = plugin !== null && typeof plugin === "object" && typeof plugin.apply === "function";
+  if (!ok || typeof plugin.name !== "string" || plugin.name === "")
+    throw new TypeError("invalid plugin: expected { name, apply }");
 }
 
 export const plugins = {
@@ -394,23 +385,24 @@ export const plugins = {
   // Instantiate under a child of `rootScope`, where a throw in `apply` reverts the partial scope.
   /** @param {Plugin} plugin @param {unknown} [config] @returns {Disposer} */
   use(plugin, config) {
-    const def = resolvePlugin(plugin);
-    if (this._live[def.name]) this.dispose(def.name);
+    checkPlugin(plugin);
+    const name = plugin.name;
+    if (this._live[name]) this.dispose(name);
 
-    const scope = rootScope.child("plugin:" + def.name);
-    const ctx = new Context(scope, def.name);
+    const scope = rootScope.child("plugin:" + name);
+    const ctx = new Context(scope, name);
     try {
-      scope.effect(() => def.apply(ctx, config));
+      scope.effect(() => plugin.apply(ctx, config));
     } catch (e) {
       scope.dispose();
       throw e;
     }
 
-    this._live[def.name] = scope;
+    this._live[name] = scope;
 
     // The disposer clears the slot only while current, so a stale handle cannot evict a reload.
     return () => {
-      if (this._live[def.name] === scope) delete this._live[def.name];
+      if (this._live[name] === scope) delete this._live[name];
       scope.dispose();
     };
   },

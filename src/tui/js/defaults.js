@@ -1,5 +1,5 @@
 // yuke:defaults — the bundled UI shell, built from plugins so a user's index.js layers on top.
-import { command, keymap, copy, clip, text, Node, root, quit, config } from "yuke:core";
+import { keymap, copy, clip, text, Node, root, quit, config } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, NAV_KEYS } from "yuke:ui";
 import * as client from "yuke:client";

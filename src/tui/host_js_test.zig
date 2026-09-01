@@ -348,6 +348,21 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  check("plugin-partial-revert", threw && !command.map["bad:act"] && !plugins.get("bad"));
         \\}
         \\
+        \\// A plugin is `{ name, apply }` and nothing else, so no shape can register under a guessed name.
+        \\{
+        \\  const rejects = (p) => { try { plugins.use(p); return false; } catch (e) { return e instanceof TypeError; } };
+        \\  const fn = (ctx) => { ctx.command(null, { act: () => {} }); };
+        \\  fn.pluginName = "sneaky";
+        \\  check("plugin-rejects-function", rejects(fn));
+        \\  // This one survives a misapplied call, so only the shape test can turn it away.
+        \\  const quiet = () => {};
+        \\  check("plugin-rejects-quiet-function", rejects(quiet) && plugins.names().indexOf("quiet") < 0);
+        \\  check("plugin-function-registers-nothing", plugins.names().indexOf("sneaky") < 0 && plugins.names().indexOf("fn") < 0 && !command.map["fn:act"]);
+        \\  check("plugin-rejects-nameless", rejects({ apply(ctx) {} }));
+        \\  check("plugin-rejects-empty-name", rejects({ name: "", apply(ctx) {} }));
+        \\  check("plugin-rejects-no-apply", rejects({ name: "x" }));
+        \\}
+        \\
         \\// A child scope disposes with its parent, newest first.
         \\{
         \\  const order = [];
@@ -1925,7 +1940,6 @@ test "yuke:ui reasoning auto-collapses and J/K walks parts" {
         \\const mix = new Transcript({ textOf: () => "hello", partsOf: () => [{ type: "text", id: 0, text: "hello" }, { type: "tool", id: 1, name: "read", arguments: '{"path":"a.zig"}', state: { type: "completed", output: "ok", duration_ms: 1 } }] });
         \\mix.setOutline([{ id: "m1", type: "assistant" }], { id: "m1", type: "assistant" });
         \\term.beginFrame(); mix.draw({ x: 0, y: 0, w: 40, h: 10 }); term.endFrame();
-        \\const mxn = mix.rowCountOf("m1");
         \\mix.select({ id: "m1", row: 0, col: 0 }, mix.posAtSource("m1", mix._sourceOf("m1").length));
         \\check("mix-had-sel", mix.selectedText() !== "");
         \\mix.setActive("m1");
