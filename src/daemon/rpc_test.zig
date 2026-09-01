@@ -2935,6 +2935,39 @@ test "a whole login stores the grant and finishes exactly once" {
     try std.testing.expectEqual(@as(usize, 1), finished); // Exactly one, never two and never none.
 }
 
+test "a login outlives the connection that started it" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    try fixture.register();
+    const a = fixture.allocator();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+    try seedOauthCatalog(&fixture, "xai");
+
+    var canned: provider.oauth.CannedHttp = .{ .replies = &.{
+        .{ .answer = .{ .status = 200, .body =
+        \\{"device_code":"dc","user_code":"UC","verification_uri":"https://x.ai/d","interval":1}
+        } },
+        .{ .answer = .{ .status = 200, .body =
+        \\{"access_token":"at","refresh_token":"rt","expires_in":3600}
+        } },
+    } };
+    fixture.state.oauth_http = canned.seam();
+
+    const started = try handlers.authLogin(&fixture.state, a, .{ .provider_id = "codex" });
+    // The client goes away while the human is still approving on the other device.
+    fixture.state.registry.unregister(fixture.conn);
+
+    var waiter = try fixture.rt.spawn(loginUntilFinished, .{ &fixture.state, started.login_id });
+    try waiter.join();
+
+    // The task belongs to the daemon, so the grant lands even with nobody listening.
+    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.store.path.?);
+    defer reloaded.deinit();
+    try std.testing.expectEqualStrings("rt", reloaded.providers[0].auth.?.oauth.refresh_token.?);
+}
+
 test "a finalizing login ignores a later cancel" {
     var fixture = try TestState.initBare(null);
     defer fixture.deinit();
