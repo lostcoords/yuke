@@ -301,7 +301,7 @@ plugins.use({
 
     ctx.command(null, {
       "app:quit": () => quit(),
-      "ui:sessions": () => openSessionFinder(),
+      "ui:sessions": () => ctx.overlay(openSessionFinder().win),
       "app:connect": () => connection.attempt(),
       "focus:left": () => root.focusDir("h"),
       "focus:down": () => root.focusDir("j"),

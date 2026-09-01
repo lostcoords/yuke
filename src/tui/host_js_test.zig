@@ -4056,6 +4056,158 @@ test "the chat pane routes a drag that leaves the transcript and guards its pres
     try expectJs(host, "ok");
 }
 
+test "the context owns every overlay its plugin pushes" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // A modal that outlives its plugin consumes every key, so the scope must own the stack too.
+    try host.evalModule(
+        \\import { command, root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const layer = (n) => ({ name: n, rect: { x: 0, y: 0, w: 1, h: 1 }, draw() {} });
+        \\
+        \\const owner = { name: "ov", apply(ctx) { ctx.command(null, { "ov:open": () => ctx.overlay(root.pushOverlay(layer("own"))) }); } };
+        \\const other = { name: "other", apply(ctx) { ctx.command(null, { "other:open": () => root.pushOverlay(layer("other")) }); } };
+        \\const base = root.overlays.length;
+        \\
+        \\plugins.use(owner);
+        \\plugins.use(other);
+        \\
+        \\// Two overlays from one plugin both leave with it, and an unowned one stays.
+        \\command.perform("ov:open");
+        \\command.perform("ov:open");
+        \\command.perform("other:open");
+        \\check("three-open", root.overlays.length === base + 3);
+        \\plugins.dispose("ov");
+        \\check("owned-popped", root.overlays.length === base + 1);
+        \\check("unowned-kept", root.overlays[root.overlays.length - 1].name === "other");
+        \\root.popOverlay();
+        \\plugins.dispose("other");
+        \\
+        \\// One plugin's unload must leave another plugin's overlay alone, not every owned overlay.
+        \\const second = { name: "ov2", apply(ctx) { ctx.command(null, { "ov2:open": () => ctx.overlay(root.pushOverlay(layer("own2"))) }); } };
+        \\plugins.use(owner);
+        \\plugins.use(second);
+        \\command.perform("ov:open");
+        \\command.perform("ov2:open");
+        \\plugins.dispose("ov");
+        \\check("other-owner-kept", root.overlays.length === base + 1 && root.overlays[root.overlays.length - 1].name === "own2");
+        \\plugins.dispose("ov2");
+        \\check("second-owner-popped", root.overlays.length === base);
+        \\
+        \\// A reload owns its own overlays, and the disposed scope no longer reaches the stack.
+        \\plugins.use(owner);
+        \\command.perform("ov:open");
+        \\const kept = root.pushOverlay(layer("kept"));
+        \\plugins.dispose("ov");
+        \\check("reload-pops-its-own", root.overlays.length === base + 1);
+        \\check("reload-keeps-others", root.overlays[root.overlays.length - 1] === kept);
+        \\root.popOverlay(kept);
+        \\
+        \\// An overlay the user already closed is not popped again, so an unload cannot take a later one.
+        \\plugins.use(owner);
+        \\command.perform("ov:open");
+        \\root.popOverlay();
+        \\const after = root.pushOverlay(layer("after"));
+        \\plugins.dispose("ov");
+        \\check("closed-overlay-not-repopped", root.overlays.length === base + 1 && root.overlays[root.overlays.length - 1] === after);
+        \\root.popOverlay(after);
+        \\
+        \\// The map keys on the layer, so a plugin that pushes one twice still owns the second push.
+        \\const again = layer("again");
+        \\plugins.use({ name: "re", apply(ctx) { ctx.command(null, { "re:open": () => ctx.overlay(root.pushOverlay(again)) }); } });
+        \\command.perform("re:open");
+        \\root.popOverlay(again);
+        \\root.pushOverlay(again);
+        \\plugins.dispose("re");
+        \\check("re-push-stays-owned", root.overlays.length === base);
+        \\
+        \\// A layer that never reached the stack is a caller error, such as a picker handle in place of its window.
+        \\let threw = false;
+        \\plugins.use({ name: "bad", apply(ctx) { try { ctx.overlay(layer("loose")); } catch (e) { threw = true; } } });
+        \\check("rejects-a-layer-off-the-stack", threw && root.overlays.length === base);
+        \\plugins.dispose("bad");
+        \\
+        \\// The overlay cleanup keeps its place among the plugin's own effects, so the order stays LIFO.
+        \\const seen = [];
+        \\plugins.use({ name: "ord", apply(ctx) {
+        \\  const a = ctx.overlay(root.pushOverlay(layer("a")));
+        \\  ctx.effect(() => () => seen.push(root.overlays.indexOf(a) >= 0));
+        \\  ctx.overlay(root.pushOverlay(layer("b")));
+        \\} });
+        \\plugins.dispose("ord");
+        \\check("cleanup-keeps-its-disposer-slot", seen.length === 1 && seen[0] === true);
+        \\check("order-test-left-nothing", root.overlays.length === base);
+        \\
+        \\// A frozen layer must still be claimable, so the claim never writes to the layer itself.
+        \\const frozen = Object.freeze({ name: "frozen", rect: { x: 0, y: 0, w: 1, h: 1 }, draw() {} });
+        \\plugins.use({ name: "fz", apply(ctx) { ctx.overlay(root.pushOverlay(frozen)); } });
+        \\check("frozen-claimed", root.overlays.length === base + 1);
+        \\plugins.dispose("fz");
+        \\check("frozen-popped", root.overlays.length === base);
+        \\
+        \\// One layer pushed twice leaves twice, because the cleanup walks every stack entry.
+        \\const twice = layer("twice");
+        \\plugins.use({ name: "dup", apply(ctx) {
+        \\  root.pushOverlay(twice);
+        \\  ctx.overlay(root.pushOverlay(twice));
+        \\} });
+        \\check("dup-pushed", root.overlays.length === base + 2);
+        \\plugins.dispose("dup");
+        \\check("dup-both-popped", root.overlays.length === base);
+        \\
+        \\// A late push from a disposed plugin closes at once, because a dead scope can never revert it.
+        \\let late = null;
+        \\plugins.use({ name: "late", apply(ctx) { late = () => ctx.overlay(root.pushOverlay(layer("late"))); } });
+        \\plugins.dispose("late");
+        \\late();
+        \\check("dead-scope-closes-a-late-push", root.overlays.length === base);
+        \\
+        \\// A late push of a layer that the stack already holds closes every copy, not only the first.
+        \\const twiceLate = layer("twicelate");
+        \\let lateDup = null;
+        \\plugins.use({ name: "ld", apply(ctx) { lateDup = () => { root.pushOverlay(twiceLate); ctx.overlay(root.pushOverlay(twiceLate)); }; } });
+        \\plugins.dispose("ld");
+        \\lateDup();
+        \\check("dead-scope-closes-every-copy", root.overlays.length === base);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "ctxoverlay.js");
+    try expectJs(host, "ok");
+}
+
+test "a plugin unload takes every picker it opened off the stack" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // A modal left on the stack consumes every key, so an unload must remove it with the plugin.
+    try host.evalModule(
+        \\import { command, root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { chat, chatPlugin } from "yuke:chat";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\chat.transcript.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }], null);
+        \\const before = root.overlays.length;
+        \\
+        \\plugins.use(chatPlugin);
+        \\command.perform("copy:message");
+        \\check("opened", root.overlays.length === before + 1);
+        \\plugins.dispose("chat");
+        \\check("unload-pops-the-chat-picker", root.overlays.length === before);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "chatoverlay.js");
+    try expectJs(host, "ok");
+}
+
 test "the explorer registers its command and takes it back on unload" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);

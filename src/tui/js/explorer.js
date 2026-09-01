@@ -76,7 +76,7 @@ function openExplorer(startPath) {
   return picker;
 }
 
-// The command, and the cleanup that takes an open picker off the overlay stack.
+// The command that opens the picker; the context owns the overlay, so an unload takes it away.
 export const explorerPlugin = {
   name: "explorer",
   /** @param {import("yuke:ext").Context} ctx @returns {void} */
@@ -84,15 +84,9 @@ export const explorerPlugin = {
     ctx.command(null, {
       "app:explorer": () => {
         const picker = openExplorer();
-        /** @type {{ _explorer?: boolean }} */ (picker.win)._explorer = true;
+        ctx.overlay(picker.win);
         return picker;
       },
-    });
-
-    ctx.effect(() => () => {
-      for (const layer of root.overlays.slice()) {
-        if (/** @type {{ _explorer?: boolean }} */ (layer)._explorer) root.popOverlay(layer);
-      }
     });
   },
 };

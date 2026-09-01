@@ -13,12 +13,6 @@ function keyHint(name) {
   return "";
 }
 
-// Mark an overlay this module opened, so a plugin unload can take it off the stack.
-/** @param {object} layer @returns {void} */
-function own(layer) {
-  /** @type {{ _commandUi?: boolean }} */ (layer)._commandUi = true;
-}
-
 function openPalette() {
   const cmds = Object.keys(command.map)
     .sort()
@@ -37,7 +31,6 @@ function openPalette() {
     format: c => ({ text: c.name, right: c.hint }),
     onAccept: c => command.perform(c.name),
   });
-  own(opened.win);
   return opened;
 }
 
@@ -130,9 +123,7 @@ class CommandLine {
 }
 
 function openCommandLine() {
-  const line = new CommandLine();
-  own(line);
-  return root.pushOverlay(line);
+  return root.pushOverlay(new CommandLine());
 }
 
 // The palette, the `:` line, and the styles that line paints itself in.
@@ -142,16 +133,9 @@ export const commandUiPlugin = {
   apply(ctx) {
     ctx.style({ YukeCmdline: { link: "Normal" }, YukeCmdlineErr: { fg: "danger", bold: true } });
     ctx.command(null, {
-      "ui:palette": () => openPalette(),
-      "ui:cmdline": () => openCommandLine(),
+      "ui:palette": () => ctx.overlay(openPalette().win),
+      "ui:cmdline": () => ctx.overlay(openCommandLine()),
     });
     ctx.keymap({ "ctrl+p": "ui:palette" });
-
-    // An unload takes this module's open overlays with it, because their styles leave too.
-    ctx.effect(() => () => {
-      for (const layer of root.overlays.slice()) {
-        if (/** @type {{ _commandUi?: boolean }} */ (layer)._commandUi) root.popOverlay(layer);
-      }
-    });
   },
 };

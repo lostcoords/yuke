@@ -167,13 +167,14 @@ export function chatEntry() {
 }
 
 // Pick any message in the transcript and copy its source text.
-export function openMessagePicker() {
+/** @param {import("yuke:ext").Context} ctx */
+function openMessagePicker(ctx) {
   const items = chat.transcript.messages().map((m, i) => ({ m, i, text: chat.transcript.textFor(m) }));
   if (items.length === 0) {
     notice.show("nothing to copy");
     return null;
   }
-  return ui.pick({
+  const picked = ui.pick({
     title: "copy a message",
     footer: "type to filter · ↵ copy · esc close",
     border: "rounded",
@@ -185,10 +186,13 @@ export function openMessagePicker() {
     format: r => ({ text: firstLine(r.text) || "(empty)", right: r.m.type }),
     onAccept: r => copy(r.text, r.m.type + " message"),
   });
+  ctx.overlay(picked.win);
+  return picked;
 }
 
-// Pick any fenced code block in the transcript and copy its body.
-export function openModelPicker() {
+// Load the catalog, then pick a model and its effort. The pick happens after the load returns.
+/** @param {import("yuke:ext").Context} ctx */
+function openModelPicker(ctx) {
   const connKey = chatSession.connKey;
   const current = chatEntry();
   const currentId = current && current.session ? current.session.model : null;
@@ -211,8 +215,9 @@ export function openModelPicker() {
       key: qualified,
       filterText: m => m.provider + " " + m.name + " " + m.id,
       format: m => ({ text: m.name, right: m.provider }),
-      onAccept: m => pickReasoning(connKey, m),
+      onAccept: m => pickReasoning(ctx, connKey, m),
     });
+    ctx.overlay(p.win);
     p.content.selectKey(currentId);
     return p;
   };
@@ -221,14 +226,14 @@ export function openModelPicker() {
 }
 
 // A model with one level needs no second step, so the pick ends there.
-/** @param {string} connKey @param {Wire.ModelInfo} model @returns {void} */
-function pickReasoning(connKey, model) {
+/** @param {import("yuke:ext").Context} ctx @param {string} connKey @param {Wire.ModelInfo} model @returns {void} */
+function pickReasoning(ctx, connKey, model) {
   const levels = model.reasoning_levels;
   if (levels.length < 2) {
     chooseModel(model, model.default_reasoning || levels[0] || "");
     return;
   }
-  ui.pick({
+  const step = ui.pick({
     title: model.name + " · effort",
     footer: "↵ select · esc close",
     border: "rounded",
@@ -239,16 +244,19 @@ function pickReasoning(connKey, model) {
     filterText: l => l.id,
     format: l => ({ text: l.id }),
     onAccept: l => chooseModel(model, l.id),
-  }).content.selectKey(model.default_reasoning || levels[0]);
+  });
+  ctx.overlay(step.win);
+  step.content.selectKey(model.default_reasoning || levels[0]);
 }
 
-export function openCodePicker() {
+/** @param {import("yuke:ext").Context} ctx */
+function openCodePicker(ctx) {
   const blocks = chat.transcript.codeBlocks();
   if (blocks.length === 0) {
     notice.show("no code block");
     return null;
   }
-  return ui.pick({
+  const picked = ui.pick({
     title: "copy a code block",
     footer: "type to filter · ↵ copy · esc close",
     border: "rounded",
@@ -260,6 +268,8 @@ export function openCodePicker() {
     format: b => ({ text: firstLine(b.text) || "(empty)", right: b.lang }),
     onAccept: b => copy(b.text, b.lang ? b.lang + " block" : "code block"),
   });
+  ctx.overlay(picked.win);
+  return picked;
 }
 
 // The first line of `s`, for a one-row picker label.
@@ -293,9 +303,9 @@ export const chatPlugin = {
     }));
 
     ctx.command(null, {
-      "copy:message": () => openMessagePicker(),
-      "copy:code": () => openCodePicker(),
-      "model:pick": () => openModelPicker(),
+      "copy:message": () => openMessagePicker(ctx),
+      "copy:code": () => openCodePicker(ctx),
+      "model:pick": () => openModelPicker(ctx),
     });
   },
 };

@@ -17,6 +17,7 @@ import { command, keymap, route, slots, events, status, style, context, root } f
 /** @typedef {Parameters<typeof keymap.add>[0]} KeyBindings */
 /** @typedef {Parameters<typeof route.add>[0]} RouteWhere */
 /** @typedef {Parameters<typeof root.addService>[0]} ServiceLike */
+/** @typedef {Parameters<typeof root.pushOverlay>[0]} Overlay */
 /** @typedef {Parameters<typeof status.add>[0]} StatusSegment */
 /** @typedef {Parameters<typeof style.add>[0]} StyleGroups */
 /** @typedef {Parameters<typeof context.set>[0]} ContextFlags */
@@ -82,6 +83,10 @@ export class Scope {
     }
   }
 }
+
+// The Context that owns an overlay. A later claim replaces the earlier one.
+/** @type {WeakMap<object, Context>} */
+const OVERLAY_OWNER = new WeakMap();
 
 // The parent of every plugin scope. A dispose here tears the whole tier down.
 export const rootScope = new Scope("root");
@@ -257,6 +262,7 @@ export class Context {
   constructor(scope, id) {
     this.scope = scope;
     this.id = id; // the plugin id; it namespaces commands and owns this plugin's advice
+    this._ownsOverlays = false;
   }
 
   /** @param {Effect} fn @returns {Disposer} */
@@ -318,6 +324,32 @@ export class Context {
     return this.scope.effect(() =>
       advice.advise(obj, prop, /** @type {AdviceWhere} */ (where), fn, Object.assign({}, opts, { owner: this.id })),
     );
+  }
+
+  // Claim an overlay the plugin pushed, so an unload takes it off the stack and leaves no modal.
+  // The claim keys on the layer, so a second push of one layer stays owned. Pass `ui.pick(...).win`.
+  /** @param {Overlay} layer @returns {Overlay} */
+  overlay(layer) {
+    // A layer off the stack is a caller error, such as a picker handle in place of its window.
+    if (root.overlays.indexOf(layer) < 0) throw new Error("overlay: the layer is not on the stack");
+
+    // A dead scope reverts nothing, so the overlay closes now and never outlives its plugin.
+    if (!this.scope.alive) {
+      while (root.overlays.indexOf(layer) >= 0) root.popOverlay(layer);
+      return layer;
+    }
+
+    // The map holds the claim, so a frozen layer and a proxy layer both stay untouched.
+    OVERLAY_OWNER.set(layer, this);
+    // One effect per Context keeps the disposal order that the plugin's own effects observe.
+    if (!this._ownsOverlays) {
+      this._ownsOverlays = true;
+      this.scope.effect(() => () => {
+        for (const l of root.overlays.slice()) if (OVERLAY_OWNER.get(l) === this) root.popOverlay(l);
+      });
+    }
+
+    return layer;
   }
 
   /** @param {ServiceLike} svc @returns {Disposer} */
