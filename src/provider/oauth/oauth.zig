@@ -52,32 +52,23 @@ pub const Error = error{
 };
 
 /// The transport one flow uses. The daemon backs it with `net.http.Client`; a test replays bytes.
+/// One call is the whole seam, so the function pointer is the interface.
 pub const Http = struct {
     ctx: *anyopaque,
-    vtable: *const VTable,
+    post_fn: *const fn (ctx: *anyopaque, req: http.PostRequest) anyerror!http.Response,
 
-    pub const VTable = struct {
-        post: *const fn (ctx: *anyopaque, req: http.PostRequest) anyerror!http.Response,
-    };
+    /// Back the seam with the real client. One client serves a whole login and pools its connection.
+    pub fn fromClient(client: *http.Client) Http {
+        return .{ .ctx = client, .post_fn = postClient };
+    }
 
     pub fn post(self: Http, req: http.PostRequest) anyerror!http.Response {
-        return self.vtable.post(self.ctx, req);
-    }
-};
-
-/// Back the seam with the real client. One client serves a whole login, so it pools its connection.
-pub const ClientHttp = struct {
-    client: *http.Client,
-
-    pub fn seam(self: *ClientHttp) Http {
-        return .{ .ctx = self, .vtable = &vtable };
+        return self.post_fn(self.ctx, req);
     }
 
-    const vtable: Http.VTable = .{ .post = post };
-
-    fn post(ctx: *anyopaque, req: http.PostRequest) anyerror!http.Response {
-        const self: *ClientHttp = @ptrCast(@alignCast(ctx));
-        return self.client.post(req);
+    fn postClient(ctx: *anyopaque, req: http.PostRequest) anyerror!http.Response {
+        const client: *http.Client = @ptrCast(@alignCast(ctx));
+        return client.post(req);
     }
 };
 
@@ -163,10 +154,8 @@ pub const CannedHttp = struct {
     };
 
     pub fn seam(self: *CannedHttp) Http {
-        return .{ .ctx = self, .vtable = &vtable };
+        return .{ .ctx = self, .post_fn = post };
     }
-
-    const vtable: Http.VTable = .{ .post = post };
 
     fn post(ctx: *anyopaque, req: http.PostRequest) anyerror!http.Response {
         const self: *CannedHttp = @ptrCast(@alignCast(ctx));

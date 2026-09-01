@@ -370,8 +370,8 @@ fn thinkingBudget(model: *const registry.ModelSpec, level: []const u8, output_li
 
     const cap: u64 = output_limit;
     var budget: u64 = if (std.mem.eql(u8, level, "max")) cap / 4 * 3 else cap / 2;
-    if (bounds.max.optional()) |maximum| budget = @min(budget, maximum);
-    if (bounds.min.optional()) |minimum| {
+    if (bounds.max) |maximum| budget = @min(budget, maximum);
+    if (bounds.min) |minimum| {
         if (minimum > 0) budget = @max(budget, @as(u64, @intCast(minimum)));
     }
     budget = @max(budget, thinking_budget_min);
@@ -394,7 +394,7 @@ fn resolvedRequest(
     };
     slot.protocol = route.instance.protocol;
 
-    const output_limit = if (r.model.limits.max_output_tokens.optional()) |limit|
+    const output_limit = if (r.model.limits.max_output_tokens) |limit|
         std.math.cast(u32, limit) orelse max_output_tokens
     else
         max_output_tokens;

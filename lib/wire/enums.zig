@@ -2,9 +2,6 @@
 
 const std = @import("std");
 
-/// The daemon supports the device-code flow only.
-pub const AuthFlow = enum { device_code };
-
 pub const AuthCredentialKind = enum { api_key, oauth };
 
 pub const BroadcastName = enum {

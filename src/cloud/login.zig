@@ -151,7 +151,6 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, opts
             .session_id = credential.session_id,
             .credential = credential.sessionCredential(),
             .relay_url = credential.relay_url,
-            .local_device_id = credential.device_id,
             .kind = @tagName(kind),
             .identity_key = if (stored) |*key| key else "",
             .schema_version = identity.schema_version,
@@ -227,7 +226,6 @@ fn awaitApproval(
         };
 
         switch (state.step(reply, elapsedMs(io, base))) {
-            .done => unreachable, // An approved reply returns above.
             .failed => |failure| {
                 std.log.err("yuke login: {s}", .{explain(failure, problem)});
                 return error.Rejected;

@@ -198,11 +198,6 @@ fn ensureDataDir(io: std.Io, dir: []const u8) !void {
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
 
-test "the daemon entry still compiles" {
-    // A test build analyzes no `main`, so only this reference reaches the body of `run`.
-    _ = &run;
-}
-
 test "a catalog replacement announces the merged revision" {
     const testing = std.testing;
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });

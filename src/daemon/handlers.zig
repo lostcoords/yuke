@@ -173,7 +173,7 @@ pub fn authList(state: *State, arena: std.mem.Allocator, _: wire.misc.Empty) !wi
     for (loaded.providers) |p| try out.append(arena, .{
         .provider_id = p.id,
         .credential_kind = credentialKind(p),
-        .login_flows = loginFlows(state, p.id),
+        .can_login = state.canLogin(p.id),
     });
     return .{ .providers = out.items };
 }
@@ -217,9 +217,9 @@ pub fn authLogin(state: *State, arena: std.mem.Allocator, params: wire.auth.Auth
 
     var client: net_http.Client = .init(state.gpa, state.io, .none);
     defer client.deinit();
-    var real: provider_oauth.ClientHttp = .{ .client = &client };
     const body = try arena.alloc(u8, net_http.max_oauth_response_bytes);
-    slot.start = try login_task.start(slot.arena.allocator(), state.oauth_http orelse real.seam(), flow, body);
+    const seam = state.oauth_http orelse provider_oauth.Http.fromClient(&client);
+    slot.start = try login_task.start(slot.arena.allocator(), seam, flow, body);
 
     try state.tasks.concurrent(state.io, login_task.run, .{ state, slot });
     return .{ .login_id = login_id, .user_code = slot.start.user_code, .verification_url = slot.start.verification_url };
@@ -229,7 +229,6 @@ pub fn authLogin(state: *State, arena: std.mem.Allocator, params: wire.auth.Auth
 pub fn authCancelLogin(state: *State, _: std.mem.Allocator, params: wire.auth.AuthCancelLoginParams) !wire.misc.Empty {
     // A cancel for a login that already finished is not an error, so a retry stays harmless.
     const slot = state.logins.get(params.login_id) orelse return .{};
-    if (slot.finalizing) return .{}; // The grant is already landing, so the outcome stands.
     if (!slot.cancel_requested) {
         slot.cancel_requested = true;
         slot.wake_event.set(state.io);
@@ -253,42 +252,12 @@ fn flowName(auth: ?catalog_feed.Auth) ?[]const u8 {
 }
 
 /// Report the flows one provider accepts. Only a catalog row naming a known flow offers one.
-fn loginFlows(state: *State, provider_id: []const u8) []const wire.enums.AuthFlow {
-    const row = provider_registry.find(state.store.merged.rows, provider_id) orelse return &.{};
-    const name = row.login_flow orelse return &.{};
-    if (login_runtime.Flow.parse(name) == null) return &.{};
-    return &.{.device_code};
-}
-
 /// Report which credential one entry holds. An entry that holds none reports null.
 fn credentialKind(p: provider_config.LocalProvider) ?wire.enums.AuthCredentialKind {
     return switch (p.auth orelse return null) {
         .api_key => |key| if (key.source == null) null else .api_key,
         .oauth => .oauth,
     };
-}
-
-/// Report whether an entry carries only its credential, so removing that leaves nothing to keep.
-fn onlyCredential(p: provider_config.LocalProvider) bool {
-    if (p.base_url != null or p.protocol != null or p.cache != null) return false;
-    if (p.responses_dialect != null or p.headers != null or p.models.len != 0) return false;
-    // A keyless entry states that the route needs nothing, so it is configuration.
-    // A named header and a declared want are both configuration the user wrote.
-    return switch (p.auth orelse return false) {
-        .api_key => |key| key.header == null and key.source != null,
-        .oauth => true,
-    };
-}
-
-/// Render the layer, parse it, then write it. A document that cannot load never reaches the file.
-fn writeProviders(state: *State, path: []const u8, providers: []const provider_config.LocalProvider) !void {
-    const bytes = try provider_config.serialize(state.gpa, providers);
-    defer state.gpa.free(bytes);
-
-    var next = try provider_config.loadBytes(state.gpa, bytes);
-    errdefer next.deinit();
-    try provider_config.writeFileBytes(state.io, path, bytes);
-    if (try state.installProviders(&next)) state.announceCatalogChanged();
 }
 
 /// Handle session.config: return one config revision and the session's system prompt.

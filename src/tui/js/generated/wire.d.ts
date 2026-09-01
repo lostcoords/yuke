@@ -92,7 +92,7 @@ export interface AuthRemoveParams {
 export interface AuthProvider {
   readonly provider_id: ProviderId;
   readonly credential_kind?: AuthCredentialKind;
-  readonly login_flows: readonly AuthFlow[];
+  readonly can_login: boolean;
 }
 
 export interface AuthSetApiKeyParams {
@@ -905,8 +905,6 @@ export interface ViewText {
   readonly text: string;
   readonly language?: string;
 }
-
-export type AuthFlow = "device_code";
 
 export type AuthCredentialKind = "api_key" | "oauth";
 

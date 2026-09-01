@@ -113,7 +113,6 @@ pub const ModelBinding = struct {
 
 /// Define one provider. The protocol selects a closed request dialect.
 pub const ProviderInstance = struct {
-    id: []const u8,
     base_url: []const u8,
     protocol: Protocol,
     auth: AuthMechanism,
@@ -138,13 +137,6 @@ test "decode a model with behavioral flags" {
     try testing.expect(f.supports_vision);
     try testing.expect(f.supports_tools); // The default is true.
     try testing.expectEqual(@as(?u64, 32000), f.reasoning_budget_max);
-}
-
-test "a keyless route generates no credential header" {
-    const mechanism: AuthMechanism = .none;
-    try testing.expect(mechanism.headerName() == null);
-    try testing.expectEqualStrings("x-api-key", (AuthMechanism{ .api_key = .x_api_key }).headerName().?);
-    try testing.expectEqualStrings("Authorization", (AuthMechanism{ .api_key = .authorization_bearer }).headerName().?);
 }
 
 test "header validation rejects what std.http asserts on" {

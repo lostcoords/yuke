@@ -267,15 +267,28 @@ pub fn requestCatalogRefresh(self: *State) void {
     if (self.scheduler) |s| s.requestCatalog();
 }
 
+/// Report whether a client can start a login for one provider. Only a flow the daemon drives counts.
+/// `auth.list` and `auth.changed` describe one provider with one type, so they read this one source.
+pub fn canLogin(self: *const State, provider_id: []const u8) bool {
+    const row = provider_registry.find(self.store.merged.rows, provider_id) orelse return false;
+    const name = row.login_flow orelse return false;
+    return login_runtime.Flow.parse(name) != null;
+}
+
 /// Publish one provider's new authentication state. A null `kind` means the daemon holds no credential.
 pub fn announceAuthChanged(self: *State, provider_id: []const u8, kind: ?wire.enums.AuthCredentialKind) void {
     const note: wire.rpc.Notification = .{
         .method = .@"auth.changed",
-        .params = .{ .auth_changed_data = .{ .provider = .{
-            .provider_id = provider_id,
-            .credential_kind = kind,
-            .login_flows = &.{},
-        } } },
+        .params = .{
+            .auth_changed_data = .{
+                .provider = .{
+                    .provider_id = provider_id,
+                    .credential_kind = kind,
+                    // An empty list here would tell a client the provider lost a login it still offers.
+                    .can_login = self.canLogin(provider_id),
+                },
+            },
+        },
     };
     self.publishAll(note, "auth.changed");
 }
@@ -348,7 +361,7 @@ test "a cloud bundle and its etag install as one snapshot" {
     const resolved = state.store.merged.resolveModel("cloud:acme/m").?;
     try std.testing.expectEqual(wire.enums.ProviderSource.cloud, resolved.provider.origin);
     try std.testing.expect(resolved.provider.availability == .ready);
-    try std.testing.expect(resolved.model.caps.tools == .unknown);
+    try std.testing.expect(resolved.model.caps.tools == null);
 }
 
 test "activation restores durable pending input into the runtime queue" {

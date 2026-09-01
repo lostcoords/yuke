@@ -60,13 +60,17 @@ pub fn poll(arena: std.mem.Allocator, seam: oauth.Http, device_auth_id: []const 
         const obj = oauth.parseObject(arena, response.body) orelse return oauth.Error.BadResponse;
         return .{ .tokens = try tokensFrom(arena, obj, now_ms) };
     }
-    // Transient by status alone. The device code is still good, so the login stays alive.
-    if (response.status == 408 or response.status == 429 or response.status >= 500) return .pending;
-
+    // The body code decides first. RFC 8628 sends `slow_down` with a 429, and the status alone
+    // would read that as a plain retry and drop the interval increase the server asked for.
     var buf: [64]u8 = undefined;
-    const code = oauth.errorCode(response.body, arena, &buf) orelse return oauth.Error.Permanent;
-    if (std.mem.eql(u8, code, "authorization_pending")) return .pending;
-    if (std.mem.eql(u8, code, "slow_down")) return .slow_down;
+    const code = oauth.errorCode(response.body, arena, &buf);
+    if (code) |name| {
+        if (std.mem.eql(u8, name, "authorization_pending")) return .pending;
+        if (std.mem.eql(u8, name, "slow_down")) return .slow_down;
+    }
+    // The server throttled or failed without a documented code. `Transient` backs the poll off,
+    // where `pending` would reset the delay and keep one rate through the whole outage.
+    if (response.status == 408 or response.status == 429 or response.status >= 500) return oauth.Error.Transient;
     // `access_denied` and `expired_token` end the login, and so does a code this flow cannot read.
     return oauth.Error.Permanent;
 }
@@ -142,11 +146,10 @@ test "a start accepts the usercode spelling" {
 test "each documented poll status and code maps to one outcome" {
     const Case = struct { status: u16, body: []const u8, want: std.meta.Tag(oauth.Poll) };
     for ([_]Case{
-        .{ .status = 408, .body = "{}", .want = .pending },
-        .{ .status = 429, .body = "{}", .want = .pending },
-        .{ .status = 503, .body = "{}", .want = .pending },
         .{ .status = 400, .body = "{\"error\":\"authorization_pending\"}", .want = .pending },
         .{ .status = 400, .body = "{\"error\":\"slow_down\"}", .want = .slow_down },
+        // RFC 8628 section 3.5 pairs `slow_down` with a 429, so the code decides before the status.
+        .{ .status = 429, .body = "{\"error\":\"slow_down\"}", .want = .slow_down },
     }) |case| {
         var arena: std.heap.ArenaAllocator = .init(testing.allocator);
         defer arena.deinit();
@@ -156,6 +159,19 @@ test "each documented poll status and code maps to one outcome" {
 
         const got = try poll(arena.allocator(), canned.seam(), "dc", 0, &out);
         try testing.expectEqual(case.want, std.meta.activeTag(got));
+    }
+}
+
+test "a throttled or failed poll backs off instead of holding one poll rate" {
+    // `pending` adopts the interval and clears the delay, so a status with no code must not use it.
+    for ([_]u16{ 408, 429, 503 }) |status| {
+        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+        defer arena.deinit();
+        var out: [512]u8 = undefined;
+        const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = status, .body = "{}" } }};
+        var canned: oauth.CannedHttp = .{ .replies = &replies };
+
+        try testing.expectError(oauth.Error.Transient, poll(arena.allocator(), canned.seam(), "dc", 0, &out));
     }
 }
 

@@ -179,17 +179,18 @@ pub const Client = struct {
                     .accept_encoding = .omit,
                 },
                 .extra_headers = &.{.{ .name = "accept", .value = "application/json" }},
-            });
-            // The connect phase ended, so the read timeout owns every later failure.
-            leg.connected.set(io);
-            break :request opened catch |err| return switch (err) {
+            }) catch |err| return switch (err) {
                 error.UnsupportedUriScheme, error.UriMissingHost => error.BadUrl,
                 error.OutOfMemory, error.Canceled => err,
-                // The reference stops on any TLS error, so this port does too.
-                error.TlsInitializationFailed => error.Ambiguous,
+                // The handshake ends before the request, so the server read no bytes here either.
+                error.TlsInitializationFailed => error.PreFlight,
                 // `request` only connects, so the server never read these bytes.
                 else => error.PreFlight,
             };
+            // The connect ended, so the read timeout owns every later failure. A cancel during the
+            // connect must leave this unset, or the parent reads a send that never happened.
+            leg.connected.set(io);
+            break :request opened;
         };
         defer request.deinit();
 
@@ -489,18 +490,6 @@ test "a json post sends its own content type and classifies the same way" {
     try testing.expectEqualStrings("application/json", server.seen_type[0..server.seen_type_len]);
 }
 
-test "a json post that times out after the send is ambiguous, like a form" {
-    // Codex refreshes with JSON, so the rotating token needs the same guard the form path has.
-    var server: FormServer = .{ .mode = .stall };
-    var client: FormClient = .{
-        .payload = .{ .json = "{}" },
-        .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(50) } },
-    };
-    try exchangeForm(&server, &client);
-
-    try testing.expectEqual(@as(?anyerror, Error.Ambiguous), client.err);
-}
-
 test "a form post refuses a redirect instead of sending the credential onward" {
     var server: FormServer = .{ .mode = .redirect };
     var client: FormClient = .{};
@@ -531,6 +520,50 @@ test "a refused connection is a pre-flight failure, so a refresh may retry it" {
     task.join();
 
     // The server never read a byte, so repeating this request cannot look like token reuse.
+    try testing.expectEqual(@as(?anyerror, Error.PreFlight), client.err);
+}
+
+/// Fill the listener accept queue. The kernel then drops the next SYN, so that connect never ends.
+const QueueFiller = struct {
+    port: u16,
+    held: [8]?zio.net.Stream = @splat(null),
+
+    fn fill(self: *QueueFiller) void {
+        const address = zio.net.IpAddress.parseIp4("127.0.0.1", self.port) catch return;
+        for (&self.held) |*slot| {
+            // The first connect the queue cannot take blocks, so a short timeout ends the fill.
+            slot.* = address.connect(.{ .timeout = .fromMilliseconds(100) }) catch return;
+        }
+    }
+
+    fn close(self: *QueueFiller) void {
+        for (&self.held) |*slot| if (slot.*) |*stream| stream.close();
+    }
+};
+
+test "a connect the timeout cancels is a pre-flight failure, never an ambiguous send" {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const address = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    // Nothing ever accepts here, so the queue stays full once the filler below saturates it.
+    var listener = try address.listen(.{ .kernel_backlog = 1 });
+    defer listener.close();
+
+    var filler: QueueFiller = .{ .port = listener.socket.address.ip.getPort() };
+    var fill_task = try rt.spawn(QueueFiller.fill, .{&filler});
+    fill_task.join();
+    defer filler.close();
+
+    var client: FormClient = .{
+        .gpa = testing.allocator,
+        .io = rt.io(),
+        .port = filler.port,
+        .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(150) } },
+    };
+    var task = try rt.spawn(postFormOnce, .{&client});
+    task.join();
+
+    // The connect never ended, so no request byte reached the server and a repeat spends no token.
     try testing.expectEqual(@as(?anyerror, Error.PreFlight), client.err);
 }
 

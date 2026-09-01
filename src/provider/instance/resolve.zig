@@ -51,6 +51,19 @@ pub const Credential = union(enum) {
     }
 };
 
+/// Report whether the generated header, the pinned headers, and `configured` name one header twice.
+/// The registry calls this before it reports a route ready, so no route is ready and then unusable.
+pub fn headerConflict(generated: ?[]const u8, pinned: []const Header, configured: []const Header) bool {
+    for (configured) |h| {
+        if (generated) |name| if (std.ascii.eqlIgnoreCase(name, h.name)) return true;
+        for (pinned) |id| if (std.ascii.eqlIgnoreCase(id.name, h.name)) return true;
+    }
+    if (generated) |name| {
+        for (pinned) |id| if (std.ascii.eqlIgnoreCase(name, id.name)) return true;
+    }
+    return false;
+}
+
 /// Append the credential and pinned headers to `out`. Every value is duplicated into `gpa`.
 pub fn authHeaders(
     gpa: std.mem.Allocator,
@@ -64,14 +77,7 @@ pub fn authHeaders(
     std.debug.assert((generated == null) == (secret == null));
 
     const identity = credential.pinned();
-    // A pinned header must never shadow a header the credential path writes.
-    for (p.headers) |h| {
-        if (generated) |name| if (std.ascii.eqlIgnoreCase(name, h.name)) return error.HeaderConflict;
-        for (identity) |id| if (std.ascii.eqlIgnoreCase(id.name, h.name)) return error.HeaderConflict;
-    }
-    if (generated) |name| {
-        for (identity) |id| if (std.ascii.eqlIgnoreCase(name, id.name)) return error.HeaderConflict;
-    }
+    if (headerConflict(generated, identity, p.headers)) return error.HeaderConflict;
 
     switch (p.auth) {
         .none => {},
@@ -110,7 +116,6 @@ fn header(headers: []const Header, name: []const u8) ?[]const u8 {
 
 test "endpoint url appends the protocol path" {
     const url = try endpointUrl(testing.allocator, &.{
-        .id = "x",
         .base_url = "https://api.anthropic.com/v1",
         .protocol = .anthropic_messages,
         .auth = .{ .api_key = .x_api_key },
@@ -121,7 +126,6 @@ test "endpoint url appends the protocol path" {
 
 test "endpoint url collapses a trailing slash on the base" {
     const url = try endpointUrl(testing.allocator, &.{
-        .id = "x",
         .base_url = "https://api.anthropic.com/v1/",
         .protocol = .anthropic_messages,
         .auth = .{ .api_key = .x_api_key },
@@ -135,7 +139,6 @@ test "anthropic api key uses x-api-key plus the pinned version header" {
     defer arena.deinit();
     var out: std.ArrayList(Header) = .empty;
     try authHeaders(arena.allocator(), &.{
-        .id = "anthropic",
         .base_url = "https://api.anthropic.com/v1",
         .protocol = .anthropic_messages,
         .auth = .{ .api_key = .x_api_key },
@@ -152,7 +155,6 @@ test "a compat host uses Authorization Bearer" {
     defer arena.deinit();
     var out: std.ArrayList(Header) = .empty;
     try authHeaders(arena.allocator(), &.{
-        .id = "compat",
         .base_url = "https://llm.acme/v1",
         .protocol = .anthropic_messages,
         .auth = .{ .api_key = .authorization_bearer },
@@ -165,7 +167,6 @@ test "an oauth grant is a bearer that carries its own identity header" {
     defer arena.deinit();
     var out: std.ArrayList(Header) = .empty;
     try authHeaders(arena.allocator(), &.{
-        .id = "codex",
         .base_url = "https://chatgpt.com/backend-api/codex",
         .protocol = .openai_responses,
         .auth = .{ .api_key = .authorization_bearer },
@@ -183,7 +184,6 @@ test "a keyless route writes no credential header" {
     defer arena.deinit();
     var out: std.ArrayList(Header) = .empty;
     try authHeaders(arena.allocator(), &.{
-        .id = "ollama",
         .base_url = "http://127.0.0.1:11434/v1",
         .protocol = .openai_chat,
         .auth = .none,
@@ -198,7 +198,6 @@ test "a pinned header that collides with the credential is rejected" {
     var out: std.ArrayList(Header) = .empty;
     defer out.deinit(testing.allocator);
     try testing.expectError(error.HeaderConflict, authHeaders(testing.allocator, &.{
-        .id = "x",
         .base_url = "x",
         .protocol = .anthropic_messages,
         .auth = .{ .api_key = .x_api_key },
@@ -210,7 +209,6 @@ test "a pinned header that collides with an oauth identity header is rejected" {
     var out: std.ArrayList(Header) = .empty;
     defer out.deinit(testing.allocator);
     try testing.expectError(error.HeaderConflict, authHeaders(testing.allocator, &.{
-        .id = "codex",
         .base_url = "x",
         .protocol = .openai_responses,
         .auth = .{ .api_key = .authorization_bearer },

@@ -52,7 +52,6 @@ pub const Session = struct {
     session_id: []const u8,
     credential: []const u8,
     relay_url: []const u8,
-    local_device_id: []const u8 = "",
     kind: []const u8,
     /// The base64 X25519 private key. A `token` session leaves it empty.
     identity_key: []const u8 = "",

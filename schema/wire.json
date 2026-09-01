@@ -8,7 +8,6 @@
     "max_activity_retry_message_bytes": 1024,
     "max_agents": 256,
     "max_api_key_bytes": 65536,
-    "max_auth_flows": 1,
     "max_auth_providers": 64,
     "max_auth_user_code_bytes": 128,
     "max_blob_bytes": 67108864,
@@ -719,8 +718,8 @@
           "presence": "optional"
         },
         {
-          "name": "login_flows",
-          "type": "[]AuthFlow",
+          "name": "can_login",
+          "type": "bool",
           "presence": "required"
         }
       ]
@@ -4145,17 +4144,6 @@
     }
   ],
   "enumerations": [
-    {
-      "name": "AuthFlow",
-      "doc": "The daemon supports the device-code flow only.",
-      "numeric": false,
-      "values": [
-        {
-          "name": "device_code",
-          "wire": "device_code"
-        }
-      ]
-    },
     {
       "name": "AuthCredentialKind",
       "numeric": false,

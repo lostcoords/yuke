@@ -183,28 +183,10 @@ test "a catalog fetch stores the rows and returns the etag to the caller" {
     if (server.err) |err| return err;
     if (out.err) |err| return err;
     try testing.expectEqualStrings("etag-2", out.outcome.?.updated);
+    try testing.expect(!server.saw_conditional); // No stored ETag sends no If-None-Match.
 
     // The caller stores the ETag after it rebuilds, so the fetch leaves none.
     try testing.expect((try store.etag(&db, arena.allocator())) == null);
-}
-
-test "an uncommitted etag makes the next refresh ask for the whole document" {
-    var db = try Database.openTest();
-    defer db.deinit();
-
-    // The first fetch stores rows. A failed rebuild then never reaches setEtag.
-    var first: CatalogServer = .{ .status = .ok, .body = test_document, .etag = "etag-2" };
-    var out_first: CatalogClient = .{ .db = &db };
-    try exchangeCatalog(&first, &out_first);
-    if (out_first.err) |err| return err;
-
-    var second: CatalogServer = .{ .status = .ok, .body = test_document, .etag = "etag-3" };
-    var out_second: CatalogClient = .{ .db = &db };
-    try exchangeCatalog(&second, &out_second);
-
-    if (second.err) |err| return err;
-    if (out_second.err) |err| return err;
-    try testing.expect(!second.saw_conditional); // No stored ETag sends no If-None-Match.
 }
 
 test "a stalled control plane fails the request at the timeout" {

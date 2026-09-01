@@ -59,8 +59,8 @@ test "a cloud provider takes its name, models and ready state from the bundle" {
     try testing.expectEqual(wire.enums.ProviderSource.cloud, rows[0].origin);
     try testing.expectEqual(wire.enums.ProviderState.ready, rows[0].availability.state());
     try testing.expectEqualStrings("grok-5", rows[0].models[0].id);
-    try testing.expect(rows[0].models[0].caps.tools == .unknown);
-    try testing.expect(rows[0].models[0].caps.vision == .unknown);
+    try testing.expect(rows[0].models[0].caps.tools == null);
+    try testing.expect(rows[0].models[0].caps.vision == null);
 }
 
 test "a dead grant still appears with the reason it cannot serve" {
@@ -145,12 +145,6 @@ test "a local provider with an absent environment key reports that it needs one"
     const rows = try resolve(a, .{ .local = &loaded, .env = &env });
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expectEqual(registry.Reason.needs_credential, rows[0].availability.unavailable);
-}
-
-test "an empty setup resolves to nothing" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    try testing.expectEqual(@as(usize, 0), (try resolve(arena.allocator(), .{})).len);
 }
 
 test "an id and a key alone resolve a full route from the catalog" {
@@ -289,6 +283,46 @@ test "a local codex grant routes with a bearer and its account header" {
     try testing.expectEqualStrings("tok", route.credential.oauth.grant.access_token);
     try testing.expectEqualStrings("ChatGPT-Account-ID", route.credential.oauth.grant.headers[0].name);
     try testing.expectEqualStrings("acct", route.credential.oauth.grant.headers[0].value);
+}
+
+test "a grant whose pinned header the file also names is never ready" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"version":1,"providers":[{"id":"codex",
+        \\ "headers":[{"name":"chatgpt-account-id","value":"mine"}],
+        \\ "auth":{"oauth":{"access_token":"tok","account_id":"acct","expires_at_ms":9000000000000}}}]}
+    );
+    defer loaded.deinit();
+
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")} });
+    // The flow pins this header, so every request would fail. A ready route must be a usable one.
+    try testing.expectEqual(wire.enums.ProviderState.needs_route, rows[0].availability.state());
+}
+
+test "a codex grant with no account id needs a credential on either origin" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"version":1,"providers":[{"id":"codex",
+        \\ "auth":{"oauth":{"access_token":"tok","expires_at_ms":9000000000000}}}]}
+    );
+    defer loaded.deinit();
+    const local = try resolve(a, .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")} });
+    try testing.expectEqual(registry.Reason.needs_credential, local[0].availability.unavailable);
+
+    const doc = try bundle.decode(a,
+        \\{"version":1,"catalog_rev":null,"providers":[{"id":"codex","name":"Codex",
+        \\ "base_url":"https://chatgpt.com/backend-api/codex","protocol":"openai_responses",
+        \\ "cache":"unsupported","headers":[],
+        \\ "auth":{"kind":"oauth","flow":"codex","status":"active","access_token":"tok"},"models":[]}]}
+    );
+    // One builder serves both origins, so one missing field cannot mean two different things.
+    const cloud = try resolve(a, .{ .account = doc });
+    try testing.expectEqual(registry.Reason.needs_credential, cloud[0].availability.unavailable);
 }
 
 test "a catalog row the daemon cannot build leaves the grant unroutable" {

@@ -7,7 +7,6 @@ const client_id = "app_EMoamEEZ73f0CkXaXp7hrann";
 const user_code_url = "https://auth.openai.com/api/accounts/deviceauth/usercode";
 const device_token_url = "https://auth.openai.com/api/accounts/deviceauth/token";
 const token_url = "https://auth.openai.com/oauth/token";
-const revoke_url = "https://auth.openai.com/oauth/revoke";
 /// OpenAI owns this callback, so the flow needs no loopback listener on this machine.
 const device_redirect_uri = "https://auth.openai.com/deviceauth/callback";
 /// Codex fixes the page the human visits, unlike an RFC 8628 flow that returns one per attempt.
@@ -110,19 +109,6 @@ pub fn refresh(arena: std.mem.Allocator, seam: oauth.Http, refresh_token: []cons
     const code = oauth.errorCode(response.body, arena, &buf) orelse return oauth.Error.Transient;
     for (permanent_refresh) |name| if (std.mem.eql(u8, code, name)) return oauth.Error.Permanent;
     return oauth.Error.Transient;
-}
-
-/// Drop the grant upstream. This is best effort, because our own copy alone leaves it live.
-pub fn revoke(arena: std.mem.Allocator, seam: oauth.Http, token: []const u8, is_refresh: bool, body_out: []u8) bool {
-    if (token.len == 0) return false;
-    const body = std.fmt.allocPrint(arena, "{f}", .{std.json.fmt(.{
-        .token = token,
-        .token_type_hint = if (is_refresh) "refresh_token" else "access_token",
-        .client_id = client_id,
-    }, .{})}) catch return false;
-
-    const response = seam.post(.{ .url = revoke_url, .payload = .{ .json = body }, .body_out = body_out }) catch return false;
-    return response.status >= 200 and response.status < 300;
 }
 
 /// Read one token response. The lifetime comes from the token itself, because `expires_in` can lie.
@@ -315,19 +301,4 @@ test "a rotated token that cannot be read is ambiguous, never retryable" {
     var canned: oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body = "{\"nonsense\":true}" } }} };
 
     try testing.expectError(oauth.Error.Ambiguous, refresh(arena.allocator(), canned.seam(), "rt", 0, &out));
-}
-
-test "a revoke reports its outcome and never fails the caller" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    var out: [512]u8 = undefined;
-
-    var ok: oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body = "{}" } }} };
-    try testing.expect(revoke(arena.allocator(), ok.seam(), "rt", true, &out));
-
-    var refused: oauth.CannedHttp = .{ .replies = &.{.{ .fail = error.PreFlight }} };
-    try testing.expect(!revoke(arena.allocator(), refused.seam(), "rt", true, &out));
-
-    var empty: oauth.CannedHttp = .{ .replies = &.{} };
-    try testing.expect(!revoke(arena.allocator(), empty.seam(), "", true, &out));
 }

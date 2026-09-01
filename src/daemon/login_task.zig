@@ -39,8 +39,7 @@ pub fn run(state: *State, slot: *login_runtime.LoginSlot) void {
 fn drive(state: *State, slot: *login_runtime.LoginSlot) !wire.auth.AuthLoginOutcome {
     var client: http.Client = .init(state.gpa, state.io, .none);
     defer client.deinit();
-    var real: oauth.ClientHttp = .{ .client = &client };
-    const seam = state.oauth_http orelse real.seam();
+    const seam = state.oauth_http orelse oauth.Http.fromClient(&client);
 
     const body = try state.gpa.alloc(u8, response_bytes);
     defer state.gpa.free(body);
@@ -67,7 +66,6 @@ fn drive(state: *State, slot: *login_runtime.LoginSlot) !wire.auth.AuthLoginOutc
             .tokens => |tokens| {
                 // Claim with no yield between, so a later cancel cannot contradict the outcome.
                 if (slot.cancel_requested) return .{ .canceled = .{} };
-                slot.finalizing = true;
                 try install(state, arena.allocator(), slot, tokens);
                 return .{ .succeeded = .{} };
             },
@@ -76,7 +74,6 @@ fn drive(state: *State, slot: *login_runtime.LoginSlot) !wire.auth.AuthLoginOutc
         } else .unavailable;
 
         switch (pace.step(reply, state.nowMillis() -| began_ms)) {
-            .done => unreachable, // A token reply returns above.
             .failed => |failure| return .{ .failed = .{ .message = switch (failure) {
                 .expired => "the login expired before approval",
                 .offline => "the provider stayed unreachable",
@@ -153,8 +150,7 @@ pub fn refreshOnce(state: *State, margin_ms: u64) !bool {
 
     var client: http.Client = .init(state.gpa, state.io, .none);
     defer client.deinit();
-    var real: oauth.ClientHttp = .{ .client = &client };
-    const seam = state.oauth_http orelse real.seam();
+    const seam = state.oauth_http orelse oauth.Http.fromClient(&client);
 
     const body = try arena.alloc(u8, response_bytes);
     // `dueGrant` selects only a grant that can rotate, so this token is present.
@@ -188,9 +184,11 @@ fn moreDue(state: *State, arena: std.mem.Allocator, margin_ms: u64) bool {
 }
 
 /// Write the rotated grant. A failed write returns no error, because a retry would spend it twice.
+/// The layer in memory then forgets the grant, so no later pass reads the token this call replaced.
 fn keep(state: *State, arena: std.mem.Allocator, due: Due, grant: provider.config.Grant) void {
     store(state, arena, due, grant) catch |err| {
         std.log.warn("cannot store the grant for {s}: {t}", .{ due.provider_id, err });
+        state.store.forgetGrant(due.provider_id);
     };
 }
 

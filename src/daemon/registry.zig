@@ -204,7 +204,7 @@ fn appendAccount(arena: std.mem.Allocator, out: *std.ArrayList(Provider), docume
             .name = p.name,
             .origin = .cloud,
             // The bundle owns its model list. An empty list means the cloud has not synced yet.
-            .models = try accountModels(arena, p.models),
+            .models = try sourceModels(arena, p.models),
             .availability = try accountAvailability(arena, p),
         });
     }
@@ -244,30 +244,32 @@ fn localAvailability(
         .oauth => |grant| {
             // The catalog states how a provider authenticates. The file only stores the grant.
             const flow = (if (catalog_auth) |a| a.flow else null) orelse return .{ .unavailable = .needs_route };
-            // Every grant is a bearer, so the flow selects only the identity header and the dialect.
-            mechanism = .{ .api_key = .authorization_bearer };
-            if (std.mem.eql(u8, flow, "codex")) {
-                const account = grant.account_id orelse return .{ .unavailable = .needs_credential };
-                const pinned = arena.dupe(instance.Header, &.{.{ .name = "ChatGPT-Account-ID", .value = account }}) catch return .{ .unavailable = .needs_route };
-                dialect = .codex;
-                source = .{ .oauth = .{ .grant = .{ .access_token = grant.access_token, .headers = pinned }, .expires_at_ms = grant.expires_at_ms } };
-            } else if (std.mem.eql(u8, flow, "xai")) {
-                source = .{ .oauth = .{ .grant = .{ .access_token = grant.access_token }, .expires_at_ms = grant.expires_at_ms } };
-            } else return .{ .unavailable = .needs_route }; // The daemon cannot build this flow.
+            switch (oauthRoute(arena, flow, grant.access_token, grant.account_id, grant.expires_at_ms)) {
+                .unavailable => |reason| return .{ .unavailable = reason },
+                .ready => |route| {
+                    mechanism = route.mechanism;
+                    dialect = route.dialect;
+                    source = route.source;
+                },
+            }
         },
     } else if (catalog_auth != null) {
         // The file names no credential and the catalog says the provider needs one.
         return .{ .unavailable = .needs_credential };
     }
 
-    // The catalog can name the header, so check the composed pair that the loader could not.
-    if (mechanism.headerName()) |name| {
-        for (headers) |h| if (std.ascii.eqlIgnoreCase(name, h.name)) return .{ .unavailable = .needs_route };
+    // The catalog can name the header, so check the composed set that the loader could not.
+    // A grant pins its own identity header, and a run refuses the whole request when one collides.
+    const pinned: []const instance.Header = switch (source) {
+        .oauth => |stored| stored.grant.headers,
+        else => &.{},
+    };
+    if (provider.resolve.headerConflict(mechanism.headerName(), pinned, headers)) {
+        return .{ .unavailable = .needs_route };
     }
 
     return .{ .ready = .{
         .instance = .{
-            .id = p.id,
             .base_url = base_url,
             .protocol = protocol,
             .auth = mechanism,
@@ -277,6 +279,44 @@ fn localAvailability(
         },
         .credential = source,
     } };
+}
+
+/// One grant becomes one route the same way from either origin. Every grant is a bearer, so the
+/// flow selects only the identity header and the response dialect.
+const OAuthRoute = union(enum) {
+    ready: struct {
+        mechanism: instance.AuthMechanism,
+        dialect: instance.ResponsesDialect,
+        source: CredentialSource,
+    },
+    unavailable: Reason,
+};
+
+fn oauthRoute(
+    arena: std.mem.Allocator,
+    flow: []const u8,
+    access_token: []const u8,
+    account_id: ?[]const u8,
+    expires_at_ms: ?u64,
+) OAuthRoute {
+    const bearer: instance.AuthMechanism = .{ .api_key = .authorization_bearer };
+    if (std.mem.eql(u8, flow, "codex")) {
+        // Codex names the account on every request, so a grant without one is half a credential.
+        const account = account_id orelse return .{ .unavailable = .needs_credential };
+        const headers = arena.dupe(instance.Header, &.{.{ .name = "ChatGPT-Account-ID", .value = account }}) catch
+            return .{ .unavailable = .needs_route };
+        return .{ .ready = .{
+            .mechanism = bearer,
+            .dialect = .codex,
+            .source = .{ .oauth = .{ .grant = .{ .access_token = access_token, .headers = headers }, .expires_at_ms = expires_at_ms } },
+        } };
+    }
+    if (std.mem.eql(u8, flow, "xai")) return .{ .ready = .{
+        .mechanism = bearer,
+        .dialect = .standard,
+        .source = .{ .oauth = .{ .grant = .{ .access_token = access_token }, .expires_at_ms = expires_at_ms } },
+    } };
+    return .{ .unavailable = .needs_route }; // The daemon cannot build this flow.
 }
 
 /// Report the flow a provider logs in with. Only an OAuth provider names one.
@@ -307,22 +347,19 @@ fn accountAvailability(arena: std.mem.Allocator, p: bundle.Provider) !Availabili
         .oauth => {
             const token = p.auth.access_token orelse return .{ .unavailable = .needs_credential };
             const flow = p.auth.flow orelse return .{ .unavailable = .needs_route };
-            // Every grant is a bearer, so the flow selects only the identity header and the dialect.
-            mechanism = .{ .api_key = .authorization_bearer };
-            if (std.mem.eql(u8, flow, "codex")) {
-                const account = p.auth.account_id orelse return .{ .unavailable = .needs_route };
-                const headers = try arena.dupe(instance.Header, &.{.{ .name = "ChatGPT-Account-ID", .value = account }});
-                dialect = .codex;
-                source = .{ .oauth = .{ .grant = .{ .access_token = token, .headers = headers }, .expires_at_ms = p.auth.expires_at_ms } };
-            } else if (std.mem.eql(u8, flow, "xai")) {
-                source = .{ .oauth = .{ .grant = .{ .access_token = token }, .expires_at_ms = p.auth.expires_at_ms } };
-            } else return .{ .unavailable = .needs_route }; // The daemon cannot build this flow.
+            switch (oauthRoute(arena, flow, token, p.auth.account_id, p.auth.expires_at_ms)) {
+                .unavailable => |reason| return .{ .unavailable = reason },
+                .ready => |route| {
+                    mechanism = route.mechanism;
+                    dialect = route.dialect;
+                    source = route.source;
+                },
+            }
         },
     }
 
     return .{ .ready = .{
         .instance = .{
-            .id = p.id,
             .base_url = base_url,
             .protocol = protocol,
             .auth = mechanism,
@@ -390,57 +427,32 @@ fn levels(arena: std.mem.Allocator, patch: []const ?[]const u8) ![]const model.R
     return out;
 }
 
-fn limitsOf(patch: model.LimitsPatch) model.Limits {
-    return .{
-        .context_window = .from(patch.context_window),
-        .max_output_tokens = .from(patch.max_output_tokens),
-    };
-}
-
-fn costOf(patch: model.CostPatch) model.Cost {
-    return .{
-        .input = .from(patch.input),
-        .output = .from(patch.output),
-        .cache_read = .from(patch.cache_read),
-        .cache_write = .from(patch.cache_write),
-    };
-}
-
 /// Read a dialect name. An unknown name degrades, because the source set is open.
 fn named(comptime T: type, name: ?[]const u8, fallback: T) T {
     const value = name orelse return fallback;
     return std.meta.stringToEnum(T, value) orelse fallback;
 }
 
-fn catalogModels(arena: std.mem.Allocator, row: ?feed.Provider) ![]const ModelSpec {
-    const p = row orelse return &.{};
-    const out = try arena.alloc(ModelSpec, p.models.len);
-    for (p.models, 0..) |m, i| out[i] = .{
+/// Convert the rows of an open source. The feed and the bundle publish one model shape, and they
+/// differ only in what each one may omit, so one projection serves both.
+fn sourceModels(arena: std.mem.Allocator, models: anytype) ![]const ModelSpec {
+    const out = try arena.alloc(ModelSpec, models.len);
+    for (models, 0..) |m, i| out[i] = .{
         .id = m.id,
         .upstream_id = m.upstream_id,
         .name = m.name,
-        .limits = limitsOf(m.limits),
-        .cost = costOf(m.cost),
-        .caps = .{ .tools = .{ .value = m.flags.supports_tools }, .vision = .{ .value = m.flags.supports_vision } },
+        .limits = m.limits,
+        .cost = m.cost,
+        .caps = .{ .tools = m.flags.supports_tools, .vision = m.flags.supports_vision },
         .reasoning_levels = try levels(arena, m.reasoning_levels),
         .dialect = dialectOf(m.flags.thinking_format, m.flags.reasoning_replay, m.flags.max_tokens_field, m.flags.anthropic_adaptive, m.flags.reasoning_budget_min, m.flags.reasoning_budget_max),
     };
     return out;
 }
 
-fn accountModels(arena: std.mem.Allocator, models: []const bundle.Model) ![]const ModelSpec {
-    const out = try arena.alloc(ModelSpec, models.len);
-    for (models, 0..) |m, i| out[i] = .{
-        .id = m.id,
-        .upstream_id = m.upstream_id,
-        .name = m.name,
-        .limits = limitsOf(m.limits),
-        .cost = costOf(m.cost),
-        .caps = .{ .tools = .from(m.flags.supports_tools), .vision = .from(m.flags.supports_vision) },
-        .reasoning_levels = try levels(arena, m.reasoning_levels),
-        .dialect = dialectOf(m.flags.thinking_format, m.flags.reasoning_replay, m.flags.max_tokens_field, m.flags.anthropic_adaptive, m.flags.reasoning_budget_min, m.flags.reasoning_budget_max),
-    };
-    return out;
+fn catalogModels(arena: std.mem.Allocator, row: ?feed.Provider) ![]const ModelSpec {
+    const p = row orelse return &.{};
+    return sourceModels(arena, p.models);
 }
 
 /// Convert a local binding, which holds closed enums and no display name.
@@ -450,9 +462,9 @@ fn localModels(arena: std.mem.Allocator, models: []const instance.ModelBinding) 
         .id = m.id,
         .upstream_id = m.upstream_id,
         .name = m.id,
-        .limits = .{ .context_window = .{ .value = m.limits.context_window }, .max_output_tokens = .{ .value = m.limits.max_output_tokens } },
-        .cost = .{ .input = .{ .value = m.cost.input }, .output = .{ .value = m.cost.output }, .cache_read = .{ .value = m.cost.cache_read }, .cache_write = .{ .value = m.cost.cache_write } },
-        .caps = .{ .tools = .{ .value = m.flags.supports_tools }, .vision = .{ .value = m.flags.supports_vision } },
+        .limits = .{ .context_window = m.limits.context_window, .max_output_tokens = m.limits.max_output_tokens },
+        .cost = .{ .input = m.cost.input, .output = m.cost.output, .cache_read = m.cost.cache_read, .cache_write = m.cost.cache_write },
+        .caps = .{ .tools = m.flags.supports_tools, .vision = m.flags.supports_vision },
         .dialect = .{
             .thinking_format = m.flags.thinking_format,
             .reasoning_replay = m.flags.reasoning_replay,
@@ -502,17 +514,17 @@ fn modelInfo(arena: std.mem.Allocator, origin: Origin, provider_id: []const u8, 
         .provider = provider_id,
         .selector = try selectorOf(arena, origin, provider_id, spec.id),
         .name = spec.name,
-        .context_window = spec.limits.context_window.optional(),
-        .max_output_tokens = spec.limits.max_output_tokens.optional(),
+        .context_window = spec.limits.context_window,
+        .max_output_tokens = spec.limits.max_output_tokens,
         .reasoning_levels = names.items,
         .default_reasoning = defaultReasoning(names.items),
-        .supports_vision = spec.caps.vision.optional(),
-        .supports_tools = spec.caps.tools.optional(),
+        .supports_vision = spec.caps.vision,
+        .supports_tools = spec.caps.tools,
         .cost = .{
-            .input = spec.cost.input.optional(),
-            .output = spec.cost.output.optional(),
-            .cache_read = spec.cost.cache_read.optional(),
-            .cache_write = spec.cost.cache_write.optional(),
+            .input = spec.cost.input,
+            .output = spec.cost.output,
+            .cache_read = spec.cost.cache_read,
+            .cache_write = spec.cost.cache_write,
         },
     };
 }

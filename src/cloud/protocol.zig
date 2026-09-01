@@ -389,7 +389,7 @@ pub fn classify(status: u16, problem: Problem) poller.Reply {
 
     return switch (status) {
         428 => .{ .pending = problem.interval_s },
-        429 => if (problem.code == .slow_down) .{ .slow_down = problem.interval_s } else .throttled,
+        429 => if (problem.code == .slow_down) .{ .slow_down = problem.interval_s } else .retryable,
         409 => .retryable,
         else => .terminal,
     };
@@ -400,7 +400,7 @@ test "classify maps every documented status" {
     try testing.expect(classify(200, .{}) == .approved);
     try testing.expect(classify(428, .{ .code = .authorization_pending, .interval_s = 5 }) == .pending);
     try testing.expect(classify(429, .{ .code = .slow_down }) == .slow_down);
-    try testing.expect(classify(429, .{ .code = .rate_limited }) == .throttled);
+    try testing.expect(classify(429, .{ .code = .rate_limited }) == .retryable);
     try testing.expect(classify(409, .{ .code = .conflict }) == .retryable);
     try testing.expect(classify(503, .{}) == .unavailable);
     try testing.expect(classify(403, .{ .code = .plan_limit }) == .terminal);
@@ -413,5 +413,5 @@ test "classify keeps an unknown code off a known path" {
     try testing.expect(classify(403, .{}) == .terminal);
     try testing.expect(classify(451, .{}) == .terminal);
     // An unknown 429 still throttles, because the status alone says to slow down.
-    try testing.expect(classify(429, .{}) == .throttled);
+    try testing.expect(classify(429, .{}) == .retryable);
 }

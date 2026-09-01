@@ -215,7 +215,6 @@ pub const envelope_unions = [_]TypeEntry{
 };
 
 pub const string_enums = [_]EnumEntry{
-    .{ .name = "AuthFlow", .ty = enums.AuthFlow },
     .{ .name = "AuthCredentialKind", .ty = enums.AuthCredentialKind },
     .{ .name = "BroadcastName", .ty = enums.BroadcastName },
     .{ .name = "RunErrorCode", .ty = enums.RunErrorCode },
@@ -246,8 +245,8 @@ pub const numeric_enums = [_]EnumEntry{
 pub const enum_order = .{
     .{ .entry = string_enums[0], .numeric = false },
     .{ .entry = string_enums[1], .numeric = false },
-    .{ .entry = string_enums[2], .numeric = false },
     .{ .entry = numeric_enums[0], .numeric = true },
+    .{ .entry = string_enums[2], .numeric = false },
     .{ .entry = string_enums[3], .numeric = false },
     .{ .entry = string_enums[4], .numeric = false },
     .{ .entry = string_enums[5], .numeric = false },
@@ -266,7 +265,6 @@ pub const enum_order = .{
     .{ .entry = string_enums[18], .numeric = false },
     .{ .entry = string_enums[19], .numeric = false },
     .{ .entry = string_enums[20], .numeric = false },
-    .{ .entry = string_enums[21], .numeric = false },
 };
 
 pub const aliases = [_]AliasEntry{

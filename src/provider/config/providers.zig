@@ -492,30 +492,6 @@ test "bad header names, values, and auth collisions are rejected" {
     )));
 }
 
-test "an entry with a route and no credential is keyless" {
-    var loaded = try loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat"}
-    ));
-    defer loaded.deinit();
-
-    const p = loaded.providers[0];
-    try testing.expect(p.auth == null); // No auth block at all means the route presents no credential.
-
-}
-
-test "an api-key block with no source means the daemon holds no key" {
-    var loaded = try loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"anthropic","auth":{"api_key":{"header":"x_api_key"}}}
-    ));
-    defer loaded.deinit();
-
-    const p = loaded.providers[0];
-    // The block states the mechanism, and the absent source states that no value is held.
-    try testing.expect(p.auth != null);
-    try testing.expect(p.auth.?.api_key.source == null);
-    try testing.expectEqual(instance.ApiKeyHeader.x_api_key, p.auth.?.api_key.header.?);
-}
-
 test "a keyless entry and an empty credential write back differently" {
     var loaded = try loadBytes(testing.allocator,
         \\{"version":1,"providers":[

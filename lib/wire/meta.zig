@@ -12,7 +12,6 @@ pub const limits = struct {
     pub const max_activity_retry_message_bytes: u64 = 1024;
     pub const max_agents: u64 = 256;
     pub const max_api_key_bytes: u64 = 65536;
-    pub const max_auth_flows: u64 = 1;
     pub const max_auth_providers: u64 = 64;
     pub const max_auth_user_code_bytes: u64 = 128;
     pub const max_blob_bytes: u64 = 67108864;

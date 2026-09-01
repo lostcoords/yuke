@@ -106,6 +106,25 @@ fn onlyCredential(p: provider.config.LocalProvider) bool {
     };
 }
 
+/// Drop one grant from the layer in memory, without a write. A rotation whose result cannot land on
+/// disk still spent its refresh token, so the daemon must never send that token again.
+/// The file keeps the old grant, and only a restart reads it back.
+pub fn forgetGrant(self: *@This(), provider_id: []const u8) void {
+    const loaded = if (self.local) |*local| local else return;
+    for (loaded.providers) |*p| {
+        if (!std.mem.eql(u8, p.id, provider_id)) continue;
+        if (p.auth) |*auth| switch (auth.*) {
+            // The strings belong to the layer arena, so dropping them frees nothing here.
+            .oauth => |*grant| {
+                grant.refresh_token = null;
+                grant.expires_at_ms = 0;
+            },
+            .api_key => {},
+        };
+        return;
+    }
+}
+
 /// Render the layer, parse it, write it, then install it. A document that cannot load never lands.
 fn install(self: *@This(), providers: []const provider.config.LocalProvider, path: []const u8, db: *database.Database) !bool {
     const bytes = try provider.config.serialize(self.gpa, providers);
@@ -113,9 +132,12 @@ fn install(self: *@This(), providers: []const provider.config.LocalProvider, pat
 
     var next = try provider.config.loadBytes(self.gpa, bytes);
     errdefer next.deinit();
+    // Build the replacement before the write. A later failure would leave the file ahead of memory,
+    // and the next edit would then serialize the stale layer back over the file.
+    var next_merged = try self.load(db, &next, if (self.account) |*loaded| loaded.document else null);
+    errdefer next_merged.deinit();
     try provider.config.writeFileBytes(self.io, path, bytes);
 
-    const next_merged = try self.load(db, &next, if (self.account) |*loaded| loaded.document else null);
     var previous = self.local;
     self.local = next;
     defer if (previous) |*loaded| loaded.deinit();

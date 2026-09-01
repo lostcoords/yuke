@@ -29,8 +29,8 @@ pub const Auth = struct {
     flow: ?[]const u8 = null,
 };
 
-pub const Limits = model.LimitsPatch;
-pub const Cost = model.CostPatch;
+pub const Limits = model.Limits;
+pub const Cost = model.Cost;
 
 /// The catalog publishes model capabilities. The request-shape rules stay in the provider layer.
 pub const Flags = struct {

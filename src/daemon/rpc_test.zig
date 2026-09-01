@@ -253,17 +253,19 @@ fn responseItemCount(bytes: []const u8) !usize {
     };
 }
 
-fn responseUpdatedAt(bytes: []const u8) ![2]u64 {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const result = try responseResult(arena.allocator(), bytes);
+/// One page row reduced to the pair the query orders on.
+const OrderKey = struct { updated_at_ms: u64, id: []const u8 };
+
+/// Read the `(updated_at_ms, id)` pair of each page row. That pair is the whole page order.
+fn responseOrderKeys(arena: std.mem.Allocator, bytes: []const u8) ![2]OrderKey {
+    const result = try responseResult(arena, bytes);
     const items = switch (result.get("items") orelse return error.InvalidResponse) {
         .array => |items| items.items,
         else => return error.InvalidResponse,
     };
     if (items.len != 2) return error.InvalidResponse;
 
-    var updated_at: [2]u64 = undefined;
+    var keys: [2]OrderKey = undefined;
     for (items, 0..) |item, i| {
         const item_object = switch (item) {
             .object => |item_object| item_object,
@@ -273,12 +275,18 @@ fn responseUpdatedAt(bytes: []const u8) ![2]u64 {
             .object => |session| session,
             else => return error.InvalidResponse,
         };
-        updated_at[i] = switch (session.get("updated_at_ms") orelse return error.InvalidResponse) {
-            .integer => |timestamp| @intCast(timestamp),
-            else => return error.InvalidResponse,
+        keys[i] = .{
+            .updated_at_ms = switch (session.get("updated_at_ms") orelse return error.InvalidResponse) {
+                .integer => |timestamp| @intCast(timestamp),
+                else => return error.InvalidResponse,
+            },
+            .id = switch (session.get("id") orelse return error.InvalidResponse) {
+                .string => |id| id,
+                else => return error.InvalidResponse,
+            },
         };
     }
-    return updated_at;
+    return keys;
 }
 
 test "dispatch initialize returns a result" {
@@ -399,11 +407,15 @@ test "session.list returns created sessions newest-first" {
         \\{"id":"3","method":"session.list","params":{}}
     , &list_buffer);
     try std.testing.expectEqual(@as(usize, 2), try responseItemCount(written));
-    const updated_at = try responseUpdatedAt(written);
-    try std.testing.expect(updated_at[0] >= updated_at[1]);
-    const first_title = std.mem.indexOf(u8, written, "\"title\":\"one\"") orelse return error.MissingTitle;
-    const second_title = std.mem.indexOf(u8, written, "\"title\":\"two\"") orelse return error.MissingTitle;
-    try std.testing.expect(first_title != second_title);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    // The page orders on `(updated_at_ms, id)` descending. Two rows can share one millisecond,
+    // so the id decides the tie, and a plain timestamp compare would accept either order.
+    const keys = try responseOrderKeys(arena.allocator(), written);
+    try std.testing.expect(keys[0].updated_at_ms >= keys[1].updated_at_ms);
+    if (keys[0].updated_at_ms == keys[1].updated_at_ms) {
+        try std.testing.expectEqual(std.math.Order.gt, std.mem.order(u8, keys[0].id, keys[1].id));
+    }
 }
 
 test "session.list pages with a selector-bound cursor" {
@@ -2267,18 +2279,14 @@ test "session.remove deletes the session and cascades its transcript" {
     try std.testing.expect(fixture.state.sessions.get(sid) == null);
 }
 
-test "the startup resume hydrates every queued session and starts one run each" {
-    var fixture = try TestState.init();
-    defer fixture.deinit();
+/// Queue two sessions in SQLite only, then drop their runtimes, so the resume reads a fresh daemon.
+fn seedQueuedSessions(fixture: *TestState, ids: *[2]wire.ids.SessionId) !void {
     const a = fixture.allocator();
-
-    var ids: [2]wire.ids.SessionId = undefined;
-    for (&ids, 0..) |*sid, i| {
-        sid.* = try createSession(&fixture, a, .{
+    for (ids, 0..) |*sid, i| {
+        sid.* = try createSession(fixture, a, .{
             .workspace_path = if (i == 0) "/first" else "/second",
             .model = "local:mock/fast",
         });
-        // Queue the input in SQLite only, then drop the runtime, so this reads like a fresh daemon.
         const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "resume me" } }};
         const now = fixture.state.nowMillis();
         var tx = try fixture.state.db.begin();
@@ -2286,8 +2294,15 @@ test "the startup resume hydrates every queued session and starts one run each" 
         _ = try database.input.enqueue(&fixture.state.db, a, sid.raw, fixture.state.newId(), now, &content, now);
         try tx.commit();
     }
-    for (ids) |sid| fixture.state.sessions.remove(sid);
+    for (ids.*) |sid| fixture.state.sessions.remove(sid);
+}
 
+test "the startup resume hydrates every queued session and starts one run each" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
+    var ids: [2]wire.ids.SessionId = undefined;
+    try seedQueuedSessions(&fixture, &ids);
     try run_task.resumeSessions(&fixture.state);
 
     for (ids) |sid| {
@@ -2698,6 +2713,21 @@ fn seedOauthCatalog(fixture: *TestState, flow: []const u8) !void {
     _ = try fixture.state.store.rebuild(&fixture.state.db);
 }
 
+/// Two catalog rows that name a device flow, so two local grants can come due together.
+fn seedTwoOauthCatalog(fixture: *TestState) !void {
+    const a = fixture.allocator();
+    const raw = try std.fmt.allocPrint(a,
+        \\{{"version":1,"catalog_rev":"{s}","providers":[
+        \\ {{"id":"codex","name":"Codex","base_url":"https://c.example/v1","protocol":"openai_responses",
+        \\ "cache":"unsupported","headers":[],"auth":{{"kind":"oauth","flow":"xai"}},"models":[]}},
+        \\ {{"id":"second","name":"Second","base_url":"https://s.example/v1","protocol":"openai_responses",
+        \\ "cache":"unsupported","headers":[],"auth":{{"kind":"oauth","flow":"xai"}},"models":[]}}]}}
+    , .{"ab" ** 64});
+    const parsed = try cloud_catalog.decode(a, raw);
+    try catalog_store.replace(&fixture.state.db, a, parsed.providers);
+    _ = try fixture.state.store.rebuild(&fixture.state.db);
+}
+
 /// Seed one local grant plus the catalog row naming its flow. The fixture then holds a file path.
 fn seedGrant(fixture: *TestState, json: []const u8) !void {
     try seedOauthCatalog(fixture, "xai");
@@ -2803,12 +2833,21 @@ test "a failed write never retries a rotation the server may have completed" {
         \\{"version":1,"providers":[{"id":"codex","auth":{"oauth":{"access_token":"at",
         \\ "refresh_token":"rt","expires_at_ms":9}}}]}
     );
-    var canned: provider.oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body =
+    // A spare reply waits, so a repeated rotation consumes one and the index reports it.
+    var canned: provider.oauth.CannedHttp = .{ .replies = &.{
+        .{ .answer = .{ .status = 200, .body =
         \\{"access_token":"new","refresh_token":"rt2","expires_in":3600}
-    } }} };
+        } },
+        .{ .answer = .{ .status = 200, .body =
+        \\{"access_token":"newer","refresh_token":"rt3","expires_in":3600}
+        } },
+    } };
     fixture.state.oauth_http = canned.seam();
 
     // The rotation landed upstream, so a write failure must not make the caller send `rt` again.
+    const more = try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    // The scheduler repeats at once while a grant stays due, so an unwritten grant must not stay due.
+    try std.testing.expect(!more);
     _ = try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
     try std.testing.expectEqual(@as(usize, 1), canned.index);
 }
@@ -2832,6 +2871,40 @@ test "a grant outside the margin is not due" {
     try std.testing.expectEqual(@as(?u64, 9000000000000), login_task.soonestExpiry(&fixture.state));
 }
 
+test "a second due grant follows the first instead of waiting an idle period" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    try seedTwoOauthCatalog(&fixture);
+    var loaded = try provider.config.loadBytes(std.testing.allocator,
+        \\{"version":1,"providers":[
+        \\ {"id":"codex","auth":{"oauth":{"access_token":"at","refresh_token":"rt","expires_at_ms":9}}},
+        \\ {"id":"second","auth":{"oauth":{"access_token":"at2","refresh_token":"rt2","expires_at_ms":9}}}]}
+    );
+    errdefer loaded.deinit();
+    _ = try fixture.state.store.installLocal(&loaded, &fixture.state.db);
+
+    var canned: provider.oauth.CannedHttp = .{ .replies = &.{
+        .{ .answer = .{ .status = 200, .body =
+        \\{"access_token":"a1","refresh_token":"r1","expires_in":3600}
+        } },
+        .{ .answer = .{ .status = 200, .body =
+        \\{"access_token":"a2","refresh_token":"r2","expires_in":3600}
+        } },
+    } };
+    fixture.state.oauth_http = canned.seam();
+
+    // One call rotates one grant and reports that another still waits.
+    try std.testing.expect(try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000));
+    try std.testing.expectEqual(@as(usize, 1), canned.index);
+    // The second call clears the last one, so the job may sleep again.
+    try std.testing.expect(!try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000));
+    try std.testing.expectEqual(@as(usize, 2), canned.index);
+}
+
 test "auth.login refuses a provider that offers no flow the daemon can drive" {
     var fixture = try TestState.initBare(null);
     defer fixture.deinit();
@@ -2839,11 +2912,37 @@ test "auth.login refuses a provider that offers no flow the daemon can drive" {
 
     try seedOauthCatalog(&fixture, "something_new");
     try std.testing.expectError(error.NoLoginFlow, handlers.authLogin(&fixture.state, a, .{ .provider_id = "codex" }));
-    // auth.list agrees, so a client never offers a login the daemon would refuse.
+}
+
+test "auth.changed reports the login flows that auth.list reports" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    try fixture.register();
+    const a = fixture.allocator();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+    try seedOauthCatalog(&fixture, "xai");
+
+    _ = try handlers.authSetApiKey(&fixture.state, a, .{ .provider_id = "codex", .api_key = "sk" });
+
     const listed = try handlers.authList(&fixture.state, a, .{});
-    for (listed.providers) |p| if (std.mem.eql(u8, p.provider_id, "codex")) {
-        try std.testing.expectEqual(@as(usize, 0), p.login_flows.len);
+    try std.testing.expectEqual(@as(usize, 1), listed.providers.len);
+    try std.testing.expect(listed.providers[0].can_login);
+
+    var log = BroadcastLog.init();
+    defer log.deinit();
+    try log.drain(fixture.conn);
+    var seen = false;
+    for (log.events.items) |ev| if (ev == .auth_changed_data) {
+        seen = true;
+        // A client folds this note into its state, so a false value erases a login still on offer.
+        try std.testing.expectEqual(
+            listed.providers[0].can_login,
+            ev.auth_changed_data.provider.can_login,
+        );
     };
+    try std.testing.expect(seen);
 }
 
 test "a cancel is idempotent and survives a login that already finished" {
@@ -2966,22 +3065,6 @@ test "a login outlives the connection that started it" {
     var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.store.path.?);
     defer reloaded.deinit();
     try std.testing.expectEqualStrings("rt", reloaded.providers[0].auth.?.oauth.refresh_token.?);
-}
-
-test "a finalizing login ignores a later cancel" {
-    var fixture = try TestState.initBare(null);
-    defer fixture.deinit();
-    const a = fixture.allocator();
-    const id: wire.ids.LoginId = .bytes(@splat(5));
-
-    const arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    const slot = try fixture.state.logins.reserve(id, arena, "codex", .codex);
-    // The task claimed the login, so the grant is already landing.
-    slot.finalizing = true;
-
-    _ = try handlers.authCancelLogin(&fixture.state, a, .{ .login_id = id });
-    // The cancel must not contradict the outcome the task is about to publish.
-    try std.testing.expect(!slot.cancel_requested);
 }
 
 test "a shutting daemon starts no new login" {

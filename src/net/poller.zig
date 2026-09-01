@@ -6,8 +6,8 @@ const std = @import("std");
 /// RFC 8628 adds this much to the interval after a `slow_down` reply.
 const slow_down_step_ms = 5_000;
 
-/// Bound one wait, so a wrong server value cannot stall the login.
-const max_interval_ms = 60_000;
+/// Hold one floor under the wait. RFC 8628 section 3.5 leaves the cadence itself to the server,
+/// and the deadline already bounds the login, so no ceiling belongs here.
 const min_interval_ms = 1_000;
 
 /// Bound the retry delay after a transient failure.
@@ -22,9 +22,7 @@ pub const Reply = union(enum) {
     /// The server waits for the human. The value is the interval that the server reports.
     pending: ?u64,
     slow_down: ?u64,
-    /// The server refused the rate of the requests.
-    throttled,
-    /// The server hit a temporary conflict.
+    /// The server refused the rate, or hit a conflict it may clear. Both wait the same way.
     retryable,
     /// The request never reached the server, or the server failed.
     unavailable,
@@ -44,7 +42,6 @@ pub const Failure = union(enum) {
 pub const Action = union(enum) {
     /// Wait this long, then poll again.
     wait_ms: u64,
-    done,
     failed: Failure,
 };
 
@@ -59,7 +56,7 @@ pub const Poller = struct {
     /// Start the policy. `now_ms` is a monotonic clock value, and the caller supplies both bounds.
     pub fn init(now_ms: u64, interval_ms: u64, lifetime_ms: u64) Poller {
         return .{
-            .interval_ms = clampInterval(interval_ms),
+            .interval_ms = atLeastInterval(interval_ms),
             .deadline_ms = now_ms +| @min(lifetime_ms, max_lifetime_ms),
         };
     }
@@ -74,7 +71,8 @@ pub const Poller = struct {
         std.debug.assert(self.interval_ms >= min_interval_ms); // Every path clamps the interval.
 
         switch (reply) {
-            .approved => return .done,
+            // Both callers take the credential an approval carries, so it never reaches the pacing.
+            .approved => unreachable,
             .terminal => return .{ .failed = .terminal },
             else => {},
         }
@@ -88,10 +86,10 @@ pub const Poller = struct {
             .pending => |server_s| self.adopt(server_s),
             .slow_down => |server_s| blk: {
                 _ = self.adopt(server_s);
-                self.interval_ms = clampInterval(self.interval_ms +| slow_down_step_ms);
+                self.interval_ms = atLeastInterval(self.interval_ms +| slow_down_step_ms);
                 break :blk self.interval_ms;
             },
-            .throttled, .retryable, .unavailable => self.backOff(),
+            .retryable, .unavailable => self.backOff(),
             .approved, .terminal => unreachable, // Both return above.
         };
 
@@ -106,7 +104,7 @@ pub const Poller = struct {
     /// so a later reply cannot undo a `slow_down` increase.
     fn adopt(self: *Poller, server_s: ?u64) u64 {
         if (server_s) |seconds| {
-            self.interval_ms = clampInterval(@max(self.interval_ms, seconds *| 1_000));
+            self.interval_ms = atLeastInterval(@max(self.interval_ms, seconds *| 1_000));
         }
         self.backoff_ms = 0;
         return self.interval_ms;
@@ -122,8 +120,8 @@ pub const Poller = struct {
     }
 };
 
-fn clampInterval(value_ms: u64) u64 {
-    return std.math.clamp(value_ms, min_interval_ms, max_interval_ms);
+fn atLeastInterval(value_ms: u64) u64 {
+    return @max(value_ms, min_interval_ms);
 }
 
 const testing = std.testing;
@@ -143,10 +141,7 @@ test "poller waits the server interval while the login is pending" {
     try testing.expectEqual(@as(u64, 5_000), p.step(.{ .pending = null }, 5_000).wait_ms);
 }
 
-test "poller finishes on approval and stops on a terminal reply" {
-    var p = pending();
-    try testing.expect(p.step(.approved, 0) == .done);
-
+test "poller stops on a terminal reply" {
     var q = pending();
     try testing.expect(q.step(.terminal, 0).failed == .terminal);
 }
@@ -162,7 +157,7 @@ test "a transient failure backs off and a valid reply resets it" {
     var p = pending();
     try testing.expectEqual(@as(u64, 5_000), p.step(.unavailable, 0).wait_ms);
     try testing.expectEqual(@as(u64, 10_000), p.step(.unavailable, 1_000).wait_ms);
-    try testing.expectEqual(@as(u64, 20_000), p.step(.throttled, 2_000).wait_ms);
+    try testing.expectEqual(@as(u64, 20_000), p.step(.retryable, 2_000).wait_ms);
     try testing.expectEqual(@as(u64, 5_000), p.step(.{ .pending = 5 }, 3_000).wait_ms);
     try testing.expectEqual(@as(u64, 5_000), p.step(.retryable, 4_000).wait_ms);
 }
@@ -187,9 +182,12 @@ test "the deadline reports an offline failure after an unreachable server" {
     try testing.expect(p.step(.unavailable, 900_000).failed == .offline);
 }
 
-test "an absurd interval clamps and a full day of lifetime survives" {
+test "the server keeps its cadence and a full day of lifetime survives" {
     const p: Poller = .init(0, 3_600_000, 86_400_000);
     // RFC 8628 accepts a day, so the whole lifetime must remain.
     try testing.expectEqual(@as(u64, 86_400_000), p.deadline_ms);
-    try testing.expectEqual(@as(u64, 60_000), p.interval_ms);
+    // Section 3.5 leaves the interval to the server. A ceiling here would poll faster than it asked.
+    try testing.expectEqual(@as(u64, 3_600_000), p.interval_ms);
+    // The floor stands, because a zero interval would spin.
+    try testing.expectEqual(@as(u64, min_interval_ms), (Poller.init(0, 0, 1_000)).interval_ms);
 }

@@ -77,7 +77,7 @@ pub const AuthRemoveParams = struct {
 pub const AuthProvider = struct {
     provider_id: ids.ProviderId,
     credential_kind: ?enums.AuthCredentialKind = null,
-    login_flows: []const enums.AuthFlow,
+    can_login: bool,
 };
 
 /// These `auth.set_api_key` parameters carry a key that the wire never returns.

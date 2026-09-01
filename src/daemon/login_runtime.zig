@@ -27,8 +27,6 @@ pub const LoginSlot = struct {
     start: oauth.Start = .{ .user_code = "", .device_auth_id = "", .verification_url = "" },
     /// A cancel sets this before it wakes the task, so the task reports `canceled`.
     cancel_requested: bool = false,
-    /// The task claims the login before it writes the grant, so a later cancel cannot undo it.
-    finalizing: bool = false,
     /// The RPC task sets this event so a waiting login stops before its next poll.
     wake_event: std.Io.Event = .unset,
 
@@ -85,13 +83,6 @@ pub const Logins = struct {
 };
 
 const testing = std.testing;
-
-test "a flow name resolves only to a flow the daemon can drive" {
-    try testing.expectEqual(Flow.xai, Flow.parse("xai").?);
-    try testing.expectEqual(Flow.codex, Flow.parse("codex").?);
-    try testing.expect(Flow.parse("something_new") == null);
-    try testing.expect(Flow.parse("") == null);
-}
 
 test "one provider holds one login, and a removal frees it" {
     var logins: Logins = .init(testing.allocator);
