@@ -25,7 +25,7 @@ import { transcriptVim } from "yuke:transcript-vim";
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "session" }>} NativeSessionEvent */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "index" }>} NativeIndexEvent */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "conn" }> & { workspaces?: readonly Wire.Workspace[] }} NativeConnEvent */
-/** @typedef {{ nextRetryAt: number, remoteRetryAt: Record<string, number>, roster: DeviceInfo[], rosterTried: boolean, onStart: () => void, attempt: () => void, dialLocal: () => void, loadRoster: () => void, dialableKey: (d: DeviceInfo) => string | null, dialRemotes: () => void, scheduleRetry: () => void, needsTick: () => { periodMs: number } | null, tick: () => void }} ConnectionService */
+/** @typedef {{ nextRetryAt: number, remoteRetryAt: Record<string, number>, roster: DeviceInfo[], rosterTried: boolean, stopped: boolean, onStart: () => void, onStop: () => void, attempt: () => void, dialLocal: () => void, loadRoster: () => void, dialableKey: (d: DeviceInfo) => string | null, dialRemotes: () => void, scheduleRetry: () => void, needsTick: () => { periodMs: number } | null, tick: () => void }} ConnectionService */
 
 // The ":" command line: the prompt links to Normal; an unmatched word shows in red.
 style.add({ YukeCmdline: { link: "Normal" }, YukeCmdlineErr: { fg: "danger", bold: true } });
@@ -1096,13 +1096,27 @@ const connection = {
   remoteRetryAt: Object.create(null),
   roster: [],
   rosterTried: false,
+  // A settled dial must do nothing once the owner unloads, so every callback reads this.
+  stopped: false,
 
   onStart() {
+    this.stopped = false;
     if (config.daemon.autoConnect === false) return;
     this.attempt();
   },
 
+  // An unload drops the connections this service opened and disarms its pending callbacks.
+  onStop() {
+    this.stopped = true;
+    this.nextRetryAt = 0;
+    this.remoteRetryAt = Object.create(null);
+    this.roster = [];
+    this.rosterTried = false;
+    for (const c of client.connections()) client.disconnect(c.key);
+  },
+
   attempt() {
+    if (this.stopped) return;
     this.dialLocal();
     this.loadRoster();
     this.dialRemotes();
@@ -1110,13 +1124,17 @@ const connection = {
   },
 
   dialLocal() {
+    if (this.stopped) return;
     if (client.connectionState(LOCAL) !== "disconnected") return;
     this.nextRetryAt = 0;
     const opts = { host: config.daemon.host, port: config.daemon.port };
     try {
       client.connect(opts).then(
-        () => root.invalidate(),
         () => {
+          if (!this.stopped) root.invalidate();
+        },
+        () => {
+          if (this.stopped) return;
           this.scheduleRetry();
           root.invalidate();
         },
@@ -1127,16 +1145,17 @@ const connection = {
   },
 
   loadRoster() {
-    if (this.rosterTried) return;
+    if (this.stopped || this.rosterTried) return;
     this.rosterTried = true;
     client.devices().then(
       (devs) => {
+        if (this.stopped) return;
         this.roster = /** @type {DeviceInfo[]} */ (devs || []);
         this.dialRemotes();
         root.invalidate();
       },
       () => {
-        this.roster = [];
+        if (!this.stopped) this.roster = [];
       },
     );
   },
@@ -1152,7 +1171,7 @@ const connection = {
   },
 
   dialRemotes() {
-    if (config.daemon.autoConnect === false) return;
+    if (this.stopped || config.daemon.autoConnect === false) return;
     const now = Date.now();
     for (const d of this.roster) {
       const key = this.dialableKey(d);
@@ -1161,8 +1180,11 @@ const connection = {
       this.remoteRetryAt[key] = 0;
       try {
         client.connect({ remote: true, device: d.device_id }).then(
-          () => root.invalidate(),
+          () => {
+            if (!this.stopped) root.invalidate();
+          },
           (err) => {
+            if (this.stopped) return;
             const code = err && err.code;
             if ((/** @type {Record<string, boolean>} */ (NO_RETRY))[code]) return;
             this.remoteRetryAt[key] = Date.now() + config.daemon.retryMs;
@@ -1182,7 +1204,7 @@ const connection = {
 
   // Ask for a tick only while a connection attempt or a retry stays open.
   needsTick() {
-    if (config.daemon.autoConnect === false) return null;
+    if (this.stopped || config.daemon.autoConnect === false) return null;
     if (client.connectionState(LOCAL) === "disconnected") return { periodMs: RETRY_POLL_MS };
     for (const d of this.roster) {
       if (this.dialableKey(d)) return { periodMs: RETRY_POLL_MS };
@@ -1191,7 +1213,7 @@ const connection = {
   },
 
   tick() {
-    if (config.daemon.autoConnect === false) return;
+    if (this.stopped || config.daemon.autoConnect === false) return;
     if (client.connectionState(LOCAL) === "disconnected") {
       if (this.nextRetryAt === 0) this.scheduleRetry();
       else if (Date.now() >= this.nextRetryAt) this.dialLocal();

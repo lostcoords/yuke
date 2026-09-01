@@ -16,6 +16,7 @@ import { term } from "yuke:term";
 /** @typedef {{ rect: Rect, draw: (...args: any[]) => unknown, name?: string, update?: () => void, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: Extract<HostEvent, { type: "mouse" }>) => boolean, onFocus?: () => void, contexts?: () => string[], navTarget?: () => NavTarget | null, needsTick?: () => { periodMs: number } | null, tick?: () => void, cursor?: () => { x: number, y: number, visible: boolean } | null, modal?: boolean }} ViewLike */
 /** @typedef {Omit<ViewLike, "rect"> & { rect?: Rect }} Overlay */
 /** @typedef {{ onStart?: () => void, onStop?: () => void, needsTick?: () => { periodMs: number } | null, tick?: () => void }} ServiceLike */
+/** @typedef {{ svc: ServiceLike, refs: number, started: boolean }} ServiceEntry */
 /** @typedef {{ type: "leaf" | "split", parent: Node | null, rect: Rect, view: ViewLike | null, kind: "row" | "col" | null, a: Node | null, b: Node | null, ratio: number }} NodeShape */
 /** @typedef {(...args: any[]) => unknown} CommandAction */
 /** @typedef {(...args: any[]) => boolean | [boolean, ...any[]]} CommandPredicate */
@@ -1628,7 +1629,7 @@ export class RootView {
     this.activeLeaf = null;
     /** @type {Overlay[]} */
     this.overlays = [];
-    /** @type {ServiceLike[]} */
+    /** @type {ServiceEntry[]} */
     this.services = [];
     /** @type {Node | null} */
     this._capture = null; // the leaf that owns the drag, from press to release
@@ -1771,22 +1772,59 @@ export class RootView {
     this._setActiveLeaf(/** @type {Node} */ (leaves[(i + step + leaves.length) % leaves.length]));
   }
 
+  /** @param {ServiceLike} svc @returns {ServiceEntry | undefined} */
+  _serviceEntry(svc) {
+    for (const e of this.services) if (e.svc === svc) return e;
+    return undefined;
+  }
+
+  // Report whether a service is registered, so a caller never reads the entry list itself.
+  /** @param {ServiceLike} svc @returns {boolean} */
+  hasService(svc) {
+    return this._serviceEntry(svc) !== undefined;
+  }
+
+  // A second registration shares one entry, so one owner cannot stop a service another still holds.
   /** @param {ServiceLike} svc @returns {ServiceLike} */
   addService(svc) {
-    this.services.push(svc);
-    if (this._started) callHook(svc, "onStart");
+    const held = this._serviceEntry(svc);
+    if (held) {
+      held.refs += 1;
+      return svc;
+    }
+    /** @type {ServiceEntry} */
+    const entry = { svc, refs: 1, started: false };
+    this.services.push(entry);
+    if (this._started) {
+      // A hook that throws must not leave a service behind that the failed scope cannot revert.
+      try {
+        callHook(svc, "onStart");
+      } catch (e) {
+        const i = this.services.indexOf(entry);
+        if (i >= 0) this.services.splice(i, 1);
+        throw e;
+      }
+      entry.started = true;
+    }
     this.syncTick();
     return svc;
   }
 
-  // Take a service back out. A started service gets `onStop`, so it can release what it holds.
+  // Drop one registration. The last one removes the entry, and only a started service gets `onStop`.
   /** @param {ServiceLike} svc @returns {void} */
   removeService(svc) {
-    const i = this.services.indexOf(svc);
-    if (i < 0) return;
-    this.services.splice(i, 1);
-    if (this._started) callHook(svc, "onStop");
-    this.syncTick();
+    const entry = this._serviceEntry(svc);
+    if (!entry) return;
+    entry.refs -= 1;
+    if (entry.refs > 0) return;
+    const i = this.services.indexOf(entry);
+    if (i >= 0) this.services.splice(i, 1);
+    try {
+      if (entry.started) callHook(svc, "onStop");
+    } finally {
+      // The timer must return to the truth even when a stop hook throws.
+      this.syncTick();
+    }
   }
 
   // The widget a nav binding drives, taken from the layer that reads the keyboard.
@@ -1830,11 +1868,11 @@ export class RootView {
     this.draw();
   }
 
-  /** @param {(layer: Overlay | ServiceLike) => void} fn @returns {void} */
+  /** @param {(layer: Overlay | ServiceLike, isService: boolean) => void} fn @returns {void} */
   _forEachTickable(fn) {
-    if (this.root_node) for (const leaf of this.root_node.leaves()) if (leaf.view) fn(leaf.view);
-    for (const layer of this.overlays) fn(layer);
-    for (const svc of this.services) fn(svc);
+    if (this.root_node) for (const leaf of this.root_node.leaves()) if (leaf.view) fn(leaf.view, false);
+    for (const layer of this.overlays) fn(layer, false);
+    for (const e of this.services.slice()) fn(e.svc, true);
   }
 
   /** @returns {void} */
@@ -1876,8 +1914,11 @@ export class RootView {
 
   /** @returns {void} */
   tickLayers() {
-    this._forEachTickable((layer) => {
-      if (callHook(layer, "needsTick")) callHook(layer, "tick");
+    this._forEachTickable((layer, isService) => {
+      if (!callHook(layer, "needsTick")) return;
+      // A service can remove itself inside `needsTick`, so a stale one must not still get `tick`.
+      if (isService && !this.hasService(/** @type {ServiceLike} */ (layer))) return;
+      callHook(layer, "tick");
     });
   }
 
@@ -1893,7 +1934,12 @@ export class RootView {
     if (ev.type === "start" || ev.type === "resize") {
       if (ev.type === "start" && !this._started) {
         this._started = true;
-        for (const svc of this.services) callHook(svc, "onStart");
+        for (const e of this.services.slice()) {
+          // A hook can remove a later service, so start only what the pass still holds.
+          if (e.started || !this.hasService(e.svc)) continue;
+          e.started = true;
+          callHook(e.svc, "onStart");
+        }
       }
       this.invalidate();
       return;

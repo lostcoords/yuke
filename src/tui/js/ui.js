@@ -87,7 +87,7 @@ function sameId(a, b) {
 // The nav vocabulary, written once. The shell binds these strokes and a modal layer reads them.
 /** @typedef {(t: import("yuke:core").NavTarget) => void} NavAction */
 /** @type {Record<string, NavAction | undefined>} */
-export const NAV_KEYS = Object.assign(Object.create(null), /** @type {Record<string, NavAction>} */ ({
+export const NAV_KEYS = Object.freeze(Object.assign(Object.create(null), /** @type {Record<string, NavAction>} */ ({
   j: (t) => t.navBy(1),
   down: (t) => t.navBy(1),
   k: (t) => t.navBy(-1),
@@ -99,7 +99,7 @@ export const NAV_KEYS = Object.assign(Object.create(null), /** @type {Record<str
   home: (t) => t.navEdge(-1),
   end: (t) => t.navEdge(1),
   G: (t) => t.navEdge(1),
-}));
+})));
 
 // A scrollable, selectable list. `key(item)` gives a stable identity, so the selection follows its
 // item across a re-sorted `items`. `itemHeight` rows render per item; `format` may return `lines`.

@@ -2592,8 +2592,15 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\import { SessionList, sidebar, chat, connection } from "yuke:defaults";
         \\const fail = [];
         \\// The connection runs as a plugin service now, so an unload can take it back out.
-        \\if (root.services.indexOf(connection) < 0) fail.push("connection-service");
+        \\if (!root.hasService(connection)) fail.push("connection-service");
         \\if (!plugins.get("connection")) fail.push("connection-plugin");
+        \\plugins.dispose("connection");
+        \\if (root.hasService(connection)) fail.push("connection-unloads");
+        \\// The unload disarms the service, so a settled dial cannot write to it afterwards.
+        \\if (!connection.stopped) fail.push("connection-stops");
+        \\if (connection.needsTick() !== null) fail.push("connection-stops-ticking");
+        \\plugins.use({ name: "connection", apply: (ctx) => ctx.service(connection) });
+        \\if (connection.stopped) fail.push("connection-restarts");
         \\
         \\// The status bar reports a pending key, the way vim reports one with showcmd.
         \\{
@@ -3125,8 +3132,7 @@ test "a focused transcript takes the keys even while the composer sits in normal
         \\  root.onEvent(key("j"));
         \\  const movedTranscript = !!(v.cursor() && c0 && v.cursor().y !== c0.y);
         \\  const movedComposer = v.composer.input.caret !== caret0;
-        \\  // An unscoped nav binding must lose to the deeper vim context, so put the cursor where the
-        \\  // vim motion can still move and therefore claims the key.
+        \\  // An unscoped nav binding loses to the deeper vim context while the motion can still move.
         \\  root.onEvent(key("k"));
         \\  root.onEvent(key("k"));
         \\  let bare = 0;
@@ -3352,31 +3358,97 @@ test "a service registered through a plugin leaves when the plugin unloads" {
         \\const svc = { onStart() { log.push("start"); }, onStop() { log.push("stop"); } };
         \\const before = root.services.length;
         \\plugins.use({ name: "svc-test", apply(ctx) { ctx.service(svc); } });
-        \\check("added", root.services.indexOf(svc) >= 0 && root.services.length === before + 1);
+        \\check("added", root.hasService(svc) && root.services.length === before + 1);
         \\check("started", log.join(",") === "start");
-        \\
         \\plugins.dispose("svc-test");
-        \\check("removed", root.services.indexOf(svc) < 0 && root.services.length === before);
+        \\check("removed", !root.hasService(svc) && root.services.length === before);
         \\check("stopped", log.join(",") === "start,stop");
+        \\
+        \\// Two owners share one entry, so one unload cannot stop what the other still holds.
+        \\log.length = 0;
+        \\plugins.use({ name: "own-a", apply(ctx) { ctx.service(svc); } });
+        \\plugins.use({ name: "own-b", apply(ctx) { ctx.service(svc); } });
+        \\check("shared-starts-once", log.join(",") === "start");
+        \\plugins.dispose("own-a");
+        \\check("shared-holds", root.hasService(svc) && log.join(",") === "start");
+        \\plugins.dispose("own-b");
+        \\check("shared-stops-last", !root.hasService(svc) && log.join(",") === "start,stop");
+        \\
+        \\// A throwing `onStart` registers nothing, so a failed scope leaves no service behind.
+        \\const bad = { onStart() { throw new Error("bad start"); } };
+        \\let threw = 0;
+        \\try { plugins.use({ name: "bad", apply(ctx) { ctx.service(bad); } }); } catch (e) { threw = 1; }
+        \\check("bad-start-rejected", threw === 1 && !root.hasService(bad) && !plugins.get("bad"));
+        \\
+        \\// A throwing `onStop` still restores the tick state.
+        \\let synced = 0;
+        \\const realSync = root.syncTick.bind(root);
+        \\root.syncTick = () => { synced++; return realSync(); };
+        \\const noisy = { needsTick() { return { periodMs: 5 }; }, onStop() { throw new Error("bad stop"); } };
+        \\root.addService(noisy);
+        \\const s0 = synced;
+        \\let stopThrew = 0;
+        \\try { root.removeService(noisy); } catch (e) { stopThrew = 1; }
+        \\check("bad-stop-syncs", stopThrew === 1 && !root.hasService(noisy) && synced > s0);
+        \\root.syncTick = realSync;
+        \\
+        \\// A service that removes itself inside `needsTick` must not still receive `tick`.
+        \\let ticks = 0;
+        \\let armed = false;
+        \\const selfRemove = {
+        \\  needsTick() { if (armed) root.removeService(selfRemove); return { periodMs: 1 }; },
+        \\  tick() { ticks++; },
+        \\};
+        \\root.addService(selfRemove);
+        \\armed = true;
+        \\root.tickLayers();
+        \\check("self-remove-skips-tick", ticks === 0 && !root.hasService(selfRemove));
         \\
         \\// A repeated removal is safe, so a disposer can run twice.
         \\root.addService(svc);
         \\root.removeService(svc);
         \\root.removeService(svc);
-        \\check("idempotent", root.services.indexOf(svc) < 0 && root.services.length === before);
-        \\
-        \\// A removed service leaves the tick set, so it costs nothing after its plugin goes.
-        \\let asked = 0;
-        \\const ticker = { needsTick() { asked++; return null; } };
-        \\root.addService(ticker);
-        \\root.syncTick();
-        \\const seen = asked;
-        \\check("ticked-while-live", seen > 0);
-        \\root.removeService(ticker);
-        \\root.syncTick();
-        \\check("untracked-after-remove", asked === seen);
+        \\check("idempotent", !root.hasService(svc) && root.services.length === before);
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "service.js");
     try expectJs(host, "ok");
+}
+
+test "a service removed during startup never starts" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // One `onStart` can remove a service the pass has not reached, so that service never starts.
+    try host.evalModule(
+        \\import { root } from "yuke:core";
+        \\const log = [];
+        \\const b = { onStart() { log.push("b-start"); }, onStop() { log.push("b-stop"); } };
+        \\const a = { onStart() { log.push("a-start"); root.removeService(b); } };
+        \\root.addService(a);
+        \\root.addService(b);
+        \\root.onEvent({ type: "start" });
+        \\globalThis.result = log.join(",") + "|" + (root.hasService(b) ? "held" : "gone");
+    , "startup.js");
+    try expectJs(host, "a-start|gone");
+}
+
+test "the nav vocabulary cannot drift after the shell binds it" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // The shell copies the table once and a modal reads it per key, so it must not be writable.
+    try host.evalModule(
+        \\import { NAV_KEYS } from "yuke:ui";
+        \\let threw = 0;
+        \\try { NAV_KEYS.j = () => {}; } catch (e) { if (e instanceof TypeError) threw++; }
+        \\try { NAV_KEYS.zz = () => {}; } catch (e) { if (e instanceof TypeError) threw++; }
+        \\try { delete NAV_KEYS.k; } catch (e) { if (e instanceof TypeError) threw++; }
+        \\globalThis.result = String(threw) + ":" + (typeof NAV_KEYS.j) + ":" + (typeof NAV_KEYS.k);
+    , "frozen.js");
+    try expectJs(host, "3:function:function");
 }
