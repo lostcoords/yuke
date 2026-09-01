@@ -12,6 +12,7 @@ const connection = @import("connection.zig");
 const Connection = connection.Connection;
 const OutboxItem = connection.OutboxItem;
 const run_task = @import("run_task.zig");
+const shutdown = @import("shutdown.zig");
 
 // Limit each request head to 64 KiB. The decoder rejects a larger head.
 const max_head_bytes = 64 * 1024;
@@ -30,7 +31,7 @@ const text_plain_allow_get = [_]std.http.Header{
 };
 
 /// Accept until the caller cancels this task. The caller owns the listener, so a bind fails startup.
-pub fn serve(state: *State, listener: *std.Io.net.Server) void {
+pub fn serve(state: *State, listener: *std.Io.net.Server, stop: *shutdown.Watcher) void {
     var group: std.Io.Group = .init;
     defer group.cancel(state.io);
 
@@ -38,7 +39,9 @@ pub fn serve(state: *State, listener: *std.Io.net.Server) void {
         const stream = listener.accept(state.io) catch |err| switch (err) {
             error.Canceled => return, // The shutdown cancels this task.
             else => {
+                // The daemon must not survive without a front door, so end the park too.
                 std.log.err("the front door stopped accepting: {t}", .{err});
+                stop.reportFault();
                 return;
             },
         };

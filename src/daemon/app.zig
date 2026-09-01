@@ -123,16 +123,15 @@ pub fn run(init: std.process.Init) !void {
     std.log.info("daemon store at {s}", .{config.db_path});
     std.log.info("front door on http://{f}", .{listener.socket.address});
 
+    var stop: shutdown.Watcher = try .init();
+
     // The cancel stops the accept and joins every live connection before State closes.
     var front_door: std.Io.Group = .init;
     defer front_door.cancel(io);
-    try front_door.concurrent(io, http.serve, .{ &state, &listener });
-
-    // This defer runs first, so the default disposition returns before the unwind starts.
-    var stop: shutdown.Watcher = try .init();
+    // This defer is declared last, so it runs first and restores the signal disposition early.
     defer stop.deinit();
+    try front_door.concurrent(io, http.serve, .{ &state, &listener, &stop });
 
-    // Park here. Every defer above unwinds in the order the shutdown needs.
     try stop.wait();
 }
 
