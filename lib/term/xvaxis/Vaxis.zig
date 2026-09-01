@@ -535,11 +535,16 @@ pub fn render(self: *Vaxis, tty: *std.Io.Writer) !void {
             const rows = cell.scale.scale;
             self.skip_pending = true;
             for (0..rows) |skipped_row| {
+                const skip_row = skipped_row + row;
+                if (skip_row >= self.screen_last.height) break;
                 for (0..cols) |skipped_col| {
+                    const skip_col = skipped_col + col;
+                    // A column past the right edge wraps into the next row, so stop instead of marking it.
+                    if (skip_col >= self.screen_last.width) break;
                     if (skipped_row == 0 and skipped_col == 0) {
                         continue;
                     }
-                    const skipped_i = (@as(usize, @intCast(skipped_row + row)) * self.screen_last.width) + (skipped_col + col);
+                    const skipped_i = (skip_row * self.screen_last.width) + skip_col;
                     self.screen_last.buf[skipped_i].skip = true;
                 }
             }
@@ -1545,6 +1550,34 @@ test "render: a scale-only change repaints the cell" {
     const unchanged_output = try w.toOwnedSlice();
     defer std.testing.allocator.free(unchanged_output);
     try std.testing.expect(std.mem.indexOf(u8, unchanged_output, scaled_text_prefix) == null);
+
+    // A fraction moves no other field, so only a whole-Scale comparison sees this change.
+    vx.window().writeCell(0, 0, .{ .char = character, .scale = .{ .scale = 3, .numerator = 1, .denominator = 2 } });
+    try vx.render(&w.writer);
+    const fraction_output = try w.toOwnedSlice();
+    defer std.testing.allocator.free(fraction_output);
+    try std.testing.expect(std.mem.indexOf(u8, fraction_output, "n=1:d=2") != null);
+}
+
+test "render: a scaled cell at the last column stays in bounds" {
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    var vx = try Vaxis.init(std.testing.io, std.testing.allocator, &env_map, .{});
+    var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer deinit_writer.deinit();
+    defer vx.deinit(std.testing.allocator, &deinit_writer.writer);
+
+    var w: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer w.deinit();
+    try vx.resize(std.testing.allocator, &w.writer, .{ .rows = 2, .cols = 2, .x_pixel = 0, .y_pixel = 0 });
+    vx.caps.scaled_text = true;
+
+    // The skip marks of a scaled cell run past the grid at an edge, so the loop must stop at the bounds.
+    vx.window().writeCell(1, 1, .{ .char = .{ .grapheme = "A", .width = 1 }, .scale = .{ .scale = 2 } });
+    try vx.render(&w.writer);
+    const output = try w.toOwnedSlice();
+    defer std.testing.allocator.free(output);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\x1b]66;s=2") != null);
 }
 
 test "resize preserves valid state on allocation failure" {
