@@ -2,6 +2,7 @@
 //! Every decoder treats the body as peer input: it returns an error and never asserts.
 
 const std = @import("std");
+const poller = @import("../net/poller.zig");
 
 /// Name the principals that one grant creates. The value goes on the wire.
 pub const Intent = enum { daemon, client, both };
@@ -378,4 +379,39 @@ test "decodeProblem degrades an unknown code and a bad body" {
     try testing.expect(decodeProblem(a,
         \\{"code":"SLOW_DOWN","interval":-2}
     ).interval_s == null);
+}
+
+/// Map one HTTP status and problem document onto a reply.
+/// An unknown code never takes a known path: it either retries on a retry status or stops.
+pub fn classify(status: u16, problem: Problem) poller.Reply {
+    if (status >= 200 and status < 300) return .approved;
+    if (status >= 500) return .unavailable;
+
+    return switch (status) {
+        428 => .{ .pending = problem.interval_s },
+        429 => if (problem.code == .slow_down) .{ .slow_down = problem.interval_s } else .throttled,
+        409 => .retryable,
+        else => .terminal,
+    };
+}
+
+test "classify maps every documented status" {
+    try testing.expect(classify(201, .{}) == .approved);
+    try testing.expect(classify(200, .{}) == .approved);
+    try testing.expect(classify(428, .{ .code = .authorization_pending, .interval_s = 5 }) == .pending);
+    try testing.expect(classify(429, .{ .code = .slow_down }) == .slow_down);
+    try testing.expect(classify(429, .{ .code = .rate_limited }) == .throttled);
+    try testing.expect(classify(409, .{ .code = .conflict }) == .retryable);
+    try testing.expect(classify(503, .{}) == .unavailable);
+    try testing.expect(classify(403, .{ .code = .plan_limit }) == .terminal);
+    try testing.expect(classify(403, .{ .code = .access_denied }) == .terminal);
+    try testing.expect(classify(400, .{ .code = .expired_token }) == .terminal);
+}
+
+test "classify keeps an unknown code off a known path" {
+    // An unknown 403 must never read as a human denial.
+    try testing.expect(classify(403, .{}) == .terminal);
+    try testing.expect(classify(451, .{}) == .terminal);
+    // An unknown 429 still throttles, because the status alone says to slow down.
+    try testing.expect(classify(429, .{}) == .throttled);
 }

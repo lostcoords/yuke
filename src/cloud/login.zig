@@ -6,7 +6,7 @@ const cli = @import("../cli.zig");
 const paths = @import("../paths/paths.zig");
 const http = @import("../net/http.zig");
 const identity = @import("identity.zig");
-const poller = @import("poller.zig");
+const poller = @import("../net/poller.zig");
 const protocol = @import("protocol.zig");
 const endpoint = @import("endpoint.zig");
 
@@ -197,7 +197,9 @@ fn awaitApproval(
     intent: protocol.Intent,
 ) !protocol.Credential {
     const base = std.Io.Timestamp.now(io, .boot);
-    var state: poller.Poller = .init(0, start);
+    var state: poller.Poller = .init(0, start.interval_s *| 1_000, start.expires_in_s *| 1_000);
+    // RFC 8628 section 3.5 requires one interval before the first request.
+    try std.Io.sleep(io, .fromMilliseconds(@intCast(state.firstWaitMs())), .boot);
 
     while (true) {
         _ = arena.reset(.retain_capacity);
@@ -208,7 +210,7 @@ fn awaitApproval(
             if (response.status < 200 or response.status >= 300) {
                 problem = protocol.decodeProblem(scratch, response.body);
             }
-            const reply = poller.classify(response.status, problem);
+            const reply = protocol.classify(response.status, problem);
             // An approved poll is the only body that carries the credential.
             if (reply == .approved) return protocol.decodeCredential(scratch, response.body, intent) catch {
                 std.log.err("yuke login: the control plane returned an unexpected credential", .{});
@@ -336,7 +338,7 @@ test "explain reports the local failures without a server detail" {
         "the control plane stayed unreachable; check the network and run `yuke login` again",
         explain(.offline, .{}),
     );
-    try testing.expectEqualStrings("denied by the human", explain(.{ .terminal = .access_denied }, .{
+    try testing.expectEqualStrings("denied by the human", explain(.terminal, .{
         .code = .access_denied,
         .detail = "denied by the human",
     }));
