@@ -25,6 +25,7 @@
       "yuke:sidebar": ["./sidebar.js"],
       "yuke:command-ui": ["./command-ui.js"],
       "yuke:catalog": ["./catalog.js"],
+      "yuke:chat": ["./chat.js"],
       "yuke:composer-vim": ["./composer-vim.js"],
       "yuke:transcript-vim": ["./transcript-vim.js"],
       "yuke:defaults": ["./defaults.js"]

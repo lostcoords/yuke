@@ -2596,6 +2596,7 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\if (!plugins.get("notice")) fail.push("notice-plugin");
         \\if (!plugins.get("command-ui")) fail.push("command-ui-plugin");
         \\if (!plugins.get("catalog")) fail.push("catalog-plugin");
+        \\if (!plugins.get("chat")) fail.push("chat-plugin");
         \\
         \\// The connection runs as a plugin service now, so an unload can take it back out.
         \\if (!root.hasService(connection)) fail.push("connection-service");
@@ -3812,5 +3813,70 @@ test "loadCatalog coalesces, clears its flag, and survives a refusal" {
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "loadcatalog.js");
+    try expectJs(host, "ok");
+}
+
+test "the chat slice owns its listeners and its transcript commands" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // The chat reacts to session events and offers the commands that read its transcript.
+    try host.evalModule(
+        \\import { command, events } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { chat, chatSession, chatEntry, chatPlugin } from "yuke:chat";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\check("commands-absent-before", !command.available("copy:message") && !command.available("model:pick"));
+        \\plugins.use(chatPlugin);
+        \\check("commands-registered", command.available("copy:message") && command.available("copy:code") && command.available("model:pick"));
+        \\
+        \\// A "gone" event for the open pair closes the session; one for another pair does not.
+        \\chatSession.connKey = "local";
+        \\chatSession.sessionId = "s1";
+        \\events.emit("session.changed", { connKey: "local", sessionId: "other", kind: "gone" });
+        \\check("ignores-other-pair", chatSession.sessionId === "s1");
+        \\events.emit("session.changed", { connKey: "local", sessionId: "s1", kind: "gone" });
+        \\check("closes-open-pair", chatSession.sessionId === null);
+        \\
+        \\// The "active" and reload branches move the transcript, not just the session id.
+        \\chatSession.sessionId = "s1";
+        \\let actives = [];
+        \\const realActive = chat.transcript.setActive.bind(chat.transcript);
+        \\chat.transcript.setActive = (id) => { actives.push(id); return realActive(id); };
+        \\events.emit("session.changed", { connKey: "local", sessionId: "s1", kind: "active", id: 7 });
+        \\check("active-moves-transcript", actives.join(",") === "7");
+        \\events.emit("session.changed", { connKey: "local", sessionId: "s1", kind: "delta" });
+        \\check("other-kinds-reload", actives.join(",") === "7");
+        \\chat.transcript.setActive = realActive;
+        \\
+        \\// A ready LOCAL connection announces the daemon; a remote or a non-ready event does not.
+        \\let ready = 0;
+        \\const offReady = events.on("daemon.ready", () => { ready++; });
+        \\events.emit("conn.changed", { key: "remote:x", kind: "ready" });
+        \\check("remote-is-not-the-daemon", ready === 0);
+        \\events.emit("conn.changed", { key: "local", kind: "close" });
+        \\check("close-announces-nothing", ready === 0);
+        \\events.emit("conn.changed", { key: "local", kind: "ready" });
+        \\check("local-ready-announces", ready === 1);
+        \\offReady();
+        \\chatSession.sessionId = null;
+        \\
+        \\// With no session the entry lookup answers null rather than reaching into a feed.
+        \\check("no-entry-without-session", chatEntry() === null);
+        \\
+        \\// An unload takes the commands and the listeners with it.
+        \\plugins.dispose("chat");
+        \\check("unload-drops-commands", !command.available("copy:message") && !command.available("model:pick"));
+        \\chatSession.sessionId = "s2";
+        \\events.emit("session.changed", { connKey: "local", sessionId: "s2", kind: "gone" });
+        \\check("unload-stops-listening", chatSession.sessionId === "s2");
+        \\chatSession.sessionId = null;
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "chat.js");
     try expectJs(host, "ok");
 }
