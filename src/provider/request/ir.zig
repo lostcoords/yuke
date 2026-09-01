@@ -111,6 +111,8 @@ pub const Request = struct {
     max_tokens_field: MaxTokensField = .@"max-tokens",
     /// Only Responses reads this field. The bound credential selects it, not the model.
     responses_dialect: ResponsesDialect = .standard,
+    /// Only Anthropic reads this field. The instance cache policy sets it.
+    cache: bool = false,
 };
 
 /// These options control the transcript fold.

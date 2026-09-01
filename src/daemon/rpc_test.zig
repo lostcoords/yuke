@@ -1817,6 +1817,39 @@ const CaptureTransport = struct {
     };
 };
 
+test "the instance cache policy decides whether the body carries cache_control" {
+    const cases = [_]struct { policy: []const u8, marked: bool }{
+        .{ .policy = "ephemeral", .marked = true },
+        .{ .policy = "unsupported", .marked = false },
+    };
+    for (cases) |case| {
+        var fixture = try TestState.initBare(null);
+        defer fixture.deinit();
+        const a = fixture.allocator();
+
+        var config_buf: [512]u8 = undefined;
+        const config = try std.fmt.bufPrint(&config_buf,
+            \\{{"version":1,"providers":[{{"id":"acme","base_url":"https://llm.acme.example/v1","protocol":"anthropic_messages",
+            \\ "auth":{{"api_key":{{"header":"x_api_key","source":{{"literal":"sk-test"}}}}}},"cache":"{s}",
+            \\ "models":[{{"id":"fast","upstream_id":"acme-fast-1","limits":{{"context_window":200000,"max_output_tokens":8192}}}}]}}]}}
+        , .{case.policy});
+        // State.deinit frees the loaded provider layer. Leave that layer for State.deinit.
+        fixture.state.store.local = try provider.config.loadBytes(std.testing.allocator, config);
+        _ = try fixture.state.store.rebuild(&fixture.state.db);
+        var capture: CaptureTransport = .{ .gpa = std.testing.allocator, .reply = provider.transport.canned_reply };
+        defer capture.deinit();
+        fixture.state.route_transport = capture.transportFor();
+
+        const sid = try createSession(&fixture, a, .{ .workspace_path = "/cache", .model = "local:acme/fast" });
+        _ = try sendText(&fixture, a, sid, "hi");
+        var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+        try launch.join();
+
+        const marked = std.mem.indexOf(u8, capture.body.items, "\"cache_control\":{\"type\":\"ephemeral\"}") != null;
+        try std.testing.expectEqual(case.marked, marked);
+    }
+}
+
 test "a provider-qualified model builds the real endpoint, headers, and body" {
     var fixture = try TestState.initBare(null);
     defer fixture.deinit();

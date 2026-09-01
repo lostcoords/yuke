@@ -58,7 +58,7 @@ pub fn requestBody(
     const request_ir = try build.build(arena, messages, .{ .target = target });
     var body: std.Io.Writer.Allocating = .init(arena);
     switch (protocol) {
-        inline else => |p| try Adapter(p).serialize(&body.writer, request, request_ir, .{}),
+        inline else => |p| try Adapter(p).serialize(&body.writer, request, request_ir),
     }
     return body.written();
 }

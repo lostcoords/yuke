@@ -1,17 +1,13 @@
 //! Serialize the Anthropic Messages request from the neutral IR. Coalesce adjacent blocks with the same role.
-//! With `cache`, mark the system block and the last eligible content block. Some compatible hosts reject `cache_control` with 400, so keep cache off by default.
+//! With `request.cache`, mark the system block and the last eligible content block. Some compatible hosts answer 400, so the instance policy decides.
 
 const std = @import("std");
 const wire = @import("wire");
 const ir = @import("ir.zig");
 const json = @import("json.zig");
 
-pub const Options = struct {
-    cache: bool = false,
-};
-
 /// Write the request JSON to `w`.
-pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr, options: Options) !void {
+pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr) !void {
     std.debug.assert(request_ir.blocks.len != 0); // Anthropic needs at least one message.
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
@@ -33,7 +29,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
         try jw.write("text");
         try jw.objectField("text");
         try jw.write(request.system);
-        if (options.cache) try writeCacheControl(&jw);
+        if (request.cache) try writeCacheControl(&jw);
         try jw.endObject();
         try jw.endArray();
     }
@@ -55,7 +51,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     }
 
     // A thinking block cannot carry the marker. Mark the last eligible block.
-    const cache_index = if (options.cache) lastCacheable(request_ir.blocks) else null;
+    const cache_index = if (request.cache) lastCacheable(request_ir.blocks) else null;
 
     try jw.objectField("messages");
     try jw.beginArray();
@@ -193,10 +189,10 @@ fn writeCacheControl(jw: *std.json.Stringify) !void {
 
 const testing = std.testing;
 
-fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestIr, options: Options) !void {
+fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestIr) !void {
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try serialize(&buf.writer, request, request_ir, options);
+    try serialize(&buf.writer, request, request_ir);
     try testing.expectEqualStrings(expected, buf.written());
 }
 
@@ -207,7 +203,6 @@ test "a plain user turn with a system prompt" {
     ,
         .{ .model = "claude", .system = "be brief", .max_output_tokens = 1024 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -218,7 +213,6 @@ test "adaptive thinking rides on the request" {
     ,
         .{ .model = "MiniMax-M3", .max_output_tokens = 8, .reasoning = .adaptive },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -229,7 +223,6 @@ test "a token budget writes the enabled shape" {
     ,
         .{ .model = "claude", .max_output_tokens = 8192, .reasoning = .{ .budget = 4096 } },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -240,14 +233,12 @@ test "off writes disabled and the default omits the member" {
     ,
         .{ .model = "claude", .max_output_tokens = 8, .reasoning = .off },
         .{ .blocks = &blocks },
-        .{},
     );
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8, .reasoning = .default },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -258,7 +249,6 @@ test "a named effort rides on output_config, not on thinking" {
     ,
         .{ .model = "claude", .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -273,7 +263,6 @@ test "a tool call and its result coalesce by role" {
     ,
         .{ .model = "claude", .max_output_tokens = 64 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -285,7 +274,6 @@ test "tools declare a raw input schema" {
     ,
         .{ .model = "claude", .tools = &tools, .max_output_tokens = 8 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -297,9 +285,8 @@ test "cache marks the system block and the last content block" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"one"},{"type":"text","text":"two","cache_control":{"type":"ephemeral"}}]}]}
     ,
-        .{ .model = "claude", .system = "sys", .max_output_tokens = 8 },
+        .{ .model = "claude", .system = "sys", .max_output_tokens = 8, .cache = true },
         .{ .blocks = &blocks },
-        .{ .cache = true },
     );
 }
 
@@ -311,9 +298,8 @@ test "cache skips a trailing thinking block and marks the last eligible block" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer","cache_control":{"type":"ephemeral"}},{"type":"thinking","thinking":"ponder","signature":"sig"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8 },
+        .{ .model = "claude", .max_output_tokens = 8, .cache = true },
         .{ .blocks = &blocks },
-        .{ .cache = true },
     );
 }
 
@@ -321,5 +307,5 @@ test "audio content is unsupported on this dialect" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "audio/mpeg", .bytes = 2 } } } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, .{ .blocks = &blocks }, .{}));
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
 }

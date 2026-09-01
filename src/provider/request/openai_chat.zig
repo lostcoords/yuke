@@ -6,11 +6,8 @@ const wire = @import("wire");
 const ir = @import("ir.zig");
 const json = @import("json.zig");
 
-pub const Options = struct {};
-
 /// Write the OpenAI Chat Completions request body to `w`.
-pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr, options: Options) !void {
-    _ = options;
+pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr) !void {
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
 
@@ -285,10 +282,10 @@ fn writeReasoning(
 
 const testing = std.testing;
 
-fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestIr, options: Options) !void {
+fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestIr) !void {
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try serialize(&buf.writer, request, request_ir, options);
+    try serialize(&buf.writer, request, request_ir);
     try testing.expectEqualStrings(expected, buf.written());
 }
 
@@ -303,7 +300,6 @@ test "a host with no replay drops the reasoning block instead of failing" {
     ,
         .{ .model = "m", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -318,14 +314,12 @@ test "a replay host carries the reasoning back on the assistant message" {
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-content" },
         .{ .blocks = &blocks },
-        .{},
     );
     try expectJson(
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}],"reasoning":"ponder"}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -340,7 +334,6 @@ test "reasoning-details replays nothing rather than send a string" {
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-details" },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -355,7 +348,6 @@ test "a replayed reasoning text is escaped and joined across blocks" {
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-content" },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -369,7 +361,6 @@ test "a reasoning block with no text leaves content null" {
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-content" },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -381,7 +372,6 @@ test "the output-token member follows the host" {
     ,
         .{ .model = "m", .max_output_tokens = 8, .max_tokens_field = .@"max-completion-tokens" },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -405,7 +395,7 @@ test "each host dialect spells the reasoning control its own way" {
             .max_output_tokens = 8,
             .reasoning = .{ .effort = .high },
             .thinking_format = case.format,
-        }, .{ .blocks = &blocks }, .{});
+        }, .{ .blocks = &blocks });
         try testing.expect(std.mem.indexOf(u8, buf.written(), case.expected) != null);
     }
 }
@@ -426,7 +416,7 @@ test "off disables thinking in the dialect that has a switch" {
             .max_output_tokens = 8,
             .reasoning = .off,
             .thinking_format = case.format,
-        }, .{ .blocks = &blocks }, .{});
+        }, .{ .blocks = &blocks });
         try testing.expect(std.mem.indexOf(u8, buf.written(), case.expected) != null);
     }
     var deepseek: std.Io.Writer.Allocating = .init(testing.allocator);
@@ -436,7 +426,7 @@ test "off disables thinking in the dialect that has a switch" {
         .max_output_tokens = 8,
         .reasoning = .off,
         .thinking_format = .deepseek,
-    }, .{ .blocks = &blocks }, .{});
+    }, .{ .blocks = &blocks });
     try testing.expect(std.mem.indexOf(u8, deepseek.written(), "\"reasoning_effort\"") == null);
 }
 
@@ -447,7 +437,6 @@ test "no dialect writes no control" {
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning = .{ .effort = .high }, .thinking_format = .none },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -458,7 +447,6 @@ test "a plain user turn with a system prompt" {
     ,
         .{ .model = "gpt", .system = "be brief", .max_output_tokens = 1024 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -473,7 +461,6 @@ test "an assistant tool call has a JSON string and its result is standalone" {
     ,
         .{ .model = "gpt", .max_output_tokens = 64 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -485,7 +472,6 @@ test "tools declare a raw input schema and strict mode" {
     ,
         .{ .model = "gpt", .tools = &tools, .max_output_tokens = 8 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -496,12 +482,12 @@ test "a blob image waits for blob resolution" {
     }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt", .max_output_tokens = 8 }, .{ .blocks = &blocks }, .{}));
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
 }
 
 test "audio content is unsupported on this dialect" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "audio/mpeg", .bytes = 2 } } } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt", .max_output_tokens = 8 }, .{ .blocks = &blocks }, .{}));
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
 }

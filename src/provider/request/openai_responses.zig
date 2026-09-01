@@ -6,14 +6,11 @@ const wire = @import("wire");
 const ir = @import("ir.zig");
 const json = @import("json.zig");
 
-pub const Options = struct {};
-
 /// The backend rejects a request that folds in no system prompt.
 const default_instructions = "You are a helpful assistant.";
 
 /// Write the OpenAI Responses request body for `request` and `request_ir`.
-pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr, options: Options) !void {
-    _ = options;
+pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr) !void {
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
 
@@ -200,10 +197,10 @@ fn writeImageSource(jw: *std.json.Stringify, source: wire.content.MediaSource) !
 
 const testing = std.testing;
 
-fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestIr, options: Options) !void {
+fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestIr) !void {
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try serialize(&buf.writer, request, request_ir, options);
+    try serialize(&buf.writer, request, request_ir);
     try testing.expectEqualStrings(expected, buf.written());
 }
 
@@ -214,7 +211,6 @@ test "a plain user turn with a system prompt" {
     ,
         .{ .model = "gpt-5", .system = "be brief", .max_output_tokens = 1024 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -226,7 +222,6 @@ test "the codex dialect omits the output ceiling" {
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .responses_dialect = .codex },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -238,7 +233,6 @@ test "a turn with no system prompt still carries instructions" {
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -249,7 +243,6 @@ test "a named effort rides on the responses request" {
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -262,7 +255,6 @@ test "off asks for no reasoning rather than omitting the control" {
     ,
         .{ .model = "gpt-5.2", .max_output_tokens = 8, .reasoning = .off },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -274,7 +266,6 @@ test "a non-reasoning model omits the reasoning control" {
     ,
         .{ .model = "gpt-4o", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -290,7 +281,6 @@ test "assistant reasoning text and tool call precede a tool result" {
     ,
         .{ .model = "gpt-5", .max_output_tokens = 64 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -304,7 +294,6 @@ test "a reasoning block with no signature is omitted" {
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -316,7 +305,6 @@ test "tools declare a flat raw schema with strict mode" {
     ,
         .{ .model = "gpt-5", .tools = &tools, .max_output_tokens = 8 },
         .{ .blocks = &blocks },
-        .{},
     );
 }
 
@@ -327,12 +315,12 @@ test "a blob user image waits for blob resolution" {
     }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }, .{}));
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
 }
 
 test "audio content is unsupported on this dialect" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "audio/mpeg", .bytes = 2 } } } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }, .{}));
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
 }
