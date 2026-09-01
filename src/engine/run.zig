@@ -33,7 +33,6 @@ pub const RoundState = struct {
     number: u64,
     message_id: wire.ids.MessageId,
     created_at_ms: u64 = 0, // The run task fills this before it commits the round.
-    stop_reason: ?wire.enums.StopReason = null,
 };
 
 /// The live progress of a run across rounds. The database usage summary is the durable aggregate.

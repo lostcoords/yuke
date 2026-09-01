@@ -421,22 +421,6 @@ pub const ParsedClose = struct {
     reason: []const u8,
 };
 
-/// Parse the payload of a close message.
-/// Asserts that `data.len` is not 1.
-pub fn parseClose(data: []const u8) ParsedClose {
-    std.debug.assert(data.len != 1); // Not enough to store a code
-
-    if (data.len == 0) return .{
-        .code = .no_status_rcvd,
-        .reason = &.{},
-    };
-
-    return .{
-        .code = @enumFromInt(std.mem.readInt(u16, data[0..2], .big)),
-        .reason = data[2..],
-    };
-}
-
 /// Make a WebSocket frame header with the provided parameters.
 ///
 /// The masking key is written in native endian, as this function is meant to be complementary to `writeMasking`.

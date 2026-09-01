@@ -91,7 +91,6 @@ pub const ResponsesDialect = @import("../request/ir.zig").ResponsesDialect;
 
 /// Model flags shape request bodies without provider-specific branches.
 pub const ModelFlags = struct {
-    supports_temperature: bool = true,
     supports_vision: bool = false,
     supports_tools: bool = true,
     reasoning_replay: ReasoningReplay = .none,

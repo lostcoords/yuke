@@ -770,18 +770,6 @@ fn enqueueReplyAndLaunch(state: *State, conn: *Connection, reply: FramedReply) !
     }
 }
 
-fn blockedReader(started: *zio.ResetEvent, release: *zio.ResetEvent, finished: *bool) anyerror!void {
-    defer finished.* = true;
-    started.set();
-    try release.wait();
-}
-
-fn blockedWriter(started: *zio.ResetEvent, release: *zio.ResetEvent, finished: *bool) void {
-    defer finished.* = true;
-    started.set();
-    release.wait() catch return;
-}
-
 /// The test dependencies. An empty environment allocates nothing, so no test frees it.
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
