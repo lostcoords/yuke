@@ -1,11 +1,12 @@
 // yuke:defaults — the bundled UI: a sidebar | chat split shell with a local connect, a command
 // palette, a ":" line, and a stub explorer. A user's index.js layers on top.
 import { term } from "yuke:term";
-import { command, keymap, style, status, copy, clip, fill, text, strokeOf, TextInput, caretCol, Node, root, quit, config, events } from "yuke:core";
+import { command, keymap, status, copy, clip, fill, text, strokeOf, TextInput, caretCol, Node, root, quit, config, events } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, ChatView, List, NAV_KEYS } from "yuke:ui";
 import * as client from "yuke:client";
 import { notice, noticePlugin } from "yuke:notice";
+import { commandUiPlugin } from "yuke:command-ui";
 import { SessionList, DeviceFeed, rowKey, rowLabel, activityMark, feedItem, newestLocalModelSession, sidebarPlugin } from "yuke:sidebar";
 import { composerVim } from "yuke:composer-vim";
 import { transcriptVim } from "yuke:transcript-vim";
@@ -20,7 +21,6 @@ import { transcriptVim } from "yuke:transcript-vim";
 /** @typedef {{ workspace_path?: string, profile?: string, model?: string, reasoning?: string, system_prompt?: string, permission?: Wire.PermissionMode, max_rounds?: number }} CreateSessionDraft */
 /** @typedef {{ is_self?: boolean, static_public_key?: string, device_id: string, online?: boolean, name?: string }} DeviceInfo */
 /** @typedef {{ key: string, notice: true, text: string, up?: never, dest?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, up: true, dest: string, notice?: never, text?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, name: string, path: string, is_git_repo?: boolean, notice?: never, up?: never, dest?: never, text?: never }} ExplorerRow */
-/** @typedef {{ name: string, hint: string }} CommandRow */
 /** @typedef {{ m: { id: number, type: string }, i: number, text: string }} MessagePickerItem */
 /** @typedef {{ id: number, lang: string, text: string, i: number }} CodeBlockRow */
 /** @typedef {{ connKey: string, sessionId: string | null, creating: boolean, gen: number, open: (connKey: string, id?: string | null) => void, send: (text: string) => boolean, interrupt: () => void, reload: () => void, active: (id: number) => void, startChat: (text: string) => boolean, newChat: () => void, close: () => void }} ChatSession */
@@ -30,7 +30,6 @@ import { transcriptVim } from "yuke:transcript-vim";
 /** @typedef {{ nextRetryAt: number, remoteRetryAt: Record<string, number>, roster: DeviceInfo[], rosterTried: boolean, stopped: boolean, onStart: () => void, onStop: () => void, attempt: () => void, dialLocal: () => void, loadRoster: () => void, dialableKey: (d: DeviceInfo) => string | null, dialRemotes: () => void, scheduleRetry: () => void, needsTick: () => { periodMs: number } | null, tick: () => void }} ConnectionService */
 
 // The ":" command line: the prompt links to Normal; an unmatched word shows in red.
-style.add({ YukeCmdline: { link: "Normal" }, YukeCmdlineErr: { fg: "danger", bold: true } });
 
 // The sidebar's share of the width in the default row split.
 const SIDEBAR_RATIO = 0.28;
@@ -440,34 +439,7 @@ function openExplorer(startPath) {
 // A picker over the command registry: it lists the commands the current context allows and runs
 // the chosen one.
 // The first stroke bound to `name`, for the palette's hint column.
-/** @param {string} name @returns {string} */
-function keyHint(name) {
-  for (const stroke in keymap.map) {
-    const list = keymap.map[stroke];
-    if (list && list.some((e) => e.fn === name)) return stroke;
-  }
-  return "";
-}
 
-function openPalette() {
-  const cmds = Object.keys(command.map)
-    .sort()
-    .filter((name) => command.available(name))
-    .map((name) => ({ name: name, hint: keyHint(name) }));
-
-  return ui.pick({
-    title: "commands",
-    footer: "type to filter · ↵ run · esc close",
-    border: "rounded",
-    width: 0.5,
-    height: 0.5,
-    items: cmds,
-    key: c => c.name,
-    filterText: c => c.name,
-    format: c => ({ text: c.name, right: c.hint }),
-    onAccept: c => command.perform(c.name),
-  });
-}
 
 // A session finder: fuzzy-search the sidebar's loaded sessions by title, then open one.
 function openSessionFinder() {
@@ -593,97 +565,6 @@ function firstLine(s) {
 }
 
 // --- command line -------------------------------------------------------------------------
-// A vim-style ":" line: it matches a command's short name exactly or by unique prefix, gated to
-// the commands the current context allows.
-function commandShortNames() {
-  const names = Object.create(null);
-  for (const full in command.map) {
-    if (!command.available(full)) continue;
-    const short = full.slice(full.lastIndexOf(":") + 1);
-    if (!names[short]) names[short] = full;
-  }
-  return names;
-}
-
-/** @param {string} word @returns {string | null} */
-function resolveCommand(word) {
-  const names = commandShortNames();
-  if (names[word]) return names[word];
-  let hit = null;
-  for (const short in names) {
-    if (short.indexOf(word) !== 0) continue;
-    if (hit) return null; // an ambiguous prefix
-    hit = names[short];
-  }
-  return hit;
-}
-
-// A single bottom row that edits a command word and runs it on Enter. It is modal while open; Esc,
-// or Backspace past the prompt, cancels.
-class CommandLine {
-  constructor() {
-    this.input = new TextInput({ onChange: () => (this.error = "") });
-    this.error = "";
-  }
-
-  get name() {
-    return "command-line";
-  }
-
-  draw() {
-    const w = term.width;
-    const h = term.height;
-    if (h <= 0 || w <= 0) return;
-    const y = h - 1;
-    const err = this.error !== "";
-    fill(0, y, w, 1, "Normal");
-    text(0, y, clip(err ? this.error : ":" + this.input.text, w), err ? "YukeCmdlineErr" : "YukeCmdline");
-  }
-
-  cursor() {
-    if (this.error) return null;
-    return { x: caretCol(term.width, ":", this.input.beforeCaret()), y: term.height - 1, visible: true };
-  }
-
-  submit() {
-    const word = this.input.text.trim();
-    if (word === "") {
-      root.popOverlay(this);
-      return;
-    }
-    const name = resolveCommand(word);
-    if (!name) {
-      this.error = "not a command: " + word;
-      return;
-    }
-    root.popOverlay(this);
-    command.perform(name);
-  }
-
-  /** @param {HostEvent} ev @returns {boolean} */
-  onKey(ev) {
-    const s = strokeOf(/** @type {Extract<HostEvent, { type: "key" }>} */ (ev));
-    if (s === "esc") {
-      root.popOverlay(this);
-      return true;
-    }
-    if (s === "enter") {
-      this.submit();
-      return true;
-    }
-    // Backspace past the empty prompt closes the line; otherwise the edit goes to the buffer.
-    if (s === "backspace" && this.input.text === "") {
-      root.popOverlay(this);
-      return true;
-    }
-    this.input.onKey(ev);
-    return true; // modal: consume every key
-  }
-}
-
-function openCommandLine() {
-  return root.pushOverlay(new CommandLine());
-}
 
 // --- daemon connection --------------------------------------------------------------------
 // The retry tick repaints the sidebar countdown, which changes once per second.
@@ -862,7 +743,6 @@ plugins.use({
 
     ctx.command(null, {
       "app:quit": () => quit(),
-      "ui:palette": () => openPalette(),
       "ui:sessions": () => openSessionFinder(),
       "app:connect": () => connection.attempt(),
       "app:explorer": () => openExplorer(),
@@ -875,7 +755,6 @@ plugins.use({
       "window:split-right": () => root.split("row", new MainPane()),
       "window:split-down": () => root.split("col", new MainPane()),
       "window:close": () => root.close(),
-      "ui:cmdline": () => openCommandLine(),
       "copy:reply": () => copy(chat.transcript.textFor(chat.transcript.last("assistant")), "reply"),
       "copy:selection": () => copy(chat.transcript.selectedText(), "selection"),
       "copy:source": () => copy(chat.transcript.selectedSource(), "source"),
@@ -911,7 +790,6 @@ plugins.use({
 
     ctx.keymap({
       "ctrl+n": "chat:new",
-      "ctrl+p": "ui:palette",
       "ctrl+f": "ui:sessions",
       "ctrl+c": "session:interrupt",
       "ctrl+q": "app:quit",
@@ -932,6 +810,7 @@ plugins.use({
 });
 
 plugins.use(noticePlugin);
+plugins.use(commandUiPlugin);
 plugins.use(sidebarPlugin, { deviceName, onCatalogChanged: /** @param {string} connKey @returns {void} */ (connKey) => { catalogOf(connKey).rev = null; } });
 
 plugins.use({
@@ -945,4 +824,4 @@ plugins.use({
 root.setRoot(workspace);
 root.focusView(chat);
 
-export { workspace, sidebar, chat, SessionList, MainPane, DeviceFeed, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };
+export { workspace, sidebar, chat, SessionList, MainPane, DeviceFeed, openExplorer, openSessionFinder, connection };

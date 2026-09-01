@@ -2593,6 +2593,7 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\const fail = [];
         \\// The shell loads the notice as a plugin, so its segment and listeners can be taken back out.
         \\if (!plugins.get("notice")) fail.push("notice-plugin");
+        \\if (!plugins.get("command-ui")) fail.push("command-ui-plugin");
         \\
         \\// The connection runs as a plugin service now, so an unload can take it back out.
         \\if (!root.hasService(connection)) fail.push("connection-service");
@@ -3597,5 +3598,97 @@ test "the sidebar rebuilds its rows on a change, not on every frame" {
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "sidebar.js");
+    try expectJs(host, "ok");
+}
+
+test "the command ui registers its palette, its line, and its styles as one plugin" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // The slice owns the two ways to run a command by name, so an unload takes both away.
+    try host.evalModule(
+        \\import { command, keymap, style, root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { commandUiPlugin } from "yuke:command-ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\check("absent-before-load", !command.available("ui:palette") && !command.available("ui:cmdline"));
+        \\check("style-absent-before", style.groups.YukeCmdline === undefined);
+        \\
+        \\plugins.use(commandUiPlugin);
+        \\check("commands-registered", command.available("ui:palette") && command.available("ui:cmdline"));
+        \\// The binding must name the palette, not merely exist.
+        \\check("key-bound", (keymap.describe("ctrl+p").winner || {}).binding === "ui:palette");
+        \\check("styles-registered", style.groups.YukeCmdline !== undefined);
+        \\
+        \\// The `:` line is an overlay, so running the command must push one.
+        \\const before = root.overlays.length;
+        \\command.perform("ui:cmdline");
+        \\check("cmdline-opens", root.overlays.length === before + 1);
+        \\root.popOverlay();
+        \\
+        \\plugins.dispose("command-ui");
+        \\check("unload-drops-commands", !command.available("ui:palette") && !command.available("ui:cmdline"));
+        \\check("unload-drops-key", keymap.describe("ctrl+p").winner === null);
+        \\check("unload-drops-styles", style.groups.YukeCmdline === undefined);
+        \\
+        \\// An unload must take this module's open overlays with it, or they keep taking keys.
+        \\plugins.use(commandUiPlugin);
+        \\command.perform("ui:cmdline");
+        \\check("line-open-again", root.overlays.length === before + 1);
+        \\plugins.dispose("command-ui");
+        \\check("unload-pops-overlay", root.overlays.length === before);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "cmdui.js");
+    try expectJs(host, "ok");
+}
+
+test "the command line resolves a word exactly, by prefix, or reports an error" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // The `:` line is the other way to run a command, so its resolution rules need their own test.
+    try host.evalModule(
+        \\import { command, root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { commandUiPlugin } from "yuke:command-ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\plugins.use(commandUiPlugin);
+        \\
+        \\// "ping" is an exact name AND a prefix of "pinger", so exact resolution must win.
+        \\let ping = 0;
+        \\let pinger = 0;
+        \\const off = command.add(null, { "test:ping": () => { ping++; }, "test:pinger": () => { pinger++; } });
+        \\const line = () => root.overlays[root.overlays.length - 1] || null;
+        \\const type = (word) => { for (const ch of word) line().input.insert(ch); };
+        \\const run = (word) => { command.perform("ui:cmdline"); type(word); line().submit(); };
+        \\
+        \\run("ping");
+        \\check("exact-beats-prefix", ping === 1 && pinger === 0 && root.overlays.length === 0);
+        \\
+        \\run("pinge");
+        \\check("unique-prefix-runs", pinger === 1 && ping === 1 && root.overlays.length === 0);
+        \\
+        \\// "pin" prefixes both names and is exact for neither.
+        \\run("pin");
+        \\check("ambiguous-refuses", ping === 1 && pinger === 1 && root.overlays.length === 1);
+        \\check("ambiguous-reports", (line() || {}).error === "not a command: pin");
+        \\if (line()) { line().input.setText(""); line().submit(); }
+        \\
+        \\run("zzzz");
+        \\check("unknown-reports", (line() || {}).error === "not a command: zzzz" && root.overlays.length === 1);
+        \\if (line()) { line().input.setText(""); line().submit(); }
+        \\check("empty-closes", root.overlays.length === 0);
+        \\
+        \\off();
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "cmdline.js");
     try expectJs(host, "ok");
 }
