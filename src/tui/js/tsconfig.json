@@ -21,6 +21,7 @@
       "yuke:ui": ["./ui.js"],
       "yuke:client": ["./client.js"],
       "yuke:vim": ["./vim.js"],
+      "yuke:notice": ["./notice.js"],
       "yuke:composer-vim": ["./composer-vim.js"],
       "yuke:transcript-vim": ["./transcript-vim.js"],
       "yuke:defaults": ["./defaults.js"]

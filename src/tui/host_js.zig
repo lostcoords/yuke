@@ -2591,6 +2591,9 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\import { term } from "yuke:term";
         \\import { SessionList, sidebar, chat, connection } from "yuke:defaults";
         \\const fail = [];
+        \\// The shell loads the notice as a plugin, so its segment and listeners can be taken back out.
+        \\if (!plugins.get("notice")) fail.push("notice-plugin");
+        \\
         \\// The connection runs as a plugin service now, so an unload can take it back out.
         \\if (!root.hasService(connection)) fail.push("connection-service");
         \\if (!plugins.get("connection")) fail.push("connection-plugin");
@@ -3451,4 +3454,47 @@ test "the nav vocabulary cannot drift after the shell binds it" {
         \\globalThis.result = String(threw) + ":" + (typeof NAV_KEYS.j) + ":" + (typeof NAV_KEYS.k);
     , "frozen.js");
     try expectJs(host, "3:function:function");
+}
+
+test "the notice plugin draws and listens only while it is loaded" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // The message object outlives the plugin; only the registrations come and go.
+    try host.evalModule(
+        \\import { root, status, copy } from "yuke:core";
+        \\import { term } from "yuke:term";
+        \\import { plugins } from "yuke:ext";
+        \\import { notice, noticePlugin } from "yuke:notice";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\term.copy = (x) => x.length;
+        \\
+        \\check("silent-before-load", status.side("left").indexOf("copied") < 0);
+        \\plugins.use(noticePlugin);
+        \\
+        \\copy("hello", "reply");
+        \\check("reports-a-copy", notice.text.indexOf("copied reply") === 0);
+        \\check("draws-on-status", status.side("left").indexOf("copied reply") >= 0);
+        \\copy("again", "source");
+        \\check("reports-every-copy", notice.text.indexOf("copied source") === 0);
+        \\
+        \\// The next key press clears the message, so it never outstays its keystroke.
+        \\root.onEvent({ type: "key", code: "char", char: "a", text: "a", event: "press", mods: 0 });
+        \\check("clears-on-key", notice.text === "");
+        \\
+        \\// An unload takes the status segment and both listeners with it.
+        \\notice.show("held");
+        \\plugins.dispose("notice");
+        \\check("unload-drops-segment", status.side("left").indexOf("held") < 0);
+        \\copy("world", "reply");
+        \\check("unload-stops-listening", notice.text === "held");
+        \\root.onEvent({ type: "key", code: "char", char: "b", text: "b", event: "press", mods: 0 });
+        \\check("unload-stops-clearing", notice.text === "held");
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "notice.js");
+    try expectJs(host, "ok");
 }

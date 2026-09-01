@@ -5,6 +5,7 @@ import { command, keymap, style, status, copy, clip, fill, text, strokeOf, TextI
 import { plugins } from "yuke:ext";
 import { ui, ChatView, List, NAV_KEYS } from "yuke:ui";
 import * as client from "yuke:client";
+import { notice, noticePlugin } from "yuke:notice";
 import { composerVim } from "yuke:composer-vim";
 import { transcriptVim } from "yuke:transcript-vim";
 
@@ -381,34 +382,6 @@ class SessionList {
 }
 
 // A transient notice replaces the chat rule row until the next key press.
-const notice = {
-  text: "",
-  /** @param {string} s */
-  show(s) {
-    this.text = s;
-    root.invalidate();
-  },
-  clear() {
-    if (this.text === "") return;
-    this.text = "";
-    root.invalidate();
-  },
-};
-
-// Clear the notice before each key press dispatches. A key release must not clear a fresh notice.
-events.on("key.press", /** @param {Extract<HostEvent, { type: "key" }>} ev */ (ev => {
-  if (ev.event === "press") notice.clear();
-}));
-
-// Report every copy, wherever it came from. OSC 52 has no acknowledgement, so a byte count means
-// the sequence left this process, not that the terminal accepted it.
-events.on("clipboard.copied", /** @param {{ text: string, bytes: number, what: string }} e */ (e => {
-  if (!e) return;
-  if (e.text === "") notice.show("nothing to copy");
-  else if (e.bytes < 0) notice.show("too large to copy · over " + term.clipboardMax + " bytes");
-  else notice.show("copied " + e.what + " · " + e.bytes + " bytes");
-}));
-
 // One catalog per connection. `catalog.list` answers "unchanged" while the revision holds, so a
 // reopened picker costs no round trip.
 /** @type {Map<string, CatalogState>} */
@@ -499,7 +472,6 @@ function tokenLabel(n) {
   return (n / 1000).toFixed(n < 10000 ? 1 : 0) + "k";
 }
 
-status.add({ side: "left", order: 0, render: () => notice.text });
 // Vim calls this showcmd: the keys typed so far, while a chord or an operator waits.
 status.add({ side: "right", order: -1, render: () => keymap.pendingLabel() });
 status.add({
@@ -1324,6 +1296,8 @@ plugins.use({
     });
   },
 });
+
+plugins.use(noticePlugin);
 
 plugins.use({
   name: "connection",
