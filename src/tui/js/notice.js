@@ -25,13 +25,15 @@ export const noticePlugin = {
   name: "notice",
   /** @param {import("yuke:ext").Context} ctx */
   apply(ctx) {
+    // A load starts clean, so a reload never shows the message an unload left behind.
+    notice.clear();
+
     // Clear the notice before each key press dispatches. A key release must not clear a fresh notice.
     ctx.on("key.press", /** @param {Extract<HostEvent, { type: "key" }>} ev @returns {void} */ (ev) => {
       if (ev.event === "press") notice.clear();
     });
 
-    // Report every copy, wherever it came from. OSC 52 has no acknowledgement, so a byte count means
-    // the sequence left this process, not that the terminal accepted it.
+    // A byte count means the sequence left this process, not that the terminal accepted it.
     ctx.on("clipboard.copied", /** @param {{ text: string, bytes: number, what: string }} e @returns {void} */ (e) => {
       if (!e) return;
       if (e.text === "") notice.show("nothing to copy");

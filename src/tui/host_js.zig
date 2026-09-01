@@ -3494,7 +3494,108 @@ test "the notice plugin draws and listens only while it is loaded" {
         \\root.onEvent({ type: "key", code: "char", char: "b", text: "b", event: "press", mods: 0 });
         \\check("unload-stops-clearing", notice.text === "held");
         \\
+        \\// A reload starts clean, so it never shows the message the unload left behind.
+        \\plugins.use(noticePlugin);
+        \\check("reload-starts-clean", notice.text === "" && status.side("left").indexOf("held") < 0);
+        \\
+        \\// A key release must not clear a message a copy raised between press and release.
+        \\copy("x", "reply");
+        \\root.onEvent({ type: "key", code: "char", char: "c", text: "c", event: "release", mods: 0 });
+        \\check("release-keeps-notice", notice.text.indexOf("copied reply") === 0);
+        \\
+        \\// The empty and oversize branches each report their own message.
+        \\copy("", "reply");
+        \\check("empty-copy", notice.text === "nothing to copy");
+        \\term.copy = () => -1;
+        \\copy("big", "reply");
+        \\check("oversize-copy", notice.text.indexOf("too large to copy") === 0);
+        \\term.copy = (x) => x.length;
+        \\
+        \\// Showing and clearing must each ask for a repaint, or the message never reaches the screen.
+        \\notice.clear();
+        \\root._needsDraw = false;
+        \\notice.show("repaint me");
+        \\check("show-repaints", root._needsDraw === true);
+        \\root._needsDraw = false;
+        \\notice.clear();
+        \\check("clear-repaints", root._needsDraw === true);
+        \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "notice.js");
+    try expectJs(host, "ok");
+}
+
+test "the sidebar rebuilds its rows on a change, not on every frame" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // `update` runs before every draw, so rebuilding there sorts every session on every frame.
+    try host.evalModule(
+        \\import { events } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { SessionList, sidebarPlugin, feedOf, newestLocalModelSession } from "yuke:sidebar";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\plugins.use(sidebarPlugin, {});
+        \\
+        \\const sl = new SessionList({});
+        \\let builds = 0;
+        \\const real = sl.list.setItems.bind(sl.list);
+        \\sl.list.setItems = (items) => { builds++; return real(items); };
+        \\
+        \\sl.update();
+        \\check("first-frame-builds", builds === 1);
+        \\sl.update();
+        \\sl.update();
+        \\check("idle-frames-reuse", builds === 1);
+        \\
+        \\// A feed change must reach the next frame.
+        \\events.emit("conn.changed", { key: "gone", kind: "close" });
+        \\sl.update();
+        \\check("change-rebuilds", builds === 2);
+        \\sl.update();
+        \\check("settles-again", builds === 2);
+        \\
+        \\// A ready connection builds a feed, and its broadcast events must each reach the next frame.
+        \\events.emit("conn.changed", { key: "local", kind: "ready", workspaces: [] });
+        \\sl.update();
+        \\const afterReady = builds;
+        \\check("ready-rebuilds", afterReady > 2);
+        \\
+        \\events.emit("index.changed", { connKey: "local", method: "session.summary_changed", params: {} });
+        \\sl.update();
+        \\check("index-rebuilds", builds === afterReady + 1);
+        \\sl.update();
+        \\check("index-settles", builds === afterReady + 1);
+        \\
+        \\// A workspace snapshot changes a rendered row, so it must bump the revision too.
+        \\events.emit("conn.changed", { key: "local", kind: "ready", workspaces: [{ id: "w1", path: "/tmp" }] });
+        \\sl.update();
+        \\check("workspaces-rebuild", builds > afterReady + 1);
+        \\
+        \\
+        \\// The model status segment reads this on every frame, so it must be cached and correct.
+        \\check("no-feed-no-model", newestLocalModelSession() === null);
+        \\const local = feedOf("local");
+        \\const mk = (id, model, at) => ({ session: { id, model, reasoning: "", updated_at_ms: at }, activity: null });
+        \\local.seed({ items: [mk("a", "old-model", 100), mk("b", "", 900), mk("c", "new-model", 500)] });
+        \\// "b" is newest but names no model, so the newest session that names one wins.
+        \\check("newest-with-model", (newestLocalModelSession() || {}).id === "c");
+        \\
+        \\// The cache must stop the scan, not merely return the same answer.
+        \\let scans = 0;
+        \\const realValues = local.items.values.bind(local.items);
+        \\local.items.values = () => { scans++; return realValues(); };
+        \\newestLocalModelSession();
+        \\check("cache-avoids-scan", scans === 0);
+        \\local.seed({ items: [mk("d", "later-model", 1000)] });
+        \\check("recomputes-after-change", (newestLocalModelSession() || {}).id === "d");
+        \\check("rescans-after-change", scans === 1);
+        \\local.items.values = realValues;
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "sidebar.js");
     try expectJs(host, "ok");
 }

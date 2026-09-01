@@ -35,10 +35,10 @@ function clientError(reason) {
   return reason instanceof ClientError ? reason : new ClientError(reason);
 }
 
-/**
- * @param {Parameters<typeof native.connect>[0]} options
- * @returns {Promise<void>}
- */
+// The key of the connection to the daemon on this machine.
+export const LOCAL = "local";
+
+/** @param {Parameters<typeof native.connect>[0]} options @returns {ReturnType<typeof native.connect>} */
 export function connect(options) {
   return native.connect(options).catch((reason) => {
     throw clientError(reason);
