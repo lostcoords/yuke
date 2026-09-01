@@ -59,7 +59,7 @@ pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     const run_id = slot.runId();
     const session_id = slot.sessionId();
     slot.phase = .running;
-    state.run_group.concurrent(state.io, runSession, .{ state, slot }) catch |err| {
+    state.tasks.concurrent(state.io, runSession, .{ state, slot }) catch |err| {
         std.log.err("cannot launch run {d}: {t}", .{ run_id, err });
         // The run task never ran, so set the round timestamp here before the commit.
         slot.progress.current.?.created_at_ms = @max(state.nowMillis(), slot.handle.started.started_at_ms);

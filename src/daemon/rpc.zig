@@ -187,6 +187,21 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             };
             return .{ .ok = .{ .id = request.id, .result = .{ .empty = result } } };
         },
+        .@"auth.login" => {
+            const result = handlers.authLogin(state, arena, request.params.auth_login_params) catch |err| switch (err) {
+                error.BadProviderId => return errorResponse(request.id, .bad_request, "the provider id is not a selector part"),
+                error.UnknownProvider => return errorResponse(request.id, .unknown_provider, "unknown provider"),
+                error.NoLoginFlow => return errorResponse(request.id, .bad_request, "the provider offers no login flow"),
+                error.LoginInProgress => return errorResponse(request.id, .bad_request, "a login for this provider already runs"),
+                error.Unavailable => return errorResponse(request.id, .internal, "the daemon stops"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .auth_login_result = result } } };
+        },
+        .@"auth.cancel_login" => {
+            const result = try handlers.authCancelLogin(state, arena, request.params.auth_cancel_login_params);
+            return .{ .ok = .{ .id = request.id, .result = .{ .empty = result } } };
+        },
         inline else => |method| {
             comptime assertUnimplemented(method);
             return errorResponse(request.id, .not_implemented, "not implemented");
@@ -203,8 +218,6 @@ const unimplemented = [_]wire.enums.MethodName{
     .@"permission.decide",
     .@"permission.rules",
     .@"permission.forget",
-    .@"auth.login",
-    .@"auth.cancel_login",
     .@"workspace.remove",
     .@"workspace.skills",
 };

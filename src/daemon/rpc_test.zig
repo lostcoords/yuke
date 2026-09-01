@@ -2593,8 +2593,6 @@ test "an unimplemented method reports not_implemented and reads no other params"
     const frames = [_][]const u8{
         \\{"id":"1","method":"session.patch","params":{"session_id":"00000000000000000000000000000000","patch":{}}}
         ,
-        \\{"id":"2","method":"auth.cancel_login","params":{"login_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}
-        ,
         \\{"id":"3","method":"permission.decide","params":{"session_id":"00000000000000000000000000000000","message_id":1,"part_id":0,"option_id":"allow_once"}}
         ,
         \\{"id":"4","method":"workspace.skills","params":{"workspace_id":"00000000000000000000000000000000"}}
@@ -2685,6 +2683,82 @@ const AuthFile = struct {
         self.tmp.cleanup();
     }
 };
+
+/// A catalog row that names a flow, so a local provider can offer a device login.
+fn seedOauthCatalog(fixture: *TestState, flow: []const u8) !void {
+    const a = fixture.allocator();
+    const raw = try std.fmt.allocPrint(a,
+        \\{{"version":1,"catalog_rev":"{s}","providers":[{{"id":"codex","name":"Codex",
+        \\ "base_url":"https://c.example/v1","protocol":"openai_responses","cache":"unsupported",
+        \\ "headers":[],"auth":{{"kind":"oauth","flow":"{s}"}},"models":[]}}]}}
+    , .{ "ab" ** 64, flow });
+    const parsed = try cloud_catalog.decode(a, raw);
+    try catalog_store.replace(&fixture.state.db, a, parsed.providers);
+    _ = try fixture.state.store.rebuild(&fixture.state.db);
+}
+
+test "auth.login refuses a provider that offers no flow the daemon can drive" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    try seedOauthCatalog(&fixture, "something_new");
+    try std.testing.expectError(error.NoLoginFlow, handlers.authLogin(&fixture.state, a, .{ .provider_id = "codex" }));
+    // auth.list agrees, so a client never offers a login the daemon would refuse.
+    const listed = try handlers.authList(&fixture.state, a, .{});
+    for (listed.providers) |p| if (std.mem.eql(u8, p.provider_id, "codex")) {
+        try std.testing.expectEqual(@as(usize, 0), p.login_flows.len);
+    };
+}
+
+test "a cancel is idempotent and survives a login that already finished" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    const id: wire.ids.LoginId = .bytes(@splat(7));
+
+    // No login holds this id, so a cancel reports success rather than an error.
+    _ = try handlers.authCancelLogin(&fixture.state, a, .{ .login_id = id });
+
+    const arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    const slot = try fixture.state.logins.create(id, arena, "codex", .codex, .{
+        .user_code = "UC",
+        .device_auth_id = "dai",
+        .verification_url = "https://u",
+    });
+    _ = try handlers.authCancelLogin(&fixture.state, a, .{ .login_id = id });
+    try std.testing.expect(slot.cancel_requested);
+    // A second cancel changes nothing and still reports success.
+    _ = try handlers.authCancelLogin(&fixture.state, a, .{ .login_id = id });
+    try std.testing.expect(slot.cancel_requested);
+}
+
+test "one provider runs one login at a time" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    try seedOauthCatalog(&fixture, "codex");
+    const arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    _ = try fixture.state.logins.create(.bytes(@splat(3)), arena, "codex", .codex, .{
+        .user_code = "UC",
+        .device_auth_id = "dai",
+        .verification_url = "https://u",
+    });
+
+    // A second attempt must not race the first for the same grant.
+    try std.testing.expectError(error.LoginInProgress, handlers.authLogin(&fixture.state, a, .{ .provider_id = "codex" }));
+}
+
+test "a shutting daemon starts no new login" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    try seedOauthCatalog(&fixture, "codex");
+    fixture.state.shutting_down = true;
+    try std.testing.expectError(error.Unavailable, handlers.authLogin(&fixture.state, a, .{ .provider_id = "codex" }));
+}
 
 test "two concurrent credential edits both survive" {
     var fixture = try TestState.initBare(null);

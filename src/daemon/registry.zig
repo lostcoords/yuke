@@ -94,6 +94,8 @@ pub const Provider = struct {
     origin: Origin,
     models: []const ModelSpec,
     availability: Availability,
+    /// The OAuth flow the catalog names for this provider. An API-key provider names none.
+    login_flow: ?[]const u8 = null,
 };
 
 /// One model, and the provider that serves it.
@@ -181,6 +183,7 @@ fn appendLocal(arena: std.mem.Allocator, out: *std.ArrayList(Provider), sources:
         const availability = localAvailability(arena, p, from_catalog, sources.env);
         try out.append(arena, .{
             .id = p.id,
+            .login_flow = if (from_catalog) |c| loginFlow(c.auth) else null,
             .name = if (from_catalog) |c| c.name else p.id,
             .origin = .local,
             .models = if (p.models.len != 0)
@@ -276,6 +279,12 @@ fn localAvailability(
     } };
 }
 
+/// Report the flow a provider logs in with. Only an OAuth provider names one.
+fn loginFlow(auth: ?feed.Auth) ?[]const u8 {
+    const row = auth orelse return null;
+    return if (row.kind == .oauth) row.flow else null;
+}
+
 /// Read the account route. A bundle that omits a required field gives `needs_route` instead.
 fn accountAvailability(arena: std.mem.Allocator, p: bundle.Provider) !Availability {
     switch (p.auth.status) {
@@ -352,6 +361,12 @@ pub fn selectorOf(arena: std.mem.Allocator, origin: Origin, provider_id: []const
 }
 
 /// Resolve a canonical selector against the merged list. A stale selector resolves to nothing.
+/// Find one provider row by id. A login addresses a provider this way.
+pub fn find(rows: []const Provider, provider_id: []const u8) ?*const Provider {
+    for (rows) |*row| if (std.mem.eql(u8, row.id, provider_id)) return row;
+    return null;
+}
+
 pub fn findModel(rows: []const Provider, selector: []const u8) ?Match {
     const colon = std.mem.indexOfScalar(u8, selector, ':') orelse return null;
     const origin = std.meta.stringToEnum(Origin, selector[0..colon]) orelse return null;

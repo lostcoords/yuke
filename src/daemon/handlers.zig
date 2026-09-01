@@ -14,6 +14,12 @@ const paths = @import("../paths/paths.zig");
 const host_mod = @import("../host/host.zig");
 const local_host = @import("../host/local.zig");
 const provider_config = @import("../provider/config/providers.zig");
+const provider_registry = @import("registry.zig");
+const catalog_store = @import("../catalog/store.zig");
+const catalog_feed = @import("../catalog/feed.zig");
+const login_runtime = @import("login_runtime.zig");
+const login_task = @import("login_task.zig");
+const net_http = @import("../net/http.zig");
 
 const session_store = database.session;
 const workspace_store = database.workspace;
@@ -166,8 +172,7 @@ pub fn authList(state: *State, arena: std.mem.Allocator, _: wire.misc.Empty) !wi
     for (loaded.providers) |p| try out.append(arena, .{
         .provider_id = p.id,
         .credential_kind = credentialKind(p),
-        // Local OAuth is stage 10, so no local provider offers a login flow yet.
-        .login_flows = &.{},
+        .login_flows = loginFlows(state, p.id),
     });
     return .{ .providers = out.items };
 }
@@ -183,6 +188,45 @@ pub fn authSetApiKey(state: *State, arena: std.mem.Allocator, params: wire.auth.
     return .{};
 }
 
+/// Handle auth.login: get a code, then poll in a task that outlives this connection.
+pub fn authLogin(state: *State, arena: std.mem.Allocator, params: wire.auth.AuthLoginParams) !wire.auth.AuthLoginResult {
+    if (!wire.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
+    if (state.shutting_down) return error.Unavailable;
+    // One provider holds one login, so a second attempt would race the first for the same grant.
+    if (state.logins.byProvider(params.provider_id) != null) return error.LoginInProgress;
+
+    const row = try catalog_store.provider(&state.db, arena, params.provider_id) orelse return error.UnknownProvider;
+    const flow = login_runtime.Flow.parse(flowName(row.auth) orelse return error.NoLoginFlow) orelse return error.NoLoginFlow;
+
+    // The slot arena owns the code and the url, because the login outlives this request arena.
+    var slot_arena: std.heap.ArenaAllocator = .init(state.gpa);
+    errdefer slot_arena.deinit();
+    const owned_id = try slot_arena.allocator().dupe(u8, params.provider_id);
+
+    var client: net_http.Client = .init(state.gpa, state.io, .none);
+    defer client.deinit();
+    const body = try arena.alloc(u8, net_http.max_oauth_response_bytes);
+    const start = try login_task.start(slot_arena.allocator(), &client, flow, body);
+
+    const login_id: wire.ids.LoginId = .bytes(state.newId() ++ state.newId());
+    const slot = try state.logins.create(login_id, slot_arena, owned_id, flow, start);
+    errdefer state.logins.remove(login_id);
+    try state.tasks.concurrent(state.io, login_task.run, .{ state, slot });
+
+    return .{ .login_id = login_id, .user_code = start.user_code, .verification_url = start.verification_url };
+}
+
+/// Handle auth.cancel_login: mark the login canceled, then wake it so it stops before its next poll.
+pub fn authCancelLogin(state: *State, _: std.mem.Allocator, params: wire.auth.AuthCancelLoginParams) !wire.misc.Empty {
+    // A cancel for a login that already finished is not an error, so a retry stays harmless.
+    const slot = state.logins.get(params.login_id) orelse return .{};
+    if (!slot.cancel_requested) {
+        slot.cancel_requested = true;
+        slot.wake_event.set(state.io);
+    }
+    return .{};
+}
+
 /// Handle auth.remove: drop the credential the daemon holds for one provider.
 pub fn authRemove(state: *State, arena: std.mem.Allocator, params: wire.auth.AuthRemoveParams) !wire.misc.Empty {
     if (!wire.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
@@ -190,6 +234,20 @@ pub fn authRemove(state: *State, arena: std.mem.Allocator, params: wire.auth.Aut
     if (try state.store.edit(arena, params.provider_id, .remove_credential, &state.db)) state.announceCatalogChanged();
     state.announceAuthChanged(params.provider_id, null);
     return .{};
+}
+
+/// Report the flow one catalog row names. Only an OAuth provider names one.
+fn flowName(auth: ?catalog_feed.Auth) ?[]const u8 {
+    const named = auth orelse return null;
+    return if (named.kind == .oauth) named.flow else null;
+}
+
+/// Report the flows one provider accepts. Only a catalog row naming a known flow offers one.
+fn loginFlows(state: *State, provider_id: []const u8) []const wire.enums.AuthFlow {
+    const row = provider_registry.find(state.store.merged.rows, provider_id) orelse return &.{};
+    const name = row.login_flow orelse return &.{};
+    if (login_runtime.Flow.parse(name) == null) return &.{};
+    return &.{.device_code};
 }
 
 /// Report which credential one entry holds. An entry that holds none reports null.

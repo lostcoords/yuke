@@ -20,6 +20,7 @@ const scheduler_mod = @import("scheduler.zig");
 const host = @import("../host/host.zig");
 const retry = @import("../provider/retry.zig");
 const session_runtime = @import("session_runtime.zig");
+const login_runtime = @import("login_runtime.zig");
 const connection = @import("connection.zig");
 const daemon_config = @import("config.zig");
 
@@ -33,6 +34,7 @@ io: std.Io, // The reactor uses this I/O for the clock, files, and sockets.
 db: database.Database, // The database uses one SQLite connection with prepared queries. One executor writes.
 config: Config,
 home: []const u8, // The default workspace root. A create that omits a workspace path uses it.
+logins: login_runtime.Logins, // Every live device login, keyed by id. It outlives the connection.
 sessions: session_runtime.Sessions, // The daemon stores live per-session state, keyed by session id.
 registry: connection.Registry, // The registry tracks live connections and the reverse subscription index.
 route_transport: provider.transport.Transport, // Every resolved route opens its response through this transport.
@@ -45,7 +47,7 @@ defaults: daemon_config.Defaults = .{}, // Defaults seed a new session's model a
 config_owner: ?daemon_config.Loaded = null, // The daemon owns the yuked.json arena when present.
 env: *const std.process.Environ.Map, // This pointer borrows the process environment for key lookup.
 scheduler: ?*scheduler_mod.Scheduler = null, // The app stores this pointer while the maintenance task runs.
-run_group: std.Io.Group = .init, // The group owns each launched run task until it returns.
+tasks: std.Io.Group = .init, // The group owns every daemon-owned task until shutdown joins it.
 shutting_down: bool = false,
 tool_host: ?host.Host = null,
 retry_policy: retry.Policy = .{}, // A test shortens the delays. Production keeps the defaults.
@@ -106,6 +108,7 @@ pub fn init(options: InitOptions) !State {
         .env = options.env,
         .route_transport = options.route_transport,
         .sessions = session_runtime.Sessions.init(gpa),
+        .logins = login_runtime.Logins.init(gpa),
         .registry = connection.Registry.init(gpa),
         .cloud_client = .init(gpa, options.io, cloud_http.default_timeout),
         .cloud_base_url = cloud_base_url,
@@ -177,8 +180,9 @@ const RecoveryEventIds = struct {
 /// Free the live sessions and the registry, then close the store.
 pub fn deinit(self: *State) void {
     self.shutting_down = true;
-    self.run_group.cancel(self.io);
+    self.tasks.cancel(self.io);
     self.registry.deinit();
+    self.logins.deinit();
     self.sessions.deinit();
     self.store.deinit();
     if (self.cloud_credential) |credential| self.gpa.free(credential);
@@ -272,8 +276,13 @@ pub fn announceAuthChanged(self: *State, provider_id: []const u8, kind: ?wire.en
             .login_flows = &.{},
         } } },
     };
+    self.publishAll(note, "auth.changed");
+}
+
+/// Frame one notification and send it to every open connection.
+pub fn publishAll(self: *State, note: wire.rpc.Notification, name: []const u8) void {
     const bytes = connection.frameNotification(self.gpa, note) catch |err| {
-        std.log.warn("cannot frame auth.changed: {t}", .{err});
+        std.log.warn("cannot frame {s}: {t}", .{ name, err });
         return;
     };
     defer self.gpa.free(bytes);
