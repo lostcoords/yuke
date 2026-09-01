@@ -125,10 +125,10 @@ pub const Client = struct {
         return future.await(io);
     }
 
-    /// POST a urlencoded form. Only a connect failure reports `PreFlight`, so a caller that
-    /// retries on that one error never repeats a request the server may already hold.
+    /// POST a urlencoded form. Only a failure before the send reports `PreFlight`.
     pub fn postForm(self: *Client, req: FormRequest) !Response {
         std.debug.assert(req.body_out.len != 0); // The caller owns a response buffer.
+        std.debug.assert(req.body_out.len <= max_oauth_response_bytes);
         const io = self.inner.io;
         const body = try encodeForm(self.inner.allocator, req.fields);
         defer self.inner.allocator.free(body);
@@ -136,8 +136,11 @@ pub const Client = struct {
         var leg: FormLeg = .{};
         var future = try io.concurrent(formLeg, .{ self, req, body, &leg });
         leg.connected.waitTimeout(io, req.connect_timeout) catch |err| {
+            // The cancel joins the child, so the connect event now holds its final value.
             _ = future.cancel(io) catch undefined;
-            return if (err == error.Timeout) Error.PreFlight else err;
+            if (err != error.Timeout) return err;
+            // A connected child may have begun the send, so only an unconnected one is retryable.
+            return if (leg.connected.isSet()) Error.Ambiguous else Error.PreFlight;
         };
         leg.done.waitTimeout(io, req.read_timeout) catch |err| {
             _ = future.cancel(io) catch undefined;
@@ -157,6 +160,8 @@ pub const Client = struct {
         var request = request: {
             const opened = self.inner.request(.POST, uri, .{
                 .redirect_behavior = .not_allowed,
+                // A failed write leaves the pooled connection dirty, so never reuse this one.
+                .keep_alive = false,
                 .headers = .{
                     .content_type = .{ .override = "application/x-www-form-urlencoded" },
                     .accept_encoding = .omit,
@@ -167,7 +172,7 @@ pub const Client = struct {
             leg.connected.set(io);
             break :request opened catch |err| return switch (err) {
                 error.UnsupportedUriScheme, error.UriMissingHost => error.BadUrl,
-                error.OutOfMemory => error.OutOfMemory,
+                error.OutOfMemory, error.Canceled => err,
                 // The reference stops on any TLS error, so this port does too.
                 error.TlsInitializationFailed => error.Ambiguous,
                 // `request` only connects, so the server never read these bytes.
@@ -297,24 +302,24 @@ fn formLeg(self: *Client, req: FormRequest, body: []u8, leg: *FormLeg) !Response
 }
 
 /// Encode `fields` as `application/x-www-form-urlencoded`. The caller owns the result.
-/// Every byte outside the unreserved set becomes %XX, so a UTF-8 value survives the round trip.
 fn encodeForm(gpa: std.mem.Allocator, fields: []const Field) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
     for (fields, 0..) |field, index| {
         if (index != 0) try out.writer.writeByte('&');
-        try std.Uri.Component.percentEncode(&out.writer, field.name, isUnreserved);
+        try encodeValue(&out.writer, field.name);
         try out.writer.writeByte('=');
-        try std.Uri.Component.percentEncode(&out.writer, field.value, isUnreserved);
+        try encodeValue(&out.writer, field.value);
     }
     return out.toOwnedSlice();
 }
 
-/// Report an RFC 3986 unreserved byte. A form value keeps only these, so a space becomes %20.
-fn isUnreserved(c: u8) bool {
-    return switch (c) {
-        'A'...'Z', 'a'...'z', '0'...'9', '-', '.', '_', '~' => true,
-        else => false,
+/// Write one form value. A space becomes `+`, and every other reserved byte becomes %XX.
+fn encodeValue(w: *std.Io.Writer, raw: []const u8) !void {
+    for (raw) |c| switch (c) {
+        'A'...'Z', 'a'...'z', '0'...'9', '-', '.', '_', '~' => try w.writeByte(c),
+        ' ' => try w.writeByte('+'),
+        else => try w.print("%{X:0>2}", .{c}),
     };
 }
 
@@ -347,10 +352,10 @@ test "a form body percent-encodes every reserved and UTF-8 byte" {
     });
     defer testing.allocator.free(body);
 
-    // A space becomes %20, and every byte of the UTF-8 sequence encodes on its own.
+    // A space becomes `+`, and every byte of the UTF-8 sequence encodes on its own.
     try testing.expectEqualStrings(
         "grant_type=refresh_token" ++
-            "&scope=openid%20profile%20grok-cli%3Aaccess" ++
+            "&scope=openid+profile+grok-cli%3Aaccess" ++
             "&note=caf%C3%A9%26%3D%2B",
         body,
     );
@@ -477,6 +482,22 @@ test "a form post bounds an oversized error body" {
     try exchangeForm(&server, &client);
 
     try testing.expectEqual(@as(?anyerror, Error.ResponseTooLarge), client.err);
+}
+
+test "a refused connection is a pre-flight failure, so a refresh may retry it" {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const address = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = try address.listen(.{});
+    const port = listener.socket.address.ip.getPort();
+    listener.close(); // Nothing listens on this port now, so the connect is refused.
+
+    var client: FormClient = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
+    var task = try rt.spawn(postFormOnce, .{&client});
+    task.join();
+
+    // The server never read a byte, so repeating this request cannot look like token reuse.
+    try testing.expectEqual(@as(?anyerror, Error.PreFlight), client.err);
 }
 
 test "a timeout after the send reports ambiguity, never a pre-flight failure" {
