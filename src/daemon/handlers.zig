@@ -17,6 +17,7 @@ const provider_config = @import("../provider/config/providers.zig");
 const provider_registry = @import("registry.zig");
 const catalog_store = @import("../catalog/store.zig");
 const catalog_feed = @import("../catalog/feed.zig");
+const provider_oauth = @import("../provider/provider.zig").oauth;
 const login_runtime = @import("login_runtime.zig");
 const login_task = @import("login_task.zig");
 const net_http = @import("../net/http.zig");
@@ -216,8 +217,9 @@ pub fn authLogin(state: *State, arena: std.mem.Allocator, params: wire.auth.Auth
 
     var client: net_http.Client = .init(state.gpa, state.io, .none);
     defer client.deinit();
+    var real: provider_oauth.ClientHttp = .{ .client = &client };
     const body = try arena.alloc(u8, net_http.max_oauth_response_bytes);
-    slot.start = try login_task.start(slot.arena.allocator(), &client, flow, body);
+    slot.start = try login_task.start(slot.arena.allocator(), state.oauth_http orelse real.seam(), flow, body);
 
     try state.tasks.concurrent(state.io, login_task.run, .{ state, slot });
     return .{ .login_id = login_id, .user_code = slot.start.user_code, .verification_url = slot.start.verification_url };

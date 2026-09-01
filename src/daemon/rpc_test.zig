@@ -2740,7 +2740,7 @@ test "an ambiguous refresh lapses the grant instead of repeating it" {
     var canned: provider.oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body = "{}" } }} };
     fixture.state.oauth_http = canned.seam();
 
-    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    _ = try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
     try std.testing.expectEqual(@as(u64, 0), fixture.state.store.local.?.providers[0].auth.?.oauth.expires_at_ms);
 }
 
@@ -2761,7 +2761,7 @@ test "a rotated grant replaces the old one and keeps a kept refresh token" {
     } }} };
     fixture.state.oauth_http = canned.seam();
 
-    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    _ = try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
     const grant = fixture.state.store.local.?.providers[0].auth.?.oauth;
     try std.testing.expectEqualStrings("new", grant.access_token);
     try std.testing.expectEqualStrings("rt", grant.refresh_token.?);
@@ -2782,7 +2782,7 @@ test "a lapsed grant is never rotated again" {
     // One ambiguous rotation lapses the grant and drops the token it may have spent.
     var first: provider.oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body = "{}" } }} };
     fixture.state.oauth_http = first.seam();
-    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    _ = try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
 
     const dead = fixture.state.store.local.?.providers[0].auth.?.oauth;
     try std.testing.expect(dead.refresh_token == null);
@@ -2790,7 +2790,7 @@ test "a lapsed grant is never rotated again" {
     // A second run finds nothing to do, so the daemon stops rewriting the file every cycle.
     var second: provider.oauth.CannedHttp = .{ .replies = &.{} };
     fixture.state.oauth_http = second.seam();
-    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    _ = try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
     try std.testing.expectEqual(@as(usize, 0), second.index); // No request left the daemon.
 }
 
@@ -2809,7 +2809,7 @@ test "a failed write never retries a rotation the server may have completed" {
     fixture.state.oauth_http = canned.seam();
 
     // The rotation landed upstream, so a write failure must not make the caller send `rt` again.
-    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    _ = try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
     try std.testing.expectEqual(@as(usize, 1), canned.index);
 }
 
@@ -2828,7 +2828,7 @@ test "a grant outside the margin is not due" {
     var canned: provider.oauth.CannedHttp = .{ .replies = &.{} };
     fixture.state.oauth_http = canned.seam();
 
-    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    _ = try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
     try std.testing.expectEqual(@as(?u64, 9000000000000), login_task.soonestExpiry(&fixture.state));
 }
 
@@ -2875,6 +2875,64 @@ test "one provider runs one login at a time" {
 
     // A second attempt must not race the first for the same grant.
     try std.testing.expectError(error.LoginInProgress, handlers.authLogin(&fixture.state, a, .{ .provider_id = "codex" }));
+}
+
+/// Wait until the login task drops its slot, which it does only after it publishes an outcome.
+fn loginUntilFinished(state: *State, id: wire.ids.LoginId) !void {
+    var waited_ms: usize = 0;
+    while (waited_ms < 10_000) : (waited_ms += 10) {
+        if (state.logins.get(id) == null) return;
+        try zio.sleep(.fromMilliseconds(10));
+    }
+    return error.LoginDidNotFinish;
+}
+
+test "a whole login stores the grant and finishes exactly once" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    try fixture.register();
+    const a = fixture.allocator();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+    try seedOauthCatalog(&fixture, "xai");
+
+    // start, then one pending poll, then the poll that carries the tokens.
+    var canned: provider.oauth.CannedHttp = .{ .replies = &.{
+        .{ .answer = .{ .status = 200, .body =
+        \\{"device_code":"dc","user_code":"UC","verification_uri":"https://x.ai/d","interval":1}
+        } },
+        .{ .answer = .{ .status = 400, .body = "{\"error\":\"authorization_pending\"}" } },
+        .{ .answer = .{ .status = 200, .body =
+        \\{"access_token":"at","refresh_token":"rt","expires_in":3600}
+        } },
+    } };
+    fixture.state.oauth_http = canned.seam();
+
+    const started = try handlers.authLogin(&fixture.state, a, .{ .provider_id = "codex" });
+    try std.testing.expectEqualStrings("UC", started.user_code);
+    try std.testing.expectEqualStrings("https://x.ai/d", started.verification_url);
+
+    // The task owns the login now, so wait inside the runtime until it publishes its outcome.
+    var waiter = try fixture.rt.spawn(loginUntilFinished, .{ &fixture.state, started.login_id });
+    try waiter.join();
+
+    // The grant reached the file, so a restart reads the same login.
+    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.store.path.?);
+    defer reloaded.deinit();
+    const grant = reloaded.providers[0].auth.?.oauth;
+    try std.testing.expectEqualStrings("at", grant.access_token);
+    try std.testing.expectEqualStrings("rt", grant.refresh_token.?);
+
+    var log = BroadcastLog.init();
+    defer log.deinit();
+    try log.drain(fixture.conn);
+    var finished: usize = 0;
+    for (log.events.items) |ev| if (ev == .auth_login_finished_data) {
+        finished += 1;
+        try std.testing.expect(ev.auth_login_finished_data.outcome == .succeeded);
+    };
+    try std.testing.expectEqual(@as(usize, 1), finished); // Exactly one, never two and never none.
 }
 
 test "a finalizing login ignores a later cancel" {

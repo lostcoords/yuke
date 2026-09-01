@@ -109,7 +109,7 @@ pub const Scheduler = struct {
     /// Rotate one local grant that is near its expiry, then wait for the next one.
     fn runGrants(self: *Scheduler) std.Io.Cancelable!void {
         const io = self.state.io;
-        login_task.refreshOnce(self.state, expiry_margin_ms) catch |err| {
+        const more = login_task.refreshOnce(self.state, expiry_margin_ms) catch |err| {
             if (err == error.Canceled) return error.Canceled;
             // Only a repeatable failure reaches here; a terminal one already lapsed the grant.
             std.log.warn("grant refresh failed: {t}", .{err});
@@ -117,6 +117,11 @@ pub const Scheduler = struct {
             return;
         };
         self.grants.failures = 0;
+        // Another grant still waits, so it runs next instead of sleeping out the idle period.
+        if (more) {
+            self.grants.due = .now(io, clock);
+            return;
+        }
         // A lapsed grant reports no lead, so the job waits instead of rotating a dead token again.
         const lead_ms = if (login_task.soonestExpiry(self.state)) |at| leadMillis(at, self.state.nowMillis()) else null;
         self.grants.due = .fromNow(io, millis(lead_ms orelse grants_idle_ms));

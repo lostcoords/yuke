@@ -20,11 +20,10 @@ const response_bytes = http.max_oauth_response_bytes;
 const max_lifetime_ms: u64 = 15 * 60 * 1000;
 
 /// Ask the provider for a code the human types. The caller answers its client with the result.
-pub fn start(arena: std.mem.Allocator, client: *http.Client, flow: login_runtime.Flow, body_out: []u8) !oauth.Start {
-    var seam: oauth.ClientHttp = .{ .client = client };
+pub fn start(arena: std.mem.Allocator, seam: oauth.Http, flow: login_runtime.Flow, body_out: []u8) !oauth.Start {
     return switch (flow) {
-        .xai => xai.start(arena, seam.seam(), body_out),
-        .codex => codex.start(arena, seam.seam(), body_out),
+        .xai => xai.start(arena, seam, body_out),
+        .codex => codex.start(arena, seam, body_out),
     };
 }
 
@@ -40,22 +39,26 @@ pub fn run(state: *State, slot: *login_runtime.LoginSlot) void {
 fn drive(state: *State, slot: *login_runtime.LoginSlot) !wire.auth.AuthLoginOutcome {
     var client: http.Client = .init(state.gpa, state.io, .none);
     defer client.deinit();
-    var seam: oauth.ClientHttp = .{ .client = &client };
+    var real: oauth.ClientHttp = .{ .client = &client };
+    const seam = state.oauth_http orelse real.seam();
 
     const body = try state.gpa.alloc(u8, response_bytes);
     defer state.gpa.free(body);
 
+    // The clock counts the request time too, so a slow provider cannot outlast the deadline.
+    const began_ms = state.nowMillis();
     var pace: poller.Poller = .init(0, slot.start.interval_ms, max_lifetime_ms);
-    var waited_ms: u64 = pace.firstWaitMs();
-    // RFC 8628 section 3.5 requires one whole interval before the first request.
-    if (try sleepOrCancel(state, slot, waited_ms)) return .{ .canceled = .{} };
+    if (try sleepOrCancel(state, slot, pace.firstWaitMs())) return .{ .canceled = .{} };
 
     while (true) {
         var arena: std.heap.ArenaAllocator = .init(state.gpa);
         defer arena.deinit();
 
         // One poll per turn, because an xAI poll that returns tokens spends the device code.
-        const result: ?oauth.Poll = pollFlow(arena.allocator(), slot, seam.seam(), state.nowMillis(), body) catch |err| switch (err) {
+        const elapsed_ms = state.nowMillis() -| began_ms;
+        if (elapsed_ms >= max_lifetime_ms) return .{ .failed = .{ .message = "the login expired before approval" } };
+
+        const result: ?oauth.Poll = pollFlow(arena.allocator(), slot, seam, state.nowMillis(), body) catch |err| switch (err) {
             oauth.Error.PreFlight, oauth.Error.Transient => null,
             else => return .{ .failed = .{ .message = "the provider refused the login" } },
         };
@@ -72,17 +75,14 @@ fn drive(state: *State, slot: *login_runtime.LoginSlot) !wire.auth.AuthLoginOutc
             .slow_down => .{ .slow_down = null },
         } else .unavailable;
 
-        switch (pace.step(reply, waited_ms)) {
+        switch (pace.step(reply, state.nowMillis() -| began_ms)) {
             .done => unreachable, // A token reply returns above.
             .failed => |failure| return .{ .failed = .{ .message = switch (failure) {
                 .expired => "the login expired before approval",
                 .offline => "the provider stayed unreachable",
                 .terminal => "the provider ended the login",
             } } },
-            .wait_ms => |delay_ms| {
-                waited_ms +|= delay_ms;
-                if (try sleepOrCancel(state, slot, delay_ms)) return .{ .canceled = .{} };
-            },
+            .wait_ms => |delay_ms| if (try sleepOrCancel(state, slot, delay_ms)) return .{ .canceled = .{} },
         }
     }
 }
@@ -133,7 +133,7 @@ pub fn soonestExpiry(state: *State) ?u64 {
     var soonest: ?u64 = null;
     for (loaded.providers) |p| {
         const auth = p.auth orelse continue;
-        if (auth != .oauth) continue;
+        if (auth != .oauth or auth.oauth.refresh_token == null) continue;
         const at = auth.oauth.expires_at_ms;
         if (soonest == null or at < soonest.?) soonest = at;
     }
@@ -141,12 +141,12 @@ pub fn soonestExpiry(state: *State) ?u64 {
 }
 
 /// Rotate the one local grant inside the margin. A terminal failure lapses it instead of retrying.
-pub fn refreshOnce(state: *State, margin_ms: u64) !void {
+pub fn refreshOnce(state: *State, margin_ms: u64) !bool {
     var arena_state: std.heap.ArenaAllocator = .init(state.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const due = try dueGrant(state, arena, margin_ms) orelse return;
+    const due = try dueGrant(state, arena, margin_ms) orelse return false;
     // A cancel between the send and the write would leave the rotation unknown, so it waits.
     const previous = state.io.swapCancelProtection(.blocked);
     defer _ = state.io.swapCancelProtection(previous);
@@ -167,7 +167,7 @@ pub fn refreshOnce(state: *State, margin_ms: u64) !void {
         else => {
             std.log.warn("refresh for {s} ended the grant: {t}", .{ due.provider_id, err });
             keep(state, arena, due, lapsed(due.grant));
-            return;
+            return moreDue(state, arena, margin_ms);
         },
     };
 
@@ -178,6 +178,13 @@ pub fn refreshOnce(state: *State, margin_ms: u64) !void {
         .expires_at_ms = tokens.expires_at_ms,
         .account_id = tokens.account_id orelse due.grant.account_id,
     });
+    return moreDue(state, arena, margin_ms);
+}
+
+/// Report whether another grant still waits, so the caller runs again instead of sleeping.
+fn moreDue(state: *State, arena: std.mem.Allocator, margin_ms: u64) bool {
+    const next = dueGrant(state, arena, margin_ms) catch return false;
+    return next != null;
 }
 
 /// Write the rotated grant. A failed write returns no error, because a retry would spend it twice.
