@@ -10,7 +10,6 @@ import { catalogOf, loadCatalog, chooseModel, defaultModel } from "yuke:catalog"
 
 const LOCAL = client.LOCAL;
 
-/** @typedef {{ connKey: string, sessionId: string | null, creating: boolean, gen: number, open: (connKey: string, id?: string | null) => void, send: (text: string) => boolean, interrupt: () => void, reload: () => void, active: (id: number) => void, startChat: (text: string) => boolean, newChat: () => void, close: () => void }} ChatSession */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "session" }>} NativeSessionEvent */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "conn" }> & { workspaces?: readonly Wire.Workspace[] }} NativeConnEvent */
 /** @typedef {{ workspace_path?: string, profile?: string, model?: string, reasoning?: string, system_prompt?: string, permission?: Wire.PermissionMode, max_rounds?: number }} CreateSessionDraft */
@@ -25,23 +24,34 @@ const newChatLines = () => {
   ];
 };
 
-export const chat = new ChatView({
-  textOf: id => (chatSession.sessionId ? client.sessionText(chatSession.connKey, chatSession.sessionId, id) : ""),
-  partsOf: id => (chatSession.sessionId ? client.sessionParts(chatSession.connKey, chatSession.sessionId, id) : []),
-  onSubmit: text => chatSession.send(text),
-  onSelect: text => {
-    if (config.mouse.copyOnSelect) copy(text, "selection");
-  },
-  empty: () => (chatSession.sessionId ? null : newChatLines()),
-});
+// One chat pane and the session it drives. Each pane owns its own view, transcript and session.
+export class Chat {
+  constructor() {
+    this.connKey = LOCAL;
+    /** @type {string | null} */
+    this.sessionId = null;
+    this.creating = false;
+    this.gen = 0;
+    this.view = new ChatView({
+      textOf: id => (this.sessionId ? client.sessionText(this.connKey, this.sessionId, id) : ""),
+      partsOf: id => (this.sessionId ? client.sessionParts(this.connKey, this.sessionId, id) : []),
+      onSubmit: text => this.send(text),
+      onSelect: text => {
+        if (config.mouse.copyOnSelect) copy(text, "selection");
+      },
+      empty: () => (this.sessionId ? null : newChatLines()),
+    });
+    CHAT_OF.set(this.view, this);
+    chats.add(this);
+  }
 
-// Drive one mounted pair into the chat pane: open and resync, then react to each "session" event.
-/** @type {ChatSession} */
-export const chatSession = {
-  connKey: LOCAL,
-  sessionId: null,
-  creating: false,
-  gen: 0,
+  get transcript() {
+    return this.view.transcript;
+  }
+
+  get composer() {
+    return this.view.composer;
+  }
 
   /** @param {string} connKey @param {string | null | undefined} id */
   open(connKey, id) {
@@ -49,15 +59,16 @@ export const chatSession = {
       id = connKey;
       connKey = LOCAL;
     }
-    if (this.sessionId && (this.connKey !== connKey || this.sessionId !== id)) {
-      client.sessionClose(this.connKey, this.sessionId);
-    }
+    if (this.sessionId && (this.connKey !== connKey || this.sessionId !== id)) this.release();
+    // A second pane on one session must not lose it, so a later open cannot reuse a stale creation.
+    this.gen++;
+    this.creating = false;
     this.connKey = connKey;
     this.sessionId = id;
     client.sessionOpen(this.connKey, id);
     client.sessionResync(this.connKey, id).catch(() => {});
     this.reload();
-  },
+  }
 
   // Send composer text into the open session. It returns false with no session, so the composer
   // keeps the text; the message appears through the "session" fold, not optimistically.
@@ -65,17 +76,17 @@ export const chatSession = {
   send(text) {
     if (!this.sessionId) return this.startChat(text);
     client.sessionSendInput(this.connKey, this.sessionId, text).catch((e) => {
-      restoreInput(text);
+      this.restoreInput(text);
       notice.show("send failed · " + ((e && e.message) || "unknown"));
       root.invalidate();
     });
     return true;
-  },
+  }
 
   interrupt() {
     if (!this.sessionId) return;
     client.sessionCancelRun(this.connKey, this.sessionId, true).catch(() => {});
-  },
+  }
 
   // A structural change (open, commit, resync): re-pull the outline.
   // A missing replica must not empty the pane; that would drop user fold overrides.
@@ -83,16 +94,16 @@ export const chatSession = {
     if (!this.sessionId) return;
     const o = client.sessionOutline(this.connKey, this.sessionId);
     if (!o || !Array.isArray(o.messages)) return;
-    chat.transcript.setOutline(o.messages, o.active || null);
+    this.transcript.setOutline(o.messages, o.active || null);
     root.invalidate();
-  },
+  }
 
   // A draft delta: re-wrap only the streaming message `id`.
   /** @param {number} id */
   active(id) {
-    chat.transcript.setActive(id);
+    this.transcript.setActive(id);
     root.invalidate();
-  },
+  }
 
   // Create the session, mount it, then send the first message. The daemon makes a session only
   // once a chat has something to say.
@@ -117,12 +128,19 @@ export const chatSession = {
     client
       .sessionCreate(connKey, params)
       .then((r) => {
-        if (token !== this.gen) return null;
+        // The daemon already committed the session, so a cancelled create unmounts its replica.
+        // The protocol has no session delete, so the empty session stays in the daemon's store.
+        if (token !== this.gen) {
+          client.sessionClose(connKey, r.session.id);
+          return null;
+        }
         this.open(connKey, r.session.id);
         return client.sessionSendInput(connKey, r.session.id, text);
       })
       .catch((e) => {
-        restoreInput(text);
+        // A cancelled create must not restore text into a pane the user already moved on from.
+        if (token !== this.gen) return;
+        this.restoreInput(text);
         notice.show("new chat failed · " + ((e && e.message) || "unknown"));
         root.invalidate();
       })
@@ -130,46 +148,105 @@ export const chatSession = {
         if (token === this.gen) this.creating = false;
       });
     return true;
-  },
+  }
 
   // Leave the open session and show an empty pane. The daemon makes the session on the first
   // message, so nothing is created until the user sends one.
   newChat() {
     this.gen++;
     this.creating = false;
-    if (this.sessionId) client.sessionClose(this.connKey, this.sessionId);
+    this.release();
     this.sessionId = null;
     this.connKey = LOCAL;
-    chat.transcript.setOutline([], null);
-    root.focusView(chat);
+    this.transcript.setOutline([], null);
+    root.focusView(this.view);
     root.invalidate();
-  },
+  }
 
   // The daemon lost the session. Clear the pane back to the placeholder.
-  close() {
+  sessionGone() {
     this.sessionId = null;
-    chat.transcript.setOutline([], null);
+    this.transcript.setOutline([], null);
     root.invalidate();
-  },
-};
+  }
 
-/** @param {string} text @returns {void} */
-function restoreInput(text) {
-  const now = chat.composer.text;
-  chat.composer.text = now === "" ? text : text + "\n" + now;
+  // Tell the daemon this pane is done with the session, unless another pane still shows it.
+  release() {
+    if (!this.sessionId) return;
+    for (const c of chats) {
+      if (c !== this && c.connKey === this.connKey && c.sessionId === this.sessionId) return;
+    }
+    client.sessionClose(this.connKey, this.sessionId);
+  }
+
+  // The pane left the tree, so the session goes and the chat leaves the registry.
+  dispose() {
+    this.gen++;
+    this.creating = false;
+    this.release();
+    this.sessionId = null;
+    chats.delete(this);
+  }
+
+  /** @param {string} text @returns {void} */
+  restoreInput(text) {
+    const now = this.composer.text;
+    this.composer.text = now === "" ? text : text + "\n" + now;
+  }
 }
 
-// The chat's live entry, or null with no open session.
+// Every live chat pane, so an event reaches each pane that shows the session it names.
+/** @type {Set<Chat>} */
+export const chats = new Set();
+
+// The Chat that owns a view, so a pane in the tree leads back to its session.
+/** @type {WeakMap<object, Chat>} */
+const CHAT_OF = new WeakMap();
+
+/** @param {unknown} view @returns {Chat | null} */
+export function chatOf(view) {
+  if (!view) return null;
+  return CHAT_OF.get(/** @type {object} */ (view)) || null;
+}
+
+// The focused view that `match` accepts, or the first one in the tree.
+/** @param {(v: any) => boolean} match @returns {any} */
+function focusedLeaf(match) {
+  const v = root.active;
+  if (v && match(v)) return v;
+  const rn = root.root_node;
+  if (!rn) return null;
+  for (const leaf of rn.leaves()) if (leaf.view && match(leaf.view)) return leaf.view;
+  return null;
+}
+
+// The chat pane a layer drives. A bare ChatView counts, because a layer reads the view alone.
+/** @returns {import("yuke:transcript").ChatView | null} */
+export function focusedChatView() {
+  return focusedLeaf(v => v.name === "chat");
+}
+
+// The chat a session command acts on. Only a pane this module built owns a session.
+/** @returns {Chat | null} */
+export function focusedChat() {
+  return chatOf(focusedLeaf(v => CHAT_OF.has(v)));
+}
+
+// The focused chat's live entry, or null with no open session.
 /** @returns {FeedItem | null} */
 export function chatEntry() {
-  if (!chatSession.sessionId) return null;
-  return feedItem(chatSession.connKey, chatSession.sessionId);
+  const c = focusedChat();
+  if (!c || !c.sessionId) return null;
+  return feedItem(c.connKey, c.sessionId);
 }
 
 // Pick any message in the transcript and copy its source text.
 /** @param {import("yuke:ext").Context} ctx */
 function openMessagePicker(ctx) {
-  const items = chat.transcript.messages().map((m, i) => ({ m, i, text: chat.transcript.textFor(m) }));
+  const c = focusedChat();
+  if (!c) return null;
+  const t = c.transcript;
+  const items = t.messages().map((m, i) => ({ m, i, text: t.textFor(m) }));
   if (items.length === 0) {
     notice.show("nothing to copy");
     return null;
@@ -193,7 +270,9 @@ function openMessagePicker(ctx) {
 // Load the catalog, then pick a model and its effort. The pick happens after the load returns.
 /** @param {import("yuke:ext").Context} ctx */
 function openModelPicker(ctx) {
-  const connKey = chatSession.connKey;
+  const chat = focusedChat();
+  if (!chat) return null;
+  const connKey = chat.connKey;
   const current = chatEntry();
   const currentId = current && current.session ? current.session.model : null;
   const show = () => {
@@ -251,7 +330,9 @@ function pickReasoning(ctx, connKey, model) {
 
 /** @param {import("yuke:ext").Context} ctx */
 function openCodePicker(ctx) {
-  const blocks = chat.transcript.codeBlocks();
+  const c = focusedChat();
+  if (!c) return null;
+  const blocks = c.transcript.codeBlocks();
   if (blocks.length === 0) {
     notice.show("no code block");
     return null;
@@ -284,11 +365,15 @@ export const chatPlugin = {
   name: "chat",
   /** @param {import("yuke:ext").Context} ctx @returns {void} */
   apply(ctx) {
+    // Two panes can show one session, so the event reaches every pane that names it.
     ctx.on("session.changed", /** @param {NativeSessionEvent} ev */ (ev => {
-      if (!ev || ev.connKey !== chatSession.connKey || ev.sessionId !== chatSession.sessionId) return;
-      if (ev.kind === "gone") chatSession.close();
-      else if (ev.kind === "active") chatSession.active(/** @type {number} */ (ev.id));
-      else chatSession.reload();
+      if (!ev) return;
+      for (const c of chats) {
+        if (c.connKey !== ev.connKey || c.sessionId !== ev.sessionId) continue;
+        if (ev.kind === "gone") c.sessionGone();
+        else if (ev.kind === "active") c.active(/** @type {number} */ (ev.id));
+        else c.reload();
+      }
     }));
 
     ctx.on("conn.changed", /** @param {NativeConnEvent} ev */ (ev => {
@@ -296,11 +381,18 @@ export const chatPlugin = {
       if (ev.kind !== "ready") return;
       loadCatalog(ev.key);
       if (ev.key === LOCAL) events.emit("daemon.ready");
-      if (chatSession.connKey === ev.key && chatSession.sessionId && client.sessionRev(ev.key, chatSession.sessionId) < 0) {
-        chatSession.open(ev.key, chatSession.sessionId);
+      // A reconnect lost the mount, so each pane on that connection re-opens its own session.
+      for (const c of chats) {
+        if (c.connKey === ev.key && c.sessionId && client.sessionRev(ev.key, c.sessionId) < 0) c.open(ev.key, c.sessionId);
       }
       root.invalidate();
     }));
+
+    // A closed pane must not keep its session mounted on the daemon.
+    ctx.on("pane.closed", view => {
+      const c = chatOf(view);
+      if (c) c.dispose();
+    });
 
     ctx.command(null, {
       "copy:message": () => openMessagePicker(ctx),

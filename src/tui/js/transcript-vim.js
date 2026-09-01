@@ -2,7 +2,8 @@
 import { term } from "yuke:term";
 import { root, copy, caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
 import { ChatView } from "yuke:transcript";
-import { register, chatView } from "yuke:vim";
+import { register } from "yuke:vim";
+import { focusedChatView } from "yuke:chat";
 
 /** @typedef {import("yuke:transcript").ChatView["transcript"]} Transcript */
 /** @typedef {{ id: number, row: number, col: number }} Position */
@@ -296,7 +297,7 @@ export const transcriptVim = {
     // Visual mode is plugin state, so it rides a flag rather than an atom.
     ctx.context({
       transcript_visual: () => {
-        const v = /** @type {ChatView | null} */ (chatView());
+        const v = /** @type {ChatView | null} */ (focusedChatView());
         const s = v ? panes.get(v) : undefined;
         return s && s.visual ? "on" : "";
       },
@@ -314,7 +315,7 @@ export const transcriptVim = {
     /** @param {(view: ChatView, s: VimState, t: Transcript) => boolean} fn @returns {() => boolean} */
     const act = (fn) => () => {
       // The binding context already limits this to a focused transcript in the active pane.
-      const view = /** @type {ChatView | null} */ (chatView());
+      const view = /** @type {ChatView | null} */ (focusedChatView());
       if (!view) return false;
       const s = stateOf(view);
       const t = view.transcript;
@@ -446,7 +447,7 @@ export const transcriptVim = {
     });
 
     return () => {
-      const view = /** @type {ChatView | null} */ (chatView());
+      const view = /** @type {ChatView | null} */ (focusedChatView());
       if (view) {
         panes.delete(view);
         view.transcript.clearSelection();

@@ -8,7 +8,7 @@ import { noticePlugin } from "yuke:notice";
 import { commandUiPlugin } from "yuke:command-ui";
 import { explorerPlugin } from "yuke:explorer";
 import { catalogOf, catalogPlugin } from "yuke:catalog";
-import { chat, chatSession, chatEntry, chatPlugin } from "yuke:chat";
+import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { SessionList, DeviceFeed, rowKey, rowLabel, activityMark, sidebarPlugin } from "yuke:sidebar";
 import { composerVim } from "yuke:composer-vim";
 import { transcriptVim } from "yuke:transcript-vim";
@@ -29,44 +29,6 @@ const LOCAL = client.LOCAL;
 
 
 
-// The main pane: a placeholder shown in a split leaf with no session.
-class MainPane {
-  constructor() {
-    this.rect = { x: 0, y: 0, w: 0, h: 0 };
-  }
-
-  get name() {
-    return "main";
-  }
-
-  /** @param {HostEvent} _ev @returns {boolean} */
-  onKey(_ev) {
-    return false;
-  }
-
-  /** @param {boolean} _focused @returns {void} */
-  draw(_focused) {
-    const { x, y, w: mw, h } = this.rect;
-    if (mw <= 0 || h <= 0) return;
-
-    const pad = mw >= 4 ? 1 : 0;
-    const iw = Math.max(0, mw - pad * 2);
-    const st = client.connectionState(LOCAL);
-
-    let msg;
-    if (st !== "ready") {
-      msg = st === "connecting" ? "connecting to local daemon…" : "daemon offline — :connect to retry";
-    } else {
-      msg = "select a session";
-    }
-
-    const bodyH = Math.max(0, h - 1);
-    const cy = y + Math.floor(Math.max(0, bodyH - 1) / 2);
-    if (bodyH > 0) text(x + pad, cy, clip(msg, iw), "YukeEmpty");
-    if (h > 0) text(x + pad, y + h - 1, clip("^p palette · ^k h/l pane", iw), "YukeFooter");
-  }
-}
-
 // --- default layout -----------------------------------------------------------------------
 
 
@@ -85,16 +47,38 @@ function deviceName(connKey) {
   return (d && d.name) || id.slice(0, 7);
 }
 
+// The first chat pane. A split adds another, and each pane drives its own session.
+const chat = new Chat();
+
+// Split the focused pane into a new chat. A tree with no active leaf keeps no orphan chat.
+/** @param {"row" | "col"} kind @returns {void} */
+function splitChat(kind) {
+  const c = new Chat();
+  if (!root.split(kind, c.view)) c.dispose();
+}
+
+// Run `fn` on the chat a command acts on. A tree with no chat pane runs nothing.
+/** @param {(c: Chat) => void} fn @returns {void} */
+function withChat(fn) {
+  const c = focusedChat();
+  if (c) fn(c);
+}
+
 const sidebar = new SessionList({
   statusLabel: connectionLabel,
-  activeSession: () => (chatSession.sessionId ? { connKey: chatSession.connKey, sessionId: chatSession.sessionId } : null),
+  activeSession: () => {
+    const c = focusedChat();
+    return c && c.sessionId ? { connKey: c.connKey, sessionId: c.sessionId } : null;
+  },
   onOpen: (connKey, id, src) => {
-    chatSession.open(connKey, id);
-    if (src !== "key") root.focusView(chat);
+    const c = focusedChat();
+    if (!c) return;
+    c.open(connKey, id);
+    if (src !== "key") root.focusView(c.view);
   },
 });
 
-const workspace = Node.branch("row", new Node(sidebar), new Node(chat), SIDEBAR_RATIO);
+const workspace = Node.branch("row", new Node(sidebar), new Node(chat.view), SIDEBAR_RATIO);
 
 
 
@@ -113,7 +97,8 @@ function openSessionFinder() {
     format: r => ({ text: rowLabel(r), right: activityMark(r.activity) }),
     onAccept: r => {
       sidebar.list.selectedKey = rowKey(r);
-      chatSession.open(r.connKey, r.id);
+      const c = focusedChat();
+      if (c) c.open(r.connKey, r.id);
     },
   });
 }
@@ -295,8 +280,8 @@ plugins.use({
     ctx.status({ side: "right", order: -1, render: () => keymap.pendingLabel() });
 
     // The interrupt command is available only with a session open.
-    ctx.command(() => chatSession.sessionId != null, {
-      "session:interrupt": () => chatSession.interrupt(),
+    ctx.command(() => { const c = focusedChat(); return c != null && c.sessionId != null; }, {
+      "session:interrupt": () => withChat(c => c.interrupt()),
     });
 
     ctx.command(null, {
@@ -309,17 +294,17 @@ plugins.use({
       "focus:right": () => root.focusDir("l"),
       "focus:next": () => root.focusCycle(1),
       "focus:prev": () => root.focusCycle(-1),
-      "window:split-right": () => root.split("row", new MainPane()),
-      "window:split-down": () => root.split("col", new MainPane()),
+      "window:split-right": () => splitChat("row"),
+      "window:split-down": () => splitChat("col"),
       "window:close": () => root.close(),
-      "copy:reply": () => copy(chat.transcript.textFor(chat.transcript.last("assistant")), "reply"),
-      "copy:selection": () => copy(chat.transcript.selectedText(), "selection"),
-      "copy:source": () => copy(chat.transcript.selectedSource(), "source"),
-      "chat:new": () => chatSession.newChat(),
-      "chat:focus-toggle": () => {
-        chat.focusRegion(chat.focus === "transcript" ? "composer" : "transcript");
+      "copy:reply": () => withChat(c => copy(c.transcript.textFor(c.transcript.last("assistant")), "reply")),
+      "copy:selection": () => withChat(c => copy(c.transcript.selectedText(), "selection")),
+      "copy:source": () => withChat(c => copy(c.transcript.selectedSource(), "source")),
+      "chat:new": () => withChat(c => c.newChat()),
+      "chat:focus-toggle": () => withChat(c => {
+        c.view.focusRegion(c.view.focus === "transcript" ? "composer" : "transcript");
         root.invalidate();
-      },
+      }),
       "composer-vim:toggle": () => (plugins.get("composer-vim") ? plugins.dispose("composer-vim") : plugins.use(composerVim)),
       "transcript-vim:toggle": () => (plugins.get("transcript-vim") ? plugins.dispose("transcript-vim") : plugins.use(transcriptVim)),
     });
@@ -366,7 +351,7 @@ plugins.use({
 plugins.use(noticePlugin);
 plugins.use(commandUiPlugin);
 plugins.use(explorerPlugin);
-plugins.use(catalogPlugin, { entry: chatEntry, connKey: () => chatSession.connKey });
+plugins.use(catalogPlugin, { entry: chatEntry, connKey: () => { const c = focusedChat(); return c ? c.connKey : LOCAL; } });
 plugins.use(chatPlugin);
 plugins.use(sidebarPlugin, { deviceName, onCatalogChanged: /** @param {string} connKey @returns {void} */ (connKey) => { catalogOf(connKey).rev = null; } });
 
@@ -379,6 +364,6 @@ plugins.use({
 });
 
 root.setRoot(workspace);
-root.focusView(chat);
+root.focusView(chat.view);
 
-export { workspace, sidebar, chat, chatSession, SessionList, MainPane, DeviceFeed, openSessionFinder, connection };
+export { workspace, sidebar, chat, SessionList, DeviceFeed, openSessionFinder, connection };

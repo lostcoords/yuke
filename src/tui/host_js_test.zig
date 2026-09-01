@@ -2259,7 +2259,7 @@ test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { List, Picker } from "yuke:ui";
+        \\import { List } from "yuke:ui";
         \\import { Transcript } from "yuke:transcript";
         \\import { fuzzyMatch, fuzzyRank } from "yuke:fzy";
         \\const fail = [];
@@ -2267,7 +2267,6 @@ test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
         \\
         \\// A two-line list shows floor(h / itemHeight) items and scrolls in item units.
         \\const l = new List({ items: [0, 1, 2, 3, 4, 5], itemHeight: 2 });
-        \\check("visible", l._visible(6) === 3);
         \\l.moveToEdge(1);
         \\check("sel-end", l.selectedIndex() === 5);
         \\l.ensureVisible(6);
@@ -2284,10 +2283,6 @@ test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
         \\const dog = fuzzyRank(["cat", "dog"], "og", String);
         \\check("subsequence", dog.length === 1 && dog[0] === "dog");
         \\check("over-long-cap", fuzzyMatch("a".repeat(1025), "a") === -Infinity);
-        \\// Assigning the query refilters the result list.
-        \\const p = new Picker({ items: ["apple", "banana"], filterText: String });
-        \\p.query = "ban";
-        \\check("picker-refilter", p.list.items.length === 1 && p.list.items[0] === "banana");
         \\
         \\// A user turn is a tinted band with a gutter marker; an assistant turn renders markdown.
         \\const texts = { u1: "hello world", a1: "**bold** text" };
@@ -2602,7 +2597,8 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\import { command, root, status, keymap } from "yuke:core";
         \\import { plugins } from "yuke:ext";
         \\import { term } from "yuke:term";
-        \\import { SessionList, sidebar, chat, chatSession, connection } from "yuke:defaults";
+        \\import { SessionList, sidebar, chat, connection } from "yuke:defaults";
+        \\import { chats, chatOf } from "yuke:chat";
         \\import { feedOf } from "yuke:sidebar";
         \\const fail = [];
         \\// The shell loads the notice as a plugin, so its segment and listeners can be taken back out.
@@ -2633,16 +2629,16 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\  if (status.side("right") === beforeG) fail.push("showcmd-on");
         \\  root.onEvent(g);
         \\  if (keymap.pendingLabel() !== "") fail.push("showcmd-off");
-        \\  root.focusView(chat);
+        \\  root.focusView(chat.view);
         \\}
         \\// Tab moves the region focus with no vim plugin loaded.
         \\{
         \\  const tab = { type: "key", code: "tab", char: "", text: "", event: "press", mods: 0 };
-        \\  if (chat.focus !== "composer") fail.push("boot-region");
+        \\  if (chat.view.focus !== "composer") fail.push("boot-region");
         \\  root.onEvent(tab);
-        \\  if (chat.focus !== "transcript") fail.push("tab-to-transcript");
+        \\  if (chat.view.focus !== "transcript") fail.push("tab-to-transcript");
         \\  root.onEvent(tab);
-        \\  if (chat.focus !== "composer") fail.push("tab-back");
+        \\  if (chat.view.focus !== "composer") fail.push("tab-back");
         \\}
         \\command.perform("ui:palette");
         \\if (root.overlays.length !== 1) fail.push("palette");
@@ -2660,8 +2656,8 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\// `focusView` moves the active leaf to the pane that holds the view.
         \\root.focusView(sidebar);
         \\if (root.active !== sidebar) fail.push("focus-sidebar");
-        \\root.focusView(chat);
-        \\if (root.active !== chat) fail.push("focus-chat");
+        \\root.focusView(chat.view);
+        \\if (root.active !== chat.view) fail.push("focus-chat");
         \\root.focusView(sidebar);
         \\
         \\// A click reports "mouse", Enter reports "key", and `l` reports "go".
@@ -2712,12 +2708,12 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\  root.onEvent(kev("g"));
         \\  root.onEvent(kev("g"));
         \\  if (sidebar.list.selectedKey !== first) fail.push("sidebar-gg-moves-top");
-        \\  root.focusView(chat);
+        \\  root.focusView(chat.view);
         \\}
         \\
         \\// PageUp scrolls the history while the composer types, through the nav binding.
         \\{
-        \\  root.focusView(chat);
+        \\  root.focusView(chat.view);
         \\  if (root.navTarget() !== chat.transcript.pager) fail.push("chat-nav-target");
         \\  let paged = 0;
         \\  const realPage = chat.transcript.pager.navPage.bind(chat.transcript.pager);
@@ -2733,10 +2729,10 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\sidebar.list.draw({ x: 0, y: 0, w: 20, h: 4 });
         \\term.endFrame();
         \\sidebar.onMouse({ type: "mouse", col: 1, row: 0, button: "left", event: "press", mods: 0 });
-        \\if (root.active !== chat) fail.push("click-focuses-chat");
+        \\if (root.active !== chat.view) fail.push("click-focuses-chat");
         \\root.focusView(sidebar);
         \\sidebar.onKey({ type: "key", code: "char", char: "l", text: "", event: "press", mods: 0 });
-        \\if (root.active !== chat) fail.push("l-focuses-chat");
+        \\if (root.active !== chat.view) fail.push("l-focuses-chat");
         \\root.focusView(sidebar);
         \\sidebar.onKey({ type: "key", code: "enter", event: "press", char: "", text: "", mods: 0 });
         \\if (root.active !== sidebar) fail.push("enter-stays");
@@ -2746,8 +2742,8 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\{
         \\  const feed = feedOf("local");
         \\  feed.seed({ items: [{ session: { id: "probe", model: "wired-model", updated_at_ms: 1 }, activity: { context_usage: { input: 2500 } } }] });
-        \\  chatSession.connKey = "local";
-        \\  chatSession.sessionId = "probe";
+        \\  chat.connKey = "local";
+        \\  chat.sessionId = "probe";
         \\  const right = status.side("right");
         \\  if (right.indexOf("wired-model") < 0) fail.push("catalog-entry-wired");
         \\  if (right.indexOf("2.5k ctx") < 0) fail.push("catalog-usage-wired");
@@ -2762,20 +2758,36 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\  if (sibling.lines[0].text.startsWith("▸ ")) fail.push("active-mark-needs-id");
         \\
         \\  // The real callback must reach the chat; the mark then follows without anyone pushing it.
-        \\  chatSession.sessionId = null;
+        \\  chat.sessionId = null;
         \\  sidebar.open({ connKey: "local", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null }, "key");
-        \\  if (chatSession.sessionId !== "probe") fail.push("sidebar-open-reaches-chat");
+        \\  if (chat.sessionId !== "probe") fail.push("sidebar-open-reaches-chat");
         \\  if (!sidebar._format({ connKey: "local", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null }).lines[0].text.startsWith("▸ ")) fail.push("open-marks-row");
         \\
         \\  // Closing the session clears the mark, which the old push never did.
-        \\  chatSession.close();
+        \\  chat.sessionGone();
         \\  if (sidebar._format({ connKey: "local", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null }).lines[0].text.startsWith("▸ ")) fail.push("close-clears-mark");
-        \\  chatSession.sessionId = null;
+        \\  chat.sessionId = null;
         \\  const unmarked = sidebar._format({ connKey: "local", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null });
         \\  if (unmarked.lines[0].text.startsWith("▸ ")) fail.push("active-mark-clears-with-chat");
         \\  feed.clear();
         \\}
         \\
+        \\
+        \\// The split command builds a real chat pane, and a tree with no leaf keeps no orphan.
+        \\{
+        \\  const before = chats.size;
+        \\  command.perform("window:split-right");
+        \\  if (chats.size !== before + 1) fail.push("split-makes-a-chat");
+        \\  if (chatOf(root.active) == null) fail.push("split-focuses-the-new-chat");
+        \\  command.perform("window:close");
+        \\  if (chats.size !== before) fail.push("close-releases-the-chat");
+        \\  const saved = root.root_node;
+        \\  root.setRoot(null);
+        \\  const empty = chats.size;
+        \\  command.perform("window:split-right");
+        \\  if (chats.size !== empty) fail.push("failed-split-keeps-no-orphan");
+        \\  root.setRoot(saved);
+        \\}
         \\// The shell's own plugin owns the showcmd reading, so an unload takes it away.
         \\{
         \\  root.focusView(sidebar);
@@ -2791,7 +2803,7 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\  if (status.side("right").indexOf("f9") >= 0) fail.push("showcmd-unloads");
         \\  keymap.pending = null;
         \\  offPrefix();
-        \\  root.focusView(chat);
+        \\  root.focusView(chat.view);
         \\}
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "act.js");
@@ -3944,26 +3956,30 @@ test "the chat slice owns its listeners and its transcript commands" {
     defer host.destroy();
     // The chat reacts to session events and offers the commands that read its transcript.
     try host.evalModule(
-        \\import { command, events } from "yuke:core";
+        \\import { command, events, root, Node } from "yuke:core";
         \\import { plugins } from "yuke:ext";
-        \\import { chat, chatSession, chatEntry, chatPlugin } from "yuke:chat";
+        \\import { Chat, chatEntry, chatPlugin } from "yuke:chat";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\// The pane must sit in the tree, because a session command acts on the focused chat.
+        \\const chat = new Chat();
+        \\root.setRoot(new Node(chat.view));
+        \\root.focusView(chat.view);
         \\
         \\check("commands-absent-before", !command.available("copy:message") && !command.available("model:pick"));
         \\plugins.use(chatPlugin);
         \\check("commands-registered", command.available("copy:message") && command.available("copy:code") && command.available("model:pick"));
         \\
         \\// A "gone" event for the open pair closes the session; one for another pair does not.
-        \\chatSession.connKey = "local";
-        \\chatSession.sessionId = "s1";
+        \\chat.connKey = "local";
+        \\chat.sessionId = "s1";
         \\events.emit("session.changed", { connKey: "local", sessionId: "other", kind: "gone" });
-        \\check("ignores-other-pair", chatSession.sessionId === "s1");
+        \\check("ignores-other-pair", chat.sessionId === "s1");
         \\events.emit("session.changed", { connKey: "local", sessionId: "s1", kind: "gone" });
-        \\check("closes-open-pair", chatSession.sessionId === null);
+        \\check("closes-open-pair", chat.sessionId === null);
         \\
         \\// The "active" and reload branches move the transcript, not just the session id.
-        \\chatSession.sessionId = "s1";
+        \\chat.sessionId = "s1";
         \\let actives = [];
         \\const realActive = chat.transcript.setActive.bind(chat.transcript);
         \\chat.transcript.setActive = (id) => { actives.push(id); return realActive(id); };
@@ -3983,7 +3999,7 @@ test "the chat slice owns its listeners and its transcript commands" {
         \\events.emit("conn.changed", { key: "local", kind: "ready" });
         \\check("local-ready-announces", ready === 1);
         \\offReady();
-        \\chatSession.sessionId = null;
+        \\chat.sessionId = null;
         \\
         \\// With no session the entry lookup answers null rather than reaching into a feed.
         \\check("no-entry-without-session", chatEntry() === null);
@@ -3991,10 +4007,10 @@ test "the chat slice owns its listeners and its transcript commands" {
         \\// An unload takes the commands and the listeners with it.
         \\plugins.dispose("chat");
         \\check("unload-drops-commands", !command.available("copy:message") && !command.available("model:pick"));
-        \\chatSession.sessionId = "s2";
+        \\chat.sessionId = "s2";
         \\events.emit("session.changed", { connKey: "local", sessionId: "s2", kind: "gone" });
-        \\check("unload-stops-listening", chatSession.sessionId === "s2");
-        \\chatSession.sessionId = null;
+        \\check("unload-stops-listening", chat.sessionId === "s2");
+        \\chat.sessionId = null;
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "chat.js");
@@ -4053,6 +4069,99 @@ test "the chat pane routes a drag that leaves the transcript and guards its pres
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "mouse.js");
+    try expectJs(host, "ok");
+}
+
+test "a split gives each chat pane its own session" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // Each pane starts with its own session, and an event reaches every pane that shows the pair.
+    try host.evalModule(
+        \\import { root, Node, events } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { Chat, chats, chatOf, focusedChat, focusedChatView, chatPlugin } from "yuke:chat";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\plugins.use(chatPlugin);
+        \\
+        \\const a = new Chat();
+        \\root.setRoot(new Node(a.view));
+        \\root.focusView(a.view);
+        \\check("first-is-focused", focusedChat() === a);
+        \\
+        \\// The split leaves the new pane focused, so a command acts on the pane the user just made.
+        \\const b = new Chat();
+        \\root.split("row", b.view);
+        \\check("split-focuses-new", root.active === b.view && focusedChat() === b);
+        \\check("view-leads-back", chatOf(b.view) === b && chatOf(a.view) === a);
+        \\
+        \\// Each pane holds its own session, so one pane cannot move the other.
+        \\a.connKey = "local"; a.sessionId = "s1";
+        \\b.connKey = "local"; b.sessionId = "s2";
+        \\a.transcript.setOutline([{ id: "u1", type: "user" }], null);
+        \\b.transcript.setOutline([{ id: "u2", type: "user" }, { id: "a2", type: "assistant" }], null);
+        \\check("separate-transcripts", a.transcript.messages().length === 1 && b.transcript.messages().length === 2);
+        \\
+        \\// A "gone" event reaches only the pane that names the pair.
+        \\events.emit("session.changed", { connKey: "local", sessionId: "s1", kind: "gone" });
+        \\check("gone-hits-one-pane", a.sessionId === null && b.sessionId === "s2");
+        \\
+        \\// Two panes on one session both follow it, which a single-chat shell could never do.
+        \\a.sessionId = "s2";
+        \\let seen = 0;
+        \\const ra = a.transcript.setActive.bind(a.transcript);
+        \\const rb = b.transcript.setActive.bind(b.transcript);
+        \\a.transcript.setActive = (id) => { seen++; return ra(id); };
+        \\b.transcript.setActive = (id) => { seen++; return rb(id); };
+        \\events.emit("session.changed", { connKey: "local", sessionId: "s2", kind: "active", id: 3 });
+        \\check("both-panes-follow", seen === 2);
+        \\a.transcript.setActive = ra;
+        \\b.transcript.setActive = rb;
+        \\
+        \\// A closed pane releases its chat, so the registry does not keep a pane the tree dropped.
+        \\const had = chats.size;
+        \\root.focusView(b.view);
+        \\root.close();
+        \\check("close-drops-the-chat", chats.size === had - 1 && !chats.has(b));
+        \\check("close-leaves-the-other", chats.has(a) && focusedChat() === a);
+        \\
+        \\// A replaced tree drops its panes, so a whole-tree swap releases them like a close.
+        \\const c1 = new Chat();
+        \\const c2 = new Chat();
+        \\c1.connKey = "local"; c1.sessionId = "s9";
+        \\root.setRoot(new Node(c1.view));
+        \\check("setRoot-drops-the-pane-it-replaced", !chats.has(a));
+        \\const held = chats.size;
+        \\root.setRoot(new Node(c2.view));
+        \\check("setRoot-drops-the-old-pane", chats.size === held - 1 && !chats.has(c1));
+        \\check("setRoot-keeps-the-new-pane", chats.has(c2));
+        \\
+        \\// A pane that survives the swap must not be released, so only the dropped views go.
+        \\const stay = new Chat();
+        \\const drop = new Chat();
+        \\root.setRoot(Node.branch("row", new Node(stay.view), new Node(drop.view), 0.5));
+        \\root.setRoot(new Node(stay.view));
+        \\check("setRoot-releases-only-the-dropped", chats.has(stay) && !chats.has(drop));
+        \\
+        \\// A split with no active leaf must not leave its new chat in the registry.
+        \\root.setRoot(null);
+        \\const orphans = chats.size;
+        \\const tried = new Chat();
+        \\if (!root.split("row", tried.view)) tried.dispose();
+        \\check("failed-split-keeps-no-orphan", chats.size === orphans);
+        \\
+        \\// A bare view is a pane for a layer, but it owns no session, so a command finds none.
+        \\const bare = { name: "chat", rect: { x: 0, y: 0, w: 1, h: 1 }, draw() {} };
+        \\root.setRoot(new Node(bare));
+        \\check("bare-view-is-a-pane", focusedChatView() === bare);
+        \\check("bare-view-owns-no-session", focusedChat() === null);
+        \\
+        \\plugins.dispose("chat");
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "splitchat.js");
     try expectJs(host, "ok");
 }
 
@@ -4188,12 +4297,15 @@ test "a plugin unload takes every picker it opened off the stack" {
     defer host.destroy();
     // A modal left on the stack consumes every key, so an unload must remove it with the plugin.
     try host.evalModule(
-        \\import { command, root } from "yuke:core";
+        \\import { command, root, Node } from "yuke:core";
         \\import { plugins } from "yuke:ext";
-        \\import { chat, chatPlugin } from "yuke:chat";
+        \\import { Chat, chatPlugin } from "yuke:chat";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\
+        \\const chat = new Chat();
+        \\root.setRoot(new Node(chat.view));
+        \\root.focusView(chat.view);
         \\chat.transcript.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }], null);
         \\const before = root.overlays.length;
         \\

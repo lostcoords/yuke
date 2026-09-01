@@ -10,7 +10,8 @@ import {
   nextWordEnd,
 } from "yuke:core";
 import { Composer } from "yuke:ui";
-import { register, chatView } from "yuke:vim";
+import { register } from "yuke:vim";
+import { focusedChatView } from "yuke:chat";
 
 /** @typedef {import("yuke:ui").Composer} ComposerType */
 /** @typedef {"insert" | "normal"} ComposerMode */
@@ -85,7 +86,7 @@ function firstWord(text, caret) {
 
 /** @returns {ComposerType | null} */
 function chatComposer() {
-  const v = /** @type {import("yuke:transcript").ChatView | null} */ (chatView());
+  const v = /** @type {import("yuke:transcript").ChatView | null} */ (focusedChatView());
   return v ? v.composer : null;
 }
 

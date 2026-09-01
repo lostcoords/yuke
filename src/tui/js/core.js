@@ -1323,6 +1323,7 @@ const CORE_EVENTS = Object.assign(Object.create(null), {
   "paste.input": 1,
   "focus.changed": 1,
   "pane.focused": 1,
+  "pane.closed": 1,
   "region.focused": 1,
   "clipboard.copied": 1,
   "session.changed": 1,
@@ -1645,12 +1646,16 @@ export class RootView {
 
   /** @param {Node | null} node @returns {void} */
   setRoot(node) {
+    const gone = this.root_node ? this.root_node.leaves().map((l) => l.view) : [];
     if (node) node.parent = null;
     this.root_node = node;
     this.activeLeaf = null;
     this._capture = null;
     // The first leaf takes the focus through the same path, so it runs `onFocus` like any other.
     if (node) this._setActiveLeaf(/** @type {Node} */ (node.leaves()[0]));
+    // A replaced tree drops its panes, so each owner hears it the way a close tells them.
+    const kept = node ? node.leaves().map((l) => l.view) : [];
+    for (const v of gone) if (v && kept.indexOf(v) < 0) events.emit("pane.closed", v);
   }
 
   /** @param {ViewLike | null} view @returns {void} */
@@ -1736,6 +1741,8 @@ export class RootView {
     if (p.a) p.a.parent = p;
     if (p.b) p.b.parent = p;
     this._setActiveLeaf(/** @type {Node} */ (p.leaves()[0]));
+    // The tree drops the view here, so the owner learns that its pane left.
+    events.emit("pane.closed", leaf.view);
   }
 
   /** @param {"h" | "j" | "k" | "l"} d @returns {void} */
