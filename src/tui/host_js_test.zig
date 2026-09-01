@@ -3399,6 +3399,34 @@ test "a modal picker reads the shared nav keys and seals the keymap" {
         \\press("page_down");
         \\check("picker-page-down", sel() === "e");
         \\
+        \\// A menu keeps its source and its selection, so a plugin that calls the finder path cannot reorder it.
+        \\press("char", "G");
+        \\content.refilter();
+        \\check("menu-refilter-keeps-selection", sel() === "e");
+        \\content.setSource(["x", "y"]);
+        \\check("menu-set-source", content.selected() === "x");
+        \\check("menu-no-query", content.query === "");
+        \\
+        \\// A plugin may destructure the kit, so `select` must not depend on its receiver.
+        \\const { select } = ui;
+        \\const loose = select(["p", "q"], { format: x => ({ text: String(x) }) });
+        \\check("detached-select", loose.content.selected() === "p");
+        \\loose.close();
+        \\
+        \\// A menu edits no query, so the setter changes neither the text nor the rows.
+        \\content.query = "zz";
+        \\check("menu-query-setter", content.query === "" && content.selected() === "x");
+        \\
+        \\// A cancel always closes, in both modes, and `onCancel` only reports it.
+        \\let told = 0;
+        \\const deep = root.overlays.length;
+        \\const menu = ui.select(["m"], { format: x => ({ text: String(x) }), onCancel: () => { told++; } });
+        \\press("esc");
+        \\check("menu-cancel-closes", root.overlays.length === deep && told === 1);
+        \\const find = ui.pick({ items: ["f"], format: x => ({ text: String(x) }), onCancel: () => { told++; } });
+        \\press("esc");
+        \\check("finder-cancel-closes", root.overlays.length === deep && told === 2);
+        \\
         \\// A modal layer seals the keymap, so an app binding cannot fire underneath it.
         \\let leaked = 0;
         \\const off = keymap.add({ f9: () => { leaked++; } });
@@ -3409,6 +3437,66 @@ test "a modal picker reads the shared nav keys and seals the keymap" {
         \\close();
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "picker.js");
+    try expectJs(host, "ok");
+}
+
+test "a finder answers the whole picker contract" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { root } from "yuke:core";
+        \\import { ui } from "yuke:ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
+        \\const press = (code, char) => root.onEvent(key(code, char));
+        \\const items = [{ id: "ay" }, { id: "bee" }, { id: "sea" }];
+        \\
+        \\// The chat model picker preselects the open model this way, so a finder must answer it.
+        \\let taken = null;
+        \\let at = -1;
+        \\const p = ui.pick({
+        \\  items,
+        \\  key: it => it.id,
+        \\  filterText: it => it.id,
+        \\  format: it => ({ text: it.id }),
+        \\  needsTick: { periodMs: 40 },
+        \\  keymap: { "ctrl+g": "bottom" },
+        \\  onAccept: (it, i) => { taken = it.id; at = i; },
+        \\});
+        \\check("selectKey", p.content.selectKey("sea") && p.content.selected().id === "sea");
+        \\
+        \\// `needsTick` reaches the window, so a finder that wants a timer gets one.
+        \\const t = p.win.needsTick();
+        \\check("needsTick", t !== null && t.periodMs === 40);
+        \\
+        \\// A string binding names a default action; only the shared class answers one.
+        \\p.content.selectKey("ay");
+        \\press("ctrl+g");
+        \\check("string-action", p.content.selected().id === "sea");
+        \\
+        \\// The query still filters, so the finder half did not regress.
+        \\press("char", "b");
+        \\check("query", p.content.query === "b" && p.content.selected().id === "bee");
+        \\
+        \\// The accept carries the row index, and a pick that `onAccept` opens stays on top. The chat model step chains this way.
+        \\const depth = root.overlays.length;
+        \\let chained = null;
+        \\p.content.onAccept = (it, i) => {
+        \\  taken = it.id;
+        \\  at = i;
+        \\  chained = ui.pick({ items: [{ id: "level" }], key: x => x.id, format: x => ({ text: x.id }) });
+        \\};
+        \\press("enter");
+        \\check("accepted", taken === "bee" && at === 0);
+        \\check("chained-on-top", root.overlays.length === depth && root.overlays[root.overlays.length - 1] === chained.win);
+        \\chained.close();
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "finder.js");
     try expectJs(host, "ok");
 }
 

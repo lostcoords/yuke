@@ -58,13 +58,13 @@ function openExplorer(startPath) {
         }
         if (res.next_cursor != null) rows.push({ key: "\x00more", notice: true, text: "… more entries not shown" });
 
-        const content = /** @type {import("yuke:ui").Picker<ExplorerRow>} */ (/** @type {unknown} */ (picker.content));
+        const content = picker.content;
         content.query = "";
         content.setSource(rows);
         root.invalidate();
       },
       () => {
-        const content = /** @type {import("yuke:ui").Picker<ExplorerRow>} */ (/** @type {unknown} */ (picker.content));
+        const content = picker.content;
         content.query = "";
         content.setSource([{ key: "\x00err", notice: true, text: "cannot browse — daemon offline?" }]);
         root.invalidate();

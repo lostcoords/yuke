@@ -7,6 +7,7 @@ import { fuzzyMatch, fuzzyRank } from "yuke:fzy";
 /** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
 /** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
 /** @typedef {string | number} ItemKey */
+/** @typedef {"accept" | "cancel" | "close" | "next" | "prev" | "top" | "bottom"} PickerAction */
 /** @typedef {string | number | object} ListKey */
 /** @typedef {{ text?: string, group?: string, lines?: ListItem[], right?: string, rightGroup?: string, rightSelGroup?: string, marker?: string | null, markerGroup?: string, markerSelGroup?: string, indent?: number, selGroup?: string }} ListItem */
 /** @typedef {{ type: "mouse", col: number, row: number, button: string, event: string, mods: number, count: number }} MouseEvent */
@@ -21,8 +22,7 @@ import { fuzzyMatch, fuzzyRank } from "yuke:fzy";
 /** @typedef {{ draw?: (win: Window) => void, cursor?: (win: Window) => { x: number, y: number, visible: boolean } | null, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: MouseEvent) => boolean, needsTick?: () => { periodMs: number } | null, tick?: () => void }} WindowContent */
 /** @typedef {{ name?: string, modal?: boolean, border?: Border, content?: WindowContent | null, width?: Dimension, height?: Dimension, panelGroup?: string, borderGroup?: string, title?: string | (() => string), title_pos?: "left" | "center" | "right", titleGroup?: string, footer?: string | (() => string), footer_pos?: "left" | "center" | "right", footerGroup?: string }} WindowOptions */
 /** @template T @typedef {{ items?: T[] | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemHeight?: number | undefined, group?: string | undefined, selGroup?: string | undefined, dimGroup?: string | undefined, dimSelGroup?: string | undefined, drawCursor?: boolean | undefined }} ListOptions */
-/** @template T @typedef {{ items?: T[] | undefined, suggest?: (query: string) => T[] | undefined, filterText?: ((item: T) => string) | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onAccept?: ((item: T, index?: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: PickerContent<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined } & WindowOptions} PickOptions */
-/** @template T @typedef {{ format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onAccept?: ((item: T, index: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: PickerContent<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined } & WindowOptions} SelectOptions */
+/** @template T @typedef {{ items?: T[] | undefined, suggest?: (query: string) => T[] | undefined, filterText?: ((item: T) => string) | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onAccept?: ((item: T, index: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: Picker<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined, filter?: boolean | undefined } & WindowOptions} PickOptions */
 
 // The kit adds its highlight groups to the core palette. It adds only a group that is absent, so a
 // theme that set one first keeps it, and a second import does not re-seed.
@@ -798,17 +798,26 @@ export class Window {
   }
 }
 
-// The content of a picker window: a List plus accept/cancel/validate and an optional per-instance
-// keymap over the default actions (accept/cancel/next/prev/top/bottom/close).
+// A picker window's content: a List with accept/cancel/validate, an optional keymap over the default actions, and an optional query line.
+const PICKER_PROMPT = "\u203a ";
+
 /** @template T */
-export class PickerContent {
-  /** @param {T[]} items @param {SelectOptions<T>} opts */
-  constructor(items, opts) {
+export class Picker {
+  /** @param {PickOptions<T>} opts */
+  constructor(opts) {
     this.opts = opts;
     /** @type {Window | null} */
     this.win = null;
+    this.filter = opts.filter !== false;
+    this.input = this.filter ? new TextInput({ onChange: () => this.refilter() }) : null;
+    /** @type {T[]} */
+    this.source = opts.items || [];
+    this.suggest = opts.suggest || null;
+    this.textOf = opts.filterText || String;
+
+    /** @type {List<T>} */
     this.list = new List({
-      items,
+      items: [],
       format: opts.format,
       key: opts.key,
       isSelectable: opts.isSelectable,
@@ -817,16 +826,34 @@ export class PickerContent {
       selGroup: opts.selGroup,
       itemHeight: opts.itemHeight,
     });
+
     this.onAccept = opts.onAccept || null;
     this.onCancel = opts.onCancel || null;
     this.validate = opts.validate || null;
     this.keymap = opts.keymap || null;
     this.closeOnAccept = opts.closeOnAccept !== false;
+    this.refilter();
+  }
+
+  /** @returns {string} */
+  get query() {
+    return this.input ? this.input.text : "";
+  }
+
+  /** @param {string} s */
+  set query(s) {
+    if (this.input) this.input.setText(s); // onChange refilters
+  }
+
+  /** @param {T[]} items @returns {void} */
+  setSource(items) {
+    this.source = items || [];
+    this.refilter();
   }
 
   /** @param {T[]} items @returns {void} */
   setItems(items) {
-    this.list.setItems(items);
+    this.setSource(items);
   }
 
   /** @param {ItemKey | null | undefined} k @returns {boolean} */
@@ -834,19 +861,21 @@ export class PickerContent {
     return this.list.selectKey(k);
   }
 
+  // A menu shows its source as given. A finder takes the order `suggest` returns, or ranks the source and selects the first result.
+  /** @returns {void} */
+  refilter() {
+    if (!this.filter) {
+      this.list.setItems(this.source);
+      return;
+    }
+    const items = this.suggest ? this.suggest(this.query) || [] : fuzzyRank(this.source, this.query, this.textOf);
+    this.list.selectedKey = null;
+    this.list.setItems(items);
+  }
+
   /** @returns {T | null} */
   selected() {
     return this.list.selected();
-  }
-
-  /** @param {Window} win @returns {void} */
-  draw(win) {
-    this.list.draw(win.inner);
-  }
-
-  /** @param {MouseEvent} ev @returns {boolean} */
-  onMouse(ev) {
-    return this.list.onMouse(ev);
   }
 
   /** @returns {{ periodMs: number } | null} */
@@ -854,33 +883,62 @@ export class PickerContent {
     return this.opts.needsTick || null;
   }
 
-  /** @returns {null} */
-  cursor() {
-    return null;
-  }
-
   /** @returns {void} */
   close() {
     root.popOverlay(/** @type {Window} */ (this.win));
   }
 
-  // Accept the selection, gated by `validate`, then close unless `closeOnAccept` is false.
+  /** @param {Window} win @returns {void} */
+  draw(win) {
+    const { x, y, w, h } = win.inner;
+    if (w <= 0 || h <= 0) {
+      this.list.clearRect();
+      return;
+    }
+    if (!this.filter) {
+      this.list.draw(win.inner);
+      return;
+    }
+    text(x, y, clip(PICKER_PROMPT, w), "UIPrompt");
+    const pw = term.measure(PICKER_PROMPT);
+    if (pw < w) text(x + pw, y, clip(this.query, w - pw), "UIQuery");
+    if (h > 1) this.list.draw({ x, y: y + 1, w, h: h - 1 });
+    else this.list.clearRect();
+  }
+
+  /** @param {MouseEvent} ev @returns {boolean} */
+  onMouse(ev) {
+    return this.list.onMouse(ev);
+  }
+
+  /** @param {Window} win @returns {{ x: number, y: number, visible: boolean } | null} */
+  cursor(win) {
+    if (!this.input) return null; // a menu edits no query, so it places no cursor
+    const { x, y, w, h } = win.inner;
+    if (w <= 0 || h <= 0) return null; // an empty interior places no cursor
+    const col = caretCol(w, PICKER_PROMPT, this.input.beforeCaret());
+    return { x: x + Math.max(0, col), y, visible: true };
+  }
+
+  // Accept the selection, gated by `validate`. The close removes this window by identity, so a picker that `onAccept` opens survives it.
   /** @returns {void} */
   accept() {
     const it = this.list.selected();
     if (it == null) return;
     if (this.validate && !this.validate(it)) return;
-    if (this.onAccept) this.onAccept(it, this.list.selectedIndex());
+    const at = this.list.selectedIndex();
     if (this.closeOnAccept) this.close();
+    if (this.onAccept) this.onAccept(it, at);
   }
 
+  // A cancel always closes. `onCancel` reports it; a picker that must survive Escape binds it to false.
   /** @returns {void} */
   cancel() {
+    this.close();
     if (this.onCancel) this.onCancel();
-    else this.close();
   }
 
-  /** @param {string} name @returns {void} */
+  /** @param {PickerAction} name @returns {void} */
   action(name) {
     switch (name) {
       case "accept":
@@ -909,149 +967,17 @@ export class PickerContent {
 
   /** @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
   onKey(ev) {
-    // A per-instance keymap wins: a function runs, a string names a default action, false disables.
-    if (this.keymap) {
-      const bound = this.keymap[strokeOf(ev)];
-      if (bound === false) return true;
-      if (typeof bound === "function") {
-        bound(ev, this);
-        return true;
-      }
-      if (typeof bound === "string") {
-        this.action(/** @type {"accept" | "cancel" | "close" | "next" | "prev" | "top" | "bottom"} */ (bound));
-        return true;
-      }
-    }
-    const stroke = strokeOf(ev);
-    const nav = NAV_KEYS[stroke];
-    if (nav) {
-      nav(this.list);
-      return true;
-    }
-    if (stroke === "enter") this.accept();
-    else if (stroke === "esc") this.cancel();
-    return true; // modal: consume every key
-  }
-}
-
-
-// --- fuzzy picker -------------------------------------------------------------------------
-// A finder: a query line above a ranked results list. Static `items` are fuzzy-ranked by
-// filterText(item); a `suggest(query)` source recomputes candidates itself.
-const PICKER_PROMPT = "› ";
-
-/** @template T */
-export class Picker {
-  /** @param {PickOptions<T>} opts */
-  constructor(opts) {
-    this.opts = opts;
-    /** @type {Window | null} */
-    this.win = null;
-    this.input = new TextInput({ onChange: () => this.refilter() });
-    /** @type {T[]} */
-    this.source = opts.items || [];
-    this.suggest = opts.suggest || null;
-    this.textOf = opts.filterText || String;
-
-    /** @type {List<T>} */
-    this.list = new List({
-      items: [],
-      format: opts.format,
-      key: opts.key,
-      isSelectable: opts.isSelectable,
-      group: opts.itemGroup,
-      selGroup: opts.selGroup,
-      itemHeight: opts.itemHeight,
-    });
-
-    this.onAccept = opts.onAccept || null;
-    this.onCancel = opts.onCancel || null;
-    this.closeOnAccept = opts.closeOnAccept !== false;
-    this.keymap = opts.keymap || null;
-    this.refilter();
-  }
-
-  /** @returns {string} */
-  get query() {
-    return this.input.text;
-  }
-
-  /** @param {string} s */
-  set query(s) {
-    this.input.setText(s); // onChange refilters
-  }
-
-  /** @param {T[]} items @returns {void} */
-  setSource(items) {
-    this.source = items || [];
-    this.refilter();
-  }
-
-  // Recompute the visible list for the current query. A cleared selection lets setItems land on the
-  // first selectable row, the best match (fuzzyRank sorts best first).
-  /** @returns {void} */
-  refilter() {
-    const items = this.suggest ? this.suggest(this.query) || [] : fuzzyRank(this.source, this.query, this.textOf);
-    this.list.selectedKey = null;
-    this.list.setItems(items);
-  }
-
-  /** @returns {T | null} */
-  selected() {
-    return this.list.selected();
-  }
-
-  /** @param {Window} win @returns {void} */
-  draw(win) {
-    const { x, y, w, h } = win.inner;
-    if (w <= 0 || h <= 0) {
-      this.list.clearRect();
-      return;
-    }
-    text(x, y, clip(PICKER_PROMPT, w), "UIPrompt");
-    const pw = term.measure(PICKER_PROMPT);
-    if (pw < w) text(x + pw, y, clip(this.query, w - pw), "UIQuery");
-    if (h > 1) this.list.draw({ x, y: y + 1, w, h: h - 1 });
-    else this.list.clearRect();
-  }
-
-  /** @param {MouseEvent} ev @returns {boolean} */
-  onMouse(ev) {
-    return this.list.onMouse(ev);
-  }
-
-  /** @param {Window} win @returns {{ x: number, y: number, visible: boolean } | null} */
-  cursor(win) {
-    const { x, y, w, h } = win.inner;
-    if (w <= 0 || h <= 0) return null; // an empty interior places no cursor
-    const col = caretCol(w, PICKER_PROMPT, this.input.beforeCaret());
-    return { x: x + Math.max(0, col), y, visible: true };
-  }
-
-  /** @returns {void} */
-  accept() {
-    const it = this.list.selected();
-    if (it == null) return;
-    if (this.opts.validate && !this.opts.validate(it)) return;
-    if (this.closeOnAccept) root.popOverlay(/** @type {Window} */ (this.win));
-    if (this.onAccept) this.onAccept(it);
-  }
-
-  /** @returns {void} */
-  cancel() {
-    root.popOverlay(/** @type {Window} */ (this.win));
-    if (this.onCancel) this.onCancel();
-  }
-
-  /** @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
-  onKey(ev) {
     const s = strokeOf(ev);
     // A per-instance keymap wins, checked before text input so a bound arrow drives the list.
     if (this.keymap) {
       const bound = this.keymap[s];
       if (bound === false) return true;
       if (typeof bound === "function") {
-        /** @type {(ev: HostEvent, content: Picker<T>) => void} */ (/** @type {unknown} */ (bound))(ev, this);
+        bound(ev, this);
+        return true;
+      }
+      if (typeof bound === "string") {
+        this.action(/** @type {PickerAction} */ (bound));
         return true;
       }
     }
@@ -1063,6 +989,12 @@ export class Picker {
       this.cancel();
       return true;
     }
+    // A menu navigates with the shared table. A finder gives every other key to the query.
+    if (!this.filter) {
+      const nav = NAV_KEYS[s];
+      if (nav) nav(this.list);
+      return true;
+    }
     if (s === "up" || s === "ctrl+p") {
       this.list.move(-1);
       return true;
@@ -1071,29 +1003,24 @@ export class Picker {
       this.list.move(1);
       return true;
     }
-    this.input.onKey(ev); // the shared buffer takes the edit; its onChange refilters
+    /** @type {TextInput} */ (this.input).onKey(ev); // the shared buffer takes the edit; its onChange refilters
     return true; // modal: consume every key
   }
 }
 
-// The kit's public surface. `select` navigates a set; `pick` is the fuzzy finder. Both return
-// { win, content, close }.
+// The kit's public surface. `select` navigates a set, `pick` adds the query line, and both return { win, content, close }.
 export const ui = {
-  /** @template T @param {T[]} items @param {SelectOptions<T>} [opts] @returns {{ win: Window, content: PickerContent<T>, close: () => void }} */
+  /** @template T @param {T[]} items @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T>, close: () => void }} */
   select(items, opts = {}) {
-    const content = new PickerContent(items || [], opts);
-    const win = new Window({ ...opts, content: /** @type {WindowContent} */ (content) });
-    content.win = win;
-    root.pushOverlay(win);
-    return { win, content, close: () => root.popOverlay(win) };
+    return ui.pick({ ...opts, items: items || [], filter: false });
   },
 
-  /** @template T @param {PickOptions<T>} [opts] @returns {{ win: Window, content: PickerContent<T>, close: () => void }} */
+  /** @template T @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T>, close: () => void }} */
   pick(opts = {}) {
     const content = new Picker(opts);
     const win = new Window({ ...opts, content: /** @type {WindowContent} */ (content) });
     content.win = win;
     root.pushOverlay(win);
-    return { win, content: /** @type {PickerContent<T>} */ (/** @type {unknown} */ (content)), close: () => root.popOverlay(win) };
+    return { win, content, close: () => root.popOverlay(win) };
   },
 };
