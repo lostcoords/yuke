@@ -2589,8 +2589,12 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\import { command, root, status, keymap } from "yuke:core";
         \\import { plugins } from "yuke:ext";
         \\import { term } from "yuke:term";
-        \\import { SessionList, sidebar, chat } from "yuke:defaults";
+        \\import { SessionList, sidebar, chat, connection } from "yuke:defaults";
         \\const fail = [];
+        \\// The connection runs as a plugin service now, so an unload can take it back out.
+        \\if (root.services.indexOf(connection) < 0) fail.push("connection-service");
+        \\if (!plugins.get("connection")) fail.push("connection-plugin");
+        \\
         \\// The status bar reports a pending key, the way vim reports one with showcmd.
         \\{
         \\  root.focusView(sidebar);
@@ -3327,5 +3331,52 @@ test "a modal picker reads the shared nav keys and seals the keymap" {
         \\close();
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "picker.js");
+    try expectJs(host, "ok");
+}
+
+test "a service registered through a plugin leaves when the plugin unloads" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\// A service starts and stops only after the shell starts, the way `onStart` already worked.
+        \\root.onEvent({ type: "start" });
+        \\
+        \\const log = [];
+        \\const svc = { onStart() { log.push("start"); }, onStop() { log.push("stop"); } };
+        \\const before = root.services.length;
+        \\plugins.use({ name: "svc-test", apply(ctx) { ctx.service(svc); } });
+        \\check("added", root.services.indexOf(svc) >= 0 && root.services.length === before + 1);
+        \\check("started", log.join(",") === "start");
+        \\
+        \\plugins.dispose("svc-test");
+        \\check("removed", root.services.indexOf(svc) < 0 && root.services.length === before);
+        \\check("stopped", log.join(",") === "start,stop");
+        \\
+        \\// A repeated removal is safe, so a disposer can run twice.
+        \\root.addService(svc);
+        \\root.removeService(svc);
+        \\root.removeService(svc);
+        \\check("idempotent", root.services.indexOf(svc) < 0 && root.services.length === before);
+        \\
+        \\// A removed service leaves the tick set, so it costs nothing after its plugin goes.
+        \\let asked = 0;
+        \\const ticker = { needsTick() { asked++; return null; } };
+        \\root.addService(ticker);
+        \\root.syncTick();
+        \\const seen = asked;
+        \\check("ticked-while-live", seen > 0);
+        \\root.removeService(ticker);
+        \\root.syncTick();
+        \\check("untracked-after-remove", asked === seen);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "service.js");
     try expectJs(host, "ok");
 }

@@ -15,7 +15,7 @@ import { term } from "yuke:term";
 /** @typedef {{ at: number, cls: number }} GraphemeCell */
 /** @typedef {{ rect: Rect, draw: (...args: any[]) => unknown, name?: string, update?: () => void, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: Extract<HostEvent, { type: "mouse" }>) => boolean, onFocus?: () => void, contexts?: () => string[], navTarget?: () => NavTarget | null, needsTick?: () => { periodMs: number } | null, tick?: () => void, cursor?: () => { x: number, y: number, visible: boolean } | null, modal?: boolean }} ViewLike */
 /** @typedef {Omit<ViewLike, "rect"> & { rect?: Rect }} Overlay */
-/** @typedef {{ onStart?: () => void, needsTick?: () => { periodMs: number } | null, tick?: () => void }} ServiceLike */
+/** @typedef {{ onStart?: () => void, onStop?: () => void, needsTick?: () => { periodMs: number } | null, tick?: () => void }} ServiceLike */
 /** @typedef {{ type: "leaf" | "split", parent: Node | null, rect: Rect, view: ViewLike | null, kind: "row" | "col" | null, a: Node | null, b: Node | null, ratio: number }} NodeShape */
 /** @typedef {(...args: any[]) => unknown} CommandAction */
 /** @typedef {(...args: any[]) => boolean | [boolean, ...any[]]} CommandPredicate */
@@ -1777,6 +1777,16 @@ export class RootView {
     if (this._started) callHook(svc, "onStart");
     this.syncTick();
     return svc;
+  }
+
+  // Take a service back out. A started service gets `onStop`, so it can release what it holds.
+  /** @param {ServiceLike} svc @returns {void} */
+  removeService(svc) {
+    const i = this.services.indexOf(svc);
+    if (i < 0) return;
+    this.services.splice(i, 1);
+    if (this._started) callHook(svc, "onStop");
+    this.syncTick();
   }
 
   // The widget a nav binding drives, taken from the layer that reads the keyboard.

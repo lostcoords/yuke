@@ -1,6 +1,6 @@
 // yuke:ext — the plugin runtime. A Scope owns revertible effects, a Context is the plugin's
 // registration surface, `advice` wraps methods, and `plugins` loads and unloads.
-import { command, keymap, route, slots, events, status, style, context } from "yuke:core";
+import { command, keymap, route, slots, events, status, style, context, root } from "yuke:core";
 
 /** @typedef {() => void} Disposer */
 /** @typedef {() => unknown} Effect */
@@ -16,6 +16,7 @@ import { command, keymap, route, slots, events, status, style, context } from "y
 /** @typedef {Parameters<typeof command.add>[1]} CommandMap */
 /** @typedef {Parameters<typeof keymap.add>[0]} KeyBindings */
 /** @typedef {Parameters<typeof route.add>[0]} RouteWhere */
+/** @typedef {Parameters<typeof root.addService>[0]} ServiceLike */
 /** @typedef {Parameters<typeof status.add>[0]} StatusSegment */
 /** @typedef {Parameters<typeof style.add>[0]} StyleGroups */
 /** @typedef {Parameters<typeof context.set>[0]} ContextFlags */
@@ -251,7 +252,6 @@ export const services = {
 
 // --- plugin context: the register-through-me surface ---
 // Every registration is an effect on the scope, so an unload reverts all of them.
-// A plugin never touches a global registry, which is what makes the unload total.
 export class Context {
   /** @param {Scope} scope @param {string} id */
   constructor(scope, id) {
@@ -318,6 +318,14 @@ export class Context {
     return this.scope.effect(() =>
       advice.advise(obj, prop, /** @type {AdviceWhere} */ (where), fn, Object.assign({}, opts, { owner: this.id })),
     );
+  }
+
+  /** @param {ServiceLike} svc @returns {Disposer} */
+  service(svc) {
+    return this.scope.effect(() => {
+      root.addService(svc);
+      return () => root.removeService(svc);
+    });
   }
 
   /** @param {string} name @param {unknown} value @returns {Disposer} */

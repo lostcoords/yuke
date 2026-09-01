@@ -1303,8 +1303,15 @@ plugins.use({
   },
 });
 
+plugins.use({
+  name: "connection",
+  /** @param {import("yuke:ext").Context} ctx */
+  apply(ctx) {
+    ctx.service(connection);
+  },
+});
+
 root.setRoot(workspace);
-root.addService(connection);
 root.focusView(chat);
 
 export { workspace, sidebar, chat, SessionList, MainPane, DeviceFeed, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };
