@@ -2266,6 +2266,37 @@ test "session.remove deletes the session and cascades its transcript" {
     try std.testing.expect(fixture.state.sessions.get(sid) == null);
 }
 
+test "the startup resume hydrates every queued session and starts one run each" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    var ids: [2]wire.ids.SessionId = undefined;
+    for (&ids, 0..) |*sid, i| {
+        sid.* = try createSession(&fixture, a, .{
+            .workspace_path = if (i == 0) "/first" else "/second",
+            .model = "local:mock/fast",
+        });
+        // Queue the input in SQLite only, then drop the runtime, so this reads like a fresh daemon.
+        const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "resume me" } }};
+        const now = fixture.state.nowMillis();
+        var tx = try fixture.state.db.begin();
+        defer tx.deinit();
+        _ = try database.input.enqueue(&fixture.state.db, a, sid.raw, fixture.state.newId(), now, &content, now);
+        try tx.commit();
+    }
+    for (ids) |sid| fixture.state.sessions.remove(sid);
+
+    try run_task.resumeSessions(&fixture.state);
+
+    for (ids) |sid| {
+        const rt = fixture.state.sessions.get(sid) orelse return error.SessionNotResumed;
+        try std.testing.expect(rt.hydrated);
+        try std.testing.expect(rt.active != null); // The durable input became one run.
+        try std.testing.expectEqual(@as(usize, 0), rt.session.queue.depth()); // prepareQueued drained it.
+    }
+}
+
 test "session.remove announces the removal with the next index revision" {
     var fixture = try TestState.init();
     defer fixture.deinit();
