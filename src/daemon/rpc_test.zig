@@ -4,6 +4,7 @@ const std = @import("std");
 const wire = @import("wire");
 const State = @import("State.zig");
 const handlers = @import("handlers.zig");
+const login_task = @import("login_task.zig");
 const cloud_catalog = @import("../catalog/feed.zig");
 const catalog_store = @import("../catalog/store.zig");
 const connection = @import("connection.zig");
@@ -2695,6 +2696,95 @@ fn seedOauthCatalog(fixture: *TestState, flow: []const u8) !void {
     const parsed = try cloud_catalog.decode(a, raw);
     try catalog_store.replace(&fixture.state.db, a, parsed.providers);
     _ = try fixture.state.store.rebuild(&fixture.state.db);
+}
+
+/// Seed one local grant plus the catalog row naming its flow. The fixture then holds a file path.
+fn seedGrant(fixture: *TestState, json: []const u8) !void {
+    try seedOauthCatalog(fixture, "xai");
+    var loaded = try provider.config.loadBytes(std.testing.allocator, json);
+    errdefer loaded.deinit();
+    _ = try fixture.state.store.installLocal(&loaded, &fixture.state.db);
+}
+
+test "a refresh that cannot reach the provider stays retryable" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    try seedGrant(&fixture,
+        \\{"version":1,"providers":[{"id":"codex","auth":{"oauth":{"access_token":"at",
+        \\ "refresh_token":"rt","expires_at_ms":9}}}]}
+    );
+    var canned: provider.oauth.CannedHttp = .{ .replies = &.{.{ .fail = error.PreFlight }} };
+    fixture.state.oauth_http = canned.seam();
+
+    // The request never left, so the caller repeats it with the same token.
+    try std.testing.expectError(provider.oauth.Error.PreFlight, login_task.refreshOnce(&fixture.state, 5 * 60 * 1000));
+    try std.testing.expectEqualStrings("rt", fixture.state.store.local.?.providers[0].auth.?.oauth.refresh_token.?);
+}
+
+test "an ambiguous refresh lapses the grant instead of repeating it" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    try seedGrant(&fixture,
+        \\{"version":1,"providers":[{"id":"codex","auth":{"oauth":{"access_token":"at",
+        \\ "refresh_token":"rt","expires_at_ms":9}}}]}
+    );
+    // A 2xx that cannot be read spent the token, so repeating it would cost the whole grant.
+    var canned: provider.oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body = "{}" } }} };
+    fixture.state.oauth_http = canned.seam();
+
+    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    try std.testing.expectEqual(@as(u64, 0), fixture.state.store.local.?.providers[0].auth.?.oauth.expires_at_ms);
+}
+
+test "a rotated grant replaces the old one and keeps a kept refresh token" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    try seedGrant(&fixture,
+        \\{"version":1,"providers":[{"id":"codex","auth":{"oauth":{"access_token":"old",
+        \\ "refresh_token":"rt","expires_at_ms":9}}}]}
+    );
+    // The response omits a replacement, so the caller keeps the token it sent.
+    var canned: provider.oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body =
+        \\{"access_token":"new","expires_in":3600}
+    } }} };
+    fixture.state.oauth_http = canned.seam();
+
+    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    const grant = fixture.state.store.local.?.providers[0].auth.?.oauth;
+    try std.testing.expectEqualStrings("new", grant.access_token);
+    try std.testing.expectEqualStrings("rt", grant.refresh_token.?);
+    try std.testing.expect(grant.expires_at_ms > 9);
+}
+
+test "a grant outside the margin is not due" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    try seedGrant(&fixture,
+        \\{"version":1,"providers":[{"id":"codex","auth":{"oauth":{"access_token":"at",
+        \\ "refresh_token":"rt","expires_at_ms":9000000000000}}}]}
+    );
+    // No reply is scripted, so any request would fail. The margin means none is made.
+    var canned: provider.oauth.CannedHttp = .{ .replies = &.{} };
+    fixture.state.oauth_http = canned.seam();
+
+    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    try std.testing.expectEqual(@as(?u64, 9000000000000), login_task.soonestExpiry(&fixture.state));
 }
 
 test "auth.login refuses a provider that offers no flow the daemon can drive" {

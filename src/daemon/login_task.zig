@@ -7,6 +7,7 @@ const http = @import("../net/http.zig");
 const poller = @import("../net/poller.zig");
 const State = @import("State.zig");
 const login_runtime = @import("login_runtime.zig");
+const catalog_store = @import("../catalog/store.zig");
 
 const oauth = provider.oauth;
 const xai = provider.oauth_xai;
@@ -123,4 +124,99 @@ fn finish(state: *State, slot: *login_runtime.LoginSlot, outcome: wire.auth.Auth
     } } };
     state.publishAll(note, "auth.login_finished");
     state.logins.remove(slot.id);
+}
+
+/// Report when the soonest local grant lapses, so the scheduler wakes before it does.
+pub fn soonestExpiry(state: *State) ?u64 {
+    const loaded = state.store.local orelse return null;
+    var soonest: ?u64 = null;
+    for (loaded.providers) |p| {
+        const auth = p.auth orelse continue;
+        if (auth != .oauth) continue;
+        const at = auth.oauth.expires_at_ms;
+        if (soonest == null or at < soonest.?) soonest = at;
+    }
+    return soonest;
+}
+
+/// Rotate the one local grant inside the margin. A terminal failure lapses it instead of retrying.
+pub fn refreshOnce(state: *State, margin_ms: u64) !void {
+    var arena_state: std.heap.ArenaAllocator = .init(state.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const due = try dueGrant(state, arena, margin_ms) orelse return;
+    var client: http.Client = .init(state.gpa, state.io, .none);
+    defer client.deinit();
+    var real: oauth.ClientHttp = .{ .client = &client };
+    const seam = state.oauth_http orelse real.seam();
+
+    const body = try arena.alloc(u8, response_bytes);
+    const old = due.grant.refresh_token orelse {
+        // No refresh token means no rotation is possible, so the grant needs a fresh login.
+        try lapse(state, arena, due);
+        return;
+    };
+
+    const tokens = refreshFlow(arena, due.flow, seam, old, state.nowMillis(), body) catch |err| switch (err) {
+        // The request never left or the call spends no token, so the caller may repeat it.
+        oauth.Error.PreFlight, oauth.Error.Transient => return err,
+        // The rotation may have landed, so repeating it would cost the whole grant.
+        else => {
+            std.log.warn("refresh for {s} ended the grant: {t}", .{ due.provider_id, err });
+            try lapse(state, arena, due);
+            return;
+        },
+    };
+
+    // A response that omits a replacement leaves the old refresh token current.
+    try store(state, arena, due, .{
+        .access_token = tokens.access_token,
+        .refresh_token = tokens.refresh_token orelse old,
+        .expires_at_ms = tokens.expires_at_ms,
+        .account_id = tokens.account_id orelse due.grant.account_id,
+    });
+}
+
+/// One grant that needs its replacement, and the flow that can produce one.
+const Due = struct {
+    provider_id: []const u8,
+    flow: login_runtime.Flow,
+    grant: provider.config.Grant,
+};
+
+fn dueGrant(state: *State, arena: std.mem.Allocator, margin_ms: u64) !?Due {
+    const loaded = state.store.local orelse return null;
+    const now_ms = state.nowMillis();
+    for (loaded.providers) |p| {
+        const auth = p.auth orelse continue;
+        if (auth != .oauth) continue;
+        if (auth.oauth.expires_at_ms > now_ms +| margin_ms) continue;
+
+        const row = try catalog_store.provider(&state.db, arena, p.id) orelse continue;
+        const named = row.auth orelse continue;
+        if (named.kind != .oauth) continue;
+        const flow = login_runtime.Flow.parse(named.flow orelse continue) orelse continue;
+        return .{ .provider_id = p.id, .flow = flow, .grant = auth.oauth };
+    }
+    return null;
+}
+
+fn refreshFlow(arena: std.mem.Allocator, flow: login_runtime.Flow, seam: oauth.Http, token: []const u8, now_ms: u64, body: []u8) !oauth.Tokens {
+    return switch (flow) {
+        .xai => xai.refresh(arena, seam, token, now_ms, body),
+        .codex => codex.refresh(arena, seam, token, now_ms, body),
+    };
+}
+
+/// Lapse the grant, so the run path refuses it and the client asks the human to log in again.
+fn lapse(state: *State, arena: std.mem.Allocator, due: Due) !void {
+    var dead = due.grant;
+    dead.expires_at_ms = 0;
+    try store(state, arena, due, dead);
+}
+
+fn store(state: *State, arena: std.mem.Allocator, due: Due, grant: provider.config.Grant) !void {
+    if (try state.store.edit(arena, due.provider_id, .{ .set_grant = grant }, &state.db)) state.announceCatalogChanged();
+    state.announceAuthChanged(due.provider_id, .oauth);
 }

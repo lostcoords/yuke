@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const State = @import("State.zig");
+const login_task = @import("login_task.zig");
 
 const Timestamp = std.Io.Clock.Timestamp;
 const Duration = std.Io.Clock.Duration;
@@ -10,6 +11,8 @@ const Duration = std.Io.Clock.Duration;
 const catalog_interval_ms = 60 * 60 * 1000;
 /// The bundle carries the routes a run needs, so it revalidates more often than the catalog.
 const bundle_interval_ms = 15 * 60 * 1000;
+/// Look again for a grant to rotate after this long. A lapsed grant needs a login, not a retry.
+const grants_idle_ms = 15 * 60 * 1000;
 /// Fetch a new bundle this long before the account token expires.
 const expiry_margin_ms = 5 * 60 * 1000;
 /// The first delay after a failure. Each later failure doubles it.
@@ -71,11 +74,13 @@ pub const Scheduler = struct {
     state: *State,
     catalog: Job,
     bundle: Job,
+    /// The local grants the daemon rotates itself. The cloud rotates its own.
+    grants: Job,
     /// A set event ends the wait early. The RPC sets it; only the scheduler task clears it.
     wake: std.Io.Event = .unset,
 
     pub fn init(state: *State) Scheduler {
-        return .{ .state = state, .catalog = .init(state.io), .bundle = .init(state.io) };
+        return .{ .state = state, .catalog = .init(state.io), .bundle = .init(state.io), .grants = .init(state.io) };
     }
 
     /// Ask for a catalog fetch now. The caller returns at once, and `catalog.changed` reports the result.
@@ -97,13 +102,32 @@ pub const Scheduler = struct {
 
             if (self.catalog.isDue(io)) try self.runCatalog();
             if (self.bundle.isDue(io)) try self.runBundle();
+            if (self.grants.isDue(io)) try self.runGrants();
         }
     }
 
+    /// Rotate one local grant that is near its expiry, then wait for the next one.
+    fn runGrants(self: *Scheduler) std.Io.Cancelable!void {
+        const io = self.state.io;
+        login_task.refreshOnce(self.state, expiry_margin_ms) catch |err| {
+            if (err == error.Canceled) return error.Canceled;
+            // Only a repeatable failure reaches here; a terminal one already lapsed the grant.
+            std.log.warn("grant refresh failed: {t}", .{err});
+            self.grants.fail(io);
+            return;
+        };
+        self.grants.failures = 0;
+        // A lapsed grant reports no lead, so the job waits instead of rotating a dead token again.
+        const lead_ms = if (login_task.soonestExpiry(self.state)) |at| leadMillis(at, self.state.nowMillis()) else null;
+        self.grants.due = .fromNow(io, millis(lead_ms orelse grants_idle_ms));
+    }
+
     fn earliest(self: *const Scheduler) Timestamp {
-        const a = self.catalog.due;
-        const b = self.bundle.due;
-        return if (a.raw.nanoseconds <= b.raw.nanoseconds) a else b;
+        var soonest = self.catalog.due;
+        for ([_]Timestamp{ self.bundle.due, self.grants.due }) |due| {
+            if (due.raw.nanoseconds < soonest.raw.nanoseconds) soonest = due;
+        }
+        return soonest;
     }
 
     fn runCatalog(self: *Scheduler) std.Io.Cancelable!void {

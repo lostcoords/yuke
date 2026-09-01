@@ -50,6 +50,7 @@ scheduler: ?*scheduler_mod.Scheduler = null, // The app stores this pointer whil
 tasks: std.Io.Group = .init, // The group owns every daemon-owned task until shutdown joins it.
 shutting_down: bool = false,
 tool_host: ?host.Host = null,
+oauth_http: ?provider.oauth.Http = null, // A test injects a canned seam; production opens a client.
 retry_policy: retry.Policy = .{}, // A test shortens the delays. Production keeps the defaults.
 retry_budget: u8 = 8, // Retry permits for one whole run. // A test injects a tool host; production builds a LocalHost per run.
 /// The in-memory session index revision. It counts each `session.summary_changed`, and a restart clears it.
