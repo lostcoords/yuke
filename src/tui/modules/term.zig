@@ -6,7 +6,6 @@ const Host = @import("../host.zig").Host;
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 const Module = Context.Module;
-const Modifiers = term_pkg.Key.Modifiers;
 
 /// The largest clipboard payload `term.copy` accepts. JavaScript reads it to report a refusal.
 pub const clipboard_max = term_pkg.Render.clipboard_max;
@@ -33,31 +32,11 @@ fn init(ctx: Context, m: Module) c_int {
         return -1;
     }
 
-    const size_obj = ctx.newObject();
-    if (ctx.isException(size_obj)) {
-        ctx.freeValue(term_obj);
-        return -1;
-    }
-    ctx.setPropertyStr(size_obj, "w", ctx.newInt32(host.paint.width)) catch {
-        ctx.freeValue(size_obj);
-        ctx.freeValue(term_obj);
-        return -1;
-    };
-    ctx.setPropertyStr(size_obj, "h", ctx.newInt32(host.paint.height)) catch {
-        ctx.freeValue(size_obj);
-        ctx.freeValue(term_obj);
-        return -1;
-    };
-
-    host.paint.size_obj = ctx.dupValue(size_obj);
-    ctx.freeValue(size_obj);
     host.paint.term_obj = ctx.dupValue(term_obj);
     ctx.setModuleExport(m, "term", term_obj) catch {
         // The export call owns `term_obj`, even when it fails.
         ctx.freeValue(host.paint.term_obj);
-        ctx.freeValue(host.paint.size_obj);
         host.paint.term_obj = quickjs.UNDEFINED;
-        host.paint.size_obj = quickjs.UNDEFINED;
         return -1;
     };
     return 0;
@@ -71,11 +50,9 @@ fn bindAll(ctx: Context, host: *Host, term_obj: Value) c_int {
     bind(ctx, term_obj, "measure", 1, measure) catch return -1;
     bind(ctx, term_obj, "graphemes", 1, graphemes) catch return -1;
     bind(ctx, term_obj, "cursor", 3, cursor) catch return -1;
-    bind(ctx, term_obj, "size", 0, sizeOf) catch return -1;
     bind(ctx, term_obj, "setNeedsTick", 2, setNeedsTick) catch return -1;
     bind(ctx, term_obj, "copy", 1, copyToClipboard) catch return -1;
     bind(ctx, term_obj, "quit", 0, quit) catch return -1;
-    bind(ctx, term_obj, "keyMatches", 3, keyMatches) catch return -1;
     ctx.setPropertyStr(term_obj, "clipboardMax", ctx.newInt32(clipboard_max)) catch return -1;
     ctx.setPropertyStr(term_obj, "cwd", ctx.newString(host.cwd)) catch return -1;
     ctx.setPropertyStr(term_obj, "width", ctx.newInt32(host.paint.width)) catch return -1;
@@ -110,12 +87,6 @@ fn endFrame(ctx: Context, _: Value, _: []const Value) Value {
     if (host.paint.render == null) return ctx.throwTypeError("term.endFrame: no host");
     commitFrame(host);
     return quickjs.UNDEFINED;
-}
-
-fn sizeOf(ctx: Context, _: Value, _: []const Value) Value {
-    const host = Host.fromContext(ctx);
-    std.debug.assert(!ctx.isUndefined(host.paint.size_obj));
-    return ctx.dupValue(host.paint.size_obj);
 }
 
 fn fill(ctx: Context, _: Value, args: []const Value) Value {
@@ -274,37 +245,6 @@ fn setNeedsTick(ctx: Context, _: Value, args: []const Value) Value {
     return quickjs.UNDEFINED;
 }
 
-fn keyMatches(ctx: Context, _: Value, args: []const Value) Value {
-    if (args.len < 2 or !ctx.isObject(args[0]) or !ctx.isString(args[1]))
-        return ctx.throwTypeError("term.keyMatches(ev, cp, mods?)");
-
-    const cp = firstRuneValue(ctx, args[1]) catch return rethrow(ctx);
-    var mods: Modifiers = .{};
-    if (args.len >= 3) {
-        const bits = ctx.toInt32(args[2]) catch return rethrow(ctx);
-        mods = modsFromBits(bits);
-    }
-
-    var text_buf: [128]u8 = undefined;
-    const char = runeProp(ctx, args[0], "char") catch return rethrow(ctx);
-    const shifted = runeProp(ctx, args[0], "shifted") catch return rethrow(ctx);
-    const text_s = textProp(ctx, args[0], &text_buf) catch return rethrow(ctx);
-    const ev_mods = modsProp(ctx, args[0]) catch return rethrow(ctx);
-    return ctx.newBool(matchKey(char, shifted, text_s, ev_mods, cp, mods));
-}
-
-/// Match keys in this order: exact, text without Shift, then shifted codepoint.
-fn matchKey(char: u21, shifted: u21, text_s: []const u8, ev_mods: Modifiers, cp: u21, mods: Modifiers) bool {
-    if (cp == 0) return false;
-    if (char == cp and eqlMods(ev_mods, mods)) return true;
-    const rest = eqlMods(dropShift(ev_mods), dropShift(mods));
-    if (rest and text_s.len != 0) {
-        const want: u21 = if (mods.shift) asciiUpper(cp) else cp;
-        if (textIsRune(text_s, want)) return true;
-    }
-    return rest and shifted == cp;
-}
-
 fn startFrame(host: *Host) void {
     const render = host.paint.render orelse return;
     render.window().clear();
@@ -449,76 +389,6 @@ fn ansiFromName(name: []const u8) ?term_pkg.Color {
     return null;
 }
 
-fn modsFromBits(v: i32) Modifiers {
-    const bits: u8 = @truncate(@as(u32, @bitCast(v)) & 0x3f);
-    return @bitCast(bits);
-}
-
-fn dropShift(m: Modifiers) Modifiers {
-    var out = m;
-    out.shift = false;
-    return out;
-}
-
-fn eqlMods(a: Modifiers, b: Modifiers) bool {
-    return @as(u8, @bitCast(a)) == @as(u8, @bitCast(b));
-}
-
-fn asciiUpper(cp: u21) u21 {
-    if (cp >= 'a' and cp <= 'z') return cp - ('a' - 'A');
-    return cp;
-}
-
-fn textIsRune(text_s: []const u8, cp: u21) bool {
-    var buf: [4]u8 = undefined;
-    const n = std.unicode.utf8Encode(cp, &buf) catch return false;
-    return std.mem.eql(u8, text_s, buf[0..n]);
-}
-
-fn firstRune(s: []const u8) u21 {
-    if (s.len == 0) return 0;
-    const seq_len = std.unicode.utf8ByteSequenceLength(s[0]) catch return 0;
-    if (seq_len > s.len) return 0;
-    return std.unicode.utf8Decode(s[0..seq_len]) catch 0;
-}
-
-fn firstRuneValue(ctx: Context, v: Value) error{Exception}!u21 {
-    const s = ctx.toCStringLen(v) catch return error.Exception;
-    defer ctx.freeCString(s.ptr);
-    return firstRune(s);
-}
-
-fn runeProp(ctx: Context, v: Value, name: [*:0]const u8) error{Exception}!u21 {
-    const prop = ctx.getPropertyStr(v, name);
-    defer ctx.freeValue(prop);
-    if (ctx.isException(prop)) return error.Exception;
-    if (!ctx.isString(prop)) return 0;
-    const s = ctx.toCStringLen(prop) catch return error.Exception;
-    defer ctx.freeCString(s.ptr);
-    return firstRune(s);
-}
-
-fn textProp(ctx: Context, v: Value, buf: *[128]u8) error{Exception}![]const u8 {
-    const prop = ctx.getPropertyStr(v, "text");
-    defer ctx.freeValue(prop);
-    if (ctx.isException(prop)) return error.Exception;
-    if (!ctx.isString(prop)) return &.{};
-    const s = ctx.toCStringLen(prop) catch return error.Exception;
-    defer ctx.freeCString(s.ptr);
-    const n = @min(s.len, buf.len);
-    @memcpy(buf[0..n], s[0..n]);
-    return buf[0..n];
-}
-
-fn modsProp(ctx: Context, v: Value) error{Exception}!Modifiers {
-    const prop = ctx.getPropertyStr(v, "mods");
-    defer ctx.freeValue(prop);
-    if (ctx.isException(prop)) return error.Exception;
-    if (ctx.isUndefined(prop)) return .{};
-    const bits = ctx.toInt32(prop) catch return error.Exception;
-    return modsFromBits(bits);
-}
-
 fn evalOk(host: *Host, src: [:0]const u8) !i32 {
     try host.evalModule(src, "term.js");
     return host.evalInt("globalThis.result");
@@ -616,25 +486,6 @@ test "setNeedsTick clamps and quit blocks a later arm" {
     try std.testing.expectEqual(@as(u32, 50), host.paint.tick_period_ms);
     try std.testing.expect(host.paint.quit_requested);
     try std.testing.expect(!host.paint.needs_tick);
-}
-
-test "keyMatches follows Odin exact, text, and shifted rules" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
-    defer host.destroy();
-    try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
-        \\import { term } from "yuke:term";
-        \\const q = { char: "q", shifted: "Q", text: "q", mods: 0 };
-        \\const colon = { char: ";", shifted: ":", text: "", mods: 1 };
-        \\globalThis.result = (
-        \\  term.keyMatches(q, "q") &&
-        \\  !term.keyMatches(q, "x") &&
-        \\  !term.keyMatches(q, "q", 2) &&
-        \\  term.keyMatches(colon, ":") &&
-        \\  term.keyMatches(colon, ":", 1)
-        \\) ? 1 : 0;
-    ));
 }
 
 test "beginFrame without a renderer throws" {

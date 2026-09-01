@@ -903,6 +903,8 @@ test "yuke:core config validates and TextInput inserts committed text" {
         \\check("stroke-kitty-shift", mk({ char: "g", shifted: "G", mods: 1 }) === "G");
         \\check("stroke-plain", mk({ char: "g" }) === "g");
         \\check("stroke-kitty-colon", mk({ char: ";", shifted: ":", mods: 1 }) === ":");
+        \\// A legacy terminal reports the shifted symbol as the char and sends no shifted form.
+        \\check("stroke-legacy-colon", mk({ char: ":", mods: 1 }) === ":");
         \\check("stroke-chord", mk({ char: "d", mods: 4 }) === "ctrl+d");
         \\check("stroke-named", mk({ code: "tab" }) === "tab");
         \\

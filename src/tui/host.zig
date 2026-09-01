@@ -75,7 +75,6 @@ pub const Paint = struct {
     /// Null outside `app.run` (tests do not run the tick task).
     tick_wake: ?*zio.ResetEvent = null,
     term_obj: quickjs.Value = quickjs.UNDEFINED,
-    size_obj: quickjs.Value = quickjs.UNDEFINED,
     /// Own grapheme bytes for the open frame. Reset after the grid clears.
     glyphs: std.heap.ArenaAllocator = undefined,
 };
@@ -237,31 +236,18 @@ pub const Host = struct {
         self.syncSizeProps();
     }
 
-    /// Copy the cached size to retained JavaScript objects.
+    /// Copy the cached size to the retained `term` object.
     pub fn syncSizeProps(self: *Host) void {
         const ctx = self.ctx;
-        const w = ctx.newInt32(self.paint.width);
-        const h = ctx.newInt32(self.paint.height);
-        if (!ctx.isUndefined(self.paint.size_obj)) {
-            ctx.setPropertyStr(self.paint.size_obj, "w", ctx.dupValue(w)) catch {};
-            ctx.setPropertyStr(self.paint.size_obj, "h", ctx.dupValue(h)) catch {};
-        }
-        if (!ctx.isUndefined(self.paint.term_obj)) {
-            ctx.setPropertyStr(self.paint.term_obj, "width", ctx.dupValue(w)) catch {};
-            ctx.setPropertyStr(self.paint.term_obj, "height", ctx.dupValue(h)) catch {};
-        }
-        ctx.freeValue(w);
-        ctx.freeValue(h);
+        if (ctx.isUndefined(self.paint.term_obj)) return;
+        ctx.setPropertyStr(self.paint.term_obj, "width", ctx.newInt32(self.paint.width)) catch {};
+        ctx.setPropertyStr(self.paint.term_obj, "height", ctx.newInt32(self.paint.height)) catch {};
     }
 
     fn freePaintRoots(self: *Host) void {
         if (!self.ctx.isUndefined(self.paint.term_obj)) {
             self.ctx.freeValue(self.paint.term_obj);
             self.paint.term_obj = quickjs.UNDEFINED;
-        }
-        if (!self.ctx.isUndefined(self.paint.size_obj)) {
-            self.ctx.freeValue(self.paint.size_obj);
-            self.paint.size_obj = quickjs.UNDEFINED;
         }
     }
 

@@ -32,13 +32,6 @@ declare module "yuke:term" {
     | "light_cyan"
     | "white";
 
-  interface KeyEvent {
-    char: string;
-    shifted: string;
-    text: string;
-    mods: number;
-  }
-
   export const term: {
     beginFrame(): void;
     endFrame(): void;
@@ -47,16 +40,14 @@ declare module "yuke:term" {
     measure(s: string): number;
     graphemes(s: string): Int32Array;
     cursor(x: number, y: number, visible: boolean): void;
-    size(): { w: number; h: number };
     setNeedsTick(enabled: boolean, periodMs?: number): void;
     copy(text: string): number;
     quit(): void;
-    keyMatches(ev: KeyEvent, cp: string, mods?: number): boolean;
     clipboardMax: number;
     cwd: string;
     width: number;
     height: number;
   };
 
-  export { Style, Color, ColorName, KeyEvent };
+  export { Style, Color, ColorName };
 }
