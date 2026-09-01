@@ -13,7 +13,7 @@ import { term } from "yuke:term";
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
 /** @typedef {{ text: string, w: number }} TextPiece */
 /** @typedef {{ at: number, cls: number }} GraphemeCell */
-/** @typedef {{ rect: Rect, draw: (...args: any[]) => unknown, name?: string, update?: () => void, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: Extract<HostEvent, { type: "mouse" }>) => boolean, onFocus?: () => void, contexts?: () => string[], needsTick?: () => { periodMs: number } | null, tick?: () => void, cursor?: () => { x: number, y: number, visible: boolean } | null, modal?: boolean }} ViewLike */
+/** @typedef {{ rect: Rect, draw: (...args: any[]) => unknown, name?: string, update?: () => void, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: Extract<HostEvent, { type: "mouse" }>) => boolean, onFocus?: () => void, contexts?: () => string[], navTarget?: () => NavTarget | null, needsTick?: () => { periodMs: number } | null, tick?: () => void, cursor?: () => { x: number, y: number, visible: boolean } | null, modal?: boolean }} ViewLike */
 /** @typedef {Omit<ViewLike, "rect"> & { rect?: Rect }} Overlay */
 /** @typedef {{ onStart?: () => void, needsTick?: () => { periodMs: number } | null, tick?: () => void }} ServiceLike */
 /** @typedef {{ type: "leaf" | "split", parent: Node | null, rect: Rect, view: ViewLike | null, kind: "row" | "col" | null, a: Node | null, b: Node | null, ratio: number }} NodeShape */
@@ -30,9 +30,10 @@ import { term } from "yuke:term";
 /** @typedef {{ where: RouteWhere, context: ContextExpr | null, order: number }} RouteEntry */
 /** @typedef {{ fn: (obj: any) => unknown }} SlotEntry */
 /** @typedef {{ fn: KeyBinding, context: ContextExpr | null, order: number, pending: "chord" | "operator" }} KeyEntry */
-/** @typedef {{ stroke: string, kind: "chord" | "operator", at: number, ev: Extract<HostEvent, { type: "key" }> | null, holder: { pending: string | null } | null }} Pending */
+/** @typedef {{ stroke: string, kind: "chord" | "operator", at: number, ev: Extract<HostEvent, { type: "key" }> | null }} Pending */
+/** @typedef {{ navBy: (delta: number) => void, navPage: (dir: number) => void, navEdge: (dir: number) => void }} NavTarget */
 /** @typedef {{ [name: string]: KeyEntry[] }} KeyMap */
-/** @typedef {{ map: KeyMap, prefixes: Record<string, string[]>, pending: Pending | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string, opts?: { pending?: "chord" | "operator" }) => () => void, _rebuildPrefixes: () => void, _armKind: (prefix: string) => "chord" | "operator" | null, owns: () => boolean, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, arm: (stroke: string, kind: "chord" | "operator", ev?: Extract<HostEvent, { type: "key" }> | null, holder?: { pending: string | null } | null) => void, disarm: (kind: "chord" | "operator") => string, pendingLabel: () => string, needsTick: () => { periodMs: number } | null, tick: () => void, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
+/** @typedef {{ map: KeyMap, prefixes: Record<string, string[]>, pending: Pending | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string, opts?: { pending?: "chord" | "operator" }) => () => void, _rebuildPrefixes: () => void, _armKind: (prefix: string) => "chord" | "operator" | null, owns: () => boolean, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, arm: (stroke: string, kind: "chord" | "operator", ev?: Extract<HostEvent, { type: "key" }> | null) => void, disarm: (kind: "chord" | "operator") => string, pendingLabel: () => string, needsTick: () => { periodMs: number } | null, tick: () => void, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
 /** @typedef {{ side?: "left" | "right", order?: number, render: () => string | null | undefined }} StatusSegment */
 /** @typedef {{ side: "left" | "right", order: number, render: () => string | null | undefined }} StatusEntry */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -820,7 +821,7 @@ export const keymap = {
       keys.push(key);
     }
     const p = this.pending;
-    if (p && p.holder === null && !this.prefixes[p.stroke]) {
+    if (p && !this.prefixes[p.stroke]) {
       this.pending = null;
       root.syncTick();
     }
@@ -843,13 +844,13 @@ export const keymap = {
   // Return true while the keymap waits for the rest of a sequence.
   /** @returns {boolean} */
   owns() {
-    return this.pending !== null && this.pending.holder === null;
+    return this.pending !== null;
   },
 
   // Arm a pending stroke of `kind`.
-  /** @param {string} stroke @param {"chord" | "operator"} kind @param {Extract<HostEvent, { type: "key" }> | null} [ev] @param {{ pending: string | null } | null} [holder] @returns {void} */
-  arm(stroke, kind, ev, holder) {
-    this.pending = { stroke, kind, at: Date.now(), ev: ev || null, holder: holder || null };
+  /** @param {string} stroke @param {"chord" | "operator"} kind @param {Extract<HostEvent, { type: "key" }> | null} [ev] @returns {void} */
+  arm(stroke, kind, ev) {
+    this.pending = { stroke, kind, at: Date.now(), ev: ev || null };
   },
 
   // Clear a pending stroke of `kind` and return the stroke it held.
@@ -864,14 +865,7 @@ export const keymap = {
   // Return the pending stroke for the status bar.
   /** @returns {string} */
   pendingLabel() {
-    const p = this.pending;
-    if (!p) return "";
-    // A vim layer can clear its own prefix, so drop a mirror the holder no longer holds.
-    if (p.kind === "operator" && p.holder && !p.holder.pending) {
-      this.pending = null;
-      return "";
-    }
-    return p.stroke;
+    return this.pending ? this.pending.stroke : "";
   },
 
   // Request a timer only for a pending chord, because an operator keeps its motion open.
@@ -1077,22 +1071,6 @@ export function copy(text, what) {
   const bytes = s === "" ? 0 : term.copy(s);
   events.emit("clipboard.copied", { what: what || "text", text: s, bytes });
   return bytes;
-}
-
-// A two-key chord. `holder.pending` is the first key, or "".
-/** @param {{ pending: string | null }} holder @returns {string} */
-export function takePrefix(holder) {
-  const first = holder.pending || "";
-  holder.pending = "";
-  // Temporary bridge: mirror the vim prefix into `keymap.pending` until the vim layers take bindings.
-  if (first) keymap.disarm("operator");
-  return first;
-}
-
-/** @param {{ pending: string | null }} holder @param {string} key @returns {void} */
-export function armPrefix(holder, key) {
-  holder.pending = key;
-  keymap.arm(key, "operator", null, holder);
 }
 
 // Return committed text. Use the folded key only for an unmodified legacy event.
@@ -1808,6 +1786,12 @@ export class RootView {
     if (this._started) callHook(svc, "onStart");
     this.syncTick();
     return svc;
+  }
+
+  // The widget a nav binding drives, taken from the layer that reads the keyboard.
+  /** @returns {NavTarget | null} */
+  navTarget() {
+    return /** @type {NavTarget | null} */ (callHook(this.focused, "navTarget") || null);
   }
 
   get focused() {

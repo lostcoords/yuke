@@ -1,7 +1,7 @@
 // yuke:ui — the widget kit over yuke:core. List/Pager/Window are classes to subclass or patch.
 // `ui` exports the pickers. Editor policy lives in yuke:core; presentation lives here.
 import { term } from "yuke:term";
-import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme, takePrefix, armPrefix, style, config, events, slots, isWheel } from "yuke:core";
+import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme, style, config, events, slots, isWheel } from "yuke:core";
 import { Document, isLinear } from "yuke:md";
 
 /** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
@@ -37,7 +37,6 @@ import { Document, isLinear } from "yuke:md";
 /** @template T @typedef {{ items?: T[] | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemHeight?: number | undefined, group?: string | undefined, selGroup?: string | undefined, dimGroup?: string | undefined, dimSelGroup?: string | undefined, drawCursor?: boolean | undefined }} ListOptions */
 /** @template T @typedef {{ items?: T[] | undefined, suggest?: (query: string) => T[] | undefined, filterText?: ((item: T) => string) | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onAccept?: ((item: T, index?: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: PickerContent<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined } & WindowOptions} PickOptions */
 /** @template T @typedef {{ format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onAccept?: ((item: T, index: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: PickerContent<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined } & WindowOptions} SelectOptions */
-/** @typedef {{ pending: string }} Chord */
 
 // The kit adds its highlight groups to the core palette. It adds only a group that is absent, so a
 // theme that set one first keeps it, and a second import does not re-seed.
@@ -85,48 +84,6 @@ function sameId(a, b) {
   return a != null && b != null && String(a) === String(b);
 }
 
-// The shared nav vocabulary: j/k move, ctrl+d/u page, gg/G top/bottom.
-/** @param {string} k @returns {"down" | "up" | "page_down" | "page_up" | "top" | "bottom" | "pending_g" | ""} */
-function navAction(k) {
-  switch (k) {
-    case "j":
-    case "down":
-      return "down";
-    case "k":
-    case "up":
-      return "up";
-    case "ctrl+d":
-    case "page_down":
-      return "page_down";
-    case "ctrl+u":
-    case "page_up":
-      return "page_up";
-    case "home":
-      return "top";
-    case "end":
-    case "G":
-      return "bottom";
-    case "g":
-      return "pending_g";
-  }
-  return "";
-}
-
-/** @param {Chord} chord @param {Extract<HostEvent, { type: "key" }>} ev @param {Record<string, () => void>} map @returns {boolean} */
-function applyNav(chord, ev, map) {
-  const k = strokeOf(ev);
-  const first = takePrefix(chord);
-  const act = first === "g" && k === "g" ? "top" : navAction(k);
-  if (act === "pending_g") {
-    armPrefix(chord, "g");
-    return true;
-  }
-  const fn = map[act];
-  if (!fn) return false;
-  fn();
-  return true;
-}
-
 // A scrollable, selectable list. `key(item)` gives a stable identity, so the selection follows its
 // item across a re-sorted `items`. `itemHeight` rows render per item; `format` may return `lines`.
 /** @template T */
@@ -151,8 +108,6 @@ export class List {
     this.selectedKey = null;
     this.scroll = 0; // first visible item index
     this._page = PAGE_FALLBACK; // last visible item count, for page moves
-    /** @type {Chord} */
-    this._chord = { pending: "" };
     this.setItems(opts.items || []);
   }
 
@@ -265,16 +220,19 @@ export class List {
     this.scroll = Math.min(Math.max(this.scroll, 0), max);
   }
 
-  /** @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
-  onKey(ev) {
-    return applyNav(this._chord, ev, {
-      down: () => this.move(1),
-      up: () => this.move(-1),
-      page_down: () => this.move(this._page),
-      page_up: () => this.move(-this._page),
-      top: () => this.moveToEdge(-1),
-      bottom: () => this.moveToEdge(1),
-    });
+  /** @param {number} delta @returns {void} */
+  navBy(delta) {
+    this.move(delta);
+  }
+
+  /** @param {number} dir @returns {void} */
+  navPage(dir) {
+    this.move(dir * this._page);
+  }
+
+  /** @param {number} dir @returns {void} */
+  navEdge(dir) {
+    this.moveToEdge(dir);
   }
 
   // Forget the drawn rect. A container calls this when it draws something else in the same space,
@@ -388,8 +346,6 @@ export class Pager {
     this._w = 0;
     /** @type {Rect | null} */
     this._rect = null; // the last drawn rect, for the mouse hit test
-    /** @type {Chord} */
-    this._chord = { pending: "" };
   }
 
   /** @returns {Rect | null} */
@@ -497,17 +453,20 @@ export class Pager {
     }
   }
 
-  /** @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
-  onKey(ev) {
-    const page = Math.max(1, this._h - 1);
-    return applyNav(this._chord, ev, {
-      down: () => this.scrollBy(1),
-      up: () => this.scrollBy(-1),
-      page_down: () => this.scrollBy(page),
-      page_up: () => this.scrollBy(-page),
-      top: () => this.toTop(),
-      bottom: () => this.toBottom(),
-    });
+  /** @param {number} delta @returns {void} */
+  navBy(delta) {
+    this.scrollBy(delta);
+  }
+
+  /** @param {number} dir @returns {void} */
+  navPage(dir) {
+    this.scrollBy(dir * Math.max(1, this._h - 1));
+  }
+
+  /** @param {number} dir @returns {void} */
+  navEdge(dir) {
+    if (dir < 0) this.toTop();
+    else this.toBottom();
   }
 
   // The wheel scrolls by `config.mouse.scrollLines`. The protocol has no pixel wheel, so the step
@@ -1674,11 +1633,6 @@ export class Transcript {
     this.pager.draw(rect);
   }
 
-  /** @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
-  onKey(ev) {
-    return this.pager.onKey(ev);
-  }
-
   // The logical position under a screen cell, or null off the drawn rows. `clamp` pulls a pointer
   // outside the pane back to the nearest row, so a drag keeps up with it.
   /** @param {number} col @param {number} row @param {boolean} clamp @returns {Position | null} */
@@ -2110,10 +2064,15 @@ export class ChatView {
 
   /** @param {HostEvent} ev @returns {boolean} */
   onKey(ev) {
-    const key = /** @type {Extract<HostEvent, { type: "key" }>} */ (ev);
-    // A focused transcript owns the keyboard, and otherwise it reads what the composer declines.
-    if (this.focus === "transcript") return this.transcript.onKey(key);
-    return this.composer.onKey(ev) || this.transcript.onKey(key);
+    // A focused transcript reads nothing here, because a nav binding scrolls it through the keymap.
+    if (this.focus === "transcript") return false;
+    return this.composer.onKey(ev);
+  }
+
+  // The widget a nav binding drives here. The transcript scrolls even while the composer types.
+  /** @returns {import("yuke:core").NavTarget} */
+  navTarget() {
+    return this.transcript.pager;
   }
 
   // Route by sub-rect, so a click or a wheel step over the composer never moves the transcript.
@@ -2153,6 +2112,18 @@ export class ChatView {
     return this.focus === "composer" ? this.composer.cursor() : null;
   }
 }
+
+// The nav keys a modal picker serves itself, named by the actions `action` already exposes.
+/** @type {Record<string, "next" | "prev" | "top" | "bottom" | undefined>} */
+const PICKER_NAV = Object.assign(Object.create(null), {
+  j: "next",
+  down: "next",
+  k: "prev",
+  up: "prev",
+  home: "top",
+  G: "bottom",
+  end: "bottom",
+});
 
 // A floating, bordered, titled window centers over the screen as an overlay-stack layer. The
 // interior is winText/winFill (clipped); override drawContent(win) or set a `content`.
@@ -2308,6 +2279,8 @@ export class PickerContent {
   /** @param {T[]} items @param {SelectOptions<T>} opts */
   constructor(items, opts) {
     this.opts = opts;
+    // A modal layer owns its keys, so it holds its own `g` prefix.
+    this._g = false;
     /** @type {Window | null} */
     this.win = null;
     this.list = new List({
@@ -2425,8 +2398,22 @@ export class PickerContent {
         return true;
       }
     }
-    if (this.list.onKey(ev)) return true;
     const stroke = strokeOf(ev);
+    const pending = this._g;
+    this._g = false;
+    if (pending && stroke === "g") {
+      this.action("top");
+      return true;
+    }
+    if (stroke === "g") {
+      this._g = true;
+      return true;
+    }
+    const nav = PICKER_NAV[stroke];
+    if (nav) {
+      this.action(nav);
+      return true;
+    }
     if (stroke === "enter") this.accept();
     else if (stroke === "esc") this.cancel();
     return true; // modal: consume every key

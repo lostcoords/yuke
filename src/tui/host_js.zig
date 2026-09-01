@@ -182,7 +182,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { command, keymap, events, status, style, root, context, parseContext, config, defineConfig, armPrefix, takePrefix, Emitter, View, Node } from "yuke:core";
+        \\import { command, keymap, events, status, style, root, context, parseContext, config, defineConfig, Emitter, View, Node } from "yuke:core";
         \\import { Scope, Context, advice, services, plugins } from "yuke:ext";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -750,14 +750,18 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\
         \\// An operator never times out, and the status bar reports it.
         \\{
-        \\  const holder = { pending: "" };
-        \\  armPrefix(holder, "d");
-        \\  check("pend-operator", keymap.pending.kind === "operator" && keymap.pendingLabel() === "d");
+        \\  const ran = [];
+        \\  const kevOp = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+        \\  const off = keymap.add({ "f8 x": () => { ran.push("op"); return true; } }, undefined, { pending: "operator" });
+        \\  keymap.onKey(kevOp({ code: "f8" }));
+        \\  check("pend-operator", keymap.pending.kind === "operator" && keymap.pendingLabel() === "f8");
         \\  check("pend-operator-no-tick", keymap.needsTick() === null);
         \\  keymap.pending.at -= 60000;
         \\  keymap.tick();
-        \\  check("pend-operator-holds", keymap.pending !== null && keymap.pendingLabel() === "d");
-        \\  check("pend-operator-taken", takePrefix(holder) === "d" && keymap.pending === null);
+        \\  check("pend-operator-holds", keymap.pending !== null && keymap.pendingLabel() === "f8");
+        \\  keymap.onKey(kevOp({ char: "x" }));
+        \\  check("pend-operator-runs", ran.join(",") === "op" && keymap.pending === null);
+        \\  off();
         \\}
         \\
         \\// The chord wait is configurable and validated.
@@ -766,25 +770,6 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  check("cfg-chord", config.keymap.chordMs === 250);
         \\  check("cfg-chord-bad", throws(() => defineConfig({ keymap: { chordMs: 0 } })) && config.keymap.chordMs === 250);
         \\  defineConfig({ keymap: { chordMs: 1000 } });
-        \\}
-        \\
-        \\// A chord skips the view, but an armed operator must still let the view read its motion.
-        \\{
-        \\  const seen = [];
-        \\  class OpPane extends View {
-        \\    get name() { return "oppane"; }
-        \\    draw() {}
-        \\    onKey(ev) { seen.push(ev.char); return true; }
-        \\  }
-        \\  const pane = new OpPane();
-        \\  root.setRoot(new Node(pane));
-        \\  root.focusView(pane);
-        \\  const holder = { pending: "" };
-        \\  armPrefix(holder, "d");
-        \\  root.onEvent({ type: "key", code: "char", char: "w", event: "press", text: "w", mods: 0 });
-        \\  check("pend-operator-routes-to-view", seen.join(",") === "w");
-        \\  takePrefix(holder);
-        \\  root.setRoot(null);
         \\}
         \\
         \\// A chord whose context does not match must not swallow the prefix or the key after it.
@@ -827,15 +812,6 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  root.focusView(boom);
         \\  check("atoms-throw-safe", JSON.stringify(context.stack()) === JSON.stringify(["root", "boom"]));
         \\  root.setRoot(null);
-        \\}
-        \\
-        \\// A vim layer can clear its own prefix, so the status label must not keep a stale mirror.
-        \\{
-        \\  const holder = { pending: "" };
-        \\  armPrefix(holder, "y");
-        \\  check("bridge-label", keymap.pendingLabel() === "y");
-        \\  holder.pending = "";
-        \\  check("bridge-label-heals", keymap.pendingLabel() === "" && keymap.pending === null);
         \\}
         \\
         \\// A flag-only context has depth 0, so registration order decides against an unscoped binding.
@@ -2610,18 +2586,21 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
 
     // the command registry and the vim toggle are wired.
     try host.evalModule(
-        \\import { command, root, status, keymap, armPrefix, takePrefix } from "yuke:core";
+        \\import { command, root, status, keymap } from "yuke:core";
         \\import { plugins } from "yuke:ext";
         \\import { term } from "yuke:term";
         \\import { SessionList, sidebar, chat } from "yuke:defaults";
         \\const fail = [];
         \\// The status bar reports a pending key, the way vim reports one with showcmd.
         \\{
-        \\  const holder = { pending: "" };
-        \\  armPrefix(holder, "d");
-        \\  if (status.side("right").indexOf("d") < 0) fail.push("showcmd-on");
-        \\  takePrefix(holder);
-        \\  if (status.side("right").indexOf("d") >= 0) fail.push("showcmd-off");
+        \\  root.focusView(sidebar);
+        \\  const g = { type: "key", code: "char", char: "g", text: "g", event: "press", mods: 0 };
+        \\  root.onEvent(g);
+        \\  if (keymap.pendingLabel() !== "g") fail.push("showcmd-armed");
+        \\  if (status.side("right").indexOf("g") < 0) fail.push("showcmd-on");
+        \\  root.onEvent(g);
+        \\  if (keymap.pendingLabel() !== "") fail.push("showcmd-off");
+        \\  root.focusView(chat);
         \\}
         \\// Tab moves the region focus with no vim plugin loaded.
         \\{
@@ -2664,6 +2643,26 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\s2.onKey({ type: "key", code: "enter", event: "press", char: "", text: "", mods: 0 });
         \\s2.onKey({ type: "key", code: "char", char: "l", text: "", event: "press", mods: 0 });
         \\if (seen.join(",") !== "mouse,key,go") fail.push("open-src:" + seen.join(","));
+        \\
+        \\// A nav key drives the focused pane's widget through the keymap, not through the pane.
+        \\{
+        \\  const rows = ["a", "b", "c"].map((id) => Object.assign({}, row, { id }));
+        \\  sidebar.list.setItems(rows);
+        \\  root.focusView(sidebar);
+        \\  const kev = (char) => ({ type: "key", code: "char", char, text: char, event: "press", mods: 0 });
+        \\  sidebar.list.navEdge(-1);
+        \\  const first = sidebar.list.selectedKey;
+        \\  root.onEvent(kev("j"));
+        \\  if (sidebar.list.selectedKey === first) fail.push("nav-j");
+        \\  root.onEvent(kev("k"));
+        \\  if (sidebar.list.selectedKey !== first) fail.push("nav-k");
+        \\  root.onEvent(kev("G"));
+        \\  if (sidebar.list.selectedKey === first) fail.push("nav-G");
+        \\  root.onEvent(kev("g"));
+        \\  root.onEvent(kev("g"));
+        \\  if (sidebar.list.selectedKey !== first) fail.push("nav-gg");
+        \\  root.focusView(chat);
+        \\}
         \\
         \\// The real sidebar moves the focus to the chat pane on a click.
         \\sidebar.list.setItems([row]);
@@ -2997,31 +2996,30 @@ test "the chat pane names the region that reads the keyboard" {
         \\root.focusView(v);
         \\// Count where each key lands, which is the routing contract itself.
         \\let toC = 0;
-        \\let toT = 0;
         \\const rc = v.composer.onKey.bind(v.composer);
-        \\const rt = v.transcript.onKey.bind(v.transcript);
         \\v.composer.onKey = (ev) => { toC++; return rc(ev); };
-        \\v.transcript.onKey = (ev) => { toT++; return rt(ev); };
         \\
         \\check("default-region", v.focus === "composer");
         \\// The region is an atom below `chat`, so a binding on it outranks one on the pane.
         \\check("stack-composer", context.stack().join(",") === "root,chat,composer");
         \\
-        \\// The composer takes a printable key and the transcript never sees it.
+        \\// The composer takes a printable key.
         \\v.onKey(key("char", "a"));
-        \\check("printable-reaches-composer", toC === 1 && toT === 0);
+        \\check("printable-reaches-composer", toC === 1);
         \\
-        \\// A key the composer declines still reaches the transcript, so a scroll works while you type.
-        \\v.onKey(key("page_up"));
-        \\check("composer-decline-reaches-transcript", toC === 2 && toT === 1);
+        \\// A key the composer declines leaves the pane, so a nav binding can scroll while you type.
+        \\check("composer-decline-leaves-pane", v.onKey(key("page_up")) === false && toC === 2);
         \\
-        \\// The focused transcript owns the keyboard outright.
+        \\// The pane offers the transcript pager whichever region reads the keyboard.
+        \\check("nav-target", v.navTarget() === v.transcript.pager);
+        \\
+        \\// A focused transcript reads nothing here, because the keymap navigates it.
         \\v.focusRegion("transcript");
         \\check("stack-transcript", context.stack().join(",") === "root,chat,transcript");
         \\const before = v.composer.input.text;
-        \\v.onKey(key("char", "b"));
-        \\check("transcript-owns", toT === 2 && toC === 2);
+        \\check("transcript-owns", v.onKey(key("char", "b")) === false && toC === 2);
         \\check("transcript-blocks-composer", v.composer.input.text === before);
+        \\check("nav-target-holds", v.navTarget() === v.transcript.pager);
         \\
         \\// The caret belongs to the focused region. A stub stands in for a laid-out composer.
         \\v.composer.cursor = () => ({ x: 1, y: 2, visible: true });
@@ -3232,5 +3230,44 @@ test "composer-vim supplies the prompt glyph through the slot" {
         \\check("unload-restores", v.composer._prompt() === own);
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "prompt.js");
+    try expectJs(host, "ok");
+}
+
+test "a modal picker serves its own nav keys" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // A modal layer never reaches the keymap, so it names the nav keys itself.
+    try host.evalModule(
+        \\import { ui } from "yuke:ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
+        \\const { content, close } = ui.select(["a", "b", "c"], { format: (x) => ({ text: String(x) }) });
+        \\
+        \\check("starts-first", content.list.selected() === "a");
+        \\content.onKey(key("char", "j"));
+        \\check("picker-j", content.list.selected() === "b");
+        \\content.onKey(key("down"));
+        \\check("picker-down", content.list.selected() === "c");
+        \\content.onKey(key("char", "k"));
+        \\check("picker-k", content.list.selected() === "b");
+        \\content.onKey(key("char", "G"));
+        \\check("picker-G", content.list.selected() === "c");
+        \\
+        \\// `g` waits for its pair, and any other key cancels the wait.
+        \\content.onKey(key("char", "g"));
+        \\content.onKey(key("char", "g"));
+        \\check("picker-gg", content.list.selected() === "a");
+        \\content.onKey(key("char", "G"));
+        \\content.onKey(key("char", "g"));
+        \\content.onKey(key("char", "j"));
+        \\check("picker-g-cancels", content.list.selected() === "c");
+        \\
+        \\close();
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "picker.js");
     try expectJs(host, "ok");
 }

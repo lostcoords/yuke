@@ -256,11 +256,15 @@ class SessionList {
     return this.list.selected();
   }
 
+  // The keymap drives this widget, so a nav key needs no handler here.
+  /** @returns {import("yuke:core").NavTarget} */
+  navTarget() {
+    return this.list;
+  }
+
   /** @param {HostEvent} ev @returns {boolean} */
   onKey(ev) {
-    const keyEv = /** @type {Extract<HostEvent, { type: "key" }>} */ (ev);
-    if (this.list.onKey(keyEv)) return true;
-    const s = strokeOf(keyEv);
+    const s = strokeOf(/** @type {Extract<HostEvent, { type: "key" }>} */ (ev));
     if (s === "enter") {
       this.open(this.list.selected(), "key");
       return true;
@@ -1263,6 +1267,29 @@ plugins.use({
     // ctrl+k prefix (it works during text entry), which leaves ctrl+w for the composer word-erase.
     // Tab moves between the two regions of the chat pane, with or without a vim layer.
     ctx.keymap({ tab: "chat:focus-toggle" }, "chat");
+
+    // The nav keys drive whichever widget the focused layer offers, so any pane scrolls the same way.
+    /** @param {(t: import("yuke:core").NavTarget) => void} fn @returns {() => boolean} */
+    const nav = (fn) => () => {
+      const target = root.navTarget();
+      if (!target) return false;
+      fn(target);
+      return true;
+    };
+    ctx.keymap({
+      j: nav((t) => t.navBy(1)),
+      down: nav((t) => t.navBy(1)),
+      k: nav((t) => t.navBy(-1)),
+      up: nav((t) => t.navBy(-1)),
+      "ctrl+d": nav((t) => t.navPage(1)),
+      page_down: nav((t) => t.navPage(1)),
+      "ctrl+u": nav((t) => t.navPage(-1)),
+      page_up: nav((t) => t.navPage(-1)),
+      home: nav((t) => t.navEdge(-1)),
+      end: nav((t) => t.navEdge(1)),
+      G: nav((t) => t.navEdge(1)),
+      "g g": nav((t) => t.navEdge(-1)),
+    });
 
     ctx.keymap({
       "ctrl+n": "chat:new",
