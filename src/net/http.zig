@@ -1,6 +1,7 @@
 //! One JSON request and one bounded JSON response. The caller owns the response buffer.
 
 const std = @import("std");
+const zio = @import("zio");
 
 /// Size the buffer for a control-plane document. The catalog caller sizes its own.
 pub const max_response_bytes = 64 * 1024;
@@ -12,7 +13,14 @@ pub const Error = error{
     ResponseTooLarge,
     /// The request passed its timeout. The caller degrades, because the control plane is optional.
     CloudTimeout,
+    /// The request never left this host. Only this error lets a refresh retry the same token.
+    PreFlight,
+    /// The server may already hold the request, so a refresh must never repeat it.
+    Ambiguous,
 };
+
+/// Bound one OAuth response. A token document is small, so a larger body is a fault.
+pub const max_oauth_response_bytes = 256 * 1024;
 
 /// This timeout covers one control-plane request, from the name lookup to the last body byte.
 pub const default_timeout: std.Io.Timeout = .{
@@ -48,6 +56,26 @@ pub const Get = struct {
 
 /// The status of a response that repeats the document the caller already holds.
 pub const status_not_modified = 304;
+
+/// One name and value of a urlencoded form.
+pub const Field = struct { name: []const u8, value: []const u8 };
+
+pub const FormRequest = struct {
+    url: []const u8,
+    fields: []const Field,
+    /// The body lands here. Its length bounds the response.
+    body_out: []u8,
+    /// The connect phase ends here. A timeout then proves the request never left this host.
+    connect_timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(15_000) } },
+    /// The send and read phase ends here. A timeout then leaves the outcome unknown.
+    read_timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(30_000) } },
+};
+
+/// The two events that split one form POST into its connect phase and its send phase.
+const FormLeg = struct {
+    connected: std.Io.Event = .unset,
+    done: std.Io.Event = .unset,
+};
 
 /// One HTTPS client for the whole login. It keeps the connection alive between the polls.
 pub const Client = struct {
@@ -95,6 +123,70 @@ pub const Client = struct {
             return if (err == error.Timeout) Error.CloudTimeout else err;
         };
         return future.await(io);
+    }
+
+    /// POST a urlencoded form. Only a connect failure reports `PreFlight`, so a caller that
+    /// retries on that one error never repeats a request the server may already hold.
+    pub fn postForm(self: *Client, req: FormRequest) !Response {
+        std.debug.assert(req.body_out.len != 0); // The caller owns a response buffer.
+        const io = self.inner.io;
+        const body = try encodeForm(self.inner.allocator, req.fields);
+        defer self.inner.allocator.free(body);
+
+        var leg: FormLeg = .{};
+        var future = try io.concurrent(formLeg, .{ self, req, body, &leg });
+        leg.connected.waitTimeout(io, req.connect_timeout) catch |err| {
+            _ = future.cancel(io) catch undefined;
+            return if (err == error.Timeout) Error.PreFlight else err;
+        };
+        leg.done.waitTimeout(io, req.read_timeout) catch |err| {
+            _ = future.cancel(io) catch undefined;
+            return if (err == error.Timeout) Error.Ambiguous else err;
+        };
+        return future.await(io);
+    }
+
+    /// The client refuses a redirect, because a credential must never reach another origin.
+    fn sendForm(self: *Client, req: FormRequest, body: []u8, leg: *FormLeg) !Response {
+        const io = self.inner.io;
+        const uri = std.Uri.parse(req.url) catch {
+            leg.connected.set(io);
+            return error.BadUrl;
+        };
+
+        var request = request: {
+            const opened = self.inner.request(.POST, uri, .{
+                .redirect_behavior = .not_allowed,
+                .headers = .{
+                    .content_type = .{ .override = "application/x-www-form-urlencoded" },
+                    .accept_encoding = .omit,
+                },
+                .extra_headers = &.{.{ .name = "accept", .value = "application/json" }},
+            });
+            // The connect phase ended, so the read timeout owns every later failure.
+            leg.connected.set(io);
+            break :request opened catch |err| return switch (err) {
+                error.UnsupportedUriScheme, error.UriMissingHost => error.BadUrl,
+                error.OutOfMemory => error.OutOfMemory,
+                // The reference stops on any TLS error, so this port does too.
+                error.TlsInitializationFailed => error.Ambiguous,
+                // `request` only connects, so the server never read these bytes.
+                else => error.PreFlight,
+            };
+        };
+        defer request.deinit();
+
+        try request.sendBodyComplete(body);
+        var response = try request.receiveHead(&.{});
+
+        var transfer: [4096]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(req.body_out);
+        _ = response.reader(&transfer).streamRemaining(&writer) catch |err| return switch (err) {
+            // A full buffer is the only way the fixed writer fails.
+            error.WriteFailed => error.ResponseTooLarge,
+            else => err,
+        };
+        return .{ .status = @intFromEnum(response.head.status), .body = writer.buffered() };
     }
 
     /// The client refuses a redirect, because a credential must never reach another origin.
@@ -198,6 +290,34 @@ fn postLeg(self: *Client, url: []const u8, body: []const u8, out: []u8, done: *s
     return self.sendJson(url, body, out);
 }
 
+/// Run one form POST in a child task. The parent waits for it, so the caller buffers stay valid.
+fn formLeg(self: *Client, req: FormRequest, body: []u8, leg: *FormLeg) !Response {
+    defer leg.done.set(self.inner.io);
+    return self.sendForm(req, body, leg);
+}
+
+/// Encode `fields` as `application/x-www-form-urlencoded`. The caller owns the result.
+/// Every byte outside the unreserved set becomes %XX, so a UTF-8 value survives the round trip.
+fn encodeForm(gpa: std.mem.Allocator, fields: []const Field) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    errdefer out.deinit();
+    for (fields, 0..) |field, index| {
+        if (index != 0) try out.writer.writeByte('&');
+        try std.Uri.Component.percentEncode(&out.writer, field.name, isUnreserved);
+        try out.writer.writeByte('=');
+        try std.Uri.Component.percentEncode(&out.writer, field.value, isUnreserved);
+    }
+    return out.toOwnedSlice();
+}
+
+/// Report an RFC 3986 unreserved byte. A form value keeps only these, so a space becomes %20.
+fn isUnreserved(c: u8) bool {
+    return switch (c) {
+        'A'...'Z', 'a'...'z', '0'...'9', '-', '.', '_', '~' => true,
+        else => false,
+    };
+}
+
 /// Copy the first value of `name` into `out`. An absent or oversize header gives an empty value.
 fn copyHeader(head: *const std.http.Client.Response.Head, name: []const u8, out: []u8) []const u8 {
     var it = head.iterateHeaders();
@@ -218,6 +338,157 @@ fn mapRequestError(err: anyerror) anyerror {
 }
 
 const testing = std.testing;
+
+test "a form body percent-encodes every reserved and UTF-8 byte" {
+    const body = try encodeForm(testing.allocator, &.{
+        .{ .name = "grant_type", .value = "refresh_token" },
+        .{ .name = "scope", .value = "openid profile grok-cli:access" },
+        .{ .name = "note", .value = "caf\u{e9}&=+" },
+    });
+    defer testing.allocator.free(body);
+
+    // A space becomes %20, and every byte of the UTF-8 sequence encodes on its own.
+    try testing.expectEqualStrings(
+        "grant_type=refresh_token" ++
+            "&scope=openid%20profile%20grok-cli%3Aaccess" ++
+            "&note=caf%C3%A9%26%3D%2B",
+        body,
+    );
+}
+
+const FormServer = struct {
+    listener: *zio.net.Server = undefined,
+    mode: enum { reply, redirect, oversize, stall },
+    seen_type: [64]u8 = undefined,
+    seen_type_len: usize = 0,
+    err: ?anyerror = null,
+};
+
+fn serveFormOnce(s: *FormServer) void {
+    serveFormOnceInner(s) catch |err| {
+        s.err = err;
+    };
+}
+
+fn serveFormOnceInner(s: *FormServer) !void {
+    const stream = try s.listener.accept(.{});
+    defer stream.close();
+    var read_buf: [4096]u8 = undefined;
+    var write_buf: [4096]u8 = undefined;
+    var reader = stream.reader(&read_buf);
+    var writer = stream.writer(&write_buf);
+    var server = std.http.Server.init(&reader.interface, &writer.interface);
+    var request = try server.receiveHead();
+
+    var headers = request.iterateHeaders();
+    while (headers.next()) |header| {
+        if (!std.ascii.eqlIgnoreCase(header.name, "content-type")) continue;
+        if (header.value.len > s.seen_type.len) break;
+        @memcpy(s.seen_type[0..header.value.len], header.value);
+        s.seen_type_len = header.value.len;
+    }
+
+    switch (s.mode) {
+        .reply => try request.respond("{\"ok\":true}", .{ .status = .ok, .keep_alive = false }),
+        .redirect => try request.respond("", .{
+            .status = .found,
+            .keep_alive = false,
+            .extra_headers = &.{.{ .name = "location", .value = "https://elsewhere.invalid/token" }},
+        }),
+        .oversize => try request.respond("x" ** 512, .{ .status = .bad_request, .keep_alive = false }),
+        // Read the request, then never answer, so the client times out after it sent the body.
+        .stall => try zio.sleep(.fromMilliseconds(400)),
+    }
+}
+
+const FormClient = struct {
+    gpa: std.mem.Allocator = undefined,
+    io: std.Io = undefined,
+    port: u16 = undefined,
+    out_len: usize = 4096,
+    read_timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(30_000) } },
+    status: u16 = 0,
+    err: ?anyerror = null,
+};
+
+fn postFormOnce(c: *FormClient) void {
+    postFormOnceInner(c) catch |err| {
+        c.err = err;
+    };
+}
+
+fn postFormOnceInner(c: *FormClient) !void {
+    var client: Client = .init(c.gpa, c.io, .none);
+    defer client.deinit();
+    var url_buf: [64]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/token", .{c.port});
+    const out = try c.gpa.alloc(u8, c.out_len);
+    defer c.gpa.free(out);
+    const response = try client.postForm(.{
+        .url = url,
+        .fields = &.{.{ .name = "grant_type", .value = "refresh_token" }},
+        .body_out = out,
+        .read_timeout = c.read_timeout,
+    });
+    c.status = response.status;
+}
+
+fn exchangeForm(server: *FormServer, client: *FormClient) !void {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const address = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = try address.listen(.{});
+    defer listener.close();
+    server.listener = &listener;
+    client.gpa = testing.allocator;
+    client.io = rt.io();
+    client.port = listener.socket.address.ip.getPort();
+
+    var server_task = try rt.spawn(serveFormOnce, .{server});
+    var client_task = try rt.spawn(postFormOnce, .{client});
+    client_task.join();
+    server_task.join();
+}
+
+test "a form post sends the urlencoded content type" {
+    var server: FormServer = .{ .mode = .reply };
+    var client: FormClient = .{};
+    try exchangeForm(&server, &client);
+
+    try testing.expectEqual(@as(?anyerror, null), server.err);
+    try testing.expectEqual(@as(?anyerror, null), client.err);
+    try testing.expectEqual(@as(u16, 200), client.status);
+    try testing.expectEqualStrings("application/x-www-form-urlencoded", server.seen_type[0..server.seen_type_len]);
+}
+
+test "a form post refuses a redirect instead of sending the credential onward" {
+    var server: FormServer = .{ .mode = .redirect };
+    var client: FormClient = .{};
+    try exchangeForm(&server, &client);
+
+    // `not_allowed` names the refusal this way. The credential never reaches the other origin.
+    try testing.expectEqual(@as(?anyerror, error.TooManyHttpRedirects), client.err);
+    try testing.expect(client.err.? != Error.PreFlight); // A refusal must never look retryable.
+}
+
+test "a form post bounds an oversized error body" {
+    var server: FormServer = .{ .mode = .oversize };
+    var client: FormClient = .{ .out_len = 64 };
+    try exchangeForm(&server, &client);
+
+    try testing.expectEqual(@as(?anyerror, Error.ResponseTooLarge), client.err);
+}
+
+test "a timeout after the send reports ambiguity, never a pre-flight failure" {
+    var server: FormServer = .{ .mode = .stall };
+    var client: FormClient = .{
+        .read_timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(50) } },
+    };
+    try exchangeForm(&server, &client);
+
+    // A retry here could look like token reuse and cost the whole grant.
+    try testing.expectEqual(@as(?anyerror, Error.Ambiguous), client.err);
+}
 
 test "postJson rejects a url that is not a request target" {
     var client: Client = .init(testing.allocator, testing.io, .none);
