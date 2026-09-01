@@ -155,12 +155,9 @@ pub fn residentActivity(state: *State, arena: std.mem.Allocator, rt: *session_ru
 
 /// Fold a durable daemon event into the session, then publish the same value.
 pub fn emitDurable(state: *State, rt: *session_runtime.SessionRuntime, note: wire.rpc.Notification) void {
-    rt.session.applyAuthoritative(note.params) catch |err| switch (err) {
-        // The daemon produced this event against its own state, so only a bug here rejects it.
-        error.Protocol => std.debug.panic("cannot fold the durable event {t}", .{note.method}),
-        // The log already holds the event, so the next start reads back what this run cannot hold.
-        error.OutOfMemory => std.log.err("cannot fold {t}: out of memory", .{note.method}),
-    };
+    // The daemon produced this event against its own state, so a rejection here is a bug.
+    rt.session.applyAuthoritative(note.params) catch |err|
+        std.debug.panic("cannot fold the durable event {t}: {t}", .{ note.method, err });
     publishBestEffort(state, rt.session.id, note);
 }
 
