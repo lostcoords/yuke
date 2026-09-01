@@ -2794,6 +2794,25 @@ test "a lapsed grant is never rotated again" {
     try std.testing.expectEqual(@as(usize, 0), second.index); // No request left the daemon.
 }
 
+test "a failed write never retries a rotation the server may have completed" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    // No AuthFile, so the store holds no path and every write fails with NoConfigDirectory.
+
+    try seedGrant(&fixture,
+        \\{"version":1,"providers":[{"id":"codex","auth":{"oauth":{"access_token":"at",
+        \\ "refresh_token":"rt","expires_at_ms":9}}}]}
+    );
+    var canned: provider.oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body =
+        \\{"access_token":"new","refresh_token":"rt2","expires_in":3600}
+    } }} };
+    fixture.state.oauth_http = canned.seam();
+
+    // The rotation landed upstream, so a write failure must not make the caller send `rt` again.
+    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    try std.testing.expectEqual(@as(usize, 1), canned.index);
+}
+
 test "a grant outside the margin is not due" {
     var fixture = try TestState.initBare(null);
     defer fixture.deinit();

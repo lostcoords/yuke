@@ -62,8 +62,7 @@ fn drive(state: *State, slot: *login_runtime.LoginSlot) !wire.auth.AuthLoginOutc
 
         const reply: poller.Reply = if (result) |poll| switch (poll) {
             .tokens => |tokens| {
-                // Claim the login with no yield between the check and the claim, so a cancel
-                // that arrives during the write cannot contradict the outcome it will read.
+                // Claim with no yield between, so a later cancel cannot contradict the outcome.
                 if (slot.cancel_requested) return .{ .canceled = .{} };
                 slot.finalizing = true;
                 try install(state, arena.allocator(), slot, tokens);
@@ -148,6 +147,10 @@ pub fn refreshOnce(state: *State, margin_ms: u64) !void {
     const arena = arena_state.allocator();
 
     const due = try dueGrant(state, arena, margin_ms) orelse return;
+    // A cancel between the send and the write would leave the rotation unknown, so it waits.
+    const previous = state.io.swapCancelProtection(.blocked);
+    defer _ = state.io.swapCancelProtection(previous);
+
     var client: http.Client = .init(state.gpa, state.io, .none);
     defer client.deinit();
     var real: oauth.ClientHttp = .{ .client = &client };
@@ -163,18 +166,33 @@ pub fn refreshOnce(state: *State, margin_ms: u64) !void {
         // The rotation may have landed, so repeating it would cost the whole grant.
         else => {
             std.log.warn("refresh for {s} ended the grant: {t}", .{ due.provider_id, err });
-            try lapse(state, arena, due);
+            keep(state, arena, due, lapsed(due.grant));
             return;
         },
     };
 
     // A response that omits a replacement leaves the old refresh token current.
-    try store(state, arena, due, .{
+    keep(state, arena, due, .{
         .access_token = tokens.access_token,
         .refresh_token = tokens.refresh_token orelse old,
         .expires_at_ms = tokens.expires_at_ms,
         .account_id = tokens.account_id orelse due.grant.account_id,
     });
+}
+
+/// Write the rotated grant. A failed write returns no error, because a retry would spend it twice.
+fn keep(state: *State, arena: std.mem.Allocator, due: Due, grant: provider.config.Grant) void {
+    store(state, arena, due, grant) catch |err| {
+        std.log.warn("cannot store the grant for {s}: {t}", .{ due.provider_id, err });
+    };
+}
+
+/// Return the grant a terminal rotation leaves, which holds nothing the daemon may send again.
+fn lapsed(grant: provider.config.Grant) provider.config.Grant {
+    var dead = grant;
+    dead.expires_at_ms = 0;
+    dead.refresh_token = null;
+    return dead;
 }
 
 /// One grant that needs its replacement, and the flow that can produce one.
@@ -197,7 +215,17 @@ fn dueGrant(state: *State, arena: std.mem.Allocator, margin_ms: u64) !?Due {
         const named = row.auth orelse continue;
         if (named.kind != .oauth) continue;
         const flow = login_runtime.Flow.parse(named.flow orelse continue) orelse continue;
-        return .{ .provider_id = p.id, .flow = flow, .grant = auth.oauth };
+        // The refresh yields, so a concurrent edit could free the layer these slices point into.
+        return .{
+            .provider_id = try arena.dupe(u8, p.id),
+            .flow = flow,
+            .grant = .{
+                .access_token = try arena.dupe(u8, auth.oauth.access_token),
+                .refresh_token = try arena.dupe(u8, auth.oauth.refresh_token.?),
+                .expires_at_ms = auth.oauth.expires_at_ms,
+                .account_id = if (auth.oauth.account_id) |id| try arena.dupe(u8, id) else null,
+            },
+        };
     }
     return null;
 }
@@ -210,14 +238,6 @@ fn refreshFlow(arena: std.mem.Allocator, flow: login_runtime.Flow, seam: oauth.H
 }
 
 /// Lapse the grant, so the run path refuses it and the client asks the human to log in again.
-fn lapse(state: *State, arena: std.mem.Allocator, due: Due) !void {
-    var dead = due.grant;
-    dead.expires_at_ms = 0;
-    // The rotation may have spent this token, so the daemon must never send it again.
-    dead.refresh_token = null;
-    try store(state, arena, due, dead);
-}
-
 fn store(state: *State, arena: std.mem.Allocator, due: Due, grant: provider.config.Grant) !void {
     if (try state.store.edit(arena, due.provider_id, .{ .set_grant = grant }, &state.db)) state.announceCatalogChanged();
     state.announceAuthChanged(due.provider_id, .oauth);
