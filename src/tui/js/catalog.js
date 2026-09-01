@@ -9,8 +9,7 @@ import { newestLocalModelSession } from "yuke:sidebar";
 /** @typedef {{ session: Wire.Session, activity: { context_usage?: Wire.TokenUsage } | null }} StatusEntry */
 /** @typedef {{ entry?: () => StatusEntry | null, connKey?: () => string }} CatalogConfig */
 
-// One catalog per connection. `catalog.list` answers "unchanged" while the revision holds, so a
-// reopened picker costs no round trip.
+// One catalog per connection; `catalog.list` answers "unchanged" while the revision holds, so a reopen costs no round trip.
 /** @type {Map<string, CatalogState>} */
 const catalogs = new Map();
 
@@ -53,8 +52,7 @@ export function contextWindowOf(connKey, modelId) {
   return m && m.context_window ? m.context_window : 0;
 }
 
-// The model a new chat starts with. `session.patch` is not implemented, so a choice cannot move an
-// open session yet.
+// The model a new chat starts with; `session.patch` is not implemented, so a choice cannot move an open session.
 /** @type {ModelDefaults} */
 const chatDefaults = { model: null, reasoning: "" };
 

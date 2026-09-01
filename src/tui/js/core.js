@@ -45,8 +45,7 @@ import { term } from "yuke:term";
 // Runtime configuration. Direct daemon writes bypass validation.
 /** @type {Config} */
 export const config = {
-  // Mouse reporting is always on. `scrollLines` is a screen-line count, so a wheel step moves the
-  // same distance in a transcript and in a list.
+  // Mouse reporting is always on; `scrollLines` counts screen lines, so a wheel step moves the same in every widget.
   mouse: {
     scrollLines: 3,
     // A drag that ends copies the selection. A release is a deliberate end, so it never surprises.
@@ -143,8 +142,7 @@ export function isWheel(button) {
 // Bound a link chain the way neovim bounds `syn_ns_get_final_id`. A cycle falls back instead.
 const link_depth_max = 100;
 
-// The highlight groups use the palette. yuke is monochrome: emphasis is weight and inversion, not hue.
-// `Normal` is `reset`, so the terminal background shows through. `danger` is the only color.
+// The highlight groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
 /** @type {StyleConfig} */
 export const style = {
   palette: {
@@ -270,8 +268,7 @@ export function clip(s, max, ellipsis = true) {
   return s.slice(0, cut) + (ell ? "…" : "");
 }
 
-// Wrap `s` to `width` cells. A newline breaks the line. A word wider than `width` breaks by grapheme.
-// A grapheme wider than `width` keeps its own line. That line is wider than `width`.
+// Wrap `s` to `width` cells; a word breaks by grapheme, and a grapheme wider than `width` keeps its own wider line.
 /** @param {string} s @param {number} width @returns {string[]} */
 export function wrap(s, width) {
   s = String(s);
@@ -364,8 +361,7 @@ function wrapParagraph(para, width, out) {
   out.push(line);
 }
 
-// Wrap `s` in `width` cells and keep its UTF-16 offsets. A row holds [start, end) and a soft flag.
-// `wrap` drops space runs, so editable text and user rows use this function.
+// Wrap `s` and keep its UTF-16 offsets as [start, end) plus a soft flag, because `wrap` drops the space runs.
 /** @param {string} s @param {number} width @returns {WrapRow[]} */
 export function wrapOffsets(s, width) {
   s = String(s);
@@ -393,7 +389,6 @@ export function wrapOffsets(s, width) {
 
     const widthAt = /** @type {number} */ (gs[k + 2]);
     // A space hangs past the right edge, so a wrap never starts a row with the space it broke on.
-    // A row keeps one grapheme even when that grapheme is wider than the width.
     if (ch !== " " && w + widthAt > width && off > start) {
       if (breakAt > start) {
         rows.push({ start, end: breakAt, soft: true });
@@ -416,8 +411,7 @@ export function wrapOffsets(s, width) {
   return rows;
 }
 
-// Place `caret` in the rows of `wrapOffsets`. A caret on a soft break takes the next row, so the
-// caret stays on the screen instead of one cell past the right edge.
+// Place `caret` in the rows of `wrapOffsets`; a soft break takes the next row, so the caret stays on the screen.
 /** @param {string} s @param {WrapRow[]} rows @param {number} caret @returns {{ row: number, col: number }} */
 export function caretRowCol(s, rows, caret) {
   for (let i = 0; i < rows.length; i++) {
@@ -540,14 +534,12 @@ function normalizePredicate(predicate) {
   return predicate;
 }
 
-// The active context: an ordered atom stack plus the flags plugins set.
-// A deeper atom wins, so `composer` beats `chat` and `chat` beats an unscoped binding.
+// The active context: an ordered atom stack plus plugin flags, where a deeper atom beats a shallower or unscoped one.
 export const context = {
   /** @type {Record<string, ContextFlag>} */
   _flags: Object.create(null),
 
-  // Set flags and return a disposer that restores what each name held before.
-  // A function value resolves at match time, so a plugin reports a live mode without an update.
+  // Set flags and return a restoring disposer; a function value resolves at match time, so a live mode needs no update.
   /** @param {Record<string, ContextFlag>} flags @returns {() => void} */
   set(flags) {
     /** @type {Array<[string, ContextFlag | undefined]>} */
@@ -1195,7 +1187,6 @@ export function nextWordEnd(s, at) {
 const grapheme_window = 256;
 
 // A step needs only the grapheme beside the caret, so it scans a window and not the whole text.
-// A cluster longer than the window is not real text.
 /** @param {string} s @param {number} at @returns {number} */
 export function prevGrapheme(s, at) {
   const from = Math.max(0, at - grapheme_window);
@@ -1222,8 +1213,7 @@ export class TextInput {
     this.caret = 0;
     /** @type {(() => void) | null} */
     this.onChange = opts.onChange || null;
-    // onEdit(from, to, insertedLength) reports the range an edit replaced. An owner that keeps
-    // offsets into the text uses this hook. TextInput never learns what those offsets mean.
+    // onEdit(from, to, insertedLength) reports the range an edit replaced, for an owner that keeps its own offsets.
     /** @type {((from: number, to: number, insertedLength: number) => void) | null} */
     this.onEdit = opts.onEdit || null;
   }
@@ -1566,8 +1556,7 @@ function clampChildSize(size, total) {
 }
 
 // --- status bar ---------------------------------------------------------------------------
-// One row under the whole layout. A segment renders to a string, or to nothing when it has none to
-// say, so a provider that is idle takes no space.
+// One row under the whole layout, where a segment renders to a string or to nothing, so an idle provider takes no space.
 export const status = {
   /** @type {StatusEntry[]} */
   _list: [],
@@ -1697,9 +1686,7 @@ export class RootView {
     return this.root_node ? this.root_node.leafAt(col, row) : null;
   }
 
-  // Send the event to the leaf under the pointer. Focus a leaf on a button press, but not on a
-  // wheel event. A left press captures the leaf, so a drag that leaves it still reaches the same
-  // view and the release always arrives. Return true when a view consumed the event.
+  // Send the event to the leaf under the pointer; a press focuses and captures it, so a drag that leaves it still lands.
   /** @param {Extract<HostEvent, { type: "mouse" }>} ev @returns {boolean} */
   routeMouse(ev) {
     if (this._capture && (ev.event === "drag" || ev.event === "release")) {

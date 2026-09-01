@@ -144,8 +144,7 @@ function srcAt(runs, i, end) {
   return end ? o + 1 : o;
 }
 
-// Split the text into blocks. `at` and `end` are source offsets, and `raw` checks the block cache.
-// Only the open tail block may still change.
+// Split the text into blocks with `at`/`end` source offsets and `raw` for the cache; only the tail block still changes.
 /** @param {string} text @returns {Block[]} */
 function segment(text) {
   const lines = /** @type {StringList} */ (text.split("\n"));
@@ -288,8 +287,7 @@ function segment(text) {
       continue;
     }
 
-    // Consume a paragraph until a blank line or a new block. A line feed joins as one space, so
-    // the inline text keeps the length of its source.
+    // Consume a paragraph until a blank line or a new block; a line feed joins as one space and keeps the source length.
     let j = i;
     const body = inlineSource();
     for (; j < lines.length; j++) {
@@ -402,8 +400,7 @@ function closeCodeSpan(cps, start, n) {
   return -1;
 }
 
-// Read a `[label](dest)` link. Return the label and the end index, or null when it is not a link.
-// A destination holds no space, so a malformed link stays literal.
+// Read a `[label](dest)` link and return the label and end index, or null; a destination holds no space.
 /** @param {StringList} cps @param {number} open @returns {{label: string, end: number} | null} */
 function scanLink(cps, open) {
   let depth = 0;
@@ -446,8 +443,7 @@ function scanLink(cps, open) {
   return { label: cps.slice(open + 1, close).join(""), end };
 }
 
-// Parse inline text into styled segments. Code spans and links resolve first; a delimiter stack
-// then folds emphasis, so nested and triple runs (**a *b* c**, ***x***) render correctly.
+// Parse inline text into styled segments: code spans and links resolve first, then a delimiter stack folds emphasis.
 /** @param {string} text @param {string} [baseGroup] @returns {InlinePiece[]} */
 function parseInline(text, baseGroup) {
   const base = baseGroup || "MdText";
@@ -532,8 +528,7 @@ function parseInline(text, baseGroup) {
   return flattenInline(nodes, base);
 }
 
-// The delimiter stack. For each closer, match the nearest compatible opener and record a strong or
-// emphasis pair on the two runs. Unused delimiters stay literal.
+// The delimiter stack: each closer matches the nearest compatible opener, and an unused delimiter stays literal.
 /** @param {InlineNode[]} nodes @param {number[]} delims @returns {void} */
 function foldEmphasis(nodes, delims) {
   for (let ci = 0; ci < delims.length; ci++) {
@@ -566,8 +561,7 @@ function foldEmphasis(nodes, delims) {
   }
 }
 
-// Walk the folded nodes and emit segments, tracking the bold and emphasis depth per position.
-// Text merges only while the source stays contiguous, so a merged segment can split by offset.
+// Walk the folded nodes and emit segments; text merges only while the source stays contiguous.
 /** @param {InlineNode[]} nodes @param {string} base @returns {InlinePiece[]} */
 function flattenInline(nodes, base) {
   const out = /** @type {InlinePiece[]} */ ([]);
@@ -601,8 +595,7 @@ function flattenInline(nodes, base) {
   return out.length ? out : [{ text: "", group: base, at: 0, len: 0 }];
 }
 
-// Map inline segments onto source offsets. A segment splits at a run edge, so every piece stays
-// linear (`srcEnd - src === text.length`) unless the markup itself is not, as with an escape.
+// Map inline segments onto source offsets, so every piece stays linear (`srcEnd - src === text.length`) unless the markup is not.
 /** @param {InlinePiece[]} segments @param {SourceRun[]} runs @returns {Segment[]} */
 function resolveSegments(segments, runs) {
   if (!runs || runs.length === 0) return segments.map((s) => ({ text: s.text, group: s.group }));
@@ -628,15 +621,13 @@ function resolveSegments(segments, runs) {
   return out;
 }
 
-// One source character per rendered character, so an offset survives a slice. A mark stands for
-// markup it hides, and an escape renders fewer characters than its source; neither one is linear.
+// One source character per rendered character, so an offset survives a slice; a mark and an escape are not linear.
 /** @param {Segment} seg @returns {seg is LinearSegment} */
 export function isLinear(seg) {
   return seg.src != null && !seg.mark && /** @type {number} */ (seg.srcEnd) - seg.src === seg.text.length;
 }
 
-// Slice a resolved segment. A segment that is not linear keeps its whole source span. Only an
-// escape reaches a wrap; a mark is wide but never wraps.
+// Slice a resolved segment; one that is not linear keeps its whole source span, and only an escape reaches a wrap.
 /** @param {Segment} seg @param {number} from @param {number} to @returns {Segment} */
 function sliceSegment(seg, from, to) {
   const out = /** @type {Segment} */ ({ text: seg.text.slice(from, to), group: seg.group });
@@ -709,8 +700,7 @@ function wrapSegments(segments, width, opts) {
   return rows;
 }
 
-// Split the segments at every blank run. A piece keeps its source offsets, so a wrap does not
-// lose them. The blank runs drop out, and `wrapSegments` puts one space back between two words.
+// Split the segments at every blank run, keeping the source offsets; `wrapSegments` puts one space back between words.
 /** @param {Segment[]} segments @returns {Word[]} */
 function segmentsToWords(segments) {
   const words = /** @type {Word[]} */ ([]);
@@ -795,8 +785,7 @@ function ruleText(width) {
   return glyph.repeat(count);
 }
 
-// A rendered segment carries the source it came from. A `mark` segment stands for markup it does
-// not show, so it takes that markup's span. A pure separator, such as a column border, carries none.
+// A rendered segment carries its source span: a `mark` takes the span of the markup it hides, and a separator carries none.
 /** @param {Block} block @param {number} width @returns {Row[]} */
 function renderBlock(block, width) {
   switch (block.kind) {
@@ -917,8 +906,7 @@ export class Document {
     return out;
   }
 
-  // The cache keys on the block offset, because a rendered segment holds absolute source offsets.
-  // Two blocks can hold the same text, so `raw` catches a block that changed under one offset.
+  // The cache keys on the block offset, because a segment holds absolute offsets; `raw` catches a change under one offset.
   /** @param {Block} block @param {number} width @returns {Row[]} */
   _blockRows(block, width) {
     if (block.open) return renderBlock(block, width);

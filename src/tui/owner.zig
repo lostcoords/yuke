@@ -1,5 +1,4 @@
-//! The owner channel message. One reactor owner serves QuickJS. Every task copies a plain message
-//! here and never calls QuickJS itself. The daemon reader adds `daemon` frames beside input and tick.
+//! The owner channel message: one reactor owner serves QuickJS, and every other task copies a plain message here.
 const std = @import("std");
 const zio = @import("zio");
 const term_pkg = @import("term");
@@ -8,8 +7,7 @@ const Event = term_pkg.Event;
 
 pub const Channel = zio.Channel(Msg);
 
-/// One owner message: a parser event with owned key text, owned paste text, a synthetic tick, or a
-/// daemon frame.
+/// One owner message: a parser event with owned key or paste text, a synthetic tick, or a daemon frame.
 pub const Msg = union(enum) {
     event: EventBuf,
     paste: []const u8,
@@ -33,8 +31,7 @@ pub const Msg = union(enum) {
     }
 };
 
-/// A frame the daemon reader delivered to the owner. `key` borrows the connection key, which stays
-/// valid until the connection frees. The owner frees the message or ping body.
+/// A daemon frame whose `key` borrows the connection key until the connection frees; the owner frees the body.
 pub const Daemon = struct {
     key: []const u8,
     body: Body,

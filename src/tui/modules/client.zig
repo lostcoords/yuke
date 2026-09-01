@@ -33,8 +33,7 @@ pub const State = enum { disconnected, connecting, ready, closing };
 /// The transport is the only part that differs local and remote. R1 builds `local`; `relay` waits.
 pub const Transport = union(enum) { none, local, relay };
 
-/// A pending JS promise: the two resolver functions held as GC roots until it settles.
-/// A non-null `resync` marks a `session.resync` response that seeds the named replica.
+/// A pending JS promise holding both resolvers as GC roots; a non-null `resync` seeds the named replica.
 const Pending = struct { resolve: Value, reject: Value, resync: ?ResyncTag = null };
 
 /// Bind a resync response to the exact mount that requested it.
@@ -43,8 +42,7 @@ const ResyncTag = struct { sid: SessionId, gen: u64 };
 /// The fold gate for one replica. A broadcast folds only in `synced`.
 const SyncState = enum { needs_resync, resyncing, synced };
 
-/// A replica holds the shared reducer, a monotonic revision, and the fold gate.
-/// `resync_gen` names the in-flight resync, so a stale response never seeds the wrong cut.
+/// A replica holds the reducer, a monotonic revision, and `resync_gen`, so a stale resync never seeds the wrong cut.
 const Replica = struct {
     session: domain.session.Session,
     rev: i32,
@@ -346,8 +344,7 @@ pub const Client = struct {
         }
     }
 
-    /// Fold one broadcast into its replica. R4 emits an index broadcast to JavaScript.
-    /// Return true when the broadcast folds into a replica. Return false for an index event to forward.
+    /// Fold one broadcast into its replica and return true, or return false for an R4 index event to forward.
     fn foldBroadcast(self: *Client, ctx: Context, conn: *Connection, a: std.mem.Allocator, v: std.json.Value) bool {
         const notif = wire.rpc.Notification.jsonParseFromValue(a, v, .{}) catch return true; // drop a malformed frame
         const sid = domain.session.replicaSession(notif.params) orelse return false; // an index event
@@ -463,8 +460,7 @@ pub const Client = struct {
         sendFrame(conn, self.gpa, id, "subscription.set", buf.items) catch failConnection(self, conn);
     }
 
-    /// Reply to a server ping. The owner writes it, so socket writes stay serialized on one side.
-    /// A failed write leaves a partial frame, so it fails the connection.
+    /// Reply to a server ping from the owner, so socket writes stay serialized; a failed write fails the connection.
     fn pong(self: *Client, conn: *Connection, payload: []const u8) void {
         if (!conn.has_transport) return;
         var mask: [4]u8 = undefined;
@@ -572,8 +568,7 @@ fn rejectRoot(ctx: Context, reject: Value, code: []const u8) void {
     ctx.freeValue(e);
 }
 
-/// Return the numeric `error.code` of a response, or null for a missing or invalid code.
-/// The wire serializes `ErrorCode` as its integer value (`unknown_session` = -31000).
+/// Return the numeric `error.code` of a response, or null when it is missing or invalid (`unknown_session` = -31000).
 fn errorCode(obj: std.json.ObjectMap) ?i64 {
     const err = obj.get("error") orelse return null;
     const eobj = switch (err) {
@@ -594,8 +589,7 @@ fn sendFrame(conn: *Connection, gpa: std.mem.Allocator, id: u64, method: []const
     try writeRequest(conn, envelope);
 }
 
-/// Connect to the daemon, complete the handshake, deliver `.connected`, then read frames.
-/// One task keeps `.connected` before any `.closed`. It never calls QuickJS.
+/// Connect, handshake, deliver `.connected`, then read frames; one task orders `.connected` before any `.closed`.
 fn connectionTask(conn: *Connection) void {
     const client = conn.client;
     const io = client.io;
@@ -786,8 +780,7 @@ fn rejectedPromise(ctx: Context, code: [*:0]const u8) Value {
     return promise;
 }
 
-/// Clear a pending exception from a throwing getter or an allocation, then reject with a code.
-/// The owner drains jobs after this call, so a stale exception must not linger in the context.
+/// Clear a pending exception, then reject with a code, because the owner drains jobs and must find none left.
 fn rejectClearing(ctx: Context, code: [*:0]const u8) Value {
     ctx.freeValue(ctx.getException());
     return rejectedPromise(ctx, code);

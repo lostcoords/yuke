@@ -1,5 +1,4 @@
-// yuke:client — the typed client surface over the native `yuke:client-native` bridge. It wraps the
-// natives with error types and JSON decode; the native module owns the transport and the replicas.
+// yuke:client — error types and JSON decode over `yuke:client-native`, which owns the transport and the replicas.
 import { native } from "yuke:client-native";
 import { events } from "yuke:core";
 

@@ -1,7 +1,6 @@
 // yuke:fzy — the fzy fuzzy matcher that ranks picker candidates.
 
-// The fzy algorithm: an affine-gap alignment that rewards word boundaries and consecutive runs.
-// The score runs over code points, so an astral char does not split. See github.com/jhawthorn/fzy.
+// The fzy algorithm over code points, so an astral char never splits. See github.com/jhawthorn/fzy.
 const SCORE_MIN = -Infinity;
 const SCORE_MAX = Infinity;
 const GAP_LEADING = -0.005;
@@ -105,8 +104,7 @@ export function fuzzyMatch(text, query) {
   return M[n - 1];
 }
 
-// Rank `items` by fuzzy score of `query` against textOf(item), dropping non-matches. Ties break by
-// shorter text, then lexicographically. An empty query keeps the input order.
+// Rank `items` by fuzzy score and drop non-matches; ties break by shorter text, then lexicographically.
 /** @template T @param {T[]} items @param {string} query @param {(item: T) => string} textOf @returns {T[]} */
 export function fuzzyRank(items, query, textOf) {
   if (query === "") return items.slice();

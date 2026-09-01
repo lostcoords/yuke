@@ -62,9 +62,7 @@ fn stepKey(host: *Host, key: Key, kind: KeyKind) Error!void {
     }
 }
 
-/// Dispatch one mouse event that stands for `count` equal steps. The owner folds a wheel run, so a
-/// fast scroll costs one dispatch instead of one for every step.
-/// Pixel mode reports pixels, so the event translates to cells first.
+/// Dispatch one mouse event that stands for `count` equal steps, so a fast scroll costs one dispatch.
 pub fn stepMouseRepeat(host: *Host, m: Mouse, count: u32) Error!void {
     std.debug.assert(host.phase == .open);
     std.debug.assert(count >= 1);
@@ -162,8 +160,7 @@ fn dispatch(host: *Host, obj: Value) Error!bool {
     return true;
 }
 
-/// Paint the frame the handlers asked for, then write it. The owner calls this once, after it
-/// drains the queue, so a burst of events costs one paint.
+/// Paint the frame the handlers asked for; the owner calls this once per drained queue, so a burst costs one paint.
 pub fn flushFrame(host: *Host) Error!void {
     const ctx = host.ctx;
     const global = ctx.getGlobalObject();

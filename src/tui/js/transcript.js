@@ -97,8 +97,7 @@ export class Pager {
     this.stuck = this.atBottom();
   }
 
-  // Scroll the least amount that puts row `index` on the screen.
-  // Refresh `stuck` even when the offset is unchanged, so an unfold cannot jump to the tail.
+  // Scroll the least that puts row `index` on the screen, and refresh `stuck` so an unfold cannot jump to the tail.
   /** @param {number} index @returns {void} */
   scrollIntoView(index) {
     if (index < 0 || this._h <= 0) return;
@@ -166,8 +165,7 @@ export class Pager {
     else this.toBottom();
   }
 
-  // The wheel scrolls by `config.mouse.scrollLines`. The protocol has no pixel wheel, so the step
-  // is a line count. `ev.count` holds the steps the owner folded into this event.
+  // The wheel scrolls by `config.mouse.scrollLines` per step, and `ev.count` holds the steps the owner folded in.
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
     if (!isWheel(ev.button) || ev.event !== "press") return false;
@@ -197,8 +195,7 @@ export function rowText(r) {
   return r.text || "";
 }
 
-// The source span under the rendered range [from, to) of a row. A segment with no source, such as
-// a wrapped list indent, adds nothing. Return null when the range maps to no source at all.
+// The source span under the rendered range [from, to), or null when the range maps to no source at all.
 /** @param {TranscriptRow} row @param {number} from @param {number} to @returns {{ from: number, to: number } | null} */
 function rowSourceSpan(row, from, to) {
   const segments = row.segments;
@@ -222,8 +219,7 @@ function rowSourceSpan(row, from, to) {
   return lo < 0 ? null : { from: lo, to: hi };
 }
 
-// The source offset at caret column `col`. A column in a gap, such as a wrap space, takes the end
-// of the source before it. Return -1 when the row carries no source at all.
+// The source offset at caret column `col`, where a gap takes the source end before it, or -1 when the row has none.
 /** @param {TranscriptRow} row @param {number} col @returns {number} */
 function rowSourceAt(row, col) {
   const segments = row.segments;
@@ -242,8 +238,7 @@ function rowSourceAt(row, col) {
   return last;
 }
 
-// Repaint the string range [from, to) of `segments` with `group`. The bounds come from
-// `caretAtCol`, so they always land on a grapheme edge.
+// Repaint the string range [from, to) of `segments` with `group`; `caretAtCol` puts the bounds on a grapheme edge.
 /** @param {Segment[]} segments @param {number} from @param {number} to @param {string} group @returns {Segment[]} */
 function markSelection(segments, from, to, group) {
   if (to <= from) return segments;
@@ -265,8 +260,7 @@ function markSelection(segments, from, to, group) {
   return out;
 }
 
-// Draw styled segments left to right. The row clips as one string, so a split run never repeats
-// the ellipsis and a selection does not move where the row cuts.
+// Draw styled segments left to right, clipping the row as one string, so a split run never repeats the ellipsis.
 /** @param {number} x @param {number} sy @param {number} w @param {Segment[]} segments @returns {void} */
 function drawSegments(x, sy, w, segments) {
   if (w <= 0) return;
@@ -605,8 +599,7 @@ function errorRows(id, error, width, srcBase) {
   return { rows, source: label };
 }
 
-// A virtualized transcript (the Pager's row source). It holds descriptors ({id, type}) plus a
-// wrapped-row cache. An assistant turn renders through yuke:md; only the streaming draft re-renders.
+// A virtualized transcript of {id, type} descriptors plus a wrapped-row cache; only the streaming draft re-renders.
 export class Transcript {
   /** @param {TranscriptOptions} [opts] */
   constructor(opts = {}) {
@@ -629,8 +622,7 @@ export class Transcript {
     this._partDocs = new Map(); // id:partId -> md Document, for text and reasoning parts
     /** @type {Map<string, boolean>} */
     this._expand = new Map(); // id:partId -> user override
-    // A selection holds two logical positions, `{ id, row, col }`. `row` counts the rendered rows
-    // of that message and `col` is a string index into the row text.
+    // A selection holds two `{ id, row, col }` positions, where `row` counts rendered rows and `col` indexes the row text.
     /** @type {Selection | null} */
     this.selection = null;
     this._dragging = false;
@@ -684,8 +676,7 @@ export class Transcript {
     this.clearSelection();
   }
 
-  // Replace the outline. Rare (commit/resync/truncate); a re-commit can change content under a
-  // stable id, so drop the caches. A user fold override stays if its message is still live.
+  // Replace the outline and drop the caches, because a re-commit can change content under a stable id.
   /** @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void} */
   setOutline(messages, active) {
     this._messages = messages || [];
@@ -734,8 +725,7 @@ export class Transcript {
     if (touches) this._reanchor(anchors);
   }
 
-  // A width change rewraps every row, so a row index means other text. The selection moves back to
-  // the same source instead.
+  // A width change rewraps every row, so the selection moves back to the same source instead of the same row index.
   /** @param {number} width @returns {void} */
   _invalidate(width) {
     if (width === this._width) return;
@@ -775,8 +765,7 @@ export class Transcript {
     return this.posAtSource(a.id, a.off);
   }
 
-  // Put the selection back on the same source text. A missing end clears it, so a selection never
-  // moves to text the user did not choose.
+  // Put the selection back on the same source text, and clear it on a missing end rather than move it.
   /** @param {SelectionAnchors | null} anchors @returns {void} */
   _reanchor(anchors) {
     const anchor = anchors && this._posAtAnchor(anchors.a);
@@ -798,8 +787,7 @@ export class Transcript {
     return doc ? doc.blocks() : [];
   }
 
-  // The rendered rows of one message at the drawn width. The array and its rows belong to the
-  // render cache, so only this class may hold them.
+  // The rendered rows of one message at the drawn width, owned by the render cache, so only this class holds them.
   /** @param {number} id @returns {TranscriptRow[]} */
   _rowsFor(id) {
     const i = this._indexOf(id);
@@ -849,8 +837,7 @@ export class Transcript {
     return rowSourceAt(row, pos.col);
   }
 
-  // The position that renders source `offset`, or the first one after it. The end of the source
-  // takes the last position, so a selection that runs to the end survives a rewrap.
+  // The position that renders source `offset`, or the first after it, so a selection to the end survives a rewrap.
   /** @param {number} id @param {number} offset @returns {Position | null} */
   posAtSource(id, offset) {
     const rows = this._rowsFor(id);
@@ -1161,8 +1148,7 @@ export class Transcript {
     return ordered ? { start: a, end: b, si: ia, ei: ib } : { start: b, end: a, si: ib, ei: ia };
   }
 
-  // Return a row range for the rows inside the selection. Keep an empty row in the middle, so a
-  // blank line survives the copy, but drop an empty end row.
+  // Return the row range inside the selection, keeping a middle empty row so a blank line survives the copy.
   /** @param {SelectionRange} range @param {number} i @param {number} k @param {number} len @returns {{ from: number, to: number } | null} */
   _rowRange(range, i, k, len) {
     if (i < range.si || i > range.ei) return null;
@@ -1195,8 +1181,7 @@ export class Transcript {
     return out.join("\n");
   }
 
-  // The markdown under the selection. A mouse copy still takes `selectedText`, so the rendered
-  // text and the source stay separate. A turn with no mapped row is plain text and is its own source.
+  // The markdown under the selection, kept separate from `selectedText`; an unmapped turn is its own source.
   /** @returns {string} */
   selectedSource() {
     const range = this._range();
@@ -1282,8 +1267,7 @@ export class Transcript {
     return out;
   }
 
-  // The committed messages, oldest first, then the streaming draft. Each one is a copy, so a
-  // caller cannot change the transcript through it.
+  // The committed messages oldest first, then the streaming draft, each a copy the caller cannot write through.
   /** @returns {MessageDescriptor[]} */
   messages() {
     const out = this._messages.map((m) => ({ ...m }));
@@ -1307,8 +1291,7 @@ export class Transcript {
     return m ? this.textOf(m.id) : "";
   }
 
-  // Return the fenced block bodies of every message, oldest first. A user turn can also hold a
-  // fence, so no turn type is skipped.
+  // Return the fenced block bodies of every message oldest first, because a user turn can also hold a fence.
   /** @returns {CodeBlock[]} */
   codeBlocks() {
     const out = [];
@@ -1330,8 +1313,7 @@ export class Transcript {
     this.pager.draw(rect);
   }
 
-  // The logical position under a screen cell, or null off the drawn rows. `clamp` pulls a pointer
-  // outside the pane back to the nearest row, so a drag keeps up with it.
+  // The logical position under a screen cell, or null off the drawn rows; `clamp` pulls a drag back to the nearest row.
   /** @param {number} col @param {number} row @param {boolean} clamp @returns {Position | null} */
   posAt(col, row, clamp) {
     const rect = this.pager.rect();
@@ -1355,8 +1337,7 @@ export class Transcript {
     }
   }
 
-  // A left drag selects text. The wheel still scrolls, and a bare click drops the old selection.
-  // A press records the start; a drag opens the range, so a click never leaves a one-cell range.
+  // A left drag selects text: a press records the start and a drag opens the range, so a click leaves no one-cell range.
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
     if (isWheel(ev.button)) return this.pager.onMouse(ev);
@@ -1453,8 +1434,7 @@ export class ChatView {
     return this.transcript.pager;
   }
 
-  // Route by sub-rect, so a click or a wheel step over the composer never moves the transcript.
-  // A captured drag still reaches the transcript, because only a press hits this test.
+  // Route by sub-rect, so a wheel step over the composer never moves the transcript; only a press hits this test.
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
     const r = this.transcript.pager.rect();

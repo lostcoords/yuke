@@ -1,5 +1,4 @@
-// yuke:ui — the widget kit over yuke:core. List/Window are classes to subclass or patch.
-// `ui` exports the pickers. Editor policy lives in yuke:core; presentation lives here.
+// yuke:ui — the widget kit over yuke:core: List and Window to subclass, plus the pickers on `ui`.
 import { term } from "yuke:term";
 import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, slots, isWheel } from "yuke:core";
 import { fuzzyMatch, fuzzyRank } from "yuke:fzy";
@@ -24,8 +23,7 @@ import { fuzzyMatch, fuzzyRank } from "yuke:fzy";
 /** @template T @typedef {{ items?: T[] | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemHeight?: number | undefined, group?: string | undefined, selGroup?: string | undefined, dimGroup?: string | undefined, dimSelGroup?: string | undefined, drawCursor?: boolean | undefined }} ListOptions */
 /** @template T @typedef {{ items?: T[] | undefined, suggest?: (query: string) => T[] | undefined, filterText?: ((item: T) => string) | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onAccept?: ((item: T, index: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: Picker<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined, filter?: boolean | undefined } & WindowOptions} PickOptions */
 
-// The kit adds its highlight groups to the core palette. It adds only a group that is absent, so a
-// theme that set one first keeps it, and a second import does not re-seed.
+// The kit adds only an absent highlight group, so a theme that set one first keeps it and a re-import does not re-seed.
 const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
   // A panel fills with spaces over the terminal background, so it is opaque behind its border.
   UIPanel: { fg: "fg", bg: "bg" },
@@ -87,8 +85,7 @@ export function normalizeCell(cell) {
   return { text: cell.text != null ? String(cell.text) : "", ...cell };
 }
 
-// A scrollable, selectable list. `key(item)` gives a stable identity, so the selection follows its
-// item across a re-sorted `items`. `itemHeight` rows render per item; `format` may return `lines`.
+// A scrollable list where `key(item)` gives a stable identity, so the selection follows its item across a re-sort.
 /** @template T */
 export class List {
   /** @param {ListOptions<T>} [opts] */
@@ -238,15 +235,13 @@ export class List {
     this.moveToEdge(dir);
   }
 
-  // Forget the drawn rect. A container calls this when it draws something else in the same space,
-  // so a click cannot hit a row that left the screen.
+  // Forget the drawn rect when a container draws something else there, so a click cannot hit a row that left.
   /** @returns {void} */
   clearRect() {
     this._rect = null;
   }
 
   // A wheel step moves the cursor, because `draw` always scrolls the selection back into view.
-  // A left press selects the row under the pointer.
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
     const r = this._rect;
@@ -274,8 +269,7 @@ export class List {
     return true;
   }
 
-  // Paint into rect { x, y, w, h }. A selected item fills all its rows; each item draws up to
-  // `itemHeight` lines. Every row repaints each frame, so `format` may be dynamic.
+  // Paint into rect { x, y, w, h }, up to `itemHeight` lines per item; every row repaints, so `format` may be dynamic.
   /** @param {Rect} rect @returns {void} */
   draw(rect) {
     const { x, y, w, h } = rect;
@@ -347,8 +341,7 @@ export class Composer {
     this.scroll = 0;
     /** @type {number | null} */
     this.goalCol = null; // the column a vertical move holds across a short row
-    // A collapsed paste. `start` and `end` index the text; the label replaces them on the screen
-    // only. The text keeps the paste, so a submit sends it even when a span is lost.
+    // A collapsed paste where the label replaces [start, end) on the screen only, so a submit still sends the text.
     /** @type {PasteSpan[]} */
     this.spans = [];
     this.nextPaste = 1;
@@ -639,8 +632,7 @@ function pasteLabel(id, t) {
   return "[Pasted text #" + id + " +" + what + "]";
 }
 
-// These strokes add a line instead of a submit.
-// Alt+Enter and Ctrl+J support a terminal with the legacy encoding.
+// These strokes add a line instead of a submit; Alt+Enter and Ctrl+J cover a legacy terminal encoding.
 const COMPOSER_NEWLINE = { "shift+enter": true, "alt+enter": true, "ctrl+j": true };
 
 // Border glyph sets, keyed by name. Extend by adding an entry.
@@ -651,8 +643,7 @@ export const borders = {
 };
 
 
-// A floating, bordered, titled window centers over the screen as an overlay-stack layer. The
-// interior is winText/winFill (clipped); override drawContent(win) or set a `content`.
+// A floating, bordered, titled window as an overlay layer; override drawContent(win) or set a `content`.
 export class Window {
   /** @param {WindowOptions} [opts] */
   constructor(opts = {}) {

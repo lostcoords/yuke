@@ -1,5 +1,4 @@
-// yuke:defaults — the bundled UI shell: it builds the panes, wires them together, and boots.
-// Each part is a plugin; a user's index.js layers on top.
+// yuke:defaults — the bundled UI shell, built from plugins so a user's index.js layers on top.
 import { command, keymap, copy, clip, text, Node, root, quit, config } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, NAV_KEYS } from "yuke:ui";
@@ -36,8 +35,7 @@ const LOCAL = client.LOCAL;
 
 
 
-// Enter previews the session and stays on the list. Click, `l`, and → move into the chat.
-// The roster belongs to the connection, so the shell names a device for the sidebar.
+// Enter previews the session and stays on the list, while click, `l`, and → move into the chat.
 /** @param {string} connKey @returns {string} */
 function deviceName(connKey) {
   if (connKey === LOCAL) return "local";
@@ -309,9 +307,7 @@ plugins.use({
       "transcript-vim:toggle": () => (plugins.get("transcript-vim") ? plugins.dispose("transcript-vim") : plugins.use(transcriptVim)),
     });
 
-    // Global commands live on ctrl strokes, so they never collide with typing. Window nav is a
-    // ctrl+k prefix (it works during text entry), which leaves ctrl+w for the composer word-erase.
-    // Tab moves between the two regions of the chat pane, with or without a vim layer.
+    // Global commands live on ctrl strokes and window nav behind ctrl+k, which leaves ctrl+w for the composer word-erase.
     ctx.keymap({ tab: "chat:focus-toggle" }, "chat");
 
     // The nav keys drive whichever widget the focused layer offers, so any pane scrolls the same way.

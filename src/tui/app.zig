@@ -13,8 +13,7 @@ const Channel = owner.Channel;
 
 const frame_buf_bytes = 256 * 1024;
 
-/// The largest run of messages one frame absorbs. A longer burst paints before it continues, so
-/// steady input never starves the screen. It also bounds a folded wheel run.
+/// The largest run of messages one frame absorbs, so steady input never starves the screen.
 const drain_max = 64;
 
 /// Bound a test send at one second, so a stalled `serve` fails rather than hangs.
@@ -24,11 +23,9 @@ const send_tries_max = 100;
 pub const user_entry = "index.js";
 
 pub const Options = struct {
-    /// The config directory holds `index.js`.
-    /// A null value skips the user entry.
+    /// The config directory holds `index.js`; null skips the user entry.
     config_dir: ?[]const u8 = null,
-    /// Skip the user entry file.
-    /// `--safe-mode` sets `safe_mode` to `true`.
+    /// Skip the user entry file; `--safe-mode` sets this.
     safe_mode: bool = false,
 };
 
@@ -55,8 +52,7 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
     // Mouse reporting is always on. The in-app selection replaces the selection of the terminal.
     try render.setMouseMode(writer, true);
 
-    // A new session takes this directory as its workspace root. The reactor owns the resolve, so
-    // it runs here and not in `main`.
+    // A new session takes this directory as its workspace root; the reactor owns the resolve.
     var cwd_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const cwd_len = try std.Io.Dir.cwd().realPath(io, &cwd_buf);
 
@@ -101,8 +97,7 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
     try serve(host, &ch);
 }
 
-/// Evaluate `<config_dir>/index.js`. A missing directory or file is not an error.
-/// The path is joined on the heap, so no path length can silently drop the entry.
+/// Evaluate `<config_dir>/index.js` from a heap-joined path; a missing directory or file is not an error.
 fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
     const dir = config_dir orelse return;
     const path = try std.fs.path.joinZ(host.gpa, &.{ dir, user_entry });
@@ -160,8 +155,7 @@ test "a throwing user entry is a JavaScriptFault the loop absorbs" {
     try absorbScriptFault(host, evalUserEntry(host, dir_buf[0..dir_len]));
 }
 
-/// Run `start`, then process queued events with `step`.
-/// A script error keeps the alternate screen. Native quit ends the loop.
+/// Run `start`, then process queued events with `step`. Native quit ends the loop, but a script error does not.
 pub fn serve(host: *Host, ch: *Channel) !void {
     std.debug.assert(host.phase == .open);
     try absorbScriptFault(host, tui_loop.start(host));
@@ -187,8 +181,7 @@ pub fn serve(host: *Host, ch: *Channel) !void {
     }
 }
 
-/// Apply one message. The caller owns the frame, so this never paints. A wheel step joins the open
-/// run; every other message ends that run first, so the order of events never changes.
+/// Apply one message; the caller owns the frame. A wheel step joins the open run, and every other message ends it.
 fn applyMsg(host: *Host, msg: *Msg, wheel: *?tui_loop.WheelRun) !void {
     switch (msg.*) {
         .event => |*e| {
@@ -246,8 +239,7 @@ fn tickTask(host: *Host, ch: *Channel) !void {
     }
 }
 
-/// Absorb a `JavaScriptFault` and keep the loop.
-/// Paint the fault row when the function absorbs a `JavaScriptFault`.
+/// Absorb a `JavaScriptFault`, paint the fault row, and keep the loop.
 fn absorbScriptFault(host: *Host, result: host_mod.Error!void) host_mod.Error!void {
     result catch |err| switch (err) {
         error.JavaScriptFault => report.paintFault(host),
@@ -255,8 +247,7 @@ fn absorbScriptFault(host: *Host, result: host_mod.Error!void) host_mod.Error!vo
     };
 }
 
-/// Read TTY events. Reset the input after a decode error.
-/// Close the channel only on EOF or cancellation. The owner frees the paste text.
+/// Read TTY events. A decode error resets the input, only EOF or cancellation closes the channel, and the owner frees the paste text.
 fn inputTask(gpa: std.mem.Allocator, tty: *term_pkg.Tty, input: *term_pkg.Input, ch: *Channel) !void {
     while (true) {
         const ev = input.readEvent(tty) catch |err| switch (err) {
@@ -280,8 +271,7 @@ fn inputTask(gpa: std.mem.Allocator, tty: *term_pkg.Tty, input: *term_pkg.Input,
     }
 }
 
-/// Watch SIGWINCH. Skip a size when ioctl fails.
-/// `runIo` spawns this task only when the terminal does not send resize events in-band.
+/// Watch SIGWINCH and skip a size when ioctl fails; `runIo` spawns this task only for a terminal with no in-band resize.
 fn winchTask(tty: *term_pkg.Tty, ch: *Channel) !void {
     var watch = try term_pkg.WinsizeWatch.init();
     defer watch.deinit();
@@ -429,8 +419,7 @@ fn sendThrowThenQuit(ch: *Channel) !void {
     try sendBounded(ch, Msg.from(.{ .key_press = .{ .codepoint = 'q' } }));
 }
 
-/// Send with a bound. A stalled consumer fails the test instead of parking the producer forever.
-/// The owner channel holds one message, so a second send blocks when `serve` stops.
+/// Send with a bound, so a stalled consumer fails the test instead of parking the producer forever.
 fn sendBounded(ch: *Channel, msg: Msg) !void {
     var tries: u8 = 0;
     while (true) : (tries += 1) {

@@ -7,8 +7,7 @@ const LOCAL = client.LOCAL;
 
 /** @typedef {{ key: string, notice: true, text: string, up?: never, dest?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, up: true, dest: string, notice?: never, text?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, name: string, path: string, is_git_repo?: boolean, notice?: never, up?: never, dest?: never, text?: never }} ExplorerRow */
 
-// A floating directory navigator over the fs.browse RPC, fuzzy-filtered as you type.
-// Enter/→ descends; ← goes to the parent; Esc closes.
+// A floating directory navigator over the fs.browse RPC: Enter or → descends, ← goes up, and Esc closes.
 /** @param {string | null | undefined} [startPath] */
 function openExplorer(startPath) {
   const state = /** @type {{ path: string, parent: string | null | undefined }} */ ({ path: startPath || "", parent: null });

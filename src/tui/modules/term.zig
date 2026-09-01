@@ -194,9 +194,7 @@ fn cursor(ctx: Context, _: Value, args: []const Value) Value {
     return quickjs.UNDEFINED;
 }
 
-/// Put text on the system clipboard through OSC 52. Return the UTF-8 byte count the write sent,
-/// or -1 when the text is over `clipboardMax`. OSC 52 has no acknowledgement, so a count reports
-/// only that the sequence left this process.
+/// Put text on the clipboard through OSC 52 and return the bytes sent, or -1 over `clipboardMax`; OSC 52 has no acknowledgement.
 fn copyToClipboard(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const render = host.paint.render orelse return ctx.throwTypeError("term.copy: no host");

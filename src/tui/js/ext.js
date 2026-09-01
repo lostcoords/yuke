@@ -1,5 +1,4 @@
-// yuke:ext — the plugin runtime. A Scope owns revertible effects, a Context is the plugin's
-// registration surface, `advice` wraps methods, and `plugins` loads and unloads.
+// yuke:ext — the plugin runtime: a Scope owns revertible effects, a Context registers, and `advice` wraps methods.
 import { command, keymap, route, slots, events, status, style, context, root } from "yuke:core";
 
 /** @typedef {() => void} Disposer */
@@ -138,8 +137,7 @@ function findDescriptor(obj, prop) {
   return undefined;
 }
 
-// Fold the advice around one call: filterArgs, before, the around chain, filterReturn, after.
-// The first-listed `around` is outermost, so the chain wraps in reverse.
+// Fold the advice around one call: filterArgs, before, around, filterReturn, after, with the first `around` outermost.
 /** @param {AdviceRecord} rec @param {object} self @param {any[]} args @returns {any} */
 function applyAdvice(rec, self, args) {
   const list = rec.list;
@@ -166,8 +164,7 @@ function applyAdvice(rec, self, args) {
 }
 
 export const advice = {
-  // Install one advice and return a disposer. The same owner and name replaces in place, so a
-  // reload does not stack. Sorted by `order`, which defaults to 0.
+  // Install one advice, ordered by `order`; the same owner and name replaces in place, so a reload does not stack.
   /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
     if (!WHERE[where]) throw new Error("advise: unknown kind " + where);
@@ -326,8 +323,7 @@ export class Context {
     );
   }
 
-  // Claim an overlay the plugin pushed, so an unload takes it off the stack and leaves no modal.
-  // The claim keys on the layer, so a second push of one layer stays owned. Pass `ui.pick(...).win`.
+  // Claim an overlay by layer so an unload takes it off the stack and a re-push stays owned; pass `ui.pick(...).win`.
   /** @param {Overlay} layer @returns {Overlay} */
   overlay(layer) {
     // A layer off the stack is a caller error, such as a picker handle in place of its window.
@@ -395,8 +391,7 @@ export const plugins = {
   /** @type {Record<string, Scope>} */
   _live: Object.create(null), // name -> Scope
 
-  // Instantiate under a child of `rootScope`. A throw in `apply` reverts the partial scope.
-  // `use` by name is idempotent, so a live name disposes first.
+  // Instantiate under a child of `rootScope`, where a throw in `apply` reverts the partial scope.
   /** @param {Plugin} plugin @param {unknown} [config] @returns {Disposer} */
   use(plugin, config) {
     const def = resolvePlugin(plugin);

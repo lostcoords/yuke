@@ -34,8 +34,7 @@ function openPalette() {
   return opened;
 }
 
-// A vim-style ":" line: it matches a command's short name exactly or by unique prefix, gated to
-// the commands the current context allows.
+// A vim-style ":" line that matches a short name exactly or by unique prefix, among the commands the context allows.
 function commandShortNames() {
   const names = Object.create(null);
   for (const full in command.map) {
@@ -59,8 +58,7 @@ function resolveCommand(word) {
   return hit;
 }
 
-// A single bottom row that edits a command word and runs it on Enter. It is modal while open; Esc,
-// or Backspace past the prompt, cancels.
+// A modal bottom row that edits a command word and runs it on Enter; Esc, or Backspace past the prompt, cancels.
 class CommandLine {
   constructor() {
     this.input = new TextInput({ onChange: () => (this.error = "") });

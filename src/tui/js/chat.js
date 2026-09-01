@@ -70,8 +70,7 @@ export class Chat {
     this.reload();
   }
 
-  // Send composer text into the open session. It returns false with no session, so the composer
-  // keeps the text; the message appears through the "session" fold, not optimistically.
+  // Send composer text into the open session, or return false so the composer keeps the text.
   /** @param {string} text @returns {boolean} */
   send(text) {
     if (!this.sessionId) return this.startChat(text);
@@ -88,8 +87,7 @@ export class Chat {
     client.sessionCancelRun(this.connKey, this.sessionId, true).catch(() => {});
   }
 
-  // A structural change (open, commit, resync): re-pull the outline.
-  // A missing replica must not empty the pane; that would drop user fold overrides.
+  // Re-pull the outline on a structural change; a missing replica must not empty the pane and drop the fold overrides.
   reload() {
     if (!this.sessionId) return;
     const o = client.sessionOutline(this.connKey, this.sessionId);
@@ -105,8 +103,7 @@ export class Chat {
     root.invalidate();
   }
 
-  // Create the session, mount it, then send the first message. The daemon makes a session only
-  // once a chat has something to say.
+  // Create the session, mount it, then send the first message, because the daemon makes a session only on demand.
   /** @param {string} text @returns {boolean} */
   startChat(text) {
     if (this.creating) return false;
@@ -128,8 +125,7 @@ export class Chat {
     client
       .sessionCreate(connKey, params)
       .then((r) => {
-        // The daemon already committed the session, so a cancelled create unmounts its replica.
-        // The protocol has no session delete, so the empty session stays in the daemon's store.
+        // A cancelled create unmounts its replica, but the protocol has no delete, so the empty session stays.
         if (token !== this.gen) {
           client.sessionClose(connKey, r.session.id);
           return null;
@@ -150,8 +146,7 @@ export class Chat {
     return true;
   }
 
-  // Leave the open session and show an empty pane. The daemon makes the session on the first
-  // message, so nothing is created until the user sends one.
+  // Leave the open session and show an empty pane; the daemon makes the next session on the first message.
   newChat() {
     this.gen++;
     this.creating = false;

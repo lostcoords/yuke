@@ -5,16 +5,14 @@ const term_pkg = @import("term");
 const host_mod = @import("host.zig");
 const Host = host_mod.Host;
 
-/// The fault row uses white text on a red background.
-/// The style uses no other color.
+/// The fault row uses white text on a red background and no other color.
 const fault_style: term_pkg.Style = .{
     .fg = .{ .index = 15 },
     .bg = .{ .index = 1 },
     .bold = true,
 };
 
-/// Paint the fault on the bottom row and flush the render.
-/// The rows above keep the partial frame that the failed script left.
+/// Paint the fault on the bottom row and flush; the rows above keep the failed script's partial frame.
 pub fn paintFault(host: *Host) void {
     std.debug.assert(host.phase == .open);
     const render = host.paint.render orelse return;

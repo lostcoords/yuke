@@ -1,5 +1,4 @@
-// The unnamed register. A yank or a delete fills it and `p` reads it. OSC 52 is write only, so a
-// paste can never read the terminal's own clipboard.
+// The unnamed register that a yank or delete fills and `p` reads, because OSC 52 cannot read the terminal clipboard.
 /** @type {{ text: string, linewise: boolean, set: (text: unknown, linewise: unknown) => void }} */
 export const register = {
   text: "",

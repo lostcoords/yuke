@@ -15,8 +15,7 @@ pub const ResolveError = error{
     OutOfMemory,
 };
 
-/// Resolve a module name against `base`. Keep `yuke:` names unchanged.
-/// The user owns the config directory, so the loader applies no containment.
+/// Resolve a module name against `base` and keep `yuke:` names; the user owns the config directory, so nothing contains it.
 pub fn resolve(
     allocator: std.mem.Allocator,
     base: []const u8,
@@ -64,8 +63,7 @@ pub const Loader = struct {
         return compile(ctx, source, name);
     }
 
-    /// Read a module file. The size bound limits the module source.
-    /// Return null when the file is absent, too large, or unreadable. The caller frees the result.
+    /// Read a module file the caller frees, or null when it is absent, too large, or unreadable.
     pub fn readModule(self: *Loader, path: []const u8) error{OutOfMemory}!?[:0]u8 {
         if (!std.fs.path.isAbsolute(path)) return null;
         var file = std.Io.Dir.openFileAbsolute(self.io, path, .{}) catch return null;

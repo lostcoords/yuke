@@ -241,8 +241,7 @@ function metaLabel(row) {
 }
 
 // --- panes --------------------------------------------------------------------------------
-// A pane is a node-leaf view: it owns its rect, draws with draw(focused), and returns whether
-// onKey(ev) consumed the key. The node tree assigns rects and routes focus.
+// A pane is a node-leaf view that owns its rect, draws with draw(focused), and reports whether onKey(ev) consumed.
 
 // The sidebar: merged DeviceFeed rows, newest first, two lines each. Enter previews the pair.
 export class SessionList {
@@ -315,8 +314,7 @@ export class SessionList {
     if (this.onOpen) this.onOpen(row.connKey, row.id, src);
   }
 
-  // A two-line row: an activity mark and title over a faint workspace and model. The active pair
-  // prefixes its title with "▸", so the mark and the active cue stay independent.
+  // A two-line row whose title takes a "▸" prefix when active, so the mark and the active cue stay independent.
   /** @param {SessionRow} row @returns {import("yuke:ui").ListItem} */
   _format(row) {
     const open = this.activeSession();
@@ -374,8 +372,7 @@ export class SessionList {
     }
   }
 
-  // The rows, or an empty/status line. The List paints the two-line rows; the cursor shows only
-  // when the pane is focused.
+  // The rows, or an empty status line; the cursor shows only when the pane is focused.
   /** @param {number} x @param {number} top @param {number} w @param {number} h @param {boolean} focused @returns {void} */
   _drawList(x, top, w, h, focused) {
     if (h <= 0 || w <= 0) {

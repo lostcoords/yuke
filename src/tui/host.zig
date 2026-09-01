@@ -16,11 +16,9 @@ pub const memory_limit: usize = 64 * 1024 * 1024;
 pub const stack_limit: usize = 4 * 1024 * 1024;
 /// Limit jobs per drain so Promise chains do not starve the owner.
 pub const job_budget: u32 = 1024;
-/// Bound one evaluation or callback by interrupt polls, a coarse CPU proxy. Wall time is not used,
-/// so scheduling jitter never aborts a script. QuickJS polls about every 10000 bytecode operations.
+/// Bound one evaluation by interrupt polls, a coarse CPU proxy, so scheduling jitter never aborts a script.
 pub const default_interrupt_budget: u32 = 100_000;
-/// Limit the fault text that the Host stores.
-/// A fixed buffer lets `captureFault` run without an allocation.
+/// Limit the fault text the Host stores, so `captureFault` runs from a fixed buffer without an allocation.
 pub const fault_text_max: usize = 512;
 /// Report this when QuickJS gives no readable text for the exception.
 pub const unknown_fault = "script fault with no message";
@@ -71,8 +69,7 @@ pub const Paint = struct {
     needs_tick: bool = false,
     tick_period_ms: u32 = 450,
     quit_requested: bool = false,
-    /// The reactor tick task waits on this. `setNeedsTick` wakes it when a tick arms or the period changes.
-    /// Null outside `app.run` (tests do not run the tick task).
+    /// The reactor tick task waits on this; `setNeedsTick` wakes it and it is null outside `app.run`.
     tick_wake: ?*zio.ResetEvent = null,
     term_obj: quickjs.Value = quickjs.UNDEFINED,
     /// Own grapheme bytes for the open frame. Reset after the grid clears.
@@ -263,8 +260,7 @@ pub const Host = struct {
         try self.drainJobs();
     }
 
-    /// Evaluate a module on the owner, then drain jobs.
-    /// Module evaluation returns a promise, so a top-level throw becomes a rejection.
+    /// Evaluate a module on the owner, then drain jobs; a top-level throw becomes a promise rejection.
     pub fn evalModule(self: *Host, source: [:0]const u8, filename: [:0]const u8) Error!void {
         std.debug.assert(self.phase == .open);
         self.enterSlice();
@@ -277,8 +273,7 @@ pub const Host = struct {
         try self.checkModulePromise(value);
     }
 
-    /// Turn a rejected module promise into a fault. QuickJS never throws it at the caller.
-    /// No host function returns a promise yet, so a pending module cannot settle later.
+    /// Turn a rejected module promise into a fault, because QuickJS never throws it at the caller.
     fn checkModulePromise(self: *Host, value: quickjs.Value) Error!void {
         if (!self.ctx.isPromise(value)) return;
         switch (self.ctx.promiseState(value)) {
@@ -337,8 +332,7 @@ pub const Host = struct {
         }
     }
 
-    /// QuickJS calls this in the bytecode loop. Do not allocate or run JavaScript.
-    /// Apply the deadline in every live phase so close cannot hang.
+    /// QuickJS calls this in the bytecode loop: do not allocate or run JavaScript, and bound every live phase.
     pub fn onInterrupt(self: *Host) bool {
         if (self.phase == .destroyed) return true;
         self.interrupt_count = self.interrupt_count +| 1;
@@ -359,12 +353,10 @@ pub const Host = struct {
         self.dropPendingException();
     }
 
-    /// Copy the exception text into the fixed buffer.
-    /// The Host allocates no memory after an out-of-memory fault.
+    /// Copy the exception text into the fixed buffer, because the Host allocates nothing after an out-of-memory fault.
     fn captureFault(self: *Host, exc: quickjs.Value) void {
         std.debug.assert(self.fault_text_len == 0);
-        // A conversion can call a user `toString`. A zero budget stops it at the first poll, while
-        // a built-in C conversion still runs.
+        // A conversion can call a user `toString`, so a zero budget stops it at the first poll.
         const saved = self.interrupt_budget;
         defer self.interrupt_budget = saved;
         self.interrupt_budget = 0;
@@ -418,15 +410,13 @@ pub const Host = struct {
         self.ctx.freeValue(exc);
     }
 
-    /// Return the last script fault text.
-    /// Return an empty slice when the Host has no fault.
+    /// Return the last script fault text, or an empty slice when the Host has no fault.
     pub fn faultText(self: *const Host) []const u8 {
         std.debug.assert(self.fault_text_len <= self.fault_text.len);
         return self.fault_text[0..self.fault_text_len];
     }
 
-    /// Clear the fault text.
-    /// The next successful frame calls `clearFault`.
+    /// Clear the fault text; the next successful frame calls this.
     pub fn clearFault(self: *Host) void {
         self.fault_text_len = 0;
     }
