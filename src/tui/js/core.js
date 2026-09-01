@@ -33,7 +33,7 @@ import { term } from "yuke:term";
 /** @typedef {{ stroke: string, kind: "chord" | "operator", at: number, ev: Extract<HostEvent, { type: "key" }> | null }} Pending */
 /** @typedef {{ navBy: (delta: number) => void, navPage: (dir: number) => void, navEdge: (dir: number) => void }} NavTarget */
 /** @typedef {{ [name: string]: KeyEntry[] }} KeyMap */
-/** @typedef {{ map: KeyMap, prefixes: Record<string, string[]>, pending: Pending | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string, opts?: { pending?: "chord" | "operator" }) => () => void, _rebuildPrefixes: () => void, _armKind: (prefix: string) => "chord" | "operator" | null, owns: () => boolean, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, arm: (stroke: string, kind: "chord" | "operator", ev?: Extract<HostEvent, { type: "key" }> | null) => void, disarm: (kind: "chord" | "operator") => string, pendingLabel: () => string, needsTick: () => { periodMs: number } | null, tick: () => void, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
+/** @typedef {{ map: KeyMap, prefixes: Record<string, string[]>, pending: Pending | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string, opts?: { pending?: "chord" | "operator" }) => () => void, _rebuildPrefixes: () => void, _armKind: (prefix: string) => "chord" | "operator" | null, owns: () => boolean, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, arm: (stroke: string, kind: "chord" | "operator", ev?: Extract<HostEvent, { type: "key" }> | null) => void, pendingLabel: () => string, needsTick: () => { periodMs: number } | null, tick: () => void, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
 /** @typedef {{ side?: "left" | "right", order?: number, render: () => string | null | undefined }} StatusSegment */
 /** @typedef {{ side: "left" | "right", order: number, render: () => string | null | undefined }} StatusEntry */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -851,15 +851,6 @@ export const keymap = {
   /** @param {string} stroke @param {"chord" | "operator"} kind @param {Extract<HostEvent, { type: "key" }> | null} [ev] @returns {void} */
   arm(stroke, kind, ev) {
     this.pending = { stroke, kind, at: Date.now(), ev: ev || null };
-  },
-
-  // Clear a pending stroke of `kind` and return the stroke it held.
-  /** @param {"chord" | "operator"} kind @returns {string} */
-  disarm(kind) {
-    const p = this.pending;
-    if (!p || p.kind !== kind) return "";
-    this.pending = null;
-    return p.stroke;
   },
 
   // Return the pending stroke for the status bar.

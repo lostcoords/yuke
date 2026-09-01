@@ -2595,9 +2595,10 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\{
         \\  root.focusView(sidebar);
         \\  const g = { type: "key", code: "char", char: "g", text: "g", event: "press", mods: 0 };
+        \\  const beforeG = status.side("right");
         \\  root.onEvent(g);
         \\  if (keymap.pendingLabel() !== "g") fail.push("showcmd-armed");
-        \\  if (status.side("right").indexOf("g") < 0) fail.push("showcmd-on");
+        \\  if (status.side("right") === beforeG) fail.push("showcmd-on");
         \\  root.onEvent(g);
         \\  if (keymap.pendingLabel() !== "") fail.push("showcmd-off");
         \\  root.focusView(chat);
@@ -2653,15 +2654,46 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\  sidebar.list.navEdge(-1);
         \\  const first = sidebar.list.selectedKey;
         \\  root.onEvent(kev("j"));
-        \\  if (sidebar.list.selectedKey === first) fail.push("nav-j");
+        \\  if (sidebar.list.selectedKey === first) fail.push("sidebar-j-moves-down");
         \\  root.onEvent(kev("k"));
-        \\  if (sidebar.list.selectedKey !== first) fail.push("nav-k");
+        \\  if (sidebar.list.selectedKey !== first) fail.push("sidebar-k-moves-up");
         \\  root.onEvent(kev("G"));
-        \\  if (sidebar.list.selectedKey === first) fail.push("nav-G");
+        \\  if (sidebar.list.selectedKey === first) fail.push("sidebar-G-moves-bottom");
+        \\  const last = sidebar.list.selectedKey;
+        \\  // Every alias drives the same action, so a dropped alias cannot hide behind its partner.
+        \\  const nkey = (code) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0 });
+        \\  root.onEvent(nkey("home"));
+        \\  if (sidebar.list.selectedKey !== first) fail.push("sidebar-home");
+        \\  root.onEvent(nkey("end"));
+        \\  if (sidebar.list.selectedKey !== last) fail.push("sidebar-end");
+        \\  root.onEvent(nkey("up"));
+        \\  if (sidebar.list.selectedKey === last) fail.push("sidebar-up");
+        \\  root.onEvent(nkey("down"));
+        \\  if (sidebar.list.selectedKey !== last) fail.push("sidebar-down");
+        \\  root.onEvent(nkey("page_up"));
+        \\  if (sidebar.list.selectedKey !== first) fail.push("sidebar-page-up");
+        \\  root.onEvent(nkey("page_down"));
+        \\  if (sidebar.list.selectedKey !== last) fail.push("sidebar-page-down");
+        \\  root.onEvent({ type: "key", code: "char", char: "u", text: "u", event: "press", mods: 4 });
+        \\  if (sidebar.list.selectedKey !== first) fail.push("sidebar-ctrl-u");
+        \\  root.onEvent({ type: "key", code: "char", char: "d", text: "d", event: "press", mods: 4 });
+        \\  if (sidebar.list.selectedKey !== last) fail.push("sidebar-ctrl-d");
         \\  root.onEvent(kev("g"));
         \\  root.onEvent(kev("g"));
-        \\  if (sidebar.list.selectedKey !== first) fail.push("nav-gg");
+        \\  if (sidebar.list.selectedKey !== first) fail.push("sidebar-gg-moves-top");
         \\  root.focusView(chat);
+        \\}
+        \\
+        \\// PageUp scrolls the history while the composer types, through the nav binding.
+        \\{
+        \\  root.focusView(chat);
+        \\  if (root.navTarget() !== chat.transcript.pager) fail.push("chat-nav-target");
+        \\  let paged = 0;
+        \\  const realPage = chat.transcript.pager.navPage.bind(chat.transcript.pager);
+        \\  chat.transcript.pager.navPage = (d) => { paged = d; return realPage(d); };
+        \\  root.onEvent({ type: "key", code: "page_up", char: "", text: "", event: "press", mods: 0 });
+        \\  if (paged !== -1) fail.push("pageup-while-typing");
+        \\  chat.transcript.pager.navPage = realPage;
         \\}
         \\
         \\// The real sidebar moves the focus to the chat pane on a click.
@@ -3019,7 +3051,6 @@ test "the chat pane names the region that reads the keyboard" {
         \\const before = v.composer.input.text;
         \\check("transcript-owns", v.onKey(key("char", "b")) === false && toC === 2);
         \\check("transcript-blocks-composer", v.composer.input.text === before);
-        \\check("nav-target-holds", v.navTarget() === v.transcript.pager);
         \\
         \\// The caret belongs to the focused region. A stub stands in for a laid-out composer.
         \\v.composer.cursor = () => ({ x: 1, y: 2, visible: true });
@@ -3060,7 +3091,7 @@ test "a focused transcript takes the keys even while the composer sits in normal
     // Both layers can be on at once. The region atom decides, so the load order cannot.
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { root, Node } from "yuke:core";
+        \\import { root, Node, keymap } from "yuke:core";
         \\import { plugins } from "yuke:ext";
         \\import { ChatView } from "yuke:ui";
         \\import { composerVim, setComposerMode, composerMode } from "yuke:composer-vim";
@@ -3090,6 +3121,16 @@ test "a focused transcript takes the keys even while the composer sits in normal
         \\  root.onEvent(key("j"));
         \\  const movedTranscript = !!(v.cursor() && c0 && v.cursor().y !== c0.y);
         \\  const movedComposer = v.composer.input.caret !== caret0;
+        \\  // An unscoped nav binding must lose to the deeper vim context, so put the cursor where the
+        \\  // vim motion can still move and therefore claims the key.
+        \\  root.onEvent(key("k"));
+        \\  root.onEvent(key("k"));
+        \\  let bare = 0;
+        \\  const offBare = keymap.add({ j: () => { bare++; return true; } });
+        \\  const yTop = v.cursor() ? v.cursor().y : -1;
+        \\  root.onEvent(key("j"));
+        \\  const bareLost = bare === 0 && !!v.cursor() && v.cursor().y !== yTop;
+        \\  offBare();
         \\  // A composer binding must not fire at all while the transcript holds the region.
         \\  root.onEvent(key("i"));
         \\  const leaked = composerMode(v.composer) !== "normal";
@@ -3105,6 +3146,7 @@ test "a focused transcript takes the keys even while the composer sits in normal
         \\  const typed = v.composer.input.text.length === len0 + 1;
         \\  for (const o of offs) o();
         \\  if (!both) return "not-both";
+        \\  if (!bareLost) return "unscoped-binding-won";
         \\  if (leaked) return "composer-leaked";
         \\  if (!typed) return "typing-broken";
         \\  if (!composerBack) return "composer-dead";
@@ -3233,38 +3275,54 @@ test "composer-vim supplies the prompt glyph through the slot" {
     try expectJs(host, "ok");
 }
 
-test "a modal picker serves its own nav keys" {
+test "a modal picker reads the shared nav keys and seals the keymap" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
-    // A modal layer never reaches the keymap, so it names the nav keys itself.
+    // The keys travel through the real dispatch, so the modal boundary is part of the test.
     try host.evalModule(
+        \\import { root, keymap } from "yuke:core";
         \\import { ui } from "yuke:ui";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
-        \\const { content, close } = ui.select(["a", "b", "c"], { format: (x) => ({ text: String(x) }) });
+        \\const { content, close } = ui.select(["a", "b", "c", "d", "e"], { format: (x) => ({ text: String(x) }) });
+        \\const press = (code, char) => root.onEvent(key(code, char));
+        \\const sel = () => content.list.selected();
         \\
-        \\check("starts-first", content.list.selected() === "a");
-        \\content.onKey(key("char", "j"));
-        \\check("picker-j", content.list.selected() === "b");
-        \\content.onKey(key("down"));
-        \\check("picker-down", content.list.selected() === "c");
-        \\content.onKey(key("char", "k"));
-        \\check("picker-k", content.list.selected() === "b");
-        \\content.onKey(key("char", "G"));
-        \\check("picker-G", content.list.selected() === "c");
+        \\press("char", "j");
+        \\check("picker-j", sel() === "b");
+        \\press("down");
+        \\check("picker-down", sel() === "c");
+        \\press("char", "k");
+        \\check("picker-k", sel() === "b");
+        \\press("up");
+        \\check("picker-up", sel() === "a");
+        \\press("char", "G");
+        \\check("picker-G", sel() === "e");
+        \\press("home");
+        \\check("picker-home", sel() === "a");
+        \\press("end");
+        \\check("picker-end", sel() === "e");
         \\
-        \\// `g` waits for its pair, and any other key cancels the wait.
-        \\content.onKey(key("char", "g"));
-        \\content.onKey(key("char", "g"));
-        \\check("picker-gg", content.list.selected() === "a");
-        \\content.onKey(key("char", "G"));
-        \\content.onKey(key("char", "g"));
-        \\content.onKey(key("char", "j"));
-        \\check("picker-g-cancels", content.list.selected() === "c");
+        \\// The paging keys came back with the shared table, so a modal pages like the app.
+        \\press("ctrl+u");
+        \\check("picker-ctrl-u", sel() !== "e");
+        \\press("ctrl+d");
+        \\check("picker-ctrl-d", sel() === "e");
+        \\press("page_up");
+        \\check("picker-page-up", sel() !== "e");
+        \\press("page_down");
+        \\check("picker-page-down", sel() === "e");
+        \\
+        \\// A modal layer seals the keymap, so an app binding cannot fire underneath it.
+        \\let leaked = 0;
+        \\const off = keymap.add({ f9: () => { leaked++; } });
+        \\press("f9");
+        \\check("modal-seals-keymap", leaked === 0);
+        \\off();
         \\
         \\close();
         \\globalThis.result = fail.length ? fail.join(",") : "ok";

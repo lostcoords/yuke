@@ -3,7 +3,7 @@
 import { term } from "yuke:term";
 import { command, keymap, style, status, copy, clip, fill, text, strokeOf, TextInput, caretCol, Node, root, quit, config, events } from "yuke:core";
 import { plugins } from "yuke:ext";
-import { ui, ChatView, List } from "yuke:ui";
+import { ui, ChatView, List, NAV_KEYS } from "yuke:ui";
 import * as client from "yuke:client";
 import { composerVim } from "yuke:composer-vim";
 import { transcriptVim } from "yuke:transcript-vim";
@@ -1276,20 +1276,10 @@ plugins.use({
       fn(target);
       return true;
     };
-    ctx.keymap({
-      j: nav((t) => t.navBy(1)),
-      down: nav((t) => t.navBy(1)),
-      k: nav((t) => t.navBy(-1)),
-      up: nav((t) => t.navBy(-1)),
-      "ctrl+d": nav((t) => t.navPage(1)),
-      page_down: nav((t) => t.navPage(1)),
-      "ctrl+u": nav((t) => t.navPage(-1)),
-      page_up: nav((t) => t.navPage(-1)),
-      home: nav((t) => t.navEdge(-1)),
-      end: nav((t) => t.navEdge(1)),
-      G: nav((t) => t.navEdge(1)),
-      "g g": nav((t) => t.navEdge(-1)),
-    });
+    /** @type {Record<string, () => boolean>} */
+    const navKeys = { "g g": nav((t) => t.navEdge(-1)) };
+    for (const stroke in NAV_KEYS) navKeys[stroke] = nav(/** @type {(t: import("yuke:core").NavTarget) => void} */ (NAV_KEYS[stroke]));
+    ctx.keymap(navKeys);
 
     ctx.keymap({
       "ctrl+n": "chat:new",

@@ -84,6 +84,23 @@ function sameId(a, b) {
   return a != null && b != null && String(a) === String(b);
 }
 
+// The nav vocabulary, written once. The shell binds these strokes and a modal layer reads them.
+/** @typedef {(t: import("yuke:core").NavTarget) => void} NavAction */
+/** @type {Record<string, NavAction | undefined>} */
+export const NAV_KEYS = Object.assign(Object.create(null), /** @type {Record<string, NavAction>} */ ({
+  j: (t) => t.navBy(1),
+  down: (t) => t.navBy(1),
+  k: (t) => t.navBy(-1),
+  up: (t) => t.navBy(-1),
+  "ctrl+d": (t) => t.navPage(1),
+  page_down: (t) => t.navPage(1),
+  "ctrl+u": (t) => t.navPage(-1),
+  page_up: (t) => t.navPage(-1),
+  home: (t) => t.navEdge(-1),
+  end: (t) => t.navEdge(1),
+  G: (t) => t.navEdge(1),
+}));
+
 // A scrollable, selectable list. `key(item)` gives a stable identity, so the selection follows its
 // item across a re-sorted `items`. `itemHeight` rows render per item; `format` may return `lines`.
 /** @template T */
@@ -2113,18 +2130,6 @@ export class ChatView {
   }
 }
 
-// The nav keys a modal picker serves itself, named by the actions `action` already exposes.
-/** @type {Record<string, "next" | "prev" | "top" | "bottom" | undefined>} */
-const PICKER_NAV = Object.assign(Object.create(null), {
-  j: "next",
-  down: "next",
-  k: "prev",
-  up: "prev",
-  home: "top",
-  G: "bottom",
-  end: "bottom",
-});
-
 // A floating, bordered, titled window centers over the screen as an overlay-stack layer. The
 // interior is winText/winFill (clipped); override drawContent(win) or set a `content`.
 export class Window {
@@ -2279,8 +2284,6 @@ export class PickerContent {
   /** @param {T[]} items @param {SelectOptions<T>} opts */
   constructor(items, opts) {
     this.opts = opts;
-    // A modal layer owns its keys, so it holds its own `g` prefix.
-    this._g = false;
     /** @type {Window | null} */
     this.win = null;
     this.list = new List({
@@ -2399,19 +2402,9 @@ export class PickerContent {
       }
     }
     const stroke = strokeOf(ev);
-    const pending = this._g;
-    this._g = false;
-    if (pending && stroke === "g") {
-      this.action("top");
-      return true;
-    }
-    if (stroke === "g") {
-      this._g = true;
-      return true;
-    }
-    const nav = PICKER_NAV[stroke];
+    const nav = NAV_KEYS[stroke];
     if (nav) {
-      this.action(nav);
+      nav(this.list);
       return true;
     }
     if (stroke === "enter") this.accept();
