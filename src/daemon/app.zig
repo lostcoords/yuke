@@ -98,7 +98,7 @@ pub fn run(init: std.process.Init) !void {
         state.config_owner = loaded;
     }
 
-    _ = try state.rebuildCatalog();
+    _ = try state.store.rebuild(&state.db);
 
     // Fetch the cloud documents off the request path. The daemon must answer before the network does.
     var scheduler: scheduler_mod.Scheduler = .init(&state);
@@ -197,6 +197,11 @@ fn ensureDataDir(io: std.Io, dir: []const u8) !void {
 /// The test dependencies. An empty environment allocates nothing, so no test frees it.
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+
+test "the daemon entry still compiles" {
+    // A test build analyzes no `main`, so only this reference reaches the body of `run`.
+    _ = &run;
+}
 
 test "a catalog replacement announces the merged revision" {
     const testing = std.testing;
