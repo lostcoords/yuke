@@ -1522,7 +1522,7 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
 
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { root, Node } from "yuke:core";
+        \\import { root, Node, keymap } from "yuke:core";
         \\import { plugins } from "yuke:ext";
         \\import { ChatView } from "yuke:ui";
         \\import { transcriptVim } from "yuke:transcript-vim";
@@ -1549,43 +1549,47 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\const off = plugins.use(transcriptVim);
         \\// The pane takes no cursor until the focus moves, so typing still works.
         \\check("still-composer", v.cursor().y === v.composer.rect.y);
-        \\root.onEvent(key("tab"));
+        \\v.focusRegion("transcript");
         \\const c0 = v.cursor();
         \\check("transcript-caret", c0 && c0.visible && c0.y < v.composer.rect.y);
         \\
         \\// A motion moves the caret one cell, and it never reaches the composer text.
         \\const before = v.composer.input.text;
-        \\v.onKey(key("char", "l"));
+        \\root.onEvent(key("char", "l"));
         \\const c1 = v.cursor();
         \\check("moved-right", c1.x === c0.x + 1);
-        \\check("no-typing", v.composer.input.text === before);
-        \\v.onKey(key("char", "h"));
+        \\check("transcript-blocks-composer", v.composer.input.text === before);
+        \\root.onEvent(key("char", "h"));
         \\check("moved-left", v.cursor().x === c0.x);
         \\
         \\// "$" goes to the row end and "0" back to its start.
-        \\v.onKey(key("char", "$"));
+        \\root.onEvent(key("char", "$"));
         \\check("row-end", v.cursor().x > c0.x);
-        \\v.onKey(key("char", "0"));
+        \\root.onEvent(key("char", "0"));
         \\check("row-start", v.cursor().x === c0.x);
         \\
         \\// The transcript cursor also stays on a character.
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "$"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "$"));
         \\check("transcript-dollar", v.cursor().x === 2 + v.transcript.rowTextAt("a1", 0).length - 1);
         \\
         \\// "gg" reaches the first row and "G" the last. A shifted letter keeps its case.
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
         \\const top = v.cursor().y;
-        \\v.onKey(key("char", "G"));
+        \\root.onEvent(key("char", "G"));
         \\check("G-moves", v.cursor().y > top);
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
         \\check("gg-returns", v.cursor().y === top);
         \\
-        \\// An unhandled key falls through, so the palette and the window chords still work.
-        \\check("falls-through", v.onKey(key("char", "z")) === false);
+        \\// An unbound key still reaches the global keymap.
+        \\let global = 0;
+        \\const offZ = keymap.add({ z: () => { global++; } });
+        \\root.onEvent(key("char", "z"));
+        \\check("global-keymap-fallback", global === 1 && v.composer.input.text === before);
+        \\offZ();
         \\
         \\// A click places the cursor and takes the focus.
         \\const r = v.transcript.pager.rect();
@@ -1594,62 +1598,62 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\
         \\// "v" starts a selection that the motions extend. Vim visual holds both ends, so the
         \\// character under the cursor stays inside.
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "v"));
-        \\v.onKey(key("char", "l"));
-        \\v.onKey(key("char", "l"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "v"));
+        \\root.onEvent(key("char", "l"));
+        \\root.onEvent(key("char", "l"));
         \\check("visual-inclusive", v.transcript.selectedText() === "alp");
         \\
         \\// "o" puts the cursor on the other end, so the far end grows instead.
         \\const far = v.cursor().x;
-        \\v.onKey(key("char", "o"));
+        \\root.onEvent(key("char", "o"));
         \\check("swap-ends", v.cursor().x < far);
-        \\v.onKey(key("char", "o"));
+        \\root.onEvent(key("char", "o"));
         \\check("swap-back", v.cursor().x === far);
         \\
         \\// "y" copies the rendered text and drops the selection.
-        \\v.onKey(key("char", "y"));
+        \\root.onEvent(key("char", "y"));
         \\check("yank-visual", copied === "alp" && v.transcript.selection === null);
         \\
         \\// "y" alone waits for a second "y", the way vim waits for a motion.
         \\copied = null;
-        \\v.onKey(key("char", "y"));
+        \\root.onEvent(key("char", "y"));
         \\check("yank-pending", copied === null);
-        \\v.onKey(key("char", "y"));
+        \\root.onEvent(key("char", "y"));
         \\check("yank-row", copied === "alpha bravo charlie");
         \\
         \\// "gy" copies the markdown source, so the markup between the ends survives.
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "y"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "y"));
         \\check("yank-source", copied === "alpha **bravo** charlie");
         \\
         \\// "Y" takes whole rows, so the register is linewise even inside visual mode.
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "v"));
-        \\v.onKey(key("char", "l"));
-        \\v.onKey(key("char", "Y"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "v"));
+        \\root.onEvent(key("char", "l"));
+        \\root.onEvent(key("char", "Y"));
         \\check("visual-Y-linewise", register.linewise === true && copied === "alpha bravo charlie");
         \\
         \\// "}" and "{" step by markdown block.
         \\body.a2 = "# Head\n\npara text\n\n- item";
         \\v.transcript.setOutline([{ id: "a1", type: "assistant" }, { id: "a2", type: "assistant" }], null);
         \\paint();
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
         \\const seen = [];
-        \\for (let i = 0; i < 4; i++) { v.onKey(key("char", "}")); seen.push(v.cursor().y); }
+        \\for (let i = 0; i < 4; i++) { root.onEvent(key("char", "}")); seen.push(v.cursor().y); }
         \\check("block-forward", seen.length === 4 && seen[0] < seen[1] && seen[1] < seen[2]);
         \\const back = seen[seen.length - 1];
-        \\v.onKey(key("char", "{"));
+        \\root.onEvent(key("char", "{"));
         \\check("block-back", v.cursor().y < back);
         \\
         \\// A rewrap moves every row index, so the cursor holds its source character instead.
-        \\v.onKey(key("char", "g"));
-        \\v.onKey(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
         \\// Row 1 holds different words at each width, so its row index alone is not the same text.
-        \\v.onKey(key("char", "j"));
+        \\root.onEvent(key("char", "j"));
         \\const srcAt = () => v.transcript.sourceAt(v.transcript.posAt(v.cursor().x, v.cursor().y, false));
         \\const srcBefore = srcAt();
         \\v.rect = { x: 0, y: 0, w: 14, h: 18 };
@@ -1659,21 +1663,37 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\v.rect = { x: 0, y: 0, w: 24, h: 18 };
         \\paint();
         \\
-        \\// A focus jump from another pane drops the transcript grab. Tab inside the pane keeps it.
+        \\// A region change clears visual mode and drops its selection.
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "g"));
+        \\root.onEvent(key("char", "v"));
+        \\root.onEvent(key("char", "l"));
+        \\check("visual-selects", v.transcript.selection !== null);
+        \\v.focusRegion("composer");
+        \\check("region-clears-selection", v.transcript.selection === null);
+        \\v.focusRegion("transcript");
+        \\root.onEvent(key("char", "l"));
+        \\check("region-clears-visual", v.transcript.selection === null);
+        \\
+        \\// A focus jump from another pane hands the keyboard back to the composer.
         \\const side = { name: "sessions", draw() {}, onKey() { return false; } };
         \\root.setRoot(Node.branch("row", new Node(side), new Node(v), 0.3));
         \\root.focusView(v);
         \\paint();
-        \\root.onEvent(key("tab"));
-        \\check("tab-transcript", v.cursor() && v.cursor().y < v.composer.rect.y);
+        \\v.focusRegion("transcript");
+        \\check("region-transcript", v.cursor() && v.cursor().y < v.composer.rect.y);
         \\root.focusView(side);
         \\root.focusView(v);
         \\check("jump-composer", v.cursor() && v.cursor().y === v.composer.rect.y);
         \\
-        \\// An unload gives the caret back to the composer.
+        \\// An unload returns the region and the caret to the composer.
+        \\v.focusRegion("transcript");
         \\off();
-        \\check("unload-restores", v.cursor().y === v.composer.rect.y);
-        \\check("unload-types", v.onKey(key("char", "x")) === true && v.composer.input.text === before + "x");
+        \\check("unload-region", v.focus === "composer");
+        \\check("unload-restores", (v.cursor() || {}).y === v.composer.rect.y);
+        \\root.onEvent(key("char", "x"));
+        \\check("unload-restores-typing", v.composer.input.text === before + "x");
+        \\check("unload-consumes", v.onKey(key("char", "y")) === true && v.composer.input.text === before + "xy");
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "tvim.js");
@@ -1794,10 +1814,10 @@ test "yuke:ui tool parts render, collapse, copy, and toggle" {
         \\const vpaint = () => { term.beginFrame(); v.draw(true); term.endFrame(); };
         \\vpaint();
         \\plugins.use(transcriptVim);
-        \\root.onEvent(key("tab"));
+        \\v.focusRegion("transcript");
         \\vpaint();
         \\check("enter-closed", markerOf(v.transcript.rows(40, 0, 4)) === "▸");
-        \\v.onKey(key("enter"));
+        \\root.onEvent(key("enter"));
         \\check("enter-open", markerOf(v.transcript.rows(40, 0, 6)) === "▾");
         \\const vr = v.transcript.pager.rect();
         \\v.onMouse({ type: "mouse", col: vr.x + 3, row: vr.y, button: "left", event: "press", mods: 0 });
@@ -2603,6 +2623,15 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\  takePrefix(holder);
         \\  if (status.side("right").indexOf("d") >= 0) fail.push("showcmd-off");
         \\}
+        \\// Tab moves the region focus with no vim plugin loaded.
+        \\{
+        \\  const tab = { type: "key", code: "tab", char: "", text: "", event: "press", mods: 0 };
+        \\  if (chat.focus !== "composer") fail.push("boot-region");
+        \\  root.onEvent(tab);
+        \\  if (chat.focus !== "transcript") fail.push("tab-to-transcript");
+        \\  root.onEvent(tab);
+        \\  if (chat.focus !== "composer") fail.push("tab-back");
+        \\}
         \\command.perform("ui:palette");
         \\if (root.overlays.length !== 1) fail.push("palette");
         \\root.popOverlay();
@@ -2742,4 +2771,466 @@ test "an unusable view or layer is rejected at the call" {
     , "reject.js");
     try std.testing.expectEqual(@as(i32, 6), try host.evalInt("globalThis.threw"));
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.cleared"));
+}
+
+test "a route sends an event to the keymap before the view" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var paint: Paint = undefined;
+    try paint.setup(gpa.allocator(), 2, 8);
+    defer paint.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    paint.bind(host);
+    const loop = @import("loop.zig");
+
+    // The pane records a "V" when it reads, and the binding records a "K".
+    try host.evalModule(
+        \\import { View, root, keymap, route } from "yuke:core";
+        \\globalThis.hits = "";
+        \\class Pane extends View {
+        \\  contexts() { return ["pane", "inner"]; }
+        \\  draw() {}
+        \\  onKey(ev) { globalThis.hits += "V"; return true; }
+        \\}
+        \\root.setActive(new Pane());
+        \\keymap.add({ a: () => { globalThis.hits += "K"; } });
+        \\globalThis.route = route;
+        \\globalThis.d1 = null;
+        \\globalThis.d2 = null;
+    , "route.js");
+
+    const press = struct {
+        fn go(h: *Host) !void {
+            try loop.step(h, .{ .key_press = .{ .codepoint = 'a' } });
+            try h.eval("globalThis.result = globalThis.hits;", "r.js");
+        }
+    }.go;
+
+    // With no route the view reads first, which is the behavior before a plugin loads.
+    try press(host);
+    try expectJs(host, "V");
+
+    // A keymap route skips the view entirely.
+    try host.eval("globalThis.d1 = globalThis.route.add(\"keymap\");", "a1.js");
+    try press(host);
+    try expectJs(host, "VK");
+
+    // A deeper context outranks the unscoped route.
+    try host.eval("globalThis.d2 = globalThis.route.add(\"view\", \"inner\");", "a2.js");
+    try press(host);
+    try expectJs(host, "VKV");
+
+    // The disposer uncovers the route it hid.
+    try host.eval("globalThis.d2();", "d2.js");
+    try press(host);
+    try expectJs(host, "VKVK");
+
+    // Depth ranks over registration order, so the older deep route still wins.
+    try host.eval(
+        \\globalThis.d1();
+        \\globalThis.d2 = globalThis.route.add("view", "inner");
+        \\globalThis.d1 = globalThis.route.add("keymap");
+    , "order.js");
+    try press(host);
+    try expectJs(host, "VKVKV");
+
+    // A keymap route drops a paste, because no pane below it reads the event.
+    try host.eval("globalThis.d2();", "d2b.js");
+    try loop.stepPaste(host, "x");
+    try host.eval("globalThis.result = globalThis.hits;", "r.js");
+    try expectJs(host, "VKVKV");
+
+    // With the route gone the paste reaches the view again.
+    try host.eval("globalThis.d1();", "d1.js");
+    try loop.stepPaste(host, "x");
+    try host.eval("globalThis.result = globalThis.hits;", "r.js");
+    try expectJs(host, "VKVKVV");
+
+    try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
+}
+
+test "route.add rejects a destination it cannot serve" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { route } from "yuke:core";
+        \\globalThis.threw = 0;
+        \\for (const bad of ["view ", "KEYMAP", "", null, 1]) {
+        \\  try { route.add(bad); } catch (e) {
+        \\    if (e.message === "route.add: where must be keymap or view") globalThis.threw++;
+        \\  }
+        \\}
+        \\globalThis.result = String(globalThis.threw) + ":" + String(route.reader());
+    , "reject.js");
+    try expectJs(host, "5:view");
+}
+
+test "the composer route stays off while another pane has focus" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // `composer_vim` reads the mode from any chat, so only the `chat` atom can gate the route.
+    try host.evalModule(
+        \\import { root, Node, View } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { ChatView } from "yuke:ui";
+        \\import { composerVim, setComposerMode } from "yuke:composer-vim";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\let seen = 0;
+        \\class Side extends View {
+        \\  contexts() { return ["side"]; }
+        \\  draw() {}
+        \\  onKey(ev) { seen++; return true; }
+        \\}
+        \\const v = new ChatView({ textOf: () => "" });
+        \\const side = new Side();
+        \\root.setRoot(Node.branch("row", new Node(side), new Node(v), 0.3));
+        \\root.focusView(v);
+        \\const off = plugins.use(composerVim);
+        \\const t = v.composer.input;
+        \\const key = (ch) => ({ type: "key", code: "char", char: ch, text: ch, event: "press", mods: 0 });
+        \\const press = (str) => { for (const ch of str) root.onEvent(key(ch)); };
+        \\
+        \\t.setText("abcd");
+        \\setComposerMode(v.composer, "normal");
+        \\// Put the caret on a character, because "x" past the last one deletes nothing.
+        \\press("$");
+        \\
+        \\// The chat holds focus, so the route sends "x" to the binding and the composer edits.
+        \\let before = t.text;
+        \\press("x");
+        \\check("chat-edits", t.text !== before);
+        \\check("chat-keeps-side", seen === 0);
+        \\
+        \\// The side pane holds focus, so the route no longer matches and the pane reads the key.
+        \\root.focusView(side);
+        \\before = t.text;
+        \\press("x");
+        \\check("side-reads", seen === 1);
+        \\check("side-leaves-composer", t.text === before);
+        \\
+        \\// Focus returns to the chat and the route matches again.
+        \\root.focusView(v);
+        \\before = t.text;
+        \\press("x");
+        \\check("chat-again", t.text !== before);
+        \\check("side-untouched", seen === 1);
+        \\
+        \\off();
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "route-panes.js");
+    try expectJs(host, "ok");
+}
+
+test "a pane focus and a terminal focus are separate events" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var paint: Paint = undefined;
+    try paint.setup(gpa.allocator(), 4, 16);
+    defer paint.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    paint.bind(host);
+    const loop = @import("loop.zig");
+
+    // `focus.changed` is the terminal window and `pane.focused` is a leaf inside the layout.
+    try host.evalModule(
+        \\import { root, Node, View, events } from "yuke:core";
+        \\class A extends View { get name() { return "a"; } draw() {} }
+        \\class B extends View { get name() { return "b"; } draw() {} }
+        \\const a = new A();
+        \\const b = new B();
+        \\root.setRoot(Node.branch("row", new Node(a), new Node(b), 0.5));
+        \\root.focusView(a);
+        \\globalThis.log = "";
+        \\events.on("pane.focused", (v) => { globalThis.log += "P" + v.name; });
+        \\events.on("focus.changed", (ev) => { globalThis.log += "T" + (ev.focused ? "1" : "0"); });
+        \\globalThis.root = root;
+        \\globalThis.a = a;
+        \\globalThis.b = b;
+    , "focus.js");
+
+    // The terminal loses and regains focus, which moves no pane.
+    try loop.step(host, .focus_in);
+    try loop.step(host, .focus_out);
+    try host.eval("globalThis.result = globalThis.log;", "r.js");
+    try expectJs(host, "T1T0");
+
+    // A pane focus reports the view that took it.
+    try host.eval("globalThis.root.focusView(globalThis.b); globalThis.result = globalThis.log;", "b.js");
+    try expectJs(host, "T1T0Pb");
+
+    // The focused pane stays focused, so a repeat reports nothing.
+    try host.eval("globalThis.root.focusView(globalThis.b); globalThis.result = globalThis.log;", "b2.js");
+    try expectJs(host, "T1T0Pb");
+
+    try host.eval("globalThis.root.focusView(globalThis.a); globalThis.result = globalThis.log;", "a.js");
+    try expectJs(host, "T1T0PbPa");
+    try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
+}
+
+test "the chat pane names the region that reads the keyboard" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { root, Node, context } from "yuke:core";
+        \\import { ChatView } from "yuke:ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
+        \\
+        \\const v = new ChatView({ textOf: () => "" });
+        \\root.setRoot(new Node(v));
+        \\root.focusView(v);
+        \\// Count where each key lands, which is the routing contract itself.
+        \\let toC = 0;
+        \\let toT = 0;
+        \\const rc = v.composer.onKey.bind(v.composer);
+        \\const rt = v.transcript.onKey.bind(v.transcript);
+        \\v.composer.onKey = (ev) => { toC++; return rc(ev); };
+        \\v.transcript.onKey = (ev) => { toT++; return rt(ev); };
+        \\
+        \\check("default-region", v.focus === "composer");
+        \\// The region is an atom below `chat`, so a binding on it outranks one on the pane.
+        \\check("stack-composer", context.stack().join(",") === "root,chat,composer");
+        \\
+        \\// The composer takes a printable key and the transcript never sees it.
+        \\v.onKey(key("char", "a"));
+        \\check("printable-reaches-composer", toC === 1 && toT === 0);
+        \\
+        \\// A key the composer declines still reaches the transcript, so a scroll works while you type.
+        \\v.onKey(key("page_up"));
+        \\check("composer-decline-reaches-transcript", toC === 2 && toT === 1);
+        \\
+        \\// The focused transcript owns the keyboard outright.
+        \\v.focusRegion("transcript");
+        \\check("stack-transcript", context.stack().join(",") === "root,chat,transcript");
+        \\const before = v.composer.input.text;
+        \\v.onKey(key("char", "b"));
+        \\check("transcript-owns", toT === 2 && toC === 2);
+        \\check("transcript-blocks-composer", v.composer.input.text === before);
+        \\
+        \\// The caret belongs to the focused region. A stub stands in for a laid-out composer.
+        \\v.composer.cursor = () => ({ x: 1, y: 2, visible: true });
+        \\check("caret-hidden", v.cursor() === null);
+        \\v.focusRegion("composer");
+        \\check("composer-caret-restored", (v.cursor() || {}).x === 1);
+        \\
+        \\// A pane focus returns the keyboard to the composer.
+        \\v.focusRegion("transcript");
+        \\v.onFocus();
+        \\check("pane-focus-resets", v.focus === "composer");
+        \\
+        \\let threw = 0;
+        \\try { v.focusRegion("sidebar"); } catch (e) { if (e instanceof TypeError) threw = 1; }
+        \\check("reject-region", threw === 1 && v.focus === "composer");
+        \\
+        \\// A new tree runs `onFocus`, so a remounted pane starts in the composer.
+        \\v.focusRegion("transcript");
+        \\root.setRoot(new Node(v));
+        \\check("remount-resets", v.focus === "composer");
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "region.js");
+    try expectJs(host, "ok");
+}
+
+test "a focused transcript takes the keys even while the composer sits in normal mode" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var paint: Paint = undefined;
+    try paint.setup(gpa.allocator(), 20, 24);
+    defer paint.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    paint.bind(host);
+
+    // Both layers can be on at once. The region atom decides, so the load order cannot.
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { root, Node } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { ChatView } from "yuke:ui";
+        \\import { composerVim, setComposerMode, composerMode } from "yuke:composer-vim";
+        \\import { transcriptVim } from "yuke:transcript-vim";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const key = (char) => ({ type: "key", code: "char", char: char, text: char, event: "press", mods: 0 });
+        \\const body = { a1: "alpha bravo charlie\nsecond line here\nthird line xx" };
+        \\
+        \\const run = (order) => {
+        \\  const v = new ChatView({ textOf: (id) => body[id] || "" });
+        \\  v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
+        \\  root.setRoot(new Node(v));
+        \\  root.focusView(v);
+        \\  v.rect = { x: 0, y: 0, w: 24, h: 18 };
+        \\  term.beginFrame(); v.draw(true); term.endFrame();
+        \\  const offs = order === "composer-first"
+        \\    ? [plugins.use(composerVim), plugins.use(transcriptVim)]
+        \\    : [plugins.use(transcriptVim), plugins.use(composerVim)];
+        \\  v.composer.input.setText("hello\nworld");
+        \\  setComposerMode(v.composer, "normal");
+        \\  v.focusRegion("transcript");
+        \\  // The composer stays in normal mode, so both layers really are live.
+        \\  const both = composerMode(v.composer) === "normal";
+        \\  const c0 = v.cursor();
+        \\  const caret0 = v.composer.input.caret;
+        \\  root.onEvent(key("j"));
+        \\  const movedTranscript = !!(v.cursor() && c0 && v.cursor().y !== c0.y);
+        \\  const movedComposer = v.composer.input.caret !== caret0;
+        \\  // A composer binding must not fire at all while the transcript holds the region.
+        \\  root.onEvent(key("i"));
+        \\  const leaked = composerMode(v.composer) !== "normal";
+        \\  // Back in the composer the same key belongs to the other layer again.
+        \\  v.focusRegion("composer");
+        \\  const caret1 = v.composer.input.caret;
+        \\  root.onEvent(key("j"));
+        \\  const composerBack = v.composer.input.caret !== caret1;
+        \\  // Insert mode must still type, so no transcript binding may own the whole pane.
+        \\  setComposerMode(v.composer, "insert");
+        \\  const len0 = v.composer.input.text.length;
+        \\  root.onEvent(key("h"));
+        \\  const typed = v.composer.input.text.length === len0 + 1;
+        \\  for (const o of offs) o();
+        \\  if (!both) return "not-both";
+        \\  if (leaked) return "composer-leaked";
+        \\  if (!typed) return "typing-broken";
+        \\  if (!composerBack) return "composer-dead";
+        \\  return movedTranscript && !movedComposer ? "transcript" : movedComposer ? "composer" : "neither";
+        \\};
+        \\
+        \\for (const order of ["composer-first", "transcript-first"]) {
+        \\  const got = run(order);
+        \\  if (got !== "transcript") fail.push(order + "=" + got);
+        \\}
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "both.js");
+    try expectJs(host, "ok");
+}
+
+test "a slot lets a plugin answer for a widget it does not own" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { slots, events } from "yuke:core";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\class Base { label() { return slots.get(this, "label") ?? "base"; } }
+        \\class Sub extends Base {}
+        \\const b = new Base();
+        \\const sub = new Sub();
+        \\
+        \\check("default", b.label() === "base");
+        \\const d1 = slots.add(Base, "label", () => "one");
+        \\check("supplied", b.label() === "one");
+        \\// A subclass reads the slots its base class declares.
+        \\check("subclass", sub.label() === "one");
+        \\
+        \\const d2 = slots.add(Base, "label", () => "two");
+        \\check("newest-wins", b.label() === "two");
+        \\
+        \\// A null answer passes the slot on rather than claiming it.
+        \\const d3 = slots.add(Base, "label", () => null);
+        \\check("declines", b.label() === "two");
+        \\d3();
+        \\
+        \\// A disposer uncovers the provider it hid.
+        \\d2();
+        \\check("uncovered", b.label() === "one");
+        \\d1();
+        \\check("restored", b.label() === "base");
+        \\
+        \\// The provider reads the instance, so one class can answer differently per object.
+        \\const d4 = slots.add(Base, "label", (obj) => (obj === sub ? "sub" : null));
+        \\check("per-instance", sub.label() === "sub" && b.label() === "base");
+        \\d4();
+        \\
+        \\// A provider that disposes itself must not hide the provider behind it.
+        \\const d7 = slots.add(Base, "label", () => "older");
+        \\let d8;
+        \\d8 = slots.add(Base, "label", () => { d8(); return null; });
+        \\check("self-dispose-keeps-next", b.label() === "older");
+        \\d7();
+        \\
+        \\// A subclass provider wins before a base provider, whatever the registration order.
+        \\const dBase = slots.add(Base, "label", () => "from-base");
+        \\const dSub = slots.add(Sub, "label", () => "from-sub");
+        \\check("subclass-outranks-base", sub.label() === "from-sub" && b.label() === "from-base");
+        \\dSub();
+        \\check("subclass-falls-back", sub.label() === "from-base");
+        \\dBase();
+        \\
+        \\// A throwing provider is reported and skipped, so the frame survives it.
+        \\let errs = 0;
+        \\const offErr = events.on("ext.error", () => { errs++; });
+        \\const d5 = slots.add(Base, "label", () => { throw new Error("bad"); });
+        \\const d6 = slots.add(Base, "label", () => null);
+        \\check("throw-skipped", b.label() === "base" && errs === 1);
+        \\d5();
+        \\d6();
+        \\offErr();
+        \\
+        \\// The last disposer leaves no registration behind.
+        \\check("no-residue", !slots._map.has(Base.prototype) && !slots._map.has(Sub.prototype));
+        \\
+        \\let threw = 0;
+        \\try { slots.add({}, "x", () => 1); } catch (e) { if (e instanceof TypeError) threw++; }
+        \\try { slots.add(Base, "x", 1); } catch (e) { if (e instanceof TypeError) threw++; }
+        \\check("reject", threw === 2 && b.label() === "base");
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "slots.js");
+    try expectJs(host, "ok");
+}
+
+test "composer-vim supplies the prompt glyph through the slot" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { root, Node } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { ChatView } from "yuke:ui";
+        \\import { composerVim, setComposerMode } from "yuke:composer-vim";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const v = new ChatView({ textOf: () => "" });
+        \\root.setRoot(new Node(v));
+        \\root.focusView(v);
+        \\
+        \\const own = v.composer._prompt();
+        \\// The layer starts in normal mode, so the glyph changes as soon as it loads.
+        \\const off = plugins.use(composerVim);
+        \\check("normal-glyph", v.composer._prompt() === "▪ " && own !== "▪ ");
+        \\setComposerMode(v.composer, "insert");
+        \\check("insert-keeps-own", v.composer._prompt() === own);
+        \\setComposerMode(v.composer, "normal");
+        \\check("normal-again", v.composer._prompt() === "▪ ");
+        \\
+        \\// The unload removes the provider, so normal mode no longer changes the glyph.
+        \\off();
+        \\setComposerMode(v.composer, "normal");
+        \\check("unload-restores", v.composer._prompt() === own);
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "prompt.js");
+    try expectJs(host, "ok");
 }

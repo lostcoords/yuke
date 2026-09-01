@@ -26,6 +26,9 @@ import { term } from "yuke:term";
 /** @typedef {{ t: "atom", name: string } | { t: "eq", name: string, value: string, neg: boolean } | { t: "not", x: ContextNode } | { t: "and", a: ContextNode, b: ContextNode } | { t: "or", a: ContextNode, b: ContextNode }} ContextNode */
 /** @typedef {string | (() => string | null | undefined)} ContextFlag */
 /** @typedef {{ source: string, node: ContextNode, atoms: string[] }} ContextExpr */
+/** @typedef {"keymap" | "view"} RouteWhere */
+/** @typedef {{ where: RouteWhere, context: ContextExpr | null, order: number }} RouteEntry */
+/** @typedef {{ fn: (obj: any) => unknown }} SlotEntry */
 /** @typedef {{ fn: KeyBinding, context: ContextExpr | null, order: number, pending: "chord" | "operator" }} KeyEntry */
 /** @typedef {{ stroke: string, kind: "chord" | "operator", at: number, ev: Extract<HostEvent, { type: "key" }> | null, holder: { pending: string | null } | null }} Pending */
 /** @typedef {{ [name: string]: KeyEntry[] }} KeyMap */
@@ -722,6 +725,34 @@ function currentDepths() {
   return depths;
 }
 
+// Rank the entries by the deepest atom the context matches, then by the newest registration.
+/** @template {{ context: ContextExpr | null, order: number }} T @param {T[]} entries @returns {T[]} */
+function rankByContext(entries) {
+  // An unscoped set needs no stack walk, which is the common stroke.
+  let scoped = false;
+  for (const e of entries) {
+    if (e.context) {
+      scoped = true;
+      break;
+    }
+  }
+  if (!scoped) return entries.slice();
+
+  const depths = currentDepths();
+  /** @type {Array<{ entry: T, depth: number }>} */
+  const hits = [];
+  for (const e of entries) {
+    if (!e.context) {
+      hits.push({ entry: e, depth: 0 });
+      continue;
+    }
+    if (!matchContext(e.context.node, depths)) continue;
+    hits.push({ entry: e, depth: depthOf(e.context, depths) });
+  }
+  hits.sort((a, b) => b.depth - a.depth || b.entry.order - a.entry.order);
+  return hits.map((h) => h.entry);
+}
+
 // New bindings run before old bindings. A space separates chord strokes.
 /** @type {KeymapRegistry} */
 export const keymap = {
@@ -768,30 +799,7 @@ export const keymap = {
   candidates(stroke) {
     const entries = this.map[stroke];
     if (!entries) return [];
-    // The common stroke carries no context, so it skips the stack walk entirely.
-    let scoped = false;
-    for (const e of entries) {
-      if (e.context) {
-        scoped = true;
-        break;
-      }
-    }
-    if (!scoped) return entries.slice();
-
-    const depths = currentDepths();
-
-    /** @type {Array<{ entry: KeyEntry, depth: number }>} */
-    const hits = [];
-    for (const e of entries) {
-      if (!e.context) {
-        hits.push({ entry: e, depth: 0 });
-        continue;
-      }
-      if (!matchContext(e.context.node, depths)) continue;
-      hits.push({ entry: e, depth: depthOf(e.context, depths) });
-    }
-    hits.sort((a, b) => b.depth - a.depth || b.entry.order - a.entry.order);
-    return hits.map((h) => h.entry);
+    return rankByContext(entries);
   },
 
   // Report the binding a stroke runs here and the bindings it shadows.
@@ -914,6 +922,95 @@ export const keymap = {
       }
     }
     return false;
+  },
+};
+
+// A route chooses whether the keymap or the view reads a key first.
+export const route = {
+  /** @type {RouteEntry[]} */
+  _list: [],
+
+  _seq: 0,
+
+  // Register one route under a context and return a disposer.
+  /** @param {RouteWhere} where @param {string} [ctx] @returns {() => void} */
+  add(where, ctx) {
+    if (where !== "keymap" && where !== "view") throw new TypeError("route.add: where must be keymap or view");
+    /** @type {RouteEntry} */
+    const entry = { where, context: ctx ? parseContext(ctx) : null, order: ++this._seq };
+    this._list.push(entry);
+    return once(() => {
+      const i = this._list.indexOf(entry);
+      if (i >= 0) this._list.splice(i, 1);
+    });
+  },
+
+  // The route for the active context. A view reads first when no route matches.
+  /** @returns {RouteWhere} */
+  reader() {
+    if (this._list.length === 0) return "view";
+    const hit = rankByContext(this._list)[0];
+    return hit ? hit.where : "view";
+  },
+};
+
+// A widget asks for a value it does not own. The nearest class answers first, then the newest provider.
+export const slots = {
+  /** @type {Map<object, Record<string, SlotEntry[]>>} */
+  _map: new Map(),
+
+  // Register a provider for one named slot on a class and return a disposer.
+  /** @param {Function} target @param {string} name @param {(obj: any) => unknown} fn @returns {() => void} */
+  add(target, name, fn) {
+    if (typeof target !== "function" || !target.prototype) throw new TypeError("slot: target must be a class");
+    if (typeof fn !== "function") throw new TypeError("slot: fn must be a function");
+    const proto = target.prototype;
+    let names = this._map.get(proto);
+    if (!names) {
+      /** @type {Record<string, SlotEntry[]>} */
+      const fresh = Object.create(null);
+      this._map.set(proto, fresh);
+      names = fresh;
+    }
+    /** @type {SlotEntry} */
+    const entry = { fn };
+    const list = names[name] || (names[name] = []);
+    list.unshift(entry);
+    return once(() => {
+      const held = this._map.get(proto);
+      const cur = held ? held[name] : undefined;
+      if (!held || !cur) return;
+      const i = cur.indexOf(entry);
+      if (i >= 0) cur.splice(i, 1);
+      if (cur.length === 0) delete held[name];
+      if (Object.keys(held).length === 0) this._map.delete(proto);
+    });
+  },
+
+  // The first value a provider gives for `obj`. A null or undefined answer passes the slot on.
+  /** @param {object | null} obj @param {string} name @returns {any} */
+  get(obj, name) {
+    if (!obj) return null;
+    let proto = Object.getPrototypeOf(obj);
+    // A subclass reads the slots its base class declares.
+    while (proto) {
+      const names = this._map.get(proto);
+      const list = names ? names[name] : undefined;
+      if (list) {
+        // A provider may dispose itself, so walk a copy the way the event bus does.
+        for (const e of list.slice()) {
+          // One bad provider must not take the frame with it.
+          try {
+            const v = e.fn(obj);
+            if (v != null) return v;
+          } catch (err) {
+            events.emit("ext.error", err, name);
+          }
+        }
+      }
+      proto = Object.getPrototypeOf(proto);
+    }
+    return null;
   },
 };
 
@@ -1255,6 +1352,8 @@ const CORE_EVENTS = Object.assign(Object.create(null), {
   "mouse.input": 1,
   "paste.input": 1,
   "focus.changed": 1,
+  "pane.focused": 1,
+  "region.focused": 1,
   "clipboard.copied": 1,
   "session.changed": 1,
   "index.changed": 1,
@@ -1578,8 +1677,10 @@ export class RootView {
   setRoot(node) {
     if (node) node.parent = null;
     this.root_node = node;
-    this.activeLeaf = node ? /** @type {Node} */ (node.leaves()[0]) : null;
+    this.activeLeaf = null;
     this._capture = null;
+    // The first leaf takes the focus through the same path, so it runs `onFocus` like any other.
+    if (node) this._setActiveLeaf(/** @type {Node} */ (node.leaves()[0]));
   }
 
   /** @param {ViewLike | null} view @returns {void} */
@@ -1592,6 +1693,8 @@ export class RootView {
   _setActiveLeaf(leaf) {
     if (!leaf || leaf === this.activeLeaf) return;
     this.activeLeaf = leaf;
+    // A listener reads the pane focus before the pane itself, which is the order advice gave it.
+    events.emit("pane.focused", leaf.view);
     callHook(leaf.view, "onFocus");
   }
 
@@ -1832,8 +1935,9 @@ export class RootView {
       // A paste completes no sequence, so it ends the wait rather than leaving it armed.
       if (ev.type === "paste" && keymap.owns()) keymap.pending = null;
       if (!consumedByOverlay("onKey")) {
-        // The keymap owns each event only while it waits for a sequence it armed.
-        const viewTakes = !keymap.owns() && callHook(this.active, "onKey", ev);
+        // The keymap reads a key first while it waits for a sequence, or where a route skips the view.
+        const keymapFirst = keymap.owns() || route.reader() === "keymap";
+        const viewTakes = !keymapFirst && callHook(this.active, "onKey", ev);
         if (!viewTakes && ev.type === "key") keymap.onKey(ev);
       }
     } else if (ev.type === "mouse") {

@@ -1,18 +1,22 @@
 // yuke:transcript-vim — opt-in cursor and yank keys for the transcript.
 import { term } from "yuke:term";
-import { root, copy, strokeOf, caretAtCol, takePrefix, armPrefix, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
+import { root, copy, caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
 import { ChatView } from "yuke:ui";
 import { register, chatView } from "yuke:vim";
 
 /** @typedef {import("yuke:ui").ChatView["transcript"]} Transcript */
 /** @typedef {{ id: number, row: number, col: number }} Position */
-/** @typedef {{ on: boolean, cursor: Position | null, src: number, anchor: Position | null, visual: boolean, goal: number | null, pending: string }} VimState */
+/** @typedef {{ cursor: Position | null, src: number, anchor: Position | null, visual: boolean, goal: number | null }} VimState */
 /** @typedef {{ x: number, y: number, visible: boolean }} Cursor */
-/** @typedef {Extract<HostEvent, { type: "key" }>} HostKeyEvent */
 /** @typedef {Extract<HostEvent, { type: "mouse" }>} HostMouseEvent */
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
 /** @typedef {{ kind: string, at: number, end: number }} Block */
-/** @typedef {{ command: (predicate: () => boolean, map: Record<string, () => void>) => unknown, keymap: (bindings: Record<string, string>) => unknown, advise: (obj: object, prop: string, where: string, fn: (...args: never[]) => unknown) => unknown }} PluginContext */
+
+// The pane owns the region focus, so every binding sits on the atom the pane reports.
+const TRANSCRIPT = "transcript";
+const VISUAL = "transcript && transcript_visual == on";
+const NOT_VISUAL = "transcript && transcript_visual != on";
+const MOTION_KEYS = ["h", "l", "j", "k", "left", "right", "down", "up", "0", "home", "$", "end", "G", "w", "b", "e", "}", "{", "J", "K"];
 
 /** @type {WeakMap<ChatView, VimState>} */
 const panes = new WeakMap();
@@ -21,7 +25,7 @@ const panes = new WeakMap();
 function stateOf(view) {
   let s = panes.get(view);
   if (!s) {
-    s = { on: false, cursor: null, src: -1, anchor: null, visual: false, goal: null, pending: "" };
+    s = { cursor: null, src: -1, anchor: null, visual: false, goal: null };
     panes.set(view, s);
   }
   return s;
@@ -284,118 +288,145 @@ function syncSelection(t, s) {
 
 export const transcriptVim = {
   name: "transcript-vim",
-  /** @param {PluginContext} ctx */
+  /** @param {import("yuke:ext").Context} ctx */
   apply(ctx) {
-    const toggle = () => {
-      const v = /** @type {ChatView | null} */ (chatView());
-      if (!v) return;
-      const s = stateOf(v);
-      s.on = !s.on;
-      s.pending = "";
-      if (s.on) seed(v, s);
-      root.invalidate();
-    };
+    // Normal keys reach the keymap only where the transcript holds the region focus.
+    ctx.route("keymap", TRANSCRIPT);
 
-    ctx.command(() => chatView() != null, { focus: toggle });
-    ctx.keymap({ tab: "transcript-vim:focus" });
+    // Visual mode is plugin state, so it rides a flag rather than an atom.
+    ctx.context({
+      transcript_visual: () => {
+        const v = /** @type {ChatView | null} */ (chatView());
+        const s = v ? panes.get(v) : undefined;
+        return s && s.visual ? "on" : "";
+      },
+    });
 
-    ctx.advise(ChatView.prototype, "onFocus", "before", /** @this {ChatView} @returns {void} */ function () {
-      const s = panes.get(this);
+    // A region change ends visual mode, so a return to the transcript starts clean.
+    ctx.on("region.focused", /** @param {ChatView} view @param {import("yuke:ui").ChatRegion} region @returns {void} */ (view, region) => {
+      const s = panes.get(view);
       if (!s) return;
-      s.on = false;
-      s.pending = "";
       s.visual = false;
       s.anchor = null;
-      this.transcript.clearSelection();
+      if (region !== "transcript") view.transcript.clearSelection();
     });
 
-    ctx.advise(ChatView.prototype, "onKey", "around", /** @this {ChatView} @param {(ev: HostEvent) => boolean} inner @param {HostKeyEvent} ev @returns {boolean} */ function (inner, ev) {
-      const s = panes.get(this);
-      if (!s || !s.on) return inner(ev);
-
-      const t = this.transcript;
-      if (!s.cursor) seed(this, s);
-      const active = /** @type {{ cursor: Position }} */ (s);
+    /** @param {(view: ChatView, s: VimState, t: Transcript) => boolean} fn @returns {() => boolean} */
+    const act = (fn) => () => {
+      // The binding context already limits this to a focused transcript in the active pane.
+      const view = /** @type {ChatView | null} */ (chatView());
+      if (!view) return false;
+      const s = stateOf(view);
+      const t = view.transcript;
+      if (!s.cursor) seed(view, s);
       reanchor(t, s);
-      const k = strokeOf(ev);
-      const first = takePrefix(s);
-      if (first === "g") {
-        if (k === "g" && toEnd(t, s, false)) {
-          holdCol(t, s);
-          syncSelection(t, s);
-          t.ensureVisible(active.cursor);
-          return place(this, s);
-        }
-        if (k === "y") {
-          yank(t, s, true);
-          return place(this, s);
-        }
-      }
-      if (first === "y") {
-        if (k === "y") yank(t, s, false);
-        return place(this, s);
-      }
-      if (k === "g") {
-        armPrefix(s, "g");
-        return place(this, s);
-      }
+      return fn(view, s, t);
+    };
 
-      if (k === "enter") {
-        const hit = t.partAt(s.cursor);
-        if (hit && (hit.kind === "tool-header" || hit.kind === "tool-body" || hit.kind === "reasoning-header" || hit.kind === "reasoning-body")) {
-          t.togglePart(hit.id, hit.partId);
-          const header = t.partHeader(hit.id, hit.partId);
-          if (header) s.cursor = header;
-          t.ensureVisible(active.cursor);
-        }
-        return place(this, s);
-      }
-      if (k === "esc") {
-        s.visual = false;
-        s.anchor = null;
-        t.clearSelection();
-        return place(this, s);
-      }
-      if (k === "v") {
-        s.visual = !s.visual;
-        s.anchor = s.visual ? s.cursor : null;
-        if (s.visual) syncSelection(t, s);
-        else t.clearSelection();
-        return place(this, s);
-      }
-      if (k === "o" && s.visual) {
-        const swap = s.anchor;
-        s.anchor = s.cursor;
-        s.cursor = swap;
-        syncSelection(t, s);
-        t.ensureVisible(active.cursor);
-        return place(this, s);
-      }
-      if (k === "Y") {
-        if (s.visual) expandLines(t, s);
-        yank(t, s, false, true);
-        return place(this, s);
-      }
-      if (k === "y") {
-        if (s.visual) yank(t, s, false, false);
-        else armPrefix(s, "y");
-        return place(this, s);
-      }
-
-      if (k !== "j" && k !== "k" && k !== "up" && k !== "down") s.goal = null;
-      if (!move(t, s, k)) return false;
+    // A motion holds the column, syncs a visual selection, and scrolls the cursor into view.
+    /** @param {ChatView} view @param {VimState} s @param {Transcript} t @returns {boolean} */
+    const settle = (view, s, t) => {
       holdCol(t, s);
       syncSelection(t, s);
-      t.ensureVisible(active.cursor);
-      return place(this, s);
-    });
+      t.ensureVisible(/** @type {Position} */ (s.cursor));
+      return place(view, s);
+    };
 
-    ctx.advise(ChatView.prototype, "cursor", "around", /** @this {ChatView} @param {() => Cursor | null} inner @returns {Cursor | null} */ function (inner) {
-      const s = panes.get(this);
-      if (!s || !s.on) return inner();
-      if (!s.cursor) seed(this, s);
-      reanchor(this.transcript, s);
-      return cursorOf(this.transcript, s.cursor) || inner();
+    /** @type {Record<string, () => boolean>} */
+    const motions = {};
+    for (const k of MOTION_KEYS) {
+      motions[k] = act((view, s, t) => {
+        // Only a vertical motion keeps the goal column.
+        if (k !== "j" && k !== "k" && k !== "up" && k !== "down") s.goal = null;
+        if (!move(t, s, k)) return false;
+        return settle(view, s, t);
+      });
+    }
+    ctx.keymap(motions, TRANSCRIPT);
+
+    ctx.keymap(
+      {
+        enter: act((view, s, t) => {
+          const hit = t.partAt(/** @type {Position} */ (s.cursor));
+          if (hit && (hit.kind === "tool-header" || hit.kind === "tool-body" || hit.kind === "reasoning-header" || hit.kind === "reasoning-body")) {
+            t.togglePart(hit.id, hit.partId);
+            const header = t.partHeader(hit.id, hit.partId);
+            if (header) s.cursor = header;
+            t.ensureVisible(/** @type {Position} */ (s.cursor));
+          }
+          return place(view, s);
+        }),
+        esc: act((view, s, t) => {
+          s.visual = false;
+          s.anchor = null;
+          t.clearSelection();
+          return place(view, s);
+        }),
+        v: act((view, s, t) => {
+          s.visual = !s.visual;
+          s.anchor = s.visual ? s.cursor : null;
+          if (s.visual) syncSelection(t, s);
+          else t.clearSelection();
+          return place(view, s);
+        }),
+        Y: act((view, s, t) => {
+          if (s.visual) expandLines(t, s);
+          yank(t, s, false, true);
+          return place(view, s);
+        }),
+      },
+      TRANSCRIPT,
+    );
+
+    // `o` swaps the ends of a selection and `y` copies it, so both need visual mode.
+    ctx.keymap(
+      {
+        o: act((view, s, t) => {
+          const swap = s.anchor;
+          s.anchor = s.cursor;
+          s.cursor = swap;
+          syncSelection(t, s);
+          t.ensureVisible(/** @type {Position} */ (s.cursor));
+          return place(view, s);
+        }),
+        y: act((view, s, t) => {
+          yank(t, s, false, false);
+          return place(view, s);
+        }),
+      },
+      VISUAL,
+    );
+
+    ctx.keymap(
+      {
+        "g g": act((view, s, t) => (toEnd(t, s, false) ? settle(view, s, t) : false)),
+        "g y": act((view, s, t) => {
+          yank(t, s, true);
+          return place(view, s);
+        }),
+      },
+      TRANSCRIPT,
+    );
+
+    // Outside visual mode `yy` waits like an operator, so a pause never cancels it.
+    ctx.keymap(
+      {
+        "y y": act((view, s, t) => {
+          yank(t, s, false);
+          return place(view, s);
+        }),
+      },
+      NOT_VISUAL,
+      { pending: "operator" },
+    );
+
+    // The transcript supplies the caret only while it holds the region.
+    ctx.slot(ChatView, "cursor", /** @param {ChatView} view @returns {Cursor | null} */ (view) => {
+      if (view.focus !== "transcript") return null;
+      const s = stateOf(view);
+      if (!s.cursor) seed(view, s);
+      reanchor(view.transcript, s);
+      return cursorOf(view.transcript, s.cursor);
     });
 
     ctx.advise(ChatView.prototype, "onMouse", "around", /** @this {ChatView} @param {(ev: HostEvent) => boolean} inner @param {HostMouseEvent} ev @returns {boolean} */ function (inner, ev) {
@@ -403,19 +434,16 @@ export const transcriptVim = {
       if (ev.event !== "press" || ev.button !== "left") return taken;
       const s = stateOf(this);
       const pos = this.transcript.posAt(ev.col, ev.row, false);
+      // A click is the plugin's own way into the region, so it moves the focus itself.
       if (!pos) {
-        s.on = false;
-        s.visual = false;
-        s.anchor = null;
-        s.pending = "";
+        this.focusRegion("composer");
         return taken;
       }
-      s.on = true;
+      this.focusRegion("transcript");
       s.cursor = pos;
       s.goal = null;
       s.visual = false;
       s.anchor = null;
-      s.pending = "";
       return place(this, s);
     });
 
@@ -424,6 +452,8 @@ export const transcriptVim = {
       if (view) {
         panes.delete(view);
         view.transcript.clearSelection();
+        // The region outlives the plugin, so an unload hands the keyboard back to the composer.
+        view.focusRegion("composer");
       }
       root.invalidate();
     };

@@ -1251,12 +1251,19 @@ plugins.use({
       "copy:code": () => openCodePicker(),
       "model:pick": () => openModelPicker(),
       "chat:new": () => chatSession.newChat(),
+      "chat:focus-toggle": () => {
+        chat.focusRegion(chat.focus === "transcript" ? "composer" : "transcript");
+        root.invalidate();
+      },
       "composer-vim:toggle": () => (plugins.get("composer-vim") ? plugins.dispose("composer-vim") : plugins.use(composerVim)),
       "transcript-vim:toggle": () => (plugins.get("transcript-vim") ? plugins.dispose("transcript-vim") : plugins.use(transcriptVim)),
     });
 
     // Global commands live on ctrl strokes, so they never collide with typing. Window nav is a
     // ctrl+k prefix (it works during text entry), which leaves ctrl+w for the composer word-erase.
+    // Tab moves between the two regions of the chat pane, with or without a vim layer.
+    ctx.keymap({ tab: "chat:focus-toggle" }, "chat");
+
     ctx.keymap({
       "ctrl+n": "chat:new",
       "ctrl+p": "ui:palette",

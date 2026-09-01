@@ -1,6 +1,6 @@
 // yuke:ext — the plugin runtime. A Scope owns revertible effects, a Context is the plugin's
 // registration surface, `advice` wraps methods, and `plugins` loads and unloads.
-import { command, keymap, events, status, style, context } from "yuke:core";
+import { command, keymap, route, slots, events, status, style, context } from "yuke:core";
 
 /** @typedef {() => void} Disposer */
 /** @typedef {() => unknown} Effect */
@@ -15,6 +15,7 @@ import { command, keymap, events, status, style, context } from "yuke:core";
 /** @typedef {Parameters<typeof command.add>[0]} CommandPredicate */
 /** @typedef {Parameters<typeof command.add>[1]} CommandMap */
 /** @typedef {Parameters<typeof keymap.add>[0]} KeyBindings */
+/** @typedef {Parameters<typeof route.add>[0]} RouteWhere */
 /** @typedef {Parameters<typeof status.add>[0]} StatusSegment */
 /** @typedef {Parameters<typeof style.add>[0]} StyleGroups */
 /** @typedef {Parameters<typeof context.set>[0]} ContextFlags */
@@ -285,6 +286,16 @@ export class Context {
   /** @param {KeyBindings} bindings @param {string} [ctx] @param {Parameters<typeof keymap.add>[2]} [opts] @returns {Disposer} */
   keymap(bindings, ctx, opts) {
     return this.scope.effect(() => keymap.add(bindings, ctx, opts));
+  }
+
+  /** @param {RouteWhere} where @param {string} [ctx] @returns {Disposer} */
+  route(where, ctx) {
+    return this.scope.effect(() => route.add(where, ctx));
+  }
+
+  /** @param {Function} target @param {string} name @param {(obj: any) => unknown} fn @returns {Disposer} */
+  slot(target, name, fn) {
+    return this.scope.effect(() => slots.add(target, name, fn));
   }
 
   /** @param {ContextFlags} flags @returns {Disposer} */

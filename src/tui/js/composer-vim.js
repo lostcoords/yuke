@@ -9,7 +9,7 @@ import {
   prevWordStart,
   nextWordEnd,
 } from "yuke:core";
-import { ChatView, Composer } from "yuke:ui";
+import { Composer } from "yuke:ui";
 import { register, chatView } from "yuke:vim";
 
 /** @typedef {import("yuke:ui").Composer} ComposerType */
@@ -20,7 +20,7 @@ import { register, chatView } from "yuke:vim";
 const NORMAL_PROMPT = "▪ ";
 
 // The context every normal-mode binding shares. The `chat` atom keeps them off another pane.
-const NORMAL_MODE = "chat && composer_vim == normal";
+const NORMAL_MODE = "composer && composer_vim == normal";
 
 // Normal mode maps these strokes to `normalKey`.
 const NORMAL_KEYS = [
@@ -248,10 +248,8 @@ export const composerVim = {
     // The plugin exposes the mode as a flag, so each binding gates on it.
     ctx.context({ composer_vim: () => composerMode(chatComposer()) || "" });
 
-    // Normal mode routes each event to the keymap, so no pane inside the chat handles it.
-    ctx.advise(ChatView.prototype, "onKey", "around", /** @this {{ composer: ComposerType }} @param {(ev: HostEvent) => boolean} inner @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */ function (inner, ev) {
-      return composerMode(this.composer) === "normal" ? false : inner(ev);
-    });
+    // Normal mode sends a key to the keymap, so no pane inside the chat reads it.
+    ctx.route("keymap", NORMAL_MODE);
 
     /** @param {string} k @returns {() => boolean} */
     const motion = (k) => () => {
@@ -276,9 +274,8 @@ export const composerVim = {
       { pending: "operator" },
     );
 
-    ctx.advise(Composer.prototype, "_prompt", "around", /** @this {ComposerType} @param {() => string} inner @returns {string} */ function (inner) {
-      return composerMode(this) === "normal" ? NORMAL_PROMPT : inner();
-    });
+    // A null answer leaves the composer its own glyph.
+    ctx.slot(Composer, "prompt", /** @param {ComposerType} c @returns {string | null} */ (c) => (composerMode(c) === "normal" ? NORMAL_PROMPT : null));
 
     ctx.keymap({
       "ctrl+w h": "focus:left",

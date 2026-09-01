@@ -1,7 +1,7 @@
 // yuke:ui — the widget kit over yuke:core. List/Pager/Window are classes to subclass or patch.
 // `ui` exports the pickers. Editor policy lives in yuke:core; presentation lives here.
 import { term } from "yuke:term";
-import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme, takePrefix, armPrefix, style, config, isWheel } from "yuke:core";
+import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme, takePrefix, armPrefix, style, config, events, slots, isWheel } from "yuke:core";
 import { Document, isLinear } from "yuke:md";
 
 /** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
@@ -26,6 +26,7 @@ import { Document, isLinear } from "yuke:md";
 /** @typedef {{ span: PasteSpan, start: number, end: number, delta: number }} ProjectionPart */
 /** @typedef {{ text: string, parts: ProjectionPart[] }} Projection */
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
+/** @typedef {"composer" | "transcript"} ChatRegion */
 /** @typedef {{ prompt?: string | undefined, placeholder?: string | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, maxRows?: number | undefined }} ComposerOptions */
 /** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: ((id: number) => readonly Wire.AssistantPart[]) | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} ChatViewOptions */
 /** @typedef {{ tl: string, t: string, tr: string, r: string, br: string, b: string, bl: string, l: string }} BorderSet */
@@ -1863,7 +1864,8 @@ export class Composer {
 
   /** @returns {string} */
   _prompt() {
-    return this.prompt;
+    const supplied = slots.get(this, "prompt");
+    return typeof supplied === "string" ? supplied : this.prompt;
   }
 
   /** @param {number} w @returns {number} */
@@ -2077,19 +2079,41 @@ export class ChatView {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
     this.transcript = new Transcript({ textOf: opts.textOf, partsOf: opts.partsOf, onSelect: opts.onSelect, empty: opts.empty });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
+    // This field names the region that reads the keyboard. The mouse routes by rect instead.
+    /** @type {ChatRegion} */
+    this.focus = "composer";
   }
 
   get name() {
     return "chat";
   }
 
-  // The pane's default caret is the composer.
+  // The focused region names the deeper atom, so a binding can own one region alone.
+  /** @returns {string[]} */
+  contexts() {
+    return ["chat", this.focus];
+  }
+
+  // A pane focus returns the keyboard to the composer.
   /** @returns {void} */
-  onFocus() {}
+  onFocus() {
+    this.focusRegion("composer");
+  }
+
+  /** @param {ChatRegion} name @returns {void} */
+  focusRegion(name) {
+    if (name !== "composer" && name !== "transcript") throw new TypeError("focusRegion: unknown region " + name);
+    if (this.focus === name) return;
+    this.focus = name;
+    events.emit("region.focused", this, name);
+  }
 
   /** @param {HostEvent} ev @returns {boolean} */
   onKey(ev) {
-    return this.composer.onKey(ev) || this.transcript.onKey(/** @type {Extract<HostEvent, { type: "key" }>} */ (ev));
+    const key = /** @type {Extract<HostEvent, { type: "key" }>} */ (ev);
+    // A focused transcript owns the keyboard, and otherwise it reads what the composer declines.
+    if (this.focus === "transcript") return this.transcript.onKey(key);
+    return this.composer.onKey(ev) || this.transcript.onKey(key);
   }
 
   // Route by sub-rect, so a click or a wheel step over the composer never moves the transcript.
@@ -2121,9 +2145,12 @@ export class ChatView {
     this.composer.draw(focused);
   }
 
+  // The caret belongs to the focused region, so a transcript with no cursor provider shows none.
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
   cursor() {
-    return this.composer.cursor();
+    const supplied = /** @type {{ x: number, y: number, visible: boolean } | null} */ (slots.get(this, "cursor"));
+    if (supplied) return supplied;
+    return this.focus === "composer" ? this.composer.cursor() : null;
   }
 }
 
