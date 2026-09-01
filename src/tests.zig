@@ -12,6 +12,7 @@ test {
     _ = @import("cloud/cloud.zig");
     _ = @import("catalog/catalog.zig");
     _ = @import("net/http.zig");
+    _ = @import("provider/oauth/oauth.zig");
     _ = @import("provider/retry.zig");
     _ = @import("tools/tool.zig");
     _ = @import("tools/read.zig");
