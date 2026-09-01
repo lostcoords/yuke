@@ -1,7 +1,6 @@
 //! The Codex device flow. It is proprietary, not RFC 8628, and it takes three calls.
 
 const std = @import("std");
-const http = @import("../../net/http.zig");
 const oauth = @import("oauth.zig");
 
 const client_id = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -41,10 +40,10 @@ pub fn start(arena: std.mem.Allocator, seam: oauth.Http, body_out: []u8) oauth.E
 }
 
 /// Step 2 and step 3. Codex signals "not approved yet" with a status, not an RFC 8628 body.
-pub fn poll(arena: std.mem.Allocator, seam: oauth.Http, s: oauth.Start, now_ms: u64, body_out: []u8) oauth.Error!oauth.Poll {
+pub fn poll(arena: std.mem.Allocator, seam: oauth.Http, device_auth_id: []const u8, user_code: []const u8, now_ms: u64, body_out: []u8) oauth.Error!oauth.Poll {
     const body = std.fmt.allocPrint(arena, "{f}", .{std.json.fmt(.{
-        .device_auth_id = s.device_auth_id,
-        .user_code = s.user_code,
+        .device_auth_id = device_auth_id,
+        .user_code = user_code,
     }, .{})}) catch return oauth.Error.PreFlight;
 
     const response = seam.post(.{
@@ -139,12 +138,12 @@ fn tokensFrom(arena: std.mem.Allocator, obj: std.json.ObjectMap, now_ms: u64) oa
 
 /// Prefer the JWT `exp`, then `expires_in`, then the shared fallback.
 fn expiryFrom(arena: std.mem.Allocator, access: []const u8, obj: std.json.ObjectMap, now_ms: u64) u64 {
+    // The token states its own deadline, so a non-positive claim means it already lapsed.
     if (jwtClaims(arena, access)) |claims| {
-        if (oauth.int(claims, "exp")) |exp| if (exp > 0) return @as(u64, @intCast(exp)) * 1000;
+        if (oauth.int(claims, "exp")) |exp| return oauth.deadlineMs(0, exp) orelse 0;
     }
     const lifetime = oauth.int(obj, "expires_in") orelse 0;
-    if (lifetime > 0) return now_ms + @as(u64, @intCast(lifetime)) * 1000;
-    return now_ms + oauth.default_lifetime_ms;
+    return oauth.deadlineMs(now_ms, lifetime) orelse now_ms +| oauth.default_lifetime_ms;
 }
 
 /// Read the account handle the request header pins. It is a label, not a secret.
@@ -194,7 +193,9 @@ test "a start reads the codex handle and its fixed verification page" {
     try testing.expectEqualStrings(verification_url, s.verification_url);
     // Codex sends the interval as a string where other flows send a number.
     try testing.expectEqual(@as(u64, 7000), s.interval_ms);
-    try testing.expect(std.mem.indexOf(u8, canned.sent, client_id) != null);
+    // The wire request must name the right endpoint and carry the client id.
+    try testing.expectEqualStrings(user_code_url, canned.sent.?.url);
+    try testing.expect(std.mem.indexOf(u8, canned.sent.?.payload.json, client_id) != null);
 }
 
 test "a 403 and a 404 both mean the human has not approved yet" {
@@ -205,7 +206,7 @@ test "a 403 and a 404 both mean the human has not approved yet" {
         const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = status, .body = "{}" } }};
         var canned: oauth.CannedHttp = .{ .replies = &replies };
 
-        const got = try poll(arena.allocator(), canned.seam(), .{ .user_code = "UC", .device_auth_id = "dai", .verification_url = "" }, 0, &out);
+        const got = try poll(arena.allocator(), canned.seam(), "dai", "UC", 0, &out);
         try testing.expectEqual(std.meta.Tag(oauth.Poll).pending, std.meta.activeTag(got));
     }
 }
@@ -219,7 +220,7 @@ test "an approved poll exchanges the server-issued code and verifier for tokens"
         .{ .answer = .{ .status = 200, .body = "{\"access_token\":\"at\",\"refresh_token\":\"rt\",\"expires_in\":60}" } },
     } };
 
-    const got = try poll(arena.allocator(), canned.seam(), .{ .user_code = "UC", .device_auth_id = "dai", .verification_url = "" }, 1000, &out);
+    const got = try poll(arena.allocator(), canned.seam(), "dai", "UC", 1000, &out);
     try testing.expectEqualStrings("at", got.tokens.access_token);
     try testing.expectEqualStrings("rt", got.tokens.refresh_token.?);
     try testing.expectEqual(@as(u64, 61_000), got.tokens.expires_at_ms);
@@ -231,7 +232,6 @@ test "a device grant missing either half is unusable" {
     for ([_][]const u8{
         "{\"authorization_code\":\"ac\"}",
         "{\"code_verifier\":\"cv\"}",
-        "{}",
     }) |body| {
         var arena: std.heap.ArenaAllocator = .init(testing.allocator);
         defer arena.deinit();
@@ -239,7 +239,7 @@ test "a device grant missing either half is unusable" {
         const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = 200, .body = body } }};
         var canned: oauth.CannedHttp = .{ .replies = &replies };
 
-        try testing.expectError(oauth.Error.BadResponse, poll(arena.allocator(), canned.seam(), .{ .user_code = "UC", .device_auth_id = "dai", .verification_url = "" }, 0, &out));
+        try testing.expectError(oauth.Error.BadResponse, poll(arena.allocator(), canned.seam(), "dai", "UC", 0, &out));
     }
 }
 

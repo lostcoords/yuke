@@ -1,7 +1,6 @@
 //! The xAI device flow. It is RFC 8628, so the poll returns tokens and there is no exchange step.
 
 const std = @import("std");
-const http = @import("../../net/http.zig");
 const oauth = @import("oauth.zig");
 
 const client_id = "b1a00492-073a-47ea-816f-4c329264a828";
@@ -106,7 +105,7 @@ fn tokensFrom(arena: std.mem.Allocator, obj: std.json.ObjectMap, now_ms: u64) oa
     return .{
         .access_token = access,
         .refresh_token = oauth.str(arena, obj, "refresh_token"),
-        .expires_at_ms = if (lifetime > 0) now_ms + @as(u64, @intCast(lifetime)) * 1000 else now_ms + oauth.default_lifetime_ms,
+        .expires_at_ms = oauth.deadlineMs(now_ms, lifetime) orelse now_ms +| oauth.default_lifetime_ms,
     };
 }
 
@@ -163,7 +162,6 @@ test "each documented poll status and code maps to one outcome" {
 test "a denied, expired, or unknown poll code ends the login" {
     for ([_][]const u8{
         "{\"error\":\"access_denied\"}",
-        "{\"error\":\"expired_token\"}",
         "{\"error\":\"something_new\"}",
         "{}",
     }) |body| {

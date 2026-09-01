@@ -141,12 +141,13 @@ pub const Client = struct {
         std.debug.assert(req.body_out.len != 0); // The caller owns a response buffer.
         std.debug.assert(req.body_out.len <= max_oauth_response_bytes);
         const io = self.inner.io;
-        // A JSON payload is already encoded, so only a form needs a buffer of its own.
-        const body = switch (req.payload) {
+        // Only a form needs encoding. The join below keeps a borrowed json body valid.
+        const encoded: ?[]u8 = switch (req.payload) {
             .form => |fields| try encodeForm(self.inner.allocator, fields),
-            .json => |bytes| try self.inner.allocator.dupe(u8, bytes),
+            .json => null,
         };
-        defer self.inner.allocator.free(body);
+        defer if (encoded) |owned| self.inner.allocator.free(owned);
+        const body = encoded orelse @constCast(req.payload.json);
 
         var leg: PostLeg = .{};
         var future = try io.concurrent(postGrantLeg, .{ self, req, body, &leg });
@@ -484,6 +485,7 @@ test "a json post sends its own content type and classifies the same way" {
     try exchangeForm(&server, &client);
 
     try testing.expectEqual(@as(?anyerror, null), client.err);
+    try testing.expectEqual(@as(u16, 200), client.status);
     try testing.expectEqualStrings("application/json", server.seen_type[0..server.seen_type_len]);
 }
 
@@ -506,7 +508,6 @@ test "a form post refuses a redirect instead of sending the credential onward" {
 
     // `not_allowed` names the refusal this way. The credential never reaches the other origin.
     try testing.expectEqual(@as(?anyerror, error.TooManyHttpRedirects), client.err);
-    try testing.expect(client.err.? != Error.PreFlight); // A refusal must never look retryable.
 }
 
 test "a form post bounds an oversized error body" {

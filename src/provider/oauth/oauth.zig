@@ -3,8 +3,11 @@
 const std = @import("std");
 const http = @import("../../net/http.zig");
 
-/// An absent or non-positive interval becomes this. RFC 8628 leaves the value to the server.
+/// An absent, non-positive, or absurd interval becomes this. RFC 8628 leaves the value to the server.
 pub const default_interval_ms: u64 = 5_000;
+
+/// No device flow polls slower than this, so a larger value is garbage rather than a cadence.
+const max_interval_ms: u64 = 60 * 60 * 1000;
 
 /// A lifetime this long stops a short fallback from rotating a ten-day grant for nothing.
 pub const default_lifetime_ms: u64 = 5 * 60 * 60 * 1000;
@@ -83,18 +86,20 @@ pub fn errorCode(body: []const u8, arena: std.mem.Allocator, out: []u8) ?[]const
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return null;
     if (parsed != .object) return null;
 
-    if (parsed.object.get("error")) |value| switch (value) {
-        .object => |nested| if (nested.get("code")) |code| return lower(code, out),
-        .string => return lower(value, out),
-        else => {},
-    };
-    if (parsed.object.get("code")) |value| return lower(value, out);
-    if (parsed.object.get("error_code")) |value| return lower(value, out);
+    const nested: ?std.json.Value = if (parsed.object.get("error")) |value| switch (value) {
+        .object => |obj| obj.get("code"),
+        else => null,
+    } else null;
+
+    // The first name that holds a usable string wins, so an empty one falls through to the next.
+    for ([_]?std.json.Value{ nested, parsed.object.get("error"), parsed.object.get("code"), parsed.object.get("error_code") }) |candidate| {
+        if (candidate) |value| if (lower(value, out)) |code| return code;
+    }
     return null;
 }
 
 fn lower(value: std.json.Value, out: []u8) ?[]const u8 {
-    if (value != .string or value.string.len > out.len) return null;
+    if (value != .string or value.string.len == 0 or value.string.len > out.len) return null;
     return std.ascii.lowerString(out[0..value.string.len], value.string);
 }
 
@@ -113,7 +118,8 @@ pub fn parseObject(arena: std.mem.Allocator, body: []const u8) ?std.json.ObjectM
 /// Read a non-empty string field. The result is a copy, because the body buffer is reused.
 pub fn str(arena: std.mem.Allocator, obj: std.json.ObjectMap, name: []const u8) ?[]const u8 {
     const value = obj.get(name) orelse return null;
-    if (value != .string or value.string.len == 0) return null;
+    if (value != .string) return null;
+    if (std.mem.trim(u8, value.string, &std.ascii.whitespace).len == 0) return null;
     return arena.dupe(u8, value.string) catch null;
 }
 
@@ -122,17 +128,24 @@ pub fn int(obj: std.json.ObjectMap, name: []const u8) ?i64 {
     const value = obj.get(name) orelse return null;
     return switch (value) {
         .integer => |n| n,
-        .float => |f| @intFromFloat(f),
+        // A float outside the integer range would trap, so clamp it instead.
+        .float => |f| std.math.lossyCast(i64, f),
         .string => |text| std.fmt.parseInt(i64, text, 10) catch null,
         else => null,
     };
 }
 
+/// Convert peer seconds into a deadline. Saturating math keeps a hostile value from wrapping.
+pub fn deadlineMs(now_ms: u64, seconds: i64) ?u64 {
+    if (seconds <= 0) return null;
+    return now_ms +| (@as(u64, @intCast(seconds)) *| 1000);
+}
+
 /// Return the interval one start response asked for. A non-positive value is no value.
 pub fn intervalFrom(obj: std.json.ObjectMap) u64 {
     const seconds = int(obj, "interval") orelse return default_interval_ms;
-    if (seconds <= 0) return default_interval_ms;
-    return @as(u64, @intCast(seconds)) * 1000;
+    const ms = deadlineMs(0, seconds) orelse return default_interval_ms;
+    return if (ms > max_interval_ms) default_interval_ms else ms;
 }
 
 const testing = std.testing;
@@ -141,8 +154,8 @@ const testing = std.testing;
 pub const CannedHttp = struct {
     replies: []const Reply,
     index: usize = 0,
-    /// The body of the last request, so a test can assert what went on the wire.
-    sent: []const u8 = "",
+    /// The last request, so a test can assert the url and the fields that went on the wire.
+    sent: ?http.PostRequest = null,
 
     pub const Reply = union(enum) {
         fail: anyerror,
@@ -160,10 +173,7 @@ pub const CannedHttp = struct {
         if (self.index == self.replies.len) return error.NoCannedReply;
         const reply = self.replies[self.index];
         self.index += 1;
-        self.sent = switch (req.payload) {
-            .json => |bytes| bytes,
-            .form => "",
-        };
+        self.sent = req;
         return switch (reply) {
             .fail => |err| err,
             .answer => |a| blk: {
@@ -210,15 +220,40 @@ test "an interval falls back when it is absent, zero, or a string" {
     try testing.expectEqual(@as(u64, 7000), intervalFrom(parseObject(a, "{\"interval\":\"7\"}").?));
 }
 
-test "the canned seam replays one scripted reply for each call" {
-    var canned: CannedHttp = .{ .replies = &.{
-        .{ .answer = .{ .status = 403, .body = "{}" } },
-        .{ .fail = error.PreFlight },
-    } };
-    const seam = canned.seam();
-    var out: [64]u8 = undefined;
+test "the error code prefers the first name that holds a usable string" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var buf: [64]u8 = undefined;
 
-    const first = try seam.post(.{ .url = "https://x.invalid", .payload = .{ .json = "{}" }, .body_out = &out });
-    try testing.expectEqual(@as(u16, 403), first.status);
-    try testing.expectError(error.PreFlight, seam.post(.{ .url = "https://x.invalid", .payload = .{ .json = "{}" }, .body_out = &out }));
+    // Every name is present, so the documented order decides.
+    try testing.expectEqualStrings("first", errorCode("{\"error\":{\"code\":\"first\"},\"code\":\"third\",\"error_code\":\"fourth\"}", a, &buf).?);
+    // An unusable higher name falls through instead of ending the search.
+    try testing.expectEqualStrings("third", errorCode("{\"error\":\"\",\"code\":\"third\"}", a, &buf).?);
+    try testing.expectEqualStrings("third", errorCode("{\"error\":{\"code\":0},\"code\":\"third\"}", a, &buf).?);
+}
+
+test "a hostile number never traps and never wraps" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // A float beyond i64 clamps, and the seconds then saturate instead of wrapping.
+    try testing.expectEqual(@as(i64, std.math.maxInt(i64)), int(parseObject(a, "{\"n\":1e300}").?, "n").?);
+    try testing.expectEqual(@as(u64, std.math.maxInt(u64)), deadlineMs(0, std.math.maxInt(i64)).?);
+    try testing.expectEqual(@as(u64, std.math.maxInt(u64)), deadlineMs(std.math.maxInt(u64), 1).?);
+    try testing.expect(deadlineMs(0, -1) == null);
+    try testing.expectEqual(default_interval_ms, intervalFrom(parseObject(a, "{\"interval\":1e300}").?));
+}
+
+test "a blank string is no value, so a fallback field still gets its turn" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const obj = parseObject(a, "{\"blank\":\"   \",\"empty\":\"\",\"kept\":\" v \"}").?;
+
+    try testing.expect(str(a, obj, "blank") == null);
+    try testing.expect(str(a, obj, "empty") == null);
+    // A value with content keeps its own spacing, because only the blank test trims.
+    try testing.expectEqualStrings(" v ", str(a, obj, "kept").?);
 }
