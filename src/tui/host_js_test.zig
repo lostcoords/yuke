@@ -2610,6 +2610,7 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\if (!plugins.get("command-ui")) fail.push("command-ui-plugin");
         \\if (!plugins.get("catalog")) fail.push("catalog-plugin");
         \\if (!plugins.get("chat")) fail.push("chat-plugin");
+        \\if (!plugins.get("explorer")) fail.push("explorer-plugin");
         \\
         \\// The connection runs as a plugin service now, so an unload can take it back out.
         \\if (!root.hasService(connection)) fail.push("connection-service");
@@ -2773,6 +2774,24 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\  const unmarked = sidebar._format({ connKey: "local", id: "probe", session: { updated_at_ms: 1, model: "m" }, activity: { state: { type: "idle" } }, workspace: null });
         \\  if (unmarked.lines[0].text.startsWith("▸ ")) fail.push("active-mark-clears-with-chat");
         \\  feed.clear();
+        \\}
+        \\
+        \\// The shell's own plugin owns the showcmd reading, so an unload takes it away.
+        \\{
+        \\  root.focusView(sidebar);
+        \\  // A test-owned prefix outlives the shell's bindings, so the pending stroke survives disposal.
+        \\  const offPrefix = keymap.add({ "f9 x": () => true });
+        \\  const f9 = { type: "key", code: "f9", char: "", text: "", event: "press", mods: 0 };
+        \\  root.onEvent(f9);
+        \\  if (status.side("right").indexOf("f9") < 0) fail.push("showcmd-drawn");
+        \\  keymap.pending = null;
+        \\  plugins.dispose("app-keys");
+        \\  root.onEvent(f9);
+        \\  if (keymap.pendingLabel() !== "f9") fail.push("showcmd-still-pending");
+        \\  if (status.side("right").indexOf("f9") >= 0) fail.push("showcmd-unloads");
+        \\  keymap.pending = null;
+        \\  offPrefix();
+        \\  root.focusView(chat);
         \\}
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "act.js");
@@ -3946,5 +3965,46 @@ test "the chat pane routes a drag that leaves the transcript and guards its pres
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "mouse.js");
+    try expectJs(host, "ok");
+}
+
+test "the explorer registers its command and takes it back on unload" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // The picker walks the filesystem through the client, so only its command lifetime is tested here.
+    try host.evalModule(
+        \\import { command, root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { explorerPlugin } from "yuke:explorer";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\check("absent-before-load", !command.available("app:explorer"));
+        \\plugins.use(explorerPlugin);
+        \\check("command-registered", command.available("app:explorer"));
+        \\
+        \\// The command must open it, so a broken command entry cannot pass.
+        \\const before = root.overlays.length;
+        \\command.perform("app:explorer");
+        \\check("command-opens-overlay", root.overlays.length === before + 1);
+        \\
+        \\// An unload takes an OPEN picker off the stack, or it keeps eating every key.
+        \\plugins.dispose("explorer");
+        \\check("unload-pops-open-picker", root.overlays.length === before);
+        \\check("unload-drops-command", !command.available("app:explorer"));
+        \\
+        \\// A reload opens and closes cleanly again.
+        \\plugins.use(explorerPlugin);
+        \\command.perform("app:explorer");
+        \\check("reload-opens", root.overlays.length === before + 1);
+        \\root.popOverlay();
+        \\check("closes-again", root.overlays.length === before);
+        \\plugins.dispose("explorer");
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "explorer.js");
     try expectJs(host, "ok");
 }

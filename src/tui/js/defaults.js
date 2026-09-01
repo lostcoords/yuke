@@ -1,11 +1,12 @@
-// yuke:defaults — the bundled UI: a sidebar | chat split shell with a local connect, a command
-// palette, a ":" line, and a stub explorer. A user's index.js layers on top.
-import { command, keymap, status, copy, clip, fill, text, strokeOf, TextInput, caretCol, Node, root, quit, config, events } from "yuke:core";
+// yuke:defaults — the bundled UI shell: it builds the panes, wires them together, and boots.
+// Each part is a plugin; a user's index.js layers on top.
+import { command, keymap, copy, clip, text, Node, root, quit, config } from "yuke:core";
 import { plugins } from "yuke:ext";
-import { ui, List, NAV_KEYS } from "yuke:ui";
+import { ui, NAV_KEYS } from "yuke:ui";
 import * as client from "yuke:client";
-import { notice, noticePlugin } from "yuke:notice";
+import { noticePlugin } from "yuke:notice";
 import { commandUiPlugin } from "yuke:command-ui";
+import { explorerPlugin } from "yuke:explorer";
 import { catalogOf, catalogPlugin } from "yuke:catalog";
 import { chat, chatSession, chatEntry, chatPlugin } from "yuke:chat";
 import { SessionList, DeviceFeed, rowKey, rowLabel, activityMark, sidebarPlugin } from "yuke:sidebar";
@@ -14,10 +15,8 @@ import { transcriptVim } from "yuke:transcript-vim";
 
 /** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
 /** @typedef {{ is_self?: boolean, static_public_key?: string, device_id: string, online?: boolean, name?: string }} DeviceInfo */
-/** @typedef {{ key: string, notice: true, text: string, up?: never, dest?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, up: true, dest: string, notice?: never, text?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, name: string, path: string, is_git_repo?: boolean, notice?: never, up?: never, dest?: never, text?: never }} ExplorerRow */
 /** @typedef {{ nextRetryAt: number, remoteRetryAt: Record<string, number>, roster: DeviceInfo[], rosterTried: boolean, stopped: boolean, onStart: () => void, onStop: () => void, attempt: () => void, dialLocal: () => void, loadRoster: () => void, dialableKey: (d: DeviceInfo) => string | null, dialRemotes: () => void, scheduleRetry: () => void, needsTick: () => { periodMs: number } | null, tick: () => void }} ConnectionService */
 
-// The ":" command line: the prompt links to Normal; an unmatched word shows in red.
 
 // The sidebar's share of the width in the default row split.
 const SIDEBAR_RATIO = 0.28;
@@ -29,9 +28,6 @@ const LOCAL = client.LOCAL;
 
 
 
-
-// Vim calls this showcmd: the keys typed so far, while a chord or an operator waits.
-status.add({ side: "right", order: -1, render: () => keymap.pendingLabel() });
 
 // The main pane: a placeholder shown in a split leaf with no session.
 class MainPane {
@@ -100,80 +96,7 @@ const sidebar = new SessionList({
 
 const workspace = Node.branch("row", new Node(sidebar), new Node(chat), SIDEBAR_RATIO);
 
-// --- explorer -----------------------------------------------------------------------------
-// A floating directory navigator over the fs.browse RPC, fuzzy-filtered as you type.
-// Enter/→ descends; ← goes to the parent; Esc closes.
-/** @param {string | null | undefined} [startPath] */
-function openExplorer(startPath) {
-  const state = /** @type {{ path: string, parent: string | null | undefined }} */ ({ path: startPath || "", parent: null });
 
-  const picker = ui.pick({
-    title: () => state.path || "…",
-    footer: "type to filter · ↵/→ enter · ← up · esc close",
-    border: "rounded",
-    width: 0.6,
-    height: 0.6,
-    key: e => e.key,
-    filterText: e => e.name || "",
-    isSelectable: e => !e.notice,
-    format: e => {
-      if (e.notice) return { text: e.text, group: "UIDim" };
-      if (e.up) return { text: "..", group: "UIDim" };
-      return { text: e.name + "/", right: e.is_git_repo ? "git" : "" };
-    },
-    onAccept: e => {
-      if (e.notice) return;
-      go(e.up ? e.dest : e.path);
-    },
-    closeOnAccept: false,
-    keymap: {
-      left: () => {
-        if (state.parent != null) go(state.parent);
-      },
-      right: (_ev, p) => {
-        const e = p.selected();
-        if (e && !e.up && !e.notice) go(e.path);
-      },
-    },
-  });
-
-  /** @param {string | null | undefined} path */
-  function go(path) {
-    client.fsBrowse(LOCAL, path != null ? { path } : {}).then(
-      (res) => {
-        state.path = res.path;
-        state.parent = res.parent;
-
-        /** @type {ExplorerRow[]} */
-        const rows = [];
-        if (res.parent != null) rows.push({ key: "..", up: true, dest: res.parent });
-        for (const e of res.entries) {
-          rows.push({ key: e.path, name: e.name, path: e.path, is_git_repo: e.is_git_repo });
-        }
-        if (res.next_cursor != null) rows.push({ key: "\x00more", notice: true, text: "… more entries not shown" });
-
-        const content = /** @type {import("yuke:ui").Picker<ExplorerRow>} */ (/** @type {unknown} */ (picker.content));
-        content.query = "";
-        content.setSource(rows);
-        root.invalidate();
-      },
-      () => {
-        const content = /** @type {import("yuke:ui").Picker<ExplorerRow>} */ (/** @type {unknown} */ (picker.content));
-        content.query = "";
-        content.setSource([{ key: "\x00err", notice: true, text: "cannot browse — daemon offline?" }]);
-        root.invalidate();
-      },
-    );
-  }
-
-  go(state.path || null);
-  return picker;
-}
-
-// --- command palette ----------------------------------------------------------------------
-// A picker over the command registry: it lists the commands the current context allows and runs
-// the chosen one.
-// The first stroke bound to `name`, for the palette's hint column.
 
 
 // A session finder: fuzzy-search the sidebar's loaded sessions by title, then open one.
@@ -197,7 +120,6 @@ function openSessionFinder() {
 
 
 
-// --- command line -------------------------------------------------------------------------
 
 // --- daemon connection --------------------------------------------------------------------
 // The retry tick repaints the sidebar countdown, which changes once per second.
@@ -369,6 +291,9 @@ plugins.use({
   name: "app-keys",
   /** @param {import("yuke:ext").Context} ctx */
   apply(ctx) {
+    // Vim calls this showcmd: the keys typed so far, while a chord or an operator waits.
+    ctx.status({ side: "right", order: -1, render: () => keymap.pendingLabel() });
+
     // The interrupt command is available only with a session open.
     ctx.command(() => chatSession.sessionId != null, {
       "session:interrupt": () => chatSession.interrupt(),
@@ -378,7 +303,6 @@ plugins.use({
       "app:quit": () => quit(),
       "ui:sessions": () => openSessionFinder(),
       "app:connect": () => connection.attempt(),
-      "app:explorer": () => openExplorer(),
       "focus:left": () => root.focusDir("h"),
       "focus:down": () => root.focusDir("j"),
       "focus:up": () => root.focusDir("k"),
@@ -441,6 +365,7 @@ plugins.use({
 
 plugins.use(noticePlugin);
 plugins.use(commandUiPlugin);
+plugins.use(explorerPlugin);
 plugins.use(catalogPlugin, { entry: chatEntry, connKey: () => chatSession.connKey });
 plugins.use(chatPlugin);
 plugins.use(sidebarPlugin, { deviceName, onCatalogChanged: /** @param {string} connKey @returns {void} */ (connKey) => { catalogOf(connKey).rev = null; } });
@@ -456,4 +381,4 @@ plugins.use({
 root.setRoot(workspace);
 root.focusView(chat);
 
-export { workspace, sidebar, chat, chatSession, SessionList, MainPane, DeviceFeed, openExplorer, openSessionFinder, connection };
+export { workspace, sidebar, chat, chatSession, SessionList, MainPane, DeviceFeed, openSessionFinder, connection };

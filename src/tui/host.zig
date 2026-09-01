@@ -44,6 +44,7 @@ pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:chat", .source = @embedFile("js/chat.js") },
     .{ .name = "yuke:fzy", .source = @embedFile("js/fzy.js") },
     .{ .name = "yuke:transcript", .source = @embedFile("js/transcript.js") },
+    .{ .name = "yuke:explorer", .source = @embedFile("js/explorer.js") },
     .{ .name = "yuke:composer-vim", .source = @embedFile("js/composer-vim.js") },
     .{ .name = "yuke:transcript-vim", .source = @embedFile("js/transcript-vim.js") },
     .{ .name = "yuke:defaults", .source = @embedFile("js/defaults.js") },

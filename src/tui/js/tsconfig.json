@@ -28,6 +28,7 @@
       "yuke:chat": ["./chat.js"],
       "yuke:fzy": ["./fzy.js"],
       "yuke:transcript": ["./transcript.js"],
+      "yuke:explorer": ["./explorer.js"],
       "yuke:composer-vim": ["./composer-vim.js"],
       "yuke:transcript-vim": ["./transcript-vim.js"],
       "yuke:defaults": ["./defaults.js"]
