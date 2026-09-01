@@ -29,7 +29,7 @@ import { term } from "yuke:term";
 /** @typedef {{ source: string, node: ContextNode, atoms: string[] }} ContextExpr */
 /** @typedef {"keymap" | "view"} RouteWhere */
 /** @typedef {{ where: RouteWhere, context: ContextExpr | null, order: number }} RouteEntry */
-/** @typedef {{ fn: (obj: any) => unknown }} SlotEntry */
+/** @typedef {{ fn: (obj: any, arg?: any) => unknown }} SlotEntry */
 /** @typedef {{ fn: KeyBinding, context: ContextExpr | null, order: number, pending: "chord" | "operator" }} KeyEntry */
 /** @typedef {{ stroke: string, kind: "chord" | "operator", at: number, ev: Extract<HostEvent, { type: "key" }> | null }} Pending */
 /** @typedef {{ navBy: (delta: number) => void, navPage: (dir: number) => void, navEdge: (dir: number) => void }} NavTarget */
@@ -946,7 +946,7 @@ export const slots = {
   _map: new Map(),
 
   // Register a provider for one named slot on a class and return a disposer.
-  /** @param {Function} target @param {string} name @param {(obj: any) => unknown} fn @returns {() => void} */
+  /** @param {Function} target @param {string} name @param {(obj: any, arg?: any) => unknown} fn @returns {() => void} */
   add(target, name, fn) {
     if (typeof target !== "function" || !target.prototype) throw new TypeError("slot: target must be a class");
     if (typeof fn !== "function") throw new TypeError("slot: fn must be a function");
@@ -974,8 +974,8 @@ export const slots = {
   },
 
   // The first value a provider gives for `obj`. A null or undefined answer passes the slot on.
-  /** @param {object | null} obj @param {string} name @returns {any} */
-  get(obj, name) {
+  /** @param {object | null} obj @param {string} name @param {any} [arg] @returns {any} */
+  get(obj, name, arg) {
     if (!obj) return null;
     let proto = Object.getPrototypeOf(obj);
     // A subclass reads the slots its base class declares.
@@ -987,7 +987,7 @@ export const slots = {
         for (const e of list.slice()) {
           // One bad provider must not take the frame with it.
           try {
-            const v = e.fn(obj);
+            const v = e.fn(obj, arg);
             if (v != null) return v;
           } catch (err) {
             events.emit("ext.error", err, name);

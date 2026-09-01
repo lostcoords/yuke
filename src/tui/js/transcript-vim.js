@@ -1,10 +1,10 @@
 // yuke:transcript-vim — opt-in cursor and yank keys for the transcript.
 import { term } from "yuke:term";
 import { root, copy, caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
-import { ChatView } from "yuke:ui";
+import { ChatView } from "yuke:transcript";
 import { register, chatView } from "yuke:vim";
 
-/** @typedef {import("yuke:ui").ChatView["transcript"]} Transcript */
+/** @typedef {import("yuke:transcript").ChatView["transcript"]} Transcript */
 /** @typedef {{ id: number, row: number, col: number }} Position */
 /** @typedef {{ cursor: Position | null, src: number, anchor: Position | null, visual: boolean, goal: number | null }} VimState */
 /** @typedef {{ x: number, y: number, visible: boolean }} Cursor */
@@ -303,7 +303,7 @@ export const transcriptVim = {
     });
 
     // A region change ends visual mode, so a return to the transcript starts clean.
-    ctx.on("region.focused", /** @param {ChatView} view @param {import("yuke:ui").ChatRegion} region @returns {void} */ (view, region) => {
+    ctx.on("region.focused", /** @param {ChatView} view @param {import("yuke:transcript").ChatRegion} region @returns {void} */ (view, region) => {
       const s = panes.get(view);
       if (!s) return;
       s.visual = false;
@@ -429,22 +429,20 @@ export const transcriptVim = {
       return cursorOf(view.transcript, s.cursor);
     });
 
-    ctx.advise(ChatView.prototype, "onMouse", "around", /** @this {ChatView} @param {(ev: HostEvent) => boolean} inner @param {HostMouseEvent} ev @returns {boolean} */ function (inner, ev) {
-      const taken = inner(ev);
-      if (ev.event !== "press" || ev.button !== "left") return taken;
-      const s = stateOf(this);
-      const pos = this.transcript.posAt(ev.col, ev.row, false);
-      // A click is the plugin's own way into the region, so it moves the focus itself.
+    // A click is the plugin's own way into the region, so it moves the focus itself.
+    ctx.slot(ChatView, "press", /** @param {ChatView} view @param {HostMouseEvent} ev @returns {boolean} */ (view, ev) => {
+      const s = stateOf(view);
+      const pos = view.transcript.posAt(ev.col, ev.row, false);
       if (!pos) {
-        this.focusRegion("composer");
-        return taken;
+        view.focusRegion("composer");
+        return false;
       }
-      this.focusRegion("transcript");
+      view.focusRegion("transcript");
       s.cursor = pos;
       s.goal = null;
       s.visual = false;
       s.anchor = null;
-      return place(this, s);
+      return place(view, s);
     });
 
     return () => {

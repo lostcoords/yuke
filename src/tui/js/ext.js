@@ -293,7 +293,7 @@ export class Context {
     return this.scope.effect(() => route.add(where, ctx));
   }
 
-  /** @param {Function} target @param {string} name @param {(obj: any) => unknown} fn @returns {Disposer} */
+  /** @param {Function} target @param {string} name @param {(obj: any, arg?: any) => unknown} fn @returns {Disposer} */
   slot(target, name, fn) {
     return this.scope.effect(() => slots.add(target, name, fn));
   }

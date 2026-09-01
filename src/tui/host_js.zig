@@ -957,7 +957,8 @@ test "yuke:ui mouse config, wheel scroll, and pane routing under the pointer" {
     try host.evalModule(
         \\import { term } from "yuke:term";
         \\import { config, defineConfig, root, Node, View, isWheel } from "yuke:core";
-        \\import { Pager, List } from "yuke:ui";
+        \\import { List } from "yuke:ui";
+        \\import { Pager } from "yuke:transcript";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
@@ -1051,7 +1052,7 @@ test "yuke:ui copy targets: last reply, message list, and code blocks" {
 
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { Transcript } from "yuke:ui";
+        \\import { Transcript } from "yuke:transcript";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\
@@ -1128,7 +1129,7 @@ test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
 
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { Transcript } from "yuke:ui";
+        \\import { Transcript } from "yuke:transcript";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
@@ -1261,7 +1262,7 @@ test "yuke:ui the transcript seam maps a position to source, screen, and scroll"
 
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { Transcript } from "yuke:ui";
+        \\import { Transcript } from "yuke:transcript";
         \\import { Document } from "yuke:md";
         \\import { prevGrapheme, nextGrapheme } from "yuke:core";
         \\const fail = [];
@@ -1337,7 +1338,7 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
     try host.evalModule(
         \\import { root, Node, View, keymap } from "yuke:core";
         \\import { plugins } from "yuke:ext";
-        \\import { ChatView } from "yuke:ui";
+        \\import { ChatView } from "yuke:transcript";
         \\import { composerVim, setComposerMode, composerMode } from "yuke:composer-vim";
         \\import { register } from "yuke:vim";
         \\const fail = [];
@@ -1500,7 +1501,7 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\import { term } from "yuke:term";
         \\import { root, Node, keymap } from "yuke:core";
         \\import { plugins } from "yuke:ext";
-        \\import { ChatView } from "yuke:ui";
+        \\import { ChatView } from "yuke:transcript";
         \\import { transcriptVim } from "yuke:transcript-vim";
         \\import { register } from "yuke:vim";
         \\const fail = [];
@@ -1567,10 +1568,20 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\check("global-keymap-fallback", global === 1 && v.composer.input.text === before);
         \\offZ();
         \\
-        \\// A click places the cursor and takes the focus.
+        \\// A click places the cursor on the row it landed on and takes the region.
         \\const r = v.transcript.pager.rect();
-        \\v.onMouse({ type: "mouse", col: r.x + 4, row: r.y, button: "left", event: "press", mods: 0 });
-        \\check("click-focus", v.cursor().y === r.y);
+        \\root.onEvent(key("char", "G"));
+        \\const clickBase = v.cursor().y;
+        \\v.focusRegion("composer");
+        \\const press = (row) => v.onMouse({ type: "mouse", col: r.x + 4, row, button: "left", event: "press", mods: 0 });
+        \\press(r.y);
+        \\check("click-takes-region", v.focus === "transcript");
+        \\check("click-moves-cursor", !!v.cursor() && v.cursor().y === r.y && clickBase !== r.y);
+        \\
+        \\// A press below the transcript hands the region back to the composer.
+        \\press(v.composer.rect.y);
+        \\check("click-outside-releases", v.focus === "composer");
+        \\v.focusRegion("transcript");
         \\
         \\// "v" starts a selection that the motions extend. Vim visual holds both ends, so the
         \\// character under the cursor stays inside.
@@ -1689,7 +1700,7 @@ test "yuke:ui a transcript with no message shows its placeholder" {
 
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { Transcript } from "yuke:ui";
+        \\import { Transcript } from "yuke:transcript";
         \\const t = new Transcript({ textOf: () => "", empty: () => [{ text: "new chat" }] });
         \\t.setOutline([], null);
         \\globalThis.count = t.rowCount(30);
@@ -1716,7 +1727,7 @@ test "yuke:ui tool parts render, collapse, copy, and toggle" {
         \\import { term } from "yuke:term";
         \\import { root, Node } from "yuke:core";
         \\import { plugins } from "yuke:ext";
-        \\import { Transcript, ChatView } from "yuke:ui";
+        \\import { Transcript, ChatView } from "yuke:transcript";
         \\import { transcriptVim } from "yuke:transcript-vim";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -1830,7 +1841,7 @@ test "yuke:ui reasoning auto-collapses and J/K walks parts" {
 
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { Transcript } from "yuke:ui";
+        \\import { Transcript } from "yuke:transcript";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
@@ -2195,7 +2206,7 @@ test "yuke:ui a selection maps back to the markdown source" {
 
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { Transcript, rowText } from "yuke:ui";
+        \\import { Transcript, rowText } from "yuke:transcript";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
@@ -2248,7 +2259,9 @@ test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { List, fuzzyMatch, fuzzyRank, Transcript, Picker } from "yuke:ui";
+        \\import { List, Picker } from "yuke:ui";
+        \\import { Transcript } from "yuke:transcript";
+        \\import { fuzzyMatch, fuzzyRank } from "yuke:fzy";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\
@@ -2388,7 +2401,7 @@ test "yuke:ui Transcript draws markdown segments through the pager" {
 
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { Transcript, ChatView } from "yuke:ui";
+        \\import { Transcript, ChatView } from "yuke:transcript";
         \\const t = new Transcript({ textOf: () => "**hi** there" });
         \\t.setOutline([{ id: "a1", type: "assistant" }], null);
         \\term.beginFrame();
@@ -2962,7 +2975,7 @@ test "the composer route stays off while another pane has focus" {
     try host.evalModule(
         \\import { root, Node, View } from "yuke:core";
         \\import { plugins } from "yuke:ext";
-        \\import { ChatView } from "yuke:ui";
+        \\import { ChatView } from "yuke:transcript";
         \\import { composerVim, setComposerMode } from "yuke:composer-vim";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -3069,7 +3082,7 @@ test "the chat pane names the region that reads the keyboard" {
     defer host.destroy();
     try host.evalModule(
         \\import { root, Node, context } from "yuke:core";
-        \\import { ChatView } from "yuke:ui";
+        \\import { ChatView } from "yuke:transcript";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
@@ -3144,7 +3157,7 @@ test "a focused transcript takes the keys even while the composer sits in normal
         \\import { term } from "yuke:term";
         \\import { root, Node, keymap } from "yuke:core";
         \\import { plugins } from "yuke:ext";
-        \\import { ChatView } from "yuke:ui";
+        \\import { ChatView } from "yuke:transcript";
         \\import { composerVim, setComposerMode, composerMode } from "yuke:composer-vim";
         \\import { transcriptVim } from "yuke:transcript-vim";
         \\const fail = [];
@@ -3299,7 +3312,7 @@ test "composer-vim supplies the prompt glyph through the slot" {
     try host.evalModule(
         \\import { root, Node } from "yuke:core";
         \\import { plugins } from "yuke:ext";
-        \\import { ChatView } from "yuke:ui";
+        \\import { ChatView } from "yuke:transcript";
         \\import { composerVim, setComposerMode } from "yuke:composer-vim";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -3878,5 +3891,60 @@ test "the chat slice owns its listeners and its transcript commands" {
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "chat.js");
+    try expectJs(host, "ok");
+}
+
+test "the chat pane routes a drag that leaves the transcript and guards its press slot" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var paint: Paint = undefined;
+    try paint.setup(gpa.allocator(), 20, 40);
+    defer paint.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    paint.bind(host);
+
+    // A drag that ends over the composer must still reach the transcript, or its drag never ends.
+    try host.evalModule(
+        \\import { root, Node, slots } from "yuke:core";
+        \\import { term } from "yuke:term";
+        \\import { ChatView } from "yuke:transcript";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const body = { a1: "alpha bravo charlie\nsecond line here\nthird line xx" };
+        \\const v = new ChatView({ textOf: (id) => body[id] || "" });
+        \\v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
+        \\root.setRoot(new Node(v));
+        \\v.rect = { x: 0, y: 0, w: 40, h: 18 };
+        \\term.beginFrame(); v.draw(true); term.endFrame();
+        \\const r = v.transcript.pager.rect();
+        \\const mouse = (row, event, button) => v.onMouse({ type: "mouse", col: r.x + 2, row, button: button || "left", event, mods: 0 });
+        \\
+        \\mouse(r.y, "press");
+        \\check("press-starts-drag", v.transcript._dragging === true);
+        \\mouse(v.composer.rect.y, "drag");
+        \\check("drag-outside-still-drags", v.transcript._dragging === true);
+        \\mouse(v.composer.rect.y, "release");
+        \\check("release-outside-ends-drag", v.transcript._dragging === false);
+        \\
+        \\// A non-left button never reaches the press slot.
+        \\let calls = 0;
+        \\const off = slots.add(ChatView, "press", () => { calls++; return true; });
+        \\mouse(r.y, "press", "right");
+        \\check("right-button-skips-slot", calls === 0);
+        \\mouse(r.y, "drag");
+        \\check("drag-skips-slot", calls === 0);
+        \\mouse(r.y, "press");
+        \\check("left-press-reaches-slot", calls === 1);
+        \\off();
+        \\
+        \\// The pane claims the press only for a literal true, so a truthy value does not.
+        \\const offTruthy = slots.add(ChatView, "press", () => "yes");
+        \\check("truthy-does-not-claim", v.onMouse({ type: "mouse", col: r.x + 2, row: v.composer.rect.y, button: "left", event: "press", mods: 0 }) === false);
+        \\offTruthy();
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "mouse.js");
     try expectJs(host, "ok");
 }

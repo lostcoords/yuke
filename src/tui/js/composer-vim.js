@@ -85,7 +85,7 @@ function firstWord(text, caret) {
 
 /** @returns {ComposerType | null} */
 function chatComposer() {
-  const v = /** @type {import("yuke:ui").ChatView | null} */ (chatView());
+  const v = /** @type {import("yuke:transcript").ChatView | null} */ (chatView());
   return v ? v.composer : null;
 }
 
