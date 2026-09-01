@@ -3863,6 +3863,54 @@ test "the command line resolves a word exactly, by prefix, or reports an error" 
     try expectJs(host, "ok");
 }
 
+test "the palette hints only the strokes that run the command here" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // A hint the current context cannot run is worse than no hint, so the scan must rank like dispatch.
+    try host.evalModule(
+        \\import { command, keymap, root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { commandUiPlugin } from "yuke:command-ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\plugins.use(commandUiPlugin);
+        \\
+        \\const offCmd = command.add(null, {
+        \\  "test:plain": () => {}, "test:hidden": () => {},
+        \\  "test:shadowed": () => {}, "test:winner": () => {},
+        \\});
+        \\const offA = keymap.add({ "ctrl+alt+a": "test:plain" });
+        \\// No pane provides this atom, so the stroke never reaches the command.
+        \\const offB = keymap.add({ "ctrl+alt+b": "test:hidden" }, "no_such_pane");
+        \\// One stroke, two commands: the newest entry answers it and the older one is shadowed.
+        \\const offC = keymap.add({ "ctrl+alt+c": "test:shadowed" });
+        \\const offD = keymap.add({ "ctrl+alt+c": "test:winner" });
+        \\
+        \\const hintOf = (name) => {
+        \\  command.perform("ui:palette");
+        \\  const win = root.overlays[root.overlays.length - 1];
+        \\  const p = win.content;
+        \\  p.selectKey(name);
+        \\  const it = p.selected();
+        \\  root.popOverlay(win);
+        \\  return it && it.name === name ? it.hint : null;
+        \\};
+        \\
+        \\check("hint-shows-active", hintOf("test:plain") === "ctrl+alt+a");
+        \\check("hint-hides-inactive", hintOf("test:hidden") === "");
+        \\check("hint-shows-winner", hintOf("test:winner") === "ctrl+alt+c");
+        \\check("hint-hides-shadowed", hintOf("test:shadowed") === "");
+        \\check("palette-closed", root.overlays.length === 0);
+        \\
+        \\offA(); offB(); offC(); offD(); offCmd();
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "hint.js");
+    try expectJs(host, "ok");
+}
+
 test "the catalog slice owns the model and context readings" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);

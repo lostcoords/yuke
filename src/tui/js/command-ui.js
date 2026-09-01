@@ -3,12 +3,12 @@ import { command, keymap, root, clip, fill, text, strokeOf, TextInput, caretCol 
 import { term } from "yuke:term";
 import { ui } from "yuke:ui";
 
-// The first stroke bound to a command, or "". A command with two keys shows the first one found.
+// The first stroke that runs a command here, or "". `candidates` drops what the context shadows.
 /** @param {string} name @returns {string} */
 function keyHint(name) {
   for (const stroke in keymap.map) {
-    const list = keymap.map[stroke];
-    if (list && list.some((e) => e.fn === name)) return stroke;
+    const winner = keymap.candidates(stroke)[0];
+    if (winner && winner.fn === name) return stroke;
   }
   return "";
 }
