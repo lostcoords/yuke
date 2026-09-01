@@ -124,8 +124,6 @@ pub fn init(options: InitOptions) !State {
     var event_ids: RecoveryEventIds = .{ .state = &self };
     const recovered = try database.run.recoverOpen(&self.db, arena.allocator(), self.nowMillis(), &event_ids);
     if (recovered > 0) std.log.info("recovered {d} open runs as canceled", .{recovered});
-    const pending_sessions = try database.input.sessionIds(&self.db, arena.allocator());
-    for (pending_sessions) |session_id| _ = try self.activate(.bytes(session_id));
     return self;
 }
 
@@ -415,7 +413,7 @@ test "a cloud bundle and its etag install as one snapshot" {
     try std.testing.expect(resolved.model.caps.tools == .unknown);
 }
 
-test "init restores durable pending input into the runtime queue" {
+test "activation restores durable pending input into the runtime queue" {
     var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer runtime.deinit();
     const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
@@ -445,7 +443,7 @@ test "init restores durable pending input into the runtime queue" {
 
     var state = try State.init(.{ .gpa = std.testing.allocator, .io = runtime.io(), .db = db, .config = .{ .listen = listen }, .home = "/home/test", .env = &test_env, .route_transport = test_transport.transport() });
     defer state.deinit();
-    const rt = state.sessions.get(.bytes(session_id)).?;
+    const rt = try state.activate(.bytes(session_id));
     try std.testing.expectEqual(@as(usize, 1), rt.session.queue.depth());
     try std.testing.expectEqual(queued.input.input_id, rt.session.queue.entries()[0].input_id);
 }
@@ -481,7 +479,7 @@ test "activation does not retain partial hydration after allocation failure" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var state = try State.init(.{ .gpa = failing.allocator(), .io = runtime.io(), .db = db, .config = .{ .listen = listen }, .home = "/home/test", .env = &test_env, .route_transport = test_transport.transport() });
     defer state.deinit();
-    const rt = state.sessions.get(.bytes(session_id)).?;
+    const rt = try state.activate(.bytes(session_id));
     const baseline = failing.alloc_index;
     var saw_oom = false;
 

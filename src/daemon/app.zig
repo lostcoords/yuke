@@ -13,6 +13,7 @@ const provider = @import("../provider/provider.zig");
 const daemon_config = @import("config.zig");
 const scheduler_mod = @import("scheduler.zig");
 const connection = @import("connection.zig");
+const run_task = @import("run_task.zig");
 const InstanceLock = @import("InstanceLock.zig");
 const State = @import("State.zig");
 
@@ -111,6 +112,9 @@ pub fn run(init: std.process.Init) !void {
     maintenance.concurrent(io, scheduler_mod.Scheduler.run, .{&scheduler}) catch |err| {
         std.log.warn("the scheduler did not start: {t}", .{err});
     };
+
+    // Restart the durable work before the front door opens, so no client sees a half-resumed daemon.
+    try run_task.resumeSessions(&state);
 
     std.log.info("daemon store at {s}", .{config.db_path});
     try http.serve(&state);

@@ -623,14 +623,14 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     return slot;
 }
 
-/// Resume durable queue entries before the daemon accepts new connections.
-pub fn resumePendingInputs(state: *State) !void {
+/// Hydrate each session that holds durable queue entries, then start its run.
+/// The catalog must exist first, so this runs after the config load, not in `State.init`.
+pub fn resumeSessions(state: *State) !void {
     var arena_state = std.heap.ArenaAllocator.init(state.gpa);
     defer arena_state.deinit();
     const session_ids = try database.input.sessionIds(&state.db, arena_state.allocator());
     for (session_ids) |raw| {
-        const session_id = ids.SessionId.bytes(raw);
-        const rt = state.sessions.get(session_id) orelse return error.CorruptRuntime;
+        const rt = try state.activate(.bytes(raw));
         if (rt.active == null and rt.session.queue.depth() > 0) try startQueued(state, rt);
     }
 }
