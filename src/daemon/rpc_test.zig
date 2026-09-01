@@ -2837,11 +2837,7 @@ test "a cancel is idempotent and survives a login that already finished" {
     _ = try handlers.authCancelLogin(&fixture.state, a, .{ .login_id = id });
 
     const arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    const slot = try fixture.state.logins.create(id, arena, "codex", .codex, .{
-        .user_code = "UC",
-        .device_auth_id = "dai",
-        .verification_url = "https://u",
-    });
+    const slot = try fixture.state.logins.reserve(id, arena, "codex", .codex);
     _ = try handlers.authCancelLogin(&fixture.state, a, .{ .login_id = id });
     try std.testing.expect(slot.cancel_requested);
     // A second cancel changes nothing and still reports success.
@@ -2856,14 +2852,26 @@ test "one provider runs one login at a time" {
 
     try seedOauthCatalog(&fixture, "codex");
     const arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    _ = try fixture.state.logins.create(.bytes(@splat(3)), arena, "codex", .codex, .{
-        .user_code = "UC",
-        .device_auth_id = "dai",
-        .verification_url = "https://u",
-    });
+    _ = try fixture.state.logins.reserve(.bytes(@splat(3)), arena, "codex", .codex);
 
     // A second attempt must not race the first for the same grant.
     try std.testing.expectError(error.LoginInProgress, handlers.authLogin(&fixture.state, a, .{ .provider_id = "codex" }));
+}
+
+test "a finalizing login ignores a later cancel" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    const id: wire.ids.LoginId = .bytes(@splat(5));
+
+    const arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    const slot = try fixture.state.logins.reserve(id, arena, "codex", .codex);
+    // The task claimed the login, so the grant is already landing.
+    slot.finalizing = true;
+
+    _ = try handlers.authCancelLogin(&fixture.state, a, .{ .login_id = id });
+    // The cancel must not contradict the outcome the task is about to publish.
+    try std.testing.expect(!slot.cancel_requested);
 }
 
 test "a shutting daemon starts no new login" {

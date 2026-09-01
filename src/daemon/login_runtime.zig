@@ -23,9 +23,12 @@ pub const LoginSlot = struct {
     /// The arena owns this copy, so it outlives the request that named the provider.
     provider_id: []const u8,
     flow: Flow,
-    start: oauth.Start,
+    /// The reservation holds no code until `start` answers, so a second attempt still sees it.
+    start: oauth.Start = .{ .user_code = "", .device_auth_id = "", .verification_url = "" },
     /// A cancel sets this before it wakes the task, so the task reports `canceled`.
     cancel_requested: bool = false,
+    /// The task claims the login before it writes the grant, so a later cancel cannot undo it.
+    finalizing: bool = false,
     /// The RPC task sets this event so a waiting login stops before its next poll.
     wake_event: std.Io.Event = .unset,
 
@@ -64,11 +67,12 @@ pub const Logins = struct {
         return null;
     }
 
-    /// Take one login and its arena. The caller owns the slot after this returns.
-    pub fn create(self: *Logins, id: wire.ids.LoginId, arena: std.heap.ArenaAllocator, provider_id: []const u8, flow: Flow, start: oauth.Start) !*LoginSlot {
+    /// Reserve the provider and take its arena, before any call that can yield.
+    /// The registry owns the arena from here, so the caller frees the slot only through `remove`.
+    pub fn reserve(self: *Logins, id: wire.ids.LoginId, arena: std.heap.ArenaAllocator, provider_id: []const u8, flow: Flow) !*LoginSlot {
         const slot = try self.gpa.create(LoginSlot);
         errdefer self.gpa.destroy(slot);
-        slot.* = .{ .arena = arena, .id = id, .provider_id = provider_id, .flow = flow, .start = start };
+        slot.* = .{ .arena = arena, .id = id, .provider_id = provider_id, .flow = flow };
         try self.map.put(self.gpa, id, slot);
         return slot;
     }
@@ -95,11 +99,7 @@ test "one provider holds one login, and a removal frees it" {
 
     const id: wire.ids.LoginId = .bytes(@splat(1));
     const arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    const slot = try logins.create(id, arena, "codex", .codex, .{
-        .user_code = "UC",
-        .device_auth_id = "dai",
-        .verification_url = "https://u",
-    });
+    const slot = try logins.reserve(id, arena, "codex", .codex);
 
     try testing.expect(logins.get(id) == slot);
     try testing.expect(logins.byProvider("codex") == slot);

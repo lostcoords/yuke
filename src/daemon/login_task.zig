@@ -62,8 +62,10 @@ fn drive(state: *State, slot: *login_runtime.LoginSlot) !wire.auth.AuthLoginOutc
 
         const reply: poller.Reply = if (result) |poll| switch (poll) {
             .tokens => |tokens| {
-                // A cancel that lands during the poll must not install the grant.
+                // Claim the login with no yield between the check and the claim, so a cancel
+                // that arrives during the write cannot contradict the outcome it will read.
                 if (slot.cancel_requested) return .{ .canceled = .{} };
+                slot.finalizing = true;
                 try install(state, arena.allocator(), slot, tokens);
                 return .{ .succeeded = .{} };
             },

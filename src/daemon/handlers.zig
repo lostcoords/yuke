@@ -200,26 +200,34 @@ pub fn authLogin(state: *State, arena: std.mem.Allocator, params: wire.auth.Auth
 
     // The slot arena owns the code and the url, because the login outlives this request arena.
     var slot_arena: std.heap.ArenaAllocator = .init(state.gpa);
-    errdefer slot_arena.deinit();
-    const owned_id = try slot_arena.allocator().dupe(u8, params.provider_id);
+    const owned_id = slot_arena.allocator().dupe(u8, params.provider_id) catch |err| {
+        slot_arena.deinit();
+        return err;
+    };
+
+    // Reserve before the network call, because `start` yields and a second request would pass
+    // the check above. The registry owns the arena from here, so one `remove` frees everything.
+    const login_id: wire.ids.LoginId = .bytes(state.newId() ++ state.newId());
+    const slot = state.logins.reserve(login_id, slot_arena, owned_id, flow) catch |err| {
+        slot_arena.deinit();
+        return err;
+    };
+    errdefer state.logins.remove(login_id);
 
     var client: net_http.Client = .init(state.gpa, state.io, .none);
     defer client.deinit();
     const body = try arena.alloc(u8, net_http.max_oauth_response_bytes);
-    const start = try login_task.start(slot_arena.allocator(), &client, flow, body);
+    slot.start = try login_task.start(slot.arena.allocator(), &client, flow, body);
 
-    const login_id: wire.ids.LoginId = .bytes(state.newId() ++ state.newId());
-    const slot = try state.logins.create(login_id, slot_arena, owned_id, flow, start);
-    errdefer state.logins.remove(login_id);
     try state.tasks.concurrent(state.io, login_task.run, .{ state, slot });
-
-    return .{ .login_id = login_id, .user_code = start.user_code, .verification_url = start.verification_url };
+    return .{ .login_id = login_id, .user_code = slot.start.user_code, .verification_url = slot.start.verification_url };
 }
 
 /// Handle auth.cancel_login: mark the login canceled, then wake it so it stops before its next poll.
 pub fn authCancelLogin(state: *State, _: std.mem.Allocator, params: wire.auth.AuthCancelLoginParams) !wire.misc.Empty {
     // A cancel for a login that already finished is not an error, so a retry stays harmless.
     const slot = state.logins.get(params.login_id) orelse return .{};
+    if (slot.finalizing) return .{}; // The grant is already landing, so the outcome stands.
     if (!slot.cancel_requested) {
         slot.cancel_requested = true;
         slot.wake_event.set(state.io);
