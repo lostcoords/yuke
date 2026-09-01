@@ -811,5 +811,5 @@ test {
     _ = @import("report.zig");
     _ = @import("owner.zig");
     _ = @import("modules/client.zig");
-    _ = @import("host_js.zig");
+    _ = @import("host_js_test.zig");
 }
