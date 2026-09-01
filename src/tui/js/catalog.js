@@ -4,7 +4,7 @@ import * as client from "yuke:client";
 import { notice } from "yuke:notice";
 import { newestLocalModelSession } from "yuke:sidebar";
 
-/** @typedef {{ rev: Wire.CatalogRev | null, models: readonly Wire.ModelInfo[], providers: readonly Wire.ProviderInfo[], loading: boolean }} CatalogState */
+/** @typedef {{ rev: Wire.CatalogRev | null, models: readonly Wire.ModelInfo[], loading: boolean }} CatalogState */
 /** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
 /** @typedef {{ session: Wire.Session, activity: { context_usage?: Wire.TokenUsage } | null }} StatusEntry */
 /** @typedef {{ entry?: () => StatusEntry | null, connKey?: () => string }} CatalogConfig */
@@ -18,7 +18,7 @@ const catalogs = new Map();
 export function catalogOf(connKey) {
   let c = catalogs.get(connKey);
   if (!c) {
-    c = { rev: null, models: [], providers: [], loading: false };
+    c = { rev: null, models: [], loading: false };
     catalogs.set(connKey, c);
   }
   return c;
@@ -35,7 +35,6 @@ export function loadCatalog(connKey) {
       if (r && r.type === "full") {
         c.rev = r.catalog_rev;
         c.models = r.models || [];
-        c.providers = r.providers || [];
       }
     })
     .catch(() => {})
