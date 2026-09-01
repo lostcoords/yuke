@@ -15,6 +15,7 @@ const cloud_fetch = @import("../cloud/fetch.zig");
 const catalog_fetch = @import("../catalog/fetch.zig");
 const catalog_store = @import("../catalog/store.zig");
 const provider_registry = @import("registry.zig");
+const provider_store = @import("provider_store.zig");
 const scheduler_mod = @import("scheduler.zig");
 const host = @import("../host/host.zig");
 const retry = @import("../provider/retry.zig");
@@ -35,19 +36,15 @@ home: []const u8, // The default workspace root. A create that omits a workspace
 sessions: session_runtime.Sessions, // The daemon stores live per-session state, keyed by session id.
 registry: connection.Registry, // The registry tracks live connections and the reverse subscription index.
 route_transport: provider.transport.Transport, // Every resolved route opens its response through this transport.
-providers: ?provider.config.Loaded = null, // The daemon owns this layer. Replace it only through installProviders.
 cloud_client: cloud_http.Client,
 cloud_base_url: []u8,
 cloud_credential: ?[]u8 = null,
 device_id: ?[]u8 = null, // The enrolled device id. `/identity` reports it, and it holds no secret.
-cloud_bundle: ?bundle.Snapshot = null, // The account bundle stays in memory, because it holds live credentials.
-catalog: provider_registry.Registry, // One merged snapshot serves catalog reads and provider requests.
+store: provider_store, // The provider layer owns the file, the bundle, and the merged view.
 defaults: daemon_config.Defaults = .{}, // Defaults seed a new session's model and system prompt.
 config_owner: ?daemon_config.Loaded = null, // The daemon owns the yuked.json arena when present.
 env: *const std.process.Environ.Map, // This pointer borrows the process environment for key lookup.
 scheduler: ?*scheduler_mod.Scheduler = null, // The app stores this pointer while the maintenance task runs.
-fetching: bool = false, // One control-plane fetch at a time. Two would race the stored ETag.
-providers_path: ?[]u8 = null, // State owns this path and frees it in deinit. Null means no config directory.
 run_group: std.Io.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
 tool_host: ?host.Host = null,
@@ -114,7 +111,7 @@ pub fn init(options: InitOptions) !State {
         .cloud_base_url = cloud_base_url,
         .cloud_credential = cloud_credential,
         .device_id = device_id,
-        .catalog = .init(gpa),
+        .store = .init(gpa, options.io, options.env),
     };
     errdefer self.deinit();
 
@@ -183,31 +180,13 @@ pub fn deinit(self: *State) void {
     self.run_group.cancel(self.io);
     self.registry.deinit();
     self.sessions.deinit();
-    self.catalog.deinit();
-    if (self.cloud_bundle) |*loaded| loaded.deinit();
+    self.store.deinit();
     if (self.cloud_credential) |credential| self.gpa.free(credential);
     if (self.device_id) |id| self.gpa.free(id);
-    if (self.providers_path) |path| self.gpa.free(path);
     self.gpa.free(self.cloud_base_url);
     self.cloud_client.deinit();
-    if (self.providers) |*p| p.deinit();
     if (self.config_owner) |*c| c.deinit();
     self.db.deinit();
-}
-
-/// Replace the merged provider snapshot. Build the replacement before the live snapshot changes.
-pub fn rebuildCatalog(self: *State) !bool {
-    const next = try provider_registry.Registry.load(self.gpa, &self.db, .{
-        .local = if (self.providers) |*loaded| loaded else null,
-        .account = if (self.cloud_bundle) |*loaded| loaded.document else null,
-        .env = self.env,
-    });
-
-    const changed = !std.mem.eql(u8, &self.catalog.revision.raw, &next.revision.raw);
-    var previous = self.catalog;
-    self.catalog = next;
-    previous.deinit();
-    return changed;
 }
 
 /// Report what one cloud refresh achieved.
@@ -223,9 +202,9 @@ pub fn refreshCatalogOnce(self: *State) !RefreshStatus {
     std.debug.assert(self.cloud_base_url.len != 0);
 
     // A second fetch would read the same stored ETag and install its response out of order.
-    std.debug.assert(!self.fetching);
-    self.fetching = true;
-    defer self.fetching = false;
+    std.debug.assert(!self.store.fetching);
+    self.store.fetching = true;
+    defer self.store.fetching = false;
 
     var etag_buf: [catalog_fetch.max_etag_bytes]u8 = undefined;
     const outcome = try catalog_fetch.refreshCatalog(self.gpa, &self.cloud_client, &self.db, self.cloud_base_url, &etag_buf);
@@ -233,7 +212,7 @@ pub fn refreshCatalogOnce(self: *State) !RefreshStatus {
         .unchanged => return .current,
         .unavailable => return .catalog_unavailable,
         .updated => |etag| {
-            const changed = try self.rebuildCatalog();
+            const changed = try self.store.rebuild(&self.db);
             // The stored ETag means the live snapshot holds that document, so it commits first.
             try catalog_store.setEtag(&self.db, etag);
             if (changed) self.announceCatalogChanged();
@@ -248,77 +227,27 @@ pub fn refreshBundleOnce(self: *State) !void {
 
     const credential = self.cloud_credential orelse return;
     // A second fetch would hold this ETag while the first install frees the arena behind it.
-    std.debug.assert(!self.fetching);
-    self.fetching = true;
-    defer self.fetching = false;
+    std.debug.assert(!self.store.fetching);
+    self.store.fetching = true;
+    defer self.store.fetching = false;
 
-    const etag = if (self.cloud_bundle) |*loaded| loaded.etag else "";
+    const etag = self.store.accountEtag();
     const outcome = try cloud_fetch.refreshProviders(self.gpa, &self.cloud_client, self.cloud_base_url, credential, etag);
     switch (outcome) {
         .unchanged => {},
         .updated => |loaded| {
             var next = loaded;
             errdefer next.deinit();
-            if (try self.installCloudBundle(&next)) self.announceCatalogChanged();
+            if (try self.store.installAccount(&next, &self.db)) self.announceCatalogChanged();
         },
     }
-}
-
-/// Report when the soonest ACTIVE account token expires, because a dead grant keeps a stale expiry.
-pub fn bundleExpiryMillis(self: *const State) ?u64 {
-    const loaded = self.cloud_bundle orelse return null;
-    var soonest: ?u64 = null;
-    for (loaded.document.providers) |p| {
-        if (p.auth.status != .active) continue;
-        const at = p.auth.expires_at_ms orelse continue;
-        if (soonest == null or at < soonest.?) soonest = at;
-    }
-    return soonest;
-}
-
-/// Install one bundle after the merged replacement is ready. State takes ownership of `next_bundle`.
-fn installCloudBundle(self: *State, next_bundle: *bundle.Snapshot) !bool {
-    const next_catalog = try provider_registry.Registry.load(self.gpa, &self.db, .{
-        .local = if (self.providers) |*loaded| loaded else null,
-        .account = next_bundle.document,
-        .env = self.env,
-    });
-
-    const changed = !std.mem.eql(u8, &self.catalog.revision.raw, &next_catalog.revision.raw);
-    var previous_catalog = self.catalog;
-    var previous_bundle = self.cloud_bundle;
-    self.catalog = next_catalog;
-    self.cloud_bundle = next_bundle.*;
-    next_bundle.* = undefined;
-    previous_catalog.deinit();
-    if (previous_bundle) |*loaded| loaded.deinit();
-    return changed;
-}
-
-/// Install one providers layer after the replacement is ready, because a direct assignment frees live routes.
-pub fn installProviders(self: *State, next: *provider.config.Loaded) !bool {
-    const next_catalog = try provider_registry.Registry.load(self.gpa, &self.db, .{
-        .local = next,
-        .account = if (self.cloud_bundle) |*loaded| loaded.document else null,
-        .env = self.env,
-    });
-
-    const changed = !std.mem.eql(u8, &self.catalog.revision.raw, &next_catalog.revision.raw);
-    var previous_catalog = self.catalog;
-    var previous_providers = self.providers;
-    self.catalog = next_catalog;
-    self.providers = next.*;
-    next.* = undefined;
-    previous_catalog.deinit();
-    if (previous_providers) |*loaded| loaded.deinit();
-    return changed;
 }
 
 /// Publish the new merged revision after the replacement is ready.
 pub fn announceCatalogChanged(self: *State) void {
     const note: wire.rpc.Notification = .{
         .method = .@"catalog.changed",
-        .params = .{ .catalog_changed_data = .{ .catalog_rev = self.catalog.revision } },
+        .params = .{ .catalog_changed_data = .{ .catalog_rev = self.store.merged.revision } },
     };
     const bytes = connection.frameNotification(self.gpa, note) catch |err| {
         std.log.warn("cannot frame catalog.changed: {t}", .{err});
@@ -401,12 +330,12 @@ test "a cloud bundle and its etag install as one snapshot" {
     var installed = false;
     defer if (!installed) snapshot.deinit();
 
-    const changed = try state.installCloudBundle(&snapshot);
+    const changed = try state.store.installAccount(&snapshot, &state.db);
     installed = true;
     try std.testing.expect(changed);
-    try std.testing.expectEqualStrings("etag-1", state.cloud_bundle.?.etag);
-    try std.testing.expectEqualStrings("secret", state.cloud_bundle.?.document.providers[0].auth.api_key.?);
-    const resolved = state.catalog.resolveModel("cloud:acme/m").?;
+    try std.testing.expectEqualStrings("etag-1", state.store.account.?.etag);
+    try std.testing.expectEqualStrings("secret", state.store.account.?.document.providers[0].auth.api_key.?);
+    const resolved = state.store.merged.resolveModel("cloud:acme/m").?;
     try std.testing.expectEqual(wire.enums.ProviderSource.cloud, resolved.provider.origin);
     try std.testing.expect(resolved.provider.availability == .ready);
     try std.testing.expect(resolved.model.caps.tools == .unknown);

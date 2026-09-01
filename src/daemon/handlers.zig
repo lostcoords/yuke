@@ -139,7 +139,7 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
         .profiles = &.{},
         .agents = &.{},
         .session_revision = state.session_revision,
-        .catalog_rev = state.catalog.revision,
+        .catalog_rev = state.store.merged.revision,
         .capabilities = &.{},
     };
 }
@@ -147,14 +147,14 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
 /// Handle catalog.list: return every configured provider and its models, or nothing when the
 /// client already holds this revision. A signed-out user with a local key still picks a model.
 pub fn catalogList(state: *State, _: std.mem.Allocator, params: wire.catalog.CatalogListParams) !wire.catalog.CatalogListResult {
-    const current = state.catalog.revision;
+    const current = state.store.merged.revision;
     if (params.since_rev) |since| {
         if (std.mem.eql(u8, &since.raw, &current.raw)) return .{ .unchanged = .{ .catalog_rev = current } };
     }
     return .{ .full = .{
         .catalog_rev = current,
-        .providers = state.catalog.providers,
-        .models = state.catalog.models,
+        .providers = state.store.merged.providers,
+        .models = state.store.merged.models,
     } };
 }
 
@@ -162,7 +162,7 @@ pub fn catalogList(state: *State, _: std.mem.Allocator, params: wire.catalog.Cat
 /// The cloud owns account credentials, so the account bundle is not listed here.
 pub fn authList(state: *State, arena: std.mem.Allocator, _: wire.misc.Empty) !wire.auth.AuthListResult {
     var out: std.ArrayList(wire.auth.AuthProvider) = .empty;
-    const loaded = state.providers orelse return .{ .providers = &.{} };
+    const loaded = state.store.local orelse return .{ .providers = &.{} };
     for (loaded.providers) |p| try out.append(arena, .{
         .provider_id = p.id,
         .credential_kind = credentialKind(p),
@@ -175,62 +175,19 @@ pub fn authList(state: *State, arena: std.mem.Allocator, _: wire.misc.Empty) !wi
 /// Handle auth.set_api_key: store one literal key and rebuild the snapshot.
 /// The entry keeps every other field, so a hand-written route survives a key change.
 pub fn authSetApiKey(state: *State, arena: std.mem.Allocator, params: wire.auth.AuthSetApiKeyParams) !wire.misc.Empty {
-    const path = state.providers_path orelse return error.NoConfigDirectory;
     if (!wire.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
     if (params.api_key.len == 0) return error.BadApiKey;
 
-    var next: std.ArrayList(provider_config.LocalProvider) = .empty;
-    var replaced = false;
-    if (state.providers) |loaded| for (loaded.providers) |p| {
-        if (std.mem.eql(u8, p.id, params.provider_id)) {
-            var updated = p;
-            updated.auth = .{ .api_key = .{
-                .header = if (p.auth) |a| switch (a) {
-                    .api_key => |key| key.header,
-                    .oauth => null,
-                } else null,
-                .source = .{ .literal = params.api_key },
-            } };
-            try next.append(arena, updated);
-            replaced = true;
-        } else try next.append(arena, p);
-    };
-    // A provider the file does not name yet needs only an id and a key; the catalog completes it.
-    if (!replaced) try next.append(arena, .{ .id = params.provider_id, .auth = .{ .api_key = .{ .source = .{ .literal = params.api_key } } } });
-
-    try writeProviders(state, path, next.items);
+    if (try state.store.edit(arena, params.provider_id, .{ .set_api_key = params.api_key }, &state.db)) state.announceCatalogChanged();
     state.announceAuthChanged(params.provider_id, .api_key);
     return .{};
 }
 
 /// Handle auth.remove: drop the credential the daemon holds for one provider.
-/// The entry stays when it carries route or model configuration, so a hand-written file survives.
 pub fn authRemove(state: *State, arena: std.mem.Allocator, params: wire.auth.AuthRemoveParams) !wire.misc.Empty {
-    const path = state.providers_path orelse return error.NoConfigDirectory;
     if (!wire.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
-    const loaded = state.providers orelse return error.UnknownProvider;
 
-    var next: std.ArrayList(provider_config.LocalProvider) = .empty;
-    var found = false;
-    for (loaded.providers) |p| {
-        if (!std.mem.eql(u8, p.id, params.provider_id)) {
-            try next.append(arena, p);
-            continue;
-        }
-        found = true;
-        // The entry holds nothing else, so it goes with its credential.
-        if (onlyCredential(p)) continue;
-        var kept = p;
-        // A route that presents no credential keeps that shape; another one now wants a key.
-        if (p.auth) |a| kept.auth = switch (a) {
-            .api_key => |key| .{ .api_key = .{ .header = key.header } },
-            .oauth => null,
-        };
-        try next.append(arena, kept);
-    }
-    if (!found) return error.UnknownProvider;
-
-    try writeProviders(state, path, next.items);
+    if (try state.store.edit(arena, params.provider_id, .remove_credential, &state.db)) state.announceCatalogChanged();
     state.announceAuthChanged(params.provider_id, null);
     return .{};
 }

@@ -141,7 +141,7 @@ pub const Scheduler = struct {
 
     /// Return the wait that reaches the soonest token with the margin to spare.
     fn expiryLeadMillis(self: *const Scheduler) ?i64 {
-        return leadMillis(self.state.bundleExpiryMillis() orelse return null, self.state.nowMillis());
+        return leadMillis(self.state.store.accountExpiryMillis() orelse return null, self.state.nowMillis());
     }
 };
 

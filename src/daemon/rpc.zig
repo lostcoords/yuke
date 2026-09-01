@@ -129,7 +129,7 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
         .@"catalog.refresh" => {
             // The fetch runs on the scheduler, so this answers now and `catalog.changed` reports the result.
             state.requestCatalogRefresh();
-            const result: wire.catalog.CatalogRefreshResult = .{ .catalog_rev = state.catalog.revision };
+            const result: wire.catalog.CatalogRefreshResult = .{ .catalog_rev = state.store.merged.revision };
             return .{ .ok = .{ .id = request.id, .result = .{ .catalog_refresh_result = result } } };
         },
         .@"session.resync" => {

@@ -332,7 +332,7 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
     const model = slot.config.model;
 
     // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
-    const resolved = state.catalog.resolveModel(model) orelse return error.UnknownModel;
+    const resolved = state.store.merged.resolveModel(model) orelse return error.UnknownModel;
     const request = try resolvedRequest(arena, state, slot, transcript, resolved);
     const body = try state.route_transport.open(arena, request, info);
     std.debug.assert(slot.body == null); // one body per run

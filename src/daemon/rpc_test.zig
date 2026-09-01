@@ -113,8 +113,8 @@ const TestState = struct {
         var fixture = try initBare(null);
         errdefer fixture.deinit();
         // State.deinit frees the provider layer.
-        fixture.state.providers = try provider.config.loadBytes(std.testing.allocator, fixture_providers);
-        _ = try fixture.state.rebuildCatalog();
+        fixture.state.store.local = try provider.config.loadBytes(std.testing.allocator, fixture_providers);
+        _ = try fixture.state.store.rebuild(&fixture.state.db);
         return fixture;
     }
 
@@ -1810,13 +1810,13 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
     const a = fixture.allocator();
 
     // State.deinit frees the loaded provider layer. Leave that layer for State.deinit.
-    fixture.state.providers = try provider.config.loadBytes(std.testing.allocator,
+    fixture.state.store.local = try provider.config.loadBytes(std.testing.allocator,
         \\{"version":1,"providers":[{"id":"acme","base_url":"https://llm.acme.example/v1","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-test"}}},
         \\ "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
         \\ "models":[{"id":"fast","upstream_id":"acme-fast-1","limits":{"context_window":200000,"max_output_tokens":8192}}]}]}
     );
-    _ = try fixture.state.rebuildCatalog();
+    _ = try fixture.state.store.rebuild(&fixture.state.db);
     var capture: CaptureTransport = .{ .gpa = std.testing.allocator, .reply = provider.transport.canned_reply };
     defer capture.deinit();
     fixture.state.route_transport = capture.transportFor();
@@ -2120,8 +2120,8 @@ test "a local provider changes the catalog before the first cloud sync" {
     defer fixture.deinit();
     const a = fixture.allocator();
 
-    fixture.state.providers = try cloud_catalog_test_local();
-    try std.testing.expect(try fixture.state.rebuildCatalog());
+    fixture.state.store.local = try cloud_catalog_test_local();
+    try std.testing.expect(try fixture.state.store.rebuild(&fixture.state.db));
 
     const initialized = try handlers.initialize(&fixture.state, a);
     try std.testing.expect(!std.mem.eql(u8, &initialized.catalog_rev.raw, &@as([64]u8, @splat(0))));
@@ -2133,7 +2133,7 @@ test "a local provider changes the catalog before the first cloud sync" {
 
     const unchanged = try handlers.catalogList(&fixture.state, a, .{ .since_rev = full.full.catalog_rev });
     try std.testing.expect(unchanged == .unchanged);
-    try std.testing.expect(!try fixture.state.rebuildCatalog());
+    try std.testing.expect(!try fixture.state.store.rebuild(&fixture.state.db));
 }
 
 test "catalog.list projects stored models and honors a matching revision" {
@@ -2157,8 +2157,8 @@ test "catalog.list projects stored models and honors a matching revision" {
     try catalog_store.replace(&fixture.state.db, a, parsed.providers);
 
     // A catalog row alone is not offered; a local key makes it a configured provider.
-    fixture.state.providers = try cloud_catalog_test_local(); // State.deinit frees this.
-    _ = try fixture.state.rebuildCatalog();
+    fixture.state.store.local = try cloud_catalog_test_local(); // State.deinit frees this.
+    _ = try fixture.state.store.rebuild(&fixture.state.db);
     const result = try handlers.catalogList(&fixture.state, a, .{});
     try std.testing.expect(result == .full);
     try std.testing.expectEqual(@as(usize, 1), result.full.providers.len);
@@ -2679,12 +2679,39 @@ const AuthFile = struct {
         errdefer self.tmp.cleanup();
         const len = try self.tmp.dir.realPath(std.testing.io, &self.path_buf);
         const joined = try std.fmt.bufPrint(self.path_buf[len..], "/providers.json", .{});
-        state.providers_path = try state.gpa.dupe(u8, self.path_buf[0 .. len + joined.len]);
+        state.store.path = try state.gpa.dupe(u8, self.path_buf[0 .. len + joined.len]);
     }
     fn deinit(self: *AuthFile) void {
         self.tmp.cleanup();
     }
 };
+
+test "two concurrent credential edits both survive" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    // Both tasks read the layer, write the file, and install. The lock stops the later one
+    // from building its replacement out of the layer the earlier one is about to replace.
+    const Edit = struct {
+        fn call(state: *State, id: []const u8, key: []const u8) !void {
+            var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+            defer arena.deinit();
+            _ = try handlers.authSetApiKey(state, arena.allocator(), .{ .provider_id = id, .api_key = key });
+        }
+    }.call;
+
+    var first = try fixture.rt.spawn(Edit, .{ &fixture.state, "alpha", "sk-a" });
+    var second = try fixture.rt.spawn(Edit, .{ &fixture.state, "beta", "sk-b" });
+    try first.join();
+    try second.join();
+
+    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.store.path.?);
+    defer reloaded.deinit();
+    try std.testing.expectEqual(@as(usize, 2), reloaded.providers.len); // Neither write lost the other.
+}
 
 test "an api-key write keeps the grant of every other entry" {
     var fixture = try TestState.initBare(null);
@@ -2695,7 +2722,7 @@ test "an api-key write keeps the grant of every other entry" {
     defer file.deinit();
 
     // A hand-written grant stands in for a finished login, because no login flow exists yet.
-    fixture.state.providers = try provider.config.loadBytes(std.testing.allocator,
+    fixture.state.store.local = try provider.config.loadBytes(std.testing.allocator,
         \\{"version":1,"providers":[{"id":"codex",
         \\ "auth":{"oauth":{"access_token":"tok","refresh_token":"ref","account_id":"acct","expires_at_ms":9000000000000}}}]}
     );
@@ -2703,7 +2730,7 @@ test "an api-key write keeps the grant of every other entry" {
     _ = try handlers.authSetApiKey(&fixture.state, a, .{ .provider_id = "acme", .api_key = "sk-one" });
 
     // The write rewrites the whole file, so a projection that drops the arm loses this grant.
-    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
+    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.store.path.?);
     defer reloaded.deinit();
     try std.testing.expectEqual(@as(usize, 2), reloaded.providers.len);
     const grant = reloaded.providers[0].auth.?.oauth;
@@ -2734,18 +2761,18 @@ test "auth.set_api_key creates an entry, auth.list reports it, auth.remove drops
     try std.testing.expectEqual(wire.enums.AuthCredentialKind.api_key, listed.providers[0].credential_kind.?);
 
     // The key reached the file, so a restart reads the same credential.
-    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
+    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.store.path.?);
     defer reloaded.deinit();
     try std.testing.expectEqualStrings("sk-one", reloaded.providers[0].auth.?.api_key.source.?.literal);
 
     // The live snapshot routes the new provider, so the write reached the registry too.
-    try std.testing.expectEqual(@as(usize, 1), fixture.state.catalog.providers.len);
-    try std.testing.expectEqualStrings("acme", fixture.state.catalog.providers[0].id);
+    try std.testing.expectEqual(@as(usize, 1), fixture.state.store.merged.providers.len);
+    try std.testing.expectEqualStrings("acme", fixture.state.store.merged.providers[0].id);
 
     _ = try handlers.authRemove(&fixture.state, a, .{ .provider_id = "acme" });
     try std.testing.expectEqual(@as(usize, 0), (try handlers.authList(&fixture.state, a, .{})).providers.len);
     // The removal reached the file, so a change that touched only memory would fail here.
-    var after = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
+    var after = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.store.path.?);
     defer after.deinit();
     try std.testing.expectEqual(@as(usize, 0), after.providers.len);
 }
@@ -2763,12 +2790,12 @@ test "auth.set_api_key replaces the key and keeps every other field" {
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-old"}}},
         \\ "models":[{"id":"m","upstream_id":"u","limits":{"context_window":10,"max_output_tokens":10}}]}]}
     );
-    try provider.config.write(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?, seeded.providers);
-    _ = try fixture.state.installProviders(&seeded);
+    try provider.config.write(std.testing.allocator, fixture.state.io, fixture.state.store.path.?, seeded.providers);
+    _ = try fixture.state.store.installLocal(&seeded, &fixture.state.db);
 
     _ = try handlers.authSetApiKey(&fixture.state, a, .{ .provider_id = "acme", .api_key = "sk-new" });
 
-    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
+    var reloaded = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.store.path.?);
     defer reloaded.deinit();
     const p = reloaded.providers[0];
     try std.testing.expectEqualStrings("sk-new", p.auth.?.api_key.source.?.literal);
@@ -2777,7 +2804,7 @@ test "auth.set_api_key replaces the key and keeps every other field" {
     try std.testing.expectEqualStrings("m", p.models[0].id);
 
     // The live route presents the new key, so a write that skipped installProviders fails here.
-    const match = fixture.state.catalog.resolveModel("local:acme/m").?;
+    const match = fixture.state.store.merged.resolveModel("local:acme/m").?;
     try std.testing.expectEqualStrings("sk-new", match.provider.availability.ready.credential.literal);
 }
 
@@ -2796,13 +2823,13 @@ test "auth.remove keeps a configured entry and only drops its credential" {
         \\  "models":[{"id":"m","upstream_id":"u","limits":{"context_window":10,"max_output_tokens":10}}]},
         \\ {"id":"plain","api_key":"sk-plain"}]}
     );
-    try provider.config.write(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?, seeded.providers);
-    _ = try fixture.state.installProviders(&seeded);
+    try provider.config.write(std.testing.allocator, fixture.state.io, fixture.state.store.path.?, seeded.providers);
+    _ = try fixture.state.store.installLocal(&seeded, &fixture.state.db);
 
     _ = try handlers.authRemove(&fixture.state, a, .{ .provider_id = "acme" });
     _ = try handlers.authRemove(&fixture.state, a, .{ .provider_id = "plain" });
 
-    var after = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.providers_path.?);
+    var after = try provider.config.load(std.testing.allocator, fixture.state.io, fixture.state.store.path.?);
     defer after.deinit();
 
     // The entry that carried only a key is gone; the configured one keeps its route and models.
@@ -2815,7 +2842,7 @@ test "auth.remove keeps a configured entry and only drops its credential" {
     try std.testing.expectEqual(provider.instance.ApiKeyHeader.x_api_key, kept.auth.?.api_key.header.?);
 
     // The live snapshot reports the provider as configurable rather than hiding it.
-    try std.testing.expectEqual(wire.enums.ProviderState.needs_credential, fixture.state.catalog.providers[0].state);
+    try std.testing.expectEqual(wire.enums.ProviderState.needs_credential, fixture.state.store.merged.providers[0].state);
 }
 
 test "auth rejects a bad id and an unknown provider" {

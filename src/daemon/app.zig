@@ -77,11 +77,11 @@ pub fn run(init: std.process.Init) !void {
     defer state.deinit();
 
     // State owns this path, because an invalid file fails startup and `auth.set_api_key` rewrites it.
-    state.providers_path = try configFilePath(init.gpa, init.environ_map, "providers.json");
-    if (state.providers_path) |path| {
+    state.store.path = try configFilePath(init.gpa, init.environ_map, "providers.json");
+    if (state.store.path) |path| {
         var loaded = try provider.config.load(init.gpa, io, path);
         if (loaded.providers.len > 0) {
-            state.providers = loaded;
+            state.store.local = loaded;
             std.log.info("loaded {d} provider(s) from providers.json", .{loaded.providers.len});
         } else loaded.deinit();
     }
@@ -212,7 +212,7 @@ test "a catalog replacement announces the merged revision" {
     try state.registry.register(&conn);
     defer state.registry.unregister(&conn);
 
-    state.catalog.revision = .bytes(@splat(0xab));
+    state.store.merged.revision = .bytes(@splat(0xab));
     state.announceCatalogChanged();
 
     const item = (try conn.tryReceive()).?;
