@@ -38,6 +38,8 @@ pub const Poll = union(enum) {
 pub const Error = error{
     /// The request never left this host, so a repeat cannot look like token reuse.
     PreFlight,
+    /// The call carried no rotating token, so the caller may repeat it.
+    Transient,
     /// The server may already hold the request, so a refresh must never repeat it.
     Ambiguous,
     /// The grant is gone and only a fresh login recovers it.
@@ -96,13 +98,41 @@ fn lower(value: std.json.Value, out: []u8) ?[]const u8 {
     return std.ascii.lowerString(out[0..value.string.len], value.string);
 }
 
-/// Classify one transport failure. Only a proven pre-flight failure stays retryable.
-pub fn classify(err: anyerror) Error {
-    return switch (err) {
-        error.PreFlight => Error.PreFlight,
-        // Every other failure may have reached the server, so a refresh must not repeat it.
-        else => Error.Ambiguous,
+/// Classify one transport failure. A rotating call spends its token, so it cannot repeat one.
+pub fn classify(err: anyerror, rotating: bool) Error {
+    if (err == error.PreFlight) return Error.PreFlight;
+    return if (rotating) Error.Ambiguous else Error.Transient;
+}
+
+/// Parse one response body as a JSON object. Any other shape is unreadable.
+pub fn parseObject(arena: std.mem.Allocator, body: []const u8) ?std.json.ObjectMap {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return null;
+    return if (parsed == .object) parsed.object else null;
+}
+
+/// Read a non-empty string field. The result is a copy, because the body buffer is reused.
+pub fn str(arena: std.mem.Allocator, obj: std.json.ObjectMap, name: []const u8) ?[]const u8 {
+    const value = obj.get(name) orelse return null;
+    if (value != .string or value.string.len == 0) return null;
+    return arena.dupe(u8, value.string) catch null;
+}
+
+/// Read an integer field. Codex sends `interval` as a string and other flows send a number.
+pub fn int(obj: std.json.ObjectMap, name: []const u8) ?i64 {
+    const value = obj.get(name) orelse return null;
+    return switch (value) {
+        .integer => |n| n,
+        .float => |f| @intFromFloat(f),
+        .string => |text| std.fmt.parseInt(i64, text, 10) catch null,
+        else => null,
     };
+}
+
+/// Return the interval one start response asked for. A non-positive value is no value.
+pub fn intervalFrom(obj: std.json.ObjectMap) u64 {
+    const seconds = int(obj, "interval") orelse return default_interval_ms;
+    if (seconds <= 0) return default_interval_ms;
+    return @as(u64, @intCast(seconds)) * 1000;
 }
 
 const testing = std.testing;
@@ -159,11 +189,25 @@ test "the error code reads the four documented names in order" {
     try testing.expect(errorCode("not json", a, &buf) == null);
 }
 
-test "only a pre-flight transport failure stays retryable" {
-    try testing.expectEqual(Error.PreFlight, classify(error.PreFlight));
-    try testing.expectEqual(Error.Ambiguous, classify(error.Ambiguous));
-    try testing.expectEqual(Error.Ambiguous, classify(error.ResponseTooLarge));
-    try testing.expectEqual(Error.Ambiguous, classify(error.CloudTimeout));
+test "a rotating call cannot repeat what a poll may repeat" {
+    try testing.expectEqual(Error.PreFlight, classify(error.PreFlight, true));
+    try testing.expectEqual(Error.PreFlight, classify(error.PreFlight, false));
+    // The refresh spent its token, so an unknown outcome is terminal.
+    try testing.expectEqual(Error.Ambiguous, classify(error.CloudTimeout, true));
+    // The poll holds a reusable device code, so the same failure keeps the login alive.
+    try testing.expectEqual(Error.Transient, classify(error.CloudTimeout, false));
+}
+
+test "an interval falls back when it is absent, zero, or a string" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try testing.expectEqual(default_interval_ms, intervalFrom(parseObject(a, "{}").?));
+    try testing.expectEqual(default_interval_ms, intervalFrom(parseObject(a, "{\"interval\":0}").?));
+    try testing.expectEqual(@as(u64, 7000), intervalFrom(parseObject(a, "{\"interval\":7}").?));
+    // Codex sends this field as a string.
+    try testing.expectEqual(@as(u64, 7000), intervalFrom(parseObject(a, "{\"interval\":\"7\"}").?));
 }
 
 test "the canned seam replays one scripted reply for each call" {

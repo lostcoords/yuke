@@ -13,6 +13,8 @@ test {
     _ = @import("catalog/catalog.zig");
     _ = @import("net/http.zig");
     _ = @import("provider/oauth/oauth.zig");
+    _ = @import("provider/oauth/xai.zig");
+    _ = @import("provider/oauth/codex.zig");
     _ = @import("provider/retry.zig");
     _ = @import("tools/tool.zig");
     _ = @import("tools/read.zig");

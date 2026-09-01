@@ -21,6 +21,8 @@ pub const resolve = @import("instance/resolve.zig");
 pub const config = @import("config/providers.zig");
 
 pub const oauth = @import("oauth/oauth.zig");
+pub const oauth_xai = @import("oauth/xai.zig");
+pub const oauth_codex = @import("oauth/codex.zig");
 pub const transport = @import("transport.zig");
 pub const http_transport = @import("transport/http.zig");
 pub const failure = @import("failure.zig");
