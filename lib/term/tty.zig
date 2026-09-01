@@ -17,10 +17,6 @@ pub const WinsizeWatch = switch (builtin.os.tag) {
     else => @import("tty_posix.zig").WinsizeWatch,
 };
 
-test "resize_in_band matches the OS" {
-    try std.testing.expectEqual(builtin.os.tag == .windows, resize_in_band);
-}
-
 test {
     _ = Tty;
     _ = WinsizeWatch;

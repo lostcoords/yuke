@@ -49,14 +49,13 @@ pub fn run(init: std.process.Init) !void {
 
     const config: State.Config = .{
         .listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", default_port),
-        .db_path = db_path,
     };
 
     // The HTTP client outlives State. State.deinit joins every run before the defer calls HttpTransport.deinit.
     var http_transport = provider.http_transport.HttpTransport.init(init.gpa, io, provider_idle_timeout);
     defer http_transport.deinit();
 
-    const conn = try zqlite.open(config.db_path, open_flags);
+    const conn = try zqlite.open(db_path, open_flags);
     // The fixed buffer bounds the read, and State.init copies the credential before the buffer ends.
     var state = state: {
         var secrets: [secret_buffer_bytes]u8 = undefined;
@@ -120,7 +119,7 @@ pub fn run(init: std.process.Init) !void {
     // Reuse the address, because the instance lock, not the bind, keeps one daemon on the port.
     var listener = try config.listen.listen(io, .{ .reuse_address = true });
     defer listener.deinit(io);
-    std.log.info("daemon store at {s}", .{config.db_path});
+    std.log.info("daemon store at {s}", .{db_path});
     std.log.info("front door on http://{f}", .{listener.socket.address});
 
     var stop: shutdown.Watcher = try .init();

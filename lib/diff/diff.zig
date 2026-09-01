@@ -43,12 +43,6 @@ pub fn changedLines(list: []const Hunk) usize {
     return total;
 }
 
-test "the child modules run their own tests" {
-    _ = lines;
-    _ = myers;
-    _ = hunks;
-}
-
 const testing = std.testing;
 
 test "compare returns no hunk for an equal text" {

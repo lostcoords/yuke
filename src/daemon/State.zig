@@ -59,7 +59,6 @@ session_revision: u64 = 0,
 /// The daemon stores its configuration here.
 pub const Config = struct {
     listen: std.Io.net.IpAddress,
-    db_path: [:0]const u8 = ":memory:",
     /// The browser origins that admission accepts beyond the official client.
     allowed_origins: []const []const u8 = &.{},
 };
