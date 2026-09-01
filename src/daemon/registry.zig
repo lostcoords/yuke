@@ -23,10 +23,10 @@ pub const Route = struct {
     credential: CredentialSource,
 };
 
-/// A stored grant and the moment it lapses. A run reads both, so a rebuild is not needed.
+/// A run reads the stored grant and its expiry, so it needs no catalog rebuild.
 pub const OAuthSource = struct {
     grant: provider.resolve.Credential.OAuth,
-    /// Unix milliseconds. A run at or past this reports a missing credential.
+    /// The expiry uses Unix milliseconds, and a run at or past it reports a missing credential.
     expires_at_ms: ?u64 = null,
 };
 
@@ -250,7 +250,7 @@ fn localAvailability(
                 source = .{ .oauth = .{ .grant = .{ .access_token = grant.access_token, .headers = pinned }, .expires_at_ms = grant.expires_at_ms } };
             } else if (std.mem.eql(u8, flow, "xai")) {
                 source = .{ .oauth = .{ .grant = .{ .access_token = grant.access_token }, .expires_at_ms = grant.expires_at_ms } };
-            } else return .{ .unavailable = .needs_route }; // A flow this daemon cannot build.
+            } else return .{ .unavailable = .needs_route }; // The daemon cannot build this flow.
         },
     } else if (catalog_auth != null) {
         // The file names no credential and the catalog says the provider needs one.
@@ -304,10 +304,10 @@ fn accountAvailability(arena: std.mem.Allocator, p: bundle.Provider) !Availabili
                 const account = p.auth.account_id orelse return .{ .unavailable = .needs_route };
                 const headers = try arena.dupe(instance.Header, &.{.{ .name = "ChatGPT-Account-ID", .value = account }});
                 dialect = .codex;
-                source = .{ .oauth = .{ .grant = .{ .access_token = token, .headers = headers } } };
+                source = .{ .oauth = .{ .grant = .{ .access_token = token, .headers = headers }, .expires_at_ms = p.auth.expires_at_ms } };
             } else if (std.mem.eql(u8, flow, "xai")) {
-                source = .{ .oauth = .{ .grant = .{ .access_token = token } } };
-            } else return .{ .unavailable = .needs_route }; // A flow this daemon cannot build.
+                source = .{ .oauth = .{ .grant = .{ .access_token = token }, .expires_at_ms = p.auth.expires_at_ms } };
+            } else return .{ .unavailable = .needs_route }; // The daemon cannot build this flow.
         },
     }
 

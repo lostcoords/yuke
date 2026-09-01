@@ -27,7 +27,7 @@ pub const Error = error{
     HeaderConflict,
     BadPath,
     AmbiguousCredential,
-    /// An oauth arm carries no access token, so it can present no bearer.
+    /// An OAuth arm has no access token, so it cannot present a bearer.
     EmptyGrant,
     FileTooLarge,
     NotRegularFile,
@@ -305,7 +305,7 @@ fn validEnvName(name: []const u8) bool {
     return true;
 }
 
-/// The API-key credential of a local provider. The header is null when the catalog must name it.
+/// A local API-key credential uses a header, or the catalog names the missing header.
 pub const LocalApiKey = struct {
     /// The catalog names the header when the file omits it.
     header: ?instance.ApiKeyHeader = null,
@@ -313,13 +313,13 @@ pub const LocalApiKey = struct {
     source: ?CredentialSource = null,
 };
 
-/// The durable residue of one login. The file never stores a device code, a code, or a verifier.
+/// The file stores the result of one login and excludes device data, codes, and verifiers.
 pub const Grant = struct {
     access_token: []const u8,
     refresh_token: ?[]const u8 = null,
-    /// Unix milliseconds. A run at or past this reports a missing credential.
-    expires_at_ms: ?u64 = null,
-    /// Codex pins this as `ChatGPT-Account-Id`. It is not a secret.
+    /// The expiry uses Unix milliseconds, and a run at or past it reports a missing credential.
+    expires_at_ms: u64,
+    /// Codex uses this value in the `ChatGPT-Account-ID` header. The account id is not a secret.
     account_id: ?[]const u8 = null,
 };
 
@@ -376,7 +376,7 @@ test "a grant round-trips through the writer" {
 
 test "an oauth arm with no access token is refused" {
     try testing.expectError(error.EmptyGrant, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"codex","auth":{"oauth":{"access_token":""}}}
+        \\{"id":"codex","auth":{"oauth":{"access_token":"","expires_at_ms":1}}}
     )));
 }
 

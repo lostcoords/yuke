@@ -257,7 +257,7 @@ test "resolveModel finds a model through the merged list" {
     try testing.expect(registry.findModel(rows, "cloud:acme/cm") == null); // The row is local, not cloud.
 }
 
-/// A catalog row for a provider the daemon logs into itself. The row names the flow.
+/// The catalog row names the OAuth flow for a local provider.
 fn oauthCatalogRow(id: []const u8, flow: []const u8) feed.Provider {
     return .{
         .id = id,
@@ -277,7 +277,7 @@ test "a local codex grant routes with a bearer and its account header" {
 
     var loaded = try provider.config.loadBytes(testing.allocator,
         \\{"version":1,"providers":[{"id":"codex",
-        \\ "auth":{"oauth":{"access_token":"tok","account_id":"acct"}}}]}
+        \\ "auth":{"oauth":{"access_token":"tok","account_id":"acct","expires_at_ms":9000000000000}}}]}
     );
     defer loaded.deinit();
 
@@ -296,7 +296,7 @@ test "a catalog row the daemon cannot build leaves the grant unroutable" {
     defer arena.deinit();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"other","auth":{"oauth":{"access_token":"tok"}}}]}
+        \\{"version":1,"providers":[{"id":"other","auth":{"oauth":{"access_token":"tok","expires_at_ms":9000000000000}}}]}
     );
     defer loaded.deinit();
 
@@ -345,6 +345,28 @@ test "a cloud oauth provider routes with its access token" {
     try testing.expectEqualStrings("tok", route.credential.oauth.grant.access_token);
     try testing.expectEqualStrings("ChatGPT-Account-ID", route.credential.oauth.grant.headers[0].name);
     try testing.expectEqualStrings("acct", route.credential.oauth.grant.headers[0].value);
+}
+
+test "a lapsed cloud grant also presents no credential" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const doc = try bundle.decode(a,
+        \\{"version":1,"catalog_rev":null,"providers":[{"id":"xai","name":"xAI",
+        \\ "base_url":"https://api.x.ai/v1","protocol":"openai_chat","cache":"unsupported","headers":[],
+        \\ "auth":{"kind":"oauth","flow":"xai","status":"active","access_token":"tok","expires_at_ms":1000},
+        \\ "models":[]}]}
+    );
+
+    var env = EnvMap.init(testing.allocator);
+    defer env.deinit();
+    const rows = try resolve(a, .{ .account = doc });
+    const route = rows[0].availability.ready;
+
+    // The cloud states the expiry, so the run refuses the grant without waiting for a bundle refresh.
+    try testing.expect(credential(route.credential, &env, 999) != null);
+    try testing.expect(credential(route.credential, &env, 1000) == null);
 }
 
 test "an entry that names a key and holds none needs a credential" {

@@ -2697,7 +2697,7 @@ test "an api-key write keeps the grant of every other entry" {
     // A hand-written grant stands in for a finished login, because no login flow exists yet.
     fixture.state.providers = try provider.config.loadBytes(std.testing.allocator,
         \\{"version":1,"providers":[{"id":"codex",
-        \\ "auth":{"oauth":{"access_token":"tok","refresh_token":"ref","account_id":"acct"}}}]}
+        \\ "auth":{"oauth":{"access_token":"tok","refresh_token":"ref","account_id":"acct","expires_at_ms":9000000000000}}}]}
     );
 
     _ = try handlers.authSetApiKey(&fixture.state, a, .{ .provider_id = "acme", .api_key = "sk-one" });
