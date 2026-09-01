@@ -2768,6 +2768,32 @@ test "a rotated grant replaces the old one and keeps a kept refresh token" {
     try std.testing.expect(grant.expires_at_ms > 9);
 }
 
+test "a lapsed grant is never rotated again" {
+    var fixture = try TestState.initBare(null);
+    defer fixture.deinit();
+    var file: AuthFile = undefined;
+    try file.init(&fixture.state);
+    defer file.deinit();
+
+    try seedGrant(&fixture,
+        \\{"version":1,"providers":[{"id":"codex","auth":{"oauth":{"access_token":"at",
+        \\ "refresh_token":"rt","expires_at_ms":9}}}]}
+    );
+    // One ambiguous rotation lapses the grant and drops the token it may have spent.
+    var first: provider.oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body = "{}" } }} };
+    fixture.state.oauth_http = first.seam();
+    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+
+    const dead = fixture.state.store.local.?.providers[0].auth.?.oauth;
+    try std.testing.expect(dead.refresh_token == null);
+
+    // A second run finds nothing to do, so the daemon stops rewriting the file every cycle.
+    var second: provider.oauth.CannedHttp = .{ .replies = &.{} };
+    fixture.state.oauth_http = second.seam();
+    try login_task.refreshOnce(&fixture.state, 5 * 60 * 1000);
+    try std.testing.expectEqual(@as(usize, 0), second.index); // No request left the daemon.
+}
+
 test "a grant outside the margin is not due" {
     var fixture = try TestState.initBare(null);
     defer fixture.deinit();

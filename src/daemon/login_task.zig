@@ -152,11 +152,8 @@ pub fn refreshOnce(state: *State, margin_ms: u64) !void {
     const seam = state.oauth_http orelse real.seam();
 
     const body = try arena.alloc(u8, response_bytes);
-    const old = due.grant.refresh_token orelse {
-        // No refresh token means no rotation is possible, so the grant needs a fresh login.
-        try lapse(state, arena, due);
-        return;
-    };
+    // `dueGrant` selects only a grant that can rotate, so this token is present.
+    const old = due.grant.refresh_token.?;
 
     const tokens = refreshFlow(arena, due.flow, seam, old, state.nowMillis(), body) catch |err| switch (err) {
         // The request never left or the call spends no token, so the caller may repeat it.
@@ -191,6 +188,7 @@ fn dueGrant(state: *State, arena: std.mem.Allocator, margin_ms: u64) !?Due {
     for (loaded.providers) |p| {
         const auth = p.auth orelse continue;
         if (auth != .oauth) continue;
+        if (auth.oauth.refresh_token == null) continue;
         if (auth.oauth.expires_at_ms > now_ms +| margin_ms) continue;
 
         const row = try catalog_store.provider(&state.db, arena, p.id) orelse continue;
@@ -213,6 +211,8 @@ fn refreshFlow(arena: std.mem.Allocator, flow: login_runtime.Flow, seam: oauth.H
 fn lapse(state: *State, arena: std.mem.Allocator, due: Due) !void {
     var dead = due.grant;
     dead.expires_at_ms = 0;
+    // The rotation may have spent this token, so the daemon must never send it again.
+    dead.refresh_token = null;
     try store(state, arena, due, dead);
 }
 
