@@ -14,6 +14,7 @@ const daemon_config = @import("config.zig");
 const scheduler_mod = @import("scheduler.zig");
 const connection = @import("connection.zig");
 const run_task = @import("run_task.zig");
+const shutdown = @import("shutdown.zig");
 const InstanceLock = @import("InstanceLock.zig");
 const State = @import("State.zig");
 
@@ -116,8 +117,23 @@ pub fn run(init: std.process.Init) !void {
     // Restart the durable work before the front door opens, so no client sees a half-resumed daemon.
     try run_task.resumeSessions(&state);
 
+    // Reuse the address, because the instance lock, not the bind, keeps one daemon on the port.
+    var listener = try config.listen.listen(io, .{ .reuse_address = true });
+    defer listener.deinit(io);
     std.log.info("daemon store at {s}", .{config.db_path});
-    try http.serve(&state);
+    std.log.info("front door on http://{f}", .{listener.socket.address});
+
+    // The cancel stops the accept and joins every live connection before State closes.
+    var front_door: std.Io.Group = .init;
+    defer front_door.cancel(io);
+    try front_door.concurrent(io, http.serve, .{ &state, &listener });
+
+    // This defer runs first, so the default disposition returns before the unwind starts.
+    var stop: shutdown.Watcher = try .init();
+    defer stop.deinit();
+
+    // Park here. Every defer above unwinds in the order the shutdown needs.
+    try stop.wait();
 }
 
 /// Join a file name under the config directory, or null when none exists. The caller owns it.

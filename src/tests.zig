@@ -24,5 +24,7 @@ test {
     _ = @import("daemon/connection.zig");
     _ = @import("daemon/config.zig");
     _ = @import("daemon/InstanceLock.zig");
+    _ = @import("daemon/shutdown.zig");
+    _ = @import("daemon/app.zig");
     _ = @import("daemon/turn_context.zig");
 }

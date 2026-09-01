@@ -29,21 +29,23 @@ const text_plain_allow_get = [_]std.http.Header{
     .{ .name = "allow", .value = "GET" },
 };
 
-/// Accept connections forever. Run each connection in its own task.
-pub fn serve(state: *State) !void {
-    // Reuse the address, because a restart must not wait for the sockets of the last daemon to leave
-    // TIME_WAIT. The instance lock, not the bind, keeps one daemon on the port.
-    var listener = try state.config.listen.listen(state.io, .{ .reuse_address = true });
-    defer listener.deinit(state.io);
-    std.log.info("front door on http://{f}", .{listener.socket.address});
-
+/// Accept until the caller cancels this task. The caller owns the listener, so a bind fails startup.
+pub fn serve(state: *State, listener: *std.Io.net.Server) void {
     var group: std.Io.Group = .init;
     defer group.cancel(state.io);
 
     while (true) {
-        const stream = try listener.accept(state.io);
-        errdefer stream.close(state.io);
-        try group.concurrent(state.io, handleConnection, .{ state, stream });
+        const stream = listener.accept(state.io) catch |err| switch (err) {
+            error.Canceled => return, // The shutdown cancels this task.
+            else => {
+                std.log.err("the front door stopped accepting: {t}", .{err});
+                return;
+            },
+        };
+        group.concurrent(state.io, handleConnection, .{ state, stream }) catch |err| {
+            std.log.err("a connection task did not start: {t}", .{err});
+            stream.close(state.io);
+        };
     }
 }
 
