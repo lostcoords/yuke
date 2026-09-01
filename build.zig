@@ -115,6 +115,26 @@ pub fn build(b: *std.Build) void {
     });
     const run_js_tests = addTestRun(b, "js", "Run JS host tests", js_mod);
 
+    const bench_exe = b.addExecutable(.{
+        .name = "yuke-tui-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tui/bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quickjs", .module = quickjs.module("quickjs") },
+                .{ .name = "zio", .module = zio.module("zio") },
+                .{ .name = "term", .module = term },
+                .{ .name = "websocket", .module = websocket },
+                .{ .name = "wire", .module = wire },
+                .{ .name = "domain", .module = domain },
+            },
+        }),
+    });
+    const run_bench = b.addRunArtifact(bench_exe);
+    const bench_step = b.step("bench", "Measure the TUI frame cost");
+    bench_step.dependOn(&run_bench.step);
+
     const tests = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
         .target = target,
