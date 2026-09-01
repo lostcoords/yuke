@@ -65,14 +65,12 @@ pub const FormRequest = struct {
     fields: []const Field,
     /// The body lands here. Its length bounds the response.
     body_out: []u8,
-    /// The connect phase ends here. A timeout then proves the request never left this host.
-    connect_timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(15_000) } },
-    /// The send and read phase ends here. A timeout then leaves the outcome unknown.
-    read_timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(30_000) } },
+    /// One deadline covers the whole request. The connect marker, not the clock, classifies it.
+    timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(30_000) } },
 };
 
-/// The two events that split one form POST into its connect phase and its send phase.
 const FormLeg = struct {
+    /// The child sets this once the connect ends, so a failure after it may have reached the server.
     connected: std.Io.Event = .unset,
     done: std.Io.Event = .unset,
 };
@@ -135,16 +133,12 @@ pub const Client = struct {
 
         var leg: FormLeg = .{};
         var future = try io.concurrent(formLeg, .{ self, req, body, &leg });
-        leg.connected.waitTimeout(io, req.connect_timeout) catch |err| {
-            // The cancel joins the child, so the connect event now holds its final value.
+        leg.done.waitTimeout(io, req.timeout) catch |err| {
+            // The cancel joins the child, so the connect marker now holds its final value.
             _ = future.cancel(io) catch undefined;
             if (err != error.Timeout) return err;
             // A connected child may have begun the send, so only an unconnected one is retryable.
             return if (leg.connected.isSet()) Error.Ambiguous else Error.PreFlight;
-        };
-        leg.done.waitTimeout(io, req.read_timeout) catch |err| {
-            _ = future.cancel(io) catch undefined;
-            return if (err == error.Timeout) Error.Ambiguous else err;
         };
         return future.await(io);
     }
@@ -411,7 +405,7 @@ const FormClient = struct {
     io: std.Io = undefined,
     port: u16 = undefined,
     out_len: usize = 4096,
-    read_timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(30_000) } },
+    timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(30_000) } },
     status: u16 = 0,
     err: ?anyerror = null,
 };
@@ -433,7 +427,7 @@ fn postFormOnceInner(c: *FormClient) !void {
         .url = url,
         .fields = &.{.{ .name = "grant_type", .value = "refresh_token" }},
         .body_out = out,
-        .read_timeout = c.read_timeout,
+        .timeout = c.timeout,
     });
     c.status = response.status;
 }
@@ -503,7 +497,7 @@ test "a refused connection is a pre-flight failure, so a refresh may retry it" {
 test "a timeout after the send reports ambiguity, never a pre-flight failure" {
     var server: FormServer = .{ .mode = .stall };
     var client: FormClient = .{
-        .read_timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(50) } },
+        .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(50) } },
     };
     try exchangeForm(&server, &client);
 
