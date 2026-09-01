@@ -32,7 +32,8 @@ pub const InternalCell = struct {
         return std.mem.eql(u8, self.char.items, cell.char.grapheme) and
             Style.eql(self.style, cell.style) and
             std.mem.eql(u8, self.uri.items, cell.link.uri) and
-            std.mem.eql(u8, self.uri_id.items, cell.link.params);
+            std.mem.eql(u8, self.uri_id.items, cell.link.params) and
+            self.scale.eql(cell.scale);
     }
 };
 
@@ -107,6 +108,7 @@ pub fn writeCell(
     };
     self.buf[i].style = cell.style;
     self.buf[i].default = cell.default;
+    self.buf[i].scale = cell.scale;
 }
 
 pub fn readCell(self: *InternalScreen, col: u16, row: u16) ?Cell {
@@ -129,6 +131,7 @@ pub fn readCell(self: *InternalScreen, col: u16, row: u16) ?Cell {
             .params = cell.uri_id.items,
         },
         .default = cell.default,
+        .scale = cell.scale,
     };
 }
 

@@ -1511,6 +1511,42 @@ fn testResizeAllocationFailures(allocator: std.mem.Allocator) !void {
     try vx.resize(allocator, &writer.writer, .{ .rows = 3, .cols = 3, .x_pixel = 0, .y_pixel = 0 });
 }
 
+test "render: a scale-only change repaints the cell" {
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    var vx = try Vaxis.init(std.testing.io, std.testing.allocator, &env_map, .{});
+    var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer deinit_writer.deinit();
+    defer vx.deinit(std.testing.allocator, &deinit_writer.writer);
+
+    var w: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer w.deinit();
+    try vx.resize(std.testing.allocator, &w.writer, .{ .rows = 4, .cols = 4, .x_pixel = 0, .y_pixel = 0 });
+    vx.caps.scaled_text = true;
+    const scaled_text_prefix = "\x1b]66;s=";
+
+    // `eql` detects the change because only the scale differs.
+    const character: Cell.Character = .{ .grapheme = "A", .width = 1 };
+    vx.window().writeCell(0, 0, .{ .char = character, .scale = .{ .scale = 2 } });
+    try vx.render(&w.writer);
+    const scale_2_output = try w.toOwnedSlice();
+    defer std.testing.allocator.free(scale_2_output);
+    try std.testing.expect(std.mem.indexOf(u8, scale_2_output, scaled_text_prefix ++ "2") != null);
+
+    vx.window().writeCell(0, 0, .{ .char = character, .scale = .{ .scale = 3 } });
+    try vx.render(&w.writer);
+    const scale_3_output = try w.toOwnedSlice();
+    defer std.testing.allocator.free(scale_3_output);
+    try std.testing.expect(std.mem.indexOf(u8, scale_3_output, scaled_text_prefix ++ "3") != null);
+
+    // The third frame emits no cell output because `screen_last` stores the scale.
+    vx.window().writeCell(0, 0, .{ .char = character, .scale = .{ .scale = 3 } });
+    try vx.render(&w.writer);
+    const unchanged_output = try w.toOwnedSlice();
+    defer std.testing.allocator.free(unchanged_output);
+    try std.testing.expect(std.mem.indexOf(u8, unchanged_output, scaled_text_prefix) == null);
+}
+
 test "resize preserves valid state on allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
