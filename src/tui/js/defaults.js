@@ -7,7 +7,8 @@ import { ui, ChatView, List, NAV_KEYS } from "yuke:ui";
 import * as client from "yuke:client";
 import { notice, noticePlugin } from "yuke:notice";
 import { commandUiPlugin } from "yuke:command-ui";
-import { SessionList, DeviceFeed, rowKey, rowLabel, activityMark, feedItem, newestLocalModelSession, sidebarPlugin } from "yuke:sidebar";
+import { catalogOf, loadCatalog, chooseModel, defaultModel, catalogPlugin } from "yuke:catalog";
+import { SessionList, DeviceFeed, rowKey, rowLabel, activityMark, feedItem, sidebarPlugin } from "yuke:sidebar";
 import { composerVim } from "yuke:composer-vim";
 import { transcriptVim } from "yuke:transcript-vim";
 
@@ -16,8 +17,6 @@ import { transcriptVim } from "yuke:transcript-vim";
 /** @typedef {{ connKey: string, id: string, title: string, activity: FeedActivity, session: Wire.Session, workspace: Wire.Workspace | null, deviceName: string }} SessionRow */
 /** @typedef {{ method: string, params: any }} BroadcastEvent */
 /** @typedef {{ onOpen?: (connKey: string, id: string, src: string) => void }} SessionListOptions */
-/** @typedef {{ rev: Wire.CatalogRev | null, models: readonly Wire.ModelInfo[], providers: readonly Wire.ProviderInfo[], loading: boolean }} CatalogState */
-/** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
 /** @typedef {{ workspace_path?: string, profile?: string, model?: string, reasoning?: string, system_prompt?: string, permission?: Wire.PermissionMode, max_rounds?: number }} CreateSessionDraft */
 /** @typedef {{ is_self?: boolean, static_public_key?: string, device_id: string, online?: boolean, name?: string }} DeviceInfo */
 /** @typedef {{ key: string, notice: true, text: string, up?: never, dest?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, up: true, dest: string, notice?: never, text?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, name: string, path: string, is_git_repo?: boolean, notice?: never, up?: never, dest?: never, text?: never }} ExplorerRow */
@@ -38,72 +37,6 @@ const SIDEBAR_RATIO = 0.28;
 const LOCAL = client.LOCAL;
 
 
-// One catalog per connection. `catalog.list` answers "unchanged" while the revision holds, so a
-// reopened picker costs no round trip.
-/** @type {Map<string, CatalogState>} */
-const catalogs = new Map();
-
-/** @param {string} connKey @returns {CatalogState} */
-function catalogOf(connKey) {
-  let c = catalogs.get(connKey);
-  if (!c) {
-    c = { rev: null, models: [], providers: [], loading: false };
-    catalogs.set(connKey, c);
-  }
-  return c;
-}
-
-/** @param {string} connKey @returns {Promise<CatalogState>} */
-function loadCatalog(connKey) {
-  const c = catalogOf(connKey);
-  if (c.loading) return Promise.resolve(c);
-  c.loading = true;
-  return client
-    .catalogList(connKey, c.rev)
-    .then((r) => {
-      if (r && r.type === "full") {
-        c.rev = r.catalog_rev;
-        c.models = r.models || [];
-        c.providers = r.providers || [];
-      }
-    })
-    .catch(() => {})
-    .then(() => {
-      c.loading = false;
-      root.invalidate();
-      return c;
-    });
-}
-
-// The context window of one model, or 0 when the catalog does not name it.
-/** @param {string} connKey @param {string | null | undefined} modelId @returns {number} */
-function contextWindowOf(connKey, modelId) {
-  if (!modelId) return 0;
-  const m = catalogOf(connKey).models.find((x) => x.selector === modelId);
-  return m && m.context_window ? m.context_window : 0;
-}
-
-// The model a new chat starts with. `session.patch` is not implemented, so a choice cannot move an
-// open session yet.
-/** @type {ModelDefaults} */
-const chatDefaults = { model: null, reasoning: "" };
-
-/** @param {Wire.ModelInfo} model @param {string} reasoning @returns {void} */
-function chooseModel(model, reasoning) {
-  chatDefaults.model = model.selector;
-  chatDefaults.reasoning = reasoning;
-  notice.show("model · " + model.name + (reasoning ? " · " + reasoning : ""));
-  root.invalidate();
-}
-
-// Without a choice this run, the newest session names the model and reasoning, so a restart keeps working.
-/** @returns {ModelDefaults} */
-function defaultModel() {
-  if (chatDefaults.model) return chatDefaults;
-  const s = newestLocalModelSession();
-  if (s && s.model) return { model: s.model, reasoning: s.reasoning };
-  return chatDefaults;
-}
 
 /** @param {string} text @returns {void} */
 function restoreInput(text) {
@@ -118,36 +51,9 @@ function chatEntry() {
   return feedItem(chatSession.connKey, chatSession.sessionId);
 }
 
-// Round a token count to a short label. The catalog is not in the TUI, so this is not a percentage.
-/** @param {number} n @returns {string} */
-function tokenLabel(n) {
-  if (n < 1000) return String(n);
-  return (n / 1000).toFixed(n < 10000 ? 1 : 0) + "k";
-}
 
 // Vim calls this showcmd: the keys typed so far, while a chord or an operator waits.
 status.add({ side: "right", order: -1, render: () => keymap.pendingLabel() });
-status.add({
-  side: "right",
-  order: 10,
-  render: () => {
-    const e = chatEntry();
-    if (e && e.session && e.session.model) return e.session.model;
-    return defaultModel().model || "";
-  },
-});
-status.add({
-  side: "right",
-  order: 20,
-  render: () => {
-    const e = chatEntry();
-    if (!e) return "";
-    const u = e && e.activity ? e.activity.context_usage : null;
-    if (!u || !u.input) return "";
-    const win = contextWindowOf(chatSession.connKey, e.session.model);
-    return win ? Math.round((u.input / win) * 100) + "% ctx" : tokenLabel(u.input) + " ctx";
-  },
-});
 
 // The main pane: a placeholder shown in a split leaf with no session.
 class MainPane {
@@ -811,6 +717,7 @@ plugins.use({
 
 plugins.use(noticePlugin);
 plugins.use(commandUiPlugin);
+plugins.use(catalogPlugin, { entry: chatEntry, connKey: () => chatSession.connKey });
 plugins.use(sidebarPlugin, { deviceName, onCatalogChanged: /** @param {string} connKey @returns {void} */ (connKey) => { catalogOf(connKey).rev = null; } });
 
 plugins.use({
@@ -824,4 +731,4 @@ plugins.use({
 root.setRoot(workspace);
 root.focusView(chat);
 
-export { workspace, sidebar, chat, SessionList, MainPane, DeviceFeed, openExplorer, openSessionFinder, connection };
+export { workspace, sidebar, chat, chatSession, SessionList, MainPane, DeviceFeed, openExplorer, openSessionFinder, connection };

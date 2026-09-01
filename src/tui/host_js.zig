@@ -2589,11 +2589,13 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\import { command, root, status, keymap } from "yuke:core";
         \\import { plugins } from "yuke:ext";
         \\import { term } from "yuke:term";
-        \\import { SessionList, sidebar, chat, connection } from "yuke:defaults";
+        \\import { SessionList, sidebar, chat, chatSession, connection } from "yuke:defaults";
+        \\import { feedOf } from "yuke:sidebar";
         \\const fail = [];
         \\// The shell loads the notice as a plugin, so its segment and listeners can be taken back out.
         \\if (!plugins.get("notice")) fail.push("notice-plugin");
         \\if (!plugins.get("command-ui")) fail.push("command-ui-plugin");
+        \\if (!plugins.get("catalog")) fail.push("catalog-plugin");
         \\
         \\// The connection runs as a plugin service now, so an unload can take it back out.
         \\if (!root.hasService(connection)) fail.push("connection-service");
@@ -2725,6 +2727,19 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\sidebar.onKey({ type: "key", code: "enter", event: "press", char: "", text: "", mods: 0 });
         \\if (root.active !== sidebar) fail.push("enter-stays");
         \\
+        \\
+        \\// The catalog readings must come through the shell's own wiring, not a test's own callbacks.
+        \\{
+        \\  const feed = feedOf("local");
+        \\  feed.seed({ items: [{ session: { id: "probe", model: "wired-model", updated_at_ms: 1 }, activity: { context_usage: { input: 2500 } } }] });
+        \\  chatSession.connKey = "local";
+        \\  chatSession.sessionId = "probe";
+        \\  const right = status.side("right");
+        \\  if (right.indexOf("wired-model") < 0) fail.push("catalog-entry-wired");
+        \\  if (right.indexOf("2.5k ctx") < 0) fail.push("catalog-usage-wired");
+        \\  chatSession.sessionId = null;
+        \\  feed.clear();
+        \\}
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "act.js");
     try expectJs(host, "ok");
@@ -3690,5 +3705,92 @@ test "the command line resolves a word exactly, by prefix, or reports an error" 
         \\off();
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "cmdline.js");
+    try expectJs(host, "ok");
+}
+
+test "the catalog slice owns the model and context readings" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // The readings need the open session, which the shell owns, so the slice takes it as config.
+    try host.evalModule(
+        \\import { status, root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { notice, noticePlugin } from "yuke:notice";
+        \\import { catalogPlugin, catalogOf, chooseModel, tokenLabel } from "yuke:catalog";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\let open = null;
+        \\let key = "local";
+        \\plugins.use(catalogPlugin, { entry: () => open, connKey: () => key });
+        \\
+        \\// With no session the readings fall back to the default model and show no context.
+        \\check("empty-without-session", status.side("right") === "");
+        \\// A choice tells the user and asks for a repaint, or the new model never reaches the screen.
+        \\plugins.use(noticePlugin);
+        \\root._needsDraw = false;
+        \\chooseModel({ selector: "m-1", name: "m-1" }, "high");
+        \\check("choice-notifies", notice.text === "model · m-1 · high");
+        \\check("choice-repaints", root._needsDraw === true);
+        \\check("default-model-shows", status.side("right").indexOf("m-1") >= 0);
+        \\
+        \\// An open session names its own model instead of the default.
+        \\open = { session: { id: "s", model: "session-model" }, activity: null };
+        \\check("session-model-wins", status.side("right").indexOf("session-model") >= 0);
+        \\check("no-ctx-without-usage", status.side("right").indexOf("ctx") < 0);
+        \\
+        \\// With usage and no known window the reading falls back to a token count.
+        \\open = { session: { id: "s", model: "session-model" }, activity: { context_usage: { input: 2500 } } };
+        \\check("token-fallback", status.side("right").indexOf("2.5k ctx") >= 0);
+        \\
+        \\// A model the catalog names reports a percentage of its window instead.
+        \\catalogOf(key).models = [{ selector: "session-model", context_window: 10000 }];
+        \\check("known-window-percent", status.side("right").indexOf("25% ctx") >= 0);
+        \\catalogOf(key).models = [];
+        \\check("token-label", tokenLabel(999) === "999" && tokenLabel(2500) === "2.5k" && tokenLabel(20000) === "20k");
+        \\
+        \\// An unload takes both readings away.
+        \\plugins.dispose("catalog");
+        \\check("unload-drops-readings", status.side("right") === "");
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "catalog.js");
+    try expectJs(host, "ok");
+}
+
+test "loadCatalog coalesces, clears its flag, and survives a refusal" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // There is no connection here, so the request refuses; the state machine must still settle.
+    try host.evalModule(
+        \\import { root } from "yuke:core";
+        \\import { catalogOf, loadCatalog } from "yuke:catalog";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\const c = catalogOf("probe");
+        \\check("starts-idle", c.loading === false && c.rev === null && c.models.length === 0);
+        \\
+        \\// A second call while one is open returns the same state and starts no new request.
+        \\c.loading = true;
+        \\const coalesced = await loadCatalog("probe");
+        \\check("coalesces", coalesced === c && c.loading === true);
+        \\c.loading = false;
+        \\
+        \\// A refused request still clears the flag and asks for a repaint.
+        \\root._needsDraw = false;
+        \\const settled = await loadCatalog("probe");
+        \\check("settles", settled === c && c.loading === false);
+        \\check("repaints", root._needsDraw === true);
+        \\check("keeps-empty-state", c.rev === null && c.models.length === 0);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "loadcatalog.js");
     try expectJs(host, "ok");
 }
