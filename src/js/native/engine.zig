@@ -213,6 +213,8 @@ fn writeOutline(w: *std.Io.Writer, s: *domain_session.Session) !void {
 pub const max_inline_views: usize = 8;
 pub const max_inline_diff_lines: usize = 200;
 pub const max_inline_line_bytes: usize = 512;
+/// What one diff file or hunk costs in keys and brackets. The budget charges it, so structure cannot escape the bound.
+const diff_scaffold_bytes: usize = 128;
 
 /// The writer makes at most this many cut entries for one part, because its own caps bound them.
 const max_cuts: usize = 2 * max_inline_views + 8;
@@ -431,31 +433,40 @@ fn writeView(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, v: 
 
 /// Write a diff with a bounded line count. A transcript shows a preview, never a whole patch.
 fn writeDiff(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, d: proto.view.ViewDiff) !void {
-    var budget: usize = max_inline_diff_lines;
+    // Count first, because the walk stops early and the reader still wants the whole size.
     var total: u64 = 0;
+    for (d.files) |file| for (file.hunks) |hunk| {
+        total += hunk.lines.len;
+    };
+
+    var budget: usize = max_inline_diff_lines;
     var shortened: u64 = 0;
+    var written: usize = 0;
     try w.writeAll("{\"type\":\"diff\",\"files\":[");
-    for (d.files, 0..) |file, fi| {
-        if (fi > 0) try w.writeByte(',');
+    for (d.files) |file| {
+        // Charge the keys and brackets before writing them, so a file the budget cannot afford ends the walk.
+        if (parts.take(diff_scaffold_bytes) < diff_scaffold_bytes) break;
+        if (written > 0) try w.writeByte(',');
+        written += 1;
         try w.writeAll("{\"path\":");
-        try std.json.Stringify.encodeJsonString(file.path, .{}, w);
+        _ = try writeFloor(w, parts, file.path);
         if (file.old_path) |old| {
             try w.writeAll(",\"old_path\":");
-            try std.json.Stringify.encodeJsonString(old, .{}, w);
+            _ = try writeFloor(w, parts, old);
         }
         try w.writeAll(",\"hunks\":[");
-        for (file.hunks, 0..) |hunk, hi| {
-            if (hi > 0) try w.writeByte(',');
+        var hunks: usize = 0;
+        for (file.hunks) |hunk| {
+            if (parts.take(diff_scaffold_bytes) < diff_scaffold_bytes) break;
+            if (hunks > 0) try w.writeByte(',');
+            hunks += 1;
             try w.print("{{\"old_start\":{d},\"old_lines\":{d},\"new_start\":{d},\"new_lines\":{d},\"lines\":[", .{
                 hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines,
             });
-            total += hunk.lines.len;
             const shown = @min(hunk.lines.len, budget);
             for (hunk.lines[0..shown], 0..) |line, li| {
                 if (li > 0) try w.writeByte(',');
-                const end = utf8Floor(line, parts.take(@min(line.len, max_inline_line_bytes)));
-                if (end < line.len) shortened += 1;
-                try std.json.Stringify.encodeJsonString(line[0..end], .{}, w);
+                if (try writeFloor(w, parts, line)) shortened += 1;
             }
             budget -= shown;
             try w.writeAll("]}");
@@ -463,10 +474,17 @@ fn writeDiff(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, d: 
         try w.writeAll("]}");
     }
     try w.writeAll("]}");
-    // A dropped line and a shortened line both abbreviate the diff, and a preview reports the whole count either way.
-    if (total > max_inline_diff_lines or shortened > 0) {
+    // A dropped file, a dropped line and a shortened line all abbreviate the diff, and the reader gets the whole count.
+    if (written < d.files.len or total > max_inline_diff_lines or shortened > 0) {
         parts.cuts.add(.{ .field = .view_diff, .list = list, .index = index, .size = total });
     }
+}
+
+/// Write one diff string cut to the budget and the line cap. Answer whether the cap shortened it.
+fn writeFloor(w: *std.Io.Writer, parts: *Parts, text: []const u8) !bool {
+    const end = utf8Floor(text, parts.take(@min(text.len, max_inline_line_bytes)));
+    try std.json.Stringify.encodeJsonString(text[0..end], .{}, w);
+    return end < text.len;
 }
 
 fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: u64) !void {
@@ -1066,6 +1084,45 @@ test "a huge tool result projects into a bounded parts response" {
     // `partText` reads that output one bounded page at a time.
     const text = partTextOf(&sess, 1, 0, "output") orelse return error.TestUnexpectedResult;
     try testing.expectEqual(huge.len, text.len);
+}
+
+test "a diff of many files stays inside the response budget" {
+    const gpa = testing.allocator;
+    const sid = SessionId.bytes([_]u8{7} ** 16);
+    var sess = domain_session.Session.init(gpa, sid);
+    defer sess.deinit();
+
+    // A path and its scaffolding cost bytes even when no line is written, so the file count must not escape the budget.
+    const path = "a" ** 200;
+    const lines = [_][]const u8{"x"};
+    const hunks = [_]proto.view.DiffHunk{.{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 1, .lines = &lines }};
+    const files = try gpa.alloc(proto.view.DiffFile, 10_000);
+    defer gpa.free(files);
+    for (files) |*f| f.* = .{ .path = path, .hunks = &hunks };
+    const views = [_]proto.view.View{.{ .diff = .{ .files = files } }};
+    const content = [_]proto.message.AssistantPart{.{ .tool = .{
+        .id = 0,
+        .name = "exec",
+        .arguments = "{}",
+        .state = .{ .completed = .{ .output = "", .view = &views, .duration_ms = 1 } },
+    } }};
+    const messages = [_]proto.message.Message{.{ .assistant = .{
+        .id = 1,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = "claude",
+        .content = &content,
+        .time = .{ .created_at_ms = 1 },
+    } }};
+    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .messages = &messages, .has_more = false });
+
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    try writeMessageParts(&aw.writer, &sess, 1);
+
+    try testing.expect(aw.written().len < max_response_bytes + max_page_bytes);
+    // The diff says how many lines the whole patch holds, so a row can mark what it hides.
+    try testing.expect(std.mem.indexOf(u8, aw.written(), "\"field\":\"view.0.diff\",\"total\":10000") != null);
 }
 
 test "many huge parts stay inside the response budget and none is dropped" {
