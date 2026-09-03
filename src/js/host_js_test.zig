@@ -5593,7 +5593,6 @@ test "an overlay survives a rebuild of the block that claimed it" {
         \\root.pushOverlay(layer);
         \\const base = root.overlays.length;
         \\
-        \\const errs = [];
         \\let builds = 0;
         \\services.provide("gate", 1);
         \\plugins.use({

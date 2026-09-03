@@ -302,8 +302,6 @@ fn streamAttempt(
     }
 }
 
-/// Open the response and stream it into the draft. The run task uses a child so cancellation can interrupt a blocked read.
-/// The child owns the body and deinits it before it returns.
 /// Build the request for one round. A retry re-sends these bytes, so the cached prefix still matches.
 fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !provider.transport.Request {
     const model = slot.config.model;
@@ -317,6 +315,7 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, strea
     return resolvedRequest(arena, engine, slot, ctx.slice(), resolved);
 }
 
+/// Open the response and stream it into the draft, in a child so a cancel can interrupt a blocked read.
 fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, request: provider.transport.Request, info: *provider.transport.AttemptInfo) !void {
     defer slot.wake_event.set(engine.deps.io);
     try checkCanceled(engine.deps.io, slot);

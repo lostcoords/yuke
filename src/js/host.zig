@@ -14,9 +14,6 @@ const tools_table = @import("tools.zig");
 const tool_run = @import("tool_run.zig");
 const pending = @import("pending.zig");
 
-pub const loader = loader_mod;
-pub const term = term_module;
-
 /// Limit the client heap. Scripts fail when they exceed this limit.
 pub const memory_limit: usize = 64 * 1024 * 1024;
 /// Limit the QuickJS stack below the zio coroutine stack.

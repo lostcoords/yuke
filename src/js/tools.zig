@@ -6,8 +6,7 @@
 //! event. The table stays sorted by name, so the load order of a plugin cannot move the prefix.
 //!
 //! The host owns this table, so a handler stays reachable for the life of the context.
-//! Registration ends when the boot script returns; `seal` marks that end, and the engine then
-//! borrows the declarations it advertises.
+//! A plugin registers and withdraws a tool at any time, and the engine asks for the set.
 //!
 //! A turn task submits a `Call` and waits. The OWNER runs the handler, polls the Promise, and
 //! answers. No engine task ever enters QuickJS. The executor is cooperative and holds one thread,

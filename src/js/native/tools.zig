@@ -40,9 +40,6 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
 
     const name = ctx.toCStringLen(args[0]) catch return exception(ctx);
     defer ctx.freeCString(name.ptr);
-    if (!table.validName(name))
-        return ctx.throwTypeError("the tool name must be 1 to 64 characters of a-z, A-Z, 0-9, _ or -");
-
     const description = ctx.getPropertyStr(args[1], "description");
     defer ctx.freeValue(description);
     if (!ctx.isString(description)) return ctx.throwTypeError("the tool needs a description string");

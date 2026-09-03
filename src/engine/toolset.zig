@@ -35,7 +35,6 @@ fn noDecls(_: *anyopaque) []const ir.Tool {
 
 /// A name the process does not serve answers the model, so a turn continues.
 fn unknownTool(_: *anyopaque, out: std.mem.Allocator, name: []const u8, _: []const u8, _: []const u8) Outcome {
-    std.debug.assert(name.len != 0); // the reducer never opens a tool part without a name
     return .{
         .output = std.fmt.allocPrint(out, "The tool \"{s}\" is unknown.", .{name}) catch "The requested tool is unknown.",
         .is_error = true,
