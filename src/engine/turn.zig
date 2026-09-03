@@ -90,7 +90,8 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
     var root_resolved = false;
 
     while (true) {
-        // Open this round. message.started opens a fresh draft. streamRound resets the streamer.
+        // Open this round. A commit reads the streamer, so clear it before any path can fail.
+        streamer.reset();
         const created_at = engine.nowMillis();
         std.debug.assert(slot.progress.current != null); // bind or beginRound opened the round
         slot.progress.current.?.created_at_ms = created_at;
@@ -232,6 +233,7 @@ fn streamRound(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, stream
 }
 
 /// Record the wait on the slot, then publish it, so the wait shows as a retry and not a silent pause.
+/// Record the wait on the slot, then publish it, so the wait shows as a retry and not a silent pause.
 fn publishRetrying(engine: *Engine, slot: *RunSlot, number: u8, err: anyerror, delay_ms: u64) void {
     // @todo(xyaman): log one line per attempt. Record the attempt number, provider, model, status, the
     // normalized code, the provider request id, the delivery engine, the delay source, and the budget
@@ -251,7 +253,6 @@ fn publishRetrying(engine: *Engine, slot: *RunSlot, number: u8, err: anyerror, d
     session_events.announceActivity(engine, rt);
 }
 
-/// The outcome of one attempt. A failure carries its error for the classifier.
 /// What a cancelable child produced. A run cancel keeps the run alive. A canceled run task unwinds.
 const ChildResult = union(enum) {
     /// The child returned. The payload holds its result.
