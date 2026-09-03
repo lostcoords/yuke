@@ -386,7 +386,7 @@ fn resolvedRequest(
     const body_bytes = try provider.requestBody(arena, transcript, route.instance.protocol, .{
         .model = r.model.upstream_id,
         .system = slot.config.system_prompt,
-        .tools = engine.deps.tools.decls(engine.deps.tools.ctx),
+        .tools = engine.deps.tools.getDecls(engine.deps.tools.ctx),
         .max_output_tokens = output_limit,
         .reasoning = reasoningFor(r.model, slot.config.reasoning, output_limit),
         .thinking_format = r.model.dialect.thinking_format,

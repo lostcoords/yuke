@@ -15,7 +15,7 @@ const Value = quickjs.Value;
 /// Build the port the process installs. The set answers from the live host table.
 pub fn toolSet(host: *Host) toolset.ToolSet {
     std.debug.assert(host.phase == .open);
-    return .{ .ctx = host, .decls = declsFor, .run = runFor };
+    return .{ .ctx = host, .getDecls = declsFor, .run = runFor };
 }
 
 /// Answer the live declarations. The engine holds them only until it writes one request body.

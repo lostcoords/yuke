@@ -200,3 +200,8 @@ export class Emitter {
 }
 
 export const events = new Emitter(CORE_EVENTS);
+
+// Report a listener fault where every other fault goes, and never re-enter on the report itself.
+events.onError = (error, name) => {
+  if (name !== "ext.error") events.emit("ext.error", error, name);
+};

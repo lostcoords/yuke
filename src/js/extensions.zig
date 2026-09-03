@@ -133,7 +133,7 @@ test "headless extensions pump an async JavaScript tool" {
     try std.testing.expect(!extensions.user_entry_fault);
     // The engine asks the host, so the user tool and every built-in reach the provider together.
     const installed = app_runtime.engine.deps.tools;
-    const advertised = installed.decls(installed.ctx);
+    const advertised = installed.getDecls(installed.ctx);
     try std.testing.expectEqual(extensions.host.tools.decls.items.len, advertised.len);
     const found = for (advertised) |d| {
         if (std.mem.eql(u8, d.name, "read_note")) break true;

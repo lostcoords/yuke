@@ -17,7 +17,7 @@ pub const Outcome = struct {
 pub const ToolSet = struct {
     ctx: *anyopaque = undefined,
     /// Answer what the provider may call. The slice is valid until the caller returns.
-    decls: *const fn (ctx: *anyopaque) []const ir.Tool = noDecls,
+    getDecls: *const fn (ctx: *anyopaque) []const ir.Tool = noDecls,
     /// Run one tool by the name the provider chose.
     run: *const fn (
         ctx: *anyopaque,

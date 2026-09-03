@@ -5699,3 +5699,34 @@ test "one tool leaves without moving the others" {
     try std.testing.expectEqualStrings("mike", host.tools.decls.items[1].name);
     try std.testing.expectEqualStrings("zulu", host.tools.decls.items[2].name);
 }
+
+test "a listener fault reaches the shared error bus" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { events } from "yuke:kernel";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\// A throwing listener must not vanish, and the other listeners still run.
+        \\const seen = [];
+        \\events.on("ext.error", (e, who) => seen.push(String(who) + ":" + e.message));
+        \\events.on("myplugin:go", () => { throw new Error("boom"); });
+        \\events.on("myplugin:go", () => seen.push("second"));
+        \\events.emit("myplugin:go");
+        \\check("reported", seen.indexOf("myplugin:go:boom") >= 0);
+        \\check("others-ran", seen.indexOf("second") >= 0);
+        \\
+        \\// A throwing `ext.error` listener must not re-enter the bus.
+        \\events.on("ext.error", () => { throw new Error("second fault"); });
+        \\let looped = false;
+        \\try { events.emit("myplugin:go"); looped = true; } catch { looped = true; }
+        \\check("no-recursion", looped);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "bus-fault.js");
+    try expectJs(host, "ok");
+}
