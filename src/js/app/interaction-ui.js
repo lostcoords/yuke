@@ -1,7 +1,8 @@
 // yuke:interaction-ui — the terminal answerer for the shared interaction capability.
 import { TextInput, caretCol, root, strokeOf } from "yuke:core";
 import { Window, ui } from "yuke:ui";
-import { confirmRequest, inputRequest, selectRequest } from "yuke:interaction";
+import { notice } from "yuke:notice";
+import { confirmRequest, inputRequest, noticeLevel, selectRequest } from "yuke:interaction";
 
 /** @typedef {() => void} Cancel */
 
@@ -56,6 +57,12 @@ function createInteraction(provider) {
   });
 
   return {
+    /** @param {string} source @param {string} message @param {"info" | "warn" | "error"} level @returns {void} */
+    notify(source, message, level) {
+      noticeLevel(level);
+      notice.show(message);
+    },
+
     /** @param {import("yuke:ext").Context} consumer */
     bindTo(consumer) {
       /** @type {Set<Cancel>} */

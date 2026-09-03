@@ -471,6 +471,14 @@ export class Context {
   inject(names, apply) {
     return injectInto(this.scope, this.id, names, apply);
   }
+
+  // One message to the user. This registers nothing, so it reads the live answerer per call.
+  /** @param {string} message @param {"info" | "warn" | "error"} [level] @returns {void} */
+  notify(message, level = "info") {
+    /** @type {{ notify: (source: string, message: string, level: string) => void }} */ (
+      services.get("interaction")
+    ).notify(this.id, message, level);
+  }
 }
 
 // --- plugin registry ---

@@ -149,3 +149,76 @@ test "headless extensions pump an async JavaScript tool" {
     extensions.host.calls.finish(call);
     try owner.pump(extensions.host);
 }
+
+test "a plugin notice reaches every attached frontend" {
+    const database = @import("../store/store.zig");
+    const provider = @import("../provider/provider.zig");
+    const rpc_boot = @import("../app/rpc.zig").boot;
+    const proto = @import("proto");
+
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = user_entry, .data = "" });
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
+
+    var reactor = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    defer reactor.deinit();
+    var env: std.process.Environ.Map = .init(gpa.allocator());
+    defer env.deinit();
+    var canned = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+    var app_runtime: App = undefined;
+    try app_runtime.initTest(gpa.allocator(), reactor.io(), try database.Database.openTest(), &env, canned.transport());
+    var extensions: Extensions = undefined;
+    try extensions.init(gpa.allocator(), reactor.io(), &app_runtime, .{
+        .host = .{ .headless = true, .cwd = root, .env = &env },
+        .boot = rpc_boot,
+        .config_dir = root,
+    });
+    defer {
+        extensions.deinit();
+        app_runtime.engine.close();
+        app_runtime.catalog_client.deinit();
+        app_runtime.db.deinit();
+        app_runtime.store.deinit();
+        app_runtime.logins.deinit();
+    }
+    try std.testing.expect(!extensions.user_entry_fault);
+
+    // A frontend attaches here, so the notice has somewhere to arrive.
+    const Capture = struct {
+        level: proto.enums.NoticeLevel = .info,
+        source: [64]u8 = undefined,
+        source_len: usize = 0,
+        message: [64]u8 = undefined,
+        message_len: usize = 0,
+        seen: usize = 0,
+
+        fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (note.method != .notice) return;
+            self.seen += 1;
+            self.level = note.params.notice.level;
+            self.source_len = note.params.notice.source.len;
+            @memcpy(self.source[0..self.source_len], note.params.notice.source);
+            self.message_len = note.params.notice.message.len;
+            @memcpy(self.message[0..self.message_len], note.params.notice.message);
+        }
+    };
+    var capture: Capture = .{};
+    app_runtime.engine.sinks.add(.{ .ctx = @ptrCast(&capture), .on_event = Capture.onEvent });
+    defer app_runtime.engine.sinks.remove(@ptrCast(&capture));
+
+    try extensions.host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\plugins.use({ name: "reporter", apply(ctx) { ctx.notify("build failed", "warn"); } });
+    , "notify.js");
+
+    try std.testing.expectEqual(@as(usize, 1), capture.seen);
+    try std.testing.expectEqual(proto.enums.NoticeLevel.warn, capture.level);
+    try std.testing.expectEqualStrings("reporter", capture.source[0..capture.source_len]);
+    try std.testing.expectEqualStrings("build failed", capture.message[0..capture.message_len]);
+}

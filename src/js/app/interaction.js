@@ -54,6 +54,12 @@ export function inputRequest(title, placeholder) {
   return request;
 }
 
+/** @param {unknown} level @returns {"info" | "warn" | "error"} */
+export function noticeLevel(level) {
+  if (level !== "info" && level !== "warn" && level !== "error") throw new TypeError("notify level is invalid");
+  return level;
+}
+
 // A wrap reuses an id the host may still hold, and the host answers `Duplicate` if it does.
 function allocateId() {
   const id = nextId;
@@ -62,6 +68,11 @@ function allocateId() {
 }
 
 const rpcInteraction = {
+  /** @param {string} source @param {string} message @param {"info" | "warn" | "error"} level @returns {void} */
+  notify(source, message, level) {
+    native.notify(source, text(message, "notify message"), noticeLevel(level));
+  },
+
   /** @param {import("yuke:ext").Context} ctx */
   bindTo(ctx) {
     const live = new Set();

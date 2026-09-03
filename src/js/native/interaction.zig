@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const quickjs = @import("quickjs");
+const proto = @import("proto");
 const Host = @import("../host.zig").Host;
 const interactions = @import("../interactions.zig");
 const pending = @import("../pending.zig");
@@ -14,6 +15,7 @@ const Binding = struct { name: [*:0]const u8, length: c_int, function: fn (Conte
 
 const bindings = [_]Binding{
     .{ .name = "request", .length = 2, .function = jsRequest },
+    .{ .name = "notify", .length = 3, .function = jsNotify },
     .{ .name = "cancel", .length = 1, .function = jsCancel },
 };
 
@@ -51,6 +53,27 @@ fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
     defer ctx.freeCString(json.ptr);
     return host.interactions.start(&host.ops, ctx, host.owner_wake, id, json) catch |err|
         pending.rejected(ctx, errorMessage(err));
+}
+
+/// Broadcast one message to every attached frontend. Nothing answers it.
+fn jsNotify(ctx: Context, _: Value, args: []const Value) Value {
+    const engine = Host.fromContext(ctx).engine;
+    const runtime = engine.runtime orelse return ctx.throwPlainError("the engine is not ready");
+    if (args.len < 3) return ctx.throwTypeError("interaction.notify needs a source, a message and a level");
+    const source = ctx.toCStringLen(args[0]) catch return ctx.throwTypeError("the notice source must be a string");
+    defer ctx.freeCString(source.ptr);
+    const message = ctx.toCStringLen(args[1]) catch return ctx.throwTypeError("the notice message must be a string");
+    defer ctx.freeCString(message.ptr);
+    const level_text = ctx.toCStringLen(args[2]) catch return ctx.throwTypeError("the notice level must be a string");
+    defer ctx.freeCString(level_text.ptr);
+    const level = std.meta.stringToEnum(proto.enums.NoticeLevel, level_text) orelse
+        return ctx.throwTypeError("the notice level is unknown");
+    runtime.engine.sinks.emit(.{ .method = .notice, .params = .{ .notice = .{
+        .level = level,
+        .source = source,
+        .message = message,
+    } } });
+    return quickjs.UNDEFINED;
 }
 
 fn jsCancel(ctx: Context, _: Value, args: []const Value) Value {
