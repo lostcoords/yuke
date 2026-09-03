@@ -12,14 +12,12 @@ const zio = @import("zio");
 
 pub const std_options: std.Options = .{ .logFn = logFn };
 
-/// The TUI owns the screen, so a log line must never reach stderr. `tui_log_mutex` guards the file,
-/// because a log can come from any task.
+/// The TUI owns the screen, so a log line must never reach stderr; `tui_log_mutex` guards the file, because a log can come from any task.
 var tui_mode: std.atomic.Value(bool) = .init(false);
 var tui_log_mutex: std.Io.Mutex = .init;
 var tui_log: ?std.Io.File = null;
 
-/// Write to the TUI log file in TUI mode, and to stderr otherwise.
-/// A TUI without a log file drops the line, because stderr would damage the frame.
+/// Write to the TUI log file in TUI mode, and to stderr otherwise; a TUI without a log file drops the line, because stderr would damage the frame.
 fn logFn(
     comptime level: std.log.Level,
     comptime scope: @EnumLiteral(),
@@ -33,8 +31,7 @@ fn logFn(
     appendLog(file, "[" ++ level.asText() ++ "] (" ++ @tagName(scope) ++ "): " ++ format ++ "\n", args);
 }
 
-/// Append one line to `file`. A streaming writer holds the file position, so a line never lands on
-/// the line before it. The log is best effort, so a failed write drops the rest of the line.
+/// Append one line to `file`; a streaming writer holds the file position, so a line never lands on the line before it, and a failed write drops the rest of the line since the log is best effort.
 fn appendLog(file: std.Io.File, comptime format: []const u8, args: anytype) void {
     const io = std.Options.debug_io;
     const prev = io.swapCancelProtection(.blocked);
@@ -124,10 +121,8 @@ pub fn main(init: std.process.Init) !void {
     const io = reactor.io();
 
     const tui = command == .tui;
-    if (tui) {
-        startTuiLog(init.gpa, init.io, init.environ_map);
-        defer stopTuiLog(init.io);
-    }
+    if (tui) startTuiLog(init.gpa, init.io, init.environ_map);
+    defer if (tui) stopTuiLog(init.io);
 
     // A null directory is not an error. The baked UI still runs without a config file.
     const config_dir = try paths.configDir(init.gpa, init.environ_map);
