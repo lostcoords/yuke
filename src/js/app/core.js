@@ -1115,22 +1115,22 @@ export function caretCol(w, prompt, before) {
 
 
 // The view tier emits these names, so it declares them and a headless bus refuses them.
-events.declare({
-  "ui.start": 1,
-  "ui.closed": 1,
-  "ui.resize": 1,
-  "ui.tick": 1,
-  "key.press": 1,
-  "mouse.input": 1,
-  "paste.input": 1,
-  "focus.changed": 1,
-  "pane.focused": 1,
-  "pane.closed": 1,
-  "region.focused": 1,
-  "clipboard.copied": 1,
-  "session.changed": 1,
-  "index.changed": 1,
-});
+events.declare([
+  "ui.start",
+  "ui.closed",
+  "ui.resize",
+  "ui.tick",
+  "key.press",
+  "mouse.input",
+  "paste.input",
+  "focus.changed",
+  "pane.focused",
+  "pane.closed",
+  "region.focused",
+  "clipboard.copied",
+  "session.changed",
+  "index.changed",
+]);
 
 // This table maps a host event type to its core event name.
 const HOST_TO_CORE_EVENT = {

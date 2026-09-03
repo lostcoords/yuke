@@ -388,7 +388,7 @@ fn resolvedRequest(
     const body_bytes = try provider.requestBody(arena, transcript, route.instance.protocol, .{
         .model = r.model.upstream_id,
         .system = slot.config.system_prompt,
-        .tools = engine.deps.tools.decls,
+        .tools = engine.deps.tools.decls(engine.deps.tools.ctx),
         .max_output_tokens = output_limit,
         .reasoning = reasoningFor(r.model, slot.config.reasoning, output_limit),
         .thinking_format = r.model.dialect.thinking_format,
@@ -822,7 +822,8 @@ fn toolChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer
         defer _ = engine.deps.io.swapCancelProtection(old);
         try streamer.emitToolState(pt.part_id, .{ .running = .{ .started_at_ms = started } });
     }
-    const res = engine.deps.tools.run(arena, pt.name, pt.arguments, workspace_root); // The cancel point.
+    const tools = engine.deps.tools;
+    const res = tools.run(tools.ctx, arena, pt.name, pt.arguments, workspace_root); // The cancel point.
     const duration = engine.nowMillis() -| started; // Saturate; the wall clock can move backward.
     const old = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old);

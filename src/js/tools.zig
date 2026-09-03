@@ -1,5 +1,10 @@
 //! The tools `index.js` registered. Each one owns a live JavaScript handler.
 //!
+//! A provider caches on the request prefix, and the tool definitions lead that prefix. A change to
+//! this table therefore drops the cached prefix of every later request in a live session. Register
+//! from an explicit action, such as a plugin load or a user command, and never from a background
+//! event. The table stays sorted by name, so the load order of a plugin cannot move the prefix.
+//!
 //! The host owns this table, so a handler stays reachable for the life of the context.
 //! Registration ends when the boot script returns; `seal` marks that end, and the engine then
 //! borrows the declarations it advertises.
@@ -23,7 +28,6 @@ pub const max_name_bytes: usize = 64;
 
 /// Why one registration was refused. Each case answers one sentence to the script.
 pub const RegisterError = error{
-    Sealed,
     DuplicateName,
     InvalidName,
     OutOfMemory,
@@ -43,8 +47,6 @@ pub const Tools = struct {
     gpa: std.mem.Allocator,
     list: std.ArrayList(Tool) = .empty,
     decls: std.ArrayList(ir.Tool) = .empty,
-    /// A sealed table accepts no further tool. A plugin loaded after boot cannot add one.
-    sealed: bool = false,
 
     pub fn deinit(self: *Tools, ctx: Context) void {
         for (self.list.items) |tool| {
@@ -63,7 +65,6 @@ pub const Tools = struct {
     /// `JS_ToCStringLen` writes WTF-8 for a lone surrogate, so the copies become valid UTF-8 here.
     /// These strings reach a provider request, which accepts text and refuses a byte array.
     pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, handler: Value) RegisterError!void {
-        if (self.sealed) return error.Sealed;
         if (!validName(name)) return error.InvalidName;
         if (self.find(name) != null) return error.DuplicateName;
 
@@ -74,14 +75,16 @@ pub const Tools = struct {
         const owned_schema = try utf8.sanitize(self.gpa, input_schema);
         errdefer self.gpa.free(owned_schema);
 
-        try self.list.append(self.gpa, .{
+        // The provider caches on the request prefix, so the advertised order must not follow load order.
+        const at = self.sortedIndex(owned_name);
+        try self.list.insert(self.gpa, at, .{
             .name = owned_name,
             .description = owned_description,
             .input_schema = owned_schema,
             .handler = handler,
         });
-        errdefer _ = self.list.pop();
-        try self.decls.append(self.gpa, .{
+        errdefer _ = self.list.orderedRemove(at);
+        try self.decls.insert(self.gpa, at, .{
             .name = owned_name,
             .description = owned_description,
             .input_schema = owned_schema,
@@ -97,10 +100,12 @@ pub const Tools = struct {
         return null;
     }
 
-    /// End registration. A later `register` answers `Sealed` rather than moving `decls`.
-    pub fn seal(self: *Tools) void {
-        std.debug.assert(!self.sealed); // one process seals one time
-        self.sealed = true;
+    /// The index that keeps `name` in order. The table stays sorted, so the advertised order is stable.
+    fn sortedIndex(self: *const Tools, name: []const u8) usize {
+        for (self.decls.items, 0..) |d, i| {
+            if (std.mem.order(u8, name, d.name) == .lt) return i;
+        }
+        return self.decls.items.len;
     }
 };
 
@@ -277,8 +282,8 @@ test "the table refuses a duplicate name, a bad name, and a late registration" {
     try testing.expectError(error.DuplicateName, tools.register("probe", "d", "{}", quickjs.UNDEFINED));
     try testing.expectError(error.InvalidName, tools.register("bad name", "d", "{}", quickjs.UNDEFINED));
 
-    tools.seal();
-    try testing.expectError(error.Sealed, tools.register("late", "d", "{}", quickjs.UNDEFINED));
+    // A tool registers at any time, so a plugin can add one after boot.
+    try tools.register("late", "d", "{}", quickjs.UNDEFINED);
 }
 
 test "the declarations follow the registered tools" {

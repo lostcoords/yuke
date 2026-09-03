@@ -15,47 +15,29 @@ pub const Outcome = struct {
 };
 
 pub const ToolSet = struct {
-    /// A set with no tool. Every name is unknown, so a run answers the model instead of failing.
-    pub const none: ToolSet = .{ .ctx = undefined, .vtable = &none_vtable, .decls = &.{} };
-
-    ctx: *anyopaque,
-    vtable: *const VTable,
-    /// What the provider is told it may call. It stays fixed while the engine holds this set.
-    decls: []const ir.Tool,
-
-    pub const VTable = struct {
-        run: *const fn (
-            ctx: *anyopaque,
-            out: std.mem.Allocator,
-            name: []const u8,
-            arguments: []const u8,
-            workspace_root: []const u8,
-        ) Outcome,
-    };
-
-    /// Return true when this is the empty set used before extensions boot.
-    pub fn isNone(self: ToolSet) bool {
-        return self.vtable == &none_vtable;
-    }
-
-    /// Run `name`. The result belongs to `out` and the path root belongs to the session.
-    pub fn run(
-        self: ToolSet,
+    ctx: *anyopaque = undefined,
+    /// Answer what the provider may call. The slice is valid until the caller returns.
+    decls: *const fn (ctx: *anyopaque) []const ir.Tool = noDecls,
+    /// Run one tool by the name the provider chose.
+    run: *const fn (
+        ctx: *anyopaque,
         out: std.mem.Allocator,
         name: []const u8,
         arguments: []const u8,
         workspace_root: []const u8,
-    ) Outcome {
-        std.debug.assert(name.len != 0); // the reducer never opens a tool part without a name
-        return self.vtable.run(self.ctx, out, name, arguments, workspace_root);
-    }
+    ) Outcome = unknownTool,
 };
 
-const none_vtable: ToolSet.VTable = .{ .run = struct {
-    fn run(_: *anyopaque, out: std.mem.Allocator, name: []const u8, _: []const u8, _: []const u8) Outcome {
-        return .{
-            .output = std.fmt.allocPrint(out, "The tool \"{s}\" is unknown.", .{name}) catch "The requested tool is unknown.",
-            .is_error = true,
-        };
-    }
-}.run };
+/// A process without extensions advertises no tool.
+fn noDecls(_: *anyopaque) []const ir.Tool {
+    return &.{};
+}
+
+/// A name the process does not serve answers the model, so a turn continues.
+fn unknownTool(_: *anyopaque, out: std.mem.Allocator, name: []const u8, _: []const u8, _: []const u8) Outcome {
+    std.debug.assert(name.len != 0); // the reducer never opens a tool part without a name
+    return .{
+        .output = std.fmt.allocPrint(out, "The tool \"{s}\" is unknown.", .{name}) catch "The requested tool is unknown.",
+        .is_error = true,
+    };
+}

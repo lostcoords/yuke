@@ -95,9 +95,7 @@ function applyConfigPatch(section, fields, src, label) {
 }
 
 // The kernel declares only what neutral code emits, so each tier declares its own names.
-const CORE_EVENTS = Object.assign(Object.create(null), {
-  "ext.error": 1,
-});
+const CORE_EVENTS = new Set(["ext.error"]);
 
 // True for an `owner:event` name. A plugin owns such a name, so no declaration can enumerate it.
 /** @param {string} name @returns {boolean} */
@@ -115,36 +113,36 @@ export function callHook(obj, name, ...args) {
 }
 
 export class Emitter {
-  /** @param {Record<string, number> | null} [names] */
+  /** @param {Set<string> | null} [names] */
   constructor(names) {
     /** @type {ListenerMap} */
     this._hooks = Object.create(null);
-    /** @type {Record<string, number> | null} */
+    /** @type {Set<string> | null} */
     this._names = names || null;
     /** @type {((error: unknown, name: string) => void) | null} */
     this.onError = null;
   }
 
   // Declare more names for the life of a tier, and answer a disposer that withdraws them.
-  /** @param {Record<string, number>} names @returns {() => void} */
+  /** @param {string[]} names @returns {() => void} */
   declare(names) {
-    if (!this._names) return () => {};
     const table = this._names;
-    const added = Object.keys(names).filter((n) => !table[n]);
-    for (const n of added) table[n] = 1;
+    if (!table) return () => {};
+    const added = names.filter((n) => !table.has(n));
+    for (const n of added) table.add(n);
 
     let done = false;
     return () => {
       if (done) return;
       done = true;
-      for (const n of added) delete table[n];
+      for (const n of added) table.delete(n);
     };
   }
 
   // Reject a name a closed bus does not declare, so a typo fails at the call and not in silence.
   /** @param {string} name @returns {void} */
   _check(name) {
-    if (!this._names || this._names[name]) return;
+    if (!this._names || this._names.has(name)) return;
     // An `owner:event` name belongs to its owner, so the core set never declares it.
     if (isNamespaced(name)) return;
     throw new TypeError("unknown event: " + name);

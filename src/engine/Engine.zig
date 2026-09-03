@@ -28,7 +28,7 @@ pub const Deps = struct {
     route_transport: provider.transport.Transport,
     env: *const std.process.Environ.Map,
     /// The tools this process can run. The engine borrows the set from the extension owner.
-    tools: toolset.ToolSet = .none,
+    tools: toolset.ToolSet = .{},
     retry_policy: retry.Policy = .{},
     /// Retry permits for one whole run.
     retry_budget: u8 = 8,
@@ -61,17 +61,15 @@ pub fn setDefaultSystemPrompt(self: *Engine, prompt: ?[]const u8) !void {
     self.default_system_prompt = copy;
 }
 
-/// Give the engine its tools after `index.js` runs and before the first turn.
+/// Give the engine its tools. The set answers live, so a plugin can add or drop one at any time.
 pub fn installTools(self: *Engine, set: toolset.ToolSet) void {
-    std.debug.assert(self.deps.tools.isNone()); // one process installs one tool set
     self.deps.tools = set;
 }
 
-/// Drop the borrowed tool set after all turn tasks leave the engine.
+/// Drop the tool set after all turn tasks leave the engine.
 pub fn clearTools(self: *Engine) void {
     std.debug.assert(self.closing);
-    std.debug.assert(!self.deps.tools.isNone());
-    self.deps.tools = .none;
+    self.deps.tools = .{};
 }
 
 /// Cancel every turn and wait for each task to leave the engine.
@@ -175,7 +173,7 @@ test "activation restores durable pending input into the runtime queue" {
         .providers = &store,
         .route_transport = test_transport.transport(),
         .env = &test_env,
-        .tools = .none,
+        .tools = .{},
     });
     defer engine.close();
     defer db.deinit();

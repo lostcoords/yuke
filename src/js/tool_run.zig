@@ -5,20 +5,24 @@ const quickjs = @import("quickjs");
 const proto = @import("proto");
 const Host = @import("host.zig").Host;
 const table = @import("tools.zig");
+const ir = @import("../provider/request/ir.zig");
 const toolset = @import("../engine/toolset.zig");
 const utf8 = @import("../utf8.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
-/// Build the port the process installs. The set borrows the host declarations and context.
+/// Build the port the process installs. The set answers from the live host table.
 pub fn toolSet(host: *Host) toolset.ToolSet {
     std.debug.assert(host.phase == .open);
-    std.debug.assert(host.tools.sealed);
-    return .{ .ctx = host, .vtable = &vtable, .decls = host.tools.decls.items };
+    return .{ .ctx = host, .decls = declsFor, .run = runFor };
 }
 
-const vtable: toolset.ToolSet.VTable = .{ .run = runFor };
+/// Answer the live declarations. The engine holds them only until it writes one request body.
+fn declsFor(ctx: *anyopaque) []const ir.Tool {
+    const host: *Host = @ptrCast(@alignCast(ctx));
+    return host.tools.decls.items;
+}
 
 /// Submit one call and wait at the turn cancellation point for the owner to answer it.
 fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: []const u8, workspace_root: []const u8) toolset.Outcome {

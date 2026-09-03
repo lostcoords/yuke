@@ -4807,33 +4807,41 @@ test "defineTool refuses every definition a provider would reject" {
     try std.testing.expectEqual(@as(usize, 1), host.tools.list.items.len);
 }
 
-test "a tool cannot register after the table seals" {
+test "a tool registers after boot and keeps the advertised order stable" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
 
+    // Registration order is not the advertised order, so a load order change cannot move the prefix.
     try host.evalModule(
         \\import { defineTool } from "yuke:tools";
-        \\globalThis.register = () => defineTool("late", {
-        \\  description: "a late tool",
-        \\  parameters: { type: "object", properties: {} },
-        \\  execute: () => 1,
-        \\});
+        \\const p = { type: "object", properties: {} };
+        \\for (const n of ["zulu", "alpha", "mike"]) {
+        \\  defineTool(n, { description: "d", parameters: p, execute: async () => ({ text: n }) });
+        \\}
+        \\globalThis.result = "ok";
+    , "boot.js");
+    try expectJs(host, "ok");
+
+    // A plugin may add a tool after boot, and it lands in the same sorted position.
+    try host.evalModule(
+        \\import { defineTool } from "yuke:tools";
+        \\defineTool("bravo", { description: "d", parameters: { type: "object", properties: {} },
+        \\  execute: async () => ({ text: "b" }) });
         \\globalThis.result = "ok";
     , "late.js");
     try expectJs(host, "ok");
 
-    // A plugin loaded after boot must not add a tool, because the advertisement is already built.
-    host.tools.seal();
-    try host.evalModule(
-        \\try { globalThis.register(); globalThis.result = "accepted"; }
-        \\catch (e) { globalThis.result = e.message; }
-    , "after.js");
-    try expectJs(host, "a tool must register while index.js runs, not after it");
+    var names: std.ArrayList(u8) = .empty;
+    defer names.deinit(gpa.allocator());
+    for (host.tools.decls.items) |d| {
+        if (names.items.len != 0) try names.append(gpa.allocator(), ',');
+        try names.appendSlice(gpa.allocator(), d.name);
+    }
+    try std.testing.expectEqualStrings("alpha,bravo,mike,zulu", names.items);
 }
-
 test "baked tools preserve file edits, bounded reads, views, and command output" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);

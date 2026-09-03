@@ -62,7 +62,6 @@ pub const Extensions = struct {
         // Load built-ins last so a user tool with the same name wins.
         try host.evalModule("import \"yuke:builtins\";", "builtins.js");
 
-        host.tools.seal();
         app.engine.installTools(tool_run.toolSet(host));
     }
 
@@ -132,10 +131,14 @@ test "headless extensions pump an async JavaScript tool" {
         app_runtime.logins.deinit();
     }
     try std.testing.expect(!extensions.user_entry_fault);
-    try std.testing.expectEqual(
-        @intFromPtr(extensions.host.tools.decls.items.ptr),
-        @intFromPtr(app_runtime.engine.deps.tools.decls.ptr),
-    );
+    // The engine asks the host, so the user tool and every built-in reach the provider together.
+    const installed = app_runtime.engine.deps.tools;
+    const advertised = installed.decls(installed.ctx);
+    try std.testing.expectEqual(extensions.host.tools.decls.items.len, advertised.len);
+    const found = for (advertised) |d| {
+        if (std.mem.eql(u8, d.name, "read_note")) break true;
+    } else false;
+    try std.testing.expect(found);
     try std.testing.expectEqualStrings("configured by JavaScript", app_runtime.engine.default_system_prompt.?);
     try extensions.host.evalModule(
         \\import { defineConfig } from "yuke";

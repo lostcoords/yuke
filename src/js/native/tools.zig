@@ -107,7 +107,6 @@ fn schemaFault(ctx: Context, parameters: Value) ?[*:0]const u8 {
 /// Map one refusal to the sentence the script reads. The set is closed.
 fn registerMessage(err: table.RegisterError) [*:0]const u8 {
     return switch (err) {
-        error.Sealed => "a tool must register while index.js runs, not after it",
         error.DuplicateName => "another tool already has this name",
         error.InvalidName => "the tool name must be 1 to 64 characters of a-z, A-Z, 0-9, _ or -",
         error.OutOfMemory => "out of memory",
