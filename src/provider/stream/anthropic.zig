@@ -265,7 +265,7 @@ fn mapStopReason(raw: []const u8) proto.enums.StopReason {
     if (std.mem.eql(u8, raw, "stop_sequence")) return .stop;
     if (std.mem.eql(u8, raw, "max_tokens")) return .length;
     if (std.mem.eql(u8, raw, "tool_use")) return .tool_calls;
-    if (std.mem.eql(u8, raw, "refusal")) return .content_filter;
+    if (std.mem.eql(u8, raw, "refusal")) return .refusal;
     if (std.mem.eql(u8, raw, "model_context_window_exceeded")) return .length;
     // The reducer keeps only the raw value for pause_turn and new reasons.
     return .unknown;
@@ -456,6 +456,22 @@ test "the final message_delta reports thinking tokens as reasoning usage" {
     const done = h.out.items[h.out.items.len - 1].done;
     try testing.expectEqual(@as(u64, 40), done.usage.output);
     try testing.expectEqual(@as(u64, 25), done.usage.reasoning);
+}
+
+// Claude 4 returns this when a safety classifier stops the turn. It is not a content filter.
+test "a refusal stop reason reports refusal" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
+        ,
+        \\{"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":2}}
+        ,
+        \\{"type":"message_stop"}
+    });
+    const done = h.out.items[h.out.items.len - 1].done;
+    try testing.expectEqual(proto.enums.StopReason.refusal, done.stop_reason);
+    try testing.expectEqualStrings("refusal", done.raw_stop_reason);
 }
 
 test "unknown event type is a forward-compatible no-op" {

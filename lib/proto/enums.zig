@@ -119,8 +119,8 @@ pub const RunKind = enum { turn, compaction };
 
 pub const CompactSkipReason = enum { nothing_to_summarize, too_few_messages };
 
-/// Assistant stop reason.
-pub const StopReason = enum { stop, length, content_filter, tool_calls, canceled, @"error", unknown };
+/// Assistant stop reason. `refusal` is a model decline; `content_filter` is a filter that cut content.
+pub const StopReason = enum { stop, length, content_filter, refusal, tool_calls, canceled, @"error", unknown };
 
 pub const CompactStatus = enum { started, queued };
 

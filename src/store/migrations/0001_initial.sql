@@ -121,7 +121,7 @@ CREATE TABLE messages (
     protocol TEXT CHECK (protocol IS NULL OR length(protocol) <= 32),
 
     finish TEXT CHECK (finish IS NULL OR
-        finish IN ('stop', 'length', 'content_filter', 'tool_calls', 'canceled', 'error', 'unknown')),
+        finish IN ('stop', 'length', 'content_filter', 'refusal', 'tool_calls', 'canceled', 'error', 'unknown')),
     tokens_input       INTEGER CHECK (tokens_input       IS NULL OR tokens_input       BETWEEN 0 AND 9007199254740991), -- u64
     tokens_output      INTEGER CHECK (tokens_output      IS NULL OR tokens_output      BETWEEN 0 AND 9007199254740991), -- u64
     tokens_reasoning   INTEGER CHECK (tokens_reasoning   IS NULL OR tokens_reasoning   BETWEEN 0 AND 9007199254740991), -- u64

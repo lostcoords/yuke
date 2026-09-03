@@ -3708,7 +3708,7 @@
     },
     {
       "name": "StopReason",
-      "doc": "Assistant stop reason.",
+      "doc": "Assistant stop reason. `refusal` is a model decline; `content_filter` is a filter that cut content.",
       "numeric": false,
       "values": [
         {
@@ -3722,6 +3722,10 @@
         {
           "name": "content_filter",
           "wire": "content_filter"
+        },
+        {
+          "name": "refusal",
+          "wire": "refusal"
         },
         {
           "name": "tool_calls",

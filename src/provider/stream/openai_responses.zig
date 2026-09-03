@@ -291,7 +291,7 @@ pub const Reducer = struct {
         try self.recordUsage(response);
         // This API has no tool stop reason: a response carrying a function call still reports
         // `completed`. The blocks decide instead, or the engine refuses the tool part it was sent.
-        self.stop_reason = if (self.refused) .content_filter else if (self.hasToolBlock()) .tool_calls else .stop;
+        self.stop_reason = if (self.refused) .refusal else if (self.hasToolBlock()) .tool_calls else .stop;
         try self.setRawStopReason("completed");
         try self.emitDone(out);
     }
@@ -847,7 +847,7 @@ test "a mix of closed and open tools keeps only the closed call" {
 }
 
 // A refusal arrives in its own content part, so it would otherwise commit an empty message.
-test "a refusal streams as text and reports content_filter" {
+test "a refusal streams as text and reports refusal" {
     var h = Harness.init();
     defer h.deinit();
     try h.feed(&.{
@@ -868,7 +868,7 @@ test "a refusal streams as text and reports content_filter" {
     try testing.expectEqualStrings("I cannot help", h.out.items[1].text_delta.text);
     try testing.expect(h.out.items[2] == .block_stopped);
     // The turn reports the refusal, so a caller never reads it as a plain answer.
-    try testing.expectEqual(proto.enums.StopReason.content_filter, h.out.items[3].done.stop_reason);
+    try testing.expectEqual(proto.enums.StopReason.refusal, h.out.items[3].done.stop_reason);
 }
 
 // A refusal outranks a call, because the model declined the request it was given.
@@ -887,7 +887,7 @@ test "a refusal outranks a tool call in the stop reason" {
         \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
     });
     const done = h.out.items[h.out.items.len - 1].done;
-    try testing.expectEqual(proto.enums.StopReason.content_filter, done.stop_reason);
+    try testing.expectEqual(proto.enums.StopReason.refusal, done.stop_reason);
 }
 
 test "a failed response terminates with a provider error" {

@@ -737,7 +737,7 @@ export type RunKind = "turn" | "compaction";
 
 export type CompactSkipReason = "nothing_to_summarize" | "too_few_messages";
 
-export type StopReason = "stop" | "length" | "content_filter" | "tool_calls" | "canceled" | "error" | "unknown";
+export type StopReason = "stop" | "length" | "content_filter" | "refusal" | "tool_calls" | "canceled" | "error" | "unknown";
 
 export type CompactStatus = "started" | "queued";
 

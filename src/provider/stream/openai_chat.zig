@@ -33,6 +33,8 @@ pub const Reducer = struct {
     usage: proto.message.TokenUsage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
     raw_stop_reason: []const u8 = "",
     stop_reason: proto.enums.StopReason = .unknown,
+    /// True when the model refused. This dialect reports `stop`, so the refusal sets the reason.
+    refused: bool = false,
     done_emitted: bool = false,
 
     pub fn init(gpa: std.mem.Allocator) Reducer {
@@ -103,6 +105,7 @@ pub const Reducer = struct {
 
         // Expose a refusal as assistant text so the consumer receives it.
         if (json.fieldStr(delta, "refusal")) |text| {
+            self.refused = true;
             try self.appendTextDelta(text, out);
         }
 
@@ -236,6 +239,8 @@ pub const Reducer = struct {
         if (self.done_emitted) return error.Protocol;
         try self.stopOpen(out);
 
+        // A refusal outranks the finish reason, because the model declined the request.
+        if (self.refused) self.stop_reason = .refusal;
         self.done_emitted = true;
         try out.append(self.gpa, .{ .done = .{
             .stop_reason = self.stop_reason,
@@ -437,6 +442,25 @@ test "every block stops before the next block starts" {
         .done => try testing.expectEqual(@as(usize, 0), open),
         else => {},
     };
+}
+
+// This dialect reports `stop` for a refusal, so only the refusal field marks the turn.
+test "a refusal streams as text and reports refusal" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"choices":[{"index":0,"delta":{"refusal":"I cannot help"},"finish_reason":null}]}
+        ,
+        \\{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+        ,
+        "[DONE]",
+    });
+
+    try testing.expectEqual(event.BlockKind.text, h.out.items[0].block_started.kind);
+    try testing.expectEqualStrings("I cannot help", h.out.items[1].text_delta.text);
+    const done = h.out.items[h.out.items.len - 1].done;
+    try testing.expectEqual(proto.enums.StopReason.refusal, done.stop_reason);
+    try testing.expectEqualStrings("stop", done.raw_stop_reason); // The provider value stays intact.
 }
 
 test "malformed JSON degrades to a protocol error" {
