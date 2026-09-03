@@ -1,5 +1,6 @@
 // yuke:ext — the plugin runtime: a Scope owns revertible effects, a Context registers, and `advice` wraps methods.
 import { events } from "yuke:kernel";
+import { defineTool, removeTool } from "yuke:tools";
 
 /** @typedef {() => void} Disposer */
 /** @typedef {() => unknown} Effect */
@@ -12,6 +13,8 @@ import { events } from "yuke:kernel";
 /** @typedef {Parameters<typeof events.on>[1]} EventHandler */
 /** @typedef {Parameters<typeof events.on>[2]} EventOptions */
 /** @typedef {(ctx: Context, config: unknown) => unknown} PluginApply */
+/** @typedef {(args: any, signal: { aborted: boolean }, context: { workspaceRoot: string }) => Promise<unknown>} ToolExecute */
+/** @typedef {{ name: string, description: string, parameters: Record<string, unknown>, execute: ToolExecute }} ToolDefinition */
 /** @typedef {Context & Record<string, any>} InjectContext */
 /** @typedef {(ctx: InjectContext) => unknown} InjectApply */
 /** @typedef {{ name: string, apply: PluginApply }} Plugin */
@@ -443,6 +446,24 @@ export class Context {
   /** @param {string} name @param {unknown} value @returns {Disposer} */
   provide(name, value) {
     return this.scope.effect(() => services.provide(name, value));
+  }
+
+  // The tools this plugin owns. A dispose withdraws them, so an unload leaves no tool behind.
+  get tools() {
+    const owner = this;
+    return {
+      /** @param {ToolDefinition} definition @returns {Disposer} */
+      define(definition) {
+        if (definition == null || typeof definition !== "object") {
+          throw new TypeError("tools.define expects a tool definition object");
+        }
+        const name = definition.name;
+        return owner.scope.effect(() => {
+          defineTool(name, definition);
+          return () => removeTool(name);
+        });
+      },
+    };
   }
 
   // Run `apply` only while every named capability exists, in a child scope a withdrawal reverts.

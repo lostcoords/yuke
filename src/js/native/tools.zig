@@ -12,16 +12,18 @@ const Context = quickjs.Context;
 const Value = quickjs.Value;
 const Module = Context.Module;
 
-/// Register the closed `yuke:tools` module and export `defineTool`.
+/// Register the closed `yuke:tools` module and export its two functions.
 pub fn install(host: *Host) error{OutOfMemory}!void {
     std.debug.assert(host.phase == .open);
     const m = host.ctx.newModule("yuke:tools", init) orelse return error.OutOfMemory;
     host.ctx.addModuleExport(m, "defineTool") catch return error.OutOfMemory;
+    host.ctx.addModuleExport(m, "removeTool") catch return error.OutOfMemory;
 }
 
 fn init(ctx: Context, m: Module) c_int {
     std.debug.assert(Host.fromContext(ctx).phase == .open);
     ctx.setModuleExport(m, "defineTool", ctx.newFunction("defineTool", 2, jsDefineTool)) catch return -1;
+    ctx.setModuleExport(m, "removeTool", ctx.newFunction("removeTool", 1, jsRemoveTool)) catch return -1;
     return 0;
 }
 
@@ -77,6 +79,15 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
         return ctx.throwTypeError(registerMessage(err));
     };
     return quickjs.UNDEFINED;
+}
+
+/// `removeTool(name)` withdraws one tool. It answers true when a tool held that name.
+fn jsRemoveTool(ctx: Context, _: Value, args: []const Value) Value {
+    const host = Host.fromContext(ctx);
+    if (args.len < 1 or !ctx.isString(args[0])) return ctx.throwTypeError("removeTool needs a name string");
+    const name = ctx.toCStringLen(args[0]) catch return exception(ctx);
+    defer ctx.freeCString(name.ptr);
+    return ctx.newBool(host.tools.remove(ctx, name));
 }
 
 /// Answer the exception sentinel and leave the pending exception in place.

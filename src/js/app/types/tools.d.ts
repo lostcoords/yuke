@@ -13,4 +13,6 @@ declare module "yuke:tools" {
       ) => Promise<unknown>;
     },
   ): void;
+
+  export function removeTool(name: string): boolean;
 }

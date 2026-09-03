@@ -5615,3 +5615,87 @@ test "an overlay survives a rebuild of the block that claimed it" {
     , "overlay-rebuild.js");
     try expectJs(host, "ok");
 }
+
+test "a plugin owns the tools it defines and withdraws them on unload" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const params = { type: "object", properties: {} };
+        \\
+        \\plugins.use({
+        \\  name: "toolbox",
+        \\  apply(ctx) {
+        \\    ctx.tools.define({ name: "zeta", description: "d", parameters: params, execute: async () => ({ text: "z" }) });
+        \\    ctx.tools.define({ name: "alpha", description: "d", parameters: params, execute: async () => ({ text: "a" }) });
+        \\  },
+        \\});
+        \\globalThis.result = "ok";
+    , "own.js");
+    try expectJs(host, "ok");
+
+    // The plugin registered both, and the table keeps them sorted.
+    try std.testing.expectEqual(@as(usize, 2), host.tools.decls.items.len);
+    try std.testing.expectEqualStrings("alpha", host.tools.decls.items[0].name);
+    try std.testing.expectEqualStrings("zeta", host.tools.decls.items[1].name);
+
+    // An unload withdraws every tool the plugin owned.
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\plugins.dispose("toolbox");
+        \\globalThis.result = "ok";
+    , "drop.js");
+    try expectJs(host, "ok");
+    try std.testing.expectEqual(@as(usize, 0), host.tools.decls.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.tools.list.items.len);
+
+    // The name is free again, so a reload can register it.
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\const params = { type: "object", properties: {} };
+        \\plugins.use({ name: "again", apply: (ctx) => {
+        \\  ctx.tools.define({ name: "zeta", description: "d", parameters: params, execute: async () => ({ text: "z2" }) });
+        \\} });
+        \\globalThis.result = "ok";
+    , "reload.js");
+    try expectJs(host, "ok");
+    try std.testing.expectEqual(@as(usize, 1), host.tools.decls.items.len);
+}
+
+test "one tool leaves without moving the others" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\const params = { type: "object", properties: {} };
+        \\globalThis.drop = null;
+        \\plugins.use({
+        \\  name: "three",
+        \\  apply(ctx) {
+        \\    ctx.tools.define({ name: "zulu", description: "d", parameters: params, execute: async () => ({ text: "z" }) });
+        \\    globalThis.drop = ctx.tools.define({ name: "bravo", description: "d", parameters: params, execute: async () => ({ text: "b" }) });
+        \\    ctx.tools.define({ name: "alpha", description: "d", parameters: params, execute: async () => ({ text: "a" }) });
+        \\    ctx.tools.define({ name: "mike", description: "d", parameters: params, execute: async () => ({ text: "m" }) });
+        \\  },
+        \\});
+        \\globalThis.result = "ok";
+    , "three.js");
+    try expectJs(host, "ok");
+    try std.testing.expectEqual(@as(usize, 4), host.tools.decls.items.len);
+
+    // Drop the middle tool. The rest must keep their order, so the advertised prefix is unchanged.
+    try host.evalModule("globalThis.drop(); globalThis.result = \"ok\";", "drop-one.js");
+    try expectJs(host, "ok");
+    try std.testing.expectEqual(@as(usize, 3), host.tools.decls.items.len);
+    try std.testing.expectEqualStrings("alpha", host.tools.decls.items[0].name);
+    try std.testing.expectEqualStrings("mike", host.tools.decls.items[1].name);
+    try std.testing.expectEqualStrings("zulu", host.tools.decls.items[2].name);
+}

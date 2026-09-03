@@ -100,6 +100,25 @@ pub const Tools = struct {
         return null;
     }
 
+    /// Drop the tool named `name`. Answer false when no tool holds it.
+    ///
+    /// A turn resolves a tool by name at call time, so a removal during a turn answers the model
+    /// instead of failing it. The provider prefix changes, which drops the cached prefix.
+    pub fn remove(self: *Tools, ctx: Context, name: []const u8) bool {
+        const at = for (self.list.items, 0..) |tool, i| {
+            if (std.mem.eql(u8, tool.name, name)) break i;
+        } else return false;
+
+        std.debug.assert(self.list.items.len == self.decls.items.len);
+        const tool = self.list.orderedRemove(at); // Ordered, so the sorted advertisement holds.
+        _ = self.decls.orderedRemove(at);
+        ctx.freeValue(tool.handler);
+        self.gpa.free(tool.name);
+        self.gpa.free(tool.description);
+        self.gpa.free(tool.input_schema);
+        return true;
+    }
+
     /// The index that keeps `name` in order. The table stays sorted, so the advertised order is stable.
     fn sortedIndex(self: *const Tools, name: []const u8) usize {
         for (self.decls.items, 0..) |d, i| {
