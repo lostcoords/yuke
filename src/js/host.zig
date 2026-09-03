@@ -35,14 +35,22 @@ pub const Error = error{
     JavaScriptFault,
 };
 
-pub const default_baked = [_]loader_mod.BakedModule{
+/// The modules every frontend loads. A headless frontend loads these and nothing else.
+const shared_baked = [_]loader_mod.BakedModule{
     // The public facade. `index.js` imports this name; every other name here is internal.
     .{ .name = "yuke", .source = @embedFile("app/facade.js") },
     .{ .name = "yuke:kernel", .source = @embedFile("app/kernel.js") },
-    .{ .name = "yuke:tui", .source = @embedFile("app/tui.js") },
     .{ .name = "yuke:builtins", .source = @embedFile("app/builtins.js") },
-    .{ .name = "yuke:core", .source = @embedFile("app/core.js") },
     .{ .name = "yuke:ext", .source = @embedFile("app/ext.js") },
+};
+
+/// The modules a headless frontend can load. The loader refuses every view module.
+pub const headless_baked = shared_baked;
+
+/// The view tier loads on top of the shared set, so the two lists cannot drift apart.
+pub const default_baked = shared_baked ++ [_]loader_mod.BakedModule{
+    .{ .name = "yuke:tui", .source = @embedFile("app/tui.js") },
+    .{ .name = "yuke:core", .source = @embedFile("app/core.js") },
     .{ .name = "yuke:md", .source = @embedFile("app/md.js") },
     .{ .name = "yuke:ui", .source = @embedFile("app/ui.js") },
     .{ .name = "yuke:client", .source = @embedFile("app/client.js") },
@@ -58,14 +66,6 @@ pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:composer-vim", .source = @embedFile("app/composer-vim.js") },
     .{ .name = "yuke:transcript-vim", .source = @embedFile("app/transcript-vim.js") },
     .{ .name = "yuke:defaults", .source = @embedFile("app/defaults.js") },
-};
-
-/// The modules a headless frontend can load. The loader refuses every view module.
-pub const headless_baked = [_]loader_mod.BakedModule{
-    .{ .name = "yuke", .source = @embedFile("app/facade.js") },
-    .{ .name = "yuke:kernel", .source = @embedFile("app/kernel.js") },
-    .{ .name = "yuke:ext", .source = @embedFile("app/ext.js") },
-    .{ .name = "yuke:builtins", .source = @embedFile("app/builtins.js") },
 };
 
 pub const Options = struct {

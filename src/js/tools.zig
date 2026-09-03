@@ -66,7 +66,8 @@ pub const Tools = struct {
     /// These strings reach a provider request, which accepts text and refuses a byte array.
     pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, handler: Value) RegisterError!void {
         if (!validName(name)) return error.InvalidName;
-        if (self.find(name) != null) return error.DuplicateName;
+        const slot = self.lookup(name);
+        if (slot.found) return error.DuplicateName;
 
         const owned_name = try self.gpa.dupe(u8, name);
         errdefer self.gpa.free(owned_name);
@@ -76,7 +77,7 @@ pub const Tools = struct {
         errdefer self.gpa.free(owned_schema);
 
         // The provider caches on the request prefix, so the advertised order must not follow load order.
-        const at = self.sortedIndex(owned_name);
+        const at = slot.at;
         try self.list.insert(self.gpa, at, .{
             .name = owned_name,
             .description = owned_description,
@@ -92,12 +93,26 @@ pub const Tools = struct {
         std.debug.assert(self.list.items.len == self.decls.items.len);
     }
 
+    /// Where `name` sits in the sorted table, and whether a tool already holds it.
+    const Lookup = struct { at: usize, found: bool };
+
+    /// One ordered scan answers the insert position and the duplicate question together.
+    fn lookup(self: *const Tools, name: []const u8) Lookup {
+        std.debug.assert(self.list.items.len == self.decls.items.len);
+        for (self.list.items, 0..) |tool, i| {
+            switch (std.mem.order(u8, name, tool.name)) {
+                .lt => return .{ .at = i, .found = false },
+                .eq => return .{ .at = i, .found = true },
+                .gt => {},
+            }
+        }
+        return .{ .at = self.list.items.len, .found = false };
+    }
+
     /// Return the tool with `name`, or null.
     pub fn find(self: *const Tools, name: []const u8) ?*const Tool {
-        for (self.list.items) |*tool| {
-            if (std.mem.eql(u8, tool.name, name)) return tool;
-        }
-        return null;
+        const at = self.lookup(name);
+        return if (at.found) &self.list.items[at.at] else null;
     }
 
     /// Drop the tool named `name`. Answer false when no tool holds it.
@@ -105,11 +120,10 @@ pub const Tools = struct {
     /// A turn resolves a tool by name at call time, so a removal during a turn answers the model
     /// instead of failing it. The provider prefix changes, which drops the cached prefix.
     pub fn remove(self: *Tools, ctx: Context, name: []const u8) bool {
-        const at = for (self.list.items, 0..) |tool, i| {
-            if (std.mem.eql(u8, tool.name, name)) break i;
-        } else return false;
+        const slot = self.lookup(name);
+        if (!slot.found) return false;
 
-        std.debug.assert(self.list.items.len == self.decls.items.len);
+        const at = slot.at;
         const tool = self.list.orderedRemove(at); // Ordered, so the sorted advertisement holds.
         _ = self.decls.orderedRemove(at);
         ctx.freeValue(tool.handler);
@@ -117,14 +131,6 @@ pub const Tools = struct {
         self.gpa.free(tool.description);
         self.gpa.free(tool.input_schema);
         return true;
-    }
-
-    /// The index that keeps `name` in order. The table stays sorted, so the advertised order is stable.
-    fn sortedIndex(self: *const Tools, name: []const u8) usize {
-        for (self.decls.items, 0..) |d, i| {
-            if (std.mem.order(u8, name, d.name) == .lt) return i;
-        }
-        return self.decls.items.len;
     }
 };
 
