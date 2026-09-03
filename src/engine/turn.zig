@@ -186,44 +186,48 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
 /// Stream one round, and repeat the request while the classifier allows it. A repeat uses a fresh
 /// body and a fresh reducer. `docs/plan.md` "Retry / backoff policy" holds the rules.
 fn streamRound(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) Terminal {
+    // Build once for the round. Every attempt then sends the same bytes and the same tool prefix.
+    const request = roundRequest(engine, arena, slot, streamer) catch |err| {
+        std.log.warn("run {d} could not build its request: {t}", .{ slot.runId(), err });
+        return .{ .failed = failure(err) };
+    };
+
     var number: u8 = 1;
     while (true) : (number += 1) {
         streamer.reset();
         var info: provider.transport.AttemptInfo = .{};
-        const outcome = streamAttempt(engine, arena, slot, streamer, &info);
-        const err = switch (outcome) {
-            .failed => |e| e,
-            else => return outcome.terminal,
-        };
+        const terminal = streamAttempt(engine, arena, slot, streamer, request, &info) catch |err| {
+            const decision = retry.decide(engine.deps.retry_policy, .{
+                .err = err,
+                .info = info,
+                // A published event outranks every other gate. The client already folded that output.
+                .saw_semantic = streamer.saw_semantic,
+                .number = number,
+                .budget_left = slot.retry_budget,
+            }, engine.jitter());
+            const delay_ms = switch (decision) {
+                .stop => return .{ .failed = failure(err) },
+                .retry_in_ms => |ms| ms,
+            };
 
-        const decision = retry.decide(engine.deps.retry_policy, .{
-            .err = err,
-            .info = info,
-            // A published event outranks every other gate. The client already folded that output.
-            .saw_semantic = streamer.saw_semantic,
-            .number = number,
-            .budget_left = slot.retry_budget,
-        }, engine.jitter());
-        const delay_ms = switch (decision) {
-            .stop => return .{ .failed = failure(err) },
-            .retry_in_ms => |ms| ms,
+            std.debug.assert(slot.retry_budget > 0); // the classifier refuses a retry at zero
+            slot.retry_budget -= 1;
+            publishRetrying(engine, slot, number, err, delay_ms);
+            defer slot.retry_state = null;
+            // Wait on the slot event, NOT on a plain sleep. `cancel_run` sets this event, and a plain
+            // sleep would hold the run for the whole delay because the flag alone never wakes it.
+            slot.wake_event.reset();
+            const waited: std.Io.Clock.Duration = .{ .raw = .fromMilliseconds(@intCast(delay_ms)), .clock = .awake };
+            if (slot.wake_event.waitTimeout(engine.deps.io, .{ .duration = waited })) |_| {
+                return .canceled; // The event fired, so a cancel arrived during the delay.
+            } else |wait_err| switch (wait_err) {
+                error.Timeout => {}, // The delay elapsed. Open the next attempt.
+                error.Canceled => return .canceled,
+            }
+            if (slot.cancel_requested) return .canceled;
+            continue;
         };
-
-        std.debug.assert(slot.retry_budget > 0); // the classifier refuses a retry at zero
-        slot.retry_budget -= 1;
-        publishRetrying(engine, slot, number, err, delay_ms);
-        defer slot.retry_state = null;
-        // Wait on the slot event, NOT on a plain sleep. `cancel_run` sets this event, and a plain
-        // sleep would hold the run for the whole delay because the flag alone never wakes it.
-        slot.wake_event.reset();
-        const waited: std.Io.Clock.Duration = .{ .raw = .fromMilliseconds(@intCast(delay_ms)), .clock = .awake };
-        if (slot.wake_event.waitTimeout(engine.deps.io, .{ .duration = waited })) |_| {
-            return .canceled; // The event fired, so a cancel arrived during the delay.
-        } else |wait_err| switch (wait_err) {
-            error.Timeout => {}, // The delay elapsed. Open the next attempt.
-            error.Canceled => return .canceled,
-        }
-        if (slot.cancel_requested) return .canceled;
+        return terminal;
     }
 }
 
@@ -248,15 +252,6 @@ fn publishRetrying(engine: *Engine, slot: *RunSlot, number: u8, err: anyerror, d
 }
 
 /// The outcome of one attempt. A failure carries its error for the classifier.
-const AttemptOutcome = union(enum) {
-    terminal: Terminal,
-    failed: anyerror,
-
-    fn ok(t: Terminal) AttemptOutcome {
-        return .{ .terminal = t };
-    }
-};
-
 /// What a cancelable child produced. A run cancel keeps the run alive. A canceled run task unwinds.
 const ChildResult = union(enum) {
     /// The child returned. The payload holds its result.
@@ -288,28 +283,28 @@ fn streamAttempt(
     arena: std.mem.Allocator,
     slot: *RunSlot,
     streamer: *Streamer,
+    request: provider.transport.Request,
     info: *provider.transport.AttemptInfo,
-) AttemptOutcome {
-    const result = switch (runChild(engine, slot, streamChild, .{ engine, arena, slot, streamer, info })) {
-        .canceled, .aborted => return .ok(.canceled),
+) anyerror!Terminal {
+    const result = switch (runChild(engine, slot, streamChild, .{ engine, arena, slot, streamer, request, info })) {
+        .canceled, .aborted => return .canceled,
         .returned => |r| r,
     };
     if (result) |_| {
-        if (slot.cancel_requested) return .ok(.canceled);
+        if (slot.cancel_requested) return .canceled;
         const reason = streamer.stop_reason orelse
-            return .ok(.{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } });
-        return .ok(.{ .success = reason });
+            return .{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } };
+        return .{ .success = reason };
     } else |err| {
-        if (err == error.Canceled or slot.cancel_requested) return .ok(.canceled);
-        return .{ .failed = err };
+        if (err == error.Canceled or slot.cancel_requested) return .canceled;
+        return err;
     }
 }
 
 /// Open the response and stream it into the draft. The run task uses a child so cancellation can interrupt a blocked read.
 /// The child owns the body and deinits it before it returns.
-fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, info: *provider.transport.AttemptInfo) !void {
-    defer slot.wake_event.set(engine.deps.io);
-    try checkCanceled(engine.deps.io, slot);
+/// Build the request for one round. A retry re-sends these bytes, so the cached prefix still matches.
+fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !provider.transport.Request {
     const model = slot.config.model;
 
     // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
@@ -318,8 +313,12 @@ fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, stream
     // Project the resident transcript for this round. The model window sets the history budget.
     const budget = turn_context.Budget.forModel(resolved.model.limits.context_window, resolved.model.limits.max_output_tokens);
     const ctx = try turn_context.project(arena, &streamer.session.transcript, budget);
-    const transcript = ctx.slice();
-    const request = try resolvedRequest(arena, engine, slot, transcript, resolved);
+    return resolvedRequest(arena, engine, slot, ctx.slice(), resolved);
+}
+
+fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, request: provider.transport.Request, info: *provider.transport.AttemptInfo) !void {
+    defer slot.wake_event.set(engine.deps.io);
+    try checkCanceled(engine.deps.io, slot);
     const body = try engine.deps.route_transport.open(arena, request, info);
     std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
