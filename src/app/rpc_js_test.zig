@@ -14,9 +14,7 @@ test "an interaction question and its answer share the RPC stream" {
     try host.evalModule(rpc.boot ++
         \\
         \\import { plugins as registry } from "yuke:ext";
-        \\registry.use({ name: "ask", apply(ctx) {
-        \\  ctx.inject(["interaction"], (ctx) => { ctx.interaction.confirm("allow", "run"); });
-        \\} });
+        \\registry.use({ name: "ask", apply(ctx) { ctx.interaction.confirm("allow", "run"); } });
     , "rpc-interaction.js");
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);

@@ -411,6 +411,65 @@ function injectInto(parent, id, names, apply) {
   });
 }
 
+// --- interaction: the service a frontend installs ---
+// A frontend answers a question and shows a message. It is always present, so it gates no block.
+/** @typedef {{ confirm(title: string, message?: string): Promise<boolean | undefined>, select(title: string, options: string[]): Promise<string | undefined>, input(title: string, placeholder?: string): Promise<string | undefined>, notify(message: string, level?: "info" | "warn" | "error"): void }} InteractionSurface */
+/** @typedef {{ bindTo: (ctx: Context) => InteractionSurface }} Answerer */
+
+/** @param {string} name @returns {Error} */
+function noAnswerer(name) {
+  const error = new Error("no interaction answerer is installed: " + name);
+  error.name = "InteractionUnavailable";
+  return error;
+}
+
+// The default answerer. A composition without a frontend fails loudly instead of denying in silence.
+/** @type {Answerer} */
+const unanswered = {
+  bindTo: () => ({
+    confirm: () => Promise.reject(noAnswerer("confirm")),
+    select: () => Promise.reject(noAnswerer("select")),
+    input: () => Promise.reject(noAnswerer("input")),
+    notify: () => {
+      throw noAnswerer("notify");
+    },
+  }),
+};
+
+/** @type {Answerer} */
+let answerer = unanswered;
+
+/** @type {WeakMap<Context, { answerer: Answerer, surface: InteractionSurface }>} */
+const surfaces = new WeakMap();
+
+export const interaction = {
+  // Install the answerer this process uses. The disposer restores the one it replaced.
+  /** @param {Answerer} next @returns {Disposer} */
+  install(next) {
+    if (next == null || typeof next.bindTo !== "function") throw new TypeError("an answerer needs a bindTo method");
+    const previous = answerer;
+    answerer = next;
+
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      // Only the live answerer steps back, so a stale handle cannot evict a later install.
+      if (answerer === next) answerer = previous;
+    };
+  },
+};
+
+// One surface for each plugin, rebuilt after an install replaces the answerer.
+/** @param {Context} ctx @returns {InteractionSurface} */
+function surfaceFor(ctx) {
+  const held = surfaces.get(ctx);
+  if (held && held.answerer === answerer) return held.surface;
+  const surface = answerer.bindTo(ctx);
+  surfaces.set(ctx, { answerer, surface });
+  return surface;
+}
+
 // --- plugin context: the register-through-me surface ---
 // Every registration is an effect on the scope, so an unload reverts all of them.
 export class Context {
@@ -472,12 +531,10 @@ export class Context {
     return injectInto(this.scope, this.id, names, apply);
   }
 
-  // One message to the user. This registers nothing, so it reads the live answerer per call.
-  /** @param {string} message @param {"info" | "warn" | "error"} [level] @returns {void} */
-  notify(message, level = "info") {
-    /** @type {{ notify: (source: string, message: string, level: string) => void }} */ (
-      services.get("interaction")
-    ).notify(this.id, message, level);
+  // The frontend seam. A service is always installed, so a plugin calls it without `inject`.
+  /** @returns {InteractionSurface} */
+  get interaction() {
+    return surfaceFor(this);
   }
 }
 

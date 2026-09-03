@@ -1,4 +1,5 @@
 // yuke:interaction — the shared question contract and the RPC answerer.
+import { interaction } from "yuke:ext";
 import { native } from "yuke:interaction-native";
 
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
@@ -67,12 +68,7 @@ function allocateId() {
   return id;
 }
 
-const rpcInteraction = {
-  /** @param {string} source @param {string} message @param {"info" | "warn" | "error"} level @returns {void} */
-  notify(source, message, level) {
-    native.notify(source, text(message, "notify message"), noticeLevel(level));
-  },
-
+const rpcAnswerer = {
   /** @param {import("yuke:ext").Context} ctx */
   bindTo(ctx) {
     const live = new Set();
@@ -101,6 +97,10 @@ const rpcInteraction = {
       input(title, placeholder) {
         return ask(inputRequest(title, placeholder));
       },
+      /** @param {string} message @param {"info" | "warn" | "error"} [level] @returns {void} */
+      notify(message, level = "info") {
+        native.notify(ctx.id, text(message, "notify message"), noticeLevel(level));
+      },
     };
   },
 };
@@ -109,6 +109,6 @@ export const rpcInteractionPlugin = {
   name: "rpc-interaction",
   /** @param {import("yuke:ext").Context} ctx @returns {void} */
   apply(ctx) {
-    ctx.provide("interaction", rpcInteraction);
+    ctx.effect(() => interaction.install(rpcAnswerer));
   },
 };

@@ -214,7 +214,7 @@ test "a plugin notice reaches every attached frontend" {
 
     try extensions.host.evalModule(
         \\import { plugins } from "yuke:ext";
-        \\plugins.use({ name: "reporter", apply(ctx) { ctx.notify("build failed", "warn"); } });
+        \\plugins.use({ name: "reporter", apply(ctx) { ctx.interaction.notify("build failed", "warn"); } });
     , "notify.js");
 
     try std.testing.expectEqual(@as(usize, 1), capture.seen);

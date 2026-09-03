@@ -5743,11 +5743,9 @@ test "RPC interaction answers correlated promises out of order" {
         \\plugins.use(rpcInteractionPlugin);
         \\globalThis.result = "pending";
         \\plugins.use({ name: "ask", apply(ctx) {
-        \\  ctx.inject(["interaction"], (ctx) => {
-        \\    const a = ctx.interaction.confirm("first", "one");
-        \\    const b = ctx.interaction.select("second", ["red", "blue"]);
-        \\    Promise.all([a, b]).then((answers) => { globalThis.result = JSON.stringify(answers); });
-        \\  });
+        \\  const a = ctx.interaction.confirm("first", "one");
+        \\  const b = ctx.interaction.select("second", ["red", "blue"]);
+        \\  Promise.all([a, b]).then((answers) => { globalThis.result = JSON.stringify(answers); });
         \\} });
     , "interaction.js");
 
@@ -5794,10 +5792,8 @@ test "disposing an interaction consumer cancels only its pending dialog" {
         \\plugins.use(rpcInteractionPlugin);
         \\globalThis.result = "pending";
         \\plugins.use({ name: "ask", apply(ctx) {
-        \\  ctx.inject(["interaction"], (ctx) => {
-        \\    ctx.interaction.input("value").then((answer) => {
-        \\      globalThis.result = answer === undefined ? "canceled" : answer;
-        \\    });
+        \\  ctx.interaction.input("value").then((answer) => {
+        \\    globalThis.result = answer === undefined ? "canceled" : answer;
         \\  });
         \\} });
     , "interaction-cancel.js");
@@ -5832,12 +5828,10 @@ test "the TUI interaction provider answers select and input dialogs" {
         \\plugins.use(tuiPlugin);
         \\plugins.use(tuiInteractionPlugin);
         \\globalThis.result = "pending";
-        \\plugins.use({ name: "ask", apply(ctx) {
-        \\  ctx.inject(["interaction"], async (ctx) => {
-        \\    const selected = await ctx.interaction.select("pick", ["alpha", "beta"]);
-        \\    const entered = await ctx.interaction.input("name", "value");
-        \\    globalThis.result = selected + ":" + entered;
-        \\  });
+        \\plugins.use({ name: "ask", async apply(ctx) {
+        \\  const selected = await ctx.interaction.select("pick", ["alpha", "beta"]);
+        \\  const entered = await ctx.interaction.input("name", "value");
+        \\  globalThis.result = selected + ":" + entered;
         \\} });
     , "interaction-tui.js");
 
@@ -5847,4 +5841,45 @@ test "the TUI interaction provider answers select and input dialogs" {
     try loop.step(host, .{ .key_press = .{ .codepoint = 'x' } });
     try loop.step(host, .{ .key_press = .{ .codepoint = '\r' } });
     try expectJs(host, "alpha:x");
+}
+
+test "a composition with no answerer refuses every question" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\globalThis.result = "pending";
+        \\plugins.use({ name: "ask", apply(ctx) {
+        \\  try { ctx.interaction.notify("hello"); } catch (e) { globalThis.sync = e.name; }
+        \\  ctx.interaction.confirm("allow").catch((e) => { globalThis.result = globalThis.sync + ":" + e.name; });
+        \\} });
+    , "no-answerer.js");
+    try owner.pump(host);
+    try expectJs(host, "InteractionUnavailable:InteractionUnavailable");
+}
+
+test "an install replaces the answerer and its disposer restores the last one" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { interaction, plugins } from "yuke:ext";
+        \\const answerer = (tag) => ({ bindTo: () => ({ notify: (m) => { globalThis.heard.push(tag + ":" + m); } }) });
+        \\globalThis.heard = [];
+        \\const first = interaction.install(answerer("first"));
+        \\plugins.use({ name: "reporter", apply(ctx) { globalThis.say = (m) => ctx.interaction.notify(m); } });
+        \\globalThis.say("a");
+        \\const second = interaction.install(answerer("second"));
+        \\globalThis.say("b");
+        \\second();
+        \\globalThis.say("c");
+        \\first();
+        \\globalThis.result = globalThis.heard.join(",");
+    , "install-stack.js");
+    try expectJs(host, "first:a,second:b,first:c");
 }
