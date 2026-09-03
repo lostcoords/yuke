@@ -2,9 +2,10 @@
 //! A blank line emits a payload. It joins `data:` fields with a newline and ignores `event:` because providers encode the type in JSON.
 
 const std = @import("std");
+const limits = @import("limits.zig");
 
 /// This constant sets the maximum size for one line and one event payload. Larger peer input returns an error.
-pub const max_bytes = 1 << 20;
+pub const max_bytes = limits.max_message_bytes;
 
 pub const Error = error{ LineTooLong, EventTooLarge, OutOfMemory };
 
