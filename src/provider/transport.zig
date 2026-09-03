@@ -96,7 +96,7 @@ pub fn stream(
         try parser.push(buf[0..n], scratch.allocator(), &frames);
         for (frames.items) |data| {
             events.clearRetainingCapacity();
-            try reducer.decode(data, scratch.allocator(), &events);
+            try decodeFrame(reducer, data, scratch.allocator(), &events);
             try emit(events.items, &saw_done, ctx, onEvent);
         }
         _ = scratch.reset(.retain_capacity); // Reset the arena after this read.
@@ -107,14 +107,28 @@ pub fn stream(
     try parser.finish(scratch.allocator(), &tail);
     for (tail.items) |data| {
         events.clearRetainingCapacity();
-        try reducer.decode(data, scratch.allocator(), &events);
+        try decodeFrame(reducer, data, scratch.allocator(), &events);
         try emit(events.items, &saw_done, ctx, onEvent);
     }
-    events.clearRetainingCapacity();
-    try reducer.finish(&events);
-    try emit(events.items, &saw_done, ctx, onEvent);
 
     if (!saw_done) return error.IncompleteStream; // Treat a stream without the terminal done event as truncated.
+}
+
+/// The first bytes of a rejected frame. A longer frame carries no more diagnostic value.
+const max_logged_frame_bytes = 512;
+
+/// Decode one frame and name the frame that failed. The failure table keeps no detail of its own.
+fn decodeFrame(
+    reducer: anytype,
+    data: []const u8,
+    scratch: std.mem.Allocator,
+    events: *std.ArrayList(event.StreamEvent),
+) !void {
+    return reducer.decode(data, scratch, events) catch |err| {
+        const head = data[0..@min(data.len, max_logged_frame_bytes)];
+        std.log.warn("provider stream: {t} on frame: {s}", .{ err, head });
+        return err;
+    };
 }
 
 /// Hand each event to the callback. Reject an event after the terminal done.

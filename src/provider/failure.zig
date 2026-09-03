@@ -58,7 +58,6 @@ pub fn classify(err: anyerror) Detail {
         http.Error.RedirectRefused => .{ .class = .permanent, .code = .protocol, .message = "the provider attempted a redirect" },
         // A parse error never repeats. Keep it apart from a truncation.
         error.Protocol,
-        error.InvalidCharacter,
         error.HttpChunkInvalid,
         => .{ .class = .permanent, .code = .protocol, .message = "the provider stream was malformed" },
         else => .{ .class = .permanent, .code = .provider, .message = "the provider request failed" },

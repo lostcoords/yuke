@@ -83,7 +83,7 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
     };
 
     var streamer: Streamer = .{ .engine = engine, .slot = slot, .session = rt };
-    defer streamer.offsets.deinit(engine.deps.gpa);
+    defer streamer.blocks.deinit(engine.deps.gpa);
 
     // The workspace cannot change during a run, so resolve its root once and only when a tool runs.
     var workspace_root: ?[]const u8 = null;
@@ -206,7 +206,11 @@ fn streamRound(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, stream
                 .budget_left = slot.retry_budget,
             }, engine.jitter());
             const delay_ms = switch (decision) {
-                .stop => return .{ .failed = failure(err) },
+                .stop => {
+                    // The wire message names a class, not the cause. Record the cause before it is lost.
+                    std.log.warn("run {d} attempt {d} ended: {t}", .{ slot.runId(), number, err });
+                    return .{ .failed = failure(err) };
+                },
                 .retry_in_ms => |ms| ms,
             };
 
@@ -231,7 +235,6 @@ fn streamRound(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, stream
     }
 }
 
-/// Record the wait on the slot, then publish it, so the wait shows as a retry and not a silent pause.
 /// Record the wait on the slot, then publish it, so the wait shows as a retry and not a silent pause.
 fn publishRetrying(engine: *Engine, slot: *RunSlot, number: u8, err: anyerror, delay_ms: u64) void {
     // @todo(xyaman): log one line per attempt. Record the attempt number, provider, model, status, the
@@ -636,12 +639,23 @@ fn isSemantic(ev: event.StreamEvent) bool {
     };
 }
 
+/// One stream block. `part_id` stays null until the block opens its wire part.
+const BlockSlot = struct {
+    part_id: ?ids.PartId = null,
+    /// True after the block stops. A reducer stops a block one time.
+    stopped: bool = false,
+    /// The byte count that the deltas of this part already carry.
+    offset: u64 = 0,
+};
+
 const Streamer = struct {
     engine: *Engine,
     slot: *RunSlot,
     session: *Session,
-    offsets: std.ArrayList(u64) = .empty,
-    open: usize = 0,
+    /// One row per stream block, indexed by the reducer's dense `BlockId`.
+    blocks: std.ArrayList(BlockSlot) = .empty,
+    /// The next wire part id. A part takes its id when the engine emits it, never from a block id.
+    next_part_id: ids.PartId = 0,
     stop_reason: ?proto.enums.StopReason = null,
     usage: ?message.TokenUsage = null,
     /// A semantic event reached the client. A repeat of the request would duplicate it.
@@ -649,8 +663,8 @@ const Streamer = struct {
 
     /// Reset the per-round stream engine before a new round.
     fn reset(self: *Streamer) void {
-        self.offsets.clearRetainingCapacity();
-        self.open = 0;
+        self.blocks.clearRetainingCapacity();
+        self.next_part_id = 0;
         self.stop_reason = null;
         self.usage = null;
         self.saw_semantic = false;
@@ -669,47 +683,69 @@ const Streamer = struct {
         if (isSemantic(ev)) self.saw_semantic = true;
         switch (ev) {
             .block_started => |b| {
-                // Blocks are sequential; a new block requires the previous one to stop. This keeps the
-                // deferred tool part_added in ascending id order, so a peer never trips the fold assert.
-                if (self.open != 0) return error.Protocol;
+                // A part takes the next id when it is emitted, so parallel blocks keep the wire ids dense.
+                std.debug.assert(b.block == self.blocks.items.len); // the reducer assigns dense ids in start order
+                try self.blocks.append(self.engine.deps.gpa, .{});
                 // A tool block has no metadata yet. Open its part at block_stopped instead.
                 if (b.kind != .tool) {
+                    const part_id = self.openPart(b.block);
                     try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{
                         .session_id = self.slot.sessionId(),
                         .message_id = self.slot.progress.current.?.message_id,
-                        .part = emptyPart(b.block, b.kind),
+                        .part = emptyPart(part_id, b.kind),
                     } } });
                     // A block boundary is the only point in a turn that moves the phase. A delta never does.
                     session_events.announceActivity(self.engine, self.session);
                 }
-                try self.offsets.append(self.engine.deps.gpa, 0);
-                self.open += 1;
             },
             .text_delta => |d| try self.partDelta(d.block, d.text),
             .reasoning_delta => |d| try self.partDelta(d.block, d.text),
             .tool_input_delta => {}, // The reducer joins fragments; the whole call arrives at block_stopped.
             .block_stopped => |b| {
-                if (self.open == 0) return error.Protocol;
-                self.open -= 1;
+                const stopped_index = self.blockIndex(b.block);
+                std.debug.assert(!self.blocks.items[stopped_index].stopped); // the reducer stops a block one time
+                self.blocks.items[stopped_index].stopped = true;
                 switch (b.result) {
-                    .reasoning => |r| try self.emitFinalized(b.block, .{ .reasoning = .{ .signature = r.signature } }),
-                    .redacted_reasoning => |r| try self.emitFinalized(b.block, .{ .redacted_reasoning = .{ .data = r.data } }),
+                    .reasoning => |r| try self.emitFinalized(self.partIdOf(b.block), .{ .reasoning = .{ .signature = r.signature } }),
+                    .redacted_reasoning => |r| try self.emitFinalized(self.partIdOf(b.block), .{ .redacted_reasoning = .{ .data = r.data } }),
                     .text => {},
-                    .tool => |call| try self.emitToolPart(b.block, call),
+                    // A tool part carries its call metadata, so it opens here and not at the start.
+                    .tool => |call| try self.emitToolPart(self.openPart(b.block), call),
                 }
             },
             .done => |d| {
-                if (self.open != 0) return error.Protocol;
                 self.stop_reason = d.stop_reason;
                 self.usage = d.usage;
             },
         }
     }
 
-    fn partDelta(self: *Streamer, part_id: event.BlockId, text: []const u8) !void {
-        const index: usize = @intCast(part_id); // The reducer emits dense ids, so this fits a part index.
-        std.debug.assert(index < self.offsets.items.len); // The reducer opens the block before it emits the delta.
-        const offset = self.offsets.items[index];
+    /// Give `block` the next wire part id. Parts are dense in emit order.
+    fn openPart(self: *Streamer, block: event.BlockId) ids.PartId {
+        const slot = &self.blocks.items[self.blockIndex(block)];
+        std.debug.assert(slot.part_id == null); // a block opens its part one time
+        const part_id = self.next_part_id;
+        slot.part_id = part_id;
+        self.next_part_id += 1;
+        return part_id;
+    }
+
+    /// Read the wire part id of an open block.
+    fn partIdOf(self: *Streamer, block: event.BlockId) ids.PartId {
+        const slot = self.blocks.items[self.blockIndex(block)];
+        return slot.part_id.?; // the block opened its part before this event
+    }
+
+    fn blockIndex(self: *const Streamer, block: event.BlockId) usize {
+        const index: usize = @intCast(block);
+        std.debug.assert(index < self.blocks.items.len); // the reducer starts a block before it names it
+        return index;
+    }
+
+    fn partDelta(self: *Streamer, block: event.BlockId, text: []const u8) !void {
+        const index = self.blockIndex(block);
+        const part_id = self.blocks.items[index].part_id.?; // a delta follows the part that block_started opened
+        const offset = self.blocks.items[index].offset;
         try checkStreamCap(offset, text.len); // The provider is a peer. Return an error for an oversized delta.
         try self.emit(.{ .method = .@"message.part_delta", .params = .{ .message_part_delta_data = .{
             .session_id = self.slot.sessionId(),
@@ -718,10 +754,10 @@ const Streamer = struct {
             .delta = text,
             .offset = offset,
         } } });
-        self.offsets.items[index] += text.len;
+        self.blocks.items[index].offset += text.len;
     }
 
-    fn emitFinalized(self: *Streamer, part_id: event.BlockId, final: message.PartFinal) !void {
+    fn emitFinalized(self: *Streamer, part_id: ids.PartId, final: message.PartFinal) !void {
         // The provider controls the final metadata size. Reject an oversized signature or data payload.
         const len = switch (final) {
             .reasoning => |r| r.signature.len,
@@ -739,7 +775,7 @@ const Streamer = struct {
 
     /// Open a pending tool part when its block stops. The provider is a peer, so cap the metadata sizes.
     /// The part stays pending until the run settles it into a terminal state.
-    fn emitToolPart(self: *Streamer, part_id: event.BlockId, call: event.ToolCall) !void {
+    fn emitToolPart(self: *Streamer, part_id: ids.PartId, call: event.ToolCall) !void {
         try checkStreamCap(0, call.name.len);
         try checkStreamCap(0, call.call_id.len);
         try checkStreamCap(0, call.arguments.len);
@@ -784,7 +820,7 @@ fn hasToolPart(live: *const draft.Draft) bool {
 /// One pending tool call. A snapshot frees the tool call from the draft parts array.
 const PendingTool = struct { part_id: proto.ids.PartId, name: []const u8, arguments: []const u8 };
 
-/// Settle pending tools in provider order and cancel them when the workspace is absent.
+/// Settle pending tools in part order, which is the order the blocks stopped, not the item order.
 fn settlePendingTools(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, workspace_root: ?[]const u8, live: *const draft.Draft) !void {
     var pending: std.ArrayList(PendingTool) = .empty;
     for (live.parts.items) |*p| {
@@ -840,7 +876,7 @@ fn checkStreamCap(offset: u64, len: usize) error{ResponseTooLarge}!void {
     if (offset > cap or len > cap - offset) return error.ResponseTooLarge;
 }
 
-fn emptyPart(part_id: event.BlockId, kind: event.BlockKind) message.AssistantPart {
+fn emptyPart(part_id: ids.PartId, kind: event.BlockKind) message.AssistantPart {
     return switch (kind) {
         .text => .{ .text = .{ .id = part_id, .text = "" } },
         .reasoning => .{ .reasoning = .{ .id = part_id, .text = "", .signature = "" } },
@@ -893,4 +929,194 @@ test "the stream cap rejects an oversized provider delta" {
     try std.testing.expectError(error.ResponseTooLarge, checkStreamCap(0, max + 1));
     try std.testing.expectError(error.ResponseTooLarge, checkStreamCap(max, 1));
     try std.testing.expectError(error.ResponseTooLarge, checkStreamCap(max + 1, 0));
+}
+
+const zio = @import("zio");
+const provider_store = @import("../provider/provider_store.zig");
+
+var stream_test_env: std.process.Environ.Map = .init(std.testing.allocator);
+var stream_test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+
+/// Drive `Streamer.onEvent` over a real engine, session, and draft. The caller reads the draft parts.
+const StreamerFixture = struct {
+    runtime: *zio.Runtime,
+    db: database.Database,
+    store: provider_store,
+    engine: Engine,
+    slot: *RunSlot,
+    session: *Session,
+
+    const session_id = [_]u8{9} ** 16;
+
+    fn init(self: *StreamerFixture) !void {
+        self.runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+        errdefer self.runtime.deinit();
+        self.db = try database.Database.openTest();
+        errdefer self.db.deinit();
+        try session_store.create(&self.db, .{
+            .id = session_id,
+            .root = "/w",
+            .origin = "root",
+            .profile = "default",
+            .model = "mock",
+            .reasoning = "",
+            .config_rev = 0,
+            .title = "t",
+            .created_at_ms = 1,
+            .updated_at_ms = 1,
+        });
+        self.store = .init(std.testing.allocator, self.runtime.io(), &stream_test_env);
+        errdefer self.store.deinit();
+        self.engine = Engine.init(.{
+            .gpa = std.testing.allocator,
+            .io = self.runtime.io(),
+            .db = &self.db,
+            .providers = &self.store,
+            .route_transport = stream_test_transport.transport(),
+            .env = &stream_test_env,
+            .tools = .{},
+        });
+        errdefer self.engine.close();
+        self.session = try self.engine.activate(.bytes(session_id));
+        self.slot = try RunSlot.prepare(std.testing.allocator, "mock", "", "", null);
+        errdefer self.slot.destroy();
+        self.slot.bind(
+            .{ .input_id = 1, .started = .{ .session_id = .bytes(session_id), .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 } },
+            .{ .number = 1, .message_id = 1 },
+        );
+        self.session.active_run = self.slot;
+        try self.session.apply(.{ .message_started_data = .{
+            .session_id = .bytes(session_id),
+            .message_id = 1,
+            .run_id = 1,
+            .config_rev = 0,
+            .agent = agent_name,
+            .created_at_ms = 1,
+        } });
+    }
+
+    fn deinit(self: *StreamerFixture) void {
+        self.session.active_run = null;
+        self.slot.destroy();
+        self.engine.close();
+        self.db.deinit();
+        self.store.deinit();
+        self.runtime.deinit();
+    }
+
+    /// Close the live draft and open the next round, so a test can check the part ids restart.
+    fn newRound(self: *StreamerFixture, message_id: ids.MessageId) !void {
+        self.session.draft.?.deinit();
+        self.session.draft = null;
+        try self.session.apply(.{ .message_started_data = .{
+            .session_id = .bytes(session_id),
+            .message_id = message_id,
+            .run_id = 1,
+            .config_rev = 0,
+            .agent = agent_name,
+            .created_at_ms = 2,
+        } });
+        self.slot.progress.current = .{ .number = 2, .message_id = message_id };
+    }
+
+    fn streamer(self: *StreamerFixture) Streamer {
+        return .{ .engine = &self.engine, .slot = self.slot, .session = self.session };
+    }
+};
+
+// A tool part opens at the stop, so a part id follows the emit order and never the block id.
+test "interleaved tool blocks number their parts in emit order" {
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+
+    var s = fixture.streamer();
+    defer s.blocks.deinit(std.testing.allocator);
+
+    try s.onEvent(.{ .block_started = .{ .block = 0, .kind = .tool } });
+    try s.onEvent(.{ .block_started = .{ .block = 1, .kind = .tool } });
+    try s.onEvent(.{ .block_started = .{ .block = 2, .kind = .tool } });
+    // The last item completes first, so completion order decides the part ids.
+    try s.onEvent(.{ .block_stopped = .{ .block = 2, .result = .{ .tool = .{ .call_id = "c", .name = "read", .arguments = "{}" } } } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 0, .result = .{ .tool = .{ .call_id = "a", .name = "read", .arguments = "{}" } } } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 1, .result = .{ .tool = .{ .call_id = "b", .name = "read", .arguments = "{}" } } } });
+    try s.onEvent(.{ .done = .{ .stop_reason = .tool_calls, .raw_stop_reason = "tool_calls", .usage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 } } });
+
+    const parts = fixture.session.draft.?.parts.items;
+    try std.testing.expectEqual(@as(usize, 3), parts.len);
+    for (parts, 0..) |p, i| try std.testing.expectEqual(@as(ids.PartId, @intCast(i)), p.id());
+    try std.testing.expectEqualStrings("c", parts[0].tool.call_id.?);
+    try std.testing.expectEqualStrings("a", parts[1].tool.call_id.?);
+    try std.testing.expectEqualStrings("b", parts[2].tool.call_id.?);
+}
+
+// A text block opens its part at the start, so a tool block that stops later takes a later id.
+test "a text block and a concurrent tool block keep dense part ids" {
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+
+    var s = fixture.streamer();
+    defer s.blocks.deinit(std.testing.allocator);
+
+    try s.onEvent(.{ .block_started = .{ .block = 0, .kind = .tool } });
+    try s.onEvent(.{ .block_started = .{ .block = 1, .kind = .text } });
+    try s.onEvent(.{ .text_delta = .{ .block = 1, .text = "hi" } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 1, .result = .text } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 0, .result = .{ .tool = .{ .call_id = "a", .name = "read", .arguments = "{}" } } } });
+
+    const parts = fixture.session.draft.?.parts.items;
+    try std.testing.expectEqual(@as(usize, 2), parts.len);
+    // The text part opened first, so it holds id 0 and the tool part follows it.
+    try std.testing.expectEqualStrings("hi", parts[0].text.text.items);
+    try std.testing.expectEqual(@as(ids.PartId, 0), parts[0].id());
+    try std.testing.expectEqualStrings("a", parts[1].tool.call_id.?);
+    try std.testing.expectEqual(@as(ids.PartId, 1), parts[1].id());
+}
+
+// A reducer drops a tool block that the terminal leaves open, so `done` arrives with a block unstopped.
+test "a dropped tool block leaves the earlier parts intact" {
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+
+    var s = fixture.streamer();
+    defer s.blocks.deinit(std.testing.allocator);
+
+    try s.onEvent(.{ .block_started = .{ .block = 0, .kind = .text } });
+    try s.onEvent(.{ .text_delta = .{ .block = 0, .text = "hi" } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 0, .result = .text } });
+    try s.onEvent(.{ .block_started = .{ .block = 1, .kind = .tool } });
+    try s.onEvent(.{ .done = .{ .stop_reason = .stop, .raw_stop_reason = "completed", .usage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 } } });
+
+    const parts = fixture.session.draft.?.parts.items;
+    try std.testing.expectEqual(@as(usize, 1), parts.len);
+    try std.testing.expectEqualStrings("hi", parts[0].text.text.items);
+    try std.testing.expectEqual(proto.enums.StopReason.stop, s.stop_reason.?);
+}
+
+// A round reuses the streamer, so the part ids must restart from zero for the next message.
+test "part ids restart for each round" {
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+
+    var s = fixture.streamer();
+    defer s.blocks.deinit(std.testing.allocator);
+
+    try s.onEvent(.{ .block_started = .{ .block = 0, .kind = .text } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 0, .result = .text } });
+    try s.onEvent(.{ .block_started = .{ .block = 1, .kind = .tool } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 1, .result = .{ .tool = .{ .call_id = "a", .name = "read", .arguments = "{}" } } } });
+    try std.testing.expectEqual(@as(usize, 2), fixture.session.draft.?.parts.items.len);
+
+    try fixture.newRound(2);
+    s.reset();
+    try s.onEvent(.{ .block_started = .{ .block = 0, .kind = .tool } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 0, .result = .{ .tool = .{ .call_id = "b", .name = "read", .arguments = "{}" } } } });
+
+    const parts = fixture.session.draft.?.parts.items;
+    try std.testing.expectEqual(@as(usize, 1), parts.len);
+    try std.testing.expectEqual(@as(ids.PartId, 0), parts[0].id());
+    try std.testing.expectEqualStrings("b", parts[0].tool.call_id.?);
 }

@@ -38,6 +38,8 @@ const ItemKind = enum { message, reasoning, tool, ignored };
 /// An output item records the blocks that it owns.
 const Output = struct {
     kind: ItemKind,
+    /// The hashed `item.id` from the `added` event. Zero means the provider sent none.
+    item_id: u64 = 0,
     text: ?event.BlockId = null,
     reasoning: ?event.BlockId = null,
     tool: ?event.BlockId = null,
@@ -52,6 +54,8 @@ const PartSlot = struct {
 const Block = struct {
     kind: event.BlockKind,
     open: bool = true,
+    /// True when the reducer discards the block. A dropped block reaches no consumer.
+    dropped: bool = false,
     call_id: []const u8 = "",
     name: []const u8 = "",
     signature: []const u8 = "",
@@ -94,12 +98,16 @@ pub const Reducer = struct {
         scratch: std.mem.Allocator,
         out: *std.ArrayList(StreamEvent),
     ) Error!void {
+        // This dialect ends at `response.completed`, so a gateway's Chat sentinel adds nothing.
+        if (std.mem.eql(u8, data, "[DONE]")) return;
+        // The first terminal decides the turn. Drop every later frame before the parse can reject it.
+        if (self.done_emitted) return;
+
         const root = std.json.parseFromSliceLeaky(std.json.Value, scratch, data, .{}) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.Protocol,
         };
         const kind = std.meta.stringToEnum(ResponsesEvent, json.fieldStr(root, "type") orelse return error.Protocol) orelse return; // Unknown event types do nothing.
-        if (self.done_emitted) return error.Protocol; // No event follows the terminal response.
 
         switch (kind) {
             .@"response.created", .@"response.in_progress" => {},
@@ -118,9 +126,6 @@ pub const Reducer = struct {
         }
     }
 
-    /// Terminal response events arrive before EOF, so this method emits nothing.
-    pub fn finish(_: *Reducer, _: *std.ArrayList(StreamEvent)) Error!void {}
-
     fn onOutputItemAdded(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         const index = try outputIndex(root);
         const item = json.fieldGet(root, "item") orelse return error.Protocol;
@@ -129,7 +134,7 @@ pub const Reducer = struct {
         if (self.outputs.count() >= max_blocks) return error.Protocol; // Bound the output map.
         var entry = try self.outputs.getOrPut(self.gpa, index);
         if (entry.found_existing) return error.Protocol;
-        entry.value_ptr.* = .{ .kind = .ignored };
+        entry.value_ptr.* = .{ .kind = .ignored, .item_id = itemIdHash(json.fieldStr(item, "id")) };
 
         if (std.mem.eql(u8, item_type, "message")) {
             entry.value_ptr.kind = .message;
@@ -153,9 +158,8 @@ pub const Reducer = struct {
     }
 
     fn onContentPartAdded(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const index = try outputIndex(root);
         _ = try contentIndex(root);
-        const output = try self.messageOutput(index);
+        const output = try self.messageOutput(try self.outputFor(root));
         const part = json.fieldGet(root, "part") orelse return error.Protocol;
         const part_type = json.fieldStr(part, "type") orelse return error.Protocol;
 
@@ -165,14 +169,13 @@ pub const Reducer = struct {
     }
 
     fn onTextDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const id = try self.outputBlockId(try outputIndex(root), .text);
+        const id = try self.outputBlockId(try self.outputFor(root), .text);
         const delta = json.fieldStr(root, "delta") orelse return error.Protocol;
         try out.append(self.gpa, .{ .text_delta = .{ .block = id, .text = delta } });
     }
 
     fn onReasoningDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const index = try outputIndex(root);
-        const output = self.outputs.getPtr(index) orelse return error.Protocol;
+        const output = try self.outputFor(root);
         const id = output.reasoning orelse blk: {
             const new_id = try self.startBlock(.reasoning, out);
             output.reasoning = new_id;
@@ -184,7 +187,7 @@ pub const Reducer = struct {
     }
 
     fn onToolDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const id = try self.outputBlockId(try outputIndex(root), .tool);
+        const id = try self.outputBlockId(try self.outputFor(root), .tool);
         const block = try self.openBlock(id);
         const fragment = json.fieldStr(root, "delta") orelse return error.Protocol;
         if (block.authoritative_args != null) return error.Protocol;
@@ -195,16 +198,14 @@ pub const Reducer = struct {
     }
 
     fn onTextDone(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const index = try outputIndex(root);
-        const output = try self.messageOutput(index);
+        const output = try self.messageOutput(try self.outputFor(root));
         const id = output.text orelse return error.Protocol;
         try self.stopBlockIfOpen(id, out);
     }
 
     fn onContentPartDone(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const index = try outputIndex(root);
         _ = try contentIndex(root);
-        const output = try self.messageOutput(index);
+        const output = try self.messageOutput(try self.outputFor(root));
         const part = json.fieldGet(root, "part") orelse return error.Protocol;
         const part_type = json.fieldStr(part, "type") orelse return error.Protocol;
 
@@ -213,7 +214,7 @@ pub const Reducer = struct {
     }
 
     fn onToolArgumentsDone(self: *Reducer, root: std.json.Value) Error!void {
-        const id = try self.outputBlockId(try outputIndex(root), .tool);
+        const id = try self.outputBlockId(try self.outputFor(root), .tool);
         const block = try self.openBlock(id);
         if (block.authoritative_args != null) return error.Protocol;
         const arguments = json.fieldStr(root, "arguments") orelse return error.Protocol;
@@ -222,10 +223,10 @@ pub const Reducer = struct {
     }
 
     fn onOutputItemDone(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const index = try outputIndex(root);
-        const output = self.outputs.getPtr(index) orelse return error.Protocol;
+        const output = try self.outputFor(root);
         const item = json.fieldGet(root, "item") orelse return error.Protocol;
         const item_type = json.fieldStr(item, "type") orelse return error.Protocol;
+        try checkItemId(output, json.fieldStr(item, "id"));
 
         switch (output.kind) {
             .message => if (!std.mem.eql(u8, item_type, "message")) return error.Protocol,
@@ -249,6 +250,12 @@ pub const Reducer = struct {
                 if (!std.mem.eql(u8, item_type, "function_call")) return error.Protocol;
                 const id = output.tool orelse return error.Protocol;
                 const block = try self.openBlock(id);
+                // A status other than `completed` marks a call the model never finished. Drop it.
+                if (json.fieldStr(item, "status")) |status| if (!std.mem.eql(u8, status, "completed")) {
+                    block.open = false;
+                    block.dropped = true;
+                    return;
+                };
                 if (json.fieldGet(item, "arguments")) |value| {
                     const arguments = switch (value) {
                         .string => |arguments| arguments,
@@ -266,7 +273,6 @@ pub const Reducer = struct {
     }
 
     fn onCompleted(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        if (self.done_emitted) return error.Protocol;
         const response = json.fieldObj(root, "response") orelse return error.Protocol;
         const status = json.childStr(response, "status") orelse return error.Protocol;
         if (!std.mem.eql(u8, status, "completed")) return error.Protocol;
@@ -279,7 +285,6 @@ pub const Reducer = struct {
     }
 
     fn onIncomplete(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        if (self.done_emitted) return error.Protocol;
         const response = json.fieldObj(root, "response") orelse return error.Protocol;
         try self.recordUsage(response);
 
@@ -316,8 +321,11 @@ pub const Reducer = struct {
 
     fn emitDone(self: *Reducer, out: *std.ArrayList(StreamEvent)) Error!void {
         std.debug.assert(!self.done_emitted);
-        var i: usize = 0;
-        while (i < self.blocks.items.len) : (i += 1) try self.stopBlockIfOpen(@intCast(i), out);
+        // An open tool block holds partial arguments, so drop it instead of an unfinished call.
+        for (self.blocks.items, 0..) |block, i| {
+            if (block.kind == .tool) continue;
+            try self.stopBlockIfOpen(@intCast(i), out);
+        }
         self.done_emitted = true;
         try out.append(self.gpa, .{ .done = .{
             .stop_reason = self.stop_reason,
@@ -326,14 +334,19 @@ pub const Reducer = struct {
         } });
     }
 
-    fn messageOutput(self: *Reducer, index: usize) Error!*Output {
-        const output = self.outputs.getPtr(index) orelse return error.Protocol;
+    /// Find the item an event names. An `item_id` that names another item rejects the frame.
+    fn outputFor(self: *Reducer, root: std.json.Value) Error!*Output {
+        const output = self.outputs.getPtr(try outputIndex(root)) orelse return error.Protocol;
+        try checkItemId(output, json.fieldStr(root, "item_id"));
+        return output;
+    }
+
+    fn messageOutput(_: *Reducer, output: *Output) Error!*Output {
         if (output.kind != .message) return error.Protocol;
         return output;
     }
 
-    fn outputBlockId(self: *Reducer, index: usize, kind: event.BlockKind) Error!event.BlockId {
-        const output = self.outputs.getPtr(index) orelse return error.Protocol;
+    fn outputBlockId(self: *Reducer, output: *Output, kind: event.BlockKind) Error!event.BlockId {
         const id = switch (kind) {
             .text => output.text orelse return error.Protocol,
             .reasoning => output.reasoning orelse return error.Protocol,
@@ -347,7 +360,8 @@ pub const Reducer = struct {
 
     /// True when this response opened a function call. It decides the stop reason at `completed`.
     fn hasToolBlock(self: *const Reducer) bool {
-        for (self.blocks.items) |block| if (block.kind == .tool) return true;
+        // A dropped or unfinished tool block reaches no consumer, so it must not decide the stop reason.
+        for (self.blocks.items) |block| if (block.kind == .tool and !block.open and !block.dropped) return true;
         return false;
     }
 
@@ -419,6 +433,20 @@ fn mapIncompleteReason(raw: []const u8) proto.enums.StopReason {
     return .unknown;
 }
 
+/// Hash an item id for identity checks. Zero marks an absent id, so a hashed zero moves to one.
+fn itemIdHash(id: ?[]const u8) u64 {
+    const text = id orelse return 0;
+    const hash = std.hash.Wyhash.hash(0, text);
+    return if (hash == 0) 1 else hash;
+}
+
+/// Compare an item id against the id that opened the item. An absent id on either side skips the check.
+fn checkItemId(output: *const Output, id: ?[]const u8) Error!void {
+    const hash = itemIdHash(id);
+    if (output.item_id == 0 or hash == 0) return;
+    if (output.item_id != hash) return error.Protocol;
+}
+
 /// The output index must be present, non-negative, and representable as `usize`.
 fn outputIndex(root: std.json.Value) Error!usize {
     return json.fieldIndex(root, "output_index") orelse error.Protocol;
@@ -455,7 +483,6 @@ const Harness = struct {
 
     fn feed(self: *Harness, events: []const []const u8) Error!void {
         for (events) |e| try self.reducer.decode(e, self.arena.allocator(), &self.out);
-        try self.reducer.finish(&self.out);
     }
 };
 
@@ -521,6 +548,67 @@ test "tool turn: input deltas stream and authoritative arguments surface at stop
     // This API reports `completed` for a function call too, so the blocks decide the stop reason.
     // Reporting `stop` here makes the engine refuse the very tool part it was sent.
     try testing.expectEqual(proto.enums.StopReason.tool_calls, h.out.items[4].done.stop_reason);
+}
+
+// This is the shape that opencode zen relays: every item opens before the first one closes.
+test "parallel tool items interleave and each block keeps its own call" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_a","name":"read"}}
+        ,
+        \\{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":\"a\"}"}
+        ,
+        \\{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_b","name":"read"}}
+        ,
+        \\{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"path\":\"b\"}"}
+        ,
+        \\{"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"path\":\"a\"}"}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","arguments":"{\"path\":\"a\"}"}}
+        ,
+        \\{"type":"response.function_call_arguments.done","output_index":1,"arguments":"{\"path\":\"b\"}"}
+        ,
+        \\{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","arguments":"{\"path\":\"b\"}"}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    });
+
+    // Both blocks open before either one stops, and each id follows the item that started it.
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[0].block_started.block);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[1].tool_input_delta.block);
+    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[2].block_started.block);
+    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[3].tool_input_delta.block);
+
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[4].block_stopped.block);
+    try testing.expectEqualStrings("call_a", h.out.items[4].block_stopped.result.tool.call_id);
+    try testing.expectEqualStrings("{\"path\":\"a\"}", h.out.items[4].block_stopped.result.tool.arguments);
+    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[5].block_stopped.block);
+    try testing.expectEqualStrings("call_b", h.out.items[5].block_stopped.result.tool.call_id);
+    try testing.expectEqualStrings("{\"path\":\"b\"}", h.out.items[5].block_stopped.result.tool.arguments);
+    try testing.expectEqual(proto.enums.StopReason.tool_calls, h.out.items[6].done.stop_reason);
+}
+
+// Nothing orders the item completions, so a later item may close first.
+test "parallel tool items may complete out of order" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_a","name":"read"}}
+        ,
+        \\{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_b","name":"read"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","arguments":"{}"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","arguments":"{}"}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    });
+
+    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[2].block_stopped.block);
+    try testing.expectEqualStrings("call_b", h.out.items[2].block_stopped.result.tool.call_id);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[3].block_stopped.block);
+    try testing.expectEqualStrings("call_a", h.out.items[3].block_stopped.result.tool.call_id);
 }
 
 test "authoritative arguments override deltas and conflicting echoes fail" {
@@ -616,6 +704,133 @@ test "a reasoning item with no summary and no encrypted content emits no block" 
     });
     try testing.expectEqual(@as(usize, 1), h.out.items.len);
     try testing.expect(h.out.items[0] == .done);
+}
+
+// A gateway that speaks both dialects can append the Chat Completions sentinel.
+test "the chat done sentinel is ignored" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+        ,
+        "[DONE]",
+    });
+    try testing.expectEqual(@as(usize, 1), h.out.items.len);
+    try testing.expect(h.out.items[0] == .done);
+}
+
+// A rejection here would throw away an answer that already arrived in full.
+test "a frame after the terminal response is ignored" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}
+        ,
+        \\{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}
+        ,
+        \\{"type":"response.output_text.delta","output_index":0,"delta":"hi"}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"type":"message"}}
+    });
+    try testing.expectEqual(@as(usize, 4), h.out.items.len);
+    try testing.expect(h.out.items[3] == .done);
+}
+
+// The arguments are partial, so the call must not reach the consumer.
+test "a tool item still open at the terminal is dropped" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"run"}}
+        ,
+        \\{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"cmd\":\"zig "}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    });
+    try testing.expectEqual(@as(usize, 3), h.out.items.len);
+    try testing.expectEqual(event.BlockKind.tool, h.out.items[0].block_started.kind);
+    try testing.expect(h.out.items[1] == .tool_input_delta);
+    // No block_stopped closes the tool, and the stop reason never claims a call.
+    try testing.expect(h.out.items[2] == .done);
+    try testing.expectEqual(proto.enums.StopReason.stop, h.out.items[2].done.stop_reason);
+}
+
+// A malformed trailer must not undo an answer that already arrived in full.
+test "a malformed frame after the terminal response is ignored" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+        ,
+        "{not json",
+    });
+    try testing.expectEqual(@as(usize, 1), h.out.items.len);
+    try testing.expect(h.out.items[0] == .done);
+}
+
+// The arguments would otherwise attach to a call the event does not name.
+test "an item id that names another item is rejected" {
+    var h = Harness.init();
+    defer h.deinit();
+    try testing.expectError(error.Protocol, h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"run"}}
+        ,
+        \\{"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_2","delta":"{}"}
+    }));
+}
+
+// The provider marks a call it never finished, so the call must not reach the consumer.
+test "a tool item that reports an unfinished status is dropped" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"run"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"incomplete","arguments":"{}"}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    });
+    try testing.expectEqual(@as(usize, 2), h.out.items.len);
+    try testing.expectEqual(event.BlockKind.tool, h.out.items[0].block_started.kind);
+    try testing.expect(h.out.items[1] == .done);
+    try testing.expectEqual(proto.enums.StopReason.stop, h.out.items[1].done.stop_reason);
+}
+
+// These are the frames the provider sent when `max_output_tokens` cut a call off mid-arguments.
+test "a call cut off by the output cap reports length and no tool" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","call_id":"call_1","name":"exec"}}
+        ,
+        \\{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{}}}
+    });
+    try testing.expectEqual(@as(usize, 2), h.out.items.len);
+    try testing.expectEqual(event.BlockKind.tool, h.out.items[0].block_started.kind);
+    try testing.expect(h.out.items[1] == .done);
+    try testing.expectEqual(proto.enums.StopReason.length, h.out.items[1].done.stop_reason);
+}
+
+// One call finished and one did not, so only the finished call reaches the consumer.
+test "a mix of closed and open tools keeps only the closed call" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_a","name":"read"}}
+        ,
+        \\{"type":"response.output_item.added","output_index":1,"item":{"id":"fc_2","type":"function_call","call_id":"call_b","name":"read"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","arguments":"{}"}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    });
+    try testing.expectEqual(@as(usize, 4), h.out.items.len);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[2].block_stopped.block);
+    try testing.expectEqualStrings("call_a", h.out.items[2].block_stopped.result.tool.call_id);
+    // The open call never stops, and the closed one still sets the stop reason.
+    try testing.expectEqual(proto.enums.StopReason.tool_calls, h.out.items[3].done.stop_reason);
 }
 
 test "a failed response terminates with a provider error" {

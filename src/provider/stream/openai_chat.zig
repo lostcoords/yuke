@@ -79,9 +79,6 @@ pub const Reducer = struct {
         try self.onUsage(root);
     }
 
-    /// The terminal event arrives before EOF, so this method emits nothing.
-    pub fn finish(_: *Reducer, _: *std.ArrayList(StreamEvent)) Error!void {}
-
     fn onChoice(self: *Reducer, choice: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         if (json.fieldGet(choice, "delta")) |delta| switch (delta) {
             .object => try self.onDelta(delta, out),
@@ -291,7 +288,6 @@ const Harness = struct {
 
     fn feed(self: *Harness, events: []const []const u8) Error!void {
         for (events) |e| try self.reducer.decode(e, self.arena.allocator(), &self.out);
-        try self.reducer.finish(&self.out);
     }
 };
 
@@ -388,6 +384,8 @@ test "reasoning then text gives two sequential blocks" {
     try testing.expectEqual(event.BlockKind.reasoning, h.out.items[0].block_started.kind);
     try testing.expectEqualStrings("why", h.out.items[1].reasoning_delta.text);
     try testing.expectEqual(@as(event.BlockId, 0), h.out.items[2].block_stopped.block);
+    // This dialect carries no reasoning signature.
+    try testing.expectEqualStrings("", h.out.items[2].block_stopped.result.reasoning.signature);
     try testing.expectEqual(event.BlockKind.text, h.out.items[3].block_started.kind);
     try testing.expectEqualStrings("hi", h.out.items[4].text_delta.text);
     try testing.expectEqual(@as(event.BlockId, 1), h.out.items[5].block_stopped.block);
@@ -439,21 +437,6 @@ test "every block stops before the next block starts" {
         .done => try testing.expectEqual(@as(usize, 0), open),
         else => {},
     };
-}
-
-test "reasoning_content starts a reasoning block" {
-    var h = Harness.init();
-    defer h.deinit();
-    try h.feed(&.{
-        \\{"choices":[{"index":0,"delta":{"reasoning_content":"think"},"finish_reason":null}]}
-        ,
-        "[DONE]",
-    });
-
-    try testing.expectEqual(@as(usize, 4), h.out.items.len);
-    try testing.expectEqual(event.BlockKind.reasoning, h.out.items[0].block_started.kind);
-    try testing.expectEqualStrings("think", h.out.items[1].reasoning_delta.text);
-    try testing.expectEqualStrings("", h.out.items[2].block_stopped.result.reasoning.signature);
 }
 
 test "malformed JSON degrades to a protocol error" {

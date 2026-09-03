@@ -90,9 +90,6 @@ pub const Reducer = struct {
         }
     }
 
-    /// Anthropic sends all events before EOF, so this method emits nothing.
-    pub fn finish(_: *Reducer, _: *std.ArrayList(StreamEvent)) Error!void {}
-
     fn onMessageStart(self: *Reducer, root: std.json.Value) Error!void {
         if (self.started) return error.Protocol; // The stream has one message_start event.
         self.started = true;
@@ -299,7 +296,6 @@ const Harness = struct {
 
     fn feed(self: *Harness, events: []const []const u8) Error!void {
         for (events) |e| try self.reducer.decode(e, self.arena.allocator(), &self.out);
-        try self.reducer.finish(&self.out);
     }
 };
 

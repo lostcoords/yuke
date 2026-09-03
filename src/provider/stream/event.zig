@@ -1,5 +1,8 @@
 //! Neutral events use a closed, block-based shape. A reducer maps provider SSE to this stream.
 //! It assigns dense `BlockId` values, emits block events and one `done`, and borrows source slices until the consumer drains the stream.
+//! Several blocks can stay open at one time, because the Responses API interleaves output items.
+//! The consumer numbers its own parts in emit order, so a block id is never a part id.
+//! A reducer stops or drops each open block before `done`; a dropped block opens no part.
 
 const proto = @import("proto");
 
