@@ -114,10 +114,7 @@ pub const Tools = struct {
         return if (at.found) &self.list.items[at.at] else null;
     }
 
-    /// Drop the tool named `name`. Answer false when no tool holds it.
-    ///
-    /// A turn resolves a tool by name at call time, so a removal during a turn answers the model
-    /// instead of failing it. The provider prefix changes, which drops the cached prefix.
+    /// Remove the tool named `name` and answer false when no tool holds it.
     pub fn remove(self: *Tools, ctx: Context, name: []const u8) bool {
         const slot = self.lookup(name);
         if (!slot.found) return false;

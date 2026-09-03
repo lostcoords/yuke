@@ -184,8 +184,7 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
     };
 }
 
-/// Stream one round, and repeat the request while the classifier allows it. A repeat uses a fresh
-/// body and a fresh reducer. `docs/plan.md` "Retry / backoff policy" holds the rules.
+/// Stream one round, and resend the same request while the classifier allows it.
 fn streamRound(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) Terminal {
     // Build once for the round. Every attempt then sends the same bytes and the same tool prefix.
     const request = roundRequest(engine, arena, slot, streamer) catch |err| {

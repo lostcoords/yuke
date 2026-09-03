@@ -321,7 +321,7 @@ function injectInto(parent, id, names, apply) {
     if (isReserved(n)) throw new TypeError("inject: `" + n + "` is a plugin context member");
   }
   if (typeof apply !== "function") throw new TypeError("inject needs an apply function");
-  // One watcher per name is enough, because a repeated name builds the block twice for one change.
+  // One watcher per name, so a name repeated in `names` still builds the block one time per change.
   const deps = Array.from(new Set(names));
 
   /** @type {Scope | null} */
