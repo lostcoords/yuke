@@ -308,6 +308,7 @@ function staticRowSource(list) {
 // A compaction message is plain thought text, not markdown.
 /** @param {ItemKey} id @param {string} body @param {number} width @returns {TranscriptRow[]} */
 function wrapPlain(id, body, width) {
+  /** @type {TranscriptRow[]} */
   const rows = wrapBody(body, Math.max(1, width - TX_GUTTER), "TxThought").map((r) => ({
     ...r,
     key: id,
