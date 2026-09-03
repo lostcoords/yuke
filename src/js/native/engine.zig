@@ -25,10 +25,9 @@ const Module = Context.Module;
 const SessionId = proto.ids.SessionId;
 
 /// One text read copies at most this many bytes. A view asks again for the next page.
+/// The inline text of a part is its first page, so a cut names where the second page starts.
 /// A limit of zero asks for this default, so a caller that wants one page passes nothing.
 pub const max_page_bytes: usize = 64 * 1024;
-/// A part carries this much inline text. A view pages the rest through `partText`.
-pub const inline_part_bytes: usize = 4 * 1024;
 /// Bound the dirty set so a storm cannot grow it without limit. A full set marks everything dirty.
 pub const max_dirty_sessions: usize = 256;
 /// The default prompt uses the protocol string limit.
@@ -289,7 +288,7 @@ const Cuts = struct {
 
 /// Write `"name":"..."` with the text cut on a character boundary. Record the whole size when cut.
 fn writeCapped(w: *std.Io.Writer, cuts: *Cuts, field: Cut.Field, list: []const u8, index: u32, name: []const u8, text: []const u8) !void {
-    const end = utf8Floor(text, inline_part_bytes);
+    const end = utf8Floor(text, max_page_bytes);
     try w.print("\"{s}\":", .{name});
     try std.json.Stringify.encodeJsonString(text[0..end], .{}, w);
     if (end < text.len) cuts.add(.{ .field = field, .list = list, .index = index, .size = text.len, .next = end });
@@ -308,7 +307,7 @@ fn writePart(w: *std.Io.Writer, p: proto.message.AssistantPart) !void {
 
 /// Write a text-bearing part. A cut text names itself in `cut`, so a view knows to page the rest.
 fn writeTextPart(w: *std.Io.Writer, cuts: *Cuts, kind: []const u8, id: u64, text: []const u8) !void {
-    const end = utf8Floor(text, inline_part_bytes);
+    const end = utf8Floor(text, max_page_bytes);
     try w.print("{{\"type\":\"{s}\",\"id\":{d},\"text\":", .{ kind, id });
     try std.json.Stringify.encodeJsonString(text[0..end], .{}, w);
     if (end < text.len) cuts.add(.{ .field = .text, .size = text.len, .next = end });
@@ -1040,10 +1039,10 @@ test "a huge tool result projects into a bounded parts response" {
     defer aw.deinit();
     try writeMessageParts(&aw.writer, &sess, 1);
 
-    // Three megabytes of source must not become a three-megabyte projection.
-    try testing.expect(aw.written().len < 64 * 1024);
+    // Three megabytes of source must not become a three-megabyte projection. One page per string bounds it.
+    try testing.expect(aw.written().len < 4 * max_page_bytes);
     // The response still says how large the output really is, so a view can page it.
-    try testing.expect(std.mem.indexOf(u8, aw.written(), "{\"field\":\"output\",\"bytes\":1048576,\"next\":4096}") != null);
+    try testing.expect(std.mem.indexOf(u8, aw.written(), "{\"field\":\"output\",\"bytes\":1048576,\"next\":65536}") != null);
     // The one diff line is far over the line cap, and the response says so instead of eliding in silence.
     try testing.expect(std.mem.indexOf(u8, aw.written(), "{\"field\":\"view.0.diff\",\"total\":1}") != null);
 
@@ -1103,7 +1102,7 @@ test "a text part over the inline bound reports more and pages back whole" {
     defer sess.deinit();
 
     // A multibyte run straddles every plausible page edge, so a lost or split character shows up.
-    const long = try gpa.alloc(u8, 3 * 4096);
+    const long = try gpa.alloc(u8, 3 * 24_000);
     defer gpa.free(long);
     for (0..long.len / 3) |i| @memcpy(long[i * 3 ..][0..3], "\u{2014}");
 
@@ -1124,7 +1123,7 @@ test "a text part over the inline bound reports more and pages back whole" {
 
     // The view learns the text is cut and how large it really is, which is what asks it to page.
     // The cut names the field, the whole size, and where a reader resumes, so the prefix is not re-fetched.
-    try testing.expect(std.mem.indexOf(u8, aw.written(), "\"cut\":[{\"field\":\"text\",\"bytes\":12288,\"next\":4095}]") != null);
+    try testing.expect(std.mem.indexOf(u8, aw.written(), "\"cut\":[{\"field\":\"text\",\"bytes\":72000,\"next\":65535}]") != null);
 
     const whole = partTextOf(&sess, 1, 0, "text") orelse return error.TestUnexpectedResult;
     try testing.expectEqual(long.len, whole.len);
