@@ -20,10 +20,12 @@ const ResponsesEvent = enum {
     @"response.output_item.added",
     @"response.content_part.added",
     @"response.output_text.delta",
+    @"response.refusal.delta",
     @"response.reasoning_summary_text.delta",
     @"response.reasoning_text.delta",
     @"response.function_call_arguments.delta",
     @"response.output_text.done",
+    @"response.refusal.done",
     @"response.content_part.done",
     @"response.function_call_arguments.done",
     @"response.output_item.done",
@@ -70,6 +72,8 @@ pub const Reducer = struct {
     usage: proto.message.TokenUsage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
     raw_stop_reason: []const u8 = "",
     stop_reason: proto.enums.StopReason = .unknown,
+    /// True when the model refused. A refusal arrives beside the content, never inside it.
+    refused: bool = false,
     done_emitted: bool = false,
 
     pub fn init(gpa: std.mem.Allocator) Reducer {
@@ -114,9 +118,10 @@ pub const Reducer = struct {
             .@"response.output_item.added" => try self.onOutputItemAdded(root, out),
             .@"response.content_part.added" => try self.onContentPartAdded(root, out),
             .@"response.output_text.delta" => try self.onTextDelta(root, out),
+            .@"response.refusal.delta" => try self.onRefusalDelta(root, out),
             .@"response.reasoning_summary_text.delta", .@"response.reasoning_text.delta" => try self.onReasoningDelta(root, out),
             .@"response.function_call_arguments.delta" => try self.onToolDelta(root, out),
-            .@"response.output_text.done" => try self.onTextDone(root, out),
+            .@"response.output_text.done", .@"response.refusal.done" => try self.onTextDone(root, out),
             .@"response.content_part.done" => try self.onContentPartDone(root, out),
             .@"response.function_call_arguments.done" => try self.onToolArgumentsDone(root),
             .@"response.output_item.done" => try self.onOutputItemDone(root, out),
@@ -163,6 +168,7 @@ pub const Reducer = struct {
         const part = json.fieldGet(root, "part") orelse return error.Protocol;
         const part_type = json.fieldStr(part, "type") orelse return error.Protocol;
 
+        if (std.mem.eql(u8, part_type, "refusal")) self.refused = true;
         const part_slot = partSlot(output, part_type) orelse return;
         if (part_slot.slot.* != null) return error.Protocol;
         part_slot.slot.* = try self.startBlock(part_slot.kind, out);
@@ -172,6 +178,12 @@ pub const Reducer = struct {
         const id = try self.outputBlockId(try self.outputFor(root), .text);
         const delta = json.fieldStr(root, "delta") orelse return error.Protocol;
         try out.append(self.gpa, .{ .text_delta = .{ .block = id, .text = delta } });
+    }
+
+    /// Carry a refusal as assistant text, so the reason the model declined reaches the consumer.
+    fn onRefusalDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
+        self.refused = true;
+        return self.onTextDelta(root, out);
     }
 
     fn onReasoningDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
@@ -279,7 +291,7 @@ pub const Reducer = struct {
         try self.recordUsage(response);
         // This API has no tool stop reason: a response carrying a function call still reports
         // `completed`. The blocks decide instead, or the engine refuses the tool part it was sent.
-        self.stop_reason = if (self.hasToolBlock()) .tool_calls else .stop;
+        self.stop_reason = if (self.refused) .content_filter else if (self.hasToolBlock()) .tool_calls else .stop;
         try self.setRawStopReason("completed");
         try self.emitDone(out);
     }
@@ -460,6 +472,7 @@ fn contentIndex(root: std.json.Value) Error!usize {
 fn partSlot(output: *Output, part_type: []const u8) ?PartSlot {
     if (std.mem.eql(u8, part_type, "output_text")) return .{ .slot = &output.text, .kind = .text };
     if (std.mem.eql(u8, part_type, "summary_text")) return .{ .slot = &output.reasoning, .kind = .reasoning };
+    if (std.mem.eql(u8, part_type, "refusal")) return .{ .slot = &output.text, .kind = .text };
     return null;
 }
 
@@ -831,6 +844,50 @@ test "a mix of closed and open tools keeps only the closed call" {
     try testing.expectEqualStrings("call_a", h.out.items[2].block_stopped.result.tool.call_id);
     // The open call never stops, and the closed one still sets the stop reason.
     try testing.expectEqual(proto.enums.StopReason.tool_calls, h.out.items[3].done.stop_reason);
+}
+
+// A refusal arrives in its own content part, so it would otherwise commit an empty message.
+test "a refusal streams as text and reports content_filter" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message"}}
+        ,
+        \\{"type":"response.content_part.added","output_index":0,"content_index":0,"item_id":"msg_1","part":{"type":"refusal"}}
+        ,
+        \\{"type":"response.refusal.delta","output_index":0,"content_index":0,"item_id":"msg_1","delta":"I cannot help"}
+        ,
+        \\{"type":"response.refusal.done","output_index":0,"content_index":0,"item_id":"msg_1","refusal":"I cannot help"}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_1","type":"message"}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    });
+
+    try testing.expectEqual(event.BlockKind.text, h.out.items[0].block_started.kind);
+    try testing.expectEqualStrings("I cannot help", h.out.items[1].text_delta.text);
+    try testing.expect(h.out.items[2] == .block_stopped);
+    // The turn reports the refusal, so a caller never reads it as a plain answer.
+    try testing.expectEqual(proto.enums.StopReason.content_filter, h.out.items[3].done.stop_reason);
+}
+
+// A refusal outranks a call, because the model declined the request it was given.
+test "a refusal outranks a tool call in the stop reason" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"run"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","arguments":"{}"}}
+        ,
+        \\{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message"}}
+        ,
+        \\{"type":"response.content_part.added","output_index":1,"content_index":0,"item_id":"msg_1","part":{"type":"refusal"}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    });
+    const done = h.out.items[h.out.items.len - 1].done;
+    try testing.expectEqual(proto.enums.StopReason.content_filter, done.stop_reason);
 }
 
 test "a failed response terminates with a provider error" {
