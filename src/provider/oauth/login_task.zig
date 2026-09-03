@@ -17,7 +17,7 @@ const codex = provider.oauth_codex;
 /// One login response fits this. The flows read a token document, never a model list.
 const response_bytes = http.max_oauth_response_bytes;
 
-/// No flow reports a lifetime, so the engine bounds the login as the reference does.
+/// No flow reports a lifetime, so the engine bounds the login to a fixed maximum.
 const max_lifetime_ms: u64 = 15 * 60 * 1000;
 
 /// Ask the provider for a code the human types. The caller answers its client with the result.

@@ -50,7 +50,7 @@ export function isWheel(button) {
   return button === "wheel_up" || button === "wheel_down" || button === "wheel_left" || button === "wheel_right";
 }
 
-// Bound a link chain the way neovim bounds `syn_ns_get_final_id`. A cycle falls back instead.
+// Bound a link chain, so a cycle falls back instead of looping for ever.
 const link_depth_max = 100;
 
 // The highlight groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.

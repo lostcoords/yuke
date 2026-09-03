@@ -634,7 +634,7 @@ export class Transcript {
     this._press = null;
   }
 
-  // Set both ends. `{ inclusive: true }` grows the later end by one grapheme, as vim visual does.
+  // Set both ends. `{ inclusive: true }` grows the later end by one grapheme.
   /** @param {Position | null} anchor @param {Position | null} cursor @param {{ inclusive?: boolean } | null | undefined} [opts] @returns {void} */
   select(anchor, cursor, opts) {
     if (!anchor || !cursor) {

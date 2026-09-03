@@ -602,7 +602,7 @@ export class Composer {
 // The composer stops growing here, so the transcript keeps its room.
 const COMPOSER_ROWS_MAX = 10;
 
-// A paste over one of these collapses to a label, as OpenCode does.
+// A paste over one of these collapses to a label.
 const COMPOSER_PASTE_LINES = 3;
 const COMPOSER_PASTE_CHARS = 150;
 

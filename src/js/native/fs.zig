@@ -220,7 +220,7 @@ fn ownedRoot(ctx: Context, host: *Host, args: []const Value, idx: usize) ?[]u8 {
     return host.gpa.dupe(u8, if (raw.len == 0) host.cwd else raw) catch null;
 }
 
-/// Replace a file's whole content. It answers the byte count, as the Odin host did.
+/// Replace a file's whole content. It answers the byte count it wrote.
 fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const root = ownedRoot(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string");
