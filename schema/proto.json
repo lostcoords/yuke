@@ -1,0 +1,3924 @@
+{
+  "protocolVersion": 1,
+  "limits": {
+    "default_page_size": 50,
+    "default_session_list_page_size": 25,
+    "max_activity_retry_message_bytes": 1024,
+    "max_api_key_bytes": 65536,
+    "max_auth_providers": 64,
+    "max_auth_user_code_bytes": 128,
+    "max_catalog_models": 4096,
+    "max_error_message_bytes": 4096,
+    "max_input_parts": 256,
+    "max_message_parts": 1024,
+    "max_message_string_bytes": 1048576,
+    "max_page_size": 500,
+    "max_queued_inputs": 128,
+    "max_reasoning_levels": 32,
+    "max_session_list_cursor_bytes": 256,
+    "max_session_list_page_size": 100,
+    "max_skills": 1024,
+    "max_snapshot_configs": 501,
+    "max_tool_output_stream_bytes": 1048576,
+    "max_view_bytes": 1048576,
+    "max_view_items": 1024,
+    "max_views_per_tool": 64
+  },
+  "constants": {
+    "MAX_REQUEST_ID_BYTES": 64,
+    "MAX_SESSION_REVISION": 9007199254740991,
+    "MAX_WIRE_INTEGER": 9007199254740991,
+    "PROTOCOL_VERSION": 1
+  },
+  "methods": [
+    {
+      "name": "initialize",
+      "doc": "Establish the connection and negotiate the protocol version.",
+      "params": "Empty",
+      "result": "InitializeResult",
+      "direction": "clientToServer",
+      "paramsOptional": true
+    },
+    {
+      "name": "session.list",
+      "doc": "List the sessions.",
+      "params": "SessionListParams",
+      "result": "SessionListResult",
+      "direction": "clientToServer",
+      "paramsOptional": true
+    },
+    {
+      "name": "session.create",
+      "doc": "Create a session.",
+      "params": "CreateSession",
+      "result": "SessionResult",
+      "direction": "clientToServer",
+      "paramsOptional": true
+    },
+    {
+      "name": "session.patch",
+      "doc": "Update a session's mutable fields.",
+      "params": "SessionPatchParams",
+      "result": "SessionResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.remove",
+      "doc": "Remove a session.",
+      "params": "SessionRemoveParams",
+      "result": "Empty",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.fork",
+      "doc": "Fork a session at a message.",
+      "params": "SessionForkParams",
+      "result": "SessionResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.compact",
+      "doc": "Compact a session's transcript.",
+      "params": "SessionCompactParams",
+      "result": "SessionCompactResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.rewind",
+      "doc": "Rewind a session to before a message.",
+      "params": "SessionRewindParams",
+      "result": "Empty",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.send_input",
+      "doc": "Send user input to a session.",
+      "params": "SessionSendInputParams",
+      "result": "SessionSendInputResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.cancel_input",
+      "doc": "Cancel a queued input.",
+      "params": "SessionCancelInputParams",
+      "result": "SessionCancelInputResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.cancel_run",
+      "doc": "Cancel the active run.",
+      "params": "SessionCancelRunParams",
+      "result": "SessionCancelRunResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.history",
+      "doc": "Fetch a page from a session transcript.",
+      "params": "SessionHistoryParams",
+      "result": "SessionHistoryResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.config",
+      "doc": "Fetch a session's run config.",
+      "params": "SessionConfigParams",
+      "result": "SessionConfigResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "catalog.list",
+      "doc": "List the model catalog.",
+      "params": "CatalogListParams",
+      "result": "CatalogListResult",
+      "direction": "clientToServer",
+      "paramsOptional": true
+    },
+    {
+      "name": "catalog.refresh",
+      "doc": "Refresh the model catalog from providers.",
+      "params": "Empty",
+      "result": "CatalogRefreshResult",
+      "direction": "clientToServer",
+      "paramsOptional": true
+    },
+    {
+      "name": "auth.list",
+      "doc": "List the local providers and the credential each one holds.",
+      "params": "Empty",
+      "result": "AuthListResult",
+      "direction": "clientToServer",
+      "paramsOptional": true
+    },
+    {
+      "name": "auth.set_api_key",
+      "doc": "Set an API key for a provider.",
+      "params": "AuthSetApiKeyParams",
+      "result": "Empty",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "auth.login",
+      "doc": "Begin a provider login flow.",
+      "params": "AuthLoginParams",
+      "result": "AuthLoginResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "auth.cancel_login",
+      "doc": "Cancel an active login flow.",
+      "params": "AuthCancelLoginParams",
+      "result": "Empty",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "auth.remove",
+      "doc": "Remove the credential the engine holds for a provider.",
+      "params": "AuthRemoveParams",
+      "result": "Empty",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    }
+  ],
+  "broadcasts": [
+    {
+      "name": "session.summary_changed",
+      "doc": "A session's summary metadata changed.",
+      "params": "SessionSummaryChangedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "session.activity_changed",
+      "doc": "A session's activity state changed.",
+      "params": "SessionActivityChangedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "session.removed",
+      "doc": "The engine removed a session.",
+      "params": "SessionRemovedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "catalog.changed",
+      "doc": "The model catalog changed.",
+      "params": "CatalogChangedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "auth.login_finished",
+      "doc": "The engine finished an authentication login flow.",
+      "params": "AuthLoginFinishedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "auth.changed",
+      "doc": "Authentication state changed.",
+      "params": "AuthChangedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "notice",
+      "doc": "The engine sent an out-of-band notice.",
+      "params": "Notice",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "message.committed",
+      "doc": "The engine committed a message to a session transcript.",
+      "params": "MessageCommittedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "run.started",
+      "doc": "A run started.",
+      "params": "RunStartedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "run.done",
+      "doc": "A run finished.",
+      "params": "RunDoneData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "config.changed",
+      "doc": "A session's run config changed.",
+      "params": "ConfigChangedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "transcript.truncated",
+      "doc": "The engine truncated older transcript messages.",
+      "params": "TranscriptTruncatedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "message.started",
+      "doc": "A new streaming message started.",
+      "params": "MessageStartedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "message.discarded",
+      "doc": "The engine discarded an unfinished message.",
+      "params": "MessageDiscardedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "message.part_added",
+      "doc": "The engine added a part to a message.",
+      "params": "MessagePartAddedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "message.part_delta",
+      "doc": "The engine sent more content for a message part.",
+      "params": "MessagePartDeltaData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "message.part_finalized",
+      "doc": "The engine attached final metadata to a stopped part.",
+      "params": "MessagePartFinalizedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "tool.state_changed",
+      "doc": "A tool call's state changed.",
+      "params": "ToolStateChangedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "tool.output_delta",
+      "doc": "The engine sent more output from a tool.",
+      "params": "ToolOutputDeltaData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "input.queued",
+      "doc": "The engine queued an input behind the active run.",
+      "params": "InputQueuedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "input.canceled",
+      "doc": "The engine canceled a queued input.",
+      "params": "InputCanceledData",
+      "direction": "serverToClient"
+    }
+  ],
+  "structures": [
+    {
+      "name": "Client",
+      "doc": "This type identifies the client connection.",
+      "fields": [
+        {
+          "name": "name",
+          "doc": "The client connection name.",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "version",
+          "doc": "The client build version.",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ContentText",
+      "doc": "This part holds plain text.",
+      "fields": [
+        {
+          "name": "text",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ContentImage",
+      "doc": "This part holds an image source and an optional detail hint.",
+      "fields": [
+        {
+          "name": "source",
+          "type": "MediaSource",
+          "presence": "required"
+        },
+        {
+          "name": "detail",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "ContentAudio",
+      "doc": "This part holds an audio source and its format.",
+      "fields": [
+        {
+          "name": "source",
+          "type": "MediaSource",
+          "presence": "required"
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ContentFile",
+      "doc": "This part holds a file source and an optional file name.",
+      "fields": [
+        {
+          "name": "source",
+          "type": "MediaSource",
+          "presence": "required"
+        },
+        {
+          "name": "filename",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "MediaBlob",
+      "doc": "A content-addressed blob. No blob store exists yet, so a request that carries one is refused.",
+      "fields": [
+        {
+          "name": "hash",
+          "type": "[64]u8",
+          "presence": "required"
+        },
+        {
+          "name": "mime",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "bytes",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AuthCancelLoginParams",
+      "doc": "These are the parameters for `auth.cancel_login`.",
+      "fields": [
+        {
+          "name": "login_id",
+          "type": "LoginId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AuthChangedData",
+      "doc": "This payload describes `auth.changed`.",
+      "fields": [
+        {
+          "name": "provider",
+          "type": "AuthProvider",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AuthListResult",
+      "doc": "This result describes `auth.list`.",
+      "fields": [
+        {
+          "name": "providers",
+          "type": "[]AuthProvider",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AuthLoginResult",
+      "doc": "The engine returns these device authorization details only to the connection that sent the request.",
+      "fields": [
+        {
+          "name": "login_id",
+          "type": "LoginId",
+          "presence": "required"
+        },
+        {
+          "name": "verification_url",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "user_code",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AuthLoginFinishedData",
+      "doc": "This payload describes `auth.login_finished`.",
+      "fields": [
+        {
+          "name": "login_id",
+          "type": "LoginId",
+          "presence": "required"
+        },
+        {
+          "name": "provider_id",
+          "type": "ProviderId",
+          "presence": "required"
+        },
+        {
+          "name": "outcome",
+          "type": "AuthLoginOutcome",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AuthLoginOutcomeCanceled",
+      "doc": "The login was explicitly canceled.",
+      "fields": []
+    },
+    {
+      "name": "AuthLoginOutcomeFailed",
+      "doc": "The login failed without changing durable credentials.",
+      "fields": [
+        {
+          "name": "message",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AuthLoginOutcomeSucceeded",
+      "doc": "The engine completed login and durably stored the credentials.",
+      "fields": []
+    },
+    {
+      "name": "AuthLoginParams",
+      "doc": "These are the parameters for `auth.login`.",
+      "fields": [
+        {
+          "name": "provider_id",
+          "type": "ProviderId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AuthRemoveParams",
+      "doc": "These parameters select the local credential to remove. OAuth waits for stage 10.",
+      "fields": [
+        {
+          "name": "provider_id",
+          "type": "ProviderId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AuthProvider",
+      "doc": "Public authentication state and capabilities for one provider.",
+      "fields": [
+        {
+          "name": "provider_id",
+          "type": "ProviderId",
+          "presence": "required"
+        },
+        {
+          "name": "credential_kind",
+          "type": "AuthCredentialKind",
+          "presence": "optional"
+        },
+        {
+          "name": "can_login",
+          "type": "bool",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AuthSetApiKeyParams",
+      "doc": "These `auth.set_api_key` parameters carry a key that the wire never returns.",
+      "fields": [
+        {
+          "name": "provider_id",
+          "type": "ProviderId",
+          "presence": "required"
+        },
+        {
+          "name": "api_key",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "CatalogChangedData",
+      "doc": "This payload describes `catalog.changed`.",
+      "fields": [
+        {
+          "name": "catalog_rev",
+          "type": "CatalogRev",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "CatalogListParams",
+      "doc": "These are the parameters for `catalog.list`.",
+      "fields": [
+        {
+          "name": "since_rev",
+          "type": "CatalogRev",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "CatalogListResultFull",
+      "doc": "The client sent a stale or absent revision, so the engine returns the full catalog.",
+      "fields": [
+        {
+          "name": "catalog_rev",
+          "type": "CatalogRev",
+          "presence": "required"
+        },
+        {
+          "name": "providers",
+          "type": "[]ProviderInfo",
+          "presence": "required"
+        },
+        {
+          "name": "models",
+          "type": "[]ModelInfo",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ProviderInfo",
+      "doc": "This type describes one configured provider. Its state tells a client why it cannot serve a turn.",
+      "fields": [
+        {
+          "name": "id",
+          "doc": "The provider name inside its origin. Two origins can use one id.",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "source",
+          "type": "ProviderSource",
+          "presence": "required"
+        },
+        {
+          "name": "state",
+          "type": "ProviderState",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "CatalogListResultUnchanged",
+      "doc": "The client sent the current revision, so the engine returns no catalog data.",
+      "fields": [
+        {
+          "name": "catalog_rev",
+          "type": "CatalogRev",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "CatalogRefreshResult",
+      "doc": "This result describes `catalog.refresh`.",
+      "fields": [
+        {
+          "name": "catalog_rev",
+          "type": "CatalogRev",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ModelCost",
+      "doc": "These costs use United States dollars per million tokens.",
+      "fields": [
+        {
+          "name": "input",
+          "type": "f64",
+          "presence": "optional"
+        },
+        {
+          "name": "output",
+          "type": "f64",
+          "presence": "optional"
+        },
+        {
+          "name": "cache_read",
+          "type": "f64",
+          "presence": "optional"
+        },
+        {
+          "name": "cache_write",
+          "type": "f64",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "ModelInfo",
+      "doc": "This type exposes a closed projection of a provider model record. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "ModelId",
+          "presence": "required"
+        },
+        {
+          "name": "provider",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "selector",
+          "doc": "The token that selects this model. A client echoes it back and never parses or builds it.",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "context_window",
+          "type": "u64",
+          "presence": "optional"
+        },
+        {
+          "name": "max_output_tokens",
+          "type": "u64",
+          "presence": "optional"
+        },
+        {
+          "name": "reasoning_levels",
+          "type": "[]string",
+          "presence": "required"
+        },
+        {
+          "name": "default_reasoning",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "supports_vision",
+          "type": "bool",
+          "presence": "optional"
+        },
+        {
+          "name": "supports_tools",
+          "type": "bool",
+          "presence": "optional"
+        },
+        {
+          "name": "cost",
+          "type": "ModelCost",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Request",
+      "doc": "This type carries an RPC request.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "RequestId",
+          "presence": "required"
+        },
+        {
+          "name": "method",
+          "type": "MethodName",
+          "presence": "required"
+        },
+        {
+          "name": "params",
+          "type": "RequestParams",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ResponseOk",
+      "doc": "This type carries a successful RPC response.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "RequestId",
+          "presence": "required"
+        },
+        {
+          "name": "result",
+          "type": "ResponseResult",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ResponseError",
+      "doc": "This type carries a failed RPC response.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "RequestId",
+          "presence": "required"
+        },
+        {
+          "name": "error",
+          "type": "ErrorObject",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Notification",
+      "doc": "This type carries an RPC notification.",
+      "fields": [
+        {
+          "name": "method",
+          "type": "BroadcastName",
+          "presence": "required"
+        },
+        {
+          "name": "params",
+          "type": "BroadcastData",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ActivityStateBuilding",
+      "doc": "This state marks the first phase of a run.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ActivityStateCompacting",
+      "doc": "This state marks an active compaction model call.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "reason",
+          "type": "CompactionReason",
+          "presence": "required"
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ActivityStateIdle",
+      "doc": "This state marks a session with no active work.",
+      "fields": []
+    },
+    {
+      "name": "ActivityStateReasoning",
+      "doc": "The model produces reasoning in this state.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "PartId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ActivityStateRetrying",
+      "doc": "This state marks a run that waits for a retry.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "attempt",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "max_attempts",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "next_at_ms",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "code",
+          "type": "RunErrorCode",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ActivityStateRunning",
+      "doc": "This state marks an active run.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ActivityStateRunningTool",
+      "doc": "This state marks an active tool call.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "PartId",
+          "presence": "required"
+        },
+        {
+          "name": "tool_name",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InputCanceledData",
+      "doc": "This payload describes `input.canceled`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "presence": "required"
+        },
+        {
+          "name": "input_id",
+          "type": "InputId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InputContent",
+      "doc": "Raw content parts.",
+      "fields": [
+        {
+          "name": "content",
+          "type": "[]ContentPart",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InputQueuedData",
+      "doc": "This payload describes `input.queued`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "presence": "required"
+        },
+        {
+          "name": "input",
+          "type": "QueuedInput",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InputSkill",
+      "doc": "This type describes a skill invocation.",
+      "fields": [
+        {
+          "name": "skill",
+          "type": "SkillRef",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SkillInfo",
+      "doc": "This type records discovered skill metadata.",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "scope",
+          "doc": "This scope identifies a project or personal skill.",
+          "type": "SkillScope",
+          "presence": "required"
+        },
+        {
+          "name": "argument_hint",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SkillRef",
+      "doc": "This type names a skill and holds its rendered arguments.",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "arguments",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SkillsResult",
+      "doc": "This result lists discovered skills.",
+      "fields": [
+        {
+          "name": "skills",
+          "doc": "This field lists discovered skills.",
+          "type": "[]SkillInfo",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ActiveDraft",
+      "doc": "This is the assistant draft that a run streams. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "message",
+          "type": "AssistantMessage",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AssistantMessage",
+      "doc": "This payload describes an assistant transcript message. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "config_rev",
+          "type": "ConfigRev",
+          "presence": "required"
+        },
+        {
+          "name": "agent",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "content",
+          "type": "[]AssistantPart",
+          "presence": "required"
+        },
+        {
+          "name": "finish",
+          "type": "StopReason",
+          "presence": "optional"
+        },
+        {
+          "name": "tokens",
+          "type": "TokenUsage",
+          "presence": "optional"
+        },
+        {
+          "name": "cost",
+          "type": "f64",
+          "presence": "optional"
+        },
+        {
+          "name": "time",
+          "type": "MessageTime",
+          "presence": "required"
+        },
+        {
+          "name": "error",
+          "type": "MessageError",
+          "presence": "optional"
+        },
+        {
+          "name": "provenance",
+          "type": "TurnProvenance",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "CompactionMessage",
+      "doc": "This payload describes a compaction transcript message. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "reason",
+          "type": "CompactionReason",
+          "presence": "required"
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "first_kept_id",
+          "type": "MessageId",
+          "presence": "optional"
+        },
+        {
+          "name": "tokens_before",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "tokens_after",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "time",
+          "type": "CreatedTime",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "MessageCommittedData",
+      "doc": "This payload describes `message.committed`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "Message",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "MessageDiscardedData",
+      "doc": "This payload describes `message.discarded`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "MessageError",
+      "doc": "This type describes an assistant error with `finish: \"error\"`. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "type",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "MessagePartAddedData",
+      "doc": "This payload describes `message.part_added`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "part",
+          "type": "AssistantPart",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "MessagePartFinalizedData",
+      "doc": "This payload describes `message.part_finalized`. The engine sends it at block stop.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "PartId",
+          "presence": "required"
+        },
+        {
+          "name": "final",
+          "type": "PartFinal",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "MessageStartedData",
+      "doc": "This payload describes `message.started` when the engine opens a draft.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "config_rev",
+          "type": "ConfigRev",
+          "presence": "required"
+        },
+        {
+          "name": "agent",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "created_at_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "MessageTime",
+      "doc": "Creation and completion times for an assistant message.",
+      "fields": [
+        {
+          "name": "created_at_ms",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "completed_at_ms",
+          "type": "u64",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "PartDelta",
+      "doc": "This payload holds more text or reasoning bytes for a draft.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "PartId",
+          "presence": "required"
+        },
+        {
+          "name": "delta",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "offset",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ReasoningFinal",
+      "doc": "The engine attaches the reasoning signature at block stop. An empty string means none.",
+      "fields": [
+        {
+          "name": "signature",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ReasoningPart",
+      "doc": "This payload describes a reasoning part in an assistant message. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "PartId",
+          "presence": "required"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "signature",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RedactedReasoningFinal",
+      "doc": "The engine attaches the opaque redacted reasoning data at block stop.",
+      "fields": [
+        {
+          "name": "data",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RedactedReasoningPart",
+      "doc": "This payload holds opaque, safety-redacted model reasoning. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "PartId",
+          "presence": "required"
+        },
+        {
+          "name": "data",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "TextPart",
+      "doc": "This payload describes a text part in an assistant message. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "PartId",
+          "presence": "required"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "TokenUsage",
+      "doc": "This type records token counts for one assistant message.",
+      "fields": [
+        {
+          "name": "input",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "output",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "reasoning",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "cache_read",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "cache_write",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ToolPart",
+      "doc": "This payload describes a tool part in an assistant message. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "PartId",
+          "presence": "required"
+        },
+        {
+          "name": "call_id",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "arguments",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "input_view",
+          "type": "[]View",
+          "presence": "optional"
+        },
+        {
+          "name": "state",
+          "type": "ToolState",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "TurnProvenance",
+      "doc": "This type records the provider that produced an assistant turn. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "protocol",
+          "type": "ProviderProtocol",
+          "presence": "required"
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "UserMessage",
+      "doc": "This payload describes a user transcript message. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "content",
+          "type": "[]ContentPart",
+          "presence": "required"
+        },
+        {
+          "name": "input_id",
+          "type": "InputId",
+          "presence": "required"
+        },
+        {
+          "name": "skill",
+          "type": "SkillRef",
+          "presence": "optional"
+        },
+        {
+          "name": "time",
+          "type": "CreatedTime",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ConfigChangedData",
+      "doc": "This payload describes `config.changed`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "presence": "required"
+        },
+        {
+          "name": "config",
+          "type": "RunConfig",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "CreateSession",
+      "doc": "These are the `session.create` input fields. They borrow their data.",
+      "fields": [
+        {
+          "name": "workspace_path",
+          "doc": "The workspace root. The caller names it; the engine holds no default directory.",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "profile",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "reasoning",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "system_prompt",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "max_rounds",
+          "type": "u64",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "CreatedTime",
+      "doc": "This type records the creation time for a user or compaction message.",
+      "fields": [
+        {
+          "name": "created_at_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "EngineInfo",
+      "doc": "This type records the engine build. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "version",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Empty",
+      "doc": "Empty params or result object.",
+      "fields": []
+    },
+    {
+      "name": "ErrorObject",
+      "doc": "This type records request failure details. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "code",
+          "type": "ErrorCode",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InitializeResult",
+      "doc": "This result contains the coarse engine snapshot after `initialize`.",
+      "fields": [
+        {
+          "name": "protocol",
+          "type": "u32",
+          "presence": "required"
+        },
+        {
+          "name": "engine",
+          "type": "EngineInfo",
+          "presence": "required"
+        },
+        {
+          "name": "session_revision",
+          "type": "SessionRevision",
+          "presence": "required"
+        },
+        {
+          "name": "catalog_rev",
+          "type": "CatalogRev",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Notice",
+      "doc": "The engine broadcasts this diagnostic notice to all connections. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "level",
+          "type": "NoticeLevel",
+          "presence": "required"
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "QueuedInput",
+      "doc": "This input waits behind an active turn.",
+      "fields": [
+        {
+          "name": "input_id",
+          "type": "InputId",
+          "presence": "required"
+        },
+        {
+          "name": "content",
+          "type": "[]ContentPart",
+          "presence": "required"
+        },
+        {
+          "name": "queued_at_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session",
+      "doc": "The engine owns this session summary.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "root",
+          "doc": "The canonical workspace directory this session runs in.",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "profile",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "reasoning",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "config_rev",
+          "type": "ConfigRev",
+          "presence": "required"
+        },
+        {
+          "name": "max_rounds",
+          "type": "u64",
+          "presence": "optional"
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "message_count",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "usage_total",
+          "type": "TokenUsage",
+          "presence": "required"
+        },
+        {
+          "name": "created_at_ms",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "updated_at_ms",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "created_by",
+          "type": "Client",
+          "presence": "optional"
+        },
+        {
+          "name": "origin",
+          "type": "SessionOrigin",
+          "presence": "required"
+        },
+        {
+          "name": "agent",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "TranscriptTruncatedData",
+      "doc": "This payload describes `transcript.truncated`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "presence": "required"
+        },
+        {
+          "name": "first_removed_id",
+          "type": "MessageId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RunCanceledTiming",
+      "doc": "This type records run start and end times. The engine records no start time when a queued run never starts.",
+      "fields": [
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "presence": "optional"
+        },
+        {
+          "name": "ended_at_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RunConfig",
+      "doc": "The engine saves these run settings at run start.",
+      "fields": [
+        {
+          "name": "config_rev",
+          "type": "ConfigRev",
+          "presence": "required"
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "reasoning",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RunDoneData",
+      "doc": "This payload describes `run.done`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "kind",
+          "type": "RunKind",
+          "presence": "required"
+        },
+        {
+          "name": "timing",
+          "type": "RunCanceledTiming",
+          "presence": "required"
+        },
+        {
+          "name": "outcome",
+          "type": "RunOutcome",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RunOutcomeCanceled",
+      "doc": "The user or engine canceled the run. The terminal envelope carries its timing.",
+      "fields": []
+    },
+    {
+      "name": "RunOutcomeCompacted",
+      "doc": "The engine completed a manual compaction and produced a summary.",
+      "fields": [
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RunOutcomeFailed",
+      "doc": "The engine reports failure after it exhausts its retry policy.",
+      "fields": [
+        {
+          "name": "code",
+          "type": "RunErrorCode",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RunOutcomeSkipped",
+      "doc": "The engine skipped a manual compaction without producing a summary.",
+      "fields": [
+        {
+          "name": "reason",
+          "type": "CompactSkipReason",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RunOutcomeTurn",
+      "doc": "The engine completed a turn after some round trips and recorded its stop reason.",
+      "fields": [
+        {
+          "name": "finish",
+          "type": "StopReason",
+          "presence": "required"
+        },
+        {
+          "name": "rounds",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RunStartedData",
+      "doc": "This payload describes `run.started`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "kind",
+          "type": "RunKind",
+          "presence": "required"
+        },
+        {
+          "name": "reason",
+          "type": "CompactionReason",
+          "presence": "optional"
+        },
+        {
+          "name": "config_rev",
+          "type": "ConfigRev",
+          "presence": "required"
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionActivity",
+      "doc": "Coarse live session state.",
+      "fields": [
+        {
+          "name": "state",
+          "type": "ActivityState",
+          "presence": "required"
+        },
+        {
+          "name": "config",
+          "type": "RunConfig",
+          "presence": "optional"
+        },
+        {
+          "name": "queued",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "context_usage",
+          "type": "TokenUsage",
+          "presence": "required"
+        },
+        {
+          "name": "pending_compaction",
+          "type": "RunId",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "SessionActivityChangedData",
+      "doc": "This payload describes `session.activity_changed`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "activity",
+          "type": "SessionActivity",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionCancelInputParams",
+      "doc": "These are the parameters for `session.cancel_input`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "input_id",
+          "type": "InputId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionCancelInputResult",
+      "doc": "This result identifies the canceled input.",
+      "fields": [
+        {
+          "name": "canceled_input",
+          "type": "InputId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionCancelRunParams",
+      "doc": "These are the parameters for `session.cancel_run`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "optional"
+        },
+        {
+          "name": "clear_queue",
+          "type": "bool",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "SessionCancelRunResult",
+      "doc": "This result identifies the canceled run and cleared inputs.",
+      "fields": [
+        {
+          "name": "canceled_run",
+          "type": "RunId",
+          "presence": "optional"
+        },
+        {
+          "name": "cleared_inputs",
+          "type": "[]InputId",
+          "presence": "required"
+        },
+        {
+          "name": "cleared_compaction",
+          "type": "RunId",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "SessionCompactParams",
+      "doc": "These are the parameters for `session.compact`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionCompactResult",
+      "doc": "This result describes `session.compact`.",
+      "fields": [
+        {
+          "name": "status",
+          "type": "CompactStatus",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionConfigParams",
+      "doc": "These are the parameters for `session.config.get`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "config_rev",
+          "type": "ConfigRev",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "SessionConfigResult",
+      "doc": "This result describes `session.config.get`.",
+      "fields": [
+        {
+          "name": "config",
+          "type": "RunConfig",
+          "presence": "required"
+        },
+        {
+          "name": "system_prompt",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "SessionForkParams",
+      "doc": "These are the parameters for `session.fork`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "before_message_id",
+          "type": "MessageId",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "SessionHistoryParams",
+      "doc": "These are the parameters for `session.history`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "before_message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "limit",
+          "type": "u64",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "SessionHistoryResult",
+      "doc": "This result describes `session.history`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "messages",
+          "type": "[]Message",
+          "presence": "required"
+        },
+        {
+          "name": "configs",
+          "type": "[]RunConfig",
+          "presence": "required"
+        },
+        {
+          "name": "has_more",
+          "type": "bool",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionListItem",
+      "doc": "This row summarizes a session for `session.list` and session broadcasts. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "session",
+          "type": "Session",
+          "presence": "required"
+        },
+        {
+          "name": "activity",
+          "type": "SessionActivity",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionListParams",
+      "doc": "These are the `session.list` input fields. They borrow their data.",
+      "fields": [
+        {
+          "name": "population",
+          "type": "SessionPopulation",
+          "presence": "defaulted"
+        },
+        {
+          "name": "view",
+          "type": "SessionView",
+          "presence": "defaulted"
+        },
+        {
+          "name": "limit",
+          "type": "u64",
+          "presence": "optional"
+        },
+        {
+          "name": "cursor",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "SessionListResult",
+      "doc": "This result contains one bounded `session.list` page. Its fields borrow their data.",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "SessionRevision",
+          "presence": "required"
+        },
+        {
+          "name": "items",
+          "type": "[]SessionListItem",
+          "presence": "required"
+        },
+        {
+          "name": "next_cursor",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "total",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionOriginChild",
+      "doc": "This origin links a session to its parent session and message part.",
+      "fields": [
+        {
+          "name": "parent_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "parent_message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "parent_part_id",
+          "type": "PartId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionOriginFork",
+      "doc": "This origin links a session to its source session.",
+      "fields": [
+        {
+          "name": "source_id",
+          "type": "SessionId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionOriginRoot",
+      "doc": "This origin marks a user-created root session.",
+      "fields": []
+    },
+    {
+      "name": "SessionPatch",
+      "doc": "An absent field leaves the current value unchanged. The engine stores the system prompt at creation. The system prompt remains fixed, and the fields borrow their data.",
+      "fields": [
+        {
+          "name": "model",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "reasoning",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "max_rounds",
+          "type": "u64",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "SessionPatchParams",
+      "doc": "These are the parameters for `session.patch`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "patch",
+          "type": "SessionPatch",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionPopulationAll",
+      "doc": "This option selects every session regardless of origin.",
+      "fields": []
+    },
+    {
+      "name": "SessionPopulationChildren",
+      "doc": "This option selects the immediate persistent children of one session.",
+      "fields": [
+        {
+          "name": "parent_id",
+          "type": "SessionId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionPopulationTopLevel",
+      "doc": "This option selects root sessions and forks for user-facing conversations.",
+      "fields": []
+    },
+    {
+      "name": "SessionRemoveParams",
+      "doc": "These are the parameters for `session.remove`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "cascade_children",
+          "type": "bool",
+          "presence": "defaulted"
+        }
+      ]
+    },
+    {
+      "name": "SessionRemovedData",
+      "doc": "This payload describes `session.removed`.",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "SessionRevision",
+          "presence": "required"
+        },
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionResult",
+      "doc": "This result contains the session after creation, a fork, or a patch.",
+      "fields": [
+        {
+          "name": "session",
+          "type": "Session",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionRewindParams",
+      "doc": "These are the parameters for `session.rewind`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "before_message_id",
+          "type": "MessageId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionSendInputParams",
+      "doc": "These are the parameters for `session.send_input`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "input",
+          "type": "Input",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionSendInputResultQueued",
+      "doc": "The engine queued the input behind an active turn.",
+      "fields": [
+        {
+          "name": "input_id",
+          "type": "InputId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionSendInputResultStarted",
+      "doc": "The engine started the input immediately.",
+      "fields": [
+        {
+          "name": "input_id",
+          "type": "InputId",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionSummaryChangedData",
+      "doc": "This payload describes `session.summary_changed`.",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "SessionRevision",
+          "presence": "required"
+        },
+        {
+          "name": "session",
+          "type": "Session",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ToolStateCanceled",
+      "doc": "The user or engine canceled the call.",
+      "fields": [
+        {
+          "name": "duration_ms",
+          "type": "u64",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "ToolStateChangedData",
+      "doc": "This payload describes `tool.state_changed`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "PartId",
+          "presence": "required"
+        },
+        {
+          "name": "state",
+          "type": "ToolState",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ToolStateCompleted",
+      "doc": "The tool call completed successfully.",
+      "fields": [
+        {
+          "name": "output",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "view",
+          "type": "[]View",
+          "presence": "optional"
+        },
+        {
+          "name": "duration_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ToolStateError",
+      "doc": "The tool call failed.",
+      "fields": [
+        {
+          "name": "error",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "view",
+          "type": "[]View",
+          "presence": "optional"
+        },
+        {
+          "name": "duration_ms",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ToolStatePending",
+      "doc": "The tool call has not started.",
+      "fields": []
+    },
+    {
+      "name": "ToolStateRunning",
+      "doc": "The tool call is active.",
+      "fields": [
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "DiffFile",
+      "doc": "This type describes one file in a diff view.",
+      "fields": [
+        {
+          "name": "path",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "old_path",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "hunks",
+          "type": "[]DiffHunk",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "DiffHunk",
+      "doc": "This type describes one hunk of a unified diff.",
+      "fields": [
+        {
+          "name": "old_start",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "old_lines",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "new_start",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "new_lines",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "lines",
+          "type": "[]string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ViewDiff",
+      "doc": "This view displays a unified diff.",
+      "fields": [
+        {
+          "name": "files",
+          "type": "[]DiffFile",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ViewImage",
+      "doc": "This view displays an image.",
+      "fields": [
+        {
+          "name": "source",
+          "type": "MediaSource",
+          "presence": "required"
+        },
+        {
+          "name": "alt",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "ViewJson",
+      "doc": "This view displays JSON text.",
+      "fields": [
+        {
+          "name": "text",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ViewMarkdown",
+      "doc": "This view displays Markdown text.",
+      "fields": [
+        {
+          "name": "text",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ViewText",
+      "doc": "This view displays plain text.",
+      "fields": [
+        {
+          "name": "text",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "language",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    }
+  ],
+  "unions": [
+    {
+      "name": "ContentPart",
+      "doc": "This type describes one part of a message's content.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "text",
+          "type": "ContentText"
+        },
+        {
+          "tag": "image",
+          "type": "ContentImage"
+        },
+        {
+          "tag": "audio",
+          "type": "ContentAudio"
+        },
+        {
+          "tag": "file",
+          "type": "ContentFile"
+        }
+      ]
+    },
+    {
+      "name": "MediaSource",
+      "doc": "This type identifies where media bytes live.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "blob",
+          "type": "MediaBlob"
+        }
+      ]
+    },
+    {
+      "name": "AuthLoginOutcome",
+      "doc": "This union reports the terminal outcome of an engine-owned login attempt.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "succeeded",
+          "type": "AuthLoginOutcomeSucceeded"
+        },
+        {
+          "tag": "canceled",
+          "type": "AuthLoginOutcomeCanceled"
+        },
+        {
+          "tag": "failed",
+          "type": "AuthLoginOutcomeFailed"
+        }
+      ]
+    },
+    {
+      "name": "CatalogListResult",
+      "doc": "This result reports a catalog unchanged since `since_rev`, or a full catalog snapshot.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "unchanged",
+          "type": "CatalogListResultUnchanged"
+        },
+        {
+          "tag": "full",
+          "type": "CatalogListResultFull"
+        }
+      ]
+    },
+    {
+      "name": "ActivityState",
+      "doc": "This state holds the locator fields that place the session in its transcript.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "idle",
+          "type": "ActivityStateIdle"
+        },
+        {
+          "tag": "building",
+          "type": "ActivityStateBuilding"
+        },
+        {
+          "tag": "running",
+          "type": "ActivityStateRunning"
+        },
+        {
+          "tag": "reasoning",
+          "type": "ActivityStateReasoning"
+        },
+        {
+          "tag": "running_tool",
+          "type": "ActivityStateRunningTool"
+        },
+        {
+          "tag": "retrying",
+          "type": "ActivityStateRetrying"
+        },
+        {
+          "tag": "compacting",
+          "type": "ActivityStateCompacting"
+        }
+      ]
+    },
+    {
+      "name": "Input",
+      "doc": "This type accepts raw content or a skill invocation. Its fields borrow their data.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "content",
+          "type": "InputContent"
+        },
+        {
+          "tag": "skill",
+          "type": "InputSkill"
+        }
+      ]
+    },
+    {
+      "name": "AssistantPart",
+      "doc": "This type describes one element of an assistant message's content. Its fields borrow their data.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "text",
+          "type": "TextPart"
+        },
+        {
+          "tag": "reasoning",
+          "type": "ReasoningPart"
+        },
+        {
+          "tag": "redacted_reasoning",
+          "type": "RedactedReasoningPart"
+        },
+        {
+          "tag": "tool",
+          "type": "ToolPart"
+        }
+      ]
+    },
+    {
+      "name": "Message",
+      "doc": "This union describes a transcript message. Its fields borrow their data.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "user",
+          "type": "UserMessage"
+        },
+        {
+          "tag": "assistant",
+          "type": "AssistantMessage"
+        },
+        {
+          "tag": "compaction",
+          "type": "CompactionMessage"
+        }
+      ]
+    },
+    {
+      "name": "PartFinal",
+      "doc": "The final metadata for a stopped reasoning part. Tool parts finalize through `tool.state_changed`.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "reasoning",
+          "type": "ReasoningFinal"
+        },
+        {
+          "tag": "redacted_reasoning",
+          "type": "RedactedReasoningFinal"
+        }
+      ]
+    },
+    {
+      "name": "RunOutcome",
+      "doc": "This union describes the terminal run outcome. The `type` field selects the outcome.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "turn",
+          "type": "RunOutcomeTurn"
+        },
+        {
+          "tag": "compacted",
+          "type": "RunOutcomeCompacted"
+        },
+        {
+          "tag": "skipped",
+          "type": "RunOutcomeSkipped"
+        },
+        {
+          "tag": "canceled",
+          "type": "RunOutcomeCanceled"
+        },
+        {
+          "tag": "failed",
+          "type": "RunOutcomeFailed"
+        }
+      ]
+    },
+    {
+      "name": "SessionOrigin",
+      "doc": "This union records how the engine created the session.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "root",
+          "type": "SessionOriginRoot"
+        },
+        {
+          "tag": "child",
+          "type": "SessionOriginChild"
+        },
+        {
+          "tag": "fork",
+          "type": "SessionOriginFork"
+        }
+      ]
+    },
+    {
+      "name": "SessionPopulation",
+      "doc": "This union selects the session relationships that `session.list` returns.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "top_level",
+          "type": "SessionPopulationTopLevel"
+        },
+        {
+          "tag": "children",
+          "type": "SessionPopulationChildren"
+        },
+        {
+          "tag": "all",
+          "type": "SessionPopulationAll"
+        }
+      ]
+    },
+    {
+      "name": "SessionSendInputResult",
+      "doc": "This result says whether the engine started or queued the input.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "started",
+          "type": "SessionSendInputResultStarted"
+        },
+        {
+          "tag": "queued",
+          "type": "SessionSendInputResultQueued"
+        }
+      ]
+    },
+    {
+      "name": "ToolState",
+      "doc": "This union records a tool part's lifecycle state. Its fields borrow their data.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "pending",
+          "type": "ToolStatePending"
+        },
+        {
+          "tag": "running",
+          "type": "ToolStateRunning"
+        },
+        {
+          "tag": "completed",
+          "type": "ToolStateCompleted"
+        },
+        {
+          "tag": "error",
+          "type": "ToolStateError"
+        },
+        {
+          "tag": "canceled",
+          "type": "ToolStateCanceled"
+        }
+      ]
+    },
+    {
+      "name": "View",
+      "doc": "A frontend can render this hint natively or ignore it. Its fields borrow their data.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "text",
+          "type": "ViewText"
+        },
+        {
+          "tag": "markdown",
+          "type": "ViewMarkdown"
+        },
+        {
+          "tag": "json",
+          "type": "ViewJson"
+        },
+        {
+          "tag": "diff",
+          "type": "ViewDiff"
+        },
+        {
+          "tag": "image",
+          "type": "ViewImage"
+        }
+      ]
+    },
+    {
+      "name": "RequestParams",
+      "doc": "This union carries client request parameters.",
+      "discriminator": "",
+      "arms": [
+        {
+          "type": "SessionListParams"
+        },
+        {
+          "type": "CreateSession"
+        },
+        {
+          "type": "SessionPatchParams"
+        },
+        {
+          "type": "SessionRemoveParams"
+        },
+        {
+          "type": "SessionForkParams"
+        },
+        {
+          "type": "SessionCompactParams"
+        },
+        {
+          "type": "SessionRewindParams"
+        },
+        {
+          "type": "SessionSendInputParams"
+        },
+        {
+          "type": "SessionCancelInputParams"
+        },
+        {
+          "type": "SessionCancelRunParams"
+        },
+        {
+          "type": "SessionHistoryParams"
+        },
+        {
+          "type": "SessionConfigParams"
+        },
+        {
+          "type": "CatalogListParams"
+        },
+        {
+          "type": "Empty"
+        },
+        {
+          "type": "AuthSetApiKeyParams"
+        },
+        {
+          "type": "AuthLoginParams"
+        },
+        {
+          "type": "AuthCancelLoginParams"
+        },
+        {
+          "type": "AuthRemoveParams"
+        }
+      ]
+    },
+    {
+      "name": "ResponseResult",
+      "doc": "This union carries server response results.",
+      "discriminator": "",
+      "arms": [
+        {
+          "type": "InitializeResult"
+        },
+        {
+          "type": "SessionListResult"
+        },
+        {
+          "type": "SessionResult"
+        },
+        {
+          "type": "Empty"
+        },
+        {
+          "type": "SessionCompactResult"
+        },
+        {
+          "type": "SessionSendInputResult"
+        },
+        {
+          "type": "SessionCancelInputResult"
+        },
+        {
+          "type": "SessionCancelRunResult"
+        },
+        {
+          "type": "SessionHistoryResult"
+        },
+        {
+          "type": "SessionConfigResult"
+        },
+        {
+          "type": "CatalogListResult"
+        },
+        {
+          "type": "CatalogRefreshResult"
+        },
+        {
+          "type": "AuthListResult"
+        },
+        {
+          "type": "AuthLoginResult"
+        }
+      ]
+    },
+    {
+      "name": "BroadcastData",
+      "doc": "This union carries server broadcast data.",
+      "discriminator": "",
+      "arms": [
+        {
+          "type": "SessionSummaryChangedData"
+        },
+        {
+          "type": "SessionActivityChangedData"
+        },
+        {
+          "type": "SessionRemovedData"
+        },
+        {
+          "type": "CatalogChangedData"
+        },
+        {
+          "type": "AuthLoginFinishedData"
+        },
+        {
+          "type": "AuthChangedData"
+        },
+        {
+          "type": "Notice"
+        },
+        {
+          "type": "MessageCommittedData"
+        },
+        {
+          "type": "RunStartedData"
+        },
+        {
+          "type": "RunDoneData"
+        },
+        {
+          "type": "ConfigChangedData"
+        },
+        {
+          "type": "TranscriptTruncatedData"
+        },
+        {
+          "type": "MessageStartedData"
+        },
+        {
+          "type": "MessageDiscardedData"
+        },
+        {
+          "type": "MessagePartAddedData"
+        },
+        {
+          "type": "MessagePartDeltaData"
+        },
+        {
+          "type": "MessagePartFinalizedData"
+        },
+        {
+          "type": "ToolStateChangedData"
+        },
+        {
+          "type": "ToolOutputDeltaData"
+        },
+        {
+          "type": "InputQueuedData"
+        },
+        {
+          "type": "InputCanceledData"
+        }
+      ]
+    },
+    {
+      "name": "Response",
+      "doc": "This union carries an RPC response.",
+      "discriminator": "",
+      "arms": [
+        {
+          "type": "ResponseOk"
+        },
+        {
+          "type": "ResponseError"
+        }
+      ]
+    }
+  ],
+  "enumerations": [
+    {
+      "name": "AuthCredentialKind",
+      "numeric": false,
+      "values": [
+        {
+          "name": "api_key",
+          "wire": "api_key"
+        },
+        {
+          "name": "oauth",
+          "wire": "oauth"
+        }
+      ]
+    },
+    {
+      "name": "BroadcastName",
+      "numeric": false,
+      "values": [
+        {
+          "name": "session.summary_changed",
+          "wire": "session.summary_changed",
+          "doc": "A session's summary metadata changed."
+        },
+        {
+          "name": "session.activity_changed",
+          "wire": "session.activity_changed",
+          "doc": "A session's activity state changed."
+        },
+        {
+          "name": "session.removed",
+          "wire": "session.removed",
+          "doc": "The engine removed a session."
+        },
+        {
+          "name": "catalog.changed",
+          "wire": "catalog.changed",
+          "doc": "The model catalog changed."
+        },
+        {
+          "name": "auth.login_finished",
+          "wire": "auth.login_finished",
+          "doc": "The engine finished an authentication login flow."
+        },
+        {
+          "name": "auth.changed",
+          "wire": "auth.changed",
+          "doc": "Authentication state changed."
+        },
+        {
+          "name": "notice",
+          "wire": "notice",
+          "doc": "The engine sent an out-of-band notice."
+        },
+        {
+          "name": "message.committed",
+          "wire": "message.committed",
+          "doc": "The engine committed a message to a session transcript."
+        },
+        {
+          "name": "run.started",
+          "wire": "run.started",
+          "doc": "A run started."
+        },
+        {
+          "name": "run.done",
+          "wire": "run.done",
+          "doc": "A run finished."
+        },
+        {
+          "name": "config.changed",
+          "wire": "config.changed",
+          "doc": "A session's run config changed."
+        },
+        {
+          "name": "transcript.truncated",
+          "wire": "transcript.truncated",
+          "doc": "The engine truncated older transcript messages."
+        },
+        {
+          "name": "message.started",
+          "wire": "message.started",
+          "doc": "A new streaming message started."
+        },
+        {
+          "name": "message.discarded",
+          "wire": "message.discarded",
+          "doc": "The engine discarded an unfinished message."
+        },
+        {
+          "name": "message.part_added",
+          "wire": "message.part_added",
+          "doc": "The engine added a part to a message."
+        },
+        {
+          "name": "message.part_delta",
+          "wire": "message.part_delta",
+          "doc": "The engine sent more content for a message part."
+        },
+        {
+          "name": "message.part_finalized",
+          "wire": "message.part_finalized",
+          "doc": "The engine attached final metadata to a stopped part."
+        },
+        {
+          "name": "tool.state_changed",
+          "wire": "tool.state_changed",
+          "doc": "A tool call's state changed."
+        },
+        {
+          "name": "tool.output_delta",
+          "wire": "tool.output_delta",
+          "doc": "The engine sent more output from a tool."
+        },
+        {
+          "name": "input.queued",
+          "wire": "input.queued",
+          "doc": "The engine queued an input behind the active run."
+        },
+        {
+          "name": "input.canceled",
+          "wire": "input.canceled",
+          "doc": "The engine canceled a queued input."
+        }
+      ]
+    },
+    {
+      "name": "ErrorCode",
+      "doc": "Workspace execution environment. Advertised engine capability. Numeric JSON-RPC and yuke error codes.",
+      "numeric": true,
+      "values": [
+        {
+          "name": "bad_request",
+          "wire": "-32602"
+        },
+        {
+          "name": "bad_protocol",
+          "wire": "-32600"
+        },
+        {
+          "name": "unknown_method",
+          "wire": "-32601"
+        },
+        {
+          "name": "unknown_session",
+          "wire": "-31000"
+        },
+        {
+          "name": "stale_cursor",
+          "wire": "-31002"
+        },
+        {
+          "name": "unknown_message",
+          "wire": "-31003"
+        },
+        {
+          "name": "unknown_part",
+          "wire": "-31004"
+        },
+        {
+          "name": "unknown_input",
+          "wire": "-31005"
+        },
+        {
+          "name": "unknown_config_rev",
+          "wire": "-31006"
+        },
+        {
+          "name": "unknown_skill",
+          "wire": "-31009"
+        },
+        {
+          "name": "input_already_started",
+          "wire": "-31010"
+        },
+        {
+          "name": "queue_full",
+          "wire": "-31011"
+        },
+        {
+          "name": "run_mismatch",
+          "wire": "-31012"
+        },
+        {
+          "name": "session_busy",
+          "wire": "-31015"
+        },
+        {
+          "name": "session_has_children",
+          "wire": "-31016"
+        },
+        {
+          "name": "runtime_failed",
+          "wire": "-31017"
+        },
+        {
+          "name": "invalid_patch",
+          "wire": "-31018"
+        },
+        {
+          "name": "unsupported_model",
+          "wire": "-31019"
+        },
+        {
+          "name": "unsupported_reasoning",
+          "wire": "-31020"
+        },
+        {
+          "name": "not_implemented",
+          "wire": "-31022"
+        },
+        {
+          "name": "unknown_provider",
+          "wire": "-31023"
+        },
+        {
+          "name": "internal",
+          "wire": "-32603"
+        },
+        {
+          "name": "overloaded",
+          "wire": "-31021"
+        }
+      ]
+    },
+    {
+      "name": "RunErrorCode",
+      "doc": "Run failure category.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "provider",
+          "wire": "provider"
+        },
+        {
+          "name": "protocol",
+          "wire": "protocol"
+        },
+        {
+          "name": "network",
+          "wire": "network"
+        },
+        {
+          "name": "timeout",
+          "wire": "timeout"
+        },
+        {
+          "name": "rate_limited",
+          "wire": "rate_limited"
+        },
+        {
+          "name": "quota_exhausted",
+          "wire": "quota_exhausted"
+        },
+        {
+          "name": "auth",
+          "wire": "auth"
+        },
+        {
+          "name": "unknown_model",
+          "wire": "unknown_model"
+        },
+        {
+          "name": "unsupported_reasoning",
+          "wire": "unsupported_reasoning"
+        },
+        {
+          "name": "max_rounds",
+          "wire": "max_rounds"
+        },
+        {
+          "name": "context_overflow",
+          "wire": "context_overflow"
+        },
+        {
+          "name": "runtime",
+          "wire": "runtime"
+        },
+        {
+          "name": "internal",
+          "wire": "internal"
+        }
+      ]
+    },
+    {
+      "name": "MethodName",
+      "numeric": false,
+      "values": [
+        {
+          "name": "initialize",
+          "wire": "initialize",
+          "doc": "Establish the connection and negotiate the protocol version."
+        },
+        {
+          "name": "session.list",
+          "wire": "session.list",
+          "doc": "List the sessions."
+        },
+        {
+          "name": "session.create",
+          "wire": "session.create",
+          "doc": "Create a session."
+        },
+        {
+          "name": "session.patch",
+          "wire": "session.patch",
+          "doc": "Update a session's mutable fields."
+        },
+        {
+          "name": "session.remove",
+          "wire": "session.remove",
+          "doc": "Remove a session."
+        },
+        {
+          "name": "session.fork",
+          "wire": "session.fork",
+          "doc": "Fork a session at a message."
+        },
+        {
+          "name": "session.compact",
+          "wire": "session.compact",
+          "doc": "Compact a session's transcript."
+        },
+        {
+          "name": "session.rewind",
+          "wire": "session.rewind",
+          "doc": "Rewind a session to before a message."
+        },
+        {
+          "name": "session.send_input",
+          "wire": "session.send_input",
+          "doc": "Send user input to a session."
+        },
+        {
+          "name": "session.cancel_input",
+          "wire": "session.cancel_input",
+          "doc": "Cancel a queued input."
+        },
+        {
+          "name": "session.cancel_run",
+          "wire": "session.cancel_run",
+          "doc": "Cancel the active run."
+        },
+        {
+          "name": "session.history",
+          "wire": "session.history",
+          "doc": "Fetch a page from a session transcript."
+        },
+        {
+          "name": "session.config",
+          "wire": "session.config",
+          "doc": "Fetch a session's run config."
+        },
+        {
+          "name": "catalog.list",
+          "wire": "catalog.list",
+          "doc": "List the model catalog."
+        },
+        {
+          "name": "catalog.refresh",
+          "wire": "catalog.refresh",
+          "doc": "Refresh the model catalog from providers."
+        },
+        {
+          "name": "auth.list",
+          "wire": "auth.list",
+          "doc": "List the local providers and the credential each one holds."
+        },
+        {
+          "name": "auth.set_api_key",
+          "wire": "auth.set_api_key",
+          "doc": "Set an API key for a provider."
+        },
+        {
+          "name": "auth.login",
+          "wire": "auth.login",
+          "doc": "Begin a provider login flow."
+        },
+        {
+          "name": "auth.cancel_login",
+          "wire": "auth.cancel_login",
+          "doc": "Cancel an active login flow."
+        },
+        {
+          "name": "auth.remove",
+          "wire": "auth.remove",
+          "doc": "Remove the credential the engine holds for a provider."
+        },
+        {
+          "name": "skill.list",
+          "wire": "skill.list",
+          "doc": "Describe one filesystem path. List the skills this session can invoke."
+        }
+      ]
+    },
+    {
+      "name": "NoticeLevel",
+      "doc": "Notice severity level.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "info",
+          "wire": "info"
+        },
+        {
+          "name": "warn",
+          "wire": "warn"
+        },
+        {
+          "name": "error",
+          "wire": "error"
+        }
+      ]
+    },
+    {
+      "name": "RunKind",
+      "numeric": false,
+      "values": [
+        {
+          "name": "turn",
+          "wire": "turn"
+        },
+        {
+          "name": "compaction",
+          "wire": "compaction"
+        }
+      ]
+    },
+    {
+      "name": "CompactSkipReason",
+      "numeric": false,
+      "values": [
+        {
+          "name": "nothing_to_summarize",
+          "wire": "nothing_to_summarize"
+        },
+        {
+          "name": "too_few_messages",
+          "wire": "too_few_messages"
+        }
+      ]
+    },
+    {
+      "name": "StopReason",
+      "doc": "Assistant stop reason.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "stop",
+          "wire": "stop"
+        },
+        {
+          "name": "length",
+          "wire": "length"
+        },
+        {
+          "name": "content_filter",
+          "wire": "content_filter"
+        },
+        {
+          "name": "tool_calls",
+          "wire": "tool_calls"
+        },
+        {
+          "name": "canceled",
+          "wire": "canceled"
+        },
+        {
+          "name": "error",
+          "wire": "error"
+        },
+        {
+          "name": "unknown",
+          "wire": "unknown"
+        }
+      ]
+    },
+    {
+      "name": "CompactStatus",
+      "numeric": false,
+      "values": [
+        {
+          "name": "started",
+          "wire": "started"
+        },
+        {
+          "name": "queued",
+          "wire": "queued"
+        }
+      ]
+    },
+    {
+      "name": "SessionView",
+      "doc": "Session list view.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "active",
+          "wire": "active"
+        },
+        {
+          "name": "recent",
+          "wire": "recent"
+        },
+        {
+          "name": "active_recent",
+          "wire": "active_recent"
+        }
+      ]
+    },
+    {
+      "name": "CompactionReason",
+      "numeric": false,
+      "values": [
+        {
+          "name": "auto",
+          "wire": "auto"
+        },
+        {
+          "name": "manual",
+          "wire": "manual"
+        }
+      ]
+    },
+    {
+      "name": "ProviderProtocol",
+      "doc": "Provider protocol kind.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "anthropic_messages",
+          "wire": "anthropic_messages"
+        },
+        {
+          "name": "openai_chat",
+          "wire": "openai_chat"
+        },
+        {
+          "name": "openai_responses",
+          "wire": "openai_responses"
+        }
+      ]
+    },
+    {
+      "name": "ProviderSource",
+      "doc": "Name where a provider's route and credential came from.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "local",
+          "wire": "local"
+        }
+      ]
+    },
+    {
+      "name": "ProviderState",
+      "doc": "Report whether a configured provider can serve a request now, and why it cannot.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "ready",
+          "wire": "ready"
+        },
+        {
+          "name": "needs_credential",
+          "wire": "needs_credential",
+          "doc": "No credential reached the engine."
+        },
+        {
+          "name": "needs_route",
+          "wire": "needs_route",
+          "doc": "A route field is missing, so the engine cannot build a request."
+        },
+        {
+          "name": "expired",
+          "wire": "expired",
+          "doc": "The grant expired. The user must authenticate again."
+        }
+      ]
+    },
+    {
+      "name": "SkillScope",
+      "numeric": false,
+      "values": [
+        {
+          "name": "project",
+          "wire": "project"
+        },
+        {
+          "name": "personal",
+          "wire": "personal"
+        }
+      ]
+    }
+  ],
+  "aliases": [
+    {
+      "name": "ProviderId",
+      "base": "string"
+    },
+    {
+      "name": "MessagePartDeltaData",
+      "base": "PartDelta"
+    },
+    {
+      "name": "ToolOutputDeltaData",
+      "base": "PartDelta"
+    },
+    {
+      "name": "CatalogRev",
+      "base": "[64]u8"
+    },
+    {
+      "name": "ModelId",
+      "base": "string"
+    },
+    {
+      "name": "SessionId",
+      "base": "[16]u8"
+    },
+    {
+      "name": "LoginId",
+      "base": "[32]u8"
+    },
+    {
+      "name": "RequestId",
+      "base": "string"
+    },
+    {
+      "name": "MessageId",
+      "base": "u64"
+    },
+    {
+      "name": "RunId",
+      "base": "u64"
+    },
+    {
+      "name": "InputId",
+      "base": "u64"
+    },
+    {
+      "name": "PartId",
+      "base": "u64"
+    },
+    {
+      "name": "Seq",
+      "base": "u64"
+    },
+    {
+      "name": "SessionRevision",
+      "base": "u64"
+    },
+    {
+      "name": "ConfigRev",
+      "base": "u64"
+    }
+  ]
+}

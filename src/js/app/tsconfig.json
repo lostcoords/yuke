@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "lib": ["es2022"],
+    "types": [],
+
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+
+    "paths": {
+      "yuke": ["./facade.js"],
+      "yuke:kernel": ["./kernel.js"],
+      "yuke:tui": ["./tui.js"],
+      "yuke:core": ["./core.js"],
+      "yuke:ext": ["./ext.js"],
+      "yuke:md": ["./md.js"],
+      "yuke:ui": ["./ui.js"],
+      "yuke:client": ["./client.js"],
+      "yuke:vim": ["./vim.js"],
+      "yuke:notice": ["./notice.js"],
+      "yuke:sessions": ["./sessions.js"],
+      "yuke:command-ui": ["./command-ui.js"],
+      "yuke:catalog": ["./catalog.js"],
+      "yuke:chat": ["./chat.js"],
+      "yuke:fzy": ["./fzy.js"],
+      "yuke:transcript": ["./transcript.js"],
+      "yuke:explorer": ["./explorer.js"],
+      "yuke:composer-vim": ["./composer-vim.js"],
+      "yuke:transcript-vim": ["./transcript-vim.js"],
+      "yuke:defaults": ["./defaults.js"]
+    }
+  },
+  "include": ["./**/*.js", "./types/**/*.d.ts", "./generated/**/*.d.ts"]
+}

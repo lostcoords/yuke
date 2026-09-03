@@ -1,0 +1,215 @@
+// The built-in tools. They use only the asynchronous host primitives.
+// @ts-nocheck
+
+import { fs } from "yuke:fs";
+import { exec as runCommand } from "yuke:exec";
+import { diff } from "yuke:diff";
+import { defineTool } from "yuke:tools";
+
+const result = (text, view) => ({ __yuke_result: true, text, view });
+
+function builtin(name, definition) {
+  try { defineTool(name, definition); }
+  catch (e) { if (e.message !== "another tool already has this name") throw e; }
+}
+
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_LINE = 0xffffffff;
+
+function invalid(name, message) {
+  throw new Error(`${name}: ${message}`);
+}
+
+async function hostCall(name, promise) {
+  try { return await promise; }
+  catch (e) { throw new Error(`${name}: ${e.message}`); }
+}
+
+function objectArgs(name, args) {
+  if (args == null || typeof args !== "object" || Array.isArray(args)) invalid(name, "the arguments must be an object");
+  return args;
+}
+
+function only(name, args, fields) {
+  for (const key of Object.keys(args)) if (!fields.includes(key)) invalid(name, "the schema lacks the argument");
+}
+
+function stringArg(name, args, key) {
+  if (typeof args[key] !== "string") invalid(name, `the argument ${key} must be a string`);
+  return args[key];
+}
+
+function lineArg(name, args, key) {
+  if (args[key] == null) return null;
+  if (!Number.isInteger(args[key]) || args[key] < 1 || args[key] > MAX_LINE) invalid(name, `the argument ${key} has the wrong type or range`);
+  return args[key];
+}
+
+function utf8Length(text) {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x80) bytes += 1;
+    else if (c < 0x800) bytes += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
+      bytes += 4;
+      i++;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+function viewOf(file) {
+  if (file.hunks.length === 0) return null;
+  return [{
+    type: "diff",
+    files: [{
+      path: file.path,
+      hunks: file.hunks.map(h => ({
+        old_start: h.oldStart,
+        old_lines: h.oldLines,
+        new_start: h.newStart,
+        new_lines: h.newLines,
+        lines: h.lines,
+      })),
+    }],
+  }];
+}
+
+function renderRead(got, first) {
+  const lines = got.text.length === 0 ? [] : got.text.slice(0, -1).split("\n");
+  const out = lines.map((line, i) => `${first + i}: ${line}`).join("\n");
+  let text = out;
+  if (got.longLines !== 0) text += `\n[The tool cut ${got.longLines} line(s) at 8000 bytes.]`;
+  if (got.next !== null) text += `\n[The tool capped the output. Read again with the start value set to ${got.next}.]`;
+  return text;
+}
+
+async function read(args, _signal, context) {
+  const name = "read";
+  args = objectArgs(name, args);
+  only(name, args, ["path", "start", "end"]);
+  const path = stringArg(name, args, "path");
+  const start = lineArg(name, args, "start");
+  const end = lineArg(name, args, "end");
+  const got = await hostCall(name, fs.readRange(path, { start, end }, context?.workspaceRoot));
+  return renderRead(got, start ?? 1);
+}
+
+async function write(args, _signal, context) {
+  const name = "write";
+  args = objectArgs(name, args);
+  only(name, args, ["path", "content"]);
+  const path = stringArg(name, args, "path");
+  const content = stringArg(name, args, "content");
+  let old = "";
+  let canDiff = true;
+  try { old = await fs.readFile(path, context?.workspaceRoot); }
+  catch (e) { if (e.message !== "the path does not exist") canDiff = false; }
+  const mapped = canDiff ? await diff(path, old, content) : null;
+  const bytes = await hostCall(name, fs.writeFile(path, content, context?.workspaceRoot));
+  const view = mapped == null ? null : viewOf(mapped);
+  const text = view == null ? `The tool wrote ${bytes} bytes.` : `The tool wrote ${bytes} bytes and changed ${changedLines(view)} line(s).`;
+  return result(text, view);
+}
+
+function changedLines(view) {
+  let count = 0;
+  for (const file of view[0].files) for (const hunk of file.hunks) for (const line of hunk.lines) if (line[0] !== " ") count++;
+  return count;
+}
+
+function replaceAt(text, old, replacement, all) {
+  let count = 0;
+  let out = "";
+  let at = 0;
+  while (true) {
+    const hit = text.indexOf(old, at);
+    if (hit < 0) break;
+    count++;
+    out += text.slice(at, hit) + replacement;
+    at = hit + old.length;
+  }
+  return { count, text: count === 0 ? text : out + text.slice(at) };
+}
+
+async function edit(args, _signal, context) {
+  const name = "edit";
+  args = objectArgs(name, args);
+  only(name, args, ["path", "old_string", "new_string", "replace_all"]);
+  const path = stringArg(name, args, "path");
+  const oldString = stringArg(name, args, "old_string");
+  const newString = stringArg(name, args, "new_string");
+  const replaceAll = args.replace_all ?? false;
+  if (typeof replaceAll !== "boolean") invalid(name, "the argument replace_all has the wrong type or range");
+  if (oldString.length === 0) invalid(name, "the argument old_string has the wrong type or range");
+  if (oldString === newString) invalid(name, "old_string and new_string match. The edit changes nothing");
+  const old = await hostCall(name, fs.readFile(path, context?.workspaceRoot));
+  const replaced = replaceAt(old, oldString, newString, replaceAll);
+  if (replaced.count === 0) invalid(name, "the file lacks old_string");
+  if (replaced.count > 1 && !replaceAll) invalid(name, "old_string appears more than one time. You must add context or set replace_all");
+  if (utf8Length(replaced.text) > MAX_FILE_BYTES) invalid(name, "the file exceeds the size limit");
+  const mapped = await diff(path, old, replaced.text);
+  const bytes = await hostCall(name, fs.writeFile(path, replaced.text, context?.workspaceRoot));
+  const view = viewOf(mapped);
+  const text = view == null ? `The tool replaced ${replaced.count} match(es).` : `The tool replaced ${replaced.count} match(es) and changed ${changedLines(view)} line(s).`;
+  return result(text, view);
+}
+
+function endLine(text) {
+  return text.length === 0 || text.endsWith("\n") ? text : `${text}\n`;
+}
+
+async function exec(args, _signal, context) {
+  const name = "exec";
+  args = objectArgs(name, args);
+  only(name, args, ["command", "cwd", "timeout_ms"]);
+  const command = stringArg(name, args, "command");
+  if (command.trim().length === 0) invalid(name, "the argument command has the wrong type or range");
+  const cwd = args.cwd == null ? undefined : stringArg(name, args, "cwd");
+  const timeout = args.timeout_ms == null ? 120000 : args.timeout_ms;
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid(name, "the argument timeout_ms has the wrong type or range");
+  const r = await hostCall(name, runCommand(command, { cwd, timeoutMs: timeout }, context?.workspaceRoot));
+  let text = r.stdout;
+  if (r.stderr.length !== 0) text = `${endLine(text)}[stderr]\n${r.stderr}`;
+  const empty = text.length === 0;
+  text = endLine(text);
+  if (empty) text += "[no output]\n";
+  if (r.timedOut) text += `[The command passed its ${timeout} ms timeout. The tool stopped the process group. Run a smaller command, or raise timeout_ms up to 600000.]`;
+  else if (r.signal !== null) text += `[A signal ended the command: ${r.signal}.]`;
+  else text += `[exit code: ${r.code}]`;
+  return text;
+}
+
+builtin("read", {
+  description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range.",
+  parameters: { type: "object", properties: {
+    path: { type: "string", description: "The file path. A relative path resolves against the workspace root." },
+    start: { type: ["integer", "null"], minimum: 1, maximum: MAX_LINE, description: "The first line to read, 1-indexed." },
+    end: { type: ["integer", "null"], minimum: 1, maximum: MAX_LINE, description: "The last line to read, 1-indexed and inclusive." },
+  }, required: ["path"], additionalProperties: false }, execute: read,
+});
+builtin("write", {
+  description: "Create a file or replace its content. Pass the complete content.",
+  parameters: { type: "object", properties: {
+    path: { type: "string", description: "The file path. A relative path resolves against the workspace root." },
+    content: { type: "string", description: "The complete content for the file." },
+  }, required: ["path", "content"], additionalProperties: false }, execute: write,
+});
+builtin("edit", {
+  description: "Replace an exact string in a file. old_string must appear exactly once unless replace_all is true.",
+  parameters: { type: "object", properties: {
+    path: { type: "string", description: "The file path. A relative path resolves against the workspace root." },
+    old_string: { type: "string", description: "The exact text to replace." },
+    new_string: { type: "string", description: "The replacement text." },
+    replace_all: { type: "boolean", description: "Replace every non-overlapping match." },
+  }, required: ["path", "old_string", "new_string"], additionalProperties: false }, execute: edit,
+});
+builtin("exec", {
+  description: "Run one shell command with /bin/sh and return its output.",
+  parameters: { type: "object", properties: {
+    command: { type: "string", description: "The shell command to run." },
+    cwd: { type: ["string", "null"], description: "The working directory." },
+    timeout_ms: { type: ["integer", "null"], minimum: 1, maximum: 600000, description: "The timeout in milliseconds." },
+  }, required: ["command"], additionalProperties: false }, execute: exec,
+});

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "minimax",
+      "base_url": "https://api.minimax.io/anthropic/v1",
+      "protocol": "anthropic_messages",
+      "auth": {
+        "api_key": {
+          "header": "authorization_bearer",
+          "source": { "env": "MINIMAX_API_KEY" }
+        }
+      },
+      "models": [
+        {
+          "id": "minimax-m3",
+          "upstream_id": "MiniMax-M3",
+          "limits": { "context_window": 200000, "max_output_tokens": 131072 }
+        }
+      ]
+    },
+    {
+      "id": "ollama",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "protocol": "openai_chat",
+      "models": [
+        {
+          "id": "qwen3",
+          "upstream_id": "qwen3:8b",
+          "limits": { "context_window": 40960, "max_output_tokens": 8192 }
+        }
+      ]
+    }
+  ]
+}

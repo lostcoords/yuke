@@ -1,0 +1,45 @@
+-- name: AllocSeq :one
+-- Allocate the next seq for one session and return it.
+-- SQLite applies the increment atomically; RETURNING avoids a separate read.
+-- id: [16]u8!
+-- seq_high: u64!
+UPDATE sessions SET seq_high = seq_high + 1 WHERE id = :id RETURNING seq_high;
+
+-- name: AppendEvent :exec
+-- session_id: [16]u8!
+-- seq: u64!
+-- event_id: [16]u8!
+-- committed_at_ms: u64!
+-- name: []const u8!
+-- payload: []const u8!
+INSERT INTO events(session_id, seq, event_id, committed_at_ms, name, payload)
+    VALUES (:session_id, :seq, :event_id, :committed_at_ms, :name, :payload);
+
+-- name: ReadHigh :optional
+-- Read the id marks for a session. Return no row when the session does not exist.
+-- id: [16]u8!
+-- seq_high: u64!
+-- message_id_high: u64!
+-- run_id_high: u64!
+-- input_id_high: u64!
+-- config_rev_high: u64!
+SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
+    FROM sessions WHERE id = :id;
+
+-- name: AllocRunId :one
+-- Allocate the next run id for one session. Run inside a write transaction.
+-- id: [16]u8!
+-- run_id_high: u64!
+UPDATE sessions SET run_id_high = run_id_high + 1 WHERE id = :id RETURNING run_id_high;
+
+-- name: AllocMessageId :one
+-- Allocate the next message id for one session. Run inside a write transaction.
+-- id: [16]u8!
+-- message_id_high: u64!
+UPDATE sessions SET message_id_high = message_id_high + 1 WHERE id = :id RETURNING message_id_high;
+
+-- name: AllocInputId :one
+-- Allocate the next input id for one session. Run inside a write transaction.
+-- id: [16]u8!
+-- input_id_high: u64!
+UPDATE sessions SET input_id_high = input_id_high + 1 WHERE id = :id RETURNING input_id_high;
