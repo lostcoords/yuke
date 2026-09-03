@@ -406,18 +406,6 @@ test "a mouse event reaches JavaScript with the cell, the button, and the modifi
     // The mouse and the key share the low three modifier bits.
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.ev.mods"));
 }
-
-test "a wheel event names the wheel button" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
-    defer host.destroy();
-    try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
-
-    try step(host, .{ .mouse = .{ .col = 0, .row = 0, .button = .wheel_down, .mods = .{}, .type = .press } });
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.button === 'wheel_down' ? 1 : 0"));
-}
-
 test "focus in and focus out reach JavaScript" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);

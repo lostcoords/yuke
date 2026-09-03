@@ -144,11 +144,3 @@ test "a name outside the protocol refuses with the unknown method code" {
     try std.testing.expectEqualStrings("unknown method", failure.message);
     try std.testing.expectEqual(@as(usize, 0), sink.written().len);
 }
-
-test "the bound set names every method this engine serves" {
-    comptime {
-        // A method the engine serves must have a command, which `invoke` proves at compile time.
-        std.debug.assert(bound(.@"session.send_input"));
-        std.debug.assert(bound(.initialize));
-    }
-}

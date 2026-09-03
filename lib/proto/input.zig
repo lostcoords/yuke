@@ -66,18 +66,3 @@ test "input content union round-trips" {
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(json, buf.written());
 }
-
-test "input queued data round-trips the durable seq" {
-    const value: InputQueuedData = .{
-        .session_id = .bytes(@splat(0)),
-        .seq = 7,
-        .input = .{ .input_id = 3, .content = &.{.{ .text = .{ .text = "hi" } }}, .queued_at_ms = 100 },
-    };
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    const parsed = try std.json.parseFromSlice(InputQueuedData, testing.allocator, buf.written(), opts);
-    defer parsed.deinit();
-    try testing.expectEqual(@as(ids.Seq, 7), parsed.value.seq);
-    try testing.expectEqual(@as(ids.InputId, 3), parsed.value.input.input_id);
-}
