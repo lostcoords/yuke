@@ -51,6 +51,7 @@ pub const Table = struct {
     pub fn close(self: *Table) void {
         std.debug.assert(self.accepting);
         self.accepting = false;
+        // A shutdown answers like a cancel, so a gate that waits denies instead of throwing.
         for (self.live.items) |request| {
             request.op.finish(.undefined);
             self.destroy(request);

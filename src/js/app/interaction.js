@@ -70,7 +70,7 @@ function allocateId() {
 
 const rpcAnswerer = {
   /** @param {import("yuke:ext").Context} ctx */
-  bindTo(ctx) {
+  surfaceFor(ctx) {
     const live = new Set();
     ctx.effect(() => () => {
       for (const id of live) native.cancel(id);

@@ -414,7 +414,7 @@ function injectInto(parent, id, names, apply) {
 // --- interaction: the service a frontend installs ---
 // A frontend answers a question and shows a message. It is always present, so it gates no block.
 /** @typedef {{ confirm(title: string, message?: string): Promise<boolean | undefined>, select(title: string, options: string[]): Promise<string | undefined>, input(title: string, placeholder?: string): Promise<string | undefined>, notify(message: string, level?: "info" | "warn" | "error"): void }} InteractionSurface */
-/** @typedef {{ bindTo: (ctx: Context) => InteractionSurface }} Answerer */
+/** @typedef {{ surfaceFor: (ctx: Context) => InteractionSurface }} Answerer */
 
 /** @param {string} name @returns {Error} */
 function noAnswerer(name) {
@@ -426,7 +426,7 @@ function noAnswerer(name) {
 // The default answerer. A composition without a frontend fails loudly instead of denying in silence.
 /** @type {Answerer} */
 const unanswered = {
-  bindTo: () => ({
+  surfaceFor: () => ({
     confirm: () => Promise.reject(noAnswerer("confirm")),
     select: () => Promise.reject(noAnswerer("select")),
     input: () => Promise.reject(noAnswerer("input")),
@@ -446,7 +446,7 @@ export const interaction = {
   // Install the answerer this process uses. The disposer restores the one it replaced.
   /** @param {Answerer} next @returns {Disposer} */
   install(next) {
-    if (next == null || typeof next.bindTo !== "function") throw new TypeError("an answerer needs a bindTo method");
+    if (next == null || typeof next.surfaceFor !== "function") throw new TypeError("an answerer needs a surfaceFor method");
     const previous = answerer;
     answerer = next;
 
@@ -462,10 +462,10 @@ export const interaction = {
 
 // One surface for each plugin, rebuilt after an install replaces the answerer.
 /** @param {Context} ctx @returns {InteractionSurface} */
-function surfaceFor(ctx) {
+function boundSurface(ctx) {
   const held = surfaces.get(ctx);
   if (held && held.answerer === answerer) return held.surface;
-  const surface = answerer.bindTo(ctx);
+  const surface = answerer.surfaceFor(ctx);
   surfaces.set(ctx, { answerer, surface });
   return surface;
 }
@@ -534,7 +534,7 @@ export class Context {
   // The frontend seam. A service is always installed, so a plugin calls it without `inject`.
   /** @returns {InteractionSurface} */
   get interaction() {
-    return surfaceFor(this);
+    return boundSurface(this);
   }
 }
 

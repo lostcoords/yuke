@@ -49,17 +49,17 @@ class Prompt {
   }
 }
 
-/** @param {import("yuke:ext").InjectContext} provider */
-function createAnswerer(provider) {
+/** @param {import("yuke:ext").InjectContext} frontend */
+function createAnswerer(frontend) {
   /** @type {Set<Cancel>} */
   const pending = new Set();
-  provider.effect(() => () => {
+  frontend.effect(() => () => {
     for (const cancel of Array.from(pending)) cancel();
   });
 
   return {
     /** @param {import("yuke:ext").Context} consumer */
-    bindTo(consumer) {
+    surfaceFor(consumer) {
       /** @type {Set<Cancel>} */
       const owned = new Set();
       consumer.effect(() => () => {
@@ -111,7 +111,7 @@ function createAnswerer(provider) {
               onAccept: (item) => settle(item.answer),
               onCancel: () => settle(undefined),
             });
-            return provider.tui.overlay(picked.win);
+            return frontend.tui.overlay(picked.win);
           });
         },
 
@@ -128,7 +128,7 @@ function createAnswerer(provider) {
               onAccept: settle,
               onCancel: () => settle(undefined),
             });
-            return provider.tui.overlay(picked.win);
+            return frontend.tui.overlay(picked.win);
           });
         },
 
@@ -146,7 +146,7 @@ function createAnswerer(provider) {
               content: prompt,
             });
             root.pushOverlay(win);
-            return provider.tui.overlay(win);
+            return frontend.tui.overlay(win);
           });
         },
 
@@ -164,6 +164,6 @@ export const tuiInteractionPlugin = {
   name: "tui-interaction",
   /** @param {import("yuke:ext").Context} ctx @returns {void} */
   apply(ctx) {
-    ctx.inject(["tui"], (provider) => interaction.install(createAnswerer(provider)));
+    ctx.inject(["tui"], (frontend) => interaction.install(createAnswerer(frontend)));
   },
 };

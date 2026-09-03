@@ -5869,7 +5869,7 @@ test "an install replaces the answerer and its disposer restores the last one" {
     defer host.destroy();
     try host.evalModule(
         \\import { interaction, plugins } from "yuke:ext";
-        \\const answerer = (tag) => ({ bindTo: () => ({ notify: (m) => { globalThis.heard.push(tag + ":" + m); } }) });
+        \\const answerer = (tag) => ({ surfaceFor: () => ({ notify: (m) => { globalThis.heard.push(tag + ":" + m); } }) });
         \\globalThis.heard = [];
         \\const first = interaction.install(answerer("first"));
         \\plugins.use({ name: "reporter", apply(ctx) { globalThis.say = (m) => ctx.interaction.notify(m); } });
