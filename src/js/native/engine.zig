@@ -248,6 +248,22 @@ const Cut = struct {
     };
 };
 
+/// One parts response may inline this many bytes. A part past it still appears, with its text paged.
+pub const max_response_bytes: usize = 4 * max_page_bytes;
+
+/// What a parts response carries as it writes: the cuts of the part in hand, and the bytes it may still inline.
+const Parts = struct {
+    cuts: Cuts = .{},
+    left: usize = max_response_bytes,
+
+    /// Spend up to `want` bytes of the budget and answer what it allowed.
+    fn take(self: *Parts, want: usize) usize {
+        const n = @min(want, self.left);
+        self.left -= n;
+        return n;
+    }
+};
+
 /// The cuts of one part, collected while the part is written and emitted before its closing brace.
 const Cuts = struct {
     items: [max_cuts]Cut = undefined,
@@ -287,36 +303,36 @@ const Cuts = struct {
 };
 
 /// Write `"name":"..."` with the text cut on a character boundary. Record the whole size when cut.
-fn writeCapped(w: *std.Io.Writer, cuts: *Cuts, field: Cut.Field, list: []const u8, index: u32, name: []const u8, text: []const u8) !void {
-    const end = utf8Floor(text, max_page_bytes);
+fn writeCapped(w: *std.Io.Writer, parts: *Parts, field: Cut.Field, list: []const u8, index: u32, name: []const u8, text: []const u8) !void {
+    const end = utf8Floor(text, parts.take(@min(text.len, max_page_bytes)));
     try w.print("\"{s}\":", .{name});
     try std.json.Stringify.encodeJsonString(text[0..end], .{}, w);
-    if (end < text.len) cuts.add(.{ .field = field, .list = list, .index = index, .size = text.len, .next = end });
+    if (end < text.len) parts.cuts.add(.{ .field = field, .list = list, .index = index, .size = text.len, .next = end });
 }
 
 /// Write one part. Every string it holds is bounded, whatever the tool produced.
-fn writePart(w: *std.Io.Writer, p: proto.message.AssistantPart) !void {
-    var cuts: Cuts = .{};
+fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart) !void {
+    parts.cuts = .{};
     switch (p) {
-        .text => |t| try writeTextPart(w, &cuts, "text", t.id, t.text),
-        .reasoning => |r| try writeTextPart(w, &cuts, "reasoning", r.id, r.text),
+        .text => |t| try writeTextPart(w, parts, "text", t.id, t.text),
+        .reasoning => |r| try writeTextPart(w, parts, "reasoning", r.id, r.text),
         .redacted_reasoning => |r| try w.print("{{\"type\":\"redacted_reasoning\",\"id\":{d}}}", .{r.id}),
-        .tool => |t| try writeToolPart(w, &cuts, t),
+        .tool => |t| try writeToolPart(w, parts, t),
     }
 }
 
 /// Write a text-bearing part. A cut text names itself in `cut`, so a view knows to page the rest.
-fn writeTextPart(w: *std.Io.Writer, cuts: *Cuts, kind: []const u8, id: u64, text: []const u8) !void {
-    const end = utf8Floor(text, max_page_bytes);
+fn writeTextPart(w: *std.Io.Writer, parts: *Parts, kind: []const u8, id: u64, text: []const u8) !void {
+    const end = utf8Floor(text, parts.take(@min(text.len, max_page_bytes)));
     try w.print("{{\"type\":\"{s}\",\"id\":{d},\"text\":", .{ kind, id });
     try std.json.Stringify.encodeJsonString(text[0..end], .{}, w);
-    if (end < text.len) cuts.add(.{ .field = .text, .size = text.len, .next = end });
-    try cuts.write(w);
+    if (end < text.len) parts.cuts.add(.{ .field = .text, .size = text.len, .next = end });
+    try parts.cuts.write(w);
     try w.writeByte('}');
 }
 
 /// Write a tool part field by field. A generic encode here would copy a whole tool result.
-fn writeToolPart(w: *std.Io.Writer, cuts: *Cuts, t: proto.message.ToolPart) !void {
+fn writeToolPart(w: *std.Io.Writer, parts: *Parts, t: proto.message.ToolPart) !void {
     try w.print("{{\"type\":\"tool\",\"id\":{d},\"name\":", .{t.id});
     try std.json.Stringify.encodeJsonString(t.name, .{}, w);
     if (t.call_id) |call_id| {
@@ -324,18 +340,18 @@ fn writeToolPart(w: *std.Io.Writer, cuts: *Cuts, t: proto.message.ToolPart) !voi
         try std.json.Stringify.encodeJsonString(call_id, .{}, w);
     }
     try w.writeByte(',');
-    try writeCapped(w, cuts, .arguments, "", 0, "arguments", t.arguments);
+    try writeCapped(w, parts, .arguments, "", 0, "arguments", t.arguments);
     if (t.input_view) |views| {
         try w.writeAll(",\"input_view\":");
-        try writeViews(w, cuts, "input_view", views);
+        try writeViews(w, parts, "input_view", views);
     }
     try w.writeAll(",\"state\":");
-    try writeToolState(w, cuts, t.state);
-    try cuts.write(w);
+    try writeToolState(w, parts, t.state);
+    try parts.cuts.write(w);
     try w.writeByte('}');
 }
 
-fn writeToolState(w: *std.Io.Writer, cuts: *Cuts, state: proto.tool.ToolState) !void {
+fn writeToolState(w: *std.Io.Writer, parts: *Parts, state: proto.tool.ToolState) !void {
     switch (state) {
         .pending => try w.writeAll("{\"type\":\"pending\"}"),
         .canceled => |c| {
@@ -347,25 +363,25 @@ fn writeToolState(w: *std.Io.Writer, cuts: *Cuts, state: proto.tool.ToolState) !
             try w.print("{{\"type\":\"running\",\"started_at_ms\":{d}", .{r.started_at_ms});
             if (r.output) |out| {
                 try w.writeByte(',');
-                try writeCapped(w, cuts, .output, "", 0, "output", out);
+                try writeCapped(w, parts, .output, "", 0, "output", out);
             }
             try w.writeByte('}');
         },
         .completed => |c| {
             try w.print("{{\"type\":\"completed\",\"duration_ms\":{d},", .{c.duration_ms});
-            try writeCapped(w, cuts, .output, "", 0, "output", c.output);
+            try writeCapped(w, parts, .output, "", 0, "output", c.output);
             if (c.view) |views| {
                 try w.writeAll(",\"view\":");
-                try writeViews(w, cuts, "view", views);
+                try writeViews(w, parts, "view", views);
             }
             try w.writeByte('}');
         },
         .@"error" => |e| {
             try w.print("{{\"type\":\"error\",\"duration_ms\":{d},", .{e.duration_ms});
-            try writeCapped(w, cuts, .@"error", "", 0, "error", e.@"error");
+            try writeCapped(w, parts, .@"error", "", 0, "error", e.@"error");
             if (e.view) |views| {
                 try w.writeAll(",\"view\":");
-                try writeViews(w, cuts, "view", views);
+                try writeViews(w, parts, "view", views);
             }
             try w.writeByte('}');
         },
@@ -373,22 +389,22 @@ fn writeToolState(w: *std.Io.Writer, cuts: *Cuts, state: proto.tool.ToolState) !
 }
 
 /// Write at most `max_inline_views` views. A dropped view is recorded, so a row can say how many it hides.
-fn writeViews(w: *std.Io.Writer, cuts: *Cuts, list: []const u8, views: []const proto.view.View) !void {
+fn writeViews(w: *std.Io.Writer, parts: *Parts, list: []const u8, views: []const proto.view.View) !void {
     try w.writeByte('[');
     const shown = @min(views.len, max_inline_views);
     for (views[0..shown], 0..) |v, i| {
         if (i > 0) try w.writeByte(',');
-        try writeView(w, cuts, list, @intCast(i), v);
+        try writeView(w, parts, list, @intCast(i), v);
     }
     try w.writeByte(']');
-    if (shown < views.len) cuts.add(.{ .field = .view_count, .list = list, .size = views.len });
+    if (shown < views.len) parts.cuts.add(.{ .field = .view_count, .list = list, .size = views.len });
 }
 
-fn writeView(w: *std.Io.Writer, cuts: *Cuts, list: []const u8, index: u32, v: proto.view.View) !void {
+fn writeView(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, v: proto.view.View) !void {
     switch (v) {
         .text => |t| {
             try w.writeAll("{\"type\":\"text\",");
-            try writeCapped(w, cuts, .view_text, list, index, "text", t.text);
+            try writeCapped(w, parts, .view_text, list, index, "text", t.text);
             if (t.language) |lang| {
                 try w.writeAll(",\"language\":");
                 try std.json.Stringify.encodeJsonString(lang, .{}, w);
@@ -397,24 +413,24 @@ fn writeView(w: *std.Io.Writer, cuts: *Cuts, list: []const u8, index: u32, v: pr
         },
         .markdown => |t| {
             try w.writeAll("{\"type\":\"markdown\",");
-            try writeCapped(w, cuts, .view_text, list, index, "text", t.text);
+            try writeCapped(w, parts, .view_text, list, index, "text", t.text);
             try w.writeByte('}');
         },
         .json => |t| {
             try w.writeAll("{\"type\":\"json\",");
-            try writeCapped(w, cuts, .view_text, list, index, "text", t.text);
+            try writeCapped(w, parts, .view_text, list, index, "text", t.text);
             try w.writeByte('}');
         },
         // An image view names a blob; it carries no inline bytes.
         .image => |t| try std.json.Stringify.value(v: {
             break :v .{ .type = "image", .source = t.source, .alt = t.alt };
         }, .{ .emit_null_optional_fields = false }, w),
-        .diff => |d| try writeDiff(w, cuts, list, index, d),
+        .diff => |d| try writeDiff(w, parts, list, index, d),
     }
 }
 
 /// Write a diff with a bounded line count. A transcript shows a preview, never a whole patch.
-fn writeDiff(w: *std.Io.Writer, cuts: *Cuts, list: []const u8, index: u32, d: proto.view.ViewDiff) !void {
+fn writeDiff(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, d: proto.view.ViewDiff) !void {
     var budget: usize = max_inline_diff_lines;
     var total: u64 = 0;
     var shortened: u64 = 0;
@@ -437,7 +453,7 @@ fn writeDiff(w: *std.Io.Writer, cuts: *Cuts, list: []const u8, index: u32, d: pr
             const shown = @min(hunk.lines.len, budget);
             for (hunk.lines[0..shown], 0..) |line, li| {
                 if (li > 0) try w.writeByte(',');
-                const end = utf8Floor(line, max_inline_line_bytes);
+                const end = utf8Floor(line, parts.take(@min(line.len, max_inline_line_bytes)));
                 if (end < line.len) shortened += 1;
                 try std.json.Stringify.encodeJsonString(line[0..end], .{}, w);
             }
@@ -449,16 +465,17 @@ fn writeDiff(w: *std.Io.Writer, cuts: *Cuts, list: []const u8, index: u32, d: pr
     try w.writeAll("]}");
     // A dropped line and a shortened line both abbreviate the diff, and a preview reports the whole count either way.
     if (total > max_inline_diff_lines or shortened > 0) {
-        cuts.add(.{ .field = .view_diff, .list = list, .index = index, .size = total });
+        parts.cuts.add(.{ .field = .view_diff, .list = list, .index = index, .size = total });
     }
 }
 
 fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: u64) !void {
+    var parts: Parts = .{};
     try w.writeByte('[');
     if (s.draft) |*d| if (d.message_id == mid) {
         for (d.parts.items, 0..) |*p, i| {
             if (i > 0) try w.writeByte(',');
-            try writePart(w, domain_draft.partToWire(p));
+            try writePart(w, &parts, domain_draft.partToWire(p));
         }
         return w.writeByte(']');
     };
@@ -467,7 +484,7 @@ fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: u64) !v
         switch (entry.message) {
             .assistant => |a| for (a.content, 0..) |p, i| {
                 if (i > 0) try w.writeByte(',');
-                try writePart(w, p);
+                try writePart(w, &parts, p);
             },
             else => {},
         }
@@ -1049,6 +1066,51 @@ test "a huge tool result projects into a bounded parts response" {
     // `partText` reads that output one bounded page at a time.
     const text = partTextOf(&sess, 1, 0, "output") orelse return error.TestUnexpectedResult;
     try testing.expectEqual(huge.len, text.len);
+}
+
+test "many huge parts stay inside the response budget and none is dropped" {
+    const gpa = testing.allocator;
+    const sid = SessionId.bytes([_]u8{6} ** 16);
+    var sess = domain_session.Session.init(gpa, sid);
+    defer sess.deinit();
+
+    const huge = try gpa.alloc(u8, 1024 * 1024);
+    defer gpa.free(huge);
+    @memset(huge, 'x');
+
+    // The per-field cap alone never bounded a message; only the count of parts did.
+    const part_count = 64;
+    const content = try gpa.alloc(proto.message.AssistantPart, part_count);
+    defer gpa.free(content);
+    for (content, 0..) |*part, i| {
+        part.* = .{ .tool = .{
+            .id = i,
+            .name = "exec",
+            .arguments = huge,
+            .state = .{ .completed = .{ .output = huge, .duration_ms = 5 } },
+        } };
+    }
+    const messages = [_]proto.message.Message{.{ .assistant = .{
+        .id = 1,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = "claude",
+        .content = content,
+        .time = .{ .created_at_ms = 1 },
+    } }};
+    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .messages = &messages, .has_more = false });
+
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    try writeMessageParts(&aw.writer, &sess, 1);
+
+    // 128 megabytes of source project into the budget and its own structure, never into a copy.
+    try testing.expect(aw.written().len < max_response_bytes + max_page_bytes);
+
+    // The budget shortens a first page; it never drops a part, because `partText` still reaches the rest.
+    try testing.expectEqual(part_count, std.mem.count(u8, aw.written(), "\"type\":\"tool\""));
+    const last = partTextOf(&sess, 1, part_count - 1, "output") orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(huge.len, last.len);
 }
 
 test "every cut address resolves to its own field, never a neighbour" {
