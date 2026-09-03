@@ -132,9 +132,17 @@ fn failureFor(err: anyerror) ?Failure {
     };
 }
 
-test "a name outside the protocol refuses before any command runs" {
-    // `call` resolves the method before it touches the engine, so this needs no runtime state.
-    try std.testing.expect(std.meta.stringToEnum(proto.enums.MethodName, "nope.nope") == null);
+test "a name outside the protocol refuses with the unknown method code" {
+    var sink: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer sink.deinit();
+
+    // `call` resolves the method name before it reads the runtime, so this path needs no state.
+    var runtime: App = undefined;
+    const failure = (try call(&runtime, std.testing.allocator, "nope.nope", "{}", &sink.writer)).?;
+
+    try std.testing.expectEqual(proto.enums.ErrorCode.unknown_method, failure.code);
+    try std.testing.expectEqualStrings("unknown method", failure.message);
+    try std.testing.expectEqual(@as(usize, 0), sink.written().len);
 }
 
 test "the bound set names every method this engine serves" {

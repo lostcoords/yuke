@@ -30,7 +30,11 @@ pub const Extensions = struct {
         self.app = app;
         self.user_entry_fault = false;
         self.wake = .init;
-        const host = try Host.createWith(gpa, io, .{ .cwd = opts.cwd, .env = opts.env });
+        const host = try Host.createWith(gpa, io, .{
+            .headless = opts.mode == .rpc,
+            .cwd = opts.cwd,
+            .env = opts.env,
+        });
         errdefer host.destroy();
         self.host = host;
         host.owner_wake = &self.wake;

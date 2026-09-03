@@ -1,6 +1,6 @@
 // yuke:ui — the widget kit over yuke:core: List and Window to subclass, plus the pickers on `ui`.
 import { term } from "yuke:term";
-import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, slots, isWheel } from "yuke:core";
+import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, slot, isWheel } from "yuke:core";
 import { fuzzyRank } from "yuke:fzy";
 
 /** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
@@ -432,7 +432,7 @@ export class Composer {
 
   /** @returns {string} */
   _prompt() {
-    const supplied = slots.get(this, "prompt");
+    const supplied = slot.get(this, "prompt");
     return typeof supplied === "string" ? supplied : this.prompt;
   }
 

@@ -31,7 +31,7 @@ export class Scope {
   // Run `fn` now. Collect the disposer it returns. The handle reverts this one effect, once.
   /** @param {Effect} fn @returns {Disposer} */
   effect(fn) {
-    if (!this.alive) throw new Error("effect on a disposed scope: " + this.name);
+    if (!this.alive) throw new TypeError("effect on a disposed scope: " + this.name);
 
     const cleanup = fn();
     if (typeof cleanup !== "function") return NOOP;
@@ -103,7 +103,7 @@ function adviceRecord(obj, prop) {
 
     const properties = /** @type {Record<string, unknown>} */ (obj);
     const original = /** @type {AdviceFunction} */ (properties[prop]);
-    if (typeof original !== "function") throw new Error("advise: " + prop + " is not a method");
+    if (typeof original !== "function") throw new TypeError("advise: " + prop + " is not a method");
 
     rec = { original, list: [] };
     const record = rec;
@@ -158,8 +158,8 @@ export const advice = {
   // Install one advice, ordered by `order`; the same owner and name replaces in place, so a reload does not stack.
   /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
-    if (!WHERE[where]) throw new Error("advise: unknown kind " + where);
-    if (typeof fn !== "function") throw new Error("advise: fn must be a function");
+    if (!WHERE[where]) throw new TypeError("advise: unknown kind " + where);
+    if (typeof fn !== "function") throw new TypeError("advise: fn must be a function");
 
     const owner = (opts && opts.owner) || "anon";
     const name = (opts && opts.name) || fn.name || "advice";
@@ -287,6 +287,9 @@ export const services = {
   },
 };
 
+// The passes one `inject` build takes before the runtime calls the dependency set unsettled.
+const inject_max_passes = 8;
+
 // A capability that registers effects answers `bindTo`, so the block it serves owns what it adds.
 /** @param {unknown} value @param {Context} ctx @returns {unknown} */
 function bindCapability(value, ctx) {
@@ -322,6 +325,7 @@ function injectInto(parent, id, names, apply) {
   let live = null;
   let building = false;
   let stopped = false;
+  let dirty = false;
 
   const satisfied = () => deps.every((n) => services.has(n));
 
@@ -331,32 +335,64 @@ function injectInto(parent, id, names, apply) {
     if (held) held.dispose();
   };
 
+  // Build the block once. Answer false when a retry must not follow.
+  /** @returns {boolean} */
+  const buildOnce = () => {
+    if (!satisfied()) {
+      drop();
+      return false;
+    }
+
+    // A bare Scope, not `parent.child()`: a child pushes one disposer per build and never drops it.
+    const child = new Scope("inject:" + deps.join("+"));
+    try {
+      const ctx = new Context(child, id);
+      // Each build reads the live provider, and a later change builds the block again.
+      const bound = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (ctx));
+      for (const n of deps) bound[n] = bindCapability(services.get(n), ctx);
+      child.effect(() => apply(ctx));
+      // The block can drop its own dependency, so confirm the requirement before the block commits.
+      if (satisfied() && !stopped && parent.alive) {
+        // The old block leaves only after the new one holds what it registered, so a shared
+        // resource such as an overlay passes from one block to the next without a gap.
+        drop();
+        live = child;
+      } else {
+        child.dispose();
+        drop();
+      }
+      return true;
+    } catch (e) {
+      child.dispose();
+      drop();
+      // A throwing block keeps its plugin alive, so the runtime reports the fault and stays inactive.
+      events.emit("ext.error", e, id);
+      return false;
+    }
+  };
+
   const build = () => {
     // One change can dispose this injection while a copied watcher list still holds `build`.
-    if (building || stopped || !parent.alive) return;
+    if (stopped || !parent.alive) return;
+    // A change during a build must not vanish, so record it and build again after this pass.
+    if (building) {
+      dirty = true;
+      return;
+    }
+
     building = true;
     try {
-      drop();
-      if (!satisfied()) return;
-
-      // A bare Scope, not `parent.child()`: a child pushes one disposer per build and never drops it.
-      const child = new Scope("inject:" + deps.join("+"));
-      try {
-        const ctx = new Context(child, id);
-        // A rebuild follows every change, so the block reads the provider that it was built for.
-        const bound = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (ctx));
-        for (const n of deps) bound[n] = bindCapability(services.get(n), ctx);
-        child.effect(() => apply(ctx));
-        // The block can drop its own dependency, so confirm the requirement before the block commits.
-        if (satisfied() && !stopped && parent.alive) live = child;
-        else child.dispose();
-      } catch (e) {
-        child.dispose();
-        // A throwing block keeps its plugin alive, so the runtime reports the fault and stays inactive.
-        events.emit("ext.error", e, id);
-      }
+      var passes = 0;
+      do {
+        dirty = false;
+        if (!buildOnce()) break;
+        passes += 1;
+      } while (dirty && passes < inject_max_passes && !stopped && parent.alive);
+      // A block that changes its own dependency every pass never settles, so report it once.
+      if (dirty) events.emit("ext.error", new Error("inject: `" + deps.join("+") + "` does not settle"), id);
     } finally {
       building = false;
+      dirty = false;
     }
   };
 

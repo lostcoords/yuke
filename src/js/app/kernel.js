@@ -94,23 +94,8 @@ function applyConfigPatch(section, fields, src, label) {
   Object.assign(section, patch);
 }
 
-// The core bus declares these names, and leaves every `owner:event` name to its owner.
+// The kernel declares only what neutral code emits, so each tier declares its own names.
 const CORE_EVENTS = Object.assign(Object.create(null), {
-  "ui.start": 1,
-  "ui.closed": 1,
-  "ui.resize": 1,
-  "ui.tick": 1,
-  "key.press": 1,
-  "mouse.input": 1,
-  "paste.input": 1,
-  "focus.changed": 1,
-  "pane.focused": 1,
-  "pane.closed": 1,
-  "region.focused": 1,
-  "clipboard.copied": 1,
-  "session.changed": 1,
-  "index.changed": 1,
-  "status.error": 1,
   "ext.error": 1,
 });
 
@@ -140,13 +125,29 @@ export class Emitter {
     this.onError = null;
   }
 
+  // Declare more names for the life of a tier, and answer a disposer that withdraws them.
+  /** @param {Record<string, number>} names @returns {() => void} */
+  declare(names) {
+    if (!this._names) return () => {};
+    const table = this._names;
+    const added = Object.keys(names).filter((n) => !table[n]);
+    for (const n of added) table[n] = 1;
+
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      for (const n of added) delete table[n];
+    };
+  }
+
   // Reject a name a closed bus does not declare, so a typo fails at the call and not in silence.
   /** @param {string} name @returns {void} */
   _check(name) {
     if (!this._names || this._names[name]) return;
     // An `owner:event` name belongs to its owner, so the core set never declares it.
     if (isNamespaced(name)) return;
-    throw new Error("unknown event: " + name);
+    throw new TypeError("unknown event: " + name);
   }
 
   /** @param {string} name @param {(...args: any[]) => unknown} fn @param {{ prepend?: boolean } | undefined} [opts] @returns {() => void} */

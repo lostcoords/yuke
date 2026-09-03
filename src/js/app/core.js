@@ -179,100 +179,7 @@ export function clip(s, max, ellipsis = true) {
   return s.slice(0, cut) + (ell ? "…" : "");
 }
 
-// Wrap `s` to `width` cells; a word breaks by grapheme, and a grapheme wider than `width` keeps its own wider line.
-/** @param {string} s @param {number} width @returns {string[]} */
-export function wrap(s, width) {
-  s = String(s);
-  if (width <= 0) return [""];
-
-  /** @type {string[]} */
-  const lines = [];
-  for (const para of s.split("\n")) wrapParagraph(para, width, lines);
-  return lines;
-}
-
-/** @param {string} para @returns {TextPiece[]} */
-function splitWords(para) {
-  const gs = term.graphemes(para);
-  /** @type {TextPiece[]} */
-  const words = [];
-  let text = "";
-  let w = 0;
-  for (let k = 0; k < gs.length; k += 3) {
-    const offset = /** @type {number} */ (gs[k]);
-    const length = /** @type {number} */ (gs[k + 1]);
-    const ch = para.slice(offset, offset + length);
-    if (ch === " ") {
-      if (text) words.push({ text, w });
-      text = "";
-      w = 0;
-    } else {
-      text += ch;
-      w += /** @type {number} */ (gs[k + 2]);
-    }
-  }
-  if (text) words.push({ text, w });
-  return words;
-}
-
-/** @param {string} s @param {number} width @returns {TextPiece[]} */
-function hardBreak(s, width) {
-  const gs = term.graphemes(s);
-  /** @type {TextPiece[]} */
-  const pieces = [];
-  let piece = "";
-  let w = 0;
-  for (let k = 0; k < gs.length; k += 3) {
-    if (w + /** @type {number} */ (gs[k + 2]) > width && piece !== "") {
-      pieces.push({ text: piece, w });
-      piece = "";
-      w = 0;
-    }
-    const offset = /** @type {number} */ (gs[k]);
-    const length = /** @type {number} */ (gs[k + 1]);
-    piece += s.slice(offset, offset + length);
-    w += /** @type {number} */ (gs[k + 2]);
-  }
-  pieces.push({ text: piece, w });
-  return pieces;
-}
-
-/** @param {string} para @param {number} width @param {string[]} out @returns {void} */
-function wrapParagraph(para, width, out) {
-  const words = splitWords(para);
-  if (words.length === 0) {
-    out.push("");
-    return;
-  }
-
-  let line = "";
-  let lineW = 0;
-  for (const word of words) {
-    if (line !== "" && lineW + 1 + word.w > width) {
-      out.push(line);
-      line = "";
-      lineW = 0;
-    }
-
-    if (word.w > width) {
-      const pieces = hardBreak(word.text, width);
-      for (let i = 0; i < pieces.length - 1; i++) {
-        const piece = /** @type {TextPiece} */ (pieces[i]);
-        out.push(piece.text);
-      }
-      const lastPiece = /** @type {TextPiece} */ (pieces[pieces.length - 1]);
-      line = lastPiece.text;
-      lineW = lastPiece.w;
-    } else {
-      const sep = line === "" ? 0 : 1;
-      line += (sep ? " " : "") + word.text;
-      lineW += sep + word.w;
-    }
-  }
-  out.push(line);
-}
-
-// Wrap `s` and keep its UTF-16 offsets as [start, end) plus a soft flag, because `wrap` drops the space runs.
+// Wrap `s` and keep its UTF-16 offsets as [start, end) plus a soft flag, because a plain wrap drops the space runs.
 /** @param {string} s @param {number} width @returns {WrapRow[]} */
 export function wrapOffsets(s, width) {
   s = String(s);
@@ -452,7 +359,7 @@ export const context = {
 
   // Set flags and return a restoring disposer; a function value resolves at match time, so a live mode needs no update.
   /** @param {Record<string, ContextFlag>} flags @returns {() => void} */
-  set(flags) {
+  add(flags) {
     /** @type {Array<[string, ContextFlag | undefined]>} */
     const prev = [];
     for (const name in flags) {
@@ -844,7 +751,7 @@ export const route = {
 };
 
 // A widget asks for a value it does not own. The nearest class answers first, then the newest provider.
-export const slots = {
+export const slot = {
   /** @type {Map<object, Record<string, SlotEntry[]>>} */
   _map: new Map(),
 
@@ -881,7 +788,7 @@ export const slots = {
   get(obj, name, arg) {
     if (!obj) return null;
     let proto = Object.getPrototypeOf(obj);
-    // A subclass reads the slots its base class declares.
+    // A subclass reads the slot its base class declares.
     while (proto) {
       const names = this._map.get(proto);
       const list = names ? names[name] : undefined;
@@ -1207,6 +1114,24 @@ export function caretCol(w, prompt, before) {
 }
 
 
+// The view tier emits these names, so it declares them and a headless bus refuses them.
+events.declare({
+  "ui.start": 1,
+  "ui.closed": 1,
+  "ui.resize": 1,
+  "ui.tick": 1,
+  "key.press": 1,
+  "mouse.input": 1,
+  "paste.input": 1,
+  "focus.changed": 1,
+  "pane.focused": 1,
+  "pane.closed": 1,
+  "region.focused": 1,
+  "clipboard.copied": 1,
+  "session.changed": 1,
+  "index.changed": 1,
+});
+
 // This table maps a host event type to its core event name.
 const HOST_TO_CORE_EVENT = {
   start: "ui.start",
@@ -1398,7 +1323,7 @@ export const status = {
       try {
         t = seg.render();
       } catch (e) {
-        events.emit("status.error", e);
+        events.emit("ext.error", e, "status");
       }
       if (t) out.push(String(t));
     }

@@ -1,6 +1,6 @@
 // yuke:transcript — the chat transcript, its row rendering, and the pane that holds it.
 import { term } from "yuke:term";
-import { text, clip, root, caretAtCol, wrapOffsets, nextGrapheme, events, slots, isWheel, fill, config } from "yuke:core";
+import { text, clip, root, caretAtCol, wrapOffsets, nextGrapheme, events, slot, isWheel, fill, config } from "yuke:core";
 import { Document, isLinear } from "yuke:md";
 import { Composer } from "yuke:ui";
 
@@ -1442,7 +1442,7 @@ export class ChatView {
     const taken = inside || ev.event === "drag" || ev.event === "release" ? this.transcript.onMouse(ev) : false;
     // A provider may claim a left press to place its own caret, after the transcript reads it.
     if (ev.event !== "press" || ev.button !== "left") return taken;
-    return slots.get(this, "press", ev) === true || taken;
+    return slot.get(this, "press", ev) === true || taken;
   }
 
   /** @param {boolean} focused @returns {void} */
@@ -1467,7 +1467,7 @@ export class ChatView {
   // The caret belongs to the focused region, so a transcript with no cursor provider shows none.
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
   cursor() {
-    const supplied = /** @type {{ x: number, y: number, visible: boolean } | null} */ (slots.get(this, "cursor"));
+    const supplied = /** @type {{ x: number, y: number, visible: boolean } | null} */ (slot.get(this, "cursor"));
     if (supplied) return supplied;
     return this.focus === "composer" ? this.composer.cursor() : null;
   }

@@ -60,9 +60,19 @@ pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:defaults", .source = @embedFile("app/defaults.js") },
 };
 
+/// The modules a headless frontend can load. The loader refuses every view module.
+pub const headless_baked = [_]loader_mod.BakedModule{
+    .{ .name = "yuke", .source = @embedFile("app/facade.js") },
+    .{ .name = "yuke:kernel", .source = @embedFile("app/kernel.js") },
+    .{ .name = "yuke:ext", .source = @embedFile("app/ext.js") },
+    .{ .name = "yuke:builtins", .source = @embedFile("app/builtins.js") },
+};
+
 pub const Options = struct {
-    /// An empty slice uses `default_baked`. A non-empty slice replaces it.
+    /// An empty slice takes the set that `headless` selects. A non-empty slice replaces it.
     baked: []const loader_mod.BakedModule = &.{},
+    /// A headless frontend owns no terminal, so it bakes no view module and installs no `yuke:term`.
+    headless: bool = false,
     max_file_bytes: usize = loader_mod.default_max_file_bytes,
     /// The directory the process runs in. A new session takes it as the workspace root.
     cwd: []const u8 = "",
@@ -143,7 +153,8 @@ pub const Host = struct {
         if (ctx.ptr == null) return error.OutOfMemory;
         errdefer ctx.deinit();
 
-        const baked: []const loader_mod.BakedModule = if (opts.baked.len == 0) &default_baked else opts.baked;
+        const mode_baked: []const loader_mod.BakedModule = if (opts.headless) &headless_baked else &default_baked;
+        const baked: []const loader_mod.BakedModule = if (opts.baked.len == 0) mode_baked else opts.baked;
         var ld: loader_mod.Loader = .{
             .gpa = gpa,
             .io = io,
@@ -180,7 +191,8 @@ pub const Host = struct {
         ctx.setContextOpaque(self);
         runtime.setInterruptHandler(self);
         runtime.setModuleLoader(&self.loader);
-        try term_module.install(self);
+        // A headless host never binds a renderer, so it must not offer the terminal module either.
+        if (!opts.headless) try term_module.install(self);
         try engine_module.install(self);
         try fs_module.install(self);
         try exec_module.install(self);

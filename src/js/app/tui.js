@@ -1,5 +1,5 @@
 // yuke:tui — the terminal capability. A block that declares `tui` registers its view effects here.
-import { command, keymap, route, slots, context, status, style, root } from "yuke:core";
+import { command, keymap, route, slot, context, status, style, root } from "yuke:core";
 
 /** @typedef {import("yuke:ext").Context} Context */
 /** @typedef {() => void} Disposer */
@@ -11,7 +11,7 @@ import { command, keymap, route, slots, context, status, style, root } from "yuk
 /** @typedef {Parameters<typeof root.pushOverlay>[0]} Overlay */
 /** @typedef {Parameters<typeof status.add>[0]} StatusSegment */
 /** @typedef {Parameters<typeof style.add>[0]} StyleGroups */
-/** @typedef {Parameters<typeof context.set>[0]} ContextFlags */
+/** @typedef {Parameters<typeof context.add>[0]} ContextFlags */
 
 // The surface that owns an overlay. A later claim replaces the earlier one.
 /** @type {WeakMap<object, object>} */
@@ -46,12 +46,12 @@ function bindTo(ctx) {
 
     /** @param {Function} target @param {string} name @param {(obj: any, arg?: any) => unknown} fn @returns {Disposer} */
     slot(target, name, fn) {
-      return ctx.effect(() => slots.add(target, name, fn));
+      return ctx.effect(() => slot.add(target, name, fn));
     },
 
     /** @param {ContextFlags} flags @returns {Disposer} */
     context(flags) {
-      return ctx.effect(() => context.set(flags));
+      return ctx.effect(() => context.add(flags));
     },
 
     /** @param {StatusSegment} seg @returns {Disposer} */
@@ -65,15 +65,15 @@ function bindTo(ctx) {
     },
 
     // Claim an overlay by layer so an unload takes it off the stack and a re-push stays owned; pass `ui.pick(...).win`.
-    /** @param {Overlay} layer @returns {Overlay} */
+    /** @param {Overlay} layer @returns {Disposer} */
     overlay(layer) {
       // A layer off the stack is a caller error, such as a picker handle in place of its window.
-      if (root.overlays.indexOf(layer) < 0) throw new Error("overlay: the layer is not on the stack");
+      if (root.overlays.indexOf(layer) < 0) throw new TypeError("overlay: the layer is not on the stack");
 
       // A dead scope reverts nothing, so the overlay closes now and never outlives its block.
       if (!ctx.scope.alive) {
         while (root.overlays.indexOf(layer) >= 0) root.popOverlay(layer);
-        return layer;
+        return () => {};
       }
 
       // The map holds the claim, so a frozen layer and a proxy layer both stay untouched.
@@ -86,7 +86,12 @@ function bindTo(ctx) {
         });
       }
 
-      return layer;
+      // Drop this one claim, so the block can release a layer before it unloads.
+      return () => {
+        if (OVERLAY_OWNER.get(layer) !== surface) return;
+        OVERLAY_OWNER.delete(layer);
+        while (root.overlays.indexOf(layer) >= 0) root.popOverlay(layer);
+      };
     },
 
     // A tickable joins the frame loop and receives `onStart`, `onStop`, `needsTick`, and `tick`.

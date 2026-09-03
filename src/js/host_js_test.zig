@@ -56,14 +56,13 @@ const Paint = struct {
     }
 };
 
-test "yuke:core clip wrap and style.resolve" {
+test "yuke:core clip and style.resolve" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { clip, wrap, style } from "yuke:core";
-        \\const lines = wrap("hello world\n\nabcdef", 5);
+        \\import { clip, style } from "yuke:core";
         \\const before = style.resolve("Normal").fg;
         \\style.palette.fg = "red";
         \\const stale = style.resolve("Normal").fg;
@@ -75,12 +74,6 @@ test "yuke:core clip wrap and style.resolve" {
         \\  clip("abc", 1) === "a" &&
         \\  clip("abcd", 3) === "ab…" &&
         \\  clip("中文", 3) === "中…" &&
-        \\  lines.length === 5 &&
-        \\  lines[0] === "hello" &&
-        \\  lines[1] === "world" &&
-        \\  lines[2] === "" &&
-        \\  lines[3] === "abcde" &&
-        \\  lines[4] === "f" &&
         \\  before === "reset" &&
         \\  stale === "reset" &&
         \\  style.resolve("Normal").fg === "red" &&
@@ -166,25 +159,6 @@ test "yuke:core RootView paints and only ctrl+q quits" {
     , "bind.js");
     try loop.step(host, .{ .key_press = .{ .codepoint = 'q', .mods = .{ .ctrl = true } } });
     try std.testing.expect(host.paint.quit_requested);
-}
-
-test "wrap keeps an unsplittable grapheme on its own line" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = try Host.create(gpa.allocator());
-    defer host.destroy();
-    try host.evalModule(
-        \\import { wrap } from "yuke:core";
-        \\const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-        \\globalThis.result = (
-        \\  eq(wrap("abcd", 1), ["a", "b", "c", "d"]) &&
-        \\  eq(wrap("ab\u4e2dcd", 3), ["ab", "\u4e2dc", "d"]) &&
-        \\  eq(wrap("\u4e2d\u4e2d", 1), ["\u4e2d", "\u4e2d"]) &&
-        \\  eq(wrap("\ud83d\udc69\u200d\ud83d\udcbb", 1), ["\ud83d\udc69\u200d\ud83d\udcbb"])
-        \\) ? 1 : 0;
-    , "wrap.js");
-    try expectJsInt(host, 1);
 }
 
 test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
@@ -641,7 +615,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  check("bus-bail-typo", throws(() => events.bail("ui.tik")));
         \\  const core = ["ui.start", "ui.closed", "ui.resize", "ui.tick", "key.press", "mouse.input",
         \\    "paste.input", "focus.changed", "clipboard.copied", "session.changed", "index.changed",
-        \\    "status.error", "ext.error"];
+        \\    "ext.error"];
         \\  const bad = core.filter((n) => throws(() => events.on(n, () => {})()));
         \\  check("bus-core-declared:" + bad.join("|"), bad.length === 0);
         \\}
@@ -726,7 +700,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\// A flag matches by value, and a function flag resolves at match time.
         \\{
         \\  let mode = "insert";
-        \\  const off = context.set({ vim: () => mode, fixed: "on" });
+        \\  const off = context.add({ vim: () => mode, fixed: "on" });
         \\  const ran = [];
         \\  const kev4 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
         \\  const offKey = keymap.add({ F2: () => { ran.push(mode); return true; } }, "vim == normal && fixed == on");
@@ -742,7 +716,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\
         \\// The expression grammar covers negation, alternation, inequality, and grouping.
         \\{
-        \\  const off = context.set({ m: "a" });
+        \\  const off = context.add({ m: "a" });
         \\  root.setRoot(null);
         \\  const truthy = (src) => { const off = keymap.add({ f9: () => true }, src);
         \\    const n = keymap.candidates("f9").length; off(); return n === 1; };
@@ -849,7 +823,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\
         \\// A flag-only context has depth 0, so registration order decides against an unscoped binding.
         \\{
-        \\  const offFlag = context.set({ m: "a" });
+        \\  const offFlag = context.add({ m: "a" });
         \\  const kev6 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
         \\  const first = [];
         \\  const a1 = keymap.add({ f7: () => { first.push("flag"); return true; } }, "m == a");
@@ -3213,25 +3187,25 @@ test "a slot lets a plugin answer for a widget it does not own" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { slots, events } from "yuke:core";
+        \\import { slot, events } from "yuke:core";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
-        \\class Base { label() { return slots.get(this, "label") ?? "base"; } }
+        \\class Base { label() { return slot.get(this, "label") ?? "base"; } }
         \\class Sub extends Base {}
         \\const b = new Base();
         \\const sub = new Sub();
         \\
         \\check("default", b.label() === "base");
-        \\const d1 = slots.add(Base, "label", () => "one");
+        \\const d1 = slot.add(Base, "label", () => "one");
         \\check("supplied", b.label() === "one");
-        \\// A subclass reads the slots its base class declares.
+        \\// A subclass reads the slot its base class declares.
         \\check("subclass", sub.label() === "one");
         \\
-        \\const d2 = slots.add(Base, "label", () => "two");
+        \\const d2 = slot.add(Base, "label", () => "two");
         \\check("newest-wins", b.label() === "two");
         \\
         \\// A null answer passes the slot on rather than claiming it.
-        \\const d3 = slots.add(Base, "label", () => null);
+        \\const d3 = slot.add(Base, "label", () => null);
         \\check("declines", b.label() === "two");
         \\d3();
         \\
@@ -3242,20 +3216,20 @@ test "a slot lets a plugin answer for a widget it does not own" {
         \\check("restored", b.label() === "base");
         \\
         \\// The provider reads the instance, so one class can answer differently per object.
-        \\const d4 = slots.add(Base, "label", (obj) => (obj === sub ? "sub" : null));
+        \\const d4 = slot.add(Base, "label", (obj) => (obj === sub ? "sub" : null));
         \\check("per-instance", sub.label() === "sub" && b.label() === "base");
         \\d4();
         \\
         \\// A provider that disposes itself must not hide the provider behind it.
-        \\const d7 = slots.add(Base, "label", () => "older");
+        \\const d7 = slot.add(Base, "label", () => "older");
         \\let d8;
-        \\d8 = slots.add(Base, "label", () => { d8(); return null; });
+        \\d8 = slot.add(Base, "label", () => { d8(); return null; });
         \\check("self-dispose-keeps-next", b.label() === "older");
         \\d7();
         \\
         \\// A subclass provider wins before a base provider, whatever the registration order.
-        \\const dBase = slots.add(Base, "label", () => "from-base");
-        \\const dSub = slots.add(Sub, "label", () => "from-sub");
+        \\const dBase = slot.add(Base, "label", () => "from-base");
+        \\const dSub = slot.add(Sub, "label", () => "from-sub");
         \\check("subclass-outranks-base", sub.label() === "from-sub" && b.label() === "from-base");
         \\dSub();
         \\check("subclass-falls-back", sub.label() === "from-base");
@@ -3264,23 +3238,23 @@ test "a slot lets a plugin answer for a widget it does not own" {
         \\// A throwing provider is reported and skipped, so the frame survives it.
         \\let errs = 0;
         \\const offErr = events.on("ext.error", () => { errs++; });
-        \\const d5 = slots.add(Base, "label", () => { throw new Error("bad"); });
-        \\const d6 = slots.add(Base, "label", () => null);
+        \\const d5 = slot.add(Base, "label", () => { throw new Error("bad"); });
+        \\const d6 = slot.add(Base, "label", () => null);
         \\check("throw-skipped", b.label() === "base" && errs === 1);
         \\d5();
         \\d6();
         \\offErr();
         \\
         \\// The last disposer leaves no registration behind.
-        \\check("no-residue", !slots._map.has(Base.prototype) && !slots._map.has(Sub.prototype));
+        \\check("no-residue", !slot._map.has(Base.prototype) && !slot._map.has(Sub.prototype));
         \\
         \\let threw = 0;
-        \\try { slots.add({}, "x", () => 1); } catch (e) { if (e instanceof TypeError) threw++; }
-        \\try { slots.add(Base, "x", 1); } catch (e) { if (e instanceof TypeError) threw++; }
+        \\try { slot.add({}, "x", () => 1); } catch (e) { if (e instanceof TypeError) threw++; }
+        \\try { slot.add(Base, "x", 1); } catch (e) { if (e instanceof TypeError) threw++; }
         \\check("reject", threw === 2 && b.label() === "base");
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
-    , "slots.js");
+    , "slot.js");
     try expectJs(host, "ok");
 }
 
@@ -4137,7 +4111,7 @@ test "the chat pane routes a drag that leaves the transcript and guards its pres
 
     // A drag that ends over the composer must still reach the transcript, or its drag never ends.
     try host.evalModule(
-        \\import { root, Node, slots } from "yuke:core";
+        \\import { root, Node, slot } from "yuke:core";
         \\import { term } from "yuke:term";
         \\import { ChatView } from "yuke:transcript";
         \\const fail = [];
@@ -4160,7 +4134,7 @@ test "the chat pane routes a drag that leaves the transcript and guards its pres
         \\
         \\// A non-left button never reaches the press slot.
         \\let calls = 0;
-        \\const off = slots.add(ChatView, "press", () => { calls++; return true; });
+        \\const off = slot.add(ChatView, "press", () => { calls++; return true; });
         \\mouse(r.y, "press", "right");
         \\check("right-button-skips-slot", calls === 0);
         \\mouse(r.y, "drag");
@@ -4170,7 +4144,7 @@ test "the chat pane routes a drag that leaves the transcript and guards its pres
         \\off();
         \\
         \\// The pane claims the press only for a literal true, so a truthy value does not.
-        \\const offTruthy = slots.add(ChatView, "press", () => "yes");
+        \\const offTruthy = slot.add(ChatView, "press", () => "yes");
         \\check("truthy-does-not-claim", v.onMouse({ type: "mouse", col: r.x + 2, row: v.composer.rect.y, button: "left", event: "press", mods: 0 }) === false);
         \\offTruthy();
         \\
@@ -4355,7 +4329,8 @@ test "the context owns every overlay its plugin pushes" {
         \\const seen = [];
         \\plugins.use({ name: "ord", apply(ctx) {
         \\  const t = tui.bindTo(ctx);
-        \\  const a = t.overlay(root.pushOverlay(layer("a")));
+        \\  const a = root.pushOverlay(layer("a"));
+        \\  t.overlay(a);
         \\  ctx.effect(() => () => seen.push(root.overlays.indexOf(a) >= 0));
         \\  t.overlay(root.pushOverlay(layer("b")));
         \\} });
@@ -4621,13 +4596,11 @@ test "a failed handler answers the model with an error it can read" {
         \\import { defineTool } from "yuke:tools";
         \\const params = { type: "object", properties: { city: { type: "string", description: "The city." } } };
         \\defineTool("throws", { description: "d", parameters: params, execute: async () => { throw new Error("it broke"); } });
-        \\defineTool("rejects", { description: "d", parameters: params, execute: async () => { throw new Error("it broke later"); } });
         \\defineTool("cycles", { description: "d", parameters: params, execute: async () => { const o = {}; o.self = o; return o; } });
     , "fail.js");
 
     const cases = [_]struct { name: []const u8, want: []const u8 }{
         .{ .name = "throws", .want = "it broke" },
-        .{ .name = "rejects", .want = "it broke later" },
         .{ .name = "cycles", .want = "the tool answered a value that is not JSON" },
     };
     for (cases) |case| {
@@ -5278,15 +5251,16 @@ test "inject holds a block until every capability exists" {
         \\check("activated", log.join(",") === "apply,in:T1");
         \\
         \\// A second provider hides the first, so the block reads the new value.
+        \\// The new block builds before the old one leaves, so a shared resource passes across.
         \\const off2 = services.provide("cap", "T2");
-        \\check("restacked", log.join(",") === "apply,in:T1,out,in:T2");
+        \\check("restacked", log.join(",") === "apply,in:T1,in:T2,out");
         \\
         \\// The withdrawal of the live provider reveals the one below it.
         \\off2();
-        \\check("revealed", log.join(",") === "apply,in:T1,out,in:T2,out,in:T1");
+        \\check("revealed", log.join(",") === "apply,in:T1,in:T2,out,in:T1,out");
         \\
         \\off1();
-        \\check("withdrawn", log.join(",") === "apply,in:T1,out,in:T2,out,in:T1,out");
+        \\check("withdrawn", log.join(",") === "apply,in:T1,in:T2,out,in:T1,out,out");
         \\check("gone", !services.has("cap"));
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
@@ -5524,34 +5498,32 @@ test "a capability binds onto the block that declared it" {
     try expectJs(host, "ok");
 }
 
-test "the headless module graph never reaches the view tier" {
-    // These modules load under `--rpc`, where no terminal exists.
-    const headless = [_][]const u8{ "yuke:kernel", "yuke:ext", "yuke", "yuke:builtins" };
-    // A native module is a seam that both frontends own; a view module is not.
-    const allowed = [_][]const u8{
-        "yuke:kernel", "yuke:ext",  "yuke",      "yuke:tools",
-        "yuke:fs",     "yuke:exec", "yuke:diff", "yuke:engine-native",
-    };
+test "a headless host refuses every view module" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
 
-    for (headless) |name| {
-        const source = for (host_mod.default_baked) |m| {
-            if (std.mem.eql(u8, m.name, name)) break m.source;
-        } else return error.ModuleNotBaked;
+    const host = try host_mod.Host.createWith(gpa.allocator(), std.testing.io, .{ .headless = true });
+    defer host.destroy();
 
-        var it = std.mem.splitScalar(u8, source, '\n');
-        while (it.next()) |line| {
-            const trimmed = std.mem.trim(u8, line, " \t");
-            if (!std.mem.startsWith(u8, trimmed, "import ")) continue;
-            const ok = for (allowed) |a| {
-                var quoted_buf: [64]u8 = undefined;
-                const quoted = std.fmt.bufPrint(&quoted_buf, "\"{s}\"", .{a}) catch unreachable;
-                if (std.mem.indexOf(u8, trimmed, quoted) != null) break true;
-            } else false;
-            if (ok) continue;
-            std.debug.print("\n{s} reaches the view tier: {s}\n", .{ name, trimmed });
-            return error.HeadlessModuleImportsTheViewTier;
-        }
-    }
+    // The loader owns the boundary, so a refusal covers user code as well as the baked graph.
+    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import \"yuke:core\";", "static.js"));
+    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import \"yuke:defaults\";", "shell.js"));
+    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import \"yuke:tui\";", "surface.js"));
+    // `yuke:fzy` imports nothing, so its refusal proves the baked set alone closes the door.
+    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import \"yuke:fzy\";", "leaf.js"));
+    // A native module is not baked, so the host installs no terminal binding at all.
+    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import \"yuke:term\";", "native.js"));
+    // A re-export and a dynamic import take the same loader path, so both fail too.
+    try std.testing.expectError(error.JavaScriptFault, host.evalModule("export { root } from \"yuke:core\";", "reexport.js"));
+
+    // The headless tier still loads.
+    try host.evalModule(
+        \\import { events } from "yuke:kernel";
+        \\import { plugins } from "yuke:ext";
+        \\import { tools } from "yuke";
+        \\globalThis.result = events && plugins && tools ? "ok" : "bad";
+    , "headless.js");
+    try expectJs(host, "ok");
 }
 
 test "the kernel never imports the terminal" {
@@ -5585,5 +5557,105 @@ test "the kernel alone runs without the terminal tier" {
         \\events.emit("myplugin:ready");
         \\globalThis.result = fired === 1 && config.keymap.chordMs > 0 ? "ok" : "bad";
     , "headless.js");
+    try expectJs(host, "ok");
+}
+
+test "a change during a build rebuilds the block instead of leaving it stale" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { events } from "yuke:kernel";
+        \\import { plugins, services } from "yuke:ext";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\// The block replaces its own provider while it builds, so the first bound value goes stale.
+        \\const log = [];
+        \\services.provide("x", "old");
+        \\plugins.use({ name: "selfrep", apply: (ctx) => ctx.inject(["x"], (c) => {
+        \\  log.push(c.x);
+        \\  if (c.x === "old") services.provide("x", "new");
+        \\}) });
+        \\check("rebuilt-with-live-value", log.join(",") === "old,new");
+        \\check("registry-agrees", services.get("x") === "new");
+        \\
+        \\// A block that never settles reports one fault and stops, so the build cannot spin.
+        \\const faults = [];
+        \\events.on("ext.error", (e, who) => faults.push(String(who)));
+        \\let n = 0;
+        \\services.provide("y", 0);
+        \\plugins.use({ name: "churn", apply: (ctx) => ctx.inject(["y"], () => { services.provide("y", ++n); }) });
+        \\check("stopped", faults.indexOf("churn") >= 0);
+        \\check("bounded", n <= 16);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "inject-dirty.js");
+    try expectJs(host, "ok");
+}
+
+test "a headless bus refuses a name only the view tier emits" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try host_mod.Host.createWith(gpa.allocator(), std.testing.io, .{ .headless = true });
+    defer host.destroy();
+
+    // Without the view tier nothing emits these names, so a listener would wait for ever.
+    try host.evalModule(
+        \\import { events } from "yuke:kernel";
+        \\const throws = (fn) => { try { fn(); return false; } catch { return true; } };
+        \\const view = ["ui.start", "key.press", "mouse.input", "session.changed", "index.changed"];
+        \\const accepted = view.filter((n) => !throws(() => events.on(n, () => {})));
+        \\// The neutral name stays, and an owner:event name stays free.
+        \\const neutral = !throws(() => events.on("ext.error", () => {}));
+        \\const owned = !throws(() => events.on("myplugin:ready", () => {}));
+        \\globalThis.result = accepted.length === 0 && neutral && owned ? "ok" : "accepted:" + accepted.join("|");
+    , "headless-bus.js");
+    try expectJs(host, "ok");
+}
+
+test "an overlay survives a rebuild of the block that claimed it" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { root } from "yuke:core";
+        \\import { plugins, services } from "yuke:ext";
+        \\import { tui, tuiPlugin } from "yuke:tui";
+        \\plugins.use(tuiPlugin);
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\// One long-lived layer, claimed by a block that also waits on a second capability.
+        \\const layer = { name: "kept", rect: { x: 0, y: 0, w: 1, h: 1 }, draw() {} };
+        \\root.pushOverlay(layer);
+        \\const base = root.overlays.length;
+        \\
+        \\const errs = [];
+        \\let builds = 0;
+        \\services.provide("gate", 1);
+        \\plugins.use({
+        \\  name: "keeper",
+        \\  apply: (ctx) => ctx.inject(["tui", "gate"], (c) => { builds += 1; c.tui.overlay(layer); }),
+        \\});
+        \\check("claimed", builds === 1 && root.overlays.indexOf(layer) >= 0);
+        \\
+        \\// A change of the second capability rebuilds the block; the layer must pass across.
+        \\services.provide("gate", 2);
+        \\check("rebuilt", builds === 2);
+        \\check("layer-kept", root.overlays.indexOf(layer) >= 0);
+        \\check("no-duplicate", root.overlays.length === base);
+        \\
+        \\// The plugin still owns it, so an unload takes the layer off the stack.
+        \\plugins.dispose("keeper");
+        \\check("released", root.overlays.indexOf(layer) < 0);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "overlay-rebuild.js");
     try expectJs(host, "ok");
 }
