@@ -1873,6 +1873,7 @@ test "yuke:ui reasoning auto-collapses and J/K walks parts" {
         \\let rs = t.rows(40, 0, 10);
         \\check("live-name", rowsHave(rs, "thinking"));
         \\check("live-body", rowsHave(rs, "because") && markerOf(rs) === "▾");
+        \\check("thought-style", rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf("because") >= 0 && sg.group === "TxThought")));
         \\
         \\parts.r1 = [{ type: "reasoning", id: 0, text: "because why" }, { type: "text", id: 1, text: "hello" }];
         \\t.setActive("r1");

@@ -1,5 +1,5 @@
 // yuke:defaults — the bundled UI shell, built from plugins so a user's index.js layers on top.
-import { keymap, copy, text, Node, root, quit } from "yuke:core";
+import { keymap, copy, Node, root } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, NAV_KEYS } from "yuke:ui";
 import { notice, noticePlugin } from "yuke:notice";
@@ -10,26 +10,6 @@ import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { rowKey, rowLabel, activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
 import { composerVim } from "yuke:composer-vim";
 import { transcriptVim } from "yuke:transcript-vim";
-
-/** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
-
-
-
-// The local conn key. A remote is `remote:<device_id>`. An empty `devices()` means no relay.
-
-
-
-
-
-
-// --- default layout -----------------------------------------------------------------------
-
-
-
-
-
-
-// Enter previews the session and stays on the list, while click, `l`, and → move into the chat.
 
 // The first chat pane. A split adds another, and each pane drives its own session.
 const chat = new Chat();
@@ -49,9 +29,6 @@ function withChat(fn) {
 }
 
 const workspace = new Node(chat.view);
-
-
-
 
 // A session finder: read the sessions, fuzzy-search them by title, then open one.
 // This is the only place the session list appears, so nothing keeps it on screen.
@@ -86,11 +63,6 @@ function openSessionFinder(ctx) {
   return null;
 }
 
-
-
-
-
-// --- commands + keymaps -------------------------------------------------------------------
 // The stock commands and keybinds ship as a plugin, so they load and unload through the kernel.
 plugins.use({
   name: "app-keys",
@@ -106,7 +78,6 @@ plugins.use({
       });
 
       ctx.tui.command(null, {
-        "app:quit": () => quit(),
         "ui:sessions": () => openSessionFinder(ctx),
         "focus:left": () => root.focusDir("h"),
         "focus:down": () => root.focusDir("j"),
@@ -149,7 +120,7 @@ plugins.use({
         "ctrl+n": "chat:new",
         "ctrl+f": "ui:sessions",
         "ctrl+c": "session:interrupt",
-        "ctrl+q": "app:quit",
+        "ctrl+q": "quit",
         "ctrl+k h": "focus:left",
         "ctrl+k j": "focus:down",
         "ctrl+k k": "focus:up",
@@ -173,7 +144,6 @@ plugins.use(explorerPlugin);
 plugins.use(catalogPlugin, { entry: chatEntry });
 plugins.use(chatPlugin);
 plugins.use(sessionsPlugin, { onCatalogChanged: () => { catalogOf().rev = null; } });
-
 
 root.setRoot(workspace);
 root.focusView(chat.view);

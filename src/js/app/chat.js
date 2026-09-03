@@ -17,7 +17,7 @@ const newChatLines = () => {
   const m = defaultModel().model;
   return [
     { text: "new chat", group: "YukeBrand" },
-    { text: m ? "model · " + m : "no model yet · :model:pick", group: "YukeEmpty" },
+    { text: m ? "model · " + m : "no model yet", group: "YukeEmpty" },
     { text: "type a message to start the session", group: "YukeEmpty" },
   ];
 };

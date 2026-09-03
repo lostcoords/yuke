@@ -36,7 +36,6 @@ const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
   UIComposer: { fg: "fg" },
   UIDim: { fg: "fg", dim: true },
   UIDimSel: { reverse: true },
-  TxText: { fg: "fg" },
   TxUser: { reverse: true },
   TxUserMarker: { reverse: true, bold: true },
   TxError: { fg: "danger", bold: true },

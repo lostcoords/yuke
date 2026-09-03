@@ -305,15 +305,11 @@ function staticRowSource(list) {
   };
 }
 
-// A user turn wraps to a plain tinted band with a gutter marker. Input is plain text, not markdown.
-/** @param {ItemKey} id @param {string} body @param {number} width @param {string} group @returns {TranscriptRow[]} */
-function wrapPlain(id, body, width, group) {
-  const src = body || "";
-  const contentW = Math.max(1, width - TX_GUTTER);
-  /** @type {TranscriptRow[]} */
-  const rows = wrapOffsets(src, contentW).map((r) => ({
-    segments: [{ text: src.slice(r.start, r.end), group, src: r.start, srcEnd: r.end }],
-    indent: TX_GUTTER,
+// A compaction message is plain thought text, not markdown.
+/** @param {ItemKey} id @param {string} body @param {number} width @returns {TranscriptRow[]} */
+function wrapPlain(id, body, width) {
+  const rows = wrapBody(body, Math.max(1, width - TX_GUTTER), "TxThought").map((r) => ({
+    ...r,
     key: id,
     kind: "compaction",
   }));
@@ -517,8 +513,8 @@ function toolBody(part, width) {
   return { rows: wrapBody(text, width, group), source: text };
 }
 
-/** @param {Extract<Wire.AssistantPart, { type: "reasoning" }>} part @param {number} width @param {boolean} expanded @param {boolean} live @param {Document | null} doc @returns {{ rows: TranscriptRow[], source: string }} */
-function reasoningRows(part, width, expanded, live, doc) {
+/** @param {Extract<Wire.AssistantPart, { type: "reasoning" }>} part @param {number} width @param {boolean} expanded @param {boolean} live @returns {{ rows: TranscriptRow[], source: string }} */
+function reasoningRows(part, width, expanded, live) {
   const name = live ? "thinking" : "thought";
   const header = {
     segments: [{ text: name, group: "TxThought", src: 0, srcEnd: name.length }],
@@ -531,20 +527,15 @@ function reasoningRows(part, width, expanded, live, doc) {
   const rows = /** @type {TranscriptRow[]} */ ([header]);
   let source = name;
   if (!expanded) return { rows, source };
-  if (!doc) doc = new Document();
-  doc.setText(part.text || "");
-  const chunk = doc.sourceText();
-  source += "\n" + chunk;
+  const text = part.text || "";
+  source += "\n" + text;
   const base = name.length + 1;
-  const body = /** @type {TranscriptRow[]} */ ([]);
-  for (const r of doc.rows(Math.max(1, width))) {
-    body.push({
-      segments: shiftSrc(r.segments, base),
-      indent: TX_GUTTER,
-      kind: "reasoning-body",
-      partId: part.id,
-    });
-  }
+  const body = wrapBody(text, width, "TxThought").map((r) => ({
+    ...r,
+    kind: "reasoning-body",
+    partId: part.id,
+    segments: shiftSrc(r.segments, base),
+  }));
   for (const r of capRows(body, TOOL_BODY_CAP)) rows.push(r);
   return { rows, source };
 }
@@ -619,7 +610,7 @@ export class Transcript {
     /** @type {Map<number, Document>} */
     this._docs = new Map(); // id -> md Document, for the textOf path
     /** @type {Map<string, Document>} */
-    this._partDocs = new Map(); // id:partId -> md Document, for text and reasoning parts
+    this._partDocs = new Map(); // id:partId -> md Document, for text parts
     /** @type {Map<string, boolean>} */
     this._expand = new Map(); // id:partId -> user override
     // A selection holds two `{ id, row, col }` positions, where `row` counts rendered rows and `col` indexes the row text.
@@ -901,7 +892,7 @@ export class Transcript {
       rows = userRows(m.id, this.textOf(m.id), width);
       source = this.textOf(m.id) || "";
     } else if (m.type === "compaction") {
-      rows = wrapPlain(m.id, this.textOf(m.id), width, "TxThought");
+      rows = wrapPlain(m.id, this.textOf(m.id), width);
       source = this.textOf(m.id) || "";
     } else if (this.partsOf) {
       const built = this._partRows(m, width);
@@ -1081,13 +1072,7 @@ export class Transcript {
         const base = source.length;
         const live = this._reasoningLive(m.id, part.id);
         const expanded = this._isExpanded(m.id, part.id, part);
-        const key = this._expandKey(m.id, part.id);
-        let doc = this._partDocs.get(key);
-        if (!doc) {
-          doc = new Document();
-          this._partDocs.set(key, doc);
-        }
-        const built = reasoningRows(/** @type {Extract<Wire.AssistantPart, { type: "reasoning" }>} */ (part), contentW, expanded, live, doc);
+        const built = reasoningRows(/** @type {Extract<Wire.AssistantPart, { type: "reasoning" }>} */ (part), contentW, expanded, live);
         source += built.source;
         for (const r of built.rows) {
           rows.push({

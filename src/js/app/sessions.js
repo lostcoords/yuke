@@ -1,4 +1,4 @@
-// yuke:sessions — the session list beside the chat, with one DeviceFeed per connection.
+// yuke:sessions — the session feed the finder and the catalog read.
 import { root } from "yuke:core";
 import { client } from "yuke:client";
 
