@@ -213,6 +213,39 @@ export interface InputQueuedData {
   readonly input: QueuedInput;
 }
 
+export interface InteractionRequestedData {
+  readonly interaction_id: number;
+  readonly request: InteractionRequest;
+}
+
+export interface InteractionConfirm {
+  readonly title: string;
+  readonly message: string;
+}
+
+export interface InteractionSelect {
+  readonly title: string;
+  readonly options: readonly string[];
+}
+
+export interface InteractionInput {
+  readonly title: string;
+  readonly placeholder?: string;
+}
+
+export interface InteractionRespondParams {
+  readonly interaction_id: number;
+  readonly response: InteractionResponse;
+}
+
+export interface InteractionConfirmed {
+  readonly value: boolean;
+}
+
+export interface InteractionValue {
+  readonly value: string;
+}
+
 export interface InputSkill {
   readonly skill: SkillRef;
 }
@@ -723,13 +756,13 @@ export interface ViewText {
 
 export type AuthCredentialKind = "api_key" | "oauth";
 
-export type BroadcastName = "session.summary_changed" | "session.activity_changed" | "session.removed" | "catalog.changed" | "auth.login_finished" | "auth.changed" | "notice" | "message.committed" | "run.started" | "run.done" | "config.changed" | "transcript.truncated" | "message.started" | "message.discarded" | "message.part_added" | "message.part_delta" | "message.part_finalized" | "tool.state_changed" | "tool.output_delta" | "input.queued" | "input.canceled";
+export type BroadcastName = "session.summary_changed" | "session.activity_changed" | "session.removed" | "catalog.changed" | "auth.login_finished" | "auth.changed" | "notice" | "interaction.requested" | "message.committed" | "run.started" | "run.done" | "config.changed" | "transcript.truncated" | "message.started" | "message.discarded" | "message.part_added" | "message.part_delta" | "message.part_finalized" | "tool.state_changed" | "tool.output_delta" | "input.queued" | "input.canceled";
 
-export type ErrorCode = -32602 | -32600 | -32601 | -31000 | -31002 | -31003 | -31004 | -31005 | -31006 | -31009 | -31010 | -31011 | -31012 | -31015 | -31016 | -31017 | -31018 | -31019 | -31020 | -31022 | -31023 | -32603 | -31021;
+export type ErrorCode = -32602 | -32600 | -32601 | -31000 | -31002 | -31003 | -31004 | -31005 | -31006 | -31009 | -31010 | -31011 | -31012 | -31015 | -31016 | -31017 | -31018 | -31019 | -31020 | -31022 | -31023 | -31024 | -32603 | -31021;
 
 export type RunErrorCode = "provider" | "protocol" | "network" | "timeout" | "rate_limited" | "quota_exhausted" | "auth" | "unknown_model" | "unsupported_reasoning" | "max_rounds" | "context_overflow" | "runtime" | "internal";
 
-export type MethodName = "initialize" | "session.list" | "session.create" | "session.patch" | "session.remove" | "session.fork" | "session.compact" | "session.rewind" | "session.send_input" | "session.cancel_input" | "session.cancel_run" | "session.history" | "session.config" | "catalog.list" | "catalog.refresh" | "auth.list" | "auth.set_api_key" | "auth.login" | "auth.cancel_login" | "auth.remove" | "skill.list";
+export type MethodName = "initialize" | "session.list" | "session.create" | "session.patch" | "session.remove" | "session.fork" | "session.compact" | "session.rewind" | "session.send_input" | "session.cancel_input" | "session.cancel_run" | "session.history" | "session.config" | "catalog.list" | "catalog.refresh" | "auth.list" | "auth.set_api_key" | "auth.login" | "auth.cancel_login" | "auth.remove" | "interaction.respond" | "skill.list";
 
 export type NoticeLevel = "info" | "warn" | "error";
 
@@ -765,6 +798,10 @@ export type ActivityState = { readonly type: "idle" } | ({ readonly type: "build
 
 export type Input = ({ readonly type: "content" } & InputContent) | ({ readonly type: "skill" } & InputSkill);
 
+export type InteractionRequest = ({ readonly type: "confirm" } & InteractionConfirm) | ({ readonly type: "select" } & InteractionSelect) | ({ readonly type: "input" } & InteractionInput);
+
+export type InteractionResponse = ({ readonly type: "confirm" } & InteractionConfirmed) | ({ readonly type: "select" } & InteractionValue) | ({ readonly type: "input" } & InteractionValue) | { readonly type: "canceled" };
+
 export type AssistantPart = ({ readonly type: "text" } & TextPart) | ({ readonly type: "reasoning" } & ReasoningPart) | ({ readonly type: "redacted_reasoning" } & RedactedReasoningPart) | ({ readonly type: "tool" } & ToolPart);
 
 export type Message = ({ readonly type: "user" } & UserMessage) | ({ readonly type: "assistant" } & AssistantMessage) | ({ readonly type: "compaction" } & CompactionMessage);
@@ -783,11 +820,11 @@ export type ToolState = { readonly type: "pending" } | ({ readonly type: "runnin
 
 export type View = ({ readonly type: "text" } & ViewText) | ({ readonly type: "markdown" } & ViewMarkdown) | ({ readonly type: "json" } & ViewJson) | ({ readonly type: "diff" } & ViewDiff) | ({ readonly type: "image" } & ViewImage);
 
-export type RequestParams = SessionListParams | CreateSession | SessionPatchParams | SessionRemoveParams | SessionForkParams | SessionCompactParams | SessionRewindParams | SessionSendInputParams | SessionCancelInputParams | SessionCancelRunParams | SessionHistoryParams | SessionConfigParams | CatalogListParams | Empty | AuthSetApiKeyParams | AuthLoginParams | AuthCancelLoginParams | AuthRemoveParams;
+export type RequestParams = SessionListParams | CreateSession | SessionPatchParams | SessionRemoveParams | SessionForkParams | SessionCompactParams | SessionRewindParams | SessionSendInputParams | SessionCancelInputParams | SessionCancelRunParams | SessionHistoryParams | SessionConfigParams | CatalogListParams | Empty | AuthSetApiKeyParams | AuthLoginParams | AuthCancelLoginParams | AuthRemoveParams | InteractionRespondParams;
 
 export type ResponseResult = InitializeResult | SessionListResult | SessionResult | Empty | SessionCompactResult | SessionSendInputResult | SessionCancelInputResult | SessionCancelRunResult | SessionHistoryResult | SessionConfigResult | CatalogListResult | CatalogRefreshResult | AuthListResult | AuthLoginResult;
 
-export type BroadcastData = SessionSummaryChangedData | SessionActivityChangedData | SessionRemovedData | CatalogChangedData | AuthLoginFinishedData | AuthChangedData | Notice | MessageCommittedData | RunStartedData | RunDoneData | ConfigChangedData | TranscriptTruncatedData | MessageStartedData | MessageDiscardedData | MessagePartAddedData | MessagePartDeltaData | MessagePartFinalizedData | ToolStateChangedData | ToolOutputDeltaData | InputQueuedData | InputCanceledData;
+export type BroadcastData = SessionSummaryChangedData | SessionActivityChangedData | SessionRemovedData | CatalogChangedData | AuthLoginFinishedData | AuthChangedData | Notice | MessageCommittedData | RunStartedData | RunDoneData | ConfigChangedData | TranscriptTruncatedData | MessageStartedData | MessageDiscardedData | MessagePartAddedData | MessagePartDeltaData | MessagePartFinalizedData | ToolStateChangedData | ToolOutputDeltaData | InputQueuedData | InputCanceledData | InteractionRequestedData;
 
 export type Response = ResponseOk | ResponseError;
 
@@ -820,5 +857,7 @@ export type Seq = number;
 export type SessionRevision = number;
 
 export type ConfigRev = number;
+
+export type InteractionId = number;
 
 }

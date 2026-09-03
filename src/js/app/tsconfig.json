@@ -20,6 +20,7 @@
       "yuke:tui": ["./tui.js"],
       "yuke:core": ["./core.js"],
       "yuke:ext": ["./ext.js"],
+      "yuke:interaction": ["./interaction.js"],
       "yuke:md": ["./md.js"],
       "yuke:ui": ["./ui.js"],
       "yuke:client": ["./client.js"],

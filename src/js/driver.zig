@@ -17,9 +17,11 @@ const frame_buf_bytes = 256 * 1024;
 pub const boot =
     \\import { plugins } from "yuke:ext";
     \\import { tuiPlugin } from "yuke:tui";
+    \\import { tuiInteractionPlugin } from "yuke:interaction-ui";
     \\import "yuke:core";
     \\import "yuke:defaults";
     \\plugins.use(tuiPlugin);
+    \\plugins.use(tuiInteractionPlugin);
 ;
 
 /// The largest run of messages one frame absorbs, so steady input never starves the screen.

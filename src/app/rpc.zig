@@ -5,13 +5,48 @@ const proto = @import("proto");
 const app = @import("app.zig");
 const call = @import("call.zig");
 const extensions_mod = @import("../js/extensions.zig");
+const interactions_mod = @import("../js/interactions.zig");
 const owner = @import("../js/owner.zig");
 const zio = @import("zio");
 
 const App = app.App;
 
+const InteractionFailure = error{ Unknown, ResponseMismatch, InvalidSelection, Internal };
+
+/// The interaction table, type-erased. A direct call would pull the JavaScript host into this module.
+const InteractionPort = struct {
+    ctx: *anyopaque,
+    take_next: *const fn (*anyopaque) ?proto.interaction.InteractionRequestedData,
+    respond: *const fn (*anyopaque, proto.interaction.InteractionRespondParams) InteractionFailure!void,
+};
+
+/// Answer the port for one live table. Only a module that owns the host calls this.
+pub fn interactionPort(table: *interactions_mod.Table) InteractionPort {
+    const adapter = struct {
+        fn takeNext(ctx: *anyopaque) ?proto.interaction.InteractionRequestedData {
+            const held: *interactions_mod.Table = @ptrCast(@alignCast(ctx));
+            return held.takeNext();
+        }
+
+        fn respond(ctx: *anyopaque, params: proto.interaction.InteractionRespondParams) InteractionFailure!void {
+            const held: *interactions_mod.Table = @ptrCast(@alignCast(ctx));
+            held.respond(params) catch |err| return switch (err) {
+                error.Unknown => error.Unknown,
+                error.ResponseMismatch => error.ResponseMismatch,
+                error.InvalidSelection => error.InvalidSelection,
+                else => error.Internal,
+            };
+        }
+    };
+    return .{ .ctx = @ptrCast(table), .take_next = adapter.takeNext, .respond = adapter.respond };
+}
+
 /// Boot the frontend-neutral modules for a headless JSONL process.
-pub const boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";
+pub const boot =
+    \\import { plugins } from "yuke:ext";
+    \\import { rpcInteractionPlugin } from "yuke:interaction";
+    \\plugins.use(rpcInteractionPlugin);
+;
 
 /// The stdout buffer. One event holds a whole message, so the buffer suits the largest of them.
 const out_buffer_bytes: usize = 1 << 16;
@@ -42,7 +77,7 @@ const OwnedNotification = struct {
 };
 
 /// A bounded FIFO for notifications from engine sinks.
-const NotificationQueue = struct {
+pub const NotificationQueue = struct {
     items: [queue_slots]?*OwnedNotification = .{null} ** queue_slots,
     head: usize = 0,
     len: usize = 0,
@@ -71,12 +106,13 @@ const NotificationQueue = struct {
 };
 
 /// One transport. The engine sink queues values, and the owner writes them.
-const Rpc = struct {
+pub const Rpc = struct {
     app: *App,
     out: *std.Io.Writer,
     gpa: std.mem.Allocator,
     notifications: *NotificationQueue,
     wake: *zio.ResetEvent,
+    interactions: ?InteractionPort = null,
     fatal: bool = false,
     /// Set while a line goes out. Two writers would interleave one line inside another.
     writing: bool = false,
@@ -107,7 +143,7 @@ const Rpc = struct {
     }
 
     /// Write every notification queued before this owner turn.
-    fn flushNotifications(self: *Rpc) void {
+    pub fn flushNotifications(self: *Rpc) void {
         while (self.notifications.len > 0) {
             // Remove the pointer before writeValue can yield and let a sink append again.
             const owned = self.notifications.pop() orelse unreachable;
@@ -115,6 +151,18 @@ const Rpc = struct {
             self.writeValue(owned.value) catch |err| {
                 std.log.warn("rpc: cannot write {t}: {t}", .{ owned.value.method, err });
                 self.fail("stdout failed while writing a notification");
+                return;
+            };
+        }
+        const port = self.interactions orelse return;
+        // `take_next` marks the question sent before the write. A failed write is fatal, so no answer is lost.
+        while (port.take_next(port.ctx)) |request| {
+            self.writeValue(proto.rpc.Notification{
+                .method = .@"interaction.requested",
+                .params = .{ .interaction_requested_data = request },
+            }) catch |err| {
+                std.log.warn("rpc: cannot write interaction {d}: {t}", .{ request.interaction_id, err });
+                self.fail("stdout failed while writing an interaction");
                 return;
             };
         }
@@ -186,6 +234,7 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         .gpa = gpa,
         .notifications = &notifications,
         .wake = &extensions.wake,
+        .interactions = interactionPort(&extensions.host.interactions),
     };
     application.engine.sinks.add(.{ .ctx = @ptrCast(&rpc), .on_event = Rpc.onEvent });
     defer {
@@ -287,7 +336,7 @@ fn drainRequests(gpa: std.mem.Allocator, requests: *zio.Channel(Request)) void {
 }
 
 /// Free every notification the owner never wrote. Call this after removing the sink.
-fn drainNotifications(gpa: std.mem.Allocator, notifications: *NotificationQueue) void {
+pub fn drainNotifications(gpa: std.mem.Allocator, notifications: *NotificationQueue) void {
     while (notifications.pop()) |owned| {
         owned.destroy(gpa);
     }
@@ -305,7 +354,7 @@ fn absorbOwnerPump(extensions: *extensions_mod.Extensions) void {
 }
 
 /// Serve one request line and suppress the response for notifications.
-fn serve(gpa: std.mem.Allocator, rpc: *Rpc, line: []const u8) void {
+pub fn serve(gpa: std.mem.Allocator, rpc: *Rpc, line: []const u8) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -314,6 +363,11 @@ fn serve(gpa: std.mem.Allocator, rpc: *Rpc, line: []const u8) void {
         rpc.writeFailure("", .bad_request, "the line is not a request object") catch |err| rpc.failWrite(err);
         return;
     };
+
+    if (std.mem.eql(u8, request.method, "interaction.respond")) {
+        serveInteraction(arena, rpc, request);
+        return;
+    }
 
     var body: std.Io.Writer.Allocating = .init(arena);
     const failure = call.call(rpc.app, arena, request.method, request.params, &body.writer) catch |err| {
@@ -334,6 +388,36 @@ fn serve(gpa: std.mem.Allocator, rpc: *Rpc, line: []const u8) void {
     if (request.id) |id| {
         rpc.writeResult(id, body.written()) catch |err| rpc.failWrite(err);
     }
+}
+
+fn serveInteraction(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
+    const port = rpc.interactions orelse {
+        if (request.id) |id| rpc.writeFailure(id, .internal, "interaction is unavailable") catch |err| rpc.failWrite(err);
+        return;
+    };
+    const params = std.json.parseFromSliceLeaky(
+        proto.interaction.InteractionRespondParams,
+        arena,
+        request.params,
+        .{ .ignore_unknown_fields = true },
+    ) catch {
+        rpc.flushNotifications();
+        if (request.id) |id| rpc.writeFailure(id, .bad_request, "bad interaction response") catch |err| rpc.failWrite(err);
+        return;
+    };
+    port.respond(port.ctx, params) catch |err| {
+        const failure: struct { code: proto.enums.ErrorCode, message: []const u8 } = switch (err) {
+            error.Unknown => .{ .code = .unknown_interaction, .message = "unknown interaction" },
+            error.ResponseMismatch => .{ .code = .bad_request, .message = "the interaction response has the wrong type" },
+            error.InvalidSelection => .{ .code = .bad_request, .message = "the interaction selected an unknown option" },
+            error.Internal => .{ .code = .internal, .message = "the interaction response failed" },
+        };
+        rpc.flushNotifications();
+        if (request.id) |id| rpc.writeFailure(id, failure.code, failure.message) catch |write_err| rpc.failWrite(write_err);
+        return;
+    };
+    rpc.flushNotifications();
+    if (request.id) |id| rpc.writeResult(id, "{}") catch |err| rpc.failWrite(err);
 }
 
 /// One decoded request line. Every field borrows the request arena.

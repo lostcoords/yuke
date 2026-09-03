@@ -19,6 +19,8 @@ pub const BroadcastName = enum {
     @"auth.changed",
     /// The engine sent an out-of-band notice.
     notice,
+    /// An extension asks the connected frontend to interact with the user.
+    @"interaction.requested",
     /// The engine committed a message to a session transcript.
     @"message.committed",
     /// A run started.
@@ -107,6 +109,8 @@ pub const MethodName = enum {
     @"auth.cancel_login",
     /// Remove the credential the engine holds for a provider.
     @"auth.remove",
+    /// Answer one pending extension interaction.
+    @"interaction.respond",
     /// Describe one filesystem path.
     /// List the skills this session can invoke.
     @"skill.list",
@@ -173,6 +177,7 @@ pub const ErrorCode = enum(i32) {
     unsupported_reasoning = -31020,
     not_implemented = -31022,
     unknown_provider = -31023,
+    unknown_interaction = -31024,
     internal = -32603,
     overloaded = -31021,
 

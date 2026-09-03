@@ -7,6 +7,7 @@ const content = @import("content.zig");
 const enums = @import("enums.zig");
 const initialize = @import("initialize.zig");
 const input = @import("input.zig");
+const interaction = @import("interaction.zig");
 const skill = @import("skill.zig");
 const message = @import("message.zig");
 const misc = @import("misc.zig");
@@ -61,6 +62,13 @@ pub const structs = [_]TypeEntry{
     .{ .name = "InputCanceledData", .ty = input.InputCanceledData },
     .{ .name = "InputContent", .ty = input.InputContent },
     .{ .name = "InputQueuedData", .ty = input.InputQueuedData },
+    .{ .name = "InteractionRequestedData", .ty = interaction.InteractionRequestedData },
+    .{ .name = "InteractionConfirm", .ty = interaction.InteractionConfirm },
+    .{ .name = "InteractionSelect", .ty = interaction.InteractionSelect },
+    .{ .name = "InteractionInput", .ty = interaction.InteractionInput },
+    .{ .name = "InteractionRespondParams", .ty = interaction.InteractionRespondParams },
+    .{ .name = "InteractionConfirmed", .ty = interaction.InteractionConfirmed },
+    .{ .name = "InteractionValue", .ty = interaction.InteractionValue },
     .{ .name = "InputSkill", .ty = input.InputSkill },
     .{ .name = "SkillInfo", .ty = skill.SkillInfo },
     .{ .name = "SkillRef", .ty = skill.SkillRef },
@@ -159,6 +167,8 @@ pub const tagged_unions = [_]TypeEntry{
     .{ .name = "CatalogListResult", .ty = catalog.CatalogListResult },
     .{ .name = "ActivityState", .ty = activity.ActivityState },
     .{ .name = "Input", .ty = input.Input },
+    .{ .name = "InteractionRequest", .ty = interaction.InteractionRequest },
+    .{ .name = "InteractionResponse", .ty = interaction.InteractionResponse },
     .{ .name = "AssistantPart", .ty = message.AssistantPart },
     .{ .name = "Message", .ty = message.Message },
     .{ .name = "PartFinal", .ty = message.PartFinal },
@@ -233,4 +243,5 @@ pub const aliases = [_]AliasEntry{
     .{ .name = "Seq", .base = "u64" },
     .{ .name = "SessionRevision", .base = "u64" },
     .{ .name = "ConfigRev", .base = "u64" },
+    .{ .name = "InteractionId", .base = "u64" },
 };

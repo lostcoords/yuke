@@ -1618,7 +1618,7 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\root.onEvent(key("char", "y"));
         \\check("yank-visual", copied === "alp" && v.transcript.selection === null);
         \\
-        \\// "y" alone waits for a second "y", the way vim waits for a motion.
+        \\// "y" alone waits for a second "y", because a motion can follow it.
         \\copied = null;
         \\root.onEvent(key("char", "y"));
         \\check("yank-pending", copied === null);
@@ -2379,7 +2379,7 @@ test "yuke:ui Composer grows, pastes in one edit, and owns the vertical keys" {
         \\s.text = "a\nb\nc";
         \\check("set-text-rewrapped", s.height(12) === 3);
         \\
-        \\// A vertical move holds the goal column across a short row, as vim and helix do.
+        \\// A vertical move holds the goal column across a short row.
         \\const goal = new Composer();
         \\goal.rect = { x: 0, y: 0, w: 12, h: 4 };
         \\goal.text = "12345\nx\n12345";
@@ -2634,7 +2634,7 @@ test "yuke:defaults boots the shell, seeds the session feed, and wires commands"
         \\if (!plugins.get("explorer")) fail.push("explorer-plugin");
         \\
         \\
-        \\// The status bar reports a pending key, the way vim reports one with showcmd.
+        \\// The status bar reports a pending key.
         \\{
         \\  root.focusView(chat.view);
         \\  // A `g` prefix only arms outside the composer, so the transcript takes the focus first.
@@ -2709,7 +2709,7 @@ test "yuke:defaults boots the shell, seeds the session feed, and wires commands"
         \\  if (chats.size !== empty) fail.push("failed-split-keeps-no-orphan");
         \\  root.setRoot(saved);
         \\}
-        \\// The shell's own plugin owns the showcmd reading, so an unload takes it away.
+        \\// The shell's own plugin owns the pending-key reading, so an unload takes it away.
         \\{
         \\  root.focusView(chat.view);
         \\  // A test-owned prefix outlives the shell's bindings, so the pending stroke survives disposal.
@@ -5729,4 +5729,122 @@ test "a listener fault reaches the shared error bus" {
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "bus-fault.js");
     try expectJs(host, "ok");
+}
+
+test "RPC interaction answers correlated promises out of order" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\import { rpcInteractionPlugin } from "yuke:interaction";
+        \\plugins.use(rpcInteractionPlugin);
+        \\globalThis.result = "pending";
+        \\plugins.use({ name: "ask", apply(ctx) {
+        \\  ctx.inject(["interaction"], (ctx) => {
+        \\    const a = ctx.interaction.confirm("first", "one");
+        \\    const b = ctx.interaction.select("second", ["red", "blue"]);
+        \\    Promise.all([a, b]).then((answers) => { globalThis.result = JSON.stringify(answers); });
+        \\  });
+        \\} });
+    , "interaction.js");
+
+    // The host refuses an answer to a question the frontend has not seen.
+    try std.testing.expectError(error.Unknown, host.interactions.respond(.{
+        .interaction_id = 1,
+        .response = .{ .confirm = .{ .value = true } },
+    }));
+    const first = host.interactions.takeNext().?;
+    try std.testing.expectEqualStrings("first", first.request.confirm.title);
+    const second = host.interactions.takeNext().?;
+    try std.testing.expectEqualStrings("second", second.request.select.title);
+    try std.testing.expect(host.interactions.takeNext() == null);
+
+    try std.testing.expectError(error.InvalidSelection, host.interactions.respond(.{
+        .interaction_id = second.interaction_id,
+        .response = .{ .select = .{ .value = "green" } },
+    }));
+    try std.testing.expectError(error.ResponseMismatch, host.interactions.respond(.{
+        .interaction_id = second.interaction_id,
+        .response = .{ .input = .{ .value = "blue" } },
+    }));
+    try host.interactions.respond(.{
+        .interaction_id = second.interaction_id,
+        .response = .{ .select = .{ .value = "blue" } },
+    });
+    try host.interactions.respond(.{
+        .interaction_id = first.interaction_id,
+        .response = .{ .confirm = .{ .value = true } },
+    });
+    try owner.pump(host);
+    try expectJs(host, "[true,\"blue\"]");
+}
+
+test "disposing an interaction consumer cancels only its pending dialog" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\import { rpcInteractionPlugin } from "yuke:interaction";
+        \\plugins.use(rpcInteractionPlugin);
+        \\globalThis.result = "pending";
+        \\plugins.use({ name: "ask", apply(ctx) {
+        \\  ctx.inject(["interaction"], (ctx) => {
+        \\    ctx.interaction.input("value").then((answer) => {
+        \\      globalThis.result = answer === undefined ? "canceled" : answer;
+        \\    });
+        \\  });
+        \\} });
+    , "interaction-cancel.js");
+    const interaction_id = host.interactions.takeNext().?.interaction_id;
+
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\plugins.dispose("ask");
+    , "interaction-dispose.js");
+    try owner.pump(host);
+    try expectJs(host, "canceled");
+    try std.testing.expectError(error.Unknown, host.interactions.respond(.{
+        .interaction_id = interaction_id,
+        .response = .{ .input = .{ .value = "late" } },
+    }));
+}
+
+test "the TUI interaction provider answers select and input dialogs" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var paint: Paint = undefined;
+    try paint.setup(gpa.allocator(), 12, 50);
+    defer paint.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    paint.bind(host);
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\import { tuiPlugin } from "yuke:tui";
+        \\import { tuiInteractionPlugin } from "yuke:interaction-ui";
+        \\plugins.use(tuiPlugin);
+        \\plugins.use(tuiInteractionPlugin);
+        \\globalThis.result = "pending";
+        \\plugins.use({ name: "ask", apply(ctx) {
+        \\  ctx.inject(["interaction"], async (ctx) => {
+        \\    const selected = await ctx.interaction.select("pick", ["alpha", "beta"]);
+        \\    const entered = await ctx.interaction.input("name", "value");
+        \\    globalThis.result = selected + ":" + entered;
+        \\  });
+        \\} });
+    , "interaction-tui.js");
+
+    const loop = @import("loop.zig");
+    try loop.start(host);
+    try loop.step(host, .{ .key_press = .{ .codepoint = '\r' } });
+    try loop.step(host, .{ .key_press = .{ .codepoint = 'x' } });
+    try loop.step(host, .{ .key_press = .{ .codepoint = '\r' } });
+    try expectJs(host, "alpha:x");
 }

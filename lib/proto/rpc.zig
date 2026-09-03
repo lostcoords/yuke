@@ -6,6 +6,7 @@ const catalog = @import("catalog.zig");
 const enums = @import("enums.zig");
 const ids = @import("ids.zig");
 const input = @import("input.zig");
+const interaction = @import("interaction.zig");
 const message = @import("message.zig");
 const misc = @import("misc.zig");
 const run = @import("run.zig");
@@ -38,6 +39,7 @@ pub const RequestParams = union(enum) {
     auth_login_params: auth.AuthLoginParams,
     auth_cancel_login_params: auth.AuthCancelLoginParams,
     auth_remove_params: auth.AuthRemoveParams,
+    interaction_respond_params: interaction.InteractionRespondParams,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         try stringifyPayload(self, jw);
@@ -89,6 +91,7 @@ pub const BroadcastData = union(enum) {
     tool_output_delta_data: message.ToolOutputDeltaData,
     input_queued_data: input.InputQueuedData,
     input_canceled_data: input.InputCanceledData,
+    interaction_requested_data: interaction.InteractionRequestedData,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         try stringifyPayload(self, jw);
@@ -125,6 +128,7 @@ pub const methods = [_]MethodSpec{
     .{ .name = .@"auth.login", .params = auth.AuthLoginParams, .result = auth.AuthLoginResult, .params_optional = false },
     .{ .name = .@"auth.cancel_login", .params = auth.AuthCancelLoginParams, .result = misc.Empty, .params_optional = false },
     .{ .name = .@"auth.remove", .params = auth.AuthRemoveParams, .result = misc.Empty, .params_optional = false },
+    .{ .name = .@"interaction.respond", .params = interaction.InteractionRespondParams, .result = misc.Empty, .params_optional = false },
 };
 
 /// Maps a broadcast name to its data type.
@@ -156,6 +160,7 @@ pub const broadcasts = [_]BroadcastSpec{
     .{ .name = .@"tool.output_delta", .data = message.ToolOutputDeltaData },
     .{ .name = .@"input.queued", .data = input.InputQueuedData },
     .{ .name = .@"input.canceled", .data = input.InputCanceledData },
+    .{ .name = .@"interaction.requested", .data = interaction.InteractionRequestedData },
 };
 
 fn decodeFromTable(

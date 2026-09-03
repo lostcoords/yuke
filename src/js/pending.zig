@@ -23,7 +23,9 @@ pub const Result = union(enum) {
     /// A structured answer, as the JSON text the owner parses. QuickJS reads it to the sentinel.
     json: [:0]u8,
     int: i64,
+    boolean: bool,
     nothing,
+    undefined,
     failed: []const u8,
 };
 
@@ -160,7 +162,9 @@ pub const Ops = struct {
             // A task builds this text, so a parse failure is our bug, not the caller's input.
             .json => |bytes| ctx.parseJSON(bytes, "yuke:primitive"),
             .int => |n| ctx.newInt64(n),
+            .boolean => |value| ctx.newBool(value),
             .nothing => quickjs.NULL,
+            .undefined => quickjs.UNDEFINED,
             .failed => |message| errorWith(ctx, message) orelse quickjs.UNDEFINED,
         };
         // A failed conversion is itself an exception value, which must never be handed to a

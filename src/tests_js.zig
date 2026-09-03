@@ -3,4 +3,5 @@
 test {
     _ = @import("js/host.zig");
     _ = @import("js/extensions.zig");
+    _ = @import("app/rpc_js_test.zig");
 }

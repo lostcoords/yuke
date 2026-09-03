@@ -1,0 +1,191 @@
+//! Pending frontend questions owned by one QuickJS host.
+
+const std = @import("std");
+const quickjs = @import("quickjs");
+const proto = @import("proto");
+const pending = @import("pending.zig");
+const zio = @import("zio");
+
+const Context = quickjs.Context;
+const Value = quickjs.Value;
+
+/// The admission cap on the questions that wait for an answer.
+pub const max_pending: usize = 32;
+pub const max_options: usize = 64;
+pub const max_text_bytes: usize = 64 * 1024;
+pub const max_safe_id: u64 = (1 << 53) - 1;
+
+pub const Error = error{
+    Unavailable,
+    Duplicate,
+    Full,
+    InvalidRequest,
+    Unknown,
+    ResponseMismatch,
+    InvalidSelection,
+    OutOfMemory,
+};
+
+/// One question. The arena owns every slice `value` holds.
+pub const Request = struct {
+    arena: std.heap.ArenaAllocator,
+    id: proto.ids.InteractionId,
+    value: proto.interaction.InteractionRequest,
+    op: *pending.Op,
+    sent: bool = false,
+};
+
+/// The questions this host waits on, oldest first.
+pub const Table = struct {
+    gpa: std.mem.Allocator,
+    live: std.ArrayList(*Request) = .empty,
+    accepting: bool = true,
+
+    pub fn deinit(self: *Table) void {
+        for (self.live.items) |request| self.destroy(request);
+        self.live.deinit(self.gpa);
+        self.* = undefined;
+    }
+
+    /// Stop new work and cancel every question before the JavaScript context closes.
+    pub fn close(self: *Table) void {
+        std.debug.assert(self.accepting);
+        self.accepting = false;
+        for (self.live.items) |request| {
+            request.op.finish(.undefined);
+            self.destroy(request);
+        }
+        self.live.clearRetainingCapacity();
+    }
+
+    /// Queue one question and return the Promise that its correlated answer settles.
+    pub fn start(
+        self: *Table,
+        ops: *pending.Ops,
+        ctx: Context,
+        wake: ?*zio.ResetEvent,
+        id: proto.ids.InteractionId,
+        json: []const u8,
+    ) Error!Value {
+        if (!self.accepting) return error.Unavailable;
+        if (id == 0 or id > max_safe_id) return error.InvalidRequest;
+        if (self.indexOf(id) != null) return error.Duplicate;
+        if (self.live.items.len == max_pending) return error.Full;
+
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        errdefer arena.deinit();
+        const value = std.json.parseFromSliceLeaky(
+            proto.interaction.InteractionRequest,
+            arena.allocator(),
+            json,
+            .{},
+        ) catch return error.InvalidRequest;
+        try validate(value);
+
+        const request = self.gpa.create(Request) catch return error.OutOfMemory;
+        errdefer self.gpa.destroy(request);
+        self.live.append(self.gpa, request) catch return error.OutOfMemory;
+        errdefer _ = self.live.pop();
+
+        const started = ops.start(ctx, wake) catch return error.OutOfMemory;
+        request.* = .{ .arena = arena, .id = id, .value = value, .op = started.op };
+        return started.promise;
+    }
+
+    /// Answer the oldest question the frontend has not seen and mark it sent.
+    pub fn takeNext(self: *Table) ?proto.interaction.InteractionRequestedData {
+        for (self.live.items) |request| {
+            if (request.sent) continue;
+            request.sent = true;
+            return .{ .interaction_id = request.id, .request = request.value };
+        }
+        return null;
+    }
+
+    /// Settle one question. Bad peer input leaves the original question pending.
+    pub fn respond(self: *Table, params: proto.interaction.InteractionRespondParams) Error!void {
+        const index = self.indexOf(params.interaction_id) orelse return error.Unknown;
+        const request = self.live.items[index];
+        if (!request.sent) return error.Unknown;
+        const result = try self.resultFor(request, params.response);
+        _ = self.live.orderedRemove(index);
+        request.op.finish(result);
+        self.destroy(request);
+    }
+
+    /// Cancel one consumer-owned question. A late frontend answer becomes unknown.
+    pub fn cancel(self: *Table, id: proto.ids.InteractionId) bool {
+        const index = self.indexOf(id) orelse return false;
+        const request = self.live.orderedRemove(index);
+        request.op.finish(.undefined);
+        self.destroy(request);
+        return true;
+    }
+
+    fn resultFor(self: *Table, request: *const Request, response: proto.interaction.InteractionResponse) Error!pending.Result {
+        if (!matches(request.value, response)) return error.ResponseMismatch;
+        return switch (response) {
+            .canceled => .undefined,
+            .confirm => |answer| .{ .boolean = answer.value },
+            .select => |answer| blk: {
+                for (request.value.select.options) |option| {
+                    if (std.mem.eql(u8, option, answer.value))
+                        break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch return error.OutOfMemory };
+                }
+                return error.InvalidSelection;
+            },
+            .input => |answer| blk: {
+                try validateText(answer.value, true);
+                break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch return error.OutOfMemory };
+            },
+        };
+    }
+
+    fn destroy(self: *Table, request: *Request) void {
+        request.arena.deinit();
+        self.gpa.destroy(request);
+    }
+
+    fn indexOf(self: *const Table, id: proto.ids.InteractionId) ?usize {
+        for (self.live.items, 0..) |request, i| if (request.id == id) return i;
+        return null;
+    }
+};
+
+/// Report whether the answer arm pairs with the question arm.
+fn matches(request: proto.interaction.InteractionRequest, response: proto.interaction.InteractionResponse) bool {
+    return switch (response) {
+        .canceled => true,
+        .confirm => request == .confirm,
+        .select => request == .select,
+        .input => request == .input,
+    };
+}
+
+fn validate(request: proto.interaction.InteractionRequest) Error!void {
+    switch (request) {
+        .confirm => |value| {
+            try validateText(value.title, false);
+            try validateText(value.message, true);
+        },
+        .select => |value| {
+            try validateText(value.title, false);
+            if (value.options.len == 0 or value.options.len > max_options) return error.InvalidRequest;
+            for (value.options, 0..) |option, i| {
+                try validateText(option, false);
+                for (value.options[0..i]) |previous| {
+                    if (std.mem.eql(u8, option, previous)) return error.InvalidRequest;
+                }
+            }
+        },
+        .input => |value| {
+            try validateText(value.title, false);
+            if (value.placeholder) |placeholder| try validateText(placeholder, true);
+        },
+    }
+}
+
+fn validateText(text: []const u8, empty: bool) Error!void {
+    if ((!empty and text.len == 0) or text.len > max_text_bytes or !std.unicode.utf8ValidateSlice(text))
+        return error.InvalidRequest;
+}

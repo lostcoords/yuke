@@ -67,6 +67,8 @@ pub const Seq = u64;
 pub const SessionRevision = u64;
 /// This numeric value identifies a run configuration revision.
 pub const ConfigRev = u64;
+/// This numeric ID correlates a frontend interaction with its answer.
+pub const InteractionId = u64;
 
 // String IDs use plain slices.
 /// This string identifies a provider.

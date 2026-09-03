@@ -10,7 +10,9 @@ const fs_module = @import("native/fs.zig");
 const exec_module = @import("native/exec.zig");
 const diff_module = @import("native/diff.zig");
 const tools_module = @import("native/tools.zig");
+const interaction_module = @import("native/interaction.zig");
 const tools_table = @import("tools.zig");
+const interactions_table = @import("interactions.zig");
 const tool_run = @import("tool_run.zig");
 const pending = @import("pending.zig");
 
@@ -39,6 +41,7 @@ const shared_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:kernel", .source = @embedFile("app/kernel.js") },
     .{ .name = "yuke:builtins", .source = @embedFile("app/builtins.js") },
     .{ .name = "yuke:ext", .source = @embedFile("app/ext.js") },
+    .{ .name = "yuke:interaction", .source = @embedFile("app/interaction.js") },
 };
 
 /// The modules a headless frontend can load. The loader refuses every view module.
@@ -63,6 +66,7 @@ pub const default_baked = shared_baked ++ [_]loader_mod.BakedModule{
     .{ .name = "yuke:composer-vim", .source = @embedFile("app/composer-vim.js") },
     .{ .name = "yuke:transcript-vim", .source = @embedFile("app/transcript-vim.js") },
     .{ .name = "yuke:defaults", .source = @embedFile("app/defaults.js") },
+    .{ .name = "yuke:interaction-ui", .source = @embedFile("app/interaction-ui.js") },
 };
 
 pub const Options = struct {
@@ -123,6 +127,8 @@ pub const Host = struct {
     tools: tools_table.Tools,
     /// Every tool call a turn task waits on. The owner answers them in `pump`.
     calls: tools_table.Calls,
+    /// Every headless interaction that waits for a correlated frontend answer.
+    interactions: interactions_table.Table,
     /// The owner wake event. Tasks set it after work reaches the owner queue.
     owner_wake: ?*zio.ResetEvent = null,
     /// The tasks running those calls. `close` cancels them before the context dies.
@@ -182,6 +188,7 @@ pub const Host = struct {
             .ops = .{ .gpa = gpa },
             .tools = .{ .gpa = gpa },
             .calls = .{ .gpa = gpa },
+            .interactions = .{ .gpa = gpa },
         };
         errdefer self.paint.glyphs.deinit();
         runtime.setRuntimeOpaque(self);
@@ -195,6 +202,7 @@ pub const Host = struct {
         try exec_module.install(self);
         try diff_module.install(self);
         try tools_module.install(self);
+        try interaction_module.install(self);
         return self;
     }
 
@@ -250,6 +258,7 @@ pub const Host = struct {
         self.finishDrain();
         std.debug.assert(self.phase == .drained);
         self.ops.deinit(self.ctx);
+        self.interactions.deinit();
         self.calls.deinit(self.ctx);
         self.tools.deinit(self.ctx);
         self.engine.destroy();
@@ -274,6 +283,11 @@ pub const Host = struct {
         // `Group.cancel` cancels and joins, so every task has returned once this line does. That
         // is what lets `Ops.deinit` free the ops a task held a pointer to.
         self.tasks.cancel(self.io);
+        self.interactions.close();
+        if (self.ops.settle(self.ctx)) {
+            self.dropPendingException();
+            return error.JavaScriptFault;
+        }
         var rounds: u32 = 0;
         while (self.runtime.isJobPending()) {
             try self.drainJobs();

@@ -190,6 +190,14 @@
       "result": "Empty",
       "direction": "clientToServer",
       "paramsOptional": false
+    },
+    {
+      "name": "interaction.respond",
+      "doc": "Answer one pending extension interaction.",
+      "params": "InteractionRespondParams",
+      "result": "Empty",
+      "direction": "clientToServer",
+      "paramsOptional": false
     }
   ],
   "broadcasts": [
@@ -317,6 +325,12 @@
       "name": "input.canceled",
       "doc": "The engine canceled a queued input.",
       "params": "InputCanceledData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "interaction.requested",
+      "doc": "An extension asks the connected frontend to interact with the user.",
+      "params": "InteractionRequestedData",
       "direction": "serverToClient"
     }
   ],
@@ -1018,6 +1032,103 @@
         {
           "name": "input",
           "type": "QueuedInput",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InteractionRequestedData",
+      "doc": "This payload asks the connected frontend to put one question to the user.",
+      "fields": [
+        {
+          "name": "interaction_id",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "request",
+          "type": "InteractionRequest",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InteractionConfirm",
+      "fields": [
+        {
+          "name": "title",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InteractionSelect",
+      "fields": [
+        {
+          "name": "title",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "options",
+          "type": "[]string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InteractionInput",
+      "fields": [
+        {
+          "name": "title",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "placeholder",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "InteractionRespondParams",
+      "doc": "These parameters answer one pending question.",
+      "fields": [
+        {
+          "name": "interaction_id",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "response",
+          "type": "InteractionResponse",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InteractionConfirmed",
+      "fields": [
+        {
+          "name": "value",
+          "type": "bool",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "InteractionValue",
+      "fields": [
+        {
+          "name": "value",
+          "type": "string",
           "presence": "required"
         }
       ]
@@ -2880,6 +2991,48 @@
       ]
     },
     {
+      "name": "InteractionRequest",
+      "doc": "This union carries one frontend-neutral question.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "confirm",
+          "type": "InteractionConfirm"
+        },
+        {
+          "tag": "select",
+          "type": "InteractionSelect"
+        },
+        {
+          "tag": "input",
+          "type": "InteractionInput"
+        }
+      ]
+    },
+    {
+      "name": "InteractionResponse",
+      "doc": "This union answers a question. Its arm matches the question, or the user canceled.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "confirm",
+          "type": "InteractionConfirmed"
+        },
+        {
+          "tag": "select",
+          "type": "InteractionValue"
+        },
+        {
+          "tag": "input",
+          "type": "InteractionValue"
+        },
+        {
+          "tag": "canceled",
+          "type": "Empty"
+        }
+      ]
+    },
+    {
       "name": "AssistantPart",
       "doc": "This type describes one element of an assistant message's content. Its fields borrow their data.",
       "discriminator": "type",
@@ -3128,6 +3281,9 @@
         },
         {
           "type": "AuthRemoveParams"
+        },
+        {
+          "type": "InteractionRespondParams"
         }
       ]
     },
@@ -3247,6 +3403,9 @@
         },
         {
           "type": "InputCanceledData"
+        },
+        {
+          "type": "InteractionRequestedData"
         }
       ]
     },
@@ -3317,6 +3476,11 @@
           "name": "notice",
           "wire": "notice",
           "doc": "The engine sent an out-of-band notice."
+        },
+        {
+          "name": "interaction.requested",
+          "wire": "interaction.requested",
+          "doc": "An extension asks the connected frontend to interact with the user."
         },
         {
           "name": "message.committed",
@@ -3478,6 +3642,10 @@
         {
           "name": "unknown_provider",
           "wire": "-31023"
+        },
+        {
+          "name": "unknown_interaction",
+          "wire": "-31024"
         },
         {
           "name": "internal",
@@ -3651,6 +3819,11 @@
           "name": "auth.remove",
           "wire": "auth.remove",
           "doc": "Remove the credential the engine holds for a provider."
+        },
+        {
+          "name": "interaction.respond",
+          "wire": "interaction.respond",
+          "doc": "Answer one pending extension interaction."
         },
         {
           "name": "skill.list",
@@ -3922,6 +4095,10 @@
     },
     {
       "name": "ConfigRev",
+      "base": "u64"
+    },
+    {
+      "name": "InteractionId",
       "base": "u64"
     }
   ]
