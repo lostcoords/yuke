@@ -14,6 +14,12 @@ declare module "yuke:engine-native" {
   /** One page of text. `next` is the offset to ask for, or null at the end. */
   export type TextPage = { text: string; next: number | null; bytes: number };
 
+  /** One value the projection cut: `field` is the address `partText` takes, `bytes` or `total` is the whole size, and `next` is where a reader resumes. */
+  export type ViewCut = { field: string; bytes?: number; total?: number; next?: number };
+
+  /** One part as the read surface returns it: the wire part plus every value the projection cut. */
+  export type ViewPart = Wire.AssistantPart & { cut?: readonly ViewCut[] };
+
   export const native: {
     /** Set or clear the default prompt for new sessions. Null clears it. */
     setDefaultSystemPrompt(prompt: string | null): void;
@@ -31,7 +37,7 @@ declare module "yuke:engine-native" {
     sessionParts(sessionId: string, messageId: number): string;
     /** One page of a message's whole text, as JSON `TextPage`. */
     sessionText(sessionId: string, messageId: number, offset: number, limit: number): string;
-    /** One page of a single part's text, as JSON `TextPage`. */
-    partText(sessionId: string, messageId: number, partId: number, offset: number, limit: number): string;
+    /** One page of one field of a part, as JSON `TextPage`. `field` is the address a `ViewCut` names. */
+    partText(sessionId: string, messageId: number, partId: number, field: string, offset: number, limit: number): string;
   };
 }

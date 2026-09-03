@@ -2,6 +2,9 @@
 import { native } from "yuke:engine-native";
 import { events } from "yuke:core";
 
+/** @typedef {import("yuke:engine-native").ViewPart} ViewPart */
+/** @typedef {import("yuke:engine-native").ViewCut} ViewCut */
+
 // This table maps a native event type to its core event name.
 /** @type {Record<string, string>} */
 const ENGINE_TO_CORE_EVENT = { session: "session.changed", index: "index.changed" };
@@ -77,20 +80,52 @@ function sessionText(sessionId, messageId, max = 0) {
   return sessionTextPage(sessionId, messageId, 0, max).text;
 }
 
-// The assistant parts of one message. A part carries bounded text plus its real `bytes`.
+// The assistant parts of one message. A cut field every row reads is completed here, and a large body stays paged.
 /** @param {string} sessionId @param {number} messageId @returns {Wire.AssistantPart[]} */
 function sessionParts(sessionId, messageId) {
-  return JSON.parse(native.sessionParts(sessionId, messageId));
+  const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionParts(sessionId, messageId)));
+  return parts.map((p) => {
+    if (!p || !p.cut) return p;
+    // The part already carries the prefix, so a tail resumes at `next` and nothing is read twice.
+    if (p.type === "text" || p.type === "reasoning") {
+      const cut = p.cut.find((c) => c.field === "text" && c.next != null);
+      if (!cut) return p;
+      const tail = partTextFrom(sessionId, messageId, p.id, "text", /** @type {number} */ (cut.next));
+      return { ...p, text: p.text + tail, cut: p.cut.filter((c) => c !== cut) };
+    }
+    // A row parses the arguments for its header, so a cut one must be whole. The body views stay paged.
+    if (p.type === "tool") {
+      const cut = p.cut.find((c) => c.field === "arguments" && c.next != null);
+      if (!cut) return p;
+      const tail = partTextFrom(sessionId, messageId, p.id, "arguments", /** @type {number} */ (cut.next));
+      return { ...p, arguments: p.arguments + tail, cut: p.cut.filter((c) => c !== cut) };
+    }
+    return p;
+  });
 }
 
-// One page of a single part's text, for a part whose inline text was cut.
+// The rest of one field from `offset`. Each page echoes the next byte offset back, so no caller counts bytes of its own.
+/** @param {string} sessionId @param {number} messageId @param {number} partId @param {string} field @param {number} offset @returns {string} */
+function partTextFrom(sessionId, messageId, partId, field, offset) {
+  let text = "";
+  /** @type {number | null} */
+  let at = offset;
+  while (at != null) {
+    const page = partTextPage(sessionId, messageId, partId, field, at, 0);
+    text += page.text;
+    at = page.next;
+  }
+  return text;
+}
+
+// One page of one field of a part. `field` is the address a `cut` entry names, passed back unchanged.
 /**
- * @param {string} sessionId @param {number} messageId @param {number} partId
+ * @param {string} sessionId @param {number} messageId @param {number} partId @param {string} field
  * @param {number} [offset] @param {number} [limit]
  * @returns {{ text: string, next: number | null }}
  */
-function partTextPage(sessionId, messageId, partId, offset = 0, limit = 0) {
-  return JSON.parse(native.partText(sessionId, messageId, partId, offset, limit));
+function partTextPage(sessionId, messageId, partId, field, offset = 0, limit = 0) {
+  return JSON.parse(native.partText(sessionId, messageId, partId, field, offset, limit));
 }
 
 /** @param {string} id @param {string} text @returns {Promise<Wire.SessionSendInputResult>} */
