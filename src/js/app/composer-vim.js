@@ -1,6 +1,5 @@
 // yuke:composer-vim — opt-in modal keys for the chat composer.
 import {
-  command,
   root,
   Emitter,
   prevGrapheme,
@@ -27,7 +26,7 @@ const NORMAL_MODE = "composer && composer_vim == normal";
 const NORMAL_KEYS = [
   "h", "l", "j", "k", "0", "^", "$", "w", "b", "e", "G",
   "i", "a", "I", "A", "o", "O", "x", "s", "D", "C", "p", "P",
-  "left", "right", "up", "down", "enter", ":",
+  "left", "right", "up", "down", "enter",
 ];
 /** @type {WeakMap<ComposerType, ComposerVimState>} */
 const states = new WeakMap();
@@ -224,9 +223,6 @@ function normalKey(c, k) {
     case "enter":
       c.submit();
       return true;
-    case ":":
-      command.perform("ui:cmdline");
-      return true;
   }
   return false;
 }
@@ -242,7 +238,6 @@ export const composerVim = {
       ctx.tui.command(inChat, {
         normal: () => setFocusedMode("normal"),
         insert: () => setFocusedMode("insert"),
-        cmdline: () => command.perform("ui:cmdline"),
       });
 
       ctx.tui.keymap({ esc: "composer-vim:normal" });
