@@ -396,6 +396,7 @@ fn localModels(arena: std.mem.Allocator, models: []const instance.ModelBinding) 
         .limits = .{ .context_window = m.limits.context_window, .max_output_tokens = m.limits.max_output_tokens },
         .cost = .{ .input = m.cost.input, .output = m.cost.output, .cache_read = m.cost.cache_read, .cache_write = m.cost.cache_write },
         .caps = .{ .tools = m.flags.supports_tools, .vision = m.flags.supports_vision },
+        .reasoning_levels = try levels(arena, m.reasoning_levels),
         .dialect = .{
             .thinking_format = m.flags.thinking_format,
             .reasoning_replay = m.flags.reasoning_replay,

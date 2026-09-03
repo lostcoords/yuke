@@ -337,12 +337,23 @@ fn reasoningFor(
     model: *const registry.ModelSpec,
     level: []const u8,
     output_limit: u32,
-) provider.ir.ReasoningControl {
+) !provider.ir.ReasoningControl {
     if (level.len == 0) return .default;
     if (std.mem.eql(u8, level, "off")) return .off;
+    if (model.reasoning_levels.len != 0 and !hasReasoningLevel(model.reasoning_levels, level))
+        return error.UnsupportedReasoning;
     if (model.dialect.anthropic_adaptive) return .adaptive;
     if (thinkingBudget(model, level, output_limit)) |tokens| return .{ .budget = tokens };
-    return if (std.meta.stringToEnum(provider.ir.Effort, level)) |effort| .{ .effort = effort } else .default;
+    const effort = std.meta.stringToEnum(provider.ir.Effort, level) orelse return error.UnsupportedReasoning;
+    return .{ .effort = effort };
+}
+
+fn hasReasoningLevel(levels: []const provider.model.ReasoningLevel, wanted: []const u8) bool {
+    for (levels) |level| switch (level) {
+        .none => {},
+        .named => |name| if (std.mem.eql(u8, name, wanted)) return true,
+    };
+    return false;
 }
 
 /// The smallest budget an Anthropic-shaped endpoint accepts.
@@ -391,7 +402,7 @@ fn resolvedRequest(
         .system = slot.config.system_prompt,
         .tools = engine.deps.tools.getDecls(engine.deps.tools.ctx),
         .max_output_tokens = output_limit,
-        .reasoning = reasoningFor(r.model, slot.config.reasoning, output_limit),
+        .reasoning = try reasoningFor(r.model, slot.config.reasoning, output_limit),
         .thinking_format = r.model.dialect.thinking_format,
         .reasoning_replay = r.model.dialect.reasoning_replay,
         .max_tokens_field = r.model.dialect.max_tokens_field,
@@ -887,14 +898,14 @@ fn emptyPart(part_id: ids.PartId, kind: event.BlockKind) message.AssistantPart {
 
 test "an unset level omits the control and off disables it" {
     const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m" };
-    try std.testing.expectEqual(provider.ir.ReasoningControl.default, reasoningFor(&model, "", 8192));
-    try std.testing.expectEqual(provider.ir.ReasoningControl.off, reasoningFor(&model, "off", 8192));
+    try std.testing.expectEqual(provider.ir.ReasoningControl.default, try reasoningFor(&model, "", 8192));
+    try std.testing.expectEqual(provider.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
 }
 
 test "an adaptive row resolves to adaptive for every level that is not off" {
-    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .dialect = .{ .anthropic_adaptive = true } };
-    try std.testing.expectEqual(provider.ir.ReasoningControl.adaptive, reasoningFor(&model, "high", 8192));
-    try std.testing.expectEqual(provider.ir.ReasoningControl.off, reasoningFor(&model, "off", 8192));
+    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .anthropic_adaptive = true } };
+    try std.testing.expectEqual(provider.ir.ReasoningControl.adaptive, try reasoningFor(&model, "high", 8192));
+    try std.testing.expectEqual(provider.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
 }
 
 test "a budget row sizes the budget from the output ceiling" {
@@ -902,25 +913,29 @@ test "a budget row sizes the budget from the output ceiling" {
         .id = "m",
         .upstream_id = "m",
         .name = "m",
+        .reasoning_levels = &.{ .{ .named = "max" }, .{ .named = "high" } },
         .dialect = .{ .reasoning_budget = .from(1024, 32000) },
     };
-    try std.testing.expectEqual(@as(u64, 6144), reasoningFor(&model, "max", 8192).budget);
-    try std.testing.expectEqual(@as(u64, 4096), reasoningFor(&model, "high", 8192).budget);
+    try std.testing.expectEqual(@as(u64, 6144), (try reasoningFor(&model, "max", 8192)).budget);
+    try std.testing.expectEqual(@as(u64, 4096), (try reasoningFor(&model, "high", 8192)).budget);
 }
 
 test "a budget is clamped by the feed bounds and refused when it reaches the ceiling" {
-    const capped: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .dialect = .{ .reasoning_budget = .from(null, 2000) } };
-    try std.testing.expectEqual(@as(u64, 2000), reasoningFor(&capped, "high", 8192).budget);
+    const capped: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .reasoning_budget = .from(null, 2000) } };
+    try std.testing.expectEqual(@as(u64, 2000), (try reasoningFor(&capped, "high", 8192)).budget);
 
     // A budget that reaches the ceiling falls back to the effort control.
-    const tiny: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .dialect = .{ .reasoning_budget = .from(1024, null) } };
-    try std.testing.expectEqual(provider.ir.Effort.high, reasoningFor(&tiny, "high", 1024).effort);
+    const tiny: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .reasoning_budget = .from(1024, null) } };
+    try std.testing.expectEqual(provider.ir.Effort.high, (try reasoningFor(&tiny, "high", 1024)).effort);
 }
 
-test "a level the model never listed omits the control" {
-    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m" };
-    try std.testing.expectEqual(provider.ir.ReasoningControl.default, reasoningFor(&model, "turbo", 8192));
-    try std.testing.expectEqual(provider.ir.Effort.high, reasoningFor(&model, "high", 8192).effort);
+test "a selected level outside the model list is unsupported" {
+    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }} };
+    try std.testing.expectError(error.UnsupportedReasoning, reasoningFor(&model, "turbo", 8192));
+    try std.testing.expectEqual(provider.ir.Effort.high, (try reasoningFor(&model, "high", 8192)).effort);
+
+    const unlisted: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m" };
+    try std.testing.expectError(error.UnsupportedReasoning, reasoningFor(&unlisted, "turbo", 8192));
 }
 
 test "the stream cap rejects an oversized provider delta" {

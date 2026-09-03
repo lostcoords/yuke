@@ -48,6 +48,7 @@ pub fn classify(err: anyerror) Detail {
 
         error.OutOfMemory => .{ .class = .permanent, .code = .internal, .message = "the engine ran out of memory" },
         error.UnknownModel => .{ .class = .permanent, .code = .unknown_model, .message = "the model is not configured" },
+        error.UnsupportedReasoning => .{ .class = .permanent, .code = .unsupported_reasoning, .message = "the model does not support this reasoning level" },
         http.Error.AuthFailed => .{ .class = .permanent, .code = .auth, .message = "the provider rejected the API key" },
         http.Error.PermissionDenied => .{ .class = .permanent, .code = .auth, .message = "the provider denied permission for this request" },
         // A rate limit must PROVE itself, so an unreadable 429 never repeats.
@@ -91,4 +92,10 @@ test "an unlisted error reports a generic provider failure" {
     const detail = classify(error.SomethingElse);
     try testing.expectEqual(Class.permanent, detail.class);
     try testing.expectEqual(proto.enums.RunErrorCode.provider, detail.code);
+}
+
+test "unsupported reasoning reports the dedicated run error" {
+    const detail = classify(error.UnsupportedReasoning);
+    try testing.expectEqual(Class.permanent, detail.class);
+    try testing.expectEqual(proto.enums.RunErrorCode.unsupported_reasoning, detail.code);
 }

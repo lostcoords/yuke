@@ -144,10 +144,13 @@ pub fn main(init: std.process.Init) !void {
 
     var extensions: extensions_mod.Extensions = undefined;
     try extensions.init(init.gpa, io, application, .{
-        .mode = if (tui) .tui else .rpc,
+        .host = .{
+            .headless = !tui,
+            .cwd = cwd_buf[0..cwd_len],
+            .env = init.environ_map,
+        },
+        .boot = if (tui) tui_app.boot else rpc.boot,
         .config_dir = config_dir,
-        .cwd = cwd_buf[0..cwd_len],
-        .env = init.environ_map,
     });
     defer extensions.deinit();
 

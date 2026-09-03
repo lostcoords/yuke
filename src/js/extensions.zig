@@ -9,13 +9,10 @@ const App = @import("../app/app.zig").App;
 
 pub const Host = host_mod.Host;
 
-pub const Mode = enum { tui, rpc };
-
 pub const Options = struct {
-    mode: Mode,
+    host: host_mod.Options,
+    boot: [:0]const u8,
     config_dir: ?[]const u8 = null,
-    cwd: []const u8 = "",
-    env: ?*const std.process.Environ.Map = null,
 };
 
 /// Own the QuickJS host and the wake event that all non-owner tasks use.
@@ -30,11 +27,7 @@ pub const Extensions = struct {
         self.app = app;
         self.user_entry_fault = false;
         self.wake = .init;
-        const host = try Host.createWith(gpa, io, .{
-            .headless = opts.mode == .rpc,
-            .cwd = opts.cwd,
-            .env = opts.env,
-        });
+        const host = try Host.createWith(gpa, io, opts.host);
         errdefer host.destroy();
         self.host = host;
         host.owner_wake = &self.wake;
@@ -42,18 +35,7 @@ pub const Extensions = struct {
         host.engine.attach(app);
 
         host.interrupt_budget = std.math.maxInt(u32);
-        switch (opts.mode) {
-            // The frontend owns the terminal capability, so a replaced shell still leaves it in place.
-            .tui => try host.evalModule(
-                \\import { plugins } from "yuke:ext";
-                \\import { tuiPlugin } from "yuke:tui";
-                \\import "yuke:core";
-                \\import "yuke:defaults";
-                \\plugins.use(tuiPlugin);
-            , "boot.js"),
-            // A headless frontend loads no view tier, so it takes the kernel and the plugin runtime only.
-            .rpc => try host.evalModule("import \"yuke:kernel\";\nimport \"yuke:ext\";", "boot.js"),
-        }
+        try host.evalModule(opts.boot, "boot.js");
         host.interrupt_budget = host_mod.default_interrupt_budget;
         evalUserEntry(host, opts.config_dir) catch |err| switch (err) {
             error.JavaScriptFault => self.user_entry_fault = true,
@@ -117,10 +99,9 @@ test "headless extensions pump an async JavaScript tool" {
     try app_runtime.initTest(gpa.allocator(), reactor.io(), try database.Database.openTest(), &env, canned.transport());
     var extensions: Extensions = undefined;
     try extensions.init(gpa.allocator(), reactor.io(), &app_runtime, .{
-        .mode = .rpc,
+        .host = .{ .headless = true, .cwd = root, .env = &env },
+        .boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";",
         .config_dir = root,
-        .cwd = root,
-        .env = &env,
     });
     defer {
         extensions.deinit();

@@ -32,7 +32,6 @@ const catalog_model: feed.Model = .{
     .limits = .{ .context_window = 1000, .max_output_tokens = 100 },
     .cost = .{ .input = 1, .output = 2, .cache_read = null, .cache_write = null },
     .flags = .{ .supports_tools = true, .supports_vision = false },
-    .reasoning = false,
     .reasoning_levels = &.{},
     .status = null,
 };
@@ -100,6 +99,24 @@ test "a local field beats the catalog field by field" {
     try testing.expectEqualStrings("https://pinned.example/v1", route.instance.base_url);
     try testing.expectEqual(instance.Protocol.openai_chat, route.instance.protocol);
     try testing.expectEqual(@as(usize, 0), route.instance.headers.len);
+}
+
+test "local model reasoning levels reach the registry" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"version":1,"providers":[{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat",
+        \\ "models":[{"id":"qwen3","upstream_id":"qwen3:8b","limits":{"context_window":40960,"max_output_tokens":8192},
+        \\ "reasoning_levels":[null,"high"],"flags":{"thinking_format":"qwen"}}]}]}
+    );
+    defer loaded.deinit();
+
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded });
+    const model = rows[0].models[0];
+    try testing.expectEqual(@as(usize, 2), model.reasoning_levels.len);
+    try testing.expect(model.reasoning_levels[0] == .none);
+    try testing.expectEqualStrings("high", model.reasoning_levels[1].named);
 }
 
 test "a minimal entry with no catalog row is offered but not routable" {

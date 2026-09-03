@@ -4,6 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const proto = @import("proto");
 const instance = @import("../instance/instance.zig");
+const request_ir = @import("../request/ir.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -16,6 +17,7 @@ pub const Error = error{
     BadVersion,
     DuplicateProvider,
     DuplicateModel,
+    DuplicateReasoningLevel,
     EmptyId,
     BadId,
     BadUrl,
@@ -23,6 +25,7 @@ pub const Error = error{
     BadLiteral,
     BadHeaderName,
     BadHeaderValue,
+    BadReasoningLevel,
     HeaderConflict,
     BadPath,
     AmbiguousCredential,
@@ -266,6 +269,17 @@ fn resolveProvider(fp: FileProvider) Error!LocalProvider {
         for (fp.models[0..i]) |prev| {
             if (std.mem.eql(u8, prev.id, fm.id)) return error.DuplicateModel;
         }
+        if (fm.reasoning_levels.len > proto.meta.limits.max_reasoning_levels) return error.BadReasoningLevel;
+        for (fm.reasoning_levels, 0..) |level, level_i| {
+            if (level) |name| {
+                if (std.meta.stringToEnum(request_ir.Effort, name) == null) return error.BadReasoningLevel;
+            }
+            for (fm.reasoning_levels[0..level_i]) |previous| {
+                if (level == null and previous == null) return error.DuplicateReasoningLevel;
+                if (level != null and previous != null and std.mem.eql(u8, level.?, previous.?))
+                    return error.DuplicateReasoningLevel;
+            }
+        }
     }
 
     return .{
@@ -384,7 +398,8 @@ test "load a provider with an env api key and one model" {
         \\{"id":"minimax","base_url":"https://api.minimax.io/anthropic","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"MINIMAX_API_KEY"}}},
         \\ "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
-        \\ "models":[{"id":"local","upstream_id":"MiniMax-Text","limits":{"context_window":200000,"max_output_tokens":8192}}]}
+        \\ "models":[{"id":"local","upstream_id":"MiniMax-Text","limits":{"context_window":200000,"max_output_tokens":8192},
+        \\ "reasoning_levels":[null,"high"]}]}
     );
     var loaded = try loadBytes(testing.allocator, json);
     defer loaded.deinit();
@@ -397,6 +412,9 @@ test "load a provider with an env api key and one model" {
     try testing.expectEqualStrings("anthropic-version", p.headers.?[0].name);
     try testing.expectEqualStrings("local", p.models[0].id);
     try testing.expectEqual(@as(u64, 8192), p.models[0].limits.max_output_tokens);
+    try testing.expectEqual(@as(usize, 2), p.models[0].reasoning_levels.len);
+    try testing.expect(p.models[0].reasoning_levels[0] == null);
+    try testing.expectEqualStrings("high", p.models[0].reasoning_levels[1].?);
 }
 
 test "the strict schema rejects an unknown field" {
@@ -430,6 +448,21 @@ test "duplicate provider and model ids are rejected" {
         \\{"id":"p","base_url":"https://a.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
         \\ "models":[{"id":"m","upstream_id":"a","limits":{"context_window":1,"max_output_tokens":1}},
         \\           {"id":"m","upstream_id":"b","limits":{"context_window":1,"max_output_tokens":1}}]}
+    )));
+}
+
+test "reasoning levels use the closed effort set without duplicates" {
+    try testing.expectError(error.BadReasoningLevel, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"p","models":[{"id":"m","upstream_id":"m","limits":{"context_window":1,"max_output_tokens":1},
+        \\ "reasoning_levels":["turbo"]}]}
+    )));
+    try testing.expectError(error.DuplicateReasoningLevel, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"p","models":[{"id":"m","upstream_id":"m","limits":{"context_window":1,"max_output_tokens":1},
+        \\ "reasoning_levels":["high","high"]}]}
+    )));
+    try testing.expectError(error.DuplicateReasoningLevel, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"p","models":[{"id":"m","upstream_id":"m","limits":{"context_window":1,"max_output_tokens":1},
+        \\ "reasoning_levels":[null,null]}]}
     )));
 }
 

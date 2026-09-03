@@ -66,7 +66,6 @@ const one_model: cloud_catalog.Model = .{
     .limits = .{ .context_window = 128000, .max_output_tokens = 8192 },
     .cost = .{ .input = 1.0, .output = 2.0, .cache_read = null, .cache_write = null },
     .flags = .{ .supports_tools = true, .supports_vision = false },
-    .reasoning = true,
     .reasoning_levels = &.{ "low", "high" },
     .status = "beta",
 };

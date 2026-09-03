@@ -13,14 +13,20 @@ const Channel = owner.Channel;
 
 const frame_buf_bytes = 256 * 1024;
 
+/// Boot the terminal composition and publish its terminal capability.
+pub const boot =
+    \\import { plugins } from "yuke:ext";
+    \\import { tuiPlugin } from "yuke:tui";
+    \\import "yuke:core";
+    \\import "yuke:defaults";
+    \\plugins.use(tuiPlugin);
+;
+
 /// The largest run of messages one frame absorbs, so steady input never starves the screen.
 const drain_max = 64;
 
 /// Bound a test send at one second, so a stalled `serve` fails rather than hangs.
 const send_tries_max = 100;
-
-/// The user entry file inside the config directory.
-pub const user_entry = extensions_mod.user_entry;
 
 /// Open the TTY, enter the alternate screen, and run until quit. The caller owns `extensions`.
 pub fn runIo(env: *std.process.Environ.Map, extensions: *extensions_mod.Extensions) !void {
@@ -72,11 +78,6 @@ pub fn runIo(env: *std.process.Environ.Map, extensions: *extensions_mod.Extensio
     try serve(host, &ch);
 }
 
-/// Evaluate `<config_dir>/index.js` from a heap-joined path; a missing directory or file is not an error.
-fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
-    return extensions_mod.evalUserEntry(host, config_dir);
-}
-
 test "a user entry file evaluates and a missing one is not an error" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -84,7 +85,7 @@ test "a user entry file evaluates and a missing one is not an error" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{
-        .sub_path = user_entry,
+        .sub_path = extensions_mod.user_entry,
         .data = "globalThis.result = 5;\n",
     });
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -93,15 +94,15 @@ test "a user entry file evaluates and a missing one is not an error" {
 
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
-    try evalUserEntry(host, dir);
+    try extensions_mod.evalUserEntry(host, dir);
     try std.testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.result"));
 
-    try evalUserEntry(host, null);
+    try extensions_mod.evalUserEntry(host, null);
     var empty = std.testing.tmpDir(.{});
     defer empty.cleanup();
     var empty_buf: [std.fs.max_path_bytes]u8 = undefined;
     const empty_len = try empty.dir.realPath(std.testing.io, &empty_buf);
-    try evalUserEntry(host, empty_buf[0..empty_len]);
+    try extensions_mod.evalUserEntry(host, empty_buf[0..empty_len]);
 }
 
 test "a throwing user entry is a JavaScriptFault the loop absorbs" {
@@ -111,7 +112,7 @@ test "a throwing user entry is a JavaScriptFault the loop absorbs" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{
-        .sub_path = user_entry,
+        .sub_path = extensions_mod.user_entry,
         .data = "throw new Error('bad config');\n",
     });
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -121,10 +122,10 @@ test "a throwing user entry is a JavaScriptFault the loop absorbs" {
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
-        evalUserEntry(host, dir_buf[0..dir_len]),
+        extensions_mod.evalUserEntry(host, dir_buf[0..dir_len]),
     );
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "bad config") != null);
-    try absorbScriptFault(host, evalUserEntry(host, dir_buf[0..dir_len]));
+    try absorbScriptFault(host, extensions_mod.evalUserEntry(host, dir_buf[0..dir_len]));
 }
 
 /// Run `start`, then process queued events with `step`. Native quit ends the loop, but a script error does not.

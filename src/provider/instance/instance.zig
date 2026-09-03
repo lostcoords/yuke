@@ -107,6 +107,8 @@ pub const ModelBinding = struct {
     upstream_id: []const u8,
     limits: Limits,
     cost: Cost = .{},
+    /// The ordered levels a local model accepts. Null means no effort.
+    reasoning_levels: []const ?[]const u8 = &.{},
     flags: ModelFlags = .{},
 };
 
@@ -125,6 +127,7 @@ const testing = std.testing;
 test "decode a model with behavioral flags" {
     const json =
         \\{"id":"deepseek-r1","upstream_id":"deepseek-reasoner","limits":{"context_window":65536,"max_output_tokens":8192},
+        \\ "reasoning_levels":[null,"high"],
         \\ "flags":{"reasoning_replay":"reasoning-content","thinking_format":"deepseek","max_tokens_field":"max-completion-tokens","supports_vision":true,"reasoning_budget_max":32000}}
     ;
     const parsed = try std.json.parseFromSlice(ModelBinding, testing.allocator, json, .{});
@@ -136,6 +139,9 @@ test "decode a model with behavioral flags" {
     try testing.expect(f.supports_vision);
     try testing.expect(f.supports_tools); // The default is true.
     try testing.expectEqual(@as(?u64, 32000), f.reasoning_budget_max);
+    try testing.expectEqual(@as(usize, 2), parsed.value.reasoning_levels.len);
+    try testing.expect(parsed.value.reasoning_levels[0] == null);
+    try testing.expectEqualStrings("high", parsed.value.reasoning_levels[1].?);
 }
 
 test "header validation rejects what std.http asserts on" {

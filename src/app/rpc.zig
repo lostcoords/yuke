@@ -10,6 +10,9 @@ const zio = @import("zio");
 
 const App = app.App;
 
+/// Boot the frontend-neutral modules for a headless JSONL process.
+pub const boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";
+
 /// The stdout buffer. One event holds a whole message, so the buffer suits the largest of them.
 const out_buffer_bytes: usize = 1 << 16;
 /// The stdin buffer. It must hold one whole request line, and `send_input` carries a message body.

@@ -15,7 +15,9 @@
         {
           "id": "minimax-m3",
           "upstream_id": "MiniMax-M3",
-          "limits": { "context_window": 200000, "max_output_tokens": 131072 }
+          "limits": { "context_window": 200000, "max_output_tokens": 131072 },
+          "reasoning_levels": ["low", "medium", "high"],
+          "flags": { "anthropic_adaptive": true }
         }
       ]
     },
@@ -27,7 +29,9 @@
         {
           "id": "qwen3",
           "upstream_id": "qwen3:8b",
-          "limits": { "context_window": 40960, "max_output_tokens": 8192 }
+          "limits": { "context_window": 40960, "max_output_tokens": 8192 },
+          "reasoning_levels": ["low", "medium", "high", "max"],
+          "flags": { "thinking_format": "openai" }
         }
       ]
     }

@@ -55,7 +55,6 @@ pub const Model = struct {
     limits: Limits,
     cost: Cost,
     flags: Flags,
-    reasoning: bool,
     /// A null level means no effort. The set is open, so a new name must degrade.
     reasoning_levels: []const ?[]const u8,
     /// A release stage such as `beta`. A generally available model leaves it null.
@@ -134,7 +133,7 @@ const routable_document =
     \\ "cache":"ephemeral","headers":[{"name":"anthropic-version","value":"2023-06-01"}],
     \\ "models":[{"id":"claude","upstream_id":"claude-5","name":"Claude","limits":{"context_window":200000,
     \\ "max_output_tokens":64000},"cost":{"input":3.0,"output":15.0,"cache_read":0.3,"cache_write":3.75},
-    \\ "flags":{"supports_tools":true,"supports_vision":true},"reasoning":true,
+    \\ "flags":{"supports_tools":true,"supports_vision":true},
     \\ "reasoning_levels":["low","high"],"status":null}]}]}
 ;
 
@@ -148,7 +147,7 @@ test "a model id with a slash decodes" {
         \\ "cache":"unsupported","headers":[],"models":[{"id":"anthropic/claude-opus-5","upstream_id":"anthropic/claude-opus-5",
         \\ "name":"Opus","limits":{"context_window":null,"max_output_tokens":null},
         \\ "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null},
-        \\ "flags":{"supports_tools":true,"supports_vision":false},"reasoning":true,
+        \\ "flags":{"supports_tools":true,"supports_vision":false},
         \\ "reasoning_levels":[],"status":null}]}]}
     );
     try testing.expectEqualStrings("anthropic/claude-opus-5", doc.providers[0].models[0].id);
@@ -171,7 +170,6 @@ test "decode reads a routable provider" {
     const m = p.models[0];
     try testing.expectEqualStrings("claude-5", m.upstream_id);
     try testing.expectEqual(@as(u64, 200000), m.limits.context_window.?);
-    try testing.expect(m.reasoning);
     try testing.expectEqual(@as(usize, 2), m.reasoning_levels.len);
     try testing.expect(m.status == null);
 }
@@ -187,7 +185,7 @@ test "decode tolerates a null level, a null limit, and a null price" {
         \\ "auth":{"kind":"api_key","header":"authorization_bearer"},"cache":"unsupported","headers":[],
         \\ "models":[{"id":"m","upstream_id":"m","name":"M","limits":{"context_window":null,
         \\ "max_output_tokens":null},"cost":{"input":null,"output":null,"cache_read":null,"cache_write":null},
-        \\ "flags":{"supports_tools":false,"supports_vision":false},"reasoning":true,
+        \\ "flags":{"supports_tools":false,"supports_vision":false},
         \\ "reasoning_levels":[null,"low"],"status":"beta"}]}]}
     );
     const m = doc.providers[0].models[0];

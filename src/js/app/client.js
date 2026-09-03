@@ -1,4 +1,4 @@
-// yuke:client — error types and JSON decode over `yuke:engine-native`, which owns the engine seam.
+// yuke:client — the in-process JavaScript seam over `yuke:engine-native`.
 import { native } from "yuke:engine-native";
 import { events } from "yuke:core";
 
@@ -12,30 +12,6 @@ native.setEventSink((ev) => {
   if (name) events.emit(name, ev);
 });
 
-export class ClientError extends Error {
-  /** @param {unknown} code */
-  constructor(code) {
-    super(String(code));
-    this.name = "ClientError";
-    this.code = String(code);
-  }
-}
-
-// A command refused the request. `code` is the wire error name, such as "unknown_session".
-export class RpcError extends Error {
-  /** @param {unknown} code @param {unknown} message */
-  constructor(code, message) {
-    super(String(message));
-    this.name = "RpcError";
-    this.code = String(code);
-  }
-}
-
-/** @param {unknown} reason @returns {ClientError} */
-function clientError(reason) {
-  return reason instanceof ClientError ? reason : new ClientError(reason);
-}
-
 // One request against the engine. The call is synchronous, but the surface stays a Promise so a
 // caller does not change when a command later moves off the owner.
 // Every caller casts its parameters to the generated wire type, so a wrong shape fails `tsc`
@@ -46,14 +22,14 @@ function request(method, params) {
   try {
     text = native.request(method, JSON.stringify(params));
   } catch (reason) {
-    // A refusal carries its wire code; a seam failure carries only a message.
-    const e = /** @type {{ message?: string, code?: string }} */ (reason);
-    return Promise.reject(e && e.code ? new RpcError(e.code, e.message) : clientError(e && e.message ? e.message : reason));
+    return Promise.reject(reason);
   }
   try {
     return Promise.resolve(JSON.parse(text));
   } catch {
-    return Promise.reject(new RpcError("internal", "malformed result"));
+    const error = new Error("malformed engine result");
+    error.name = "EngineError";
+    return Promise.reject(error);
   }
 }
 

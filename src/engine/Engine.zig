@@ -80,7 +80,7 @@ pub fn stopTurns(self: *Engine) void {
 
 /// Cancel every turn, then free the resident sessions. The process closes the store afterwards.
 pub fn close(self: *Engine) void {
-    self.stopTurns();
+    if (!self.closing) self.stopTurns();
     self.sessions.deinit();
     if (self.default_system_prompt) |prompt| self.deps.gpa.free(prompt);
     self.* = undefined;
