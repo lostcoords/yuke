@@ -313,13 +313,17 @@ test "the declarations follow the registered tools" {
     var tools: Tools = .{ .gpa = testing.allocator };
     defer tools.deinit(bare.ctx);
 
-    try tools.register("alpha", "the first", "{\"type\":\"object\"}", quickjs.UNDEFINED);
+    // Register out of order, because the load order of a plugin must not move the sorted prefix.
     try tools.register("beta", "the second", "{\"type\":\"object\",\"properties\":{}}", quickjs.UNDEFINED);
+    try tools.register("alpha", "the first", "{\"type\":\"object\"}", quickjs.UNDEFINED);
+    try tools.register("gamma", "the third", "{\"type\":\"object\"}", quickjs.UNDEFINED);
 
-    try testing.expectEqual(@as(usize, 2), tools.decls.items.len);
+    try testing.expectEqual(@as(usize, 3), tools.decls.items.len);
     try testing.expectEqualStrings("alpha", tools.decls.items[0].name);
+    try testing.expectEqualStrings("beta", tools.decls.items[1].name);
+    try testing.expectEqualStrings("gamma", tools.decls.items[2].name);
     try testing.expectEqualStrings("the second", tools.decls.items[1].description);
     try testing.expectEqualStrings("{\"type\":\"object\",\"properties\":{}}", tools.decls.items[1].input_schema);
     try testing.expectEqualStrings("beta", tools.find("beta").?.name);
-    try testing.expect(tools.find("gamma") == null);
+    try testing.expect(tools.find("delta") == null);
 }
