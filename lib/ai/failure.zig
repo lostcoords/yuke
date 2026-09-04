@@ -31,6 +31,9 @@ pub const Reason = enum {
     invalid_headers,
     redirect_refused,
     out_of_memory,
+    malformed_selector,
+    unknown_provider,
+    unknown_model,
     unknown,
 
     /// One sentence for the caller. It names no internal error and no credential.
@@ -52,6 +55,9 @@ pub const Reason = enum {
             .invalid_headers => "the provider request headers are invalid",
             .redirect_refused => "the provider attempted a redirect",
             .out_of_memory => "the caller ran out of memory",
+            .malformed_selector => "the model selector is malformed",
+            .unknown_provider => "the catalog holds no provider with that name",
+            .unknown_model => "the catalog holds no model with that name",
             .unknown => "the provider request failed",
         };
     }
@@ -86,6 +92,10 @@ pub fn classify(err: anyerror) Failure {
         => .{ .class = .transport, .reason = .stream_truncated },
 
         error.OutOfMemory => .{ .class = .permanent, .reason = .out_of_memory },
+        // `catalog.resolve` raises these, so the library must be able to describe them.
+        error.MalformedSelector => .{ .class = .permanent, .reason = .malformed_selector },
+        error.UnknownProvider => .{ .class = .permanent, .reason = .unknown_provider },
+        error.UnknownModel => .{ .class = .permanent, .reason = .unknown_model },
         http.Error.AuthFailed => .{ .class = .permanent, .reason = .auth_rejected },
         http.Error.PermissionDenied => .{ .class = .permanent, .reason = .permission_denied },
         // A rate limit must PROVE itself, so an unreadable 429 never repeats.
@@ -130,6 +140,16 @@ test "an unlisted error is permanent and generic" {
     const got = classify(error.SomethingElse);
     try testing.expectEqual(Class.permanent, got.class);
     try testing.expectEqual(Reason.unknown, got.reason);
+}
+
+test "the library can describe every error it raises itself" {
+    // A library error that classified as `.unknown` would reach a user as "the request failed".
+    const catalog = @import("catalog.zig");
+    inline for (@typeInfo(catalog.Error).error_set.?) |raised| {
+        const got = classify(@field(anyerror, raised.name));
+        try testing.expect(got.reason != .unknown);
+        try testing.expectEqual(Class.permanent, got.class);
+    }
 }
 
 test "every reason states a sentence" {

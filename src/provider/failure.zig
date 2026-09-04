@@ -18,7 +18,6 @@ pub fn classify(err: anyerror) Detail {
     return switch (err) {
         // The library never raises these, because they are decisions the engine makes.
         error.TurnTooLarge => .{ .class = .permanent, .code = .context_overflow, .message = "the turn is larger than the model context window" },
-        error.UnknownModel => .{ .class = .permanent, .code = .unknown_model, .message = "the model is not configured" },
         error.UnsupportedReasoning => .{ .class = .permanent, .code = .unsupported_reasoning, .message = "the model does not support this reasoning level" },
         else => {
             const got = ai.failure.classify(err);
@@ -37,6 +36,7 @@ fn codeOf(reason: ai.failure.Reason) proto.enums.RunErrorCode {
         .auth_rejected, .permission_denied => .auth,
         .quota_exhausted => .quota_exhausted,
         .out_of_memory => .internal,
+        .malformed_selector, .unknown_provider, .unknown_model => .unknown_model,
         .server_error, .bad_status, .bad_url, .invalid_headers, .unknown => .provider,
     };
 }
