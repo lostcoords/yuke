@@ -20,7 +20,7 @@ pub const oauth_codex = @import("oauth/codex.zig");
 pub const transport = ai.transport;
 pub const http_transport = ai.http_transport;
 pub const failure = @import("failure.zig");
-pub const retry = @import("retry.zig");
+pub const retry = ai.retry;
 
 /// Return the protocol's request serializer and stream reducer.
 pub const Adapter = ai.Adapter;

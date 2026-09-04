@@ -11,7 +11,7 @@ const Session = @import("../session/session.zig").Session;
 const database = @import("../store/store.zig");
 const turn_context = @import("context.zig");
 const registry = @import("../provider/registry.zig");
-const retry = @import("../provider/retry.zig");
+const retry = @import("ai").retry;
 
 const ids = proto.ids;
 const message = proto.message;

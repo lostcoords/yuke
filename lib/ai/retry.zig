@@ -1,10 +1,9 @@
 //! Decide whether a failed provider attempt may repeat. The decision is pure: no I/O and no state.
-//! `docs/plan.md` "Retry / backoff policy" holds the reasoning and the sources.
+//! `docs/plan.md` in the yuke repository holds the reasoning and the sources.
 
 const std = @import("std");
 const failure = @import("failure.zig");
-const ai = @import("ai");
-const transport = ai.transport;
+const transport = @import("transport.zig");
 
 /// The reason a run must stop instead of repeating the request.
 pub const Stop = enum {
@@ -87,7 +86,7 @@ fn backoff(policy: Policy, number: u8, jitter: f64) u64 {
 }
 
 const testing = std.testing;
-const http = ai.http_transport; // The tests name concrete provider errors.
+const http = @import("transport/http.zig"); // The tests name concrete provider errors.
 const default: Policy = .{};
 
 fn failed(err: anyerror, number: u8) Attempt {

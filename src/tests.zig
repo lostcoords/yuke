@@ -25,7 +25,6 @@ test {
     _ = @import("provider/oauth/credential_lock.zig");
     _ = @import("provider/oauth/xai.zig");
     _ = @import("provider/oauth/codex.zig");
-    _ = @import("provider/retry.zig");
     _ = @import("js/host/operations.zig");
     _ = @import("js/host/local.zig");
     _ = @import("app/app.zig");
