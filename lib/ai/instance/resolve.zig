@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const instance = @import("instance.zig");
+const transport = @import("../transport.zig");
 
 const Header = instance.Header;
 const ProviderInstance = instance.ProviderInstance;
@@ -99,6 +100,17 @@ pub fn authHeaders(
         .name = try gpa.dupe(u8, h.name),
         .value = try gpa.dupe(u8, h.value),
     });
+}
+
+/// Build the request one route sends: its endpoint, its credential headers, and `body`.
+pub fn request(gpa: std.mem.Allocator, p: *const ProviderInstance, credential: Credential, body: []u8) Error!transport.Request {
+    var headers: std.ArrayList(Header) = .empty;
+    try authHeaders(gpa, p, credential, &headers);
+    return .{
+        .url = try endpointUrl(gpa, p),
+        .headers = headers.items,
+        .body = body,
+    };
 }
 
 fn bearer(gpa: std.mem.Allocator, token_value: []const u8) Error![]u8 {
@@ -225,4 +237,30 @@ test "a credential must match the authentication mechanism" {
         .auth = .{ .api_key = .authorization_bearer },
     }, .none, &out));
     try testing.expectEqual(@as(usize, 0), out.items.len);
+}
+
+test "one call turns a route and a credential into a sendable request" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    var body = "{}".*;
+
+    const built = try request(arena.allocator(), &.{
+        .base_url = "https://api.anthropic.com/v1/",
+        .protocol = .anthropic_messages,
+        .auth = .{ .api_key = .x_api_key },
+        .headers = &.{.{ .name = "anthropic-version", .value = "2023-06-01" }},
+    }, .{ .api_key = "sk-secret" }, &body);
+
+    // The trailing slash collapses, and both the credential and the pinned header arrive.
+    try testing.expectEqualStrings("https://api.anthropic.com/v1/messages", built.url);
+    try testing.expectEqualStrings("sk-secret", header(built.headers, "x-api-key").?);
+    try testing.expectEqualStrings("2023-06-01", header(built.headers, "anthropic-version").?);
+    try testing.expectEqualStrings("{}", built.body);
+
+    // A credential the mechanism cannot present fails here rather than at the provider.
+    try testing.expectError(error.InvalidCredential, request(arena.allocator(), &.{
+        .base_url = "https://example.test/v1",
+        .protocol = .openai_chat,
+        .auth = .{ .api_key = .authorization_bearer },
+    }, .none, &body));
 }

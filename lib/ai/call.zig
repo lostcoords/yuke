@@ -146,14 +146,8 @@ pub fn streamWithTransport(
     defer call_arena.deinit();
     const arena = call_arena.allocator();
 
-    var headers: std.ArrayList(instance.Header) = .empty;
-    try resolve.authHeaders(arena, &model.provider, model.credential, &headers);
     const body_bytes = try requestBody(arena, model, request);
-    const http_request: transport.Request = .{
-        .url = try resolve.endpointUrl(arena, &model.provider),
-        .headers = headers.items,
-        .body = body_bytes,
-    };
+    const http_request = try resolve.request(arena, &model.provider, model.credential, body_bytes);
     var info: transport.AttemptInfo = .{};
     const body = try route_transport.open(arena, http_request, &info);
     defer body.deinit();

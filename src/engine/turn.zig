@@ -427,14 +427,7 @@ fn resolvedRequest(
 
     // Read the credential and the clock here, so a rotated key or a lapsed grant needs no rebuild.
     const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
-    var auth: std.ArrayList(provider.transport.Header) = .empty;
-    try provider.resolve.authHeaders(arena, &route.instance, secret, &auth);
-
-    return .{
-        .url = try provider.resolve.endpointUrl(arena, &route.instance),
-        .headers = auth.items,
-        .body = body_bytes,
-    };
+    return provider.resolve.request(arena, &route.instance, secret, body_bytes);
 }
 
 /// Reduce the response stream with the reducer for `protocol`.
