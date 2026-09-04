@@ -6,6 +6,12 @@
 
 const proto = @import("proto");
 
+/// A block becomes at most one message part, so the part cap bounds the blocks a reducer holds.
+pub const max_blocks: usize = @intCast(proto.meta.limits.max_message_parts);
+
+/// The arguments of a tool call reach the wire as one message string, so that cap bounds the accumulation.
+pub const max_tool_arg_bytes: usize = @intCast(proto.meta.limits.max_message_string_bytes);
+
 /// A dense identifier that a reducer assigns to a stream-local block.
 pub const BlockId = u32;
 

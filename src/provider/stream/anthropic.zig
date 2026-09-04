@@ -5,7 +5,6 @@ const std = @import("std");
 const proto = @import("proto");
 const event = @import("event.zig");
 const json = @import("json.zig");
-const limits = @import("limits.zig");
 
 const StreamEvent = event.StreamEvent;
 
@@ -111,7 +110,7 @@ pub const Reducer = struct {
     fn onBlockStart(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         const index = try blockIndex(root);
         if (index != self.blocks.items.len) return error.Protocol; // Block indexes must arrive in dense order.
-        if (self.blocks.items.len >= limits.max_blocks) return error.Protocol;
+        if (self.blocks.items.len >= event.max_blocks) return error.Protocol;
 
         const cb = json.fieldGet(root, "content_block") orelse return error.Protocol;
         const cb_type = json.fieldStr(cb, "type") orelse return error.Protocol;
@@ -185,8 +184,8 @@ pub const Reducer = struct {
         } else if (std.mem.eql(u8, delta_type, "input_json_delta")) {
             if (block.kind != .tool) return error.Protocol;
             const fragment = json.fieldStr(delta, "partial_json") orelse return error.Protocol;
-            std.debug.assert(block.args.items.len <= limits.max_message_bytes);
-            if (fragment.len > limits.max_message_bytes - block.args.items.len) return error.Protocol;
+            std.debug.assert(block.args.items.len <= event.max_tool_arg_bytes);
+            if (fragment.len > event.max_tool_arg_bytes - block.args.items.len) return error.Protocol;
             try block.args.appendSlice(self.gpa, fragment);
             try out.append(self.gpa, .{ .tool_input_delta = .{ .block = block.emitted_id, .partial_json = fragment } });
         }

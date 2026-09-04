@@ -5,7 +5,6 @@ const std = @import("std");
 const proto = @import("proto");
 const event = @import("event.zig");
 const json = @import("json.zig");
-const limits = @import("limits.zig");
 
 const StreamEvent = event.StreamEvent;
 
@@ -133,7 +132,7 @@ pub const Reducer = struct {
         const item = json.fieldGet(root, "item") orelse return error.Protocol;
         const item_type = json.fieldStr(item, "type") orelse return error.Protocol;
 
-        if (self.outputs.count() >= limits.max_blocks) return error.Protocol; // Bound the output map.
+        if (self.outputs.count() >= event.max_blocks) return error.Protocol; // Bound the output map.
         var entry = try self.outputs.getOrPut(self.gpa, index);
         if (entry.found_existing) return error.Protocol;
         entry.value_ptr.* = .{ .kind = .ignored, .item_id = itemIdHash(json.fieldStr(item, "id")) };
@@ -200,8 +199,8 @@ pub const Reducer = struct {
         const block = try self.openBlock(id);
         const fragment = json.fieldStr(root, "delta") orelse return error.Protocol;
         if (block.authoritative_args != null) return error.Protocol;
-        std.debug.assert(block.args.items.len <= limits.max_message_bytes);
-        if (fragment.len > limits.max_message_bytes - block.args.items.len) return error.Protocol;
+        std.debug.assert(block.args.items.len <= event.max_tool_arg_bytes);
+        if (fragment.len > event.max_tool_arg_bytes - block.args.items.len) return error.Protocol;
         try block.args.appendSlice(self.gpa, fragment);
         try out.append(self.gpa, .{ .tool_input_delta = .{ .block = id, .partial_json = fragment } });
     }
@@ -375,8 +374,8 @@ pub const Reducer = struct {
     }
 
     fn addBlock(self: *Reducer, kind: event.BlockKind) Error!*Block {
-        std.debug.assert(self.blocks.items.len <= limits.max_blocks);
-        if (self.blocks.items.len >= limits.max_blocks) return error.Protocol;
+        std.debug.assert(self.blocks.items.len <= event.max_blocks);
+        if (self.blocks.items.len >= event.max_blocks) return error.Protocol;
         try self.blocks.append(self.gpa, .{ .kind = kind });
         return &self.blocks.items[self.blocks.items.len - 1];
     }

@@ -6,7 +6,6 @@ const std = @import("std");
 const proto = @import("proto");
 const event = @import("event.zig");
 const json = @import("json.zig");
-const limits = @import("limits.zig");
 
 const StreamEvent = event.StreamEvent;
 
@@ -161,8 +160,8 @@ pub const Reducer = struct {
 
         if (json.fieldGet(function, "arguments")) |arguments| switch (arguments) {
             .string => |fragment| {
-                std.debug.assert(block.args.items.len <= limits.max_message_bytes);
-                if (fragment.len > limits.max_message_bytes - block.args.items.len) return error.Protocol;
+                std.debug.assert(block.args.items.len <= event.max_tool_arg_bytes);
+                if (fragment.len > event.max_tool_arg_bytes - block.args.items.len) return error.Protocol;
                 try block.args.appendSlice(self.gpa, fragment);
                 try out.append(self.gpa, .{ .tool_input_delta = .{ .block = @intCast(block_index), .partial_json = fragment } });
             },
@@ -187,10 +186,10 @@ pub const Reducer = struct {
         out: *std.ArrayList(StreamEvent),
     ) Error!usize {
         std.debug.assert(self.open_block == null);
-        if (self.blocks.items.len >= limits.max_blocks) return error.Protocol;
+        if (self.blocks.items.len >= event.max_blocks) return error.Protocol;
         try self.blocks.append(self.gpa, .{ .kind = kind, .tool_index = tool_index });
         const index = self.blocks.items.len - 1;
-        std.debug.assert(index < limits.max_blocks);
+        std.debug.assert(index < event.max_blocks);
         const block = &self.blocks.items[index];
         if (call_id.len != 0) block.call_id = try self.own(call_id);
         if (name.len != 0) block.name = try self.own(name);
