@@ -127,14 +127,6 @@ fn frame(chunks: []const []const u8, arena: std.mem.Allocator) ![]const []const 
     return out.items;
 }
 
-test "one event, one push" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const events = try frame(&.{"data: {\"type\":\"ping\"}\n\n"}, arena.allocator());
-    try testing.expectEqual(@as(usize, 1), events.len);
-    try testing.expectEqualStrings("{\"type\":\"ping\"}", events[0]);
-}
-
 test "event: line is ignored, type read from data" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -146,15 +138,25 @@ test "event: line is ignored, type read from data" {
 test "split at every byte boundary, including CRLF" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const whole = "data: {\"x\":1}\r\n\r\ndata: {\"y\":2}\r\n\r\n";
+    const whole = "data: {\"x\":1}\r\n\r\ndata: {\"y\":2}\r\n\r\ndata: [DONE]\r\n\r\n";
     var singles: [whole.len][]const u8 = undefined;
     for (whole, 0..) |_, i| {
         singles[i] = whole[i .. i + 1];
     }
     const events = try frame(&singles, arena.allocator());
-    try testing.expectEqual(@as(usize, 2), events.len);
+    try testing.expectEqual(@as(usize, 3), events.len);
     try testing.expectEqualStrings("{\"x\":1}", events[0]);
     try testing.expectEqualStrings("{\"y\":2}", events[1]);
+    try testing.expectEqualStrings("[DONE]", events[2]);
+}
+
+test "two CRLF data lines join with a newline" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // Every other CRLF fixture holds one data line, where a dropped CR state reads the same.
+    const events = try frame(&.{"data: a\r\ndata: b\r\n\r\n"}, arena.allocator());
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqualStrings("a\nb", events[0]);
 }
 
 test "a lone CR ends a line" {
@@ -214,19 +216,4 @@ test "an oversized line degrades to an error, never a crash" {
     var out: std.ArrayList([]const u8) = .empty;
     const big = "data: " ++ ("x" ** (max_bytes + 8));
     try testing.expectError(error.LineTooLong, sse.push(big, arena.allocator(), &out));
-}
-
-test "output is identical across every split point" {
-    const whole = "data: {\"a\":1}\n\ndata: {\"b\":2}\n\ndata: [DONE]\n\n";
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const one_shot = try frame(&.{whole}, arena.allocator());
-
-    for (0..whole.len + 1) |k| {
-        var split_arena = std.heap.ArenaAllocator.init(testing.allocator);
-        defer split_arena.deinit();
-        const split = try frame(&.{ whole[0..k], whole[k..] }, split_arena.allocator());
-        try testing.expectEqual(one_shot.len, split.len);
-        for (one_shot, split) |a, b| try testing.expectEqualStrings(a, b);
-    }
 }

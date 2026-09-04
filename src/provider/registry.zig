@@ -42,7 +42,7 @@ pub fn credential(source: CredentialSource, env: ?*const EnvMap, now_ms: u64) ?p
     return switch (source) {
         .none => .none,
         .env => |name| blk: {
-            // An empty value is no value, so a run reports a missing credential instead of sending a blank header.
+            // An empty value is no value, so a run reports a missing credential and sends no header.
             const value = (if (env) |e| e.get(name) else null) orelse return null;
             break :blk if (value.len == 0) null else .{ .api_key = value };
         },
@@ -328,13 +328,13 @@ pub fn selectorOf(arena: std.mem.Allocator, origin: Origin, provider_id: []const
     return out;
 }
 
-/// Resolve a canonical selector against the merged list. A stale selector resolves to nothing.
 /// Find one provider row by id. A login addresses a provider this way.
 pub fn find(rows: []const Provider, provider_id: []const u8) ?*const Provider {
     for (rows) |*row| if (std.mem.eql(u8, row.id, provider_id)) return row;
     return null;
 }
 
+/// Resolve a canonical selector against the merged list. A stale selector resolves to nothing.
 pub fn findModel(rows: []const Provider, selector: []const u8) ?Match {
     const colon = std.mem.indexOfScalar(u8, selector, ':') orelse return null;
     const origin = std.meta.stringToEnum(Origin, selector[0..colon]) orelse return null;
