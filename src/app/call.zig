@@ -112,6 +112,7 @@ fn failureFor(err: anyerror) ?Failure {
         error.SessionBusy => .{ .code = .session_busy, .message = "the session is open or has an active run" },
         error.SessionHasChildren => .{ .code = .session_has_children, .message = "the session has children" },
         error.SkillUnsupported => .{ .code = .unknown_skill, .message = "skills are not supported" },
+        error.HookBlocked => .{ .code = .bad_request, .message = "an extension stopped the input" },
         error.BadCursor => .{ .code = .stale_cursor, .message = "stale cursor" },
         error.RootNotAbsolute => .{ .code = .bad_request, .message = "the workspace path must be absolute" },
         error.BadPath => .{ .code = .bad_request, .message = "the engine cannot read the path" },

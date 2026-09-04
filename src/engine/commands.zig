@@ -153,7 +153,7 @@ pub fn sessionHistory(engine: *Engine, arena: std.mem.Allocator, params: proto.s
 /// Accept input for an RPC and return its prepared run to the response gate.
 pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionSendInputParams, launch: *?run_task.Launch) !proto.session.SessionSendInputResult {
     std.debug.assert(launch.* == null);
-    const content = switch (params.input) {
+    const raw_content = switch (params.input) {
         .content => |c| c.content,
         .skill => return error.SkillUnsupported,
     };
@@ -161,6 +161,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
     const rt = try engine.activate(params.session_id);
     if (rt.faulted) return error.RuntimeFailed;
+    const content = try hookedInput(engine, arena, params.session_id, raw_content);
     if (rt.active_run == null and rt.queueDepth() > 0) launch.* = .{ .slot = try run_task.prepareQueued(engine, rt) };
 
     if (rt.active_run == null) {
@@ -189,6 +190,38 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
     } });
     session_events.announceActivity(engine, rt);
     return .{ .queued = .{ .input_id = queued.input.input_id } };
+}
+
+/// One input on its way to the queue. An `input.before` handler may replace its parts.
+const InputBefore = struct {
+    session_id: proto.ids.SessionId,
+    content: []const proto.content.ContentPart,
+};
+
+/// Let the chain read one input before it reaches the queue. A block refuses the input.
+fn hookedInput(
+    engine: *Engine,
+    arena: std.mem.Allocator,
+    session_id: proto.ids.SessionId,
+    content: []const proto.content.ContentPart,
+) ![]const proto.content.ContentPart {
+    const asked = engine.deps.hooks.askIfHeld(arena, .@"input.before", InputBefore{
+        .session_id = session_id,
+        .content = content,
+    });
+    return switch (asked) {
+        .proceed => content,
+        // A handler that answers an unreadable input keeps the one the user wrote.
+        .replace => |json| blk: {
+            const changed = std.json.parseFromSliceLeaky(InputBefore, arena, json, .{ .ignore_unknown_fields = true }) catch break :blk content;
+            break :blk changed.content;
+        },
+        .block => |reason| {
+            // The wire code names a class, so record the reason before the error loses it.
+            std.log.warn("session input stopped at input.before: {s}", .{reason});
+            return error.HookBlocked;
+        },
+    };
 }
 
 /// Cancel one exact queued input. A started input belongs to the active run.

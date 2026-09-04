@@ -437,7 +437,7 @@ fn resolvedRequest(
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
     const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
-    return ai.prepare(engine.deps.gpa, .{
+    var prepared = try ai.prepare(engine.deps.gpa, .{
         .id = build.model,
         .route = route.route,
         .credential = secret,
@@ -453,7 +453,37 @@ fn resolvedRequest(
             .reasoning = try reasoningFor(r.model, slot.config.reasoning, build.max_output_tokens),
         },
     });
+    errdefer prepared.deinit();
+
+    // The round arena outlives the prepared request, so a replaced field may live in it.
+    switch (engine.deps.hooks.askIfHeld(arena, .@"request.send", RequestSend{
+        .url = prepared.transport_request.url,
+        .headers = prepared.transport_request.headers,
+        .body = prepared.transport_request.body,
+    })) {
+        .proceed => {},
+        .replace => |json| if (std.json.parseFromSliceLeaky(RequestSend, arena, json, .{ .ignore_unknown_fields = true })) |sent| {
+            prepared.transport_request = .{
+                .url = sent.url,
+                .headers = sent.headers,
+                // An HTTP writer shifts the body it sends, so it needs bytes it may write to.
+                .body = try arena.dupe(u8, sent.body),
+            };
+        } else |_| {},
+        .block => |reason| {
+            std.log.warn("run {d} stopped at request.send: {s}", .{ slot.runId(), reason });
+            return error.HookBlocked;
+        },
+    }
+    return prepared;
 }
+
+/// The serialized request one round sends. A `request.send` handler may replace any field.
+const RequestSend = struct {
+    url: []const u8,
+    headers: []const ai.instance.Header,
+    body: []const u8,
+};
 
 /// The neutral request one round sends, before any serializer reads it.
 ///
@@ -917,10 +947,13 @@ const ToolCall = struct {
     arguments: []const u8,
 };
 
-/// What the model reads after a tool answers. A `tool.after` handler may replace either field.
+/// What the model reads after a tool answers, and what the view shows beside it.
+/// A handler that replaces the output states the view too, because a stale view would
+/// show the reader one thing while the model reads another.
 const ToolResult = struct {
     output: []const u8,
     is_error: bool,
+    view: ?[]const proto.view.View = null,
 };
 
 /// Run one tool through its hooks. A block answers the model, and the process runs nothing.
@@ -942,13 +975,13 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, pt: PendingTool, workspa
         .arguments = call.arguments,
         .output = res.output,
         .is_error = res.is_error,
+        .view = res.view,
     });
     return switch (after) {
         .proceed => res,
         .replace => |json| blk: {
             const changed = std.json.parseFromSliceLeaky(ToolResult, arena, json, .{ .ignore_unknown_fields = true }) catch break :blk res;
-            // The view describes the output the tool produced, so a replaced output carries none.
-            break :blk .{ .output = changed.output, .is_error = changed.is_error };
+            break :blk .{ .output = changed.output, .view = changed.view, .is_error = changed.is_error };
         },
         .block => |reason| .{ .output = reason, .is_error = true },
     };

@@ -7,8 +7,6 @@ const tagged = @import("tagged.zig");
 /// Every point a handler can answer. Each name states a call site, so the set stays closed.
 /// A fact reads as `x.verbed` and needs no answer; a point reads as `x.verb` and waits for one.
 pub const Point = enum {
-    /// Once per run, before the first round opens.
-    @"run.before",
     /// Once per round, over the neutral request the serializer has not read yet.
     @"request.build",
     /// Once per round, over the serialized body and its headers.

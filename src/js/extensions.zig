@@ -238,6 +238,7 @@ test "a hook chain replaces a payload and the first block ends it" {
         \\  ctx.hook("tool.before", (ev) => (ev.arguments === "rewritten" ? { block: "denied" } : undefined));
         \\  ctx.hook("tool.after", async (ev) => ({ replace: { output: ev.output + "!", is_error: false } }));
         \\  ctx.hook("request.build", (ev) => ({ replace: { ...ev, system: "from the chain" } }));
+        \\  ctx.hook("input.before", (ev) => (ev.content[0].text === "no" ? { block: "refused" } : undefined));
         \\}});
     });
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -269,8 +270,9 @@ test "a hook chain replaces a payload and the first block ends it" {
     try std.testing.expect(extensions.host.hooks.holds(.@"tool.before"));
     try std.testing.expect(extensions.host.hooks.holds(.@"tool.after"));
     try std.testing.expect(extensions.host.hooks.holds(.@"request.build"));
+    try std.testing.expect(extensions.host.hooks.holds(.@"input.before"));
     // A point no handler holds must cost nothing, so the set answers false for it.
-    try std.testing.expect(!extensions.host.hooks.holds(.@"input.before"));
+    try std.testing.expect(!extensions.host.hooks.holds(.@"request.send"));
 
     // The first handler rewrites the arguments, so the second one sees them and ends the chain.
     const blocked = try settleHook(&extensions, "tool.before", "{\"name\":\"bash\",\"arguments\":\"original\"}");
@@ -289,6 +291,15 @@ test "a hook chain replaces a payload and the first block ends it" {
         "{\"type\":\"replace\",\"value\":{\"model\":\"m\",\"system\":\"from the chain\",\"tools\":[],\"max_output_tokens\":64}}",
         built,
     );
+
+    // A handler that answers nothing leaves the input as the user wrote it.
+    const allowed = try settleHook(&extensions, "input.before", "{\"session_id\":\"s\",\"content\":[{\"type\":\"text\",\"text\":\"yes\"}]}");
+    defer std.testing.allocator.free(allowed);
+    try std.testing.expectEqualStrings("", allowed);
+
+    const refused = try settleHook(&extensions, "input.before", "{\"session_id\":\"s\",\"content\":[{\"type\":\"text\",\"text\":\"no\"}]}");
+    defer std.testing.allocator.free(refused);
+    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"refused\"}", refused);
 }
 
 /// Submit one hook call and pump the owner until it settles. The owner frees the record's own
