@@ -21,6 +21,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
 
     try writeThinking(&jw, request.reasoning);
     try writeOutputConfig(&jw, request.reasoning, request.output_schema);
+    const cache = request.cache == .anthropic;
 
     if (request.system.len != 0) {
         try jw.objectField("system");
@@ -30,7 +31,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
         try jw.write("text");
         try jw.objectField("text");
         try jw.write(request.system);
-        if (request.cache) try writeCacheControl(&jw);
+        if (cache) try writeCacheControl(&jw);
         try jw.endObject();
         try jw.endArray();
     }
@@ -52,7 +53,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     }
 
     // A thinking block cannot carry the marker. Mark the last eligible block.
-    const cache_index = if (request.cache) lastCacheable(request_ir.blocks) else null;
+    const cache_index = if (cache) lastCacheable(request_ir.blocks) else null;
 
     try jw.objectField("messages");
     try jw.beginArray();
@@ -136,14 +137,7 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
             if (cache) try writeCacheControl(jw);
             try jw.endObject();
         },
-        .image => |m| {
-            try jw.beginObject();
-            try json.field(jw, "type", "image");
-            try writeImageSource(jw, m.source);
-            if (cache) try writeCacheControl(jw);
-            try jw.endObject();
-        },
-        .audio, .file => return error.UnsupportedContent,
+        .media => |media| try writeMedia(jw, media, cache),
         .reasoning => |r| {
             std.debug.assert(block.role == .assistant);
             try jw.beginObject();
@@ -183,13 +177,37 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
     }
 }
 
-fn writeImageSource(jw: *std.json.Stringify, source: types.MediaSource) !void {
+/// Write one attachment. An image is an `image` block and every other document is a `document` block.
+fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media, cache: bool) !void {
+    const kind: []const u8 = switch (media.modality()) {
+        .image => "image",
+        .pdf => "document",
+        // Anthropic reads no sound and no moving picture.
+        .audio, .video, .text => return error.UnsupportedContent,
+    };
+
+    try jw.beginObject();
+    try json.field(jw, "type", kind);
     try jw.objectField("source");
     try jw.beginObject();
-    switch (source) {
-        // The caller must resolve blobs before serialization.
-        .blob => return error.UnsupportedContent,
+    switch (media.source) {
+        .bytes => |data| {
+            try json.field(jw, "type", "base64");
+            try json.field(jw, "media_type", media.mime);
+            try jw.objectField("data");
+            try json.writeBase64(jw, "", data);
+        },
+        .url => |value| {
+            try json.field(jw, "type", "url");
+            try json.field(jw, "url", value);
+        },
+        .file_id => |value| {
+            try json.field(jw, "type", "file");
+            try json.field(jw, "file_id", value);
+        },
     }
+    try jw.endObject();
+    if (cache) try writeCacheControl(jw);
     try jw.endObject();
 }
 
@@ -199,7 +217,7 @@ fn lastCacheable(blocks: []const ir.Block) ?usize {
     while (i > 0) {
         i -= 1;
         switch (blocks[i].value) {
-            .reasoning, .redacted_reasoning, .audio, .file => {},
+            .reasoning, .redacted_reasoning => {},
             else => return i,
         }
     }
@@ -308,7 +326,7 @@ test "cache marks the system block and the last content block" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"one"},{"type":"text","text":"two","cache_control":{"type":"ephemeral"}}]}]}
     ,
-        .{ .model = "claude", .system = "sys", .max_output_tokens = 8, .cache = true },
+        .{ .model = "claude", .system = "sys", .max_output_tokens = 8, .cache = .anthropic },
         .{ .blocks = &blocks },
     );
 }
@@ -321,16 +339,32 @@ test "cache skips a trailing thinking block and marks the last eligible block" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer","cache_control":{"type":"ephemeral"}},{"type":"thinking","thinking":"ponder","signature":"sig"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8, .cache = true },
+        .{ .model = "claude", .max_output_tokens = 8, .cache = .anthropic },
         .{ .blocks = &blocks },
     );
 }
 
-test "audio content is unsupported on this dialect" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "audio/mpeg", .bytes = 2 } } } } }};
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
+test "an image and a document reach their own block shapes" {
+    const blocks = [_]ir.Block{
+        .{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" } } },
+        .{ .role = .user, .value = .{ .media = .{ .source = .{ .url = "https://x.test/a.pdf" }, .mime = "application/pdf" } } },
+        .{ .role = .user, .value = .{ .media = .{ .source = .{ .file_id = "file_1" }, .mime = "image/jpeg" } } },
+    };
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}},{"type":"document","source":{"type":"url","url":"https://x.test/a.pdf"}},{"type":"image","source":{"type":"file","file_id":"file_1"}}]}]}
+    ,
+        .{ .model = "claude", .max_output_tokens = 8 },
+        .{ .blocks = &blocks },
+    );
+}
+
+test "anthropic reads no sound and no moving picture" {
+    inline for (.{ "audio/mpeg", "video/mp4" }) |mime| {
+        const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = mime } } }};
+        var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer buf.deinit();
+        try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
+    }
 }
 
 test "a schema constrains the response through output_config" {

@@ -10,7 +10,7 @@ const types = ai.types;
 const Block = ir.Block;
 
 /// A bad transcript degrades the turn; the engine never crashes on stored data.
-pub const Error = error{ OutOfMemory, InvalidTranscript };
+pub const Error = error{ OutOfMemory, InvalidTranscript, UnresolvedBlob };
 
 /// Build the block IR in `gpa`. Blocks borrow transcript strings.
 pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, options: ir.Options) Error!ir.RequestIr {
@@ -20,7 +20,7 @@ pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, op
     for (messages) |message| switch (message) {
         .user => |user| for (user.content) |part| {
             if (part == .text and part.text.text.len == 0) continue; // Skip empty user text, as the assistant fold does.
-            try blocks.append(gpa, .{ .role = .user, .value = userValue(part) });
+            try blocks.append(gpa, .{ .role = .user, .value = try userValue(part) });
         },
         .assistant => |assistant| try foldAssistant(gpa, &blocks, assistant, options),
         .compaction => |compaction| if (compaction.summary.len != 0) {
@@ -33,18 +33,12 @@ pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, op
     return .{ .blocks = try blocks.toOwnedSlice(gpa) };
 }
 
-fn userValue(part: proto.content.ContentPart) Block.Value {
+/// Map one user part. A blob names bytes this build cannot read, because no blob store exists yet.
+fn userValue(part: proto.content.ContentPart) Error!Block.Value {
     return switch (part) {
         .text => |t| .{ .text = t.text },
-        .image => |t| .{ .image = .{ .source = mediaSource(t.source) } },
-        .audio => |t| .{ .audio = .{ .source = mediaSource(t.source) } },
-        .file => |t| .{ .file = .{ .source = mediaSource(t.source) } },
-    };
-}
-
-fn mediaSource(source: proto.content.MediaSource) types.MediaSource {
-    return switch (source) {
-        .blob => |blob| .{ .blob = .{ .hash = blob.hash, .mime = blob.mime, .bytes = blob.bytes } },
+        // Every media source is a blob today, and no store exists to read one into bytes.
+        .image, .audio, .file => error.UnresolvedBlob,
     };
 }
 
@@ -122,11 +116,8 @@ test "user text and image fold to user blocks" {
         .time = .{ .created_at_ms = 0 },
     } }};
 
-    const result = try build(arena.allocator(), &messages, .{});
-    try testing.expectEqual(@as(usize, 2), result.blocks.len);
-    try testing.expectEqual(ir.Role.user, result.blocks[0].role);
-    try testing.expectEqualStrings("hi", result.blocks[0].value.text);
-    try testing.expect(result.blocks[1].value == .image);
+    // A blob names bytes no store can read yet, so the turn fails here instead of at the provider.
+    try testing.expectError(error.UnresolvedBlob, build(arena.allocator(), &messages, .{}));
 }
 
 test "assistant tool call yields a tool_use then a tool_result" {

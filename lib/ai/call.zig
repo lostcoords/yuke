@@ -164,7 +164,7 @@ fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
         .reasoning_replay = request.reasoning_replay,
         .max_tokens_field = request.max_tokens_field,
         .responses_dialect = model.provider.responses_dialect,
-        .cache = model.provider.cache.marksBreakpoints(),
+        .cache = instance.CachePolicy.marker(model.provider.cache),
         .output_schema = request.output_schema,
     };
     return adapter.serialize(arena, model.provider.protocol, value, .{ .blocks = request.blocks });

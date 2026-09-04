@@ -8,16 +8,20 @@ pub const Protocol = types.Protocol;
 /// Select the API-key header.
 pub const ApiKeyHeader = enum { x_api_key, authorization_bearer };
 
-/// Select whether the endpoint accepts Anthropic `cache_control`.
+/// Name how an endpoint caches. A null policy is unverified, not a statement that it cannot.
 pub const CachePolicy = enum {
     unsupported,
-    ephemeral,
+    /// The host caches a repeated prefix on its own, so a request marks nothing.
+    automatic,
+    anthropic_breakpoint,
+    openai_breakpoint,
 
-    /// Report whether a request marks its own cache breakpoints. A new policy must answer here.
-    pub fn marksBreakpoints(self: CachePolicy) bool {
-        return switch (self) {
-            .unsupported => false,
-            .ephemeral => true,
+    /// Report the marker a request writes. A new policy must answer here.
+    pub fn marker(self: ?CachePolicy) types.CacheMarker {
+        return switch (self orelse return .none) {
+            .unsupported, .automatic => .none,
+            .anthropic_breakpoint => .anthropic,
+            .openai_breakpoint => .openai,
         };
     }
 };
@@ -129,7 +133,7 @@ pub const ProviderInstance = struct {
     protocol: Protocol,
     auth: AuthMechanism,
     headers: []const Header = &.{},
-    cache: CachePolicy = .unsupported,
+    cache: ?CachePolicy = null,
     responses_dialect: ResponsesDialect = .standard,
 };
 

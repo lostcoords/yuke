@@ -115,8 +115,8 @@ fn writeUserMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !void {
             .text => |text| {
                 try writeTextBlock(jw, text);
             },
-            .image => |image| try writeImage(jw, image.source),
-            .audio, .file, .reasoning, .redacted_reasoning, .tool_use, .tool_result => return error.UnsupportedContent,
+            .media => |media| try writeMedia(jw, media),
+            .reasoning, .redacted_reasoning, .tool_use, .tool_result => return error.UnsupportedContent,
         }
     }
     try jw.endArray();
@@ -146,7 +146,7 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, repl
             .tool_use => has_tool_calls = true,
             // A host that takes no replay drops the block. It is never a reason to fail the turn.
             .reasoning, .redacted_reasoning => has_reasoning = true,
-            .audio, .file, .image, .tool_result => return error.UnsupportedContent,
+            .media, .tool_result => return error.UnsupportedContent,
         }
     }
 
@@ -232,21 +232,60 @@ fn writeToolResult(jw: *std.json.Stringify, tool_result: ir.Block.ToolResult) !v
     try jw.endObject();
 }
 
-fn writeImage(jw: *std.json.Stringify, source: types.MediaSource) !void {
-    try jw.beginObject();
-    try json.field(jw, "type", "image_url");
-    try jw.objectField("image_url");
-    try jw.beginObject();
-    try writeImageSource(jw, source);
-    try jw.endObject();
-    try jw.endObject();
-}
-
-fn writeImageSource(jw: *std.json.Stringify, source: types.MediaSource) !void {
-    try jw.objectField("url");
-    switch (source) {
-        // The caller resolves a blob to bytes before serialization.
-        .blob => return error.UnsupportedContent,
+/// Write one attachment. This endpoint names a different part for each kind.
+fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
+    switch (media.modality()) {
+        .image => {
+            try jw.beginObject();
+            try json.field(jw, "type", "image_url");
+            try jw.objectField("image_url");
+            try jw.beginObject();
+            try jw.objectField("url");
+            // This part reads a URL alone, so bytes travel as a data URL and a handle has nowhere to go.
+            switch (media.source) {
+                .bytes => |data| try json.writeDataUrl(jw, media.mime, data),
+                .url => |value| try jw.write(value),
+                .file_id => return error.UnsupportedContent,
+            }
+            try jw.endObject();
+            try jw.endObject();
+        },
+        .audio => {
+            const format = try json.audioFormat(media.mime);
+            const data = switch (media.source) {
+                .bytes => |value| value,
+                // The part carries raw base64 with no envelope, so it names neither a URL nor a handle.
+                .url, .file_id => return error.UnsupportedContent,
+            };
+            try jw.beginObject();
+            try json.field(jw, "type", "input_audio");
+            try jw.objectField("input_audio");
+            try jw.beginObject();
+            try jw.objectField("data");
+            try json.writeBase64(jw, "", data);
+            try json.field(jw, "format", format);
+            try jw.endObject();
+            try jw.endObject();
+        },
+        .pdf => {
+            try jw.beginObject();
+            try json.field(jw, "type", "file");
+            try jw.objectField("file");
+            try jw.beginObject();
+            switch (media.source) {
+                .bytes => |data| {
+                    if (media.filename.len == 0) return error.UnsupportedContent; // The endpoint names the file.
+                    try jw.objectField("file_data");
+                    try json.writeDataUrl(jw, media.mime, data);
+                    try json.field(jw, "filename", media.filename);
+                },
+                .file_id => |value| try json.field(jw, "file_id", value),
+                .url => return error.UnsupportedContent,
+            }
+            try jw.endObject();
+            try jw.endObject();
+        },
+        .video, .text => return error.UnsupportedContent,
     }
 }
 
@@ -487,23 +526,6 @@ test "tools declare a raw input schema and strict mode" {
     );
 }
 
-test "a blob image waits for blob resolution" {
-    const blocks = [_]ir.Block{.{
-        .role = .user,
-        .value = .{ .image = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "image/png", .bytes = 2 } } } },
-    }};
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
-}
-
-test "audio content is unsupported on this dialect" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "audio/mpeg", .bytes = 2 } } } } }};
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
-}
-
 test "a schema constrains the response through response_format" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
     try expectJson(
@@ -520,4 +542,49 @@ test "a schema constrains the response through response_format" {
         .{ .model = "m", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}", .strict = false } },
         .{ .blocks = &blocks },
     );
+}
+
+test "each attachment kind reaches its own content part" {
+    const image = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" } } }};
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,YWI="}}]}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8 },
+        .{ .blocks = &image },
+    );
+
+    const document = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "application/pdf", .filename = "a.pdf" } } }};
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"file","file":{"file_data":"data:application/pdf;base64,YWI=","filename":"a.pdf"}}]}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8 },
+        .{ .blocks = &document },
+    );
+
+    const sound = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "audio/mpeg" } } }};
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"YWI=","format":"mp3"}}]}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8 },
+        .{ .blocks = &sound },
+    );
+}
+
+test "a part refuses a source its shape cannot carry" {
+    const cases = [_]ir.Block.Media{
+        // The image part reads a URL alone, so a provider handle has nowhere to go.
+        .{ .source = .{ .file_id = "file_1" }, .mime = "image/png" },
+        // The audio part carries raw base64 with no envelope.
+        .{ .source = .{ .url = "https://x.test/a.mp3" }, .mime = "audio/mpeg" },
+        // A document sent as bytes must name itself.
+        .{ .source = .{ .bytes = "ab" }, .mime = "application/pdf" },
+        .{ .source = .{ .bytes = "ab" }, .mime = "video/mp4" },
+        .{ .source = .{ .bytes = "ab" }, .mime = "audio/flac" },
+    };
+    for (cases) |media| {
+        const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = media } }};
+        var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer buf.deinit();
+        try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "m", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
+    }
 }

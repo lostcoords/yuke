@@ -1,6 +1,7 @@
 //! Provider sources share this model vocabulary. A `*Patch` states what one source knows.
 
 const ir = @import("request/ir.zig");
+const types = @import("types.zig");
 
 pub const ThinkingFormat = ir.ThinkingFormat;
 pub const ReasoningReplay = ir.ReasoningReplay;
@@ -34,8 +35,8 @@ pub const Caps = struct {
     disable_reasoning: ?bool = null,
 };
 
-/// One kind a model reads or writes. A source name outside this set is dropped, never guessed.
-pub const Modality = enum { text, image, audio, video, pdf };
+/// One kind a model reads or writes. The request IR names the same set.
+pub const Modality = types.Modality;
 
 /// What a model takes and what it returns.
 pub const Modalities = struct {

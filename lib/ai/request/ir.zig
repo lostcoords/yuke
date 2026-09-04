@@ -13,17 +13,28 @@ pub const Block = struct {
 
     pub const Value = union(enum) {
         text: []const u8,
-        image: Media,
-        audio: Media,
-        file: Media,
+        media: Media,
         reasoning: Reasoning,
         redacted_reasoning: []const u8,
         tool_use: ToolUse,
         tool_result: ToolResult,
     };
 
+    /// One attachment. Its media type selects the block each protocol writes.
     pub const Media = struct {
         source: types.MediaSource,
+        /// The IANA media type, such as `image/png` or `application/pdf`.
+        mime: []const u8,
+        /// The name a provider requires beside file bytes. An image needs none.
+        filename: []const u8 = "",
+
+        /// Classify the media type. An unknown type is a file, which every protocol can refuse.
+        pub fn modality(self: Media) types.Modality {
+            if (std.mem.startsWith(u8, self.mime, "image/")) return .image;
+            if (std.mem.startsWith(u8, self.mime, "audio/")) return .audio;
+            if (std.mem.startsWith(u8, self.mime, "video/")) return .video;
+            return .pdf; // Every remaining attachment travels as a document.
+        }
     };
 
     pub const Reasoning = struct {
@@ -122,8 +133,8 @@ pub const Request = struct {
     max_tokens_field: MaxTokensField = .max_tokens,
     /// Only Responses reads this field. The bound credential selects it, not the model.
     responses_dialect: ResponsesDialect = .standard,
-    /// Only Anthropic reads this field. The instance cache policy sets it.
-    cache: bool = false,
+    /// The marker this request writes. The instance cache policy selects it.
+    cache: types.CacheMarker = .none,
     /// Constrain the response to a schema. A null schema leaves the response free.
     output_schema: ?OutputSchema = null,
 };
@@ -158,10 +169,13 @@ pub fn validate(arena: std.mem.Allocator, request: Request, request_ir: RequestI
 fn validateBlock(arena: std.mem.Allocator, block: Block) !void {
     switch (block.value) {
         .text => |value| if (!stringValid(value)) return error.InvalidRequest,
-        .image, .audio, .file => |media| {
+        .media => |media| {
             if (block.role != .user) return error.InvalidRequest;
+            if (media.mime.len == 0 or !stringValid(media.mime)) return error.InvalidRequest;
+            if (!stringValid(media.filename)) return error.InvalidRequest;
             switch (media.source) {
-                .blob => |blob| if (!stringValid(blob.mime)) return error.InvalidRequest,
+                .bytes => |data| if (data.len == 0 or data.len > types.limits.max_media_bytes) return error.InvalidRequest,
+                .url, .file_id => |value| if (value.len == 0 or !stringValid(value)) return error.InvalidRequest,
             }
         },
         .reasoning => |value| {

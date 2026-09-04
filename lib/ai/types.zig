@@ -17,18 +17,25 @@ pub const ModelIdentity = struct {
     model: []const u8,
 };
 
-pub const MediaSource = union(enum) {
-    blob: Blob,
+/// One kind a model reads or writes. A source name outside this set is dropped, never guessed.
+pub const Modality = enum { text, image, audio, video, pdf };
 
-    pub const Blob = struct {
-        hash: [64]u8,
-        mime: []const u8,
-        bytes: u64,
-    };
+/// Which cache marker a request writes. A host that caches on its own needs none.
+pub const CacheMarker = enum { none, anthropic, openai };
+
+/// Where media bytes come from. A caller resolves its own storage before it serializes.
+pub const MediaSource = union(enum) {
+    /// Raw bytes. The serializer encodes them, and the caller owns them through serialization.
+    bytes: []const u8,
+    /// A URL the provider fetches for itself.
+    url: []const u8,
+    /// A handle the provider's own files endpoint returned.
+    file_id: []const u8,
 };
 
 pub const limits = struct {
     pub const max_blocks: usize = 1024;
     pub const max_string_bytes: usize = 1 << 20;
     pub const max_response_bytes: usize = 16 << 20;
+    pub const max_media_bytes: usize = 32 << 20;
 };

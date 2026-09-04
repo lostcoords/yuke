@@ -130,7 +130,7 @@ const routable_document =
     \\{"version":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","providers":[
     \\{"id":"anthropic","name":"Anthropic","base_url":"https://api.anthropic.com/v1",
     \\ "protocol":"anthropic_messages","auth":{"kind":"api_key","header":"x_api_key"},
-    \\ "cache":"ephemeral","headers":[{"name":"anthropic-version","value":"2023-06-01"}],
+    \\ "cache":"anthropic_breakpoint","headers":[{"name":"anthropic-version","value":"2023-06-01"}],
     \\ "models":[{"id":"claude","upstream_id":"claude-5","name":"Claude","limits":{"context_window":200000,
     \\ "max_output_tokens":64000},"cost":{"input":3.0,"output":15.0,"cache_read":0.3,"cache_write":3.75},
     \\ "flags":{"supports_tools":true,"supports_vision":true},
@@ -163,7 +163,7 @@ test "decode reads a routable provider" {
     const p = doc.providers[0];
     try testing.expect(p.protocol != null and p.auth != null);
     try testing.expectEqual(instance.Protocol.anthropic_messages, p.protocol.?);
-    try testing.expectEqual(instance.CachePolicy.ephemeral, p.cache);
+    try testing.expectEqual(instance.CachePolicy.anthropic_breakpoint, p.cache);
     try testing.expectEqual(instance.ApiKeyHeader.x_api_key, p.auth.?.header.?);
     try testing.expectEqualStrings("anthropic-version", p.headers[0].name);
 

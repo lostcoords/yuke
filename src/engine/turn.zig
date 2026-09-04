@@ -411,7 +411,7 @@ fn resolvedRequest(
         .reasoning_replay = r.model.dialect.reasoning_replay,
         .max_tokens_field = r.model.dialect.max_tokens_field,
         .responses_dialect = route.instance.responses_dialect,
-        .cache = route.instance.cache.marksBreakpoints(),
+        .cache = provider.instance.CachePolicy.marker(route.instance.cache),
     }, .{ .protocol = slot.protocol, .model = slot.config.model });
 
     // Read the credential and the clock here, so a rotated key or a lapsed grant needs no rebuild.

@@ -140,7 +140,13 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
     try w.print("            .auth = .{{ .api_key = .{s} }},\n", .{
         if (std.mem.eql(u8, kind, "oauth")) "authorization_bearer" else try routingName(vocab.instance.ApiKeyHeader, try string(auth, "header")),
     });
-    try w.print("            .cache = .{s},\n", .{try routingName(vocab.instance.CachePolicy, try string(provider, "cache"))});
+    // A null policy means the control plane has not verified this host, so the route marks nothing.
+    const cache = try member(provider, "cache");
+    if (cache == .null) {
+        try w.writeAll("            .cache = null,\n");
+    } else {
+        try w.print("            .cache = .{s},\n", .{try routingName(vocab.instance.CachePolicy, try text(cache))});
+    }
     try w.print("            .responses_dialect = .{s},\n", .{
         try routingName(vocab.ir.ResponsesDialect, try string(provider, "responses_dialect")),
     });
@@ -350,7 +356,7 @@ const one_provider =
     \\ {"id":"anthropic","name":"Anthropic","env":["ANTHROPIC_API_KEY"],
     \\  "base_url":"https://api.anthropic.com/v1","protocol":"anthropic_messages",
     \\  "auth":{"kind":"api_key","header":"x_api_key","env":"ANTHROPIC_API_KEY"},
-    \\  "cache":"ephemeral","responses_dialect":"standard",
+    \\  "cache":"anthropic_breakpoint","responses_dialect":"standard",
     \\  "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
     \\  "models":[{"id":"claude","upstream_id":"claude","name":"Claude",
     \\   "limits":{"context_window":200000,"max_output_tokens":64000},
@@ -375,7 +381,7 @@ test "a provider and its model reach the generated table" {
     try testing.expect(std.mem.indexOf(u8, out, ".env = &.{\"ANTHROPIC_API_KEY\"}") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".protocol = .anthropic_messages") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".auth = .{ .api_key = .x_api_key }") != null);
-    try testing.expect(std.mem.indexOf(u8, out, ".cache = .ephemeral") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".cache = .anthropic_breakpoint") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".{ .name = \"anthropic-version\", .value = \"2023-06-01\" }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".reasoning_levels = &.{ .{ .named = \"low\" }, .{ .named = \"high\" } }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".min = 1024,") != null);
@@ -412,7 +418,7 @@ test "an unknown routing name fails the run" {
     inline for (.{
         .{ "\"protocol\":\"anthropic_messages\"", "\"protocol\":\"gemini\"" },
         .{ "\"kind\":\"api_key\",\"header\":\"x_api_key\"", "\"kind\":\"api_key\",\"header\":\"x-api-key\"" },
-        .{ "\"cache\":\"ephemeral\"", "\"cache\":\"eternal\"" },
+        .{ "\"cache\":\"anthropic_breakpoint\"", "\"cache\":\"eternal\"" },
         .{ "\"version\":1", "\"version\":2" },
     }) |case| {
         const broken = try std.mem.replaceOwned(u8, a, one_provider, case[0], case[1]);

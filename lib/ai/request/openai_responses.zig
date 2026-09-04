@@ -77,15 +77,11 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                     try jw.endObject();
                 },
             },
-            .image => |image| {
+            .media => |media| {
                 if (block.role != .user) return error.UnsupportedContent;
                 try ensureMessage(&jw, &message, .user);
-                try jw.beginObject();
-                try json.field(&jw, "type", "input_image");
-                try writeImageSource(&jw, image.source);
-                try jw.endObject();
+                try writeMedia(&jw, media);
             },
-            .audio, .file => return error.UnsupportedContent,
             .reasoning => |reasoning| {
                 // Omit reasoning state when it has no encrypted content.
                 if (reasoning.signature.len == 0) continue;
@@ -199,12 +195,52 @@ fn writeTextFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void {
     try jw.endObject();
 }
 
-fn writeImageSource(jw: *std.json.Stringify, source: types.MediaSource) !void {
-    try jw.objectField("image_url");
-    switch (source) {
-        // The caller resolves a blob to bytes before serialization.
-        .blob => return error.UnsupportedContent,
+/// Write one attachment. Responses names the image URL as a plain string, not an object.
+fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
+    try jw.beginObject();
+    switch (media.modality()) {
+        .image => {
+            try json.field(jw, "type", "input_image");
+            switch (media.source) {
+                .bytes => |data| {
+                    try jw.objectField("image_url");
+                    try json.writeDataUrl(jw, media.mime, data);
+                },
+                .url => |value| try json.field(jw, "image_url", value),
+                .file_id => |value| try json.field(jw, "file_id", value),
+            }
+        },
+        .pdf => {
+            try json.field(jw, "type", "input_file");
+            switch (media.source) {
+                .bytes => |data| {
+                    if (media.filename.len == 0) return error.UnsupportedContent; // The endpoint names the file.
+                    try json.field(jw, "filename", media.filename);
+                    try jw.objectField("file_data");
+                    try json.writeDataUrl(jw, media.mime, data);
+                },
+                .url => |value| try json.field(jw, "file_url", value),
+                .file_id => |value| try json.field(jw, "file_id", value),
+            }
+        },
+        .audio => {
+            const format = try json.audioFormat(media.mime);
+            const data = switch (media.source) {
+                .bytes => |value| value,
+                // The part carries raw base64 with no envelope, so it names neither a URL nor a handle.
+                .url, .file_id => return error.UnsupportedContent,
+            };
+            try json.field(jw, "type", "input_audio");
+            try jw.objectField("input_audio");
+            try jw.beginObject();
+            try jw.objectField("data");
+            try json.writeBase64(jw, "", data);
+            try json.field(jw, "format", format);
+            try jw.endObject();
+        },
+        .video, .text => return error.UnsupportedContent,
     }
+    try jw.endObject();
 }
 
 const testing = std.testing;
@@ -320,23 +356,6 @@ test "tools declare a flat raw schema with strict mode" {
     );
 }
 
-test "a blob user image waits for blob resolution" {
-    const blocks = [_]ir.Block{.{
-        .role = .user,
-        .value = .{ .image = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "image/png", .bytes = 2 } } } },
-    }};
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
-}
-
-test "audio content is unsupported on this dialect" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "audio/mpeg", .bytes = 2 } } } } }};
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
-}
-
 test "a schema constrains the response through the text format" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
     try expectJson(
@@ -351,6 +370,21 @@ test "a schema constrains the response through the text format" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"text":{"format":{"type":"json_schema","name":"person","schema":{"type":"object"},"strict":false}},"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}", .strict = false } },
+        .{ .blocks = &blocks },
+    );
+}
+
+test "each attachment kind reaches its own input part" {
+    const blocks = [_]ir.Block{
+        .{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" } } },
+        .{ .role = .user, .value = .{ .media = .{ .source = .{ .file_id = "file_1" }, .mime = "image/jpeg" } } },
+        .{ .role = .user, .value = .{ .media = .{ .source = .{ .url = "https://x.test/a.pdf" }, .mime = "application/pdf" } } },
+        .{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "audio/wav" } } },
+    };
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,YWI="},{"type":"input_image","file_id":"file_1"},{"type":"input_file","file_url":"https://x.test/a.pdf"},{"type":"input_audio","input_audio":{"data":"YWI=","format":"wav"}}]}]}
+    ,
+        .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
     );
 }
