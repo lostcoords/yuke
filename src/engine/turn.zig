@@ -354,7 +354,7 @@ fn reasoningFor(
     if (model.reasoning_levels.len != 0 and !hasReasoningLevel(model.reasoning_levels, level))
         return error.UnsupportedReasoning;
     if (model.dialect.anthropic_adaptive) return .adaptive;
-    if (thinkingBudget(model, level, output_limit)) |tokens| return .{ .budget = tokens };
+    if (thinkingBudget(model, output_limit)) |tokens| return .{ .budget = tokens };
     const effort = std.meta.stringToEnum(provider.ir.Effort, level) orelse return error.UnsupportedReasoning;
     return .{ .effort = effort };
 }
@@ -371,21 +371,25 @@ fn hasReasoningLevel(levels: []const provider.model.ReasoningLevel, wanted: []co
 const thinking_budget_min: u64 = 1024;
 
 /// Size the budget for a level. Thinking shares the output ceiling, so the answer keeps a part.
-fn thinkingBudget(model: *const registry.ModelSpec, level: []const u8, output_limit: u32) ?u64 {
+/// Anthropic's own starting point for a complex task. A budget over 32k needs batch processing.
+const thinking_budget_default: u64 = 16_000;
+
+/// Choose the thinking budget. Anthropic states absolute starting points, never a share of the ceiling.
+fn thinkingBudget(model: *const registry.ModelSpec, output_limit: u32) ?u64 {
     const bounds = switch (model.dialect.reasoning_budget) {
         .unsupported => return null,
         .range => |range| range,
     };
 
-    const cap: u64 = output_limit;
-    var budget: u64 = if (std.mem.eql(u8, level, "max")) cap / 4 * 3 else cap / 2;
+    var budget: u64 = thinking_budget_default;
     if (bounds.max) |maximum| budget = @min(budget, maximum);
     if (bounds.min) |minimum| {
         if (minimum > 0) budget = @max(budget, @as(u64, @intCast(minimum)));
     }
     budget = @max(budget, thinking_budget_min);
 
-    return if (budget >= cap) null else budget;
+    // The budget must leave room for the answer, so a ceiling it cannot fit under sends none.
+    return if (budget >= output_limit) null else budget;
 }
 
 /// Build the real provider request. It sets the run protocol, the endpoint URL, and the auth headers.
@@ -921,7 +925,7 @@ test "an adaptive row resolves to adaptive for every level that is not off" {
     try std.testing.expectEqual(provider.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
 }
 
-test "a budget row sizes the budget from the output ceiling" {
+test "a budget row states one budget, whatever effort the caller names" {
     const model: registry.ModelSpec = .{
         .id = "m",
         .upstream_id = "m",
@@ -929,8 +933,9 @@ test "a budget row sizes the budget from the output ceiling" {
         .reasoning_levels = &.{ .{ .named = "max" }, .{ .named = "high" } },
         .dialect = .{ .reasoning_budget = .from(1024, 32000) },
     };
-    try std.testing.expectEqual(@as(u64, 6144), (try reasoningFor(&model, "max", 8192)).budget);
-    try std.testing.expectEqual(@as(u64, 4096), (try reasoningFor(&model, "high", 8192)).budget);
+    // Anthropic publishes absolute starting points, so the level never scales the budget.
+    try std.testing.expectEqual(@as(u64, 16000), (try reasoningFor(&model, "max", 64000)).budget);
+    try std.testing.expectEqual(@as(u64, 16000), (try reasoningFor(&model, "high", 64000)).budget);
 }
 
 test "a budget is clamped by the feed bounds and refused when it reaches the ceiling" {
@@ -940,6 +945,9 @@ test "a budget is clamped by the feed bounds and refused when it reaches the cei
     // A budget that reaches the ceiling falls back to the effort control.
     const tiny: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .reasoning_budget = .from(1024, null) } };
     try std.testing.expectEqual(provider.ir.Effort.high, (try reasoningFor(&tiny, "high", 1024)).effort);
+
+    // The published maximum still wins, so a model that caps itself below the default is honoured.
+    try std.testing.expectEqual(@as(u64, 2000), (try reasoningFor(&capped, "high", 64000)).budget);
 }
 
 test "a selected level outside the model list is unsupported" {
