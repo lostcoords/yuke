@@ -127,14 +127,20 @@ pub const Tools = struct {
     }
 };
 
-/// One tool call in flight. A turn task submits it and waits; the owner answers it.
+/// What one call asks for. The kind selects the handler the owner runs and the answer it records.
+pub const Kind = enum { tool, hook };
+
+/// One call in flight. A turn task submits it and waits; the owner answers it.
 ///
 /// The submitter touches no QuickJS value, so it never frees the Promise. It marks itself done,
 /// and the owner sweeps the record on its next pass.
 pub const Call = struct {
-    /// The tool and its raw JSON arguments. The submitter owns these bytes for the whole call.
+    kind: Kind = .tool,
+    /// The tool name, or the hook point. The submitter owns these bytes for the whole call.
     name: []const u8,
+    /// The tool arguments, or the hook payload. Raw JSON either way.
     arguments: []const u8,
+    /// The workspace a tool runs against. A hook call leaves it empty.
     workspace_root: []u8,
     /// The submitter sleeps on this. The owner sets it once, when the call settles.
     done: zio.ResetEvent = .init,
@@ -190,11 +196,20 @@ pub const Calls = struct {
     }
 
     pub fn submitAt(self: *Calls, name: []const u8, arguments: []const u8, workspace_root: []const u8) error{OutOfMemory}!*Call {
+        return self.submitCall(.tool, name, arguments, workspace_root);
+    }
+
+    /// Queue one hook question. The point names it, and the payload is the JSON that point defines.
+    pub fn submitHook(self: *Calls, point: []const u8, payload: []const u8) error{OutOfMemory}!*Call {
+        return self.submitCall(.hook, point, payload, "");
+    }
+
+    fn submitCall(self: *Calls, kind: Kind, name: []const u8, arguments: []const u8, workspace_root: []const u8) error{OutOfMemory}!*Call {
         const call = try self.gpa.create(Call);
         errdefer self.gpa.destroy(call);
         const root = try self.gpa.dupe(u8, workspace_root);
         errdefer self.gpa.free(root);
-        call.* = .{ .name = name, .arguments = arguments, .workspace_root = root };
+        call.* = .{ .kind = kind, .name = name, .arguments = arguments, .workspace_root = root };
         try self.live.append(self.gpa, call);
         return call;
     }

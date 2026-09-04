@@ -7,6 +7,7 @@ const Host = @import("host.zig").Host;
 const table = @import("tools.zig");
 const ir = @import("ai").ir;
 const toolset = @import("../engine/toolset.zig");
+const hookset = @import("../engine/hookset.zig");
 const utf8 = @import("../utf8.zig");
 
 const Context = quickjs.Context;
@@ -51,6 +52,54 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
     };
 }
 
+/// Build the hook port the process installs. The set answers from the live host table.
+pub fn hookSet(host: *Host) hookset.HookSet {
+    std.debug.assert(host.phase == .open);
+    return .{ .ctx = host, .holds = holdsFor, .ask = askFor };
+}
+
+/// Report whether a handler waits. A turn task reads the point set and enters no JavaScript.
+fn holdsFor(ctx: *anyopaque, point: proto.hook.Point) bool {
+    const host: *Host = @ptrCast(@alignCast(ctx));
+    return host.hooks.holds(point);
+}
+
+/// Submit one point and wait for the folded chain. A handler fault proceeds, because it is a bug.
+fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
+    const host: *Host = @ptrCast(@alignCast(ctx));
+    const call = host.calls.submitHook(point.wireName(), payload) catch return .proceed;
+    // The owner sweeps the record, so leaving is the last thing this task does with it.
+    defer {
+        host.calls.finish(call);
+        if (host.owner_wake) |wake| wake.set();
+    }
+    // The owner sleeps between frames, so a queued call must wake it.
+    if (host.owner_wake) |wake| wake.set();
+
+    call.done.wait() catch return .proceed;
+    std.debug.assert(call.state == .settled); // the owner sets the event once, and only on a settle
+    const text = call.text orelse return .proceed;
+    if (call.is_error) {
+        std.log.warn("hook {s} faulted: {s}", .{ point.wireName(), text });
+        return .proceed;
+    }
+    if (text.len == 0) return .proceed;
+    return decisionOf(out, point, text);
+}
+
+/// Read the decision the chain answered. Text the point cannot describe proceeds.
+fn decisionOf(out: std.mem.Allocator, point: proto.hook.Point, text: []const u8) hookset.Decision {
+    const parsed = std.json.parseFromSliceLeaky(proto.hook.Decision, out, text, .{}) catch {
+        std.log.warn("hook {s} answered an unreadable decision", .{point.wireName()});
+        return .proceed;
+    };
+    return switch (parsed) {
+        .proceed => .proceed,
+        .replace => |value| .{ .replace = std.json.Stringify.valueAlloc(out, value, .{}) catch return .proceed },
+        .block => |blocked| .{ .block = out.dupe(u8, blocked.reason) catch return .proceed },
+    };
+}
+
 fn fault(out: std.mem.Allocator, message: []const u8) toolset.Outcome {
     return .{ .output = out.dupe(u8, message) catch message, .is_error = true };
 }
@@ -75,8 +124,55 @@ pub fn abortAll(host: *Host) void {
     }
 }
 
-/// Invoke one handler and retain its promise until it settles.
+/// Invoke the handler this call names and retain its promise until it settles.
 fn start(host: *Host, call: *table.Call) void {
+    switch (call.kind) {
+        .tool => startTool(host, call),
+        .hook => startHook(host, call),
+    }
+}
+
+/// Hand one point and its payload to the chain folder. The folder answers one Promise for the chain.
+fn startHook(host: *Host, call: *table.Call) void {
+    const ctx = host.ctx;
+    // A withdrawn folder answers no point, so the call proceeds rather than failing the round.
+    const folder = host.hooks.dispatch orelse return settleText(host, call, "", false);
+
+    const payload = host.gpa.dupeZ(u8, call.arguments) catch
+        return settleText(host, call, "out of memory", true);
+    defer host.gpa.free(payload);
+    const parsed = ctx.parseJSON(payload, "hook-payload.json");
+    if (ctx.isException(parsed)) {
+        dropException(ctx);
+        return settleText(host, call, "the hook payload is not valid JSON", true);
+    }
+    defer ctx.freeValue(parsed);
+
+    const point = ctx.newString(call.name);
+    if (ctx.isException(point)) {
+        dropException(ctx);
+        return settleText(host, call, "out of memory", true);
+    }
+    defer ctx.freeValue(point);
+
+    host.enterSlice();
+    var argv = [_]Value{ point, parsed };
+    const answer = ctx.call(folder, quickjs.UNDEFINED, &argv);
+    if (ctx.isException(answer)) {
+        const exc = ctx.getException();
+        defer ctx.freeValue(exc);
+        return settleValue(host, call, exc, true);
+    }
+    if (!ctx.isPromise(answer)) {
+        ctx.freeValue(answer);
+        return settleText(host, call, "the hook dispatcher must return a Promise", true);
+    }
+    call.promise = answer; // the call holds the root until it settles
+    call.state = .running;
+    poll(host, call);
+}
+
+fn startTool(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     const tool = host.tools.find(call.name) orelse
         return settleText(host, call, "the tool is not registered", true);
@@ -153,9 +249,13 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
     if (is_error) {
         const message = errorText(ctx, value);
         defer if (message) |text| ctx.freeCString(text.ptr);
-        return settleText(host, call, if (message) |text| text else "the tool failed", true);
+        const fallback = if (call.kind == .hook) "the hook failed" else "the tool failed";
+        return settleText(host, call, if (message) |text| text else fallback, true);
     }
+    // An empty answer is the proceed decision for a hook, and empty output for a tool.
     if (ctx.isUndefined(value) or ctx.isNull(value)) return settleText(host, call, "", false);
+    // A hook answers one decision object, which never carries model text or a view.
+    if (call.kind == .hook) return stringifyValue(host, call, value);
     if (ctx.isString(value)) {
         const text = ctx.toCStringLen(value) catch {
             dropException(ctx);

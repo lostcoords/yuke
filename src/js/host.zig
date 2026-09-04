@@ -12,6 +12,7 @@ const diff_module = @import("native/diff.zig");
 const tools_module = @import("native/tools.zig");
 const interaction_module = @import("native/interaction.zig");
 const tools_table = @import("tools.zig");
+const hooks_table = @import("hooks.zig");
 const interactions_table = @import("interactions.zig");
 const tool_run = @import("tool_run.zig");
 const pending = @import("pending.zig");
@@ -125,6 +126,8 @@ pub const Host = struct {
     ops: pending.Ops,
     /// The tools `index.js` registered. The process reads its declarations after boot.
     tools: tools_table.Tools,
+    /// The hook points a plugin holds, and the chain folder `yuke:ext` installs.
+    hooks: hooks_table.Hooks,
     /// Every tool call a turn task waits on. The owner answers them in `pump`.
     calls: tools_table.Calls,
     /// Every headless interaction that waits for a correlated frontend answer.
@@ -187,6 +190,7 @@ pub const Host = struct {
             .env = opts.env,
             .ops = .{ .gpa = gpa },
             .tools = .{ .gpa = gpa },
+            .hooks = .{},
             .calls = .{ .gpa = gpa },
             .interactions = .{ .gpa = gpa },
         };
@@ -261,6 +265,7 @@ pub const Host = struct {
         self.interactions.deinit();
         self.calls.deinit(self.ctx);
         self.tools.deinit(self.ctx);
+        self.hooks.deinit(self.ctx);
         self.engine.destroy();
         self.freePaintRoots();
         self.paint.glyphs.deinit();
@@ -920,5 +925,6 @@ test {
     _ = @import("native/diff.zig");
     _ = @import("native/tools.zig");
     _ = @import("tools.zig");
+    _ = @import("hooks.zig");
     _ = @import("host_js_test.zig");
 }

@@ -14,6 +14,7 @@ const util = @import("../util.zig");
 const zio = @import("zio");
 const Sinks = @import("sink.zig").Sinks;
 const toolset = @import("toolset.zig");
+const hookset = @import("hookset.zig");
 
 const Engine = @This();
 
@@ -30,6 +31,8 @@ pub const Deps = struct {
     env: *const std.process.Environ.Map,
     /// The tools this process can run. The engine borrows the set from the extension owner.
     tools: toolset.ToolSet = .{},
+    /// The hooks this process can ask. The engine borrows the set from the same owner.
+    hooks: hookset.HookSet = .{},
     retry_policy: retry.Policy = .{},
     /// Retry permits for one whole run.
     retry_budget: u8 = 8,
@@ -67,10 +70,16 @@ pub fn installTools(self: *Engine, set: toolset.ToolSet) void {
     self.deps.tools = set;
 }
 
-/// Drop the tool set after all turn tasks leave the engine.
+/// Give the engine its hooks. The set answers live, so a plugin can add or drop one at any time.
+pub fn installHooks(self: *Engine, set: hookset.HookSet) void {
+    self.deps.hooks = set;
+}
+
+/// Drop the tool and hook sets after all turn tasks leave the engine.
 pub fn clearTools(self: *Engine) void {
     std.debug.assert(self.closing);
     self.deps.tools = .{};
+    self.deps.hooks = .{};
 }
 
 /// Cancel every turn and wait for each task to leave the engine.
