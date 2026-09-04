@@ -3,7 +3,9 @@
 
 const std = @import("std");
 const proto = @import("proto");
-const ir = @import("ir.zig");
+const ai = @import("ai");
+const ir = ai.ir;
+const types = ai.types;
 
 const Block = ir.Block;
 
@@ -34,9 +36,15 @@ pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, op
 fn userValue(part: proto.content.ContentPart) Block.Value {
     return switch (part) {
         .text => |t| .{ .text = t.text },
-        .image => |t| .{ .image = .{ .source = t.source } },
-        .audio => |t| .{ .audio = .{ .source = t.source } },
-        .file => |t| .{ .file = .{ .source = t.source } },
+        .image => |t| .{ .image = .{ .source = mediaSource(t.source) } },
+        .audio => |t| .{ .audio = .{ .source = mediaSource(t.source) } },
+        .file => |t| .{ .file = .{ .source = mediaSource(t.source) } },
+    };
+}
+
+fn mediaSource(source: proto.content.MediaSource) types.MediaSource {
+    return switch (source) {
+        .blob => |blob| .{ .blob = .{ .hash = blob.hash, .mime = blob.mime, .bytes = blob.bytes } },
     };
 }
 
@@ -72,9 +80,17 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: pro
     };
 }
 
-fn provenanceMatches(actual: ?proto.message.TurnProvenance, target: proto.message.TurnProvenance) bool {
+fn provenanceMatches(actual: ?proto.message.TurnProvenance, target: types.ModelIdentity) bool {
     const p = actual orelse return false;
-    return p.protocol == target.protocol and std.mem.eql(u8, p.model, target.model);
+    return protocolFromProto(p.protocol) == target.protocol and std.mem.eql(u8, p.model, target.model);
+}
+
+fn protocolFromProto(protocol: proto.enums.ProviderProtocol) types.Protocol {
+    return switch (protocol) {
+        .anthropic_messages => .anthropic_messages,
+        .openai_chat => .openai_chat,
+        .openai_responses => .openai_responses,
+    };
 }
 
 const ToolOutcome = struct { content: []const u8, is_error: bool };

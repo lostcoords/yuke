@@ -1,11 +1,11 @@
-//! The reducer maps OpenAI Chat Completions SSE data to `StreamEvent` values. The stream emits content blocks, then `[DONE]`.
+//! Map OpenAI Chat Completions SSE data to neutral stream events.
 //! The dialect has no block-stop event, so a new block or `[DONE]` stops the open block.
 //! Deltas borrow caller `scratch`. Terminal results and `done` borrow reducer buffers until `deinit`. Malformed peer input returns `error.Protocol`.
 
 const std = @import("std");
-const proto = @import("proto");
 const event = @import("event.zig");
 const json = @import("json.zig");
+const types = @import("../types.zig");
 
 const StreamEvent = event.StreamEvent;
 
@@ -26,9 +26,9 @@ pub const Reducer = struct {
     blocks: std.ArrayList(Block) = .empty,
     /// The one open block. Blocks are sequential.
     open_block: ?usize = null,
-    usage: proto.message.TokenUsage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
+    usage: types.Usage = .{},
     raw_stop_reason: []const u8 = "",
-    stop_reason: proto.enums.StopReason = .unknown,
+    stop_reason: types.FinishReason = .unknown,
     /// True when the model refused. This dialect reports `stop`, so the refusal sets the reason.
     refused: bool = false,
     done_emitted: bool = false,
@@ -255,7 +255,7 @@ pub const Reducer = struct {
     }
 };
 
-fn mapStopReason(raw: []const u8) proto.enums.StopReason {
+fn mapStopReason(raw: []const u8) types.FinishReason {
     if (std.mem.eql(u8, raw, "stop")) return .stop;
     if (std.mem.eql(u8, raw, "length")) return .length;
     if (std.mem.eql(u8, raw, "tool_calls")) return .tool_calls;
@@ -316,7 +316,7 @@ test "text turn: started, deltas, stopped, done with usage" {
     try testing.expectEqualStrings("lo", h.out.items[2].text_delta.text);
     try testing.expect(h.out.items[3].block_stopped.result == .text);
     const done = h.out.items[4].done;
-    try testing.expectEqual(proto.enums.StopReason.stop, done.stop_reason);
+    try testing.expectEqual(types.FinishReason.stop, done.stop_reason);
     try testing.expectEqualStrings("stop", done.raw_stop_reason);
     try testing.expectEqual(@as(u64, 100), done.usage.input);
     try testing.expectEqual(@as(u64, 5), done.usage.output);
@@ -343,7 +343,7 @@ test "tool turn: input deltas stream and the whole call surfaces at stop" {
     try testing.expectEqualStrings("call_1", call.call_id);
     try testing.expectEqualStrings("run", call.name);
     try testing.expectEqualStrings("{\"cmd\":\"zig test\"}", call.arguments);
-    try testing.expectEqual(proto.enums.StopReason.tool_calls, h.out.items[4].done.stop_reason);
+    try testing.expectEqual(types.FinishReason.tool_calls, h.out.items[4].done.stop_reason);
 }
 
 test "a second tool index stops the first block before it opens" {
@@ -455,7 +455,7 @@ test "a refusal streams as text and reports refusal" {
     try testing.expectEqual(event.BlockKind.text, h.out.items[0].block_started.kind);
     try testing.expectEqualStrings("I cannot help", h.out.items[1].text_delta.text);
     const done = h.out.items[h.out.items.len - 1].done;
-    try testing.expectEqual(proto.enums.StopReason.refusal, done.stop_reason);
+    try testing.expectEqual(types.FinishReason.refusal, done.stop_reason);
     try testing.expectEqualStrings("stop", done.raw_stop_reason); // The provider value stays intact.
 }
 

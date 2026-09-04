@@ -390,7 +390,7 @@ fn resolvedRequest(
         .ready => |ready| ready,
         .unavailable => return error.UnknownModel,
     };
-    slot.protocol = route.instance.protocol;
+    slot.protocol = provider.protocolToProto(route.instance.protocol);
 
     const output_limit = if (r.model.limits.max_output_tokens) |limit|
         std.math.cast(u32, limit) orelse max_output_tokens
@@ -408,7 +408,7 @@ fn resolvedRequest(
         .max_tokens_field = r.model.dialect.max_tokens_field,
         .responses_dialect = route.instance.responses_dialect,
         .cache = route.instance.cache != .unsupported,
-    }, .{ .protocol = route.instance.protocol, .model = slot.config.model });
+    }, .{ .protocol = slot.protocol, .model = slot.config.model });
 
     // Read the credential and the clock here, so a rotated key or a lapsed grant needs no rebuild.
     const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
@@ -424,7 +424,7 @@ fn resolvedRequest(
 
 /// Reduce the response stream with the reducer for `protocol`.
 fn streamWithReducer(engine: *Engine, body: provider.transport.ResponseBody, streamer: *Streamer, protocol: proto.enums.ProviderProtocol) !void {
-    switch (protocol) {
+    switch (provider.protocolFromProto(protocol)) {
         inline else => |p| {
             var reducer = provider.Adapter(p).Reducer.init(engine.deps.gpa);
             defer reducer.deinit();
@@ -725,8 +725,8 @@ const Streamer = struct {
                 }
             },
             .done => |d| {
-                self.stop_reason = d.stop_reason;
-                self.usage = d.usage;
+                self.stop_reason = provider.finishReasonToProto(d.stop_reason);
+                self.usage = provider.usageToProto(d.usage);
             },
         }
     }

@@ -1,4 +1,4 @@
-//! The SSE framer converts raw bytes into `data` payloads. It accepts LF, CRLF, and lone CR line endings.
+//! Convert SSE bytes into `data` payloads with standard line endings.
 //! A blank line emits a payload. It joins `data:` fields with a newline and ignores `event:` because providers encode the type in JSON.
 
 const std = @import("std");

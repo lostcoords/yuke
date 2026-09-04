@@ -1,10 +1,9 @@
-//! The OpenAI Chat Completions request serializer. It reads the Block IR and
-//! writes the dialect JSON. Tool results always use standalone messages.
+//! Serialize OpenAI Chat Completions requests from the block IR.
 
 const std = @import("std");
-const proto = @import("proto");
 const ir = @import("ir.zig");
 const json = @import("json.zig");
+const types = @import("../types.zig");
 
 /// Write the OpenAI Chat Completions request body to `w`.
 pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr) !void {
@@ -16,7 +15,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.objectField("stream");
     try jw.write(true);
     try json.nested(&jw, "stream_options", "include_usage", true);
-    // The engine owns the transcript, so the endpoint never keeps a copy.
+    // The caller owns the input history, so the endpoint never keeps a copy.
     try jw.objectField("store");
     try jw.write(false);
     try jw.objectField(switch (request.max_tokens_field) {
@@ -25,6 +24,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     });
     try jw.write(request.max_output_tokens);
     try writeReasoning(&jw, request.thinking_format, request.reasoning);
+    try writeResponseFormat(&jw, request.output_schema);
 
     if (request.tools.len != 0) {
         try jw.objectField("tools");
@@ -205,6 +205,23 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, repl
     try jw.endObject();
 }
 
+/// Constrain the response to a schema. The endpoint nests the schema one level deeper than Responses.
+fn writeResponseFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void {
+    const output = schema orelse return;
+    try jw.objectField("response_format");
+    try jw.beginObject();
+    try json.field(jw, "type", "json_schema");
+    try jw.objectField("json_schema");
+    try jw.beginObject();
+    try json.field(jw, "name", output.name);
+    try jw.objectField("schema");
+    try json.writeRawJson(jw, output.schema);
+    try jw.objectField("strict");
+    try jw.write(output.strict);
+    try jw.endObject();
+    try jw.endObject();
+}
+
 fn writeTextBlock(jw: *std.json.Stringify, text: []const u8) !void {
     try jw.beginObject();
     try json.field(jw, "type", "text");
@@ -220,7 +237,7 @@ fn writeToolResult(jw: *std.json.Stringify, tool_result: ir.Block.ToolResult) !v
     try jw.endObject();
 }
 
-fn writeImage(jw: *std.json.Stringify, source: proto.content.MediaSource) !void {
+fn writeImage(jw: *std.json.Stringify, source: types.MediaSource) !void {
     try jw.beginObject();
     try json.field(jw, "type", "image_url");
     try jw.objectField("image_url");
@@ -230,10 +247,10 @@ fn writeImage(jw: *std.json.Stringify, source: proto.content.MediaSource) !void 
     try jw.endObject();
 }
 
-fn writeImageSource(jw: *std.json.Stringify, source: proto.content.MediaSource) !void {
+fn writeImageSource(jw: *std.json.Stringify, source: types.MediaSource) !void {
     try jw.objectField("url");
     switch (source) {
-        // The engine resolves a blob to bytes before serialization.
+        // The caller resolves a blob to bytes before serialization.
         .blob => return error.UnsupportedContent,
     }
 }
@@ -490,4 +507,14 @@ test "audio content is unsupported on this dialect" {
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
     try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
+}
+
+test "a schema constrains the response through response_format" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"response_format":{"type":"json_schema","json_schema":{"name":"person","schema":{"type":"object"},"strict":true}},"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}" } },
+        .{ .blocks = &blocks },
+    );
 }

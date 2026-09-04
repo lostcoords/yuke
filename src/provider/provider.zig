@@ -1,49 +1,37 @@
-//! The provider layer exposes SSE framing, neutral events, and provider reducers.
+//! The yuke provider layer adapts the independent AI module to the wire protocol.
 
 const std = @import("std");
 const proto = @import("proto");
+pub const ai = @import("ai");
 
-pub const sse = @import("stream/sse.zig");
-pub const event = @import("stream/event.zig");
-pub const anthropic = @import("stream/anthropic.zig");
-pub const openai_chat = @import("stream/openai_chat.zig");
-pub const openai_responses = @import("stream/openai_responses.zig");
+pub const sse = ai.sse;
+pub const event = ai.event;
+pub const anthropic = ai.anthropic;
+pub const openai_chat = ai.openai_chat;
+pub const openai_responses = ai.openai_responses;
 
-pub const ir = @import("request/ir.zig");
+pub const ir = ai.ir;
 pub const build = @import("request/build.zig");
-pub const request_anthropic = @import("request/anthropic.zig");
-pub const request_openai_chat = @import("request/openai_chat.zig");
-pub const request_openai_responses = @import("request/openai_responses.zig");
+pub const request_anthropic = ai.request_anthropic;
+pub const request_openai_chat = ai.request_openai_chat;
+pub const request_openai_responses = ai.request_openai_responses;
 
-pub const model = @import("model.zig");
-pub const instance = @import("instance/instance.zig");
-pub const resolve = @import("instance/resolve.zig");
+pub const model = ai.model;
+pub const instance = ai.instance;
+pub const resolve = ai.resolve;
 pub const config = @import("config/providers.zig");
 
 pub const oauth = @import("oauth/oauth.zig");
 pub const oauth_xai = @import("oauth/xai.zig");
 pub const oauth_codex = @import("oauth/codex.zig");
-pub const transport = @import("transport.zig");
-pub const http_transport = @import("transport/http.zig");
+pub const transport = ai.transport;
+pub const http_transport = ai.http_transport;
 pub const failure = @import("failure.zig");
 pub const retry = @import("retry.zig");
 
 /// Return the protocol's request serializer and stream reducer. A new protocol needs one arm here.
-pub fn Adapter(comptime protocol: proto.enums.ProviderProtocol) type {
-    return switch (protocol) {
-        .anthropic_messages => struct {
-            pub const serialize = request_anthropic.serialize;
-            pub const Reducer = anthropic.Reducer;
-        },
-        .openai_chat => struct {
-            pub const serialize = request_openai_chat.serialize;
-            pub const Reducer = openai_chat.Reducer;
-        },
-        .openai_responses => struct {
-            pub const serialize = request_openai_responses.serialize;
-            pub const Reducer = openai_responses.Reducer;
-        },
-    };
+pub fn Adapter(comptime protocol: ai.Protocol) type {
+    return ai.Adapter(protocol);
 }
 
 /// Serialize a provider request body for `protocol`. The result uses `arena` storage.
@@ -51,18 +39,61 @@ pub fn Adapter(comptime protocol: proto.enums.ProviderProtocol) type {
 pub fn requestBody(
     arena: std.mem.Allocator,
     messages: []const proto.message.Message,
-    protocol: proto.enums.ProviderProtocol,
+    protocol: ai.Protocol,
     request: ir.Request,
     target: ?proto.message.TurnProvenance,
 ) ![]u8 {
-    const request_ir = try build.build(arena, messages, .{ .target = target });
-    var body: std.Io.Writer.Allocating = .init(arena);
-    switch (protocol) {
-        inline else => |p| try Adapter(p).serialize(&body.writer, request, request_ir),
-    }
-    return body.written();
+    const identity: ?ai.ModelIdentity = if (target) |value| .{
+        .protocol = protocolFromProto(value.protocol),
+        .model = value.model,
+    } else null;
+    const request_ir = try build.build(arena, messages, .{ .target = identity });
+    return ai.requestBody(arena, protocol, request, request_ir);
+}
+
+pub fn protocolFromProto(protocol: proto.enums.ProviderProtocol) ai.Protocol {
+    return switch (protocol) {
+        .anthropic_messages => .anthropic_messages,
+        .openai_chat => .openai_chat,
+        .openai_responses => .openai_responses,
+    };
+}
+
+pub fn protocolToProto(protocol: ai.Protocol) proto.enums.ProviderProtocol {
+    return switch (protocol) {
+        .anthropic_messages => .anthropic_messages,
+        .openai_chat => .openai_chat,
+        .openai_responses => .openai_responses,
+    };
+}
+
+pub fn finishReasonToProto(reason: ai.FinishReason) proto.enums.StopReason {
+    return switch (reason) {
+        .stop => .stop,
+        .length => .length,
+        .content_filter => .content_filter,
+        .refusal => .refusal,
+        .tool_calls => .tool_calls,
+        .unknown => .unknown,
+    };
+}
+
+pub fn usageToProto(usage: ai.Usage) proto.message.TokenUsage {
+    return .{
+        .input = usage.input,
+        .output = usage.output,
+        .reasoning = usage.reasoning,
+        .cache_read = usage.cache_read,
+        .cache_write = usage.cache_write,
+    };
 }
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+test "every AI protocol maps to the yuke wire and back" {
+    inline for (std.meta.tags(ai.Protocol)) |protocol| {
+        try std.testing.expectEqual(protocol, protocolFromProto(protocolToProto(protocol)));
+    }
 }

@@ -1,4 +1,4 @@
-//! The model vocabulary every provider source shares. A `*Patch` states what one source knows.
+//! Provider sources share this model vocabulary. A `*Patch` states what one source knows.
 
 const ir = @import("request/ir.zig");
 

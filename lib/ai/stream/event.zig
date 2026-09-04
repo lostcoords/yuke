@@ -1,16 +1,16 @@
-//! Neutral events use a closed, block-based shape. A reducer maps provider SSE to this stream.
+//! Neutral events use a closed block-based shape.
 //! It assigns dense `BlockId` values, emits block events and one `done`, and borrows source slices until the consumer drains the stream.
 //! Several blocks can stay open at one time, because the Responses API interleaves output items.
 //! The consumer numbers its own parts in emit order, so a block id is never a part id.
 //! A reducer stops or drops each open block before `done`; a dropped block opens no part.
 
-const proto = @import("proto");
+const types = @import("../types.zig");
 
 /// A block becomes at most one message part, so the part cap bounds the blocks a reducer holds.
-pub const max_blocks: usize = @intCast(proto.meta.limits.max_message_parts);
+pub const max_blocks = types.limits.max_blocks;
 
 /// The arguments of a tool call reach the wire as one message string, so that cap bounds the accumulation.
-pub const max_tool_arg_bytes: usize = @intCast(proto.meta.limits.max_message_string_bytes);
+pub const max_tool_arg_bytes = types.limits.max_string_bytes;
 
 /// A dense identifier that a reducer assigns to a stream-local block.
 pub const BlockId = u32;
@@ -79,7 +79,7 @@ pub const ToolCall = struct {
 
 /// This value marks the end of the turn. `stop_reason` uses the closed set; `raw_stop_reason` keeps the provider value.
 pub const Done = struct {
-    stop_reason: proto.enums.StopReason,
+    stop_reason: types.FinishReason,
     raw_stop_reason: []const u8,
-    usage: proto.message.TokenUsage,
+    usage: types.Usage,
 };

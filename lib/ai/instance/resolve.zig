@@ -1,4 +1,4 @@
-//! Resolve one instance to its request URL and its authentication headers.
+//! Resolve a provider instance to its request URL and authentication headers.
 
 const std = @import("std");
 const instance = @import("instance.zig");
@@ -7,7 +7,7 @@ const Header = instance.Header;
 const ProviderInstance = instance.ProviderInstance;
 
 /// A pinned header can collide with a generated one, and a pinned header is source input.
-pub const Error = error{HeaderConflict} || std.mem.Allocator.Error;
+pub const Error = error{ HeaderConflict, InvalidCredential } || std.mem.Allocator.Error;
 
 /// Map each protocol to its stream path.
 const protocol_path = std.enums.EnumArray(instance.Protocol, []const u8).init(.{
@@ -73,8 +73,7 @@ pub fn authHeaders(
 ) Error!void {
     const generated = p.auth.headerName();
     const secret = credential.token();
-    // The registry pairs a mechanism with a credential, so a disagreement is a bug here.
-    std.debug.assert((generated == null) == (secret == null));
+    if ((generated == null) != (secret == null)) return error.InvalidCredential;
 
     const identity = credential.pinned();
     if (headerConflict(generated, identity, p.headers)) return error.HeaderConflict;
@@ -82,7 +81,7 @@ pub fn authHeaders(
     switch (p.auth) {
         .none => {},
         .api_key => |kind| {
-            const key = secret.?; // The assertion above proves the credential carries a secret.
+            const key = secret.?; // The credential check proves that this route has a secret.
             try out.append(gpa, .{
                 .name = generated.?,
                 .value = switch (kind) {
@@ -217,4 +216,14 @@ test "a pinned header that collides with an oauth identity header is rejected" {
         .access_token = "tok",
         .headers = &.{.{ .name = "ChatGPT-Account-ID", .value = "acct" }},
     } }, &out));
+}
+
+test "a credential must match the authentication mechanism" {
+    var out: std.ArrayList(Header) = .empty;
+    try testing.expectError(error.InvalidCredential, authHeaders(testing.allocator, &.{
+        .base_url = "https://example.test/v1",
+        .protocol = .openai_chat,
+        .auth = .{ .api_key = .authorization_bearer },
+    }, .none, &out));
+    try testing.expectEqual(@as(usize, 0), out.items.len);
 }

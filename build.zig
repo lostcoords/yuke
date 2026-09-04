@@ -57,6 +57,13 @@ pub fn build(b: *std.Build) void {
     const sqlgen_step = b.step("sqlgen", "Validate SQL and generate typed queries");
     sqlgen_step.dependOn(&run_sqlgen.step);
 
+    const ai = b.addModule("ai", .{
+        .root_source_file = b.path("lib/ai/ai.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_ai_tests = addTestRun(b, "ai", "Run AI module tests", ai);
+
     const proto = b.addModule("proto", .{
         .root_source_file = b.path("lib/proto/proto.zig"),
         .target = target,
@@ -82,6 +89,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "quickjs", .module = quickjs.module("quickjs") },
             .{ .name = "zio", .module = zio.module("zio") },
+            .{ .name = "ai", .module = ai },
             .{ .name = "term", .module = term },
             .{ .name = "proto", .module = proto },
             .{ .name = "sql", .module = sql },
@@ -99,6 +107,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "sql", .module = sql },
             .{ .name = "zqlite", .module = zqlite.module("zqlite") },
             .{ .name = "zio", .module = zio.module("zio") },
+            .{ .name = "ai", .module = ai },
         },
     });
     const run_layer_tests = b.addRunArtifact(b.addTest(.{
@@ -158,6 +167,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zio", .module = zio.module("zio") },
+                .{ .name = "ai", .module = ai },
                 .{ .name = "proto", .module = proto },
                 .{ .name = "sql", .module = sql },
                 .{ .name = "zqlite", .module = zqlite.module("zqlite") },
@@ -177,6 +187,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_sql_tests.step);
     test_step.dependOn(&run_sqlgen_tests.step);
     test_step.dependOn(&run_proto_tests.step);
+    test_step.dependOn(&run_ai_tests.step);
     test_step.dependOn(&run_term_tests.step);
     test_step.dependOn(&run_js_tests.step);
     test_step.dependOn(&run_layer_tests.step);

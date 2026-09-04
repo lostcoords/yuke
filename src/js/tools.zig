@@ -15,7 +15,7 @@
 const std = @import("std");
 const quickjs = @import("quickjs");
 const zio = @import("zio");
-const ir = @import("../provider/request/ir.zig");
+const ir = @import("ai").ir;
 const utf8 = @import("../utf8.zig");
 
 const Context = quickjs.Context;

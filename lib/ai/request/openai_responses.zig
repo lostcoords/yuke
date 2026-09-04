@@ -1,10 +1,9 @@
-//! The OpenAI Responses request serializer. It reads the Block IR and writes
-//! the Responses API JSON.
+//! Serialize OpenAI Responses requests from the block IR.
 
 const std = @import("std");
-const proto = @import("proto");
 const ir = @import("ir.zig");
 const json = @import("json.zig");
+const types = @import("../types.zig");
 
 /// The backend rejects a request that folds in no system prompt.
 const default_instructions = "You are a helpful assistant.";
@@ -18,7 +17,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.write(request.model);
     try jw.objectField("stream");
     try jw.write(true);
-    // The engine owns the transcript, so the endpoint never keeps a copy.
+    // The caller owns the input history, so the endpoint never keeps a copy.
     try jw.objectField("store");
     try jw.write(false);
 
@@ -32,8 +31,9 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     }
 
     // Responses reasons by default, so only a named effort is worth a control.
-    // `.default` is also the empty-levels catalog case (gpt-4o); a reasoning object 400s there.
+    // `.default` also covers a model with no effort levels; a reasoning object can fail there.
     try writeReasoning(&jw, request.reasoning);
+    try writeTextFormat(&jw, request.output_schema);
 
     // The backend rejects a request with no instructions, so a default stands in.
     try jw.objectField("instructions");
@@ -187,10 +187,27 @@ fn endMessage(jw: *std.json.Stringify) !void {
     try jw.endObject();
 }
 
-fn writeImageSource(jw: *std.json.Stringify, source: proto.content.MediaSource) !void {
+/// Constrain the response to a schema. Responses names the format under `text`, not `response_format`.
+fn writeTextFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void {
+    const output = schema orelse return;
+    try jw.objectField("text");
+    try jw.beginObject();
+    try jw.objectField("format");
+    try jw.beginObject();
+    try json.field(jw, "type", "json_schema");
+    try json.field(jw, "name", output.name);
+    try jw.objectField("schema");
+    try json.writeRawJson(jw, output.schema);
+    try jw.objectField("strict");
+    try jw.write(output.strict);
+    try jw.endObject();
+    try jw.endObject();
+}
+
+fn writeImageSource(jw: *std.json.Stringify, source: types.MediaSource) !void {
     try jw.objectField("image_url");
     switch (source) {
-        // The engine resolves a blob to bytes before serialization.
+        // The caller resolves a blob to bytes before serialization.
         .blob => return error.UnsupportedContent,
     }
 }
@@ -323,4 +340,14 @@ test "audio content is unsupported on this dialect" {
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
     try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
+}
+
+test "a schema constrains the response through the text format" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"text":{"format":{"type":"json_schema","name":"person","schema":{"type":"object"},"strict":true}},"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
+    ,
+        .{ .model = "gpt-5", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}" } },
+        .{ .blocks = &blocks },
+    );
 }

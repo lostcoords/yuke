@@ -1,4 +1,4 @@
-//! Shared JSON accessors for stream reducers.
+//! These JSON accessors support the stream reducers.
 
 const std = @import("std");
 

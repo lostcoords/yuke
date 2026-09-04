@@ -1,9 +1,9 @@
-//! Provider instances hold request routing data and no credential.
+//! A provider instance holds request routing data and no credential.
 
 const std = @import("std");
-const proto = @import("proto");
+const types = @import("../types.zig");
 
-pub const Protocol = proto.enums.ProviderProtocol;
+pub const Protocol = types.Protocol;
 
 /// Select the API-key header.
 pub const ApiKeyHeader = enum { x_api_key, authorization_bearer };

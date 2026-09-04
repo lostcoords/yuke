@@ -1,10 +1,10 @@
-//! The reducer maps OpenAI Responses SSE data to `StreamEvent` values. The stream adds output items, emits content, then completes the response.
+//! Map OpenAI Responses SSE data to neutral stream events.
 //! Deltas borrow caller `scratch`. Terminal results and `done` borrow reducer buffers until `deinit`. Malformed peer input returns `error.Protocol`.
 
 const std = @import("std");
-const proto = @import("proto");
 const event = @import("event.zig");
 const json = @import("json.zig");
+const types = @import("../types.zig");
 
 const StreamEvent = event.StreamEvent;
 
@@ -65,9 +65,9 @@ pub const Reducer = struct {
     gpa: std.mem.Allocator,
     outputs: std.AutoHashMapUnmanaged(usize, Output) = .empty,
     blocks: std.ArrayList(Block) = .empty,
-    usage: proto.message.TokenUsage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
+    usage: types.Usage = .{},
     raw_stop_reason: []const u8 = "",
-    stop_reason: proto.enums.StopReason = .unknown,
+    stop_reason: types.FinishReason = .unknown,
     /// True when the model refused. A refusal arrives beside the content, never inside it.
     refused: bool = false,
     done_emitted: bool = false,
@@ -434,7 +434,7 @@ pub const Reducer = struct {
     }
 };
 
-fn mapIncompleteReason(raw: []const u8) proto.enums.StopReason {
+fn mapIncompleteReason(raw: []const u8) types.FinishReason {
     if (std.mem.eql(u8, raw, "max_output_tokens")) return .length;
     if (std.mem.eql(u8, raw, "max_tokens")) return .length; // The docs expose both forms.
     if (std.mem.eql(u8, raw, "content_filter")) return .content_filter;
@@ -523,7 +523,7 @@ test "text turn: started, deltas, stopped, done with usage" {
     try testing.expectEqualStrings("lo", h.out.items[2].text_delta.text);
     try testing.expect(h.out.items[3].block_stopped.result == .text);
     const done = h.out.items[4].done;
-    try testing.expectEqual(proto.enums.StopReason.stop, done.stop_reason);
+    try testing.expectEqual(types.FinishReason.stop, done.stop_reason);
     try testing.expectEqualStrings("completed", done.raw_stop_reason);
     try testing.expectEqual(@as(u64, 100), done.usage.input);
     try testing.expectEqual(@as(u64, 20), done.usage.cache_read);
@@ -556,7 +556,7 @@ test "tool turn: input deltas stream and authoritative arguments surface at stop
     try testing.expectEqualStrings("{\"cmd\":\"zig test\"}", call.arguments);
     // This API reports `completed` for a function call too, so the blocks decide the stop reason.
     // Reporting `stop` here makes the engine refuse the very tool part it was sent.
-    try testing.expectEqual(proto.enums.StopReason.tool_calls, h.out.items[4].done.stop_reason);
+    try testing.expectEqual(types.FinishReason.tool_calls, h.out.items[4].done.stop_reason);
 }
 
 // This is the shape that opencode zen relays: every item opens before the first one closes.
@@ -595,7 +595,7 @@ test "parallel tool items interleave and each block keeps its own call" {
     try testing.expectEqual(@as(event.BlockId, 1), h.out.items[5].block_stopped.block);
     try testing.expectEqualStrings("call_b", h.out.items[5].block_stopped.result.tool.call_id);
     try testing.expectEqualStrings("{\"path\":\"b\"}", h.out.items[5].block_stopped.result.tool.arguments);
-    try testing.expectEqual(proto.enums.StopReason.tool_calls, h.out.items[6].done.stop_reason);
+    try testing.expectEqual(types.FinishReason.tool_calls, h.out.items[6].done.stop_reason);
 }
 
 // Nothing orders the item completions, so a later item may close first.
@@ -654,7 +654,7 @@ test "an incomplete response maps max output tokens to length" {
         \\{"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"},"usage":{"output_tokens":9}}}
     });
     const done = h.out.items[0].done;
-    try testing.expectEqual(proto.enums.StopReason.length, done.stop_reason);
+    try testing.expectEqual(types.FinishReason.length, done.stop_reason);
     try testing.expectEqualStrings("max_output_tokens", done.raw_stop_reason);
 }
 
@@ -763,7 +763,7 @@ test "a tool item still open at the terminal is dropped" {
     try testing.expect(h.out.items[1] == .tool_input_delta);
     // No block_stopped closes the tool, and the stop reason never claims a call.
     try testing.expect(h.out.items[2] == .done);
-    try testing.expectEqual(proto.enums.StopReason.stop, h.out.items[2].done.stop_reason);
+    try testing.expectEqual(types.FinishReason.stop, h.out.items[2].done.stop_reason);
 }
 
 // A malformed trailer must not undo an answer that already arrived in full.
@@ -804,7 +804,7 @@ test "a tool item that reports an unfinished status is dropped" {
     try testing.expectEqual(@as(usize, 2), h.out.items.len);
     try testing.expectEqual(event.BlockKind.tool, h.out.items[0].block_started.kind);
     try testing.expect(h.out.items[1] == .done);
-    try testing.expectEqual(proto.enums.StopReason.stop, h.out.items[1].done.stop_reason);
+    try testing.expectEqual(types.FinishReason.stop, h.out.items[1].done.stop_reason);
 }
 
 // These are the frames the provider sent when `max_output_tokens` cut a call off mid-arguments.
@@ -819,7 +819,7 @@ test "a call cut off by the output cap reports length and no tool" {
     try testing.expectEqual(@as(usize, 2), h.out.items.len);
     try testing.expectEqual(event.BlockKind.tool, h.out.items[0].block_started.kind);
     try testing.expect(h.out.items[1] == .done);
-    try testing.expectEqual(proto.enums.StopReason.length, h.out.items[1].done.stop_reason);
+    try testing.expectEqual(types.FinishReason.length, h.out.items[1].done.stop_reason);
 }
 
 // One call finished and one did not, so only the finished call reaches the consumer.
@@ -839,7 +839,7 @@ test "a mix of closed and open tools keeps only the closed call" {
     try testing.expectEqual(@as(event.BlockId, 0), h.out.items[2].block_stopped.block);
     try testing.expectEqualStrings("call_a", h.out.items[2].block_stopped.result.tool.call_id);
     // The open call never stops, and the closed one still sets the stop reason.
-    try testing.expectEqual(proto.enums.StopReason.tool_calls, h.out.items[3].done.stop_reason);
+    try testing.expectEqual(types.FinishReason.tool_calls, h.out.items[3].done.stop_reason);
 }
 
 // A refusal arrives in its own content part, so it would otherwise commit an empty message.
@@ -864,7 +864,7 @@ test "a refusal streams as text and reports refusal" {
     try testing.expectEqualStrings("I cannot help", h.out.items[1].text_delta.text);
     try testing.expect(h.out.items[2] == .block_stopped);
     // The turn reports the refusal, so a caller never reads it as a plain answer.
-    try testing.expectEqual(proto.enums.StopReason.refusal, h.out.items[3].done.stop_reason);
+    try testing.expectEqual(types.FinishReason.refusal, h.out.items[3].done.stop_reason);
 }
 
 // A refusal outranks a call, because the model declined the request it was given.
@@ -883,7 +883,7 @@ test "a refusal outranks a tool call in the stop reason" {
         \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
     });
     const done = h.out.items[h.out.items.len - 1].done;
-    try testing.expectEqual(proto.enums.StopReason.refusal, done.stop_reason);
+    try testing.expectEqual(types.FinishReason.refusal, done.stop_reason);
 }
 
 test "a failed response terminates with a provider error" {

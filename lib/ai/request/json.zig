@@ -1,4 +1,4 @@
-//! Shared JSON writers for request serializers.
+//! These JSON writers support the request serializers.
 
 const std = @import("std");
 

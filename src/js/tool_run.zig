@@ -5,7 +5,7 @@ const quickjs = @import("quickjs");
 const proto = @import("proto");
 const Host = @import("host.zig").Host;
 const table = @import("tools.zig");
-const ir = @import("../provider/request/ir.zig");
+const ir = @import("ai").ir;
 const toolset = @import("../engine/toolset.zig");
 const utf8 = @import("../utf8.zig");
 

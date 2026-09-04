@@ -1,8 +1,6 @@
-//! This provider transport streams an SSE response body through one std.http.Client request.
-//! A run task can cancel a blocked read because the client dials through zio std.Io.
+//! Stream one SSE response through `std.http.Client` with caller-supplied `std.Io`.
 
 const std = @import("std");
-const zio = @import("zio");
 const transport = @import("../transport.zig");
 const json = @import("../stream/json.zig");
 
@@ -14,21 +12,22 @@ pub const Error = error{
     PermissionDenied, // 403
     RateLimited, // 429 with a body and no quota code
     QuotaExhausted, // 429 with a quota or spend code
-    RateLimitUnknown, // 429 the engine could not read or decode
+    RateLimitUnknown, // 429 the client could not read or decode
     ServerError, // 5xx
     BadStatus, // Any other non-200 status.
     Timeout, // 408 or 504. The provider answered.
     IdleTimeout, // The read stalled past the deadline. The request may already be held.
     RedirectRefused, // The client must not follow a 3xx response.
     BadUrl,
+    InvalidHeaders,
 };
 
-/// The App owns one shared client and injects its borrowed transport into the engine.
+/// The caller owns one shared client and lends its transport to each call.
 pub const HttpTransport = struct {
     client: std.http.Client,
     idle_timeout: ?std.Io.Duration,
 
-    /// The client dials and reads through `io`. Pass the zio reactor io so a cancel reaches the socket.
+    /// The client dials and reads through `io`, which controls cancellation and concurrency.
     pub fn init(gpa: Allocator, io: std.Io, idle_timeout: ?std.Io.Duration) HttpTransport {
         return .{ .client = .{ .allocator = gpa, .io = io }, .idle_timeout = idle_timeout };
     }
@@ -46,6 +45,7 @@ pub const HttpTransport = struct {
 
     fn open(ctx: *anyopaque, arena: Allocator, request: transport.Request, info: *transport.AttemptInfo) anyerror!transport.ResponseBody {
         const self: *HttpTransport = @ptrCast(@alignCast(ctx));
+        if (!transport.headersValid(request.headers)) return Error.InvalidHeaders;
         const uri = std.Uri.parse(request.url) catch return Error.BadUrl;
 
         // The provider sends SSE, so request it. This Accept header overrides a caller Accept header.
@@ -233,7 +233,7 @@ fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
         else => return Error.RateLimitUnknown,
     };
     if (bodyIsQuota(arena, buf[0..n])) return Error.QuotaExhausted;
-    // A rate limit must PROVE itself. A body the engine cannot decode may still name a spend cap.
+    // A rate limit must prove itself. An unreadable body may still name a spend cap.
     return if (bodyIsRateLimit(arena, buf[0..n])) Error.RateLimited else Error.RateLimitUnknown;
 }
 
@@ -274,12 +274,13 @@ const canned_sse =
     "data: {\"type\":\"message_stop\"}\n\n";
 
 const Server = struct {
-    listener: *zio.net.Server = undefined, // `exchange` binds this.
+    io: std.Io = undefined,
+    listener: *std.Io.net.Server = undefined,
     body: []const u8,
     status: std.http.Status,
     location: ?[]const u8 = null, // A redirect target. The client must never follow it.
     stall: bool = false, // Send the body, then wait on `release`. Keep the stream open.
-    release: ?*zio.ResetEvent = null,
+    release: ?*std.Io.Event = null,
     err: ?anyerror = null,
 };
 
@@ -291,12 +292,12 @@ fn serveOnce(server: *Server) void {
 }
 
 fn serveOnceInner(s: *Server) !void {
-    const stream = try s.listener.accept(.{});
-    defer stream.close();
+    const stream = try s.listener.accept(s.io);
+    defer stream.close(s.io);
     var read_buf: [8192]u8 = undefined;
     var write_buf: [8192]u8 = undefined;
-    var reader = stream.reader(&read_buf);
-    var writer = stream.writer(&write_buf);
+    var reader = stream.reader(s.io, &read_buf);
+    var writer = stream.writer(s.io, &write_buf);
     var server = std.http.Server.init(&reader.interface, &writer.interface);
     var request = try server.receiveHead();
 
@@ -319,7 +320,7 @@ fn serveOnceInner(s: *Server) !void {
     try resp.writer.writeAll(s.body);
     try resp.flush();
     if (s.stall) {
-        if (s.release) |r| r.wait() catch {}; // The client releases the server after the read times out.
+        if (s.release) |r| r.wait(s.io) catch {}; // The client releases the server after the read times out.
     }
     try resp.end();
 }
@@ -329,13 +330,13 @@ const ClientOut = struct {
     io: std.Io = undefined,
     port: u16 = undefined,
     idle: ?std.Io.Duration = null,
-    release: ?*zio.ResetEvent = null, // Signal the stalled server to end after the read returns.
+    release: ?*std.Io.Event = null, // Signal the stalled server to end after the read returns.
     bytes: std.ArrayList(u8) = .empty,
     err: ?anyerror = null,
 };
 
 fn clientTask(out: *ClientOut) void {
-    defer if (out.release) |r| r.set();
+    defer if (out.release) |r| r.set(out.io);
     runClient(out) catch |err| {
         out.err = err;
     };
@@ -363,20 +364,20 @@ fn runClient(out: *ClientOut) !void {
 
 /// Run one server and one client exchange on a private loopback port. The test reads `srv` and `out`.
 fn exchange(srv: *Server, out: *ClientOut) !void {
-    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var listener = try addr.listen(.{});
-    defer listener.close();
+    const io = testing.io;
+    const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = try addr.listen(io, .{});
+    defer listener.deinit(io);
+    srv.io = io;
     srv.listener = &listener;
     out.gpa = testing.allocator;
-    out.io = rt.io();
-    out.port = listener.socket.address.ip.getPort();
+    out.io = io;
+    out.port = listener.socket.address.getPort();
 
-    var server = try rt.spawn(serveOnce, .{srv});
-    var client = try rt.spawn(clientTask, .{out});
-    client.join();
-    server.join();
+    var server = try io.concurrent(serveOnce, .{srv});
+    var client = try io.concurrent(clientTask, .{out});
+    client.await(io);
+    server.await(io);
 }
 
 test "streams an SSE response body over http" {
@@ -401,7 +402,7 @@ test "a non-200 status maps to a transport error" {
 }
 
 test "a stalled stream returns an idle timeout" {
-    var release: zio.ResetEvent = .init;
+    var release: std.Io.Event = .unset;
     // The server sends the head, then holds the stream open with no body until the client releases it.
     var srv: Server = .{ .body = "", .status = .ok, .stall = true, .release = &release };
     var out: ClientOut = .{ .idle = std.Io.Duration.fromMilliseconds(50), .release = &release };
@@ -423,40 +424,35 @@ test "a redirect is rejected without following it" {
     try testing.expectEqual(@as(usize, 0), out.bytes.items.len);
 }
 
-test "a 429 with a quota code maps to QuotaExhausted" {
-    var srv: Server = .{ .body = "{\"error\":{\"code\":\"insufficient_quota\"}}", .status = .too_many_requests };
-    var out: ClientOut = .{};
-    defer out.bytes.deinit(testing.allocator);
-    try exchange(&srv, &out);
+test "invalid headers return an error before std HTTP sees them" {
+    var client = HttpTransport.init(testing.allocator, testing.io, null);
+    defer client.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var body: [0]u8 = .{};
+    var info: transport.AttemptInfo = .{};
 
-    try testing.expectEqual(@as(?anyerror, Error.QuotaExhausted), out.err);
+    try testing.expectError(Error.InvalidHeaders, client.transportFor().open(arena.allocator(), .{
+        .url = "https://example.com/v1/messages",
+        .headers = &.{.{ .name = "bad:name", .value = "x" }},
+        .body = &body,
+    }, &info));
+    try testing.expectEqual(transport.AttemptInfo.Delivery.definitely_unsent, info.delivery);
 }
 
-test "an Anthropic spend-cap 429 maps to QuotaExhausted" {
-    const spend_cap = "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"details\":{\"error_code\":\"enforced_spend_limit_reached\"}}}";
-    var srv: Server = .{ .body = spend_cap, .status = .too_many_requests };
-    var out: ClientOut = .{};
-    defer out.bytes.deinit(testing.allocator);
-    try exchange(&srv, &out);
+test "a 429 body distinguishes quota, rate limit, and unknown failures" {
+    const cases = [_]struct { body: []const u8, expected: anyerror }{
+        .{ .body = "{\"error\":{\"code\":\"insufficient_quota\"}}", .expected = Error.QuotaExhausted },
+        .{ .body = "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"details\":{\"error_code\":\"enforced_spend_limit_reached\"}}}", .expected = Error.QuotaExhausted },
+        .{ .body = "", .expected = Error.RateLimitUnknown },
+        .{ .body = "{\"error\":{\"code\":\"rate_limit_exceeded\"}}", .expected = Error.RateLimited },
+    };
 
-    try testing.expectEqual(@as(?anyerror, Error.QuotaExhausted), out.err);
-}
-
-test "a 429 with an empty body maps to RateLimitUnknown" {
-    var srv: Server = .{ .body = "", .status = .too_many_requests };
-    var out: ClientOut = .{};
-    defer out.bytes.deinit(testing.allocator);
-    try exchange(&srv, &out);
-
-    // A guess of RateLimited would retry a spend cap that can never succeed.
-    try testing.expectEqual(@as(?anyerror, Error.RateLimitUnknown), out.err);
-}
-
-test "a 429 without a quota code maps to RateLimited" {
-    var srv: Server = .{ .body = "{\"error\":{\"code\":\"rate_limit_exceeded\"}}", .status = .too_many_requests };
-    var out: ClientOut = .{};
-    defer out.bytes.deinit(testing.allocator);
-    try exchange(&srv, &out);
-
-    try testing.expectEqual(@as(?anyerror, Error.RateLimited), out.err);
+    for (cases) |case| {
+        var srv: Server = .{ .body = case.body, .status = .too_many_requests };
+        var out: ClientOut = .{};
+        defer out.bytes.deinit(testing.allocator);
+        try exchange(&srv, &out);
+        try testing.expectEqual(@as(?anyerror, case.expected), out.err);
+    }
 }

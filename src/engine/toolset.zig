@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const proto = @import("proto");
-const ir = @import("../provider/request/ir.zig");
+const ir = @import("ai").ir;
 
 /// One tool run, mapped for a tool part. `is_error` selects the completed or the error state.
 pub const Outcome = struct {

@@ -3,8 +3,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const proto = @import("proto");
-const instance = @import("../instance/instance.zig");
-const request_ir = @import("../request/ir.zig");
+const ai = @import("ai");
+const instance = ai.instance;
+const request_ir = ai.ir;
 
 const Allocator = std.mem.Allocator;
 

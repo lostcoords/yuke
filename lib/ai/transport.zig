@@ -1,16 +1,20 @@
-//! The provider transport seam. A run pulls response bytes from a ResponseBody and feeds the SSE
-//! parser. The real client suspends on the socket; a mock replays canned bytes for tests.
+//! The transport pulls response bytes from a `ResponseBody` and sends them to the SSE parser.
 
 const std = @import("std");
 const instance = @import("instance/instance.zig");
 const sse = @import("stream/sse.zig");
 const event = @import("stream/event.zig");
+const types = @import("types.zig");
 
 /// Cap the whole response so one turn cannot grow memory without bound.
-const max_response_bytes = 16 * 1024 * 1024;
+const max_response_bytes = types.limits.max_response_bytes;
 
-/// The caller fills only `body`; the real client fills `url` and `headers` from `resolve`.
+/// A direct caller fills all fields; a route resolver can fill the URL and headers.
 pub const Header = instance.Header;
+
+pub fn headersValid(headers: []const Header) bool {
+    return instance.validHeaders(headers);
+}
 pub const Request = struct {
     url: []const u8 = "",
     headers: []const Header = &.{},
@@ -29,7 +33,7 @@ pub const AttemptInfo = struct {
     pub const Delivery = enum { definitely_unsent, possibly_sent };
 };
 
-/// Open one provider response. The engine injects this seam, so tests and the real client can vary the body.
+/// Open one provider response through an injected transport.
 /// The run's reader child calls open. The returned body borrows `arena` for the turn.
 pub const Transport = struct {
     ctx: *anyopaque,
@@ -45,7 +49,7 @@ pub const Transport = struct {
 };
 
 /// A response body provides one provider response. The reader child reads to end of stream, then deinits.
-/// Use cancelable zio I/O for reads that can block; the run task cancels the child, and the read returns error.Canceled.
+/// A blocking adapter must use cancelable `std.Io` and return `error.Canceled` after cancellation.
 pub const ResponseBody = struct {
     ctx: *anyopaque,
     vtable: *const VTable,
@@ -114,21 +118,13 @@ pub fn stream(
     if (!saw_done) return error.IncompleteStream; // Treat a stream without the terminal done event as truncated.
 }
 
-/// The first bytes of a rejected frame. A longer frame carries no more diagnostic value.
-const max_logged_frame_bytes = 512;
-
-/// Decode one frame and name the frame that failed. The failure table keeps no detail of its own.
 fn decodeFrame(
     reducer: anytype,
     data: []const u8,
     scratch: std.mem.Allocator,
     events: *std.ArrayList(event.StreamEvent),
 ) !void {
-    return reducer.decode(data, scratch, events) catch |err| {
-        const head = data[0..@min(data.len, max_logged_frame_bytes)];
-        std.log.warn("provider stream: {t} on frame: {s}", .{ err, head });
-        return err;
-    };
+    return reducer.decode(data, scratch, events);
 }
 
 /// Hand each event to the callback. Reject an event after the terminal done.
@@ -214,23 +210,6 @@ pub const CannedTransport = struct {
     }
 };
 
-/// One scripted attempt.
-pub const Step = union(enum) {
-    /// The open call fails. No body arrives.
-    open_error: anyerror,
-    /// The open call succeeds and the body streams these bytes.
-    body: []const u8,
-    /// The body streams `prefix`, then the read fails.
-    body_then_error: struct { prefix: []const u8, err: anyerror },
-};
-
-/// Build a body-only script: one plain reply per open.
-pub fn replies(comptime list: []const []const u8) [list.len]Step {
-    var out: [list.len]Step = undefined;
-    for (&out, list) |*step, bytes| step.* = .{ .body = bytes };
-    return out;
-}
-
 const testing = std.testing;
 const anthropic = @import("stream/anthropic.zig");
 
@@ -272,7 +251,7 @@ const StreamCollector = struct {
     gpa: std.mem.Allocator,
     kinds: std.ArrayList(std.meta.Tag(event.StreamEvent)) = .empty,
     text: std.ArrayList(u8) = .empty,
-    stop: ?proto.enums.StopReason = null,
+    stop: ?types.FinishReason = null,
     first_block_kind: ?event.BlockKind = null,
     stop_result: ?std.meta.Tag(event.BlockResult) = null,
     usage_input: ?u64 = null,
@@ -311,7 +290,7 @@ test "stream delivers each event to the callback across fragmented reads" {
     try stream(testing.allocator, replay.body(), &reducer, &collector, StreamCollector.on);
 
     try testing.expectEqualStrings("Hello", collector.text.items);
-    try testing.expectEqual(proto.enums.StopReason.stop, collector.stop.?);
+    try testing.expectEqual(types.FinishReason.stop, collector.stop.?);
     try testing.expectEqual(event.BlockKind.text, collector.first_block_kind.?);
     try testing.expectEqual(std.meta.Tag(event.BlockResult).text, collector.stop_result.?);
     try testing.expectEqual(@as(u64, 120), collector.usage_input.?); // The cache subsets belong to input.
@@ -331,5 +310,3 @@ test "stream reports a truncated stream" {
     var replay: ReplayReader = .{ .bytes = canned_truncated };
     try testing.expectError(error.IncompleteStream, stream(testing.allocator, replay.body(), &reducer, &collector, StreamCollector.on));
 }
-
-const proto = @import("proto");

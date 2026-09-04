@@ -1,10 +1,10 @@
-//! Serialize the Anthropic Messages request from the neutral IR. Coalesce adjacent blocks with the same role.
+//! Serialize an Anthropic Messages request from the neutral IR.
 //! With `request.cache`, mark the system block and the last eligible content block. Some compatible hosts answer 400, so the instance policy decides.
 
 const std = @import("std");
-const proto = @import("proto");
 const ir = @import("ir.zig");
 const json = @import("json.zig");
+const types = @import("../types.zig");
 
 /// Write the request JSON to `w`.
 pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr) !void {
@@ -20,6 +20,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.write(true);
 
     try writeThinking(&jw, request.reasoning);
+    try writeOutputConfig(&jw, request.reasoning, request.output_schema);
 
     if (request.system.len != 0) {
         try jw.objectField("system");
@@ -73,12 +74,11 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
 /// Write the thinking control. Compatible hosts take `adaptive`; Anthropic takes a budget.
 fn writeThinking(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void {
     const kind: []const u8 = switch (reasoning) {
-        .default => return,
+        // An effort is a whole-request control, so `output_config` carries it instead.
+        .default, .effort => return,
         .off => "disabled",
         .adaptive => "adaptive",
         .budget => "enabled",
-        // An effort is a whole-request control, not a thinking shape.
-        .effort => |effort| return json.nested(jw, "output_config", "effort", @tagName(effort)),
     };
 
     try jw.objectField("thinking");
@@ -87,6 +87,29 @@ fn writeThinking(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void 
     if (reasoning == .budget) {
         try jw.objectField("budget_tokens");
         try jw.write(reasoning.budget);
+    }
+    try jw.endObject();
+}
+
+/// Write `output_config`. The effort and the response format share the one object.
+fn writeOutputConfig(jw: *std.json.Stringify, reasoning: ir.ReasoningControl, schema: ?ir.OutputSchema) !void {
+    const effort: ?ir.Effort = switch (reasoning) {
+        .effort => |value| value,
+        else => null,
+    };
+    if (effort == null and schema == null) return;
+
+    try jw.objectField("output_config");
+    try jw.beginObject();
+    if (effort) |value| try json.field(jw, "effort", @tagName(value));
+    if (schema) |output| {
+        // Anthropic constrains sampling from the schema alone; it takes no name and no strict flag.
+        try jw.objectField("format");
+        try jw.beginObject();
+        try json.field(jw, "type", "json_schema");
+        try jw.objectField("schema");
+        try json.writeRawJson(jw, output.schema);
+        try jw.endObject();
     }
     try jw.endObject();
 }
@@ -160,11 +183,11 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
     }
 }
 
-fn writeImageSource(jw: *std.json.Stringify, source: proto.content.MediaSource) !void {
+fn writeImageSource(jw: *std.json.Stringify, source: types.MediaSource) !void {
     try jw.objectField("source");
     try jw.beginObject();
     switch (source) {
-        // The engine must resolve blobs before serialization.
+        // The caller must resolve blobs before serialization.
         .blob => return error.UnsupportedContent,
     }
     try jw.endObject();
@@ -308,4 +331,29 @@ test "audio content is unsupported on this dialect" {
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
     try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
+}
+
+test "a schema constrains the response through output_config" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hi" } }};
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
+    ,
+        .{ .model = "claude", .max_output_tokens = 8, .output_schema = .{ .schema = "{\"type\":\"object\"}" } },
+        .{ .blocks = &blocks },
+    );
+}
+
+test "an effort and a schema share the one output_config" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hi" } }};
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"output_config":{"effort":"high","format":{"type":"json_schema","schema":{"type":"object"}}},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
+    ,
+        .{
+            .model = "claude",
+            .max_output_tokens = 8,
+            .reasoning = .{ .effort = .high },
+            .output_schema = .{ .schema = "{\"type\":\"object\"}" },
+        },
+        .{ .blocks = &blocks },
+    );
 }

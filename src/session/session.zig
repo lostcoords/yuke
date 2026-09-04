@@ -4,7 +4,7 @@ const std = @import("std");
 const proto = @import("proto");
 const draftmod = @import("draft.zig");
 const transcriptmod = @import("transcript.zig");
-const transport = @import("../provider/transport.zig");
+const transport = @import("ai").transport;
 
 const ids = proto.ids;
 const message = proto.message;

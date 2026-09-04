@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const proto = @import("proto");
-const http = @import("transport/http.zig");
+const http = @import("ai").http_transport;
 
 /// How an error class behaves for a repeat.
 pub const Class = enum {
@@ -56,6 +56,7 @@ pub fn classify(err: anyerror) Detail {
         http.Error.QuotaExhausted => .{ .class = .permanent, .code = .quota_exhausted, .message = "the provider account quota is exhausted" },
         http.Error.BadStatus => .{ .class = .permanent, .code = .provider, .message = "the provider returned an unexpected status" },
         http.Error.BadUrl => .{ .class = .permanent, .code = .provider, .message = "the provider endpoint URL is invalid" },
+        http.Error.InvalidHeaders => .{ .class = .permanent, .code = .provider, .message = "the provider request headers are invalid" },
         http.Error.RedirectRefused => .{ .class = .permanent, .code = .protocol, .message = "the provider attempted a redirect" },
         // A parse error never repeats. Keep it apart from a truncation.
         error.Protocol,

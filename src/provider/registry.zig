@@ -477,8 +477,6 @@ fn revisionOf(
     return .bytes(digest);
 }
 
-test {}
-
 test {
     _ = @import("registry_test.zig");
 }

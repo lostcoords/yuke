@@ -3,7 +3,8 @@
 
 const std = @import("std");
 const failure = @import("failure.zig");
-const transport = @import("transport.zig");
+const ai = @import("ai");
+const transport = ai.transport;
 
 /// The reason a run must stop instead of repeating the request.
 pub const Stop = enum {
@@ -86,7 +87,7 @@ fn backoff(policy: Policy, number: u8, jitter: f64) u64 {
 }
 
 const testing = std.testing;
-const http = @import("transport/http.zig"); // The tests name concrete provider errors.
+const http = ai.http_transport; // The tests name concrete provider errors.
 const default: Policy = .{};
 
 fn failed(err: anyerror, number: u8) Attempt {
