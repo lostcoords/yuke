@@ -35,6 +35,8 @@ const preamble =
     \\    env: []const []const u8,
     \\    /// The credential scheme. This library runs no OAuth flow, so a grant arrives from the caller.
     \\    auth: model.AuthKind,
+    \\    /// The one variable that holds the key, when the catalog can name it.
+    \\    auth_env: ?[]const u8,
     \\    /// The route, less the identity headers that only a live grant carries.
     \\    route: instance.ProviderInstance,
     \\    models: []const model.ModelSpec,
@@ -127,7 +129,11 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
     }
     try w.writeAll(if (env.len == 0) "}," else " },");
 
-    try w.print("\n        .auth = .{s},\n        .route = .{{\n", .{try routingName(vocab.model.AuthKind, kind)});
+    try w.print("\n        .auth = .{s},\n", .{try routingName(vocab.model.AuthKind, kind)});
+    if (auth.get("env")) |value| {
+        try w.print("        .auth_env = \"{f}\",\n", .{std.zig.fmtString(try text(value))});
+    } else try w.writeAll("        .auth_env = null,\n");
+    try w.writeAll("        .route = .{\n");
     try w.print("            .base_url = \"{f}\",\n", .{std.zig.fmtString(try string(provider, "base_url"))});
     try w.print("            .protocol = .{s},\n", .{protocol});
     // Every grant presents a bearer, so an OAuth flow selects only the response dialect.
@@ -135,7 +141,9 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
         if (std.mem.eql(u8, kind, "oauth")) "authorization_bearer" else try routingName(vocab.instance.ApiKeyHeader, try string(auth, "header")),
     });
     try w.print("            .cache = .{s},\n", .{try routingName(vocab.instance.CachePolicy, try string(provider, "cache"))});
-    try w.print("            .responses_dialect = .{s},\n", .{try responsesDialect(auth, kind)});
+    try w.print("            .responses_dialect = .{s},\n", .{
+        try routingName(vocab.ir.ResponsesDialect, try string(provider, "responses_dialect")),
+    });
 
     try w.writeAll("            .headers = &.{");
     const headers = try array(provider, "headers");
@@ -176,10 +184,18 @@ fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
     for ([_][]const u8{ "input", "output", "cache_read", "cache_write" }) |name| {
         try emitOptionalFloat(w, cost, name);
     }
-    try w.print(" }},\n                .caps = .{{ .tools = {}, .vision = {} }},\n", .{
+    try w.print(" }},\n                .caps = .{{ .tools = {}, .vision = {}", .{
         try boolean(flags, "supports_tools"),
         try boolean(flags, "supports_vision"),
     });
+    // An absent capability stays unknown, so a caller may still try it.
+    try emitOptionalBool(w, flags, "supports_structured_output", "structured_output");
+    try emitOptionalBool(w, flags, "can_disable_reasoning", "disable_reasoning");
+    try w.writeAll(" },\n");
+    try emitModalities(run, try object(try member(spec, "modalities")));
+    if (try member(spec, "status") != .null) {
+        try w.print("                .status = \"{f}\",\n", .{std.zig.fmtString(try string(spec, "status"))});
+    }
 
     // The level set is open, so any name reaches the table as it stands.
     try w.writeAll("                .reasoning_levels = &.{");
@@ -234,6 +250,35 @@ fn emitDialectMember(run: *Run, comptime Vocabulary: type, member_name: []const 
     try run.w.print(" .{s} = .{s},", .{ member_name, @tagName(tag) });
 }
 
+fn emitOptionalBool(w: *std.Io.Writer, map: std.json.ObjectMap, key: []const u8, member_name: []const u8) !void {
+    const value = map.get(key) orelse return;
+    if (value != .bool) return Error.InvalidDocument;
+    try w.print(", .{s} = {}", .{ member_name, value.bool });
+}
+
+/// Write the kinds this model reads and writes, and report a kind this build does not know.
+fn emitModalities(run: *Run, modalities: std.json.ObjectMap) !void {
+    const w = run.w;
+    try w.writeAll("                .modalities = .{");
+    for ([_][]const u8{ "input", "output" }) |side| {
+        const items = try array(modalities, side);
+        if (items.len == 0) continue;
+        try w.print(" .{s} = &.{{", .{side});
+        var written: usize = 0;
+        for (items) |item| {
+            const name = try text(item);
+            const tag = std.meta.stringToEnum(vocab.model.Modality, name) orelse {
+                try run.degrade("modality", name);
+                continue;
+            };
+            try w.print("{s} .{s}", .{ if (written == 0) "" else ",", @tagName(tag) });
+            written += 1;
+        }
+        try w.writeAll(if (written == 0) "}," else " },");
+    }
+    try w.writeAll(" },\n");
+}
+
 fn emitOptionalInt(w: *std.Io.Writer, map: std.json.ObjectMap, key: []const u8) !void {
     const value = map.get(key) orelse return Error.InvalidDocument;
     if (value == .null) return; // A limit the source does not publish stays null.
@@ -258,12 +303,6 @@ fn emitOptionalFloat(w: *std.Io.Writer, map: std.json.ObjectMap, key: []const u8
 fn routingName(comptime Vocabulary: type, name: []const u8) ![]const u8 {
     const tag = std.meta.stringToEnum(Vocabulary, name) orelse return Error.InvalidDocument;
     return @tagName(tag);
-}
-
-/// The Codex backend refuses the sampling limits, so its flow selects the other dialect.
-fn responsesDialect(auth: std.json.ObjectMap, kind: []const u8) ![]const u8 {
-    if (!std.mem.eql(u8, kind, "oauth")) return "standard";
-    return if (std.mem.eql(u8, try string(auth, "flow"), "codex")) "codex" else "standard";
 }
 
 // ── Strict readers. Every one fails on a shape the document does not state. ──
@@ -310,13 +349,15 @@ const one_provider =
     \\{"version":1,"catalog_rev":"abc","providers":[
     \\ {"id":"anthropic","name":"Anthropic","env":["ANTHROPIC_API_KEY"],
     \\  "base_url":"https://api.anthropic.com/v1","protocol":"anthropic_messages",
-    \\  "auth":{"kind":"api_key","header":"x_api_key"},"cache":"ephemeral",
+    \\  "auth":{"kind":"api_key","header":"x_api_key","env":"ANTHROPIC_API_KEY"},
+    \\  "cache":"ephemeral","responses_dialect":"standard",
     \\  "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
     \\  "models":[{"id":"claude","upstream_id":"claude","name":"Claude",
     \\   "limits":{"context_window":200000,"max_output_tokens":64000},
     \\   "cost":{"input":3,"output":15,"cache_read":0.3,"cache_write":null},
     \\   "flags":{"supports_tools":true,"supports_vision":true,"reasoning_budget_min":1024},
-    \\   "reasoning":true,"reasoning_levels":["off","high"],"status":null}]}]}
+    \\   "modalities":{"input":["text","image"],"output":["text"]},
+    \\   "reasoning":true,"reasoning_levels":["low","high"],"status":"beta"}]}]}
 ;
 
 fn generate(a: std.mem.Allocator, source: []const u8) ![]const u8 {
@@ -336,7 +377,7 @@ test "a provider and its model reach the generated table" {
     try testing.expect(std.mem.indexOf(u8, out, ".auth = .{ .api_key = .x_api_key }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".cache = .ephemeral") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".{ .name = \"anthropic-version\", .value = \"2023-06-01\" }") != null);
-    try testing.expect(std.mem.indexOf(u8, out, ".reasoning_levels = &.{ .{ .named = \"off\" }, .{ .named = \"high\" } }") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".reasoning_levels = &.{ .{ .named = \"low\" }, .{ .named = \"high\" } }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".min = 1024,") != null);
 
     // A null price is not a zero price, so the member stays absent and the field default holds.
@@ -351,7 +392,8 @@ test "an oauth provider routes as a bearer and keeps its dialect" {
         \\{"version":1,"catalog_rev":"r","providers":[
         \\ {"id":"openai-codex","name":"Codex","env":[],
         \\  "base_url":"https://chatgpt.com/backend-api/codex","protocol":"openai_responses",
-        \\  "auth":{"kind":"oauth","flow":"codex"},"cache":"unsupported","headers":[],"models":[]}]}
+        \\  "auth":{"kind":"oauth","flow":"codex"},"cache":"unsupported",
+        \\  "responses_dialect":"codex","headers":[],"models":[]}]}
     ;
     const out = try generate(arena.allocator(), source);
     try testing.expect(std.mem.indexOf(u8, out, ".auth = .oauth") != null);

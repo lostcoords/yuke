@@ -339,7 +339,11 @@ fn reasoningFor(
     output_limit: u32,
 ) !provider.ir.ReasoningControl {
     if (level.len == 0) return .default;
-    if (std.mem.eql(u8, level, "off")) return .off;
+    if (std.mem.eql(u8, level, "off")) {
+        // A model that states it cannot stop would reject the control, so refuse before the request.
+        if (model.caps.disable_reasoning) |can| if (!can) return error.UnsupportedReasoning;
+        return .off;
+    }
     if (model.reasoning_levels.len != 0 and !hasReasoningLevel(model.reasoning_levels, level))
         return error.UnsupportedReasoning;
     if (model.dialect.anthropic_adaptive) return .adaptive;

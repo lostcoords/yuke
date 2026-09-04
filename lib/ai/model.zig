@@ -27,7 +27,27 @@ pub const Cost = struct {
 
 pub const Caps = struct {
     tools: ?bool = null,
+    /// True when the model takes some attachment. Read `Modalities` to learn which kind.
     vision: ?bool = null,
+    structured_output: ?bool = null,
+    /// Whether the model can stop reasoning. Null is unknown, so a caller may still ask.
+    disable_reasoning: ?bool = null,
+};
+
+/// One kind a model reads or writes. A source name outside this set is dropped, never guessed.
+pub const Modality = enum { text, image, audio, video, pdf };
+
+/// What a model takes and what it returns.
+pub const Modalities = struct {
+    input: []const Modality = &.{},
+    output: []const Modality = &.{},
+
+    /// Report whether the model takes this kind, or null when the source lists none.
+    pub fn takesInput(self: Modalities, kind: Modality) ?bool {
+        if (self.input.len == 0) return null;
+        for (self.input) |item| if (item == kind) return true;
+        return false;
+    }
 };
 
 /// One reasoning effort a user can pick. A source writes null to mean "no effort at all".
@@ -77,6 +97,9 @@ pub const ModelSpec = struct {
     caps: Caps = .{},
     reasoning_levels: []const ReasoningLevel = &.{},
     dialect: Dialect = .{},
+    modalities: Modalities = .{},
+    /// A release stage such as `beta`. The set is open, so an unknown stage is carried as it stands.
+    status: ?[]const u8 = null,
 };
 
 const std = @import("std");
@@ -94,6 +117,19 @@ test "two absent bounds mean the model takes no thinking budget" {
     try testing.expect(capped == .range);
     try testing.expect(capped.range.min == null);
     try testing.expectEqual(@as(?u64, 32000), capped.range.max);
+}
+
+test "an input kind is unknown until the source lists one" {
+    const none: Modalities = .{};
+    try testing.expect(none.takesInput(.image) == null); // A source that lists nothing blocks nothing.
+
+    const text_only: Modalities = .{ .input = &.{.text}, .output = &.{.text} };
+    try testing.expectEqual(false, text_only.takesInput(.image).?);
+    try testing.expectEqual(true, text_only.takesInput(.text).?);
+
+    const vision: Modalities = .{ .input = &.{ .text, .image, .pdf } };
+    try testing.expectEqual(true, vision.takesInput(.pdf).?);
+    try testing.expectEqual(false, vision.takesInput(.audio).?);
 }
 
 test "a null reasoning level means no effort" {

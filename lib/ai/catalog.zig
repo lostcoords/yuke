@@ -39,12 +39,10 @@ pub fn resolve(selector: []const u8, credential: credentials.Credential) Error!c
     return Error.UnknownModel;
 }
 
-/// Bind this provider's key from the environment, or answer null when the catalog cannot name one.
-/// The catalog lists every variable a provider reads, and only a lone variable is certainly the secret.
+/// Bind this provider's key from the variable the catalog names, or answer null when it names none.
 pub fn envCredential(provider: *const Provider, env: *const std.process.Environ.Map) ?credentials.Credential {
-    if (provider.auth == .oauth) return null; // A grant needs a login flow, which this library never runs.
-    if (provider.env.len != 1) return null;
-    const value = env.get(provider.env[0]) orelse return null;
+    const name = provider.auth_env orelse return null; // An OAuth grant and a multi-variable provider name none.
+    const value = env.get(name) orelse return null;
     // An empty value is no value, so a blank variable never becomes a blank header.
     return if (value.len == 0) null else .{ .api_key = value };
 }
@@ -80,7 +78,7 @@ test "a selector resolves against the baked table" {
     try testing.expectError(Error.UnknownModel, resolve("anthropic/nope", .none));
 }
 
-test "only a lone environment variable is certainly the credential" {
+test "the credential comes from the variable the catalog names" {
     var env: std.process.Environ.Map = .init(testing.allocator);
     defer env.deinit();
     try env.put("BLANK_KEY", "");
@@ -92,25 +90,29 @@ test "only a lone environment variable is certainly the credential" {
         .name = "Acme",
         .env = &.{"ACME_API_KEY"},
         .auth = .api_key,
+        .auth_env = "ACME_API_KEY",
         .route = .{ .base_url = "https://acme.test/v1", .protocol = .openai_chat, .auth = .{ .api_key = .authorization_bearer } },
         .models = &.{},
     };
     try testing.expectEqualStrings("sk-real", envCredential(&lone, &env).?.api_key);
 
-    // `azure` names a resource before its key, so a first-wins search would send the resource name.
+    // `azure` names a resource before its key, so the catalog names no single variable for it.
     var sequence = lone;
     sequence.env = &.{ "ACME_RESOURCE_NAME", "ACME_API_KEY" };
+    sequence.auth_env = null;
     try testing.expect(envCredential(&sequence, &env) == null);
 
     var unset = lone;
-    unset.env = &.{"MISSING_KEY"};
+    unset.auth_env = "MISSING_KEY";
     try testing.expect(envCredential(&unset, &env) == null);
 
     var blank = lone;
-    blank.env = &.{"BLANK_KEY"};
+    blank.auth_env = "BLANK_KEY";
     try testing.expect(envCredential(&blank, &env) == null);
 
+    // A grant needs a login flow, which this library never runs, so the catalog names no variable.
     var oauth = lone;
     oauth.auth = .oauth;
+    oauth.auth_env = null;
     try testing.expect(envCredential(&oauth, &env) == null);
 }
