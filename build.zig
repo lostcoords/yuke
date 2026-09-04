@@ -83,8 +83,12 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_cataloggen = b.addRunArtifact(cataloggen_exe);
+    run_cataloggen.setCwd(b.path("."));
+    run_cataloggen.addArgs(&.{ "--out", "lib/ai/catalog_gen.zig" });
+    // This run reads the control plane, so it must never answer from the build cache.
+    run_cataloggen.has_side_effects = true;
     if (b.args) |args| run_cataloggen.addArgs(args);
-    const cataloggen_step = b.step("cataloggen", "Bake a catalog document into the AI module");
+    const cataloggen_step = b.step("cataloggen", "Fetch the provider catalog and bake it into the AI module");
     cataloggen_step.dependOn(&run_cataloggen.step);
 
     const proto = b.addModule("proto", .{
