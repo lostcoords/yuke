@@ -9,8 +9,8 @@ import { events } from "yuke:core";
 /** @type {Record<string, string>} */
 const ENGINE_TO_CORE_EVENT = { session: "session.changed", index: "index.changed" };
 
-// The native drains engine events on the owner. Send them to the shared bus.
-native.setEventSink((ev) => {
+// The kernel owns the sink, so the view tier reads the digest from the bus like everything else.
+events.on("engine.drained", (ev) => {
   const name = ENGINE_TO_CORE_EVENT[ev.type];
   if (name) events.emit(name, ev);
 });

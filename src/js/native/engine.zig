@@ -45,6 +45,8 @@ pub const Engine = struct {
     dirty: std.AutoHashMapUnmanaged(SessionId, Change) = .empty,
     /// The session index changed, so the list view must reread it.
     index_dirty: bool = false,
+    /// The facts that named no session. A plugin reads them beside the index change.
+    index_facts: FactSet = .initEmpty(),
     /// Set when the dirty set overflowed. `drain` then reports an index change, and the view
     /// rereads what it has open. A lost session event must never become a stale view.
     dirty_overflow: bool = false,
@@ -86,6 +88,7 @@ pub const Engine = struct {
         const self: *Engine = @ptrCast(@alignCast(ctx));
         const id = sessionOf(note) orelse {
             self.index_dirty = true;
+            self.index_facts.insert(note.method);
             self.wakeOwner();
             return;
         };
@@ -115,6 +118,9 @@ pub const Engine = struct {
     }
 };
 
+/// The facts one drain carries. A digest coalesces them, so a repeat within a frame reads as one.
+pub const FactSet = std.EnumSet(proto.enums.BroadcastName);
+
 /// How one session changed since the last drain. A view redraws differently for each kind.
 pub const Change = struct {
     /// The session is gone. This outranks every other kind.
@@ -123,20 +129,27 @@ pub const Change = struct {
     structural: bool = false,
     /// Only this message's text grew, so the view re-wraps one message.
     delta_message: ?u64 = null,
+    /// Every fact this session saw since the last drain. A view ignores it; a plugin reads it.
+    facts: FactSet = .initEmpty(),
 
     /// Classify one event. A delta is the only cheap kind; everything else reloads the outline.
     fn of(note: proto.rpc.Notification) Change {
-        return switch (note.method) {
+        var change: Change = switch (note.method) {
             .@"session.removed" => .{ .removed = true },
             .@"message.part_delta" => .{ .delta_message = note.params.message_part_delta_data.message_id },
             else => .{ .structural = true },
         };
+        change.facts.insert(note.method);
+        return change;
     }
 
     /// Fold a later event into an earlier one. The stronger kind wins, so no update is lost.
     fn merge(self: *Change, other: Change) void {
+        // A fact never loses to a stronger kind, because the two answer different questions.
+        self.facts.setUnion(other.facts);
         if (other.removed) {
-            self.* = .{ .removed = true };
+            const facts = self.facts;
+            self.* = .{ .removed = true, .facts = facts };
             return;
         }
         if (self.removed) return;
@@ -748,6 +761,24 @@ fn projectString(
     return ctx.newString(aw.written());
 }
 
+/// `factNames()` answers every fact the engine can publish, so a bus declares them without drift.
+fn jsFactNames(ctx: Context, _: Value, _: []const Value) Value {
+    const names = ctx.newArray();
+    if (ctx.isException(names)) return names;
+    for (std.meta.tags(proto.enums.BroadcastName), 0..) |fact, i| {
+        const name = ctx.newString(@tagName(fact));
+        if (ctx.isException(name)) {
+            ctx.freeValue(names);
+            return name;
+        }
+        ctx.setPropertyUint32(names, @intCast(i), name) catch {
+            ctx.freeValue(names);
+            return ctx.throw(ctx.getException());
+        };
+    }
+    return names;
+}
+
 fn jsSetEventSink(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
     ctx.freeValue(engine.sink);
@@ -912,25 +943,43 @@ pub fn drain(engine: *Engine, ctx: Context) bool {
     }
     engine.dirty.clearRetainingCapacity();
     const index = engine.index_dirty or engine.dirty_overflow;
+    const index_facts = engine.index_facts;
     engine.index_dirty = false;
+    engine.index_facts = .initEmpty();
     engine.dirty_overflow = false;
 
     // A dropped event must not leave a stale view, so an unset sink clears the batch and stops.
     if (ctx.isUndefined(engine.sink)) return false;
     engine.faulted = false;
-    if (index) emitIndex(engine, ctx);
+    if (index) emitIndex(engine, ctx, index_facts);
     for (batch[0..count]) |entry| emitSession(engine, ctx, entry.id, entry.change);
     // A throwing sink leaves a pending exception. Capture and clear it, as a key press does.
     if (engine.faulted) Host.fromContext(ctx).noteFault();
     return engine.faulted;
 }
 
-fn emitIndex(engine: *Engine, ctx: Context) void {
+fn emitIndex(engine: *Engine, ctx: Context, facts: FactSet) void {
     const ev = ctx.newObject();
     if (ctx.isException(ev)) return;
     defer ctx.freeValue(ev);
     ctx.setPropertyStr(ev, "type", ctx.newString("index")) catch return;
+    setFacts(ctx, ev, facts) catch return;
     if (call(engine, ctx, ev)) engine.faulted = true;
+}
+
+/// Name every fact the digest holds. A plugin reads the names; the view reads `kind` instead.
+fn setFacts(ctx: Context, ev: Value, facts: FactSet) !void {
+    const names = ctx.newArray();
+    if (ctx.isException(names)) return error.OutOfMemory;
+    errdefer ctx.freeValue(names);
+    var index: u32 = 0;
+    var it = facts.iterator();
+    while (it.next()) |fact| : (index += 1) {
+        const name = ctx.newString(@tagName(fact));
+        if (ctx.isException(name)) return error.OutOfMemory;
+        try ctx.setPropertyUint32(names, index, name);
+    }
+    try ctx.setPropertyStr(ev, "facts", names);
 }
 
 fn emitSession(engine: *Engine, ctx: Context, sid: SessionId, change: Change) void {
@@ -941,6 +990,7 @@ fn emitSession(engine: *Engine, ctx: Context, sid: SessionId, change: Change) vo
     ctx.setPropertyStr(ev, "type", ctx.newString("session")) catch return;
     ctx.setPropertyStr(ev, "session", ctx.newString(hex[0..])) catch return;
     ctx.setPropertyStr(ev, "kind", ctx.newString(change.kind())) catch return;
+    setFacts(ctx, ev, change.facts) catch return;
     if (change.delta_message) |mid| {
         if (!change.structural and !change.removed)
             ctx.setPropertyStr(ev, "id", ctx.newFloat64(@floatFromInt(mid))) catch return;
@@ -978,6 +1028,7 @@ fn init(ctx: Context, m: Module) c_int {
 fn bindAll(ctx: Context, native: Value) c_int {
     bind(ctx, native, "setDefaultSystemPrompt", 1, jsSetDefaultSystemPrompt) catch return -1;
     bind(ctx, native, "setEventSink", 1, jsSetEventSink) catch return -1;
+    bind(ctx, native, "factNames", 0, jsFactNames) catch return -1;
     bind(ctx, native, "request", 2, jsRequest) catch return -1;
     bind(ctx, native, "sessionOpen", 1, jsSessionOpen) catch return -1;
     bind(ctx, native, "sessionClose", 1, jsSessionClose) catch return -1;
@@ -1056,6 +1107,17 @@ test "a field pages whole characters and advances on the smallest page" {
     try testing.expectEqualStrings("ab", head.text); // the broken character never reaches a reader
     try testing.expectEqual(@as(?usize, 2), head.next);
     try testing.expect(fieldPage(broken, head.next.?, pageLimit(0)) == null); // the next page ends the read
+}
+
+test "a merge keeps every fact, even when a stronger kind resets the change" {
+    var change: Change = .of(.{ .method = .@"run.started", .params = undefined });
+    try testing.expect(change.facts.contains(.@"run.started"));
+
+    // A removal resets the kind, and a plugin still needs to know the run started first.
+    change.merge(.{ .removed = true, .facts = FactSet.initOne(.@"session.removed") });
+    try testing.expect(change.removed);
+    try testing.expect(change.facts.contains(.@"run.started"));
+    try testing.expect(change.facts.contains(.@"session.removed"));
 }
 
 test "a message pages whole characters when the window splits one" {

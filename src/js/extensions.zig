@@ -239,6 +239,7 @@ test "a hook chain replaces a payload and the first block ends it" {
         \\  ctx.hook("tool.after", async (ev) => ({ replace: { output: ev.output + "!", is_error: false } }));
         \\  ctx.hook("request.build", (ev) => ({ replace: { ...ev, system: "from the chain" } }));
         \\  ctx.hook("input.before", (ev) => (ev.content[0].text === "no" ? { block: "refused" } : undefined));
+        \\  ctx.on("run.started", (ev) => { globalThis.sawRun = ev.session; });
         \\}});
     });
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -273,6 +274,23 @@ test "a hook chain replaces a payload and the first block ends it" {
     try std.testing.expect(extensions.host.hooks.holds(.@"input.before"));
     // A point no handler holds must cost nothing, so the set answers false for it.
     try std.testing.expect(!extensions.host.hooks.holds(.@"request.send"));
+
+    // The bus carried no engine fact before, so a headless plugin could register a handler that
+    // never fired. One published run must now reach it through the digest.
+    const proto = @import("proto");
+    const session_id: proto.ids.SessionId = .bytes(@splat(0xab));
+    app_runtime.engine.sinks.emit(.{ .method = .@"run.started", .params = .{ .run_started_data = .{
+        .session_id = session_id,
+        .seq = 1,
+        .run_id = 1,
+        .kind = .turn,
+        .config_rev = 0,
+        .started_at_ms = 1,
+    } } });
+    try owner.pump(extensions.host);
+    try std.testing.expectEqual(@as(i32, 1), try extensions.host.evalInt(
+        \\globalThis.sawRun === "abababababababababababababababab" ? 1 : 0
+    ));
 
     // The first handler rewrites the arguments, so the second one sees them and ends the chain.
     const blocked = try settleHook(&extensions, "tool.before", "{\"name\":\"bash\",\"arguments\":\"original\"}");
