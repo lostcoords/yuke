@@ -168,12 +168,33 @@ fn sessionOf(note: proto.rpc.Notification) ?SessionId {
 
 // ---------------------------------------------------------------- projections
 
+/// The widest UTF-8 character, so a page below this size can hold no character.
+const max_char_bytes: usize = 4;
+
+/// Return the length of `text` without a trailing character that its bytes do not complete.
+fn utf8Whole(text: []const u8) usize {
+    var i = text.len;
+    var seen: usize = 0;
+    while (i > 0 and seen < max_char_bytes) {
+        i -= 1;
+        seen += 1;
+        if ((text[i] & 0xC0) == 0x80) continue;
+        const need = std.unicode.utf8ByteSequenceLength(text[i]) catch return i;
+        return if (need <= seen) text.len else i;
+    }
+    return text.len;
+}
+
 /// Return the largest length at or below `limit` that ends on a UTF-8 character boundary.
 fn utf8Floor(text: []const u8, limit: usize) usize {
-    if (text.len <= limit) return text.len;
-    var n = limit;
-    while (n > 0 and (text[n] & 0xC0) == 0x80) n -= 1;
-    return n;
+    return utf8Whole(text[0..@min(limit, text.len)]);
+}
+
+/// Return the count of leading bytes that continue a character cut off before `text`.
+fn utf8Head(text: []const u8) usize {
+    var i: usize = 0;
+    while (i < text.len and (text[i] & 0xC0) == 0x80) i += 1;
+    return i;
 }
 
 fn messageError(m: proto.message.Message) ?proto.message.MessageError {
@@ -566,6 +587,25 @@ const TextWindow = struct {
     }
 };
 
+/// One page of a message's concatenated text: the whole characters it holds and where a reader resumes.
+const TextPage = struct { text: []const u8, next: ?usize, total: usize };
+
+/// Copy and trim one window of a message to whole characters. `raw` owns what the page borrows.
+fn textPage(s: *domain_session.Session, mid: u64, offset: usize, want: usize, raw: *std.Io.Writer.Allocating) ?TextPage {
+    std.debug.assert(want >= max_char_bytes); // pageLimit resolved this, so a whole character always fits
+    var window: TextWindow = .{ .want_from = offset, .want_to = offset +| want, .out = &raw.writer };
+    forEachText(s, mid, &window, TextWindow.take);
+    if (window.failed) return null;
+
+    // A window is copied at byte offsets, so it can split a character at each end.
+    const win = raw.written();
+    const from = utf8Head(win);
+    const end = from + utf8Whole(win[from..]);
+    const next = offset + end;
+    // A page with no whole character means the text ends in a broken one, so the read stops here.
+    return .{ .text = win[from..end], .next = if (next > offset and next < window.total) next else null, .total = window.total };
+}
+
 /// The principal text of one assistant part. A tool part answers with what a transcript row shows.
 /// Resolve one `cut` address of a part to its whole text. `field` comes from JavaScript, so an unknown address answers null.
 fn assistantPartText(p: proto.message.AssistantPart, part_id: u64, field: []const u8) ?[]const u8 {
@@ -620,6 +660,20 @@ fn viewText(views: ?[]const proto.view.View, index: u32) ?[]const u8 {
     };
 }
 
+/// One page of one field: the whole characters it holds and where a reader resumes.
+const FieldPage = struct { text: []const u8, next: ?usize };
+
+/// Page one field from `offset`, and answer null when no whole character is left.
+fn fieldPage(text: []const u8, offset: u64, want: usize) ?FieldPage {
+    std.debug.assert(want >= max_char_bytes); // pageLimit resolved this, so a whole character always fits
+    if (offset >= text.len) return null;
+    const from: usize = @intCast(offset);
+    const start = from + utf8Head(text[from..]); // an offset inside a character resumes at the next one
+    const cut = start + utf8Floor(text[start..], want);
+    if (cut == start) return null;
+    return .{ .text = text[start..cut], .next = if (cut < text.len) cut else null };
+}
+
 /// Find the text of one part, in the draft or the committed window.
 fn partTextOf(s: *domain_session.Session, mid: u64, part_id: u64, field: []const u8) ?[]const u8 {
     if (s.draft) |*d| if (d.message_id == mid) {
@@ -657,11 +711,12 @@ fn sidArg(ctx: Context, args: []const Value, idx: usize) ?SessionId {
     return SessionId.bytes(raw);
 }
 
-/// Resolve a page limit. Absent or zero means one default page, and nothing exceeds the cap.
+/// Resolve a page limit. Absent or zero means one default page, and every page holds one whole character.
 fn pageLimit(raw: ?u64) usize {
     const want = raw orelse 0;
     if (want == 0) return max_page_bytes;
-    return @intCast(@min(want, max_page_bytes));
+    const capped: usize = @intCast(@min(want, max_page_bytes));
+    return @max(capped, max_char_bytes);
 }
 
 fn u64Arg(ctx: Context, args: []const Value, idx: usize) ?u64 {
@@ -752,21 +807,16 @@ fn jsSessionText(ctx: Context, _: Value, args: []const Value) Value {
 
     var raw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer raw.deinit();
-    var window: TextWindow = .{ .want_from = offset, .want_to = offset +| want, .out = &raw.writer };
-    forEachText(rt, mid, &window, TextWindow.take);
-    if (window.failed) return ctx.newString(empty);
+    const page = textPage(rt, mid, offset, want, &raw) orelse return ctx.newString(empty);
 
-    // The concatenation is valid UTF-8, so flooring the copied window never splits a character.
-    const cut = utf8Floor(raw.written(), raw.written().len);
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer aw.deinit();
     aw.writer.writeAll("{\"text\":") catch return ctx.newString(empty);
-    std.json.Stringify.encodeJsonString(raw.written()[0..cut], .{}, &aw.writer) catch return ctx.newString(empty);
-    const next = offset + cut;
-    if (next < window.total)
-        aw.writer.print(",\"next\":{d},\"bytes\":{d}}}", .{ next, window.total }) catch return ctx.newString(empty)
+    std.json.Stringify.encodeJsonString(page.text, .{}, &aw.writer) catch return ctx.newString(empty);
+    if (page.next) |next|
+        aw.writer.print(",\"next\":{d},\"bytes\":{d}}}", .{ next, page.total }) catch return ctx.newString(empty)
     else
-        aw.writer.print(",\"next\":null,\"bytes\":{d}}}", .{window.total}) catch return ctx.newString(empty);
+        aw.writer.print(",\"next\":null,\"bytes\":{d}}}", .{page.total}) catch return ctx.newString(empty);
     return ctx.newString(aw.written());
 }
 
@@ -784,17 +834,14 @@ fn jsPartText(ctx: Context, _: Value, args: []const Value) Value {
     const want = pageLimit(u64Arg(ctx, args, 5));
 
     const text = partTextOf(rt, mid, part_id, field) orelse return ctx.newString(empty);
-    if (offset >= text.len) return ctx.newString(empty);
-    const start: usize = @intCast(offset);
-    const cut = start + utf8Floor(text[start..], want);
-    std.debug.assert(cut >= start and cut <= text.len); // the floor never leaves the slice
+    const page = fieldPage(text, offset, want) orelse return ctx.newString(empty);
 
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer aw.deinit();
     aw.writer.writeAll("{\"text\":") catch return ctx.newString(empty);
-    std.json.Stringify.encodeJsonString(text[start..cut], .{}, &aw.writer) catch return ctx.newString(empty);
-    if (cut < text.len)
-        aw.writer.print(",\"next\":{d}}}", .{cut}) catch return ctx.newString(empty)
+    std.json.Stringify.encodeJsonString(page.text, .{}, &aw.writer) catch return ctx.newString(empty);
+    if (page.next) |next|
+        aw.writer.print(",\"next\":{d}}}", .{next}) catch return ctx.newString(empty)
     else
         aw.writer.writeAll(",\"next\":null}") catch return ctx.newString(empty);
     return ctx.newString(aw.written());
@@ -959,6 +1006,93 @@ test "utf8Floor never cuts a character in half" {
     try testing.expectEqual(@as(usize, 0), utf8Floor("😀", 1));
     try testing.expectEqual(@as(usize, 0), utf8Floor("😀", 3));
     try testing.expectEqual(@as(usize, 4), utf8Floor("😀", 4));
+}
+
+test "the head and the whole length trim a window to characters" {
+    // A copied window has no bytes past its end, so the walk goes back to the last lead byte.
+    try testing.expectEqual(@as(usize, 2), utf8Whole("ab\xF0\x9F\x99")); // three bytes of a four-byte character
+    try testing.expectEqual(@as(usize, 6), utf8Whole("ab\u{1F642}")); // the character is whole
+    try testing.expectEqual(@as(usize, 3), utf8Whole("abc"));
+    try testing.expectEqual(@as(usize, 0), utf8Whole(""));
+    try testing.expectEqual(@as(usize, 0), utf8Whole("\xF0")); // a lone lead byte completes nothing
+
+    // A window can also open inside a character, and those bytes belong to the page before it.
+    try testing.expectEqual(@as(usize, 3), utf8Head("\x9F\x99\x82ab")); // the tail of a four-byte character
+    try testing.expectEqual(@as(usize, 0), utf8Head("ab"));
+    try testing.expectEqual(@as(usize, 0), utf8Head(""));
+}
+
+test "a page limit always holds one whole character" {
+    try testing.expectEqual(max_page_bytes, pageLimit(null));
+    try testing.expectEqual(max_page_bytes, pageLimit(0)); // zero asks for the default page
+    try testing.expectEqual(max_page_bytes, pageLimit(max_page_bytes + 1)); // the cap bounds a large ask
+    try testing.expectEqual(max_char_bytes, pageLimit(1)); // a one-byte page would never advance
+    try testing.expectEqual(@as(usize, 64), pageLimit(64));
+}
+
+test "a field pages whole characters and advances on the smallest page" {
+    const text = "\u{1F642}a\u{2014}b\u{00E9}";
+    var rebuilt: std.ArrayList(u8) = .empty;
+    defer rebuilt.deinit(testing.allocator);
+
+    var offset: u64 = 0;
+    while (fieldPage(text, offset, pageLimit(1))) |page| {
+        try testing.expect(std.unicode.utf8ValidateSlice(page.text)); // no page ever splits a character
+        try rebuilt.appendSlice(testing.allocator, page.text);
+        const next = page.next orelse break;
+        try testing.expect(next > offset); // a page always advances, so the loop ends
+        offset = next;
+    }
+    try testing.expectEqualStrings(text, rebuilt.items);
+
+    // An offset inside a character resumes at the next one instead of answering orphan bytes.
+    const inside = fieldPage(text, 1, pageLimit(0)).?;
+    try testing.expect(std.unicode.utf8ValidateSlice(inside.text));
+    try testing.expectEqualStrings(text[4..], inside.text);
+
+    // A provider can store a broken character, so the page ends and never faults.
+    const broken = "ab\xF0\x9F\x99";
+    const head = fieldPage(broken, 0, pageLimit(0)).?;
+    try testing.expectEqualStrings("ab", head.text); // the broken character never reaches a reader
+    try testing.expectEqual(@as(?usize, 2), head.next);
+    try testing.expect(fieldPage(broken, head.next.?, pageLimit(0)) == null); // the next page ends the read
+}
+
+test "a message pages whole characters when the window splits one" {
+    const gpa = testing.allocator;
+    const sid = SessionId.bytes([_]u8{7} ** 16);
+    var sess = domain_session.Session.init(gpa, sid);
+    defer sess.deinit();
+
+    // Three-byte characters over a five-byte page put a split at nearly every window edge.
+    const content = [_]proto.message.AssistantPart{
+        .{ .text = .{ .id = 0, .text = "\u{2014}\u{2014}\u{2014}\u{2014}" } },
+        .{ .text = .{ .id = 1, .text = "\u{2014}\u{2014}\u{2014}" } },
+    };
+    const messages = [_]proto.message.Message{.{ .assistant = .{
+        .id = 1,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = "claude",
+        .content = &content,
+        .time = .{ .created_at_ms = 1 },
+    } }};
+    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .messages = &messages, .has_more = false });
+
+    var rebuilt: std.ArrayList(u8) = .empty;
+    defer rebuilt.deinit(gpa);
+    var offset: usize = 0;
+    while (true) {
+        var raw: std.Io.Writer.Allocating = .init(gpa);
+        defer raw.deinit();
+        const page = textPage(&sess, 1, offset, 5, &raw).?;
+        try testing.expect(std.unicode.utf8ValidateSlice(page.text)); // no page ever splits a character
+        try rebuilt.appendSlice(gpa, page.text);
+        const next = page.next orelse break;
+        try testing.expect(next > offset); // a page always advances, so the loop ends
+        offset = next;
+    }
+    try testing.expectEqualStrings("\u{2014}" ** 7, rebuilt.items);
 }
 
 test "a request reaches a command and answers with its result" {
@@ -1250,12 +1384,11 @@ test "a text part over the inline bound reports more and pages back whole" {
     // The page loop echoes `next`, so it must rebuild the text with no gap and no repeat.
     var rebuilt: std.ArrayList(u8) = .empty;
     defer rebuilt.deinit(gpa);
-    var offset: usize = 0;
-    while (offset < whole.len) {
-        const cut = offset + utf8Floor(whole[offset..], 1000);
-        try testing.expect(cut > offset); // a page always advances, so the loop ends
-        try rebuilt.appendSlice(gpa, whole[offset..cut]);
-        offset = cut;
+    var offset: u64 = 0;
+    while (fieldPage(whole, offset, pageLimit(1000))) |page| {
+        try testing.expect(std.unicode.utf8ValidateSlice(page.text)); // no page ever splits a character
+        try rebuilt.appendSlice(gpa, page.text);
+        offset = page.next orelse break;
     }
     try testing.expectEqualStrings(whole, rebuilt.items);
 }
