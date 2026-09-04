@@ -418,24 +418,54 @@ fn resolvedRequest(
         .modalities = r.model.modalities,
     });
 
+    var build: RequestBuild = .{
+        .model = r.model.upstream_id,
+        .system = slot.config.system_prompt,
+        .tools = engine.deps.tools.getDecls(engine.deps.tools.ctx),
+        .max_output_tokens = output_limit,
+    };
+    switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", build)) {
+        .proceed => {},
+        // A handler that answers an unreadable request keeps the one this round already holds.
+        .replace => |json| build = std.json.parseFromSliceLeaky(RequestBuild, arena, json, .{ .ignore_unknown_fields = true }) catch build,
+        .block => |reason| {
+            // The wire message names a class, so record the reason before the error loses it.
+            std.log.warn("run {d} stopped at request.build: {s}", .{ slot.runId(), reason });
+            return error.HookBlocked;
+        },
+    }
+
     // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
     const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
     return ai.prepare(engine.deps.gpa, .{
-        .id = r.model.upstream_id,
+        .id = build.model,
         .route = route.route,
         .credential = secret,
         .caps = r.model.caps,
         .dialect = r.model.dialect,
     }, .{
         .blocks = request_ir.blocks,
-        .system = slot.config.system_prompt,
-        .tools = engine.deps.tools.getDecls(engine.deps.tools.ctx),
+        .system = build.system,
+        .tools = build.tools,
         .options = .{
-            .max_output_tokens = output_limit,
-            .reasoning = try reasoningFor(r.model, slot.config.reasoning, output_limit),
+            .max_output_tokens = build.max_output_tokens,
+            // The budget shares the ceiling, so it follows whatever the chain left there.
+            .reasoning = try reasoningFor(r.model, slot.config.reasoning, build.max_output_tokens),
         },
     });
 }
+
+/// The neutral request one round sends, before any serializer reads it.
+///
+/// The transcript blocks stay out on purpose. An attachment carries megabytes, and a handler that
+/// only edits the system prompt must not pay to encode them. Filtering a transcript needs its own
+/// point, where that cost is the caller's choice.
+const RequestBuild = struct {
+    model: []const u8,
+    system: []const u8,
+    tools: []const ai.ir.Tool,
+    max_output_tokens: u32,
+};
 
 const Terminal = union(enum) {
     success: proto.enums.StopReason,

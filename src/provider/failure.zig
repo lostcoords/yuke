@@ -19,6 +19,7 @@ pub fn classify(err: anyerror) Detail {
         // The library never raises these, because they are decisions the engine makes.
         error.TurnTooLarge => .{ .class = .permanent, .code = .context_overflow, .message = "the turn is larger than the model context window" },
         error.UnsupportedReasoning => .{ .class = .permanent, .code = .unsupported_reasoning, .message = "the model does not support this reasoning level" },
+        error.HookBlocked => .{ .class = .permanent, .code = .runtime, .message = "an extension stopped the request" },
         else => {
             const got = ai.failure.classify(err);
             return .{ .class = got.class, .code = codeOf(got.reason), .message = got.reason.message() };
@@ -76,4 +77,10 @@ test "the library request bound reports context overflow" {
     try testing.expectEqual(Class.permanent, detail.class);
     try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, detail.code);
     try testing.expectEqualStrings("the request exceeds the library size limit", detail.message);
+}
+
+test "an extension that stops a request reports a runtime failure" {
+    const detail = classify(error.HookBlocked);
+    try testing.expectEqual(Class.permanent, detail.class);
+    try testing.expectEqual(proto.enums.RunErrorCode.runtime, detail.code);
 }

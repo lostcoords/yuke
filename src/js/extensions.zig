@@ -237,6 +237,7 @@ test "a hook chain replaces a payload and the first block ends it" {
         \\  ctx.hook("tool.before", (ev) => ({ replace: { name: ev.name, arguments: "rewritten" } }));
         \\  ctx.hook("tool.before", (ev) => (ev.arguments === "rewritten" ? { block: "denied" } : undefined));
         \\  ctx.hook("tool.after", async (ev) => ({ replace: { output: ev.output + "!", is_error: false } }));
+        \\  ctx.hook("request.build", (ev) => ({ replace: { ...ev, system: "from the chain" } }));
         \\}});
     });
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -267,7 +268,9 @@ test "a hook chain replaces a payload and the first block ends it" {
     // A point no handler holds must never reach the owner, so a turn pays nothing for it.
     try std.testing.expect(extensions.host.hooks.holds(.@"tool.before"));
     try std.testing.expect(extensions.host.hooks.holds(.@"tool.after"));
-    try std.testing.expect(!extensions.host.hooks.holds(.@"request.build"));
+    try std.testing.expect(extensions.host.hooks.holds(.@"request.build"));
+    // A point no handler holds must cost nothing, so the set answers false for it.
+    try std.testing.expect(!extensions.host.hooks.holds(.@"input.before"));
 
     // The first handler rewrites the arguments, so the second one sees them and ends the chain.
     const blocked = try settleHook(&extensions, "tool.before", "{\"name\":\"bash\",\"arguments\":\"original\"}");
@@ -278,6 +281,14 @@ test "a hook chain replaces a payload and the first block ends it" {
     const replaced = try settleHook(&extensions, "tool.after", "{\"output\":\"ok\",\"is_error\":false}");
     defer std.testing.allocator.free(replaced);
     try std.testing.expectEqualStrings("{\"type\":\"replace\",\"value\":{\"output\":\"ok!\",\"is_error\":false}}", replaced);
+
+    // A handler reads the whole neutral request, so an untouched field survives the round trip.
+    const built = try settleHook(&extensions, "request.build", "{\"model\":\"m\",\"system\":\"original\",\"tools\":[],\"max_output_tokens\":64}");
+    defer std.testing.allocator.free(built);
+    try std.testing.expectEqualStrings(
+        "{\"type\":\"replace\",\"value\":{\"model\":\"m\",\"system\":\"from the chain\",\"tools\":[],\"max_output_tokens\":64}}",
+        built,
+    );
 }
 
 /// Submit one hook call and pump the owner until it settles. The owner frees the record's own
