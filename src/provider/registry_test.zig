@@ -340,3 +340,28 @@ test "load composes the file over the real baked table" {
     // Stage 1 bakes this name. Without it the engine cannot start the login at all.
     try testing.expectEqualStrings("codex", registry.find(snapshot.rows, "openai-codex").?.login_flow.?);
 }
+
+test "a selector round-trips, and a model id keeps its own slash" {
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"version":1,"providers":[{"id":"openrouter","api_key":"sk-x"}]}
+    );
+    defer loaded.deinit();
+
+    var snapshot = try registry.Registry.load(testing.allocator, .{ .local = &loaded });
+    defer snapshot.deinit();
+
+    // OpenRouter names every model `vendor/model`, so only the first slash divides the selector.
+    const selector = snapshot.models[0].selector;
+    try testing.expect(std.mem.startsWith(u8, selector, "openrouter/"));
+    try testing.expect(std.mem.indexOfScalar(u8, selector, ':') == null);
+
+    const match = snapshot.resolveModel(selector).?;
+    try testing.expectEqualStrings("openrouter", match.provider.id);
+    try testing.expectEqualStrings(selector["openrouter/".len..], match.model.id);
+    try testing.expect(std.mem.indexOfScalar(u8, match.model.id, '/') != null);
+
+    try testing.expect(snapshot.resolveModel("openrouter/nope") == null);
+    try testing.expect(snapshot.resolveModel("openrouter") == null);
+    // The origin prefix is gone, so a stored selector in the old format resolves to nothing.
+    try testing.expect(snapshot.resolveModel("local:openrouter/aion-labs/aion-2.0") == null);
+}

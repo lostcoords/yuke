@@ -11,9 +11,6 @@ pub const ModelSpec = model.ModelSpec;
 
 const EnvMap = std.process.Environ.Map;
 
-/// Which resolver produced a row. The two origins are separate namespaces.
-pub const Origin = proto.enums.ProviderSource;
-
 /// This route holds every value that one request needs, and names its credential source.
 pub const Route = struct {
     instance: instance.ProviderInstance,
@@ -85,7 +82,6 @@ pub const Availability = union(enum) {
 pub const Provider = struct {
     id: []const u8,
     name: []const u8,
-    origin: Origin,
     models: []const ModelSpec,
     availability: Availability,
     /// The OAuth flow the catalog names for this provider. An API-key provider names none.
@@ -139,8 +135,8 @@ pub const Registry = struct {
         const providers = try arena.alloc(proto.catalog.ProviderInfo, self.rows.len);
         var models: std.ArrayList(proto.catalog.ModelInfo) = .empty;
         for (self.rows, 0..) |row, i| {
-            providers[i] = .{ .id = row.id, .name = row.name, .source = row.origin, .state = row.availability.state() };
-            for (row.models) |item| try models.append(arena, try modelInfo(arena, row.origin, row.id, item));
+            providers[i] = .{ .id = row.id, .name = row.name, .state = row.availability.state() };
+            for (row.models) |item| try models.append(arena, try modelInfo(arena, row.id, item));
         }
         self.providers = providers;
         self.models = models.items;
@@ -171,7 +167,6 @@ pub fn resolve(arena: std.mem.Allocator, sources: Sources) ![]const Provider {
             .id = p.id,
             .login_flow = if (from_catalog) |c| loginFlow(c.auth) else null,
             .name = if (from_catalog) |c| c.name else p.id,
-            .origin = .local,
             // The baked models already hold the effective shape, so only a file entry allocates.
             .models = if (p.models.len != 0)
                 try localModels(arena, p.models)
@@ -310,11 +305,11 @@ fn findCatalog(rows: []const catalog.Provider, id: []const u8) ?*const catalog.P
 }
 
 /// Build the canonical selector, which the engine owns and a client only echoes back.
-pub fn selectorOf(arena: std.mem.Allocator, origin: Origin, provider_id: []const u8, model_id: []const u8) ![]const u8 {
+pub fn selectorOf(arena: std.mem.Allocator, provider_id: []const u8, model_id: []const u8) ![]const u8 {
     // Every source validates its ids, so a bad half here is a bug in a producer, not peer input.
     std.debug.assert(proto.ids.isSelectorPart(provider_id));
     std.debug.assert(proto.ids.isSelectorTail(model_id));
-    const out = try std.fmt.allocPrint(arena, "{t}:{s}/{s}", .{ origin, provider_id, model_id });
+    const out = try std.fmt.allocPrint(arena, "{s}/{s}", .{ provider_id, model_id });
     std.debug.assert(out.len <= proto.ids.max_selector_bytes);
     return out;
 }
@@ -327,15 +322,11 @@ pub fn find(rows: []const Provider, provider_id: []const u8) ?*const Provider {
 
 /// Resolve a canonical selector against the merged list. A stale selector resolves to nothing.
 pub fn findModel(rows: []const Provider, selector: []const u8) ?Match {
-    const colon = std.mem.indexOfScalar(u8, selector, ':') orelse return null;
-    const origin = std.meta.stringToEnum(Origin, selector[0..colon]) orelse return null;
-    const rest = selector[colon + 1 ..];
-    const slash = std.mem.indexOfScalar(u8, rest, '/') orelse return null;
-    const provider_id = rest[0..slash];
-    const model_id = rest[slash + 1 ..];
+    // The library owns the selector grammar, so a model id may hold its own slash.
+    const parts = catalog.split(selector) catch return null;
     for (rows) |*p| {
-        if (p.origin != origin or !std.mem.eql(u8, p.id, provider_id)) continue;
-        for (p.models) |*m| if (std.mem.eql(u8, m.id, model_id)) return .{ .provider = p, .model = m };
+        if (!std.mem.eql(u8, p.id, parts.provider)) continue;
+        for (p.models) |*m| if (std.mem.eql(u8, m.id, parts.model)) return .{ .provider = p, .model = m };
         return null; // The provider serves no model of that name.
     }
     return null;
@@ -392,7 +383,7 @@ fn defaultReasoning(names: []const []const u8) []const u8 {
 }
 
 /// Project one model onto the public wire shape. An unknown value becomes an absent field.
-fn modelInfo(arena: std.mem.Allocator, origin: Origin, provider_id: []const u8, spec: ModelSpec) !proto.catalog.ModelInfo {
+fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, spec: ModelSpec) !proto.catalog.ModelInfo {
     var names: std.ArrayList([]const u8) = .empty;
     for (spec.reasoning_levels) |level| switch (level) {
         .none => {},
@@ -402,7 +393,7 @@ fn modelInfo(arena: std.mem.Allocator, origin: Origin, provider_id: []const u8, 
     return .{
         .id = spec.id,
         .provider = provider_id,
-        .selector = try selectorOf(arena, origin, provider_id, spec.id),
+        .selector = try selectorOf(arena, provider_id, spec.id),
         .name = spec.name,
         .context_window = spec.limits.context_window,
         .max_output_tokens = spec.limits.max_output_tokens,

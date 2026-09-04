@@ -98,7 +98,6 @@ pub const MethodName = enum {
     /// List the model catalog.
     @"catalog.list",
     /// Refresh the model catalog from providers.
-    @"catalog.refresh",
     /// List the local providers and the credential each one holds.
     @"auth.list",
     /// Set an API key for a provider.
@@ -135,9 +134,6 @@ pub const CompactionReason = enum { auto, manual };
 
 /// Provider protocol kind.
 pub const ProviderProtocol = enum { anthropic_messages, openai_chat, openai_responses };
-
-/// Name where a provider's route and credential came from.
-pub const ProviderSource = enum { local };
 
 /// Report whether a configured provider can serve a request now, and why it cannot.
 pub const ProviderState = enum {

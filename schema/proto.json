@@ -144,16 +144,8 @@
       "paramsOptional": true
     },
     {
-      "name": "catalog.refresh",
-      "doc": "Refresh the model catalog from providers.",
-      "params": "Empty",
-      "result": "CatalogRefreshResult",
-      "direction": "clientToServer",
-      "paramsOptional": true
-    },
-    {
       "name": "auth.list",
-      "doc": "List the local providers and the credential each one holds.",
+      "doc": "Refresh the model catalog from providers. List the local providers and the credential each one holds.",
       "params": "Empty",
       "result": "AuthListResult",
       "direction": "clientToServer",
@@ -647,11 +639,6 @@
           "presence": "required"
         },
         {
-          "name": "source",
-          "type": "ProviderSource",
-          "presence": "required"
-        },
-        {
           "name": "state",
           "type": "ProviderState",
           "presence": "required"
@@ -661,17 +648,6 @@
     {
       "name": "CatalogListResultUnchanged",
       "doc": "The client sent the current revision, so the engine returns no catalog data.",
-      "fields": [
-        {
-          "name": "catalog_rev",
-          "type": "CatalogRev",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CatalogRefreshResult",
-      "doc": "This result describes `catalog.refresh`.",
       "fields": [
         {
           "name": "catalog_rev",
@@ -3326,9 +3302,6 @@
           "type": "CatalogListResult"
         },
         {
-          "type": "CatalogRefreshResult"
-        },
-        {
           "type": "AuthListResult"
         },
         {
@@ -3791,14 +3764,9 @@
           "doc": "List the model catalog."
         },
         {
-          "name": "catalog.refresh",
-          "wire": "catalog.refresh",
-          "doc": "Refresh the model catalog from providers."
-        },
-        {
           "name": "auth.list",
           "wire": "auth.list",
-          "doc": "List the local providers and the credential each one holds."
+          "doc": "Refresh the model catalog from providers. List the local providers and the credential each one holds."
         },
         {
           "name": "auth.set_api_key",
@@ -3981,17 +3949,6 @@
         {
           "name": "openai_responses",
           "wire": "openai_responses"
-        }
-      ]
-    },
-    {
-      "name": "ProviderSource",
-      "doc": "Name where a provider's route and credential came from.",
-      "numeric": false,
-      "values": [
-        {
-          "name": "local",
-          "wire": "local"
         }
       ]
     },

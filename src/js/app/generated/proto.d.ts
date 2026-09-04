@@ -101,15 +101,10 @@ export interface CatalogListResultFull {
 export interface ProviderInfo {
   readonly id: string;
   readonly name: string;
-  readonly source: ProviderSource;
   readonly state: ProviderState;
 }
 
 export interface CatalogListResultUnchanged {
-  readonly catalog_rev: CatalogRev;
-}
-
-export interface CatalogRefreshResult {
   readonly catalog_rev: CatalogRev;
 }
 
@@ -762,7 +757,7 @@ export type ErrorCode = -32602 | -32600 | -32601 | -31000 | -31002 | -31003 | -3
 
 export type RunErrorCode = "provider" | "protocol" | "network" | "timeout" | "rate_limited" | "quota_exhausted" | "auth" | "unknown_model" | "unsupported_reasoning" | "max_rounds" | "context_overflow" | "runtime" | "internal";
 
-export type MethodName = "initialize" | "session.list" | "session.create" | "session.patch" | "session.remove" | "session.fork" | "session.compact" | "session.rewind" | "session.send_input" | "session.cancel_input" | "session.cancel_run" | "session.history" | "session.config" | "catalog.list" | "catalog.refresh" | "auth.list" | "auth.set_api_key" | "auth.login" | "auth.cancel_login" | "auth.remove" | "interaction.respond" | "skill.list";
+export type MethodName = "initialize" | "session.list" | "session.create" | "session.patch" | "session.remove" | "session.fork" | "session.compact" | "session.rewind" | "session.send_input" | "session.cancel_input" | "session.cancel_run" | "session.history" | "session.config" | "catalog.list" | "auth.list" | "auth.set_api_key" | "auth.login" | "auth.cancel_login" | "auth.remove" | "interaction.respond" | "skill.list";
 
 export type NoticeLevel = "info" | "warn" | "error";
 
@@ -779,8 +774,6 @@ export type SessionView = "active" | "recent" | "active_recent";
 export type CompactionReason = "auto" | "manual";
 
 export type ProviderProtocol = "anthropic_messages" | "openai_chat" | "openai_responses";
-
-export type ProviderSource = "local";
 
 export type ProviderState = "ready" | "needs_credential" | "needs_route" | "expired";
 
@@ -822,7 +815,7 @@ export type View = ({ readonly type: "text" } & ViewText) | ({ readonly type: "m
 
 export type RequestParams = SessionListParams | CreateSession | SessionPatchParams | SessionRemoveParams | SessionForkParams | SessionCompactParams | SessionRewindParams | SessionSendInputParams | SessionCancelInputParams | SessionCancelRunParams | SessionHistoryParams | SessionConfigParams | CatalogListParams | Empty | AuthSetApiKeyParams | AuthLoginParams | AuthCancelLoginParams | AuthRemoveParams | InteractionRespondParams;
 
-export type ResponseResult = InitializeResult | SessionListResult | SessionResult | Empty | SessionCompactResult | SessionSendInputResult | SessionCancelInputResult | SessionCancelRunResult | SessionHistoryResult | SessionConfigResult | CatalogListResult | CatalogRefreshResult | AuthListResult | AuthLoginResult;
+export type ResponseResult = InitializeResult | SessionListResult | SessionResult | Empty | SessionCompactResult | SessionSendInputResult | SessionCancelInputResult | SessionCancelRunResult | SessionHistoryResult | SessionConfigResult | CatalogListResult | AuthListResult | AuthLoginResult;
 
 export type BroadcastData = SessionSummaryChangedData | SessionActivityChangedData | SessionRemovedData | CatalogChangedData | AuthLoginFinishedData | AuthChangedData | Notice | MessageCommittedData | RunStartedData | RunDoneData | ConfigChangedData | TranscriptTruncatedData | MessageStartedData | MessageDiscardedData | MessagePartAddedData | MessagePartDeltaData | MessagePartFinalizedData | ToolStateChangedData | ToolOutputDeltaData | InputQueuedData | InputCanceledData | InteractionRequestedData;
 

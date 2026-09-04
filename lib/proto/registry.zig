@@ -45,7 +45,6 @@ pub const structs = [_]TypeEntry{
     .{ .name = "CatalogListResultFull", .ty = catalog.CatalogListResultFull },
     .{ .name = "ProviderInfo", .ty = catalog.ProviderInfo },
     .{ .name = "CatalogListResultUnchanged", .ty = catalog.CatalogListResultUnchanged },
-    .{ .name = "CatalogRefreshResult", .ty = catalog.CatalogRefreshResult },
     .{ .name = "ModelCost", .ty = catalog.ModelCost },
     .{ .name = "ModelInfo", .ty = catalog.ModelInfo },
     .{ .name = "Request", .ty = rpc.Request },
@@ -200,7 +199,6 @@ pub const string_enums = [_]EnumEntry{
     .{ .name = "SessionView", .ty = enums.SessionView },
     .{ .name = "CompactionReason", .ty = enums.CompactionReason },
     .{ .name = "ProviderProtocol", .ty = enums.ProviderProtocol },
-    .{ .name = "ProviderSource", .ty = enums.ProviderSource },
     .{ .name = "ProviderState", .ty = enums.ProviderState },
     .{ .name = "SkillScope", .ty = enums.SkillScope },
 };

@@ -44,17 +44,11 @@ pub const ProviderInfo = struct {
     /// The provider name inside its origin. Two origins can use one id.
     id: ids.ProviderId,
     name: []const u8,
-    source: enums.ProviderSource,
     state: enums.ProviderState,
 };
 
 /// The client sent the current revision, so the engine returns no catalog data.
 pub const CatalogListResultUnchanged = struct {
-    catalog_rev: ids.CatalogRev,
-};
-
-/// This result describes `catalog.refresh`.
-pub const CatalogRefreshResult = struct {
     catalog_rev: ids.CatalogRev,
 };
 
