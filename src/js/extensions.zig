@@ -106,7 +106,6 @@ test "headless extensions pump an async JavaScript tool" {
     defer {
         extensions.deinit();
         app_runtime.engine.close();
-        app_runtime.catalog_client.deinit();
         app_runtime.db.deinit();
         app_runtime.store.deinit();
         app_runtime.logins.deinit();
@@ -181,7 +180,6 @@ test "a plugin notice reaches every attached frontend" {
     defer {
         extensions.deinit();
         app_runtime.engine.close();
-        app_runtime.catalog_client.deinit();
         app_runtime.db.deinit();
         app_runtime.store.deinit();
         app_runtime.logins.deinit();

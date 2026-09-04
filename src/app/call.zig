@@ -67,11 +67,8 @@ fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, param
     if (n == .@"session.cancel_run") return commands.sessionCancelRun(engine, arena, params);
     if (n == .@"session.remove") return commands.sessionRemove(engine, arena, params);
     if (n == .@"catalog.list") return app_commands.catalogList(runtime, arena, params);
-    if (n == .@"catalog.refresh") {
-        // The fetch runs on the scheduler, so this answers now and `catalog.changed` reports it.
-        runtime.requestCatalogRefresh();
-        return .{ .catalog_rev = runtime.store.merged.revision };
-    }
+    // The table is baked at build time, so there is nothing to fetch. Stage 4 removes the method.
+    if (n == .@"catalog.refresh") return .{ .catalog_rev = runtime.store.merged.revision };
     if (n == .@"auth.list") return app_commands.authList(runtime, arena, params);
     if (n == .@"auth.set_api_key") return app_commands.authSetApiKey(runtime, arena, params);
     if (n == .@"auth.remove") return app_commands.authRemove(runtime, arena, params);

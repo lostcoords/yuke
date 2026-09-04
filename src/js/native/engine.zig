@@ -1109,7 +1109,6 @@ test "a request reaches a command and answers with its result" {
     defer runtime.store.deinit();
     defer runtime.db.deinit();
     defer runtime.engine.close();
-    defer runtime.catalog_client.deinit();
 
     const host = try Host.create(testing.allocator);
     defer host.destroy();

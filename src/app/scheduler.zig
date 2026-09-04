@@ -7,8 +7,6 @@ const login_task = @import("../provider/oauth/login_task.zig");
 const Timestamp = std.Io.Clock.Timestamp;
 const Duration = std.Io.Clock.Duration;
 
-/// The catalog is anonymous and changes slowly, so a conditional GET each hour is enough.
-const catalog_interval_ms = 60 * 60 * 1000;
 /// Look again for a grant to rotate after this long. A lapsed grant needs a login, not a retry.
 const grants_idle_ms = 15 * 60 * 1000;
 const expiry_margin_ms = 5 * 60 * 1000;
@@ -69,34 +67,23 @@ fn millis(value: i64) Duration {
 /// The periodic worker. The runtime holds a pointer, so an RPC can ask for an early catalog run.
 pub const Scheduler = struct {
     runtime: *App,
-    catalog: Job,
     /// The engine rotates every local grant itself.
     grants: Job,
-    /// A set event ends the wait early. The RPC sets it; only the scheduler task clears it.
-    wake: std.Io.Event = .unset,
 
     pub fn init(runtime: *App) Scheduler {
-        return .{ .runtime = runtime, .catalog = .init(runtime.io), .grants = .init(runtime.io) };
-    }
-
-    /// Ask for a catalog fetch now. The caller returns at once, and `catalog.changed` reports the result.
-    pub fn requestCatalog(self: *Scheduler) void {
-        self.catalog.due = .now(self.runtime.io, clock);
-        self.wake.set(self.runtime.io);
+        return .{ .runtime = runtime, .grants = .init(runtime.io) };
     }
 
     /// Run until a cancel arrives, which must leave this loop because no later point reports it.
     pub fn run(self: *Scheduler) std.Io.Cancelable!void {
         const io = self.runtime.io;
+        var idle: std.Io.Event = .unset;
         while (true) {
-            self.wake.waitTimeout(io, .{ .deadline = self.earliest() }) catch |err| switch (err) {
-                // A spurious wake also reports a timeout, so the loop checks each job again.
+            idle.waitTimeout(io, .{ .deadline = self.grants.due }) catch |err| switch (err) {
+                // A spurious wake also reports a timeout, so the loop checks the job again.
                 error.Timeout => {},
                 error.Canceled => return error.Canceled,
             };
-            self.wake.reset();
-
-            if (self.catalog.isDue(io)) try self.runCatalog();
             if (self.grants.isDue(io)) try self.runGrants();
         }
     }
@@ -120,32 +107,6 @@ pub const Scheduler = struct {
         // A lapsed grant reports no lead, so the job waits instead of rotating a dead token again.
         const lead_ms = if (login_task.soonestExpiry(self.runtime)) |at| leadMillis(at, self.runtime.nowMillis()) else null;
         self.grants.due = .fromNow(io, millis(lead_ms orelse grants_idle_ms));
-    }
-
-    fn earliest(self: *const Scheduler) Timestamp {
-        var soonest = self.catalog.due;
-        for ([_]Timestamp{self.grants.due}) |due| {
-            if (due.raw.nanoseconds < soonest.raw.nanoseconds) soonest = due;
-        }
-        return soonest;
-    }
-
-    fn runCatalog(self: *Scheduler) std.Io.Cancelable!void {
-        const io = self.runtime.io;
-        const status = self.runtime.refreshCatalogOnce() catch |err| {
-            if (err == error.Canceled) return error.Canceled;
-            std.log.warn("catalog refresh failed: {t}", .{err});
-            self.catalog.fail(io);
-            return;
-        };
-        switch (status) {
-            .current => self.catalog.succeed(io, catalog_interval_ms),
-            .catalog_unavailable => {
-                // The catalog can appear at any time, so a short retry beats a whole hour.
-                std.log.warn("the control plane has not synced its catalog yet", .{});
-                self.catalog.fail(io);
-            },
-        }
     }
 };
 

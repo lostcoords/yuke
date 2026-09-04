@@ -5,14 +5,10 @@ const builtin = @import("builtin");
 const zio = @import("zio");
 const zqlite = @import("zqlite");
 const proto = @import("proto");
-const catalog_endpoint = @import("../catalog/endpoint.zig");
 const database = @import("../store/store.zig");
 const paths = @import("../paths.zig");
 const provider = @import("../provider/provider.zig");
 const provider_store = @import("../provider/provider_store.zig");
-const catalog_http = @import("../net/http.zig");
-const catalog_fetch = @import("../catalog/fetch.zig");
-const catalog_store = @import("../catalog/store.zig");
 const provider_registry = @import("../provider/registry.zig");
 const login_runtime = @import("../provider/oauth/login_runtime.zig");
 const Engine = @import("../engine/Engine.zig");
@@ -27,8 +23,6 @@ const open_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.O
 pub const App = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
-    catalog_client: catalog_http.Client,
-    catalog_base_url: []u8,
     /// The HTTP client outlives the app tasks, because they read through it.
     http_transport: provider.http_transport.HttpTransport,
     db: database.Database,
@@ -51,15 +45,11 @@ pub const App = struct {
         const owned_db_path = if (data_dir) |base| try dbPathZ(gpa, base) else null;
         defer if (owned_db_path) |path| gpa.free(path);
 
-        const catalog_base_url = try gpa.dupe(u8, catalog_endpoint.baseUrl(env, null));
-        errdefer gpa.free(catalog_base_url);
         const db_path: [:0]const u8 = if (owned_db_path) |p| p else ":memory:";
 
         self.* = .{
             .gpa = gpa,
             .io = io,
-            .catalog_client = .init(gpa, io, catalog_http.default_timeout),
-            .catalog_base_url = catalog_base_url,
             .http_transport = provider.http_transport.HttpTransport.init(gpa, io, provider_idle_timeout),
             .db = undefined,
             .logins = .init(gpa),
@@ -94,7 +84,6 @@ pub const App = struct {
             .env = env,
         });
 
-        // Fetch the catalog off the turn path. The engine must answer before the network does.
         self.scheduler = .init(self);
         self.maintenance.concurrent(io, scheduler_mod.Scheduler.run, .{&self.scheduler}) catch |err| {
             std.log.warn("the scheduler did not start: {t}", .{err});
@@ -105,50 +94,11 @@ pub const App = struct {
         return self;
     }
 
-    /// Report what one catalog refresh achieved.
-    pub const RefreshStatus = enum {
-        /// The stored documents match the control plane.
-        current,
-        /// The control plane answered without a catalog.
-        catalog_unavailable,
-    };
-
-    /// Fetch the public catalog and install it. The scheduler owns the cadence.
-    pub fn refreshCatalogOnce(self: *App) !RefreshStatus {
-        std.debug.assert(self.catalog_base_url.len != 0);
-
-        // A second fetch would read the same stored ETag and install its response out of order.
-        std.debug.assert(!self.store.fetching);
-        self.store.fetching = true;
-        defer self.store.fetching = false;
-
-        var etag_buf: [catalog_fetch.max_etag_bytes]u8 = undefined;
-        const outcome = try catalog_fetch.refreshCatalog(self.gpa, &self.catalog_client, &self.db, self.catalog_base_url, &etag_buf);
-        switch (outcome) {
-            .unchanged => return .current,
-            .unavailable => return .catalog_unavailable,
-            .updated => |etag| {
-                const changed = try self.store.rebuild();
-                // The stored ETag means the live snapshot holds that document, so it commits first.
-                try catalog_store.setEtag(&self.db, etag);
-                if (changed) self.announceCatalogChanged();
-                return .current;
-            },
-        }
-    }
-
-    /// Ask the scheduler for a catalog fetch now. The caller returns before the network answers.
-    pub fn requestCatalogRefresh(self: *App) void {
-        self.scheduler.requestCatalog();
-    }
-
     /// Build one app around a test database. The caller closes the owned resources.
     pub fn initTest(self: *App, gpa: std.mem.Allocator, io: std.Io, db: database.Database, env: *const std.process.Environ.Map, route_transport: provider.transport.Transport) !void {
         self.* = .{
             .gpa = gpa,
             .io = io,
-            .catalog_client = .init(gpa, io, catalog_http.default_timeout),
-            .catalog_base_url = &.{},
             .http_transport = undefined,
             .db = db,
             .logins = .init(gpa),
@@ -218,8 +168,6 @@ pub const App = struct {
         self.tasks.cancel(io);
         self.engine.close();
         self.deinitState();
-        self.catalog_client.deinit();
-        gpa.free(self.catalog_base_url);
         self.http_transport.deinit();
         gpa.destroy(self);
     }
@@ -277,7 +225,6 @@ test "a catalog replacement announces the merged revision" {
     defer runtime.store.deinit();
     defer runtime.db.deinit();
     defer runtime.engine.close();
-    defer runtime.catalog_client.deinit();
 
     const Seen = struct {
         var method: ?proto.enums.BroadcastName = null;

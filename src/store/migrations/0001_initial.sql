@@ -1,18 +1,6 @@
 -- The schema has mutable registry tables and an append-only activity log. Projections rebuild from the log.
 -- STRICT types enforce storage; checks enforce domain rules; 2^53-1 keeps numbers safe for wire JSON.
 
--- The provider catalog uses a thin key-value store. One row holds one provider and its models.
-CREATE TABLE catalog_meta (
-    k TEXT PRIMARY KEY,
-    v TEXT NOT NULL
-) STRICT, WITHOUT ROWID;
-
-CREATE TABLE catalog_providers (
-    id   TEXT PRIMARY KEY,
-    data TEXT NOT NULL
-) STRICT, WITHOUT ROWID;
-
-
 -- The session registry holds primary state. The log does not derive this state. A rowid table suits this
 -- wide, often updated row. Flatten Session_Origin; each arm's ids are non-null only for that arm.
 CREATE TABLE sessions (

@@ -21,9 +21,6 @@ test {
     _ = @import("store/store.zig");
     _ = @import("paths.zig");
     _ = @import("net/http.zig");
-    // The registry no longer reaches these; Stage 3 removes the files and these two lines together.
-    _ = @import("catalog/feed.zig");
-    _ = @import("catalog/store.zig");
     _ = @import("provider/oauth/oauth.zig");
     _ = @import("provider/oauth/credential_lock.zig");
     _ = @import("provider/oauth/xai.zig");
