@@ -362,3 +362,73 @@ test "the registry emits a bare selector and resolves it back" {
     // The origin prefix is gone, so a selector stored in the old format resolves to nothing.
     try testing.expect(snapshot.resolveModel("local:openrouter/aion-labs/aion-2.0") == null);
 }
+
+test "the environment alone offers a provider the file never names" {
+    var env: EnvMap = .init(testing.allocator);
+    defer env.deinit();
+    try env.put("ANTHROPIC_API_KEY", "sk-env");
+
+    var snapshot = try registry.Registry.load(testing.allocator, .{ .env = &env });
+    defer snapshot.deinit();
+
+    const row = registry.find(snapshot.rows, "anthropic").?;
+    const route = row.availability.ready;
+    // The row names the variable, so a rotated key reaches the next run with no rebuild.
+    try testing.expectEqualStrings("ANTHROPIC_API_KEY", route.credential.env);
+    try testing.expectEqualStrings("https://api.anthropic.com/v1", route.instance.base_url);
+    try testing.expect(row.models.len != 0);
+
+    // A provider whose variable is unset is never offered, so no picker lists a dead route.
+    try testing.expect(registry.find(snapshot.rows, "openai") == null);
+}
+
+test "a blank variable offers no provider" {
+    var env: EnvMap = .init(testing.allocator);
+    defer env.deinit();
+    try env.put("ANTHROPIC_API_KEY", "");
+
+    var snapshot = try registry.Registry.load(testing.allocator, .{ .env = &env });
+    defer snapshot.deinit();
+    try testing.expect(registry.find(snapshot.rows, "anthropic") == null);
+}
+
+test "an oauth provider stays visible so its login can be found" {
+    var env: EnvMap = .init(testing.allocator);
+    defer env.deinit();
+
+    var snapshot = try registry.Registry.load(testing.allocator, .{ .env = &env });
+    defer snapshot.deinit();
+
+    // No variable can hold a grant, so the row must appear anyway or the login is undiscoverable.
+    const codex = registry.find(snapshot.rows, "openai-codex").?;
+    try testing.expectEqualStrings("codex", codex.login_flow.?);
+    try testing.expectEqual(registry.Reason.needs_credential, codex.availability.unavailable);
+}
+
+test "the file beats the environment and extends the baked model list" {
+    var env: EnvMap = .init(testing.allocator);
+    defer env.deinit();
+    try env.put("ANTHROPIC_API_KEY", "sk-env");
+
+    const baked = provider.ai.catalog.find("anthropic").?;
+    var buf: [512]u8 = undefined;
+    const doc = try std.fmt.bufPrint(&buf,
+        \\{{"version":1,"providers":[{{"id":"anthropic","api_key":"sk-file","models":[
+        \\ {{"id":"{s}","upstream_id":"pinned","limits":{{"context_window":1,"max_output_tokens":1}}}},
+        \\ {{"id":"private","upstream_id":"private-1","limits":{{"context_window":1,"max_output_tokens":1}}}}]}}]}}
+    , .{baked.models[0].id});
+
+    var loaded = try provider.config.loadBytes(testing.allocator, doc);
+    defer loaded.deinit();
+
+    var snapshot = try registry.Registry.load(testing.allocator, .{ .local = &loaded, .env = &env });
+    defer snapshot.deinit();
+
+    const row = registry.find(snapshot.rows, "anthropic").?;
+    try testing.expectEqualStrings("sk-file", row.availability.ready.credential.literal);
+
+    // The file adds one model and replaces one, so the list grows by exactly the new id.
+    try testing.expectEqual(baked.models.len + 1, row.models.len);
+    try testing.expectEqualStrings("pinned", row.models[0].upstream_id);
+    try testing.expectEqualStrings("private", row.models[row.models.len - 1].id);
+}

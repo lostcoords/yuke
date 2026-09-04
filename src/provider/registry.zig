@@ -156,25 +156,83 @@ pub const Registry = struct {
 };
 
 /// Compose `providers.json` with the baked catalog. The file wins field by field.
+/// The catalog leads, so the row order holds whatever the file names.
 /// The result borrows `arena` and the sources.
 pub fn resolve(arena: std.mem.Allocator, sources: Sources) ![]const Provider {
     var out: std.ArrayList(Provider) = .empty;
-    const loaded = sources.local orelse return out.items;
-    for (loaded.providers) |p| {
-        const from_catalog = findCatalog(sources.catalog, p.id);
-        const availability = localAvailability(arena, p, from_catalog, sources.env);
-        try out.append(arena, .{
-            .id = p.id,
-            .login_flow = if (from_catalog) |c| loginFlow(c.auth) else null,
-            .name = if (from_catalog) |c| c.name else p.id,
-            // The baked models already hold the effective shape, so only a file entry allocates.
-            .models = if (p.models.len != 0)
-                try localModels(arena, p.models)
-            else if (from_catalog) |c| c.models else &.{},
-            .availability = availability,
-        });
+    for (sources.catalog) |*c| {
+        const file = findLocal(sources.local, c.id);
+        // A provider the file does not name is offered only when the process can already reach it.
+        if (file == null and !offerable(c, sources.env)) continue;
+        try out.append(arena, try providerRow(arena, file orelse .{ .id = c.id }, c, sources.env));
     }
+    // An entry the catalog does not name is a local endpoint, such as Ollama.
+    if (sources.local) |loaded| for (loaded.providers) |p| {
+        if (findCatalog(sources.catalog, p.id) != null) continue;
+        try out.append(arena, try providerRow(arena, p, null, sources.env));
+    };
     return out.items;
+}
+
+/// Report whether the process can offer this provider with no `providers.json` entry.
+fn offerable(c: *const catalog.Provider, env: ?*const EnvMap) bool {
+    return switch (c.auth) {
+        // A grant needs a login, so the provider stays visible for the user to start one.
+        .oauth => true,
+        .api_key => |named| envValue(env, named orelse return false) != null,
+    };
+}
+
+/// Read a named variable. An empty value is no value, so a blank variable offers nothing.
+fn envValue(env: ?*const EnvMap, name: []const u8) ?[]const u8 {
+    const value = (if (env) |e| e.get(name) else null) orelse return null;
+    return if (value.len == 0) null else value;
+}
+
+/// Build one row from the file entry and the catalog row, either of which may be absent.
+fn providerRow(
+    arena: std.mem.Allocator,
+    p: provider.config.LocalProvider,
+    from_catalog: ?*const catalog.Provider,
+    env: ?*const EnvMap,
+) !Provider {
+    return .{
+        .id = p.id,
+        .login_flow = if (from_catalog) |c| loginFlow(c.auth) else null,
+        .name = if (from_catalog) |c| c.name else p.id,
+        .models = try mergedModels(arena, p, from_catalog),
+        .availability = localAvailability(arena, p, from_catalog, env),
+    };
+}
+
+fn findLocal(local: ?*const provider.config.Loaded, id: []const u8) ?provider.config.LocalProvider {
+    const loaded = local orelse return null;
+    for (loaded.providers) |p| if (std.mem.eql(u8, p.id, id)) return p;
+    return null;
+}
+
+/// Union the baked models with the file's. The file wins on a repeated id and appends the rest.
+fn mergedModels(
+    arena: std.mem.Allocator,
+    p: provider.config.LocalProvider,
+    from_catalog: ?*const catalog.Provider,
+) ![]const ModelSpec {
+    const baked: []const ModelSpec = if (from_catalog) |c| c.models else &.{};
+    // The baked models already hold the effective shape, so only a file entry allocates.
+    if (p.models.len == 0) return baked;
+    const extra = try localModels(arena, p.models);
+    if (baked.len == 0) return extra;
+
+    var out: std.ArrayList(ModelSpec) = .empty;
+    try out.ensureTotalCapacityPrecise(arena, baked.len + extra.len);
+    for (baked) |m| out.appendAssumeCapacity(findSpec(extra, m.id) orelse m);
+    for (extra) |e| if (findSpec(baked, e.id) == null) out.appendAssumeCapacity(e);
+    return out.items;
+}
+
+fn findSpec(specs: []const ModelSpec, id: []const u8) ?ModelSpec {
+    for (specs) |m| if (std.mem.eql(u8, m.id, id)) return m;
+    return null;
 }
 
 /// Resolve the local credential, then complete the route from the catalog template.
@@ -225,10 +283,18 @@ fn localAvailability(
                 },
             }
         },
-    } else if (from_catalog != null) {
-        // The file names no credential, and every baked route presents one.
-        return .{ .unavailable = .needs_credential };
-    }
+    } else if (from_catalog) |c| switch (c.auth) {
+        // The file names no credential, so the environment supplies the key the catalog names.
+        .api_key => |named| {
+            const name = named orelse return .{ .unavailable = .needs_credential };
+            const value = envValue(env, name) orelse return .{ .unavailable = .needs_credential };
+            std.debug.assert(value.len != 0); // `envValue` rejects a blank variable.
+            mechanism = .{ .api_key = catalog_header orelse return .{ .unavailable = .needs_route } };
+            source = .{ .env = name };
+        },
+        // No variable can hold a grant, so this provider waits for a login.
+        .oauth => return .{ .unavailable = .needs_credential },
+    };
 
     // The catalog can name the header, so check the composed set that the loader could not.
     // A grant pins its own identity header, and a run refuses the whole request when one collides.

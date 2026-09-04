@@ -5,6 +5,7 @@ const std = @import("std");
 const proto = @import("proto");
 const App = @import("app.zig").App;
 const provider_config = @import("../provider/config/providers.zig");
+const provider_registry = @import("../provider/registry.zig");
 const provider_ai = @import("../provider/provider.zig").ai;
 const provider_oauth = @import("../provider/provider.zig").oauth;
 const login_runtime = @import("../provider/oauth/login_runtime.zig");
@@ -28,11 +29,11 @@ pub fn catalogList(runtime: *App, _: std.mem.Allocator, params: proto.catalog.Ca
 /// Handle auth.list: report the credential runtime of every local provider.
 pub fn authList(runtime: *App, arena: std.mem.Allocator, _: proto.misc.Empty) !proto.auth.AuthListResult {
     var out: std.ArrayList(proto.auth.AuthProvider) = .empty;
-    const loaded = runtime.store.local orelse return .{ .providers = &.{} };
-    for (loaded.providers) |p| try out.append(arena, .{
-        .provider_id = p.id,
-        .credential_kind = credentialKind(p),
-        .can_login = runtime.canLogin(p.id),
+    // The merged view holds the providers the environment offers as well as the ones the file names.
+    for (runtime.store.merged.rows) |row| try out.append(arena, .{
+        .provider_id = row.id,
+        .credential_kind = if (localEntry(runtime, row.id)) |p| credentialKind(p) else discoveredKind(row),
+        .can_login = runtime.canLogin(row.id),
     });
     return .{ .providers = out.items };
 }
@@ -114,9 +115,63 @@ fn flowName(auth: provider_ai.catalog.Auth) ?[]const u8 {
 
 /// Report the flows one provider accepts. Only a catalog row naming a known flow offers one.
 /// Report which credential one entry holds. An entry that holds none reports null.
+fn localEntry(runtime: *const App, provider_id: []const u8) ?provider_config.LocalProvider {
+    const loaded = runtime.store.local orelse return null;
+    for (loaded.providers) |p| if (std.mem.eql(u8, p.id, provider_id)) return p;
+    return null;
+}
+
+/// Report the credential of a provider the file never names. Only the environment can supply one.
+fn discoveredKind(row: provider_registry.Provider) ?proto.enums.AuthCredentialKind {
+    return if (row.availability == .ready) .api_key else null;
+}
+
 fn credentialKind(p: provider_config.LocalProvider) ?proto.enums.AuthCredentialKind {
     return switch (p.auth orelse return null) {
         .api_key => |key| if (key.source == null) null else .api_key,
         .oauth => .oauth,
     };
+}
+
+const testing = std.testing;
+
+test "auth.list reports the providers the environment offers, not only the file" {
+    const zio = @import("zio");
+    const database = @import("../store/store.zig");
+    const provider = @import("../provider/provider.zig");
+
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    var env: std.process.Environ.Map = .init(testing.allocator);
+    defer env.deinit();
+    try env.put("ANTHROPIC_API_KEY", "sk-env");
+
+    var transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+    var runtime: App = undefined;
+    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), &env, transport.transport());
+    defer runtime.logins.deinit();
+    defer runtime.store.deinit();
+    defer runtime.db.deinit();
+    defer runtime.engine.close();
+    _ = try runtime.store.rebuild();
+
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const result = try authList(&runtime, arena.allocator(), .{});
+
+    var anthropic: ?proto.auth.AuthProvider = null;
+    var codex: ?proto.auth.AuthProvider = null;
+    for (result.providers) |p| {
+        if (std.mem.eql(u8, p.provider_id, "anthropic")) anthropic = p;
+        if (std.mem.eql(u8, p.provider_id, "openai-codex")) codex = p;
+    }
+
+    // `providers.json` names neither of these, so before discovery the list was empty.
+    try testing.expectEqual(proto.enums.AuthCredentialKind.api_key, anthropic.?.credential_kind.?);
+    try testing.expect(!anthropic.?.can_login);
+
+    // A grant provider holds no credential yet, and it must still advertise its login.
+    try testing.expect(codex.?.credential_kind == null);
+    try testing.expect(codex.?.can_login);
 }
