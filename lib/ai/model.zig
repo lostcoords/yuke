@@ -38,18 +38,8 @@ pub const Caps = struct {
 /// One kind a model reads or writes. The request IR names the same set.
 pub const Modality = types.Modality;
 
-/// What a model takes and what it returns.
-pub const Modalities = struct {
-    input: []const Modality = &.{},
-    output: []const Modality = &.{},
-
-    /// Report whether the model takes this kind, or null when the source lists none.
-    pub fn takesInput(self: Modalities, kind: Modality) ?bool {
-        if (self.input.len == 0) return null;
-        for (self.input) |item| if (item == kind) return true;
-        return false;
-    }
-};
+/// What a model takes and what it returns. The request IR reads the same shape.
+pub const Modalities = types.Modalities;
 
 /// One reasoning effort a user can pick. A source writes null to mean "no effort at all".
 pub const ReasoningLevel = union(enum) {

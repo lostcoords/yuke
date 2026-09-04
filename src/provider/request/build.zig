@@ -20,7 +20,7 @@ pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, op
     for (messages) |message| switch (message) {
         .user => |user| for (user.content) |part| {
             if (part == .text and part.text.text.len == 0) continue; // Skip empty user text, as the assistant fold does.
-            try blocks.append(gpa, .{ .role = .user, .value = try userValue(part) });
+            try blocks.append(gpa, .{ .role = .user, .value = try userValue(part, options) });
         },
         .assistant => |assistant| try foldAssistant(gpa, &blocks, assistant, options),
         .compaction => |compaction| if (compaction.summary.len != 0) {
@@ -33,13 +33,27 @@ pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, op
     return .{ .blocks = try blocks.toOwnedSlice(gpa) };
 }
 
-/// Map one user part. A blob names bytes this build cannot read, because no blob store exists yet.
-fn userValue(part: proto.content.ContentPart) Error!Block.Value {
+/// Map one user part, reading the media type rather than the part name, which does not classify a file.
+fn userValue(part: proto.content.ContentPart, options: ir.Options) Error!Block.Value {
     return switch (part) {
         .text => |t| .{ .text = t.text },
-        // Every media source is a blob today, and no store exists to read one into bytes.
-        .image, .audio, .file => error.UnresolvedBlob,
+        .image => |t| mediaValue(t.source, options),
+        .audio => |t| mediaValue(t.source, options),
+        .file => |t| mediaValue(t.source, options),
     };
+}
+
+/// Map one attachment against the target model.
+/// A model that reads no such kind gets a note, so a switched session keeps a coherent history.
+fn mediaValue(source: proto.content.MediaSource, options: ir.Options) Error!Block.Value {
+    const blob = source.blob;
+    const kind = ir.modalityOf(blob.mime);
+    // A model that lists nothing blocks nothing, so only a stated refusal replaces the attachment.
+    if (options.modalities.takesInput(kind)) |takes| {
+        if (!takes) return .{ .text = ir.omittedNote(kind) };
+    }
+    // The model reads this kind, so the bytes must arrive. No blob store exists to read them yet.
+    return error.UnresolvedBlob;
 }
 
 fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: proto.message.AssistantMessage, options: ir.Options) Error!void {
@@ -173,4 +187,57 @@ test "reasoning replays only when the provenance matches the target" {
 
     const mismatch = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "other" } });
     try testing.expectEqual(@as(usize, 1), mismatch.blocks.len);
+}
+
+test "a model that reads no images sees a note where the attachment was" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const blob: proto.content.MediaBlob = .{ .hash = std.mem.zeroes([64]u8), .mime = "image/png", .bytes = 2 };
+    const parts = [_]proto.content.ContentPart{
+        .{ .text = .{ .text = "look" } },
+        .{ .image = .{ .source = .{ .blob = blob } } },
+    };
+    const messages = [_]proto.message.Message{.{ .user = .{
+        .id = 1,
+        .content = &parts,
+        .input_id = 2,
+        .time = .{ .created_at_ms = 0 },
+    } }};
+
+    // A session that switches to a text-only model must keep working, not fail every later turn.
+    const text_only = try build(arena.allocator(), &messages, .{ .modalities = .{ .input = &.{.text} } });
+    try testing.expectEqual(@as(usize, 2), text_only.blocks.len);
+    try testing.expectEqualStrings("look", text_only.blocks[0].value.text);
+    try testing.expectEqualStrings(ir.omittedNote(.image), text_only.blocks[1].value.text);
+
+    // A model that reads images must receive the bytes, so the missing store is an error and never a note.
+    try testing.expectError(
+        error.UnresolvedBlob,
+        build(arena.allocator(), &messages, .{ .modalities = .{ .input = &.{ .text, .image } } }),
+    );
+
+    // A model that lists nothing states no refusal, so the attachment is still owed its bytes.
+    try testing.expectError(error.UnresolvedBlob, build(arena.allocator(), &messages, .{}));
+}
+
+test "the note names the kind the model refused" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const reads_images: ir.Options = .{ .modalities = .{ .input = &.{ .text, .image } } };
+
+    inline for (.{
+        .{ "application/pdf", proto.content.MediaBlob, ir.omittedNote(.pdf) },
+        .{ "audio/mpeg", proto.content.MediaBlob, ir.omittedNote(.audio) },
+    }) |case| {
+        const blob: proto.content.MediaBlob = .{ .hash = std.mem.zeroes([64]u8), .mime = case[0], .bytes = 2 };
+        const parts = [_]proto.content.ContentPart{.{ .file = .{ .source = .{ .blob = blob } } }};
+        const messages = [_]proto.message.Message{.{ .user = .{
+            .id = 1,
+            .content = &parts,
+            .input_id = 2,
+            .time = .{ .created_at_ms = 0 },
+        } }};
+        const folded = try build(arena.allocator(), &messages, reads_images);
+        try testing.expectEqualStrings(case[2], folded.blocks[0].value.text);
+    }
 }

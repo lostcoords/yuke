@@ -20,6 +20,19 @@ pub const ModelIdentity = struct {
 /// One kind a model reads or writes. A source name outside this set is dropped, never guessed.
 pub const Modality = enum { text, image, audio, video, pdf };
 
+/// What a model takes and what it returns.
+pub const Modalities = struct {
+    input: []const Modality = &.{},
+    output: []const Modality = &.{},
+
+    /// Report whether the model takes this kind, or null when the source lists none.
+    pub fn takesInput(self: Modalities, kind: Modality) ?bool {
+        if (self.input.len == 0) return null;
+        for (self.input) |item| if (item == kind) return true;
+        return false;
+    }
+};
+
 /// Which cache marker a request writes. A host that caches on its own needs none.
 pub const CacheMarker = enum { none, anthropic, openai };
 

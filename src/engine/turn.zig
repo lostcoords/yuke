@@ -412,7 +412,7 @@ fn resolvedRequest(
         .max_tokens_field = r.model.dialect.max_tokens_field,
         .responses_dialect = route.instance.responses_dialect,
         .cache = provider.instance.CachePolicy.marker(route.instance.cache),
-    }, .{ .protocol = slot.protocol, .model = slot.config.model });
+    }, .{ .protocol = slot.protocol, .model = slot.config.model }, r.model.modalities);
 
     // Read the credential and the clock here, so a rotated key or a lapsed grant needs no rebuild.
     const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;

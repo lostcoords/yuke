@@ -33,12 +33,13 @@ pub fn requestBody(
     protocol: ai.Protocol,
     request: ir.Request,
     target: ?proto.message.TurnProvenance,
+    modalities: ai.model.Modalities,
 ) ![]u8 {
     const identity: ?ai.ModelIdentity = if (target) |value| .{
         .protocol = protocolFromProto(value.protocol),
         .model = value.model,
     } else null;
-    const request_ir = try build.build(arena, messages, .{ .target = identity });
+    const request_ir = try build.build(arena, messages, .{ .target = identity, .modalities = modalities });
     return ai.requestBody(arena, protocol, request, request_ir);
 }
 

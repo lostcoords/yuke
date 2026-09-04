@@ -28,12 +28,9 @@ pub const Block = struct {
         /// The name a provider requires beside file bytes. An image needs none.
         filename: []const u8 = "",
 
-        /// Classify the media type. An unknown type is a file, which every protocol can refuse.
+        /// Classify the media type. An unknown type is a document, which every protocol can refuse.
         pub fn modality(self: Media) types.Modality {
-            if (std.mem.startsWith(u8, self.mime, "image/")) return .image;
-            if (std.mem.startsWith(u8, self.mime, "audio/")) return .audio;
-            if (std.mem.startsWith(u8, self.mime, "video/")) return .video;
-            return .pdf; // Every remaining attachment travels as a document.
+            return modalityOf(self.mime);
         }
     };
 
@@ -55,6 +52,25 @@ pub const Block = struct {
         is_error: bool,
     };
 };
+
+/// Classify one media type. An unknown type is a document, which every protocol can refuse.
+pub fn modalityOf(mime: []const u8) types.Modality {
+    if (std.mem.startsWith(u8, mime, "image/")) return .image;
+    if (std.mem.startsWith(u8, mime, "audio/")) return .audio;
+    if (std.mem.startsWith(u8, mime, "video/")) return .video;
+    return .pdf;
+}
+
+/// Name what a model that cannot read this kind sees in place of the attachment.
+pub fn omittedNote(kind: types.Modality) []const u8 {
+    return switch (kind) {
+        .image => "[image omitted: this model reads no images]",
+        .audio => "[audio omitted: this model reads no audio]",
+        .video => "[video omitted: this model reads no video]",
+        .pdf => "[document omitted: this model reads no documents]",
+        .text => unreachable, // `modalityOf` never answers text, because text is not an attachment.
+    };
+}
 
 pub const RequestIr = struct {
     blocks: []const Block,
@@ -144,6 +160,8 @@ pub const Options = struct {
     /// Replay reasoning only from a turn with this provenance.
     /// A null target drops all prior reasoning because signatures are model-specific.
     target: ?types.ModelIdentity = null,
+    /// What the target model reads. An attachment it cannot read becomes a note instead.
+    modalities: types.Modalities = .{},
 };
 
 pub fn validate(arena: std.mem.Allocator, request: Request, request_ir: RequestIr) !void {
