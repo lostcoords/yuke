@@ -31,7 +31,6 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     }
 
     // Responses reasons by default, so only a named effort is worth a control.
-    // `.default` also covers a model with no effort levels; a reasoning object can fail there.
     try writeReasoning(&jw, request.reasoning);
     try writeTextFormat(&jw, request.output_schema);
 
@@ -195,11 +194,7 @@ fn writeTextFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void {
     try jw.objectField("format");
     try jw.beginObject();
     try json.field(jw, "type", "json_schema");
-    try json.field(jw, "name", output.name);
-    try jw.objectField("schema");
-    try json.writeRawJson(jw, output.schema);
-    try jw.objectField("strict");
-    try jw.write(output.strict);
+    try json.schemaMembers(jw, output.name, output.schema, output.strict);
     try jw.endObject();
     try jw.endObject();
 }
@@ -348,6 +343,14 @@ test "a schema constrains the response through the text format" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"text":{"format":{"type":"json_schema","name":"person","schema":{"type":"object"},"strict":true}},"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}" } },
+        .{ .blocks = &blocks },
+    );
+
+    // A caller that turns strict mode off must reach the wire, or the schema stops being a guarantee.
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"text":{"format":{"type":"json_schema","name":"person","schema":{"type":"object"},"strict":false}},"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
+    ,
+        .{ .model = "gpt-5", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}", .strict = false } },
         .{ .blocks = &blocks },
     );
 }

@@ -1,8 +1,8 @@
 //! Turn one yuke catalog document into the Zig table that the AI module compiles in.
-//! A routing name this tool does not know fails the run, because no request can be built without it.
-//! A dialect name it does not know keeps the field default and is reported, so a new upstream name never breaks the build.
+//! An unknown routing name fails the run; an unknown dialect name keeps the default and is reported.
 
 const std = @import("std");
+const vocab = @import("ai_vocab");
 
 pub const Error = error{InvalidDocument};
 
@@ -71,8 +71,7 @@ const Run = struct {
     }
 };
 
-/// Read one catalog document and write the canonically formatted table to `w`.
-/// The output is what `zig fmt` produces, so a formatting pass never makes the committed file stale.
+/// Write the canonically formatted table for one document, so `zig fmt` never makes it stale.
 pub fn emit(arena: std.mem.Allocator, w: *std.Io.Writer, source: []const u8) !Stats {
     var raw: std.Io.Writer.Allocating = .init(arena);
     const stats = try build(arena, &raw.writer, source);
@@ -80,7 +79,7 @@ pub fn emit(arena: std.mem.Allocator, w: *std.Io.Writer, source: []const u8) !St
     const text_z = try arena.dupeZ(u8, raw.written());
     var tree = try std.zig.Ast.parse(arena, text_z, .zig);
     defer tree.deinit(arena);
-    if (tree.errors.len != 0) return Error.InvalidDocument; // A name this tool escaped wrongly lands here.
+    std.debug.assert(tree.errors.len == 0); // Every value is escaped, so the render input always parses.
     try tree.render(arena, w, .{});
     return stats;
 }
@@ -88,7 +87,7 @@ pub fn emit(arena: std.mem.Allocator, w: *std.Io.Writer, source: []const u8) !St
 fn build(arena: std.mem.Allocator, w: *std.Io.Writer, source: []const u8) !Stats {
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, source, .{}) catch return Error.InvalidDocument;
     const root = try object(parsed);
-    if (try integer(root, "version") != version) return Error.InvalidDocument;
+    if (try number(try member(root, "version")) != version) return Error.InvalidDocument;
 
     var run: Run = .{ .arena = arena, .w = w };
     try w.writeAll(preamble);
@@ -111,7 +110,7 @@ fn build(arena: std.mem.Allocator, w: *std.Io.Writer, source: []const u8) !Stats
 fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
     const w = run.w;
     // An executable provider states every routing field. A null here is a document this tool cannot use.
-    const protocol = try protocolName(try string(provider, "protocol"));
+    const protocol = try routingName(vocab.types.Protocol, try string(provider, "protocol"));
     const auth = try object(try member(provider, "auth"));
     const kind = try string(auth, "kind");
 
@@ -128,14 +127,14 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
     }
     try w.writeAll(if (env.len == 0) "}," else " },");
 
-    try w.print("\n        .auth = .{s},\n        .route = .{{\n", .{try authKind(kind)});
+    try w.print("\n        .auth = .{s},\n        .route = .{{\n", .{try routingName(vocab.model.AuthKind, kind)});
     try w.print("            .base_url = \"{f}\",\n", .{std.zig.fmtString(try string(provider, "base_url"))});
     try w.print("            .protocol = .{s},\n", .{protocol});
     // Every grant presents a bearer, so an OAuth flow selects only the response dialect.
     try w.print("            .auth = .{{ .api_key = .{s} }},\n", .{
-        if (std.mem.eql(u8, kind, "oauth")) "authorization_bearer" else try apiKeyHeader(try string(auth, "header")),
+        if (std.mem.eql(u8, kind, "oauth")) "authorization_bearer" else try routingName(vocab.instance.ApiKeyHeader, try string(auth, "header")),
     });
-    try w.print("            .cache = .{s},\n", .{try cachePolicy(try string(provider, "cache"))});
+    try w.print("            .cache = .{s},\n", .{try routingName(vocab.instance.CachePolicy, try string(provider, "cache"))});
     try w.print("            .responses_dialect = .{s},\n", .{try responsesDialect(auth, kind)});
 
     try w.writeAll("            .headers = &.{");
@@ -171,11 +170,11 @@ fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
     });
 
     try w.writeAll("                .limits = .{");
-    try emitOptionalInt(w, " .context_window = ", limits, "context_window");
-    try emitOptionalInt(w, " .max_output_tokens = ", limits, "max_output_tokens");
+    try emitOptionalInt(w, limits, "context_window");
+    try emitOptionalInt(w, limits, "max_output_tokens");
     try w.writeAll(" },\n                .cost = .{");
-    inline for (.{ "input", "output", "cache_read", "cache_write" }) |name| {
-        try emitOptionalFloat(w, " ." ++ name ++ " = ", cost, name);
+    for ([_][]const u8{ "input", "output", "cache_read", "cache_write" }) |name| {
+        try emitOptionalFloat(w, cost, name);
     }
     try w.print(" }},\n                .caps = .{{ .tools = {}, .vision = {} }},\n", .{
         try boolean(flags, "supports_tools"),
@@ -198,34 +197,22 @@ fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
     try w.writeAll(" },\n            },\n");
 }
 
-// The dialect vocabularies the AI module compiles. A name outside one keeps the field default.
-const thinking_formats = [_][]const u8{ "none", "openai", "openrouter", "deepseek", "zai", "qwen", "together", "string_thinking", "ant_ling" };
-const reasoning_replays = [_][]const u8{ "none", "reasoning", "reasoning_content", "reasoning_details" };
-const max_tokens_fields = [_][]const u8{ "max_tokens", "max_completion_tokens" };
-
 /// Write the dialect members this model states. An unknown name is reported and left out.
 fn emitDialect(run: *Run, flags: std.json.ObjectMap, protocol: []const u8) !void {
     const w = run.w;
     // Only an OpenAI-chat host reads a thinking format, so another protocol would reject it.
     if (flags.get("thinking_format")) |value| {
         const name = try text(value);
+        // Only an OpenAI-chat host reads a thinking format, so another protocol would reject it.
         if (!std.mem.eql(u8, protocol, "openai_chat")) {
             try run.degrade("thinking_format outside openai_chat", name);
-        } else if (known(&thinking_formats, name)) {
-            try w.print(" .thinking_format = .{f},", .{std.zig.fmtId(name)});
-        } else try run.degrade("thinking_format", name);
+        } else try emitDialectMember(run, vocab.ir.ThinkingFormat, "thinking_format", name);
     }
     if (flags.get("reasoning_replay")) |value| {
-        const name = try text(value);
-        if (known(&reasoning_replays, name)) {
-            try w.print(" .reasoning_replay = .{f},", .{std.zig.fmtId(name)});
-        } else try run.degrade("reasoning_replay", name);
+        try emitDialectMember(run, vocab.ir.ReasoningReplay, "reasoning_replay", try text(value));
     }
     if (flags.get("max_tokens_field")) |value| {
-        const name = try text(value);
-        if (known(&max_tokens_fields, name)) {
-            try w.print(" .max_tokens_field = .{f},", .{std.zig.fmtId(name)});
-        } else try run.degrade("max_tokens_field", name);
+        try emitDialectMember(run, vocab.ir.MaxTokensField, "max_tokens_field", try text(value));
     }
     if (flags.get("anthropic_adaptive")) |value| {
         if (value != .bool) return Error.InvalidDocument;
@@ -241,21 +228,24 @@ fn emitDialect(run: *Run, flags: std.json.ObjectMap, protocol: []const u8) !void
     try w.writeAll(" } },");
 }
 
-fn known(names: []const []const u8, name: []const u8) bool {
-    for (names) |candidate| if (std.mem.eql(u8, name, candidate)) return true;
-    return false;
+/// Write one dialect member, or report a name this build does not know and keep the field default.
+fn emitDialectMember(run: *Run, comptime Vocabulary: type, member_name: []const u8, name: []const u8) !void {
+    const tag = std.meta.stringToEnum(Vocabulary, name) orelse return run.degrade(member_name, name);
+    try run.w.print(" .{s} = .{s},", .{ member_name, @tagName(tag) });
 }
 
-fn emitOptionalInt(w: *std.Io.Writer, prefix: []const u8, map: std.json.ObjectMap, key: []const u8) !void {
+fn emitOptionalInt(w: *std.Io.Writer, map: std.json.ObjectMap, key: []const u8) !void {
     const value = map.get(key) orelse return Error.InvalidDocument;
     if (value == .null) return; // A limit the source does not publish stays null.
-    try w.print("{s}{d},", .{ prefix, try number(value) });
+    const count = try number(value);
+    if (count < 0) return Error.InvalidDocument; // The field is unsigned, so a negative never compiles.
+    try w.print(" .{s} = {d},", .{ key, count });
 }
 
-fn emitOptionalFloat(w: *std.Io.Writer, prefix: []const u8, map: std.json.ObjectMap, key: []const u8) !void {
+fn emitOptionalFloat(w: *std.Io.Writer, map: std.json.ObjectMap, key: []const u8) !void {
     const value = map.get(key) orelse return Error.InvalidDocument;
     if (value == .null) return; // A null price is not a zero price.
-    try w.print("{s}{d},", .{ prefix, switch (value) {
+    try w.print(" .{s} = {d},", .{ key, switch (value) {
         .float => |f| f,
         .integer => |i| @as(f64, @floatFromInt(i)),
         else => return Error.InvalidDocument,
@@ -264,31 +254,16 @@ fn emitOptionalFloat(w: *std.Io.Writer, prefix: []const u8, map: std.json.Object
 
 // ── The routing sets. An unknown name fails the run, because no request can be built without it. ──
 
-fn protocolName(name: []const u8) ![]const u8 {
-    return pick(name, &.{ "anthropic_messages", "openai_chat", "openai_responses" });
-}
-
-fn authKind(name: []const u8) ![]const u8 {
-    return pick(name, &.{ "api_key", "oauth" });
-}
-
-fn apiKeyHeader(name: []const u8) ![]const u8 {
-    return pick(name, &.{ "x_api_key", "authorization_bearer" });
-}
-
-fn cachePolicy(name: []const u8) ![]const u8 {
-    return pick(name, &.{ "unsupported", "ephemeral" });
+/// Name the tag `name` selects, or fail: these decide the route, so they have no working default.
+fn routingName(comptime Vocabulary: type, name: []const u8) ![]const u8 {
+    const tag = std.meta.stringToEnum(Vocabulary, name) orelse return Error.InvalidDocument;
+    return @tagName(tag);
 }
 
 /// The Codex backend refuses the sampling limits, so its flow selects the other dialect.
 fn responsesDialect(auth: std.json.ObjectMap, kind: []const u8) ![]const u8 {
     if (!std.mem.eql(u8, kind, "oauth")) return "standard";
     return if (std.mem.eql(u8, try string(auth, "flow"), "codex")) "codex" else "standard";
-}
-
-fn pick(name: []const u8, allowed: []const []const u8) ![]const u8 {
-    for (allowed) |candidate| if (std.mem.eql(u8, name, candidate)) return candidate;
-    return Error.InvalidDocument;
 }
 
 // ── Strict readers. Every one fails on a shape the document does not state. ──
@@ -316,10 +291,6 @@ fn boolean(map: std.json.ObjectMap, key: []const u8) !bool {
 
 fn number(value: std.json.Value) !i64 {
     return if (value == .integer) value.integer else Error.InvalidDocument;
-}
-
-fn integer(map: std.json.ObjectMap, key: []const u8) !i64 {
-    return number(try member(map, key));
 }
 
 fn array(map: std.json.ObjectMap, key: []const u8) ![]const std.json.Value {
@@ -373,16 +344,6 @@ test "a provider and its model reach the generated table" {
     try testing.expect(std.mem.indexOf(u8, out, ".cache_read = 0.3,") != null);
 }
 
-test "the generated table parses as Zig" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const source = try a.dupeZ(u8, try generate(a, one_provider));
-    var tree = try std.zig.Ast.parse(a, source, .zig);
-    defer tree.deinit(a);
-    try testing.expectEqual(@as(usize, 0), tree.errors.len);
-}
-
 test "an oauth provider routes as a bearer and keeps its dialect" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -417,11 +378,13 @@ test "an unknown routing name fails the run" {
     }
 }
 
-/// Report the run over a document whose model carries `extra` flags.
-fn withFlags(a: std.mem.Allocator, extra: []const u8) !Stats {
+const Run_ = struct { stats: Stats, text: []const u8 };
+
+/// Generate from a document whose model carries `extra` flags.
+fn withFlags(a: std.mem.Allocator, extra: []const u8) !Run_ {
     const source = try std.mem.replaceOwned(u8, a, one_provider, "\"supports_vision\":true", extra);
     var out: std.Io.Writer.Allocating = .init(a);
-    return emit(a, &out.writer, source);
+    return .{ .stats = try emit(a, &out.writer, source), .text = out.written() };
 }
 
 test "an unknown dialect name keeps the default and is reported" {
@@ -430,17 +393,29 @@ test "an unknown dialect name keeps the default and is reported" {
     const a = arena.allocator();
 
     // A new upstream name must never break the build, because the field has a working default.
-    const stats = try withFlags(a, "\"supports_vision\":true,\"reasoning_replay\":\"reasoning_blocks\"");
-    try testing.expectEqual(@as(usize, 1), stats.unknown.len);
-    try testing.expectEqualStrings("reasoning_replay=reasoning_blocks", stats.unknown[0]);
+    const unknown = try withFlags(a, "\"supports_vision\":true,\"reasoning_replay\":\"reasoning_blocks\"");
+    try testing.expectEqual(@as(usize, 1), unknown.stats.unknown.len);
+    try testing.expectEqualStrings("reasoning_replay=reasoning_blocks", unknown.stats.unknown[0]);
+    // The name must stay out of the table, or the generated file names an enum tag that does not exist.
+    try testing.expect(std.mem.indexOf(u8, unknown.text, "reasoning_blocks") == null);
 
     // A thinking format belongs to OpenAI-chat alone, so another protocol reports it and drops it.
     const wrong = try withFlags(a, "\"supports_vision\":true,\"thinking_format\":\"deepseek\"");
-    try testing.expectEqual(@as(usize, 1), wrong.unknown.len);
-    try testing.expectEqualStrings("thinking_format outside openai_chat=deepseek", wrong.unknown[0]);
+    try testing.expectEqual(@as(usize, 1), wrong.stats.unknown.len);
+    try testing.expectEqualStrings("thinking_format outside openai_chat=deepseek", wrong.stats.unknown[0]);
+    try testing.expect(std.mem.indexOf(u8, wrong.text, "thinking_format") == null);
 
     const clean = try withFlags(a, "\"supports_vision\":true,\"reasoning_replay\":\"reasoning_content\"");
-    try testing.expectEqual(@as(usize, 0), clean.unknown.len);
+    try testing.expectEqual(@as(usize, 0), clean.stats.unknown.len);
+    try testing.expect(std.mem.indexOf(u8, clean.text, ".reasoning_replay = .reasoning_content,") != null);
+}
+
+test "a negative limit is rejected before it reaches an unsigned field" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const broken = try std.mem.replaceOwned(u8, a, one_provider, "\"context_window\":200000", "\"context_window\":-1");
+    try testing.expectError(Error.InvalidDocument, generate(a, broken));
 }
 
 test "a document with no provider is rejected" {

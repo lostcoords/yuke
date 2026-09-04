@@ -52,12 +52,7 @@ pub fn Adapter(comptime protocol: Protocol) type {
 
 /// Serialize one neutral request IR into the selected protocol body.
 pub fn requestBody(arena: std.mem.Allocator, protocol: Protocol, request: ir.Request, request_ir: ir.RequestIr) ![]u8 {
-    try ir.validate(arena, request, request_ir);
-    var body: std.Io.Writer.Allocating = .init(arena);
-    switch (protocol) {
-        inline else => |p| try Adapter(p).serialize(&body.writer, request, request_ir),
-    }
-    return body.written();
+    return adapter.serialize(arena, protocol, request, request_ir);
 }
 
 test {

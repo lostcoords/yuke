@@ -3,7 +3,7 @@
 const std = @import("std");
 const generator = @import("cataloggen");
 
-const usage = "usage: yuke-cataloggen --out <file> [--url <url> | --catalog <file>] [--check] [--quiet]";
+const usage = "usage: yuke-cataloggen [--out <file>] [--url <url> | --catalog <file>] [--quiet]";
 
 /// The control plane serves the executable variant, which omits every provider yuke cannot call.
 const default_url = "https://platform.yuke.sh/api/v1/catalog?executable=true";
@@ -11,12 +11,14 @@ const default_url = "https://platform.yuke.sh/api/v1/catalog?executable=true";
 /// The executable document is about 200 KB. This ceiling stops a runaway response.
 const max_catalog_bytes = 8 << 20;
 
+/// The module reads this table, so a run with no `--out` writes where the module expects it.
+const default_out = "lib/ai/catalog_gen.zig";
+
 const Options = struct {
-    out: []const u8,
+    out: []const u8 = default_out,
     /// Read the document from this file. A null path fetches `url` instead.
     catalog: ?[]const u8 = null,
     url: []const u8 = default_url,
-    check: bool = false,
     quiet: bool = false,
 };
 
@@ -37,14 +39,13 @@ fn run(init: std.process.Init) !void {
 
     const cwd = std.Io.Dir.cwd();
     const source = if (options.catalog) |path|
-        try cwd.readFileAlloc(init.io, path, a, .unlimited)
+        try cwd.readFileAlloc(init.io, path, a, .limited(max_catalog_bytes))
     else
         try fetch(a, init.io, options.url, options.quiet);
 
     var output: std.Io.Writer.Allocating = .init(a);
     const stats = try generator.emit(a, &output.writer, source);
     const generated = output.written();
-    try validateZig(a, generated);
 
     // A degraded name leaves a working default, so it is a warning and never a failure.
     for (stats.unknown) |name| std.log.warn("catalog names {s}, which this build does not know", .{name});
@@ -52,13 +53,7 @@ fn run(init: std.process.Init) !void {
         std.log.warn("{d} providers name no environment variable", .{stats.providers_without_env});
     }
 
-    if (options.check) {
-        const existing = cwd.readFileAlloc(init.io, options.out, a, .unlimited) catch
-            return error.GeneratedFileMissing;
-        if (!std.mem.eql(u8, existing, generated)) return error.GeneratedFileStale;
-    } else {
-        try writeAtomic(a, init.io, options.out, generated);
-    }
+    try writeAtomic(a, init.io, options.out, generated);
 
     if (!options.quiet) {
         std.log.info("{s}: {d} bytes, {d} providers, {d} models", .{
@@ -70,8 +65,7 @@ fn run(init: std.process.Init) !void {
     }
 }
 
-/// Read the catalog from the control plane. It needs no credential.
-/// This asks for no encoding, so the server inflates and the tool needs no decompressor.
+/// Read the catalog, asking for no encoding so the server inflates and this tool needs no decompressor.
 fn fetch(a: std.mem.Allocator, io: std.Io, url: []const u8, quiet: bool) ![]u8 {
     if (!quiet) std.log.info("fetching {s}", .{url});
     var client: std.http.Client = .{ .allocator = a, .io = io };
@@ -120,15 +114,11 @@ fn parseOptions(args: []const [:0]const u8) ?Options {
     var catalog: ?[]const u8 = null;
     var url: ?[]const u8 = null;
     var out: ?[]const u8 = null;
-    var check = false;
     var quiet = false;
     var i: usize = 0;
     while (i < args.len) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--check")) {
-            check = true;
-            i += 1;
-        } else if (std.mem.eql(u8, arg, "--quiet")) {
+        if (std.mem.eql(u8, arg, "--quiet")) {
             quiet = true;
             i += 1;
         } else if (std.mem.eql(u8, arg, "--catalog")) {
@@ -150,17 +140,9 @@ fn parseOptions(args: []const [:0]const u8) ?Options {
     // A file and a URL name two different documents, so the run cannot hold both.
     if (catalog != null and url != null) return null;
     return .{
-        .out = out orelse return null,
+        .out = out orelse default_out,
         .catalog = catalog,
         .url = url orelse default_url,
-        .check = check,
         .quiet = quiet,
     };
-}
-
-fn validateZig(a: std.mem.Allocator, source: []const u8) !void {
-    const source_z = try a.dupeZ(u8, source);
-    var tree = try std.zig.Ast.parse(a, source_z, .zig);
-    defer tree.deinit(a);
-    if (tree.errors.len != 0) return error.InvalidGeneratedZig;
 }

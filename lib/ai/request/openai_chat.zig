@@ -123,8 +123,7 @@ fn writeUserMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !void {
     try jw.endObject();
 }
 
-/// Name the member that carries a replayed reasoning text, or null when the host takes none.
-/// `reasoning_details` needs the provider array back byte for byte, which the reducer drops.
+/// Name the member carrying replayed reasoning; `reasoning_details` needs an array the reducer drops.
 fn replayField(replay: ir.ReasoningReplay) ?[]const u8 {
     return switch (replay) {
         .none, .reasoning_details => null,
@@ -213,11 +212,7 @@ fn writeResponseFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void 
     try json.field(jw, "type", "json_schema");
     try jw.objectField("json_schema");
     try jw.beginObject();
-    try json.field(jw, "name", output.name);
-    try jw.objectField("schema");
-    try json.writeRawJson(jw, output.schema);
-    try jw.objectField("strict");
-    try jw.write(output.strict);
+    try json.schemaMembers(jw, output.name, output.schema, output.strict);
     try jw.endObject();
     try jw.endObject();
 }
@@ -515,6 +510,14 @@ test "a schema constrains the response through response_format" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"response_format":{"type":"json_schema","json_schema":{"name":"person","schema":{"type":"object"},"strict":true}},"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}" } },
+        .{ .blocks = &blocks },
+    );
+
+    // A caller that turns strict mode off must reach the wire, or the schema stops being a guarantee.
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"response_format":{"type":"json_schema","json_schema":{"name":"person","schema":{"type":"object"},"strict":false}},"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}", .strict = false } },
         .{ .blocks = &blocks },
     );
 }

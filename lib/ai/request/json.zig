@@ -21,3 +21,12 @@ pub fn writeRawJson(jw: *std.json.Stringify, raw: []const u8) !void {
     try jw.writer.writeAll(if (raw.len == 0) "{}" else raw);
     jw.endWriteRaw();
 }
+
+/// Write the name, schema, and strict members that both OpenAI response-schema shapes carry.
+pub fn schemaMembers(jw: *std.json.Stringify, name: []const u8, schema: []const u8, strict: bool) !void {
+    try field(jw, "name", name);
+    try jw.objectField("schema");
+    try writeRawJson(jw, schema);
+    try jw.objectField("strict");
+    try jw.write(strict);
+}

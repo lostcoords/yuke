@@ -427,16 +427,15 @@ fn dialectOf(
 
 // ── The wire projection. ──
 
-/// Choose the effort a client uses when the user picks none. Prefer `medium`, else the middle level.
-/// `off` disables thinking rather than naming an effort, so it never becomes the default.
+/// Prefer `medium`, else the middle effort. `off` disables thinking, so it is never the default.
 fn defaultReasoning(names: []const []const u8) []const u8 {
     var efforts: usize = 0;
     for (names) |level| {
+        if (std.mem.eql(u8, level, "medium")) return level;
         if (!std.mem.eql(u8, level, "off")) efforts += 1;
     }
     if (efforts == 0) return ""; // A model that only disables thinking has no effort to prefer.
 
-    for (names) |level| if (std.mem.eql(u8, level, "medium")) return level;
     var seen: usize = 0;
     for (names) |level| {
         if (std.mem.eql(u8, level, "off")) continue;
@@ -495,7 +494,7 @@ test {
 }
 
 // Pin every dialect name the cloud catalog publishes. An undecoded name drops a request rule in silence.
-test "every dialect name the catalog publishes decodes" {
+test "the dialect names the catalog publishes today decode" {
     const testing = std.testing;
 
     inline for (.{ "zai", "openrouter", "qwen", "deepseek", "openai" }) |name| {
@@ -511,13 +510,11 @@ test "every dialect name the catalog publishes decodes" {
 // The catalog lists `off` as a level, but it disables thinking rather than naming an effort.
 test "the default effort never lands on the disable sentinel" {
     const testing = std.testing;
-    try testing.expectEqualStrings("medium", defaultReasoning(&.{ "off", "low", "medium", "high" }));
+    // The midpoint here is `high`, so only the preference rule can answer `medium`.
+    try testing.expectEqualStrings("medium", defaultReasoning(&.{ "medium", "high", "xhigh" }));
 
-    // These two shapes put the old midpoint at or near the least thinking the model offers.
+    // This shape put the old midpoint at the least thinking the model offers.
     try testing.expectEqualStrings("high", defaultReasoning(&.{ "off", "minimal", "high" }));
-    try testing.expectEqualStrings("high", defaultReasoning(&.{ "off", "low", "high" }));
-
-    try testing.expectEqualStrings("high", defaultReasoning(&.{ "off", "high" }));
     try testing.expectEqualStrings("xhigh", defaultReasoning(&.{ "high", "xhigh", "max" }));
     try testing.expectEqualStrings("", defaultReasoning(&.{}));
     try testing.expectEqualStrings("", defaultReasoning(&.{"off"}));

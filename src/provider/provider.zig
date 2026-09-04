@@ -4,17 +4,10 @@ const std = @import("std");
 const proto = @import("proto");
 pub const ai = @import("ai");
 
-pub const sse = ai.sse;
 pub const event = ai.event;
-pub const anthropic = ai.anthropic;
-pub const openai_chat = ai.openai_chat;
-pub const openai_responses = ai.openai_responses;
 
 pub const ir = ai.ir;
 pub const build = @import("request/build.zig");
-pub const request_anthropic = ai.request_anthropic;
-pub const request_openai_chat = ai.request_openai_chat;
-pub const request_openai_responses = ai.request_openai_responses;
 
 pub const model = ai.model;
 pub const instance = ai.instance;
@@ -29,10 +22,8 @@ pub const http_transport = ai.http_transport;
 pub const failure = @import("failure.zig");
 pub const retry = @import("retry.zig");
 
-/// Return the protocol's request serializer and stream reducer. A new protocol needs one arm here.
-pub fn Adapter(comptime protocol: ai.Protocol) type {
-    return ai.Adapter(protocol);
-}
+/// Return the protocol's request serializer and stream reducer.
+pub const Adapter = ai.Adapter;
 
 /// Serialize a provider request body for `protocol`. The result uses `arena` storage.
 /// The function uses `request.model` as the upstream model. A null `target` drops reasoning replay.

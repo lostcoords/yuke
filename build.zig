@@ -64,10 +64,19 @@ pub fn build(b: *std.Build) void {
     });
     const run_ai_tests = addTestRun(b, "ai", "Run AI module tests", ai);
 
+    // The vocabulary alone, so a missing or broken generated table cannot block a rebuild.
+    const ai_vocab = b.createModule(.{
+        .root_source_file = b.path("lib/ai/vocab.zig"),
+        .target = host,
+        .optimize = optimize,
+    });
     const cataloggen = b.createModule(.{
         .root_source_file = b.path("tools/cataloggen/cataloggen.zig"),
         .target = host,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "ai_vocab", .module = ai_vocab },
+        },
     });
     const run_cataloggen_tests = addTestRun(b, "cataloggen", "Run catalog generator tests", cataloggen);
 
@@ -84,7 +93,6 @@ pub fn build(b: *std.Build) void {
     });
     const run_cataloggen = b.addRunArtifact(cataloggen_exe);
     run_cataloggen.setCwd(b.path("."));
-    run_cataloggen.addArgs(&.{ "--out", "lib/ai/catalog_gen.zig" });
     // This run reads the control plane, so it must never answer from the build cache.
     run_cataloggen.has_side_effects = true;
     if (b.args) |args| run_cataloggen.addArgs(args);

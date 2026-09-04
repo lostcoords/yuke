@@ -167,13 +167,7 @@ fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
         .cache = model.provider.cache != .unsupported,
         .output_schema = request.output_schema,
     };
-    const request_ir: ir.RequestIr = .{ .blocks = request.blocks };
-    try ir.validate(arena, value, request_ir);
-    var body: std.Io.Writer.Allocating = .init(arena);
-    switch (model.provider.protocol) {
-        inline else => |protocol| try adapter.Adapter(protocol).serialize(&body.writer, value, request_ir),
-    }
-    return body.written();
+    return adapter.serialize(arena, model.provider.protocol, value, .{ .blocks = request.blocks });
 }
 
 fn reduce(

@@ -1,5 +1,7 @@
 //! This table binds each closed wire protocol to its serializer and reducer.
 
+const std = @import("std");
+const ir = @import("request/ir.zig");
 const types = @import("types.zig");
 const request_anthropic = @import("request/anthropic.zig");
 const request_openai_chat = @import("request/openai_chat.zig");
@@ -23,4 +25,14 @@ pub fn Adapter(comptime protocol: types.Protocol) type {
             pub const Reducer = stream_openai_responses.Reducer;
         },
     };
+}
+
+/// Validate one request and serialize it into the body `protocol` expects, using `arena`.
+pub fn serialize(arena: std.mem.Allocator, protocol: types.Protocol, request: ir.Request, request_ir: ir.RequestIr) ![]u8 {
+    try ir.validate(arena, request, request_ir);
+    var body: std.Io.Writer.Allocating = .init(arena);
+    switch (protocol) {
+        inline else => |value| try Adapter(value).serialize(&body.writer, request, request_ir),
+    }
+    return body.written();
 }
