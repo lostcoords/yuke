@@ -64,6 +64,29 @@ pub fn build(b: *std.Build) void {
     });
     const run_ai_tests = addTestRun(b, "ai", "Run AI module tests", ai);
 
+    const cataloggen = b.createModule(.{
+        .root_source_file = b.path("tools/cataloggen/cataloggen.zig"),
+        .target = host,
+        .optimize = optimize,
+    });
+    const run_cataloggen_tests = addTestRun(b, "cataloggen", "Run catalog generator tests", cataloggen);
+
+    const cataloggen_exe = b.addExecutable(.{
+        .name = "yuke-cataloggen",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/cataloggen/main.zig"),
+            .target = host,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "cataloggen", .module = cataloggen },
+            },
+        }),
+    });
+    const run_cataloggen = b.addRunArtifact(cataloggen_exe);
+    if (b.args) |args| run_cataloggen.addArgs(args);
+    const cataloggen_step = b.step("cataloggen", "Bake a catalog document into the AI module");
+    cataloggen_step.dependOn(&run_cataloggen.step);
+
     const proto = b.addModule("proto", .{
         .root_source_file = b.path("lib/proto/proto.zig"),
         .target = target,
@@ -186,6 +209,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_sql_tests.step);
     test_step.dependOn(&run_sqlgen_tests.step);
+    test_step.dependOn(&run_cataloggen_tests.step);
     test_step.dependOn(&run_proto_tests.step);
     test_step.dependOn(&run_ai_tests.step);
     test_step.dependOn(&run_term_tests.step);
