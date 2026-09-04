@@ -64,6 +64,15 @@ test "a selector splits on the first slash" {
     try testing.expectEqualStrings("openrouter", nested.provider);
     try testing.expectEqualStrings("amazon/nova-2-lite-v1", nested.model);
 
+    // The baked table really does carry such ids, so the rule above is not a hypothetical.
+    const row = find("openrouter").?;
+    var buf: [512]u8 = undefined;
+    const built = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ row.id, row.models[0].id });
+    const real = try split(built);
+    try testing.expectEqualStrings("openrouter", real.provider);
+    try testing.expectEqualStrings(row.models[0].id, real.model);
+    try testing.expect(std.mem.indexOfScalar(u8, real.model, '/') != null);
+
     try testing.expectError(Error.MalformedSelector, split("anthropic"));
     try testing.expectError(Error.MalformedSelector, split("/claude"));
     try testing.expectError(Error.MalformedSelector, split("anthropic/"));
