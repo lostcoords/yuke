@@ -6,6 +6,7 @@ const call = @import("call.zig");
 const credentials = @import("instance/resolve.zig");
 
 pub const Provider = generated.Provider;
+pub const Auth = generated.Auth;
 pub const providers = generated.providers;
 pub const revision = generated.revision;
 pub const find = generated.find;
@@ -41,7 +42,11 @@ pub fn resolve(selector: []const u8, credential: credentials.Credential) Error!c
 
 /// Bind this provider's key from the variable the catalog names, or answer null when it names none.
 pub fn envCredential(provider: *const Provider, env: *const std.process.Environ.Map) ?credentials.Credential {
-    const name = provider.auth_env orelse return null; // An OAuth grant and a multi-variable provider name none.
+    // A grant needs a login flow, which this library never runs, so only an API key reads a variable.
+    const name = switch (provider.auth) {
+        .oauth => return null,
+        .api_key => |named| named orelse return null,
+    };
     const value = env.get(name) orelse return null;
     // An empty value is no value, so a blank variable never becomes a blank header.
     return if (value.len == 0) null else .{ .api_key = value };
@@ -88,31 +93,27 @@ test "the credential comes from the variable the catalog names" {
     const lone: Provider = .{
         .id = "acme",
         .name = "Acme",
-        .env = &.{"ACME_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "ACME_API_KEY",
+        .auth = .{ .api_key = "ACME_API_KEY" },
         .route = .{ .base_url = "https://acme.test/v1", .protocol = .openai_chat, .auth = .{ .api_key = .authorization_bearer } },
         .models = &.{},
     };
     try testing.expectEqualStrings("sk-real", envCredential(&lone, &env).?.api_key);
 
     // `azure` names a resource before its key, so the catalog names no single variable for it.
-    var sequence = lone;
-    sequence.env = &.{ "ACME_RESOURCE_NAME", "ACME_API_KEY" };
-    sequence.auth_env = null;
-    try testing.expect(envCredential(&sequence, &env) == null);
+    var unnamed = lone;
+    unnamed.auth = .{ .api_key = null };
+    try testing.expect(envCredential(&unnamed, &env) == null);
 
     var unset = lone;
-    unset.auth_env = "MISSING_KEY";
+    unset.auth = .{ .api_key = "MISSING_KEY" };
     try testing.expect(envCredential(&unset, &env) == null);
 
     var blank = lone;
-    blank.auth_env = "BLANK_KEY";
+    blank.auth = .{ .api_key = "BLANK_KEY" };
     try testing.expect(envCredential(&blank, &env) == null);
 
-    // A grant needs a login flow, which this library never runs, so the catalog names no variable.
+    // A grant needs a login flow, which this library never runs, so it reads no variable.
     var oauth = lone;
-    oauth.auth = .oauth;
-    oauth.auth_env = null;
+    oauth.auth = .{ .oauth = "codex" };
     try testing.expect(envCredential(&oauth, &env) == null);
 }

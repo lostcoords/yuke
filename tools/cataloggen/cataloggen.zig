@@ -13,8 +13,8 @@ pub const version = 1;
 pub const Stats = struct {
     providers: usize = 0,
     models: usize = 0,
-    /// Providers that name no environment variable. A preset cannot read a key without one.
-    providers_without_env: usize = 0,
+    /// API-key providers that name no key variable. The environment cannot enable one of these.
+    api_key_without_env: usize = 0,
     /// Dialect names this generator does not know. Each one left a field at its default.
     unknown: []const []const u8 = &.{},
 };
@@ -31,15 +31,19 @@ const preamble =
     \\pub const Provider = struct {
     \\    id: []const u8,
     \\    name: []const u8,
-    \\    /// The environment variables that hold this provider's key by convention.
-    \\    env: []const []const u8,
-    \\    /// The credential scheme. This library runs no OAuth flow, so a grant arrives from the caller.
-    \\    auth: model.AuthKind,
-    \\    /// The one variable that holds the key, when the catalog can name it.
-    \\    auth_env: ?[]const u8,
+    \\    /// How this provider authenticates. The scheme never carries the secret.
+    \\    auth: Auth,
     \\    /// The route, less the identity headers that only a live grant carries.
     \\    route: instance.ProviderInstance,
     \\    models: []const model.ModelSpec,
+    \\};
+    \\
+    \\/// Name the credential scheme and the one outside value that reaches it.
+    \\pub const Auth = union(enum) {
+    \\    /// The variable that holds the key, or null when the catalog names none.
+    \\    api_key: ?[]const u8,
+    \\    /// The login flow name. The engine drives the flow; this library never does.
+    \\    oauth: []const u8,
     \\};
     \\
     \\/// Return the provider with this id, or null.
@@ -114,31 +118,34 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
     // An executable provider states every routing field. A null here is a document this tool cannot use.
     const protocol = try routingName(vocab.types.Protocol, try string(provider, "protocol"));
     const auth = try object(try member(provider, "auth"));
-    const kind = try string(auth, "kind");
+    const scheme = std.meta.stringToEnum(vocab.model.AuthKind, try string(auth, "kind")) orelse return Error.InvalidDocument;
 
     try w.print("    .{{\n        .id = \"{f}\",\n        .name = \"{f}\",\n", .{
         std.zig.fmtString(try string(provider, "id")),
         std.zig.fmtString(try string(provider, "name")),
     });
 
-    try w.writeAll("        .env = &.{");
-    const env = optionalArray(provider, "env");
-    if (env.len == 0) run.stats.providers_without_env += 1;
-    for (env, 0..) |name, i| {
-        try w.print("{s} \"{f}\"", .{ if (i == 0) "" else ",", std.zig.fmtString(try text(name)) });
+    switch (scheme) {
+        // The engine drives the login, so a grant with no flow names nothing this build can run.
+        .oauth => try w.print("        .auth = .{{ .oauth = \"{f}\" }},\n", .{
+            std.zig.fmtString(try string(auth, "flow")),
+        }),
+        .api_key => if (auth.get("env")) |value| {
+            try w.print("        .auth = .{{ .api_key = \"{f}\" }},\n", .{std.zig.fmtString(try text(value))});
+        } else {
+            run.stats.api_key_without_env += 1;
+            try w.writeAll("        .auth = .{ .api_key = null },\n");
+        },
     }
-    try w.writeAll(if (env.len == 0) "}," else " },");
-
-    try w.print("\n        .auth = .{s},\n", .{try routingName(vocab.model.AuthKind, kind)});
-    if (auth.get("env")) |value| {
-        try w.print("        .auth_env = \"{f}\",\n", .{std.zig.fmtString(try text(value))});
-    } else try w.writeAll("        .auth_env = null,\n");
     try w.writeAll("        .route = .{\n");
     try w.print("            .base_url = \"{f}\",\n", .{std.zig.fmtString(try string(provider, "base_url"))});
     try w.print("            .protocol = .{s},\n", .{protocol});
     // Every grant presents a bearer, so an OAuth flow selects only the response dialect.
     try w.print("            .auth = .{{ .api_key = .{s} }},\n", .{
-        if (std.mem.eql(u8, kind, "oauth")) "authorization_bearer" else try routingName(vocab.instance.ApiKeyHeader, try string(auth, "header")),
+        switch (scheme) {
+            .oauth => "authorization_bearer",
+            .api_key => try routingName(vocab.instance.ApiKeyHeader, try string(auth, "header")),
+        },
     });
     // A null policy means the control plane has not verified this host, so the route marks nothing.
     const cache = try member(provider, "cache");
@@ -345,17 +352,11 @@ fn array(map: std.json.ObjectMap, key: []const u8) ![]const std.json.Value {
     return if (value == .array) value.array.items else Error.InvalidDocument;
 }
 
-/// Read an array the document may not carry yet. A missing key gives an empty list.
-fn optionalArray(map: std.json.ObjectMap, key: []const u8) []const std.json.Value {
-    const value = map.get(key) orelse return &.{};
-    return if (value == .array) value.array.items else &.{};
-}
-
 const testing = std.testing;
 
 const one_provider =
     \\{"version":1,"catalog_rev":"abc","providers":[
-    \\ {"id":"anthropic","name":"Anthropic","env":["ANTHROPIC_API_KEY"],
+    \\ {"id":"anthropic","name":"Anthropic",
     \\  "base_url":"https://api.anthropic.com/v1","protocol":"anthropic_messages",
     \\  "auth":{"kind":"api_key","header":"x_api_key","env":"ANTHROPIC_API_KEY"},
     \\  "cache":"anthropic_breakpoint","responses_dialect":"standard",
@@ -380,13 +381,17 @@ test "a provider and its model reach the generated table" {
     const out = try generate(arena.allocator(), one_provider);
 
     try testing.expect(std.mem.indexOf(u8, out, "pub const revision = \"abc\";") != null);
-    try testing.expect(std.mem.indexOf(u8, out, ".env = &.{\"ANTHROPIC_API_KEY\"}") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".auth = .{ .api_key = \"ANTHROPIC_API_KEY\" }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".protocol = .anthropic_messages") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".auth = .{ .api_key = .x_api_key }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".cache = .anthropic_breakpoint") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".{ .name = \"anthropic-version\", .value = \"2023-06-01\" }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".reasoning_levels = &.{ .{ .named = \"low\" }, .{ .named = \"high\" } }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".min = 1024,") != null);
+    // The kinds a model reads decide whether a request may carry an attachment at all.
+    try testing.expect(std.mem.indexOf(u8, out, ".input = &.{ .text, .image },") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".output = &.{.text},") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".status = \"beta\",") != null);
 
     // A null price is not a zero price, so the member stays absent and the field default holds.
     try testing.expect(std.mem.indexOf(u8, out, ".cache_write") == null);
@@ -398,17 +403,29 @@ test "an oauth provider routes as a bearer and keeps its dialect" {
     defer arena.deinit();
     const source =
         \\{"version":1,"catalog_rev":"r","providers":[
-        \\ {"id":"openai-codex","name":"Codex","env":[],
+        \\ {"id":"openai-codex","name":"Codex",
         \\  "base_url":"https://chatgpt.com/backend-api/codex","protocol":"openai_responses",
         \\  "auth":{"kind":"oauth","flow":"codex"},"cache":"unsupported",
         \\  "responses_dialect":"codex","headers":[],"models":[]}]}
     ;
     const out = try generate(arena.allocator(), source);
-    try testing.expect(std.mem.indexOf(u8, out, ".auth = .oauth") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".auth = .{ .oauth = \"codex\" }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".auth = .{ .api_key = .authorization_bearer }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".responses_dialect = .codex") != null);
-    try testing.expect(std.mem.indexOf(u8, out, ".env = &.{}") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".headers = &.{}") != null);
+}
+
+test "a grant with no flow fails the run" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    // The engine selects the login by this name, so an unnamed grant can never reach a request.
+    try testing.expectError(Error.InvalidDocument, generate(arena.allocator(),
+        \\{"version":1,"catalog_rev":"r","providers":[
+        \\ {"id":"codex","name":"Codex","base_url":"https://x","protocol":"openai_responses",
+        \\  "auth":{"kind":"oauth"},"cache":"unsupported","responses_dialect":"codex",
+        \\  "headers":[],"models":[]}]}
+    ));
 }
 
 test "an unknown routing name fails the run" {
@@ -458,6 +475,55 @@ test "an unknown dialect name keeps the default and is reported" {
     const clean = try withFlags(a, "\"supports_vision\":true,\"reasoning_replay\":\"reasoning_content\"");
     try testing.expectEqual(@as(usize, 0), clean.stats.unknown.len);
     try testing.expect(std.mem.indexOf(u8, clean.text, ".reasoning_replay = .reasoning_content,") != null);
+}
+
+test "a stated capability reaches the table, and an absent one stays unknown" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // The fixture states the two required flags alone, so every optional capability stays absent.
+    const bare = try generate(a, one_provider);
+    try testing.expect(std.mem.indexOf(u8, bare, ".caps = .{ .tools = true, .vision = true },") != null);
+    try testing.expect(std.mem.indexOf(u8, bare, ".structured_output") == null);
+    try testing.expect(std.mem.indexOf(u8, bare, ".cache_breakpoint") == null);
+
+    // A stated false is a value, not an unknown, so it must reach the table as false.
+    const stated = try withFlags(a, "\"supports_vision\":true,\"supports_structured_output\":true," ++
+        "\"can_disable_reasoning\":false,\"supports_prompt_caching\":true,\"supports_cache_breakpoint\":false");
+    try testing.expect(std.mem.indexOf(u8, stated.text, ".structured_output = true,") != null);
+    try testing.expect(std.mem.indexOf(u8, stated.text, ".disable_reasoning = false,") != null);
+    try testing.expect(std.mem.indexOf(u8, stated.text, ".prompt_caching = true,") != null);
+    try testing.expect(std.mem.indexOf(u8, stated.text, ".cache_breakpoint = false") != null);
+}
+
+test "a capability that is not a boolean fails the run" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const broken = try std.mem.replaceOwned(u8, a, one_provider, "\"supports_vision\":true", "\"supports_vision\":true,\"supports_prompt_caching\":\"yes\"");
+    try testing.expectError(Error.InvalidDocument, generate(a, broken));
+}
+
+test "an unknown modality is reported and left out" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // A new kind must never break the build, and must never name an enum tag that does not exist.
+    const one = try std.mem.replaceOwned(u8, a, one_provider, "\"input\":[\"text\",\"image\"]", "\"input\":[\"text\",\"hologram\"]");
+    var out: std.Io.Writer.Allocating = .init(a);
+    const stats = try emit(a, &out.writer, one);
+    try testing.expectEqual(@as(usize, 1), stats.unknown.len);
+    try testing.expectEqualStrings("modality=hologram", stats.unknown[0]);
+    try testing.expect(std.mem.indexOf(u8, out.written(), "hologram") == null);
+    try testing.expect(std.mem.indexOf(u8, out.written(), ".input = &.{.text}") != null);
+
+    // A side this build knows nothing of reads as no kind at all, which blocks every attachment.
+    const none = try std.mem.replaceOwned(u8, a, one_provider, "\"input\":[\"text\",\"image\"]", "\"input\":[\"hologram\"]");
+    var empty: std.Io.Writer.Allocating = .init(a);
+    _ = try emit(a, &empty.writer, none);
+    try testing.expect(std.mem.indexOf(u8, empty.written(), ".input = &.{}") != null);
 }
 
 test "a negative limit is rejected before it reaches an unsigned field" {

@@ -9,15 +9,19 @@ const model = @import("model.zig");
 pub const Provider = struct {
     id: []const u8,
     name: []const u8,
-    /// The environment variables that hold this provider's key by convention.
-    env: []const []const u8,
-    /// The credential scheme. This library runs no OAuth flow, so a grant arrives from the caller.
-    auth: model.AuthKind,
-    /// The one variable that holds the key, when the catalog can name it.
-    auth_env: ?[]const u8,
+    /// How this provider authenticates. The scheme never carries the secret.
+    auth: Auth,
     /// The route, less the identity headers that only a live grant carries.
     route: instance.ProviderInstance,
     models: []const model.ModelSpec,
+};
+
+/// Name the credential scheme and the one outside value that reaches it.
+pub const Auth = union(enum) {
+    /// The variable that holds the key, or null when the catalog names none.
+    api_key: ?[]const u8,
+    /// The login flow name. The engine drives the flow; this library never does.
+    oauth: []const u8,
 };
 
 /// Return the provider with this id, or null.
@@ -34,15 +38,13 @@ pub fn findModel(provider_id: []const u8, model_id: []const u8) ?*const model.Mo
 }
 
 /// The catalog revision these rows come from.
-pub const revision = "ad304609cf5846280489278690eb879efcc7a64da94063e2608f6f60896224b6415fb94f8ec6ff404edb1f844eaf9391cfdac8493d6de1454cc6600c792530fe";
+pub const revision = "cc2965678770a523d004255cd79d6ce79686ab2bd86eb41c56f307295a9d7933cfd904a57cf52570fe01ea3d6db80ffcb5cd3935f37049ca629bd676588be584";
 
 pub const providers = [_]Provider{
     .{
         .id = "anthropic",
         .name = "Anthropic",
-        .env = &.{"ANTHROPIC_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "ANTHROPIC_API_KEY",
+        .auth = .{ .api_key = "ANTHROPIC_API_KEY" },
         .route = .{
             .base_url = "https://api.anthropic.com/v1",
             .protocol = .anthropic_messages,
@@ -381,9 +383,7 @@ pub const providers = [_]Provider{
     .{
         .id = "openai",
         .name = "OpenAI",
-        .env = &.{"OPENAI_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "OPENAI_API_KEY",
+        .auth = .{ .api_key = "OPENAI_API_KEY" },
         .route = .{
             .base_url = "https://api.openai.com/v1",
             .protocol = .openai_responses,
@@ -1117,9 +1117,7 @@ pub const providers = [_]Provider{
     .{
         .id = "openai-codex",
         .name = "openai-codex",
-        .env = &.{},
-        .auth = .oauth,
-        .auth_env = null,
+        .auth = .{ .oauth = "codex" },
         .route = .{
             .base_url = "https://chatgpt.com/backend-api/codex",
             .protocol = .openai_responses,
@@ -1133,9 +1131,7 @@ pub const providers = [_]Provider{
     .{
         .id = "openrouter",
         .name = "OpenRouter",
-        .env = &.{"OPENROUTER_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "OPENROUTER_API_KEY",
+        .auth = .{ .api_key = "OPENROUTER_API_KEY" },
         .route = .{
             .base_url = "https://openrouter.ai/api/v1",
             .protocol = .openai_chat,
@@ -1247,7 +1243,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -1442,7 +1438,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -1466,7 +1462,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -1490,7 +1486,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -1514,7 +1510,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -1634,7 +1630,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -1658,7 +1654,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -1749,7 +1745,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -1771,7 +1767,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -1793,7 +1789,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -1815,7 +1811,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2024,7 +2020,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2087,7 +2083,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2150,7 +2146,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2173,7 +2169,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2196,7 +2192,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2218,7 +2214,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2357,7 +2353,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2381,7 +2377,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2427,7 +2423,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2949,7 +2945,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2971,7 +2967,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -2994,7 +2990,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -3016,7 +3012,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -3209,7 +3205,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -3232,7 +3228,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -3254,7 +3250,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -3359,7 +3355,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -3740,7 +3736,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -3887,7 +3883,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -3909,7 +3905,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -4391,7 +4387,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_details,
                 },
             },
@@ -4415,7 +4411,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_details,
                 },
             },
@@ -4523,7 +4519,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -4546,7 +4542,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -4608,7 +4604,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -4630,7 +4626,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -4653,7 +4649,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -4675,7 +4671,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -4786,7 +4782,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -4808,7 +4804,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -4831,7 +4827,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -4853,7 +4849,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -5973,7 +5969,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -5995,7 +5991,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6018,7 +6014,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6041,7 +6037,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6086,7 +6082,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6109,7 +6105,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6242,7 +6238,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6284,7 +6280,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6346,7 +6342,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6369,7 +6365,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6391,7 +6387,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6414,7 +6410,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6436,7 +6432,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6581,7 +6577,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6603,7 +6599,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6666,7 +6662,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6728,7 +6724,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6750,7 +6746,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -6900,7 +6896,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7104,7 +7100,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7126,7 +7122,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7149,7 +7145,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7172,7 +7168,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7194,7 +7190,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7216,7 +7212,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7238,7 +7234,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7261,7 +7257,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7284,7 +7280,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7307,7 +7303,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7330,7 +7326,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7353,7 +7349,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7376,7 +7372,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7400,7 +7396,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7424,7 +7420,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7448,7 +7444,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7518,7 +7514,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -7793,7 +7789,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -8117,7 +8113,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -8140,7 +8136,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -8183,7 +8179,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -8319,7 +8315,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_details,
                 },
             },
@@ -8343,7 +8339,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -8367,7 +8363,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -8390,7 +8386,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -8413,7 +8409,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -8436,7 +8432,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -8459,7 +8455,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -8482,7 +8478,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_details,
                 },
             },
@@ -8506,7 +8502,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_details,
                 },
             },
@@ -8530,7 +8526,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -8554,7 +8550,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -8578,7 +8574,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -8694,7 +8690,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -8742,7 +8738,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -9008,9 +9004,7 @@ pub const providers = [_]Provider{
     .{
         .id = "deepseek",
         .name = "DeepSeek",
-        .env = &.{"DEEPSEEK_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "DEEPSEEK_API_KEY",
+        .auth = .{ .api_key = "DEEPSEEK_API_KEY" },
         .route = .{
             .base_url = "https://api.deepseek.com/v1",
             .protocol = .openai_chat,
@@ -9098,9 +9092,7 @@ pub const providers = [_]Provider{
     .{
         .id = "groq",
         .name = "Groq",
-        .env = &.{"GROQ_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "GROQ_API_KEY",
+        .auth = .{ .api_key = "GROQ_API_KEY" },
         .route = .{
             .base_url = "https://api.groq.com/openai/v1",
             .protocol = .openai_chat,
@@ -9435,9 +9427,7 @@ pub const providers = [_]Provider{
     .{
         .id = "xai",
         .name = "xAI",
-        .env = &.{"XAI_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "XAI_API_KEY",
+        .auth = .{ .api_key = "XAI_API_KEY" },
         .route = .{
             .base_url = "https://api.x.ai/v1",
             .protocol = .openai_chat,
@@ -9692,9 +9682,7 @@ pub const providers = [_]Provider{
     .{
         .id = "xai-grok",
         .name = "xAI",
-        .env = &.{"XAI_API_KEY"},
-        .auth = .oauth,
-        .auth_env = null,
+        .auth = .{ .oauth = "xai" },
         .route = .{
             .base_url = "https://api.x.ai/v1",
             .protocol = .openai_chat,
@@ -9949,9 +9937,7 @@ pub const providers = [_]Provider{
     .{
         .id = "mistral",
         .name = "Mistral",
-        .env = &.{"MISTRAL_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "MISTRAL_API_KEY",
+        .auth = .{ .api_key = "MISTRAL_API_KEY" },
         .route = .{
             .base_url = "https://api.mistral.ai/v1",
             .protocol = .openai_chat,
@@ -10492,9 +10478,7 @@ pub const providers = [_]Provider{
     .{
         .id = "togetherai",
         .name = "Together AI",
-        .env = &.{"TOGETHER_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "TOGETHER_API_KEY",
+        .auth = .{ .api_key = "TOGETHER_API_KEY" },
         .route = .{
             .base_url = "https://api.together.ai/v1",
             .protocol = .openai_chat,
@@ -10605,7 +10589,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openai,
                 },
             },
             .{
@@ -10627,7 +10611,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openai,
                 },
             },
             .{
@@ -10670,7 +10654,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openai,
                 },
             },
             .{
@@ -10693,7 +10677,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -10717,7 +10701,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -10741,7 +10725,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -10845,7 +10829,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openai,
                 },
             },
             .{
@@ -10913,7 +10897,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openai,
                 },
             },
             .{
@@ -11023,7 +11007,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -11080,9 +11064,7 @@ pub const providers = [_]Provider{
     .{
         .id = "cerebras",
         .name = "Cerebras",
-        .env = &.{"CEREBRAS_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "CEREBRAS_API_KEY",
+        .auth = .{ .api_key = "CEREBRAS_API_KEY" },
         .route = .{
             .base_url = "https://api.cerebras.ai/v1",
             .protocol = .openai_chat,
@@ -11142,9 +11124,7 @@ pub const providers = [_]Provider{
     .{
         .id = "fireworks-ai",
         .name = "Fireworks AI",
-        .env = &.{"FIREWORKS_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "FIREWORKS_API_KEY",
+        .auth = .{ .api_key = "FIREWORKS_API_KEY" },
         .route = .{
             .base_url = "https://api.fireworks.ai/inference/v1",
             .protocol = .openai_chat,
@@ -11174,7 +11154,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -11198,7 +11178,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -11222,7 +11202,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -11246,7 +11226,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -11362,7 +11342,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -11386,7 +11366,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -11410,7 +11390,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -11481,7 +11461,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openai,
                 },
             },
             .{
@@ -11504,7 +11484,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .zai,
+                    .thinking_format = .openai,
                 },
             },
             .{
@@ -11527,7 +11507,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                 },
             },
             .{
@@ -11550,7 +11530,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .thinking_format = .qwen,
+                    .thinking_format = .openai,
                 },
             },
             .{
@@ -11573,7 +11553,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -11597,7 +11577,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .thinking_format = .deepseek,
+                    .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
                 },
             },
@@ -11606,9 +11586,7 @@ pub const providers = [_]Provider{
     .{
         .id = "minimax",
         .name = "MiniMax (minimax.io)",
-        .env = &.{"MINIMAX_API_KEY"},
-        .auth = .api_key,
-        .auth_env = "MINIMAX_API_KEY",
+        .auth = .{ .api_key = "MINIMAX_API_KEY" },
         .route = .{
             .base_url = "https://api.minimax.io/anthropic/v1",
             .protocol = .anthropic_messages,

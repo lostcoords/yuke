@@ -49,8 +49,8 @@ fn run(init: std.process.Init) !void {
 
     // A degraded name leaves a working default, so it is a warning and never a failure.
     for (stats.unknown) |name| std.log.warn("catalog names {s}, which this build does not know", .{name});
-    if (stats.providers_without_env != 0) {
-        std.log.warn("{d} providers name no environment variable", .{stats.providers_without_env});
+    if (stats.api_key_without_env != 0) {
+        std.log.warn("{d} api-key providers name no key variable", .{stats.api_key_without_env});
     }
 
     try writeAtomic(a, init.io, options.out, generated);
