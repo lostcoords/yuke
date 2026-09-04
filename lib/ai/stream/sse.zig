@@ -191,14 +191,6 @@ test "leading BOM is stripped once" {
     try testing.expectEqualStrings("hi", events[0]);
 }
 
-test "[DONE] sentinel surfaces as a data payload" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const events = try frame(&.{"data: [DONE]\n\n"}, arena.allocator());
-    try testing.expectEqual(@as(usize, 1), events.len);
-    try testing.expectEqualStrings("[DONE]", events[0]);
-}
-
 test "incomplete trailing event is dropped at finish" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

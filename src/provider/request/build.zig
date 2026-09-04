@@ -1,19 +1,24 @@
-//! Fold a transcript into the neutral block IR.
-//! All serializers share the role, tool, and reasoning rules.
+//! Fold a transcript into the neutral block IR that all serializers share.
 
 const std = @import("std");
 const proto = @import("proto");
+const provider = @import("../provider.zig");
 const ai = @import("ai");
 const ir = ai.ir;
 const types = ai.types;
 
 const Block = ir.Block;
 
+pub const Options = struct {
+    target: ?types.ModelIdentity = null,
+    modalities: types.Modalities = .{},
+};
+
 /// A bad transcript degrades the turn; the engine never crashes on stored data.
 pub const Error = error{ OutOfMemory, InvalidTranscript, UnresolvedBlob };
 
 /// Build the block IR in `gpa`. Blocks borrow transcript strings.
-pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, options: ir.Options) Error!ir.RequestIr {
+pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, options: Options) Error!ir.RequestIr {
     var blocks: std.ArrayList(Block) = .empty;
     errdefer blocks.deinit(gpa);
 
@@ -34,7 +39,7 @@ pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, op
 }
 
 /// Map one user part from its media type, because the part name does not classify a file.
-fn userValue(part: proto.content.ContentPart, options: ir.Options) Error!Block.Value {
+fn userValue(part: proto.content.ContentPart, options: Options) Error!Block.Value {
     return switch (part) {
         .text => |t| .{ .text = t.text },
         .image => |t| mediaValue(t.source, options),
@@ -44,18 +49,18 @@ fn userValue(part: proto.content.ContentPart, options: ir.Options) Error!Block.V
 }
 
 /// Map one attachment against the target model, and give a note for a kind it cannot read.
-fn mediaValue(source: proto.content.MediaSource, options: ir.Options) Error!Block.Value {
+fn mediaValue(source: proto.content.MediaSource, options: Options) Error!Block.Value {
     const blob = source.blob;
     const kind = ir.modalityOf(blob.mime);
     // A model that lists nothing blocks nothing, so only a stated refusal replaces the attachment.
     if (options.modalities.takesInput(kind)) |takes| {
-        if (!takes) return .{ .text = ir.omittedNote(kind) };
+        if (!takes) return .{ .text = omittedNote(kind) };
     }
     // The model reads this kind, so the bytes must arrive. No blob store exists to read them yet.
     return error.UnresolvedBlob;
 }
 
-fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: proto.message.AssistantMessage, options: ir.Options) Error!void {
+fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: proto.message.AssistantMessage, options: Options) Error!void {
     const replay = if (options.target) |target| provenanceMatches(msg.provenance, target) else false;
 
     for (msg.content) |part| switch (part) {
@@ -89,14 +94,16 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: pro
 
 fn provenanceMatches(actual: ?proto.message.TurnProvenance, target: types.ModelIdentity) bool {
     const p = actual orelse return false;
-    return protocolFromProto(p.protocol) == target.protocol and std.mem.eql(u8, p.model, target.model);
+    return provider.protocolFromProto(p.protocol) == target.protocol and std.mem.eql(u8, p.model, target.model);
 }
 
-fn protocolFromProto(protocol: proto.enums.ProviderProtocol) types.Protocol {
-    return switch (protocol) {
-        .anthropic_messages => .anthropic_messages,
-        .openai_chat => .openai_chat,
-        .openai_responses => .openai_responses,
+fn omittedNote(kind: types.Modality) []const u8 {
+    return switch (kind) {
+        .image => "[image omitted: this model reads no images]",
+        .audio => "[audio omitted: this model reads no audio]",
+        .video => "[video omitted: this model reads no video]",
+        .pdf => "[document omitted: this model reads no documents]",
+        .text => unreachable,
     };
 }
 
@@ -203,7 +210,7 @@ test "a model that reads no images sees a note where the attachment was" {
 test "the media type selects the omitted-attachment note" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const reads_images: ir.Options = .{ .modalities = .{ .input = &.{ .text, .image } } };
+    const reads_images: Options = .{ .modalities = .{ .input = &.{ .text, .image } } };
 
     inline for (.{
         .{ "application/pdf", "[document omitted: this model reads no documents]" },

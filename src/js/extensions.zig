@@ -67,8 +67,8 @@ pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
 }
 
 test "headless extensions pump an async JavaScript tool" {
+    const ai = @import("ai");
     const database = @import("../store/store.zig");
-    const provider = @import("../provider/provider.zig");
 
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -94,7 +94,7 @@ test "headless extensions pump an async JavaScript tool" {
     defer reactor.deinit();
     var env: std.process.Environ.Map = .init(gpa.allocator());
     defer env.deinit();
-    var canned = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+    var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
     var app_runtime: App = undefined;
     try app_runtime.initTest(gpa.allocator(), reactor.io(), try database.Database.openTest(), &env, canned.transport());
     var extensions: Extensions = undefined;
@@ -150,8 +150,8 @@ test "headless extensions pump an async JavaScript tool" {
 }
 
 test "a plugin notice reaches every attached frontend" {
+    const ai = @import("ai");
     const database = @import("../store/store.zig");
-    const provider = @import("../provider/provider.zig");
     const rpc_boot = @import("../app/rpc.zig").boot;
     const proto = @import("proto");
 
@@ -168,7 +168,7 @@ test "a plugin notice reaches every attached frontend" {
     defer reactor.deinit();
     var env: std.process.Environ.Map = .init(gpa.allocator());
     defer env.deinit();
-    var canned = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+    var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
     var app_runtime: App = undefined;
     try app_runtime.initTest(gpa.allocator(), reactor.io(), try database.Database.openTest(), &env, canned.transport());
     var extensions: Extensions = undefined;

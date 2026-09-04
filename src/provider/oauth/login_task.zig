@@ -1,6 +1,7 @@
 //! Drive one device login to its single terminal outcome, then store the grant it produced.
 
 const std = @import("std");
+const ai = @import("ai");
 const proto = @import("proto");
 const provider = @import("../provider.zig");
 const http = @import("../../net/http.zig");
@@ -229,7 +230,7 @@ fn dueGrant(runtime: *App, arena: std.mem.Allocator, margin_ms: u64) !?Due {
         if (auth.oauth.refresh_token == null) continue;
         if (auth.oauth.expires_at_ms > now_ms +| margin_ms) continue;
 
-        const row = provider.ai.catalog.find(p.id) orelse continue;
+        const row = ai.catalog.find(p.id) orelse continue;
         const flow = switch (row.auth) {
             .oauth => |name| login_runtime.Flow.parse(name) orelse continue,
             .api_key => continue,

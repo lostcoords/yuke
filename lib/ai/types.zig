@@ -50,5 +50,7 @@ pub const limits = struct {
     pub const max_blocks: usize = 1024;
     pub const max_string_bytes: usize = 1 << 20;
     pub const max_response_bytes: usize = 16 << 20;
+    /// Bound the input bytes one request carries, before a serializer reads them.
+    pub const max_request_bytes: usize = 64 << 20;
     pub const max_media_bytes: usize = 32 << 20;
 };

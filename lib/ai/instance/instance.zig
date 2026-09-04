@@ -52,6 +52,11 @@ pub const AuthMechanism = union(enum) {
 pub const Header = struct {
     name: []const u8,
     value: []const u8,
+
+    /// Copy both strings into `gpa`, which must be an arena, because a `Header` frees nothing itself.
+    pub fn cloneLeaky(self: Header, gpa: std.mem.Allocator) std.mem.Allocator.Error!Header {
+        return .{ .name = try gpa.dupe(u8, self.name), .value = try gpa.dupe(u8, self.value) };
+    }
 };
 
 /// RFC 9110 defines the field-name token characters. A colon would split the field line.
@@ -88,8 +93,8 @@ pub fn validHeaders(headers: []const Header) bool {
 /// Select the Responses flavor an endpoint speaks. The route owns it, because it follows the host.
 pub const ResponsesDialect = @import("../request/ir.zig").ResponsesDialect;
 
-/// Define one provider. The protocol selects a closed request dialect.
-pub const ProviderInstance = struct {
+/// Define how one request reaches a provider. The protocol selects a closed request dialect.
+pub const Route = struct {
     base_url: []const u8,
     protocol: Protocol,
     auth: AuthMechanism,

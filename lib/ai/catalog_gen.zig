@@ -12,7 +12,7 @@ pub const Provider = struct {
     /// How this provider authenticates. The scheme never carries the secret.
     auth: Auth,
     /// The route, less the identity headers that only a live grant carries.
-    route: instance.ProviderInstance,
+    route: instance.Route,
     models: []const model.ModelSpec,
 };
 

@@ -1096,13 +1096,13 @@ test "a message pages whole characters when the window splits one" {
 }
 
 test "a request reaches a command and answers with its result" {
+    const ai = @import("ai");
     const database = @import("../../store/store.zig");
-    const provider = @import("../../provider/provider.zig");
 
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     var env: std.process.Environ.Map = .init(testing.allocator);
-    var canned = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+    var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
     var runtime: app.App = undefined;
     try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), &env, canned.transport());
     defer runtime.logins.deinit();

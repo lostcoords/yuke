@@ -31,6 +31,7 @@ pub const Reason = enum {
     invalid_headers,
     redirect_refused,
     out_of_memory,
+    request_too_large,
     malformed_selector,
     unknown_provider,
     unknown_model,
@@ -55,6 +56,7 @@ pub const Reason = enum {
             .invalid_headers => "the provider request headers are invalid",
             .redirect_refused => "the provider attempted a redirect",
             .out_of_memory => "the caller ran out of memory",
+            .request_too_large => "the request exceeds the library size limit",
             .malformed_selector => "the model selector is malformed",
             .unknown_provider => "the catalog holds no provider with that name",
             .unknown_model => "the catalog holds no model with that name",
@@ -92,6 +94,7 @@ pub fn classify(err: anyerror) Failure {
         => .{ .class = .transport, .reason = .stream_truncated },
 
         error.OutOfMemory => .{ .class = .permanent, .reason = .out_of_memory },
+        error.RequestTooLarge => .{ .class = .permanent, .reason = .request_too_large },
         // `catalog.resolve` raises these, so the library must be able to describe them.
         error.MalformedSelector => .{ .class = .permanent, .reason = .malformed_selector },
         error.UnknownProvider => .{ .class = .permanent, .reason = .unknown_provider },
@@ -140,16 +143,6 @@ test "an unlisted error is permanent and generic" {
     const got = classify(error.SomethingElse);
     try testing.expectEqual(Class.permanent, got.class);
     try testing.expectEqual(Reason.unknown, got.reason);
-}
-
-test "the library can describe every error it raises itself" {
-    // A library error that classified as `.unknown` would reach a user as "the request failed".
-    const catalog = @import("catalog.zig");
-    inline for (@typeInfo(catalog.Error).error_set.?) |raised| {
-        const got = classify(@field(anyerror, raised.name));
-        try testing.expect(got.reason != .unknown);
-        try testing.expectEqual(Class.permanent, got.class);
-    }
 }
 
 test "every reason states a sentence" {

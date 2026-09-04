@@ -435,9 +435,9 @@ test "a turn with no user text carries no breakpoint and no options member" {
 test "the codex dialect refuses the sampling members too" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"temperature":0.7,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"temperature":0.7,"top_p":0.9,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
-        .{ .model = "gpt-5", .max_output_tokens = 8, .temperature = 0.7 },
+        .{ .model = "gpt-5", .max_output_tokens = 8, .temperature = 0.7, .top_p = 0.9 },
         .{ .blocks = &blocks },
     );
 
@@ -445,7 +445,7 @@ test "the codex dialect refuses the sampling members too" {
     try expectJson(
         \\{"model":"gpt-5","stream":true,"store":false,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
-        .{ .model = "gpt-5", .max_output_tokens = 8, .temperature = 0.7, .responses_dialect = .codex },
+        .{ .model = "gpt-5", .max_output_tokens = 8, .temperature = 0.7, .top_p = 0.9, .responses_dialect = .codex },
         .{ .blocks = &blocks },
     );
 }

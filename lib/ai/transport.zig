@@ -18,6 +18,7 @@ pub fn headersValid(headers: []const Header) bool {
 pub const Request = struct {
     url: []const u8 = "",
     headers: []const Header = &.{},
+    /// An HTTP writer sends the body from this buffer and shifts it on a partial write, so it mutates.
     body: []u8,
 };
 

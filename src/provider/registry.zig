@@ -1,25 +1,26 @@
 //! Assemble every provider the engine offers by composing one file layer over the baked table.
 
 const std = @import("std");
+const ai = @import("ai");
 const proto = @import("proto");
 const provider = @import("provider.zig");
-const catalog = provider.ai.catalog;
+const catalog = ai.catalog;
 
-const instance = provider.instance;
-const model = provider.model;
+const instance = ai.instance;
+const model = ai.model;
 pub const ModelSpec = model.ModelSpec;
 
 const EnvMap = std.process.Environ.Map;
 
 /// This route holds every value that one request needs, and names its credential source.
 pub const Route = struct {
-    instance: instance.ProviderInstance,
+    route: instance.Route,
     credential: CredentialSource,
 };
 
 /// A run reads the stored grant and its expiry, so it needs no catalog rebuild.
 pub const OAuthSource = struct {
-    grant: provider.resolve.Credential.OAuth,
+    grant: ai.resolve.Credential.OAuth,
     /// The expiry uses Unix milliseconds, and a run at or past it reports a missing credential.
     expires_at_ms: ?u64 = null,
 };
@@ -33,7 +34,7 @@ pub const CredentialSource = union(enum) {
 };
 
 /// Resolve the credential of one run. A named variable the process lost gives null.
-pub fn credential(source: CredentialSource, env: ?*const EnvMap, now_ms: u64) ?provider.resolve.Credential {
+pub fn credential(source: CredentialSource, env: ?*const EnvMap, now_ms: u64) ?ai.resolve.Credential {
     return switch (source) {
         .none => .none,
         .env => |name| blk: {
@@ -242,7 +243,7 @@ fn localAvailability(
     from_catalog: ?*const catalog.Provider,
     env: ?*const EnvMap,
 ) Availability {
-    const template: ?*const instance.ProviderInstance = if (from_catalog) |c| &c.route else null;
+    const template: ?*const instance.Route = if (from_catalog) |c| &c.route else null;
     const base_url = p.base_url orelse (if (template) |t| t.base_url else null) orelse return .{ .unavailable = .needs_route };
     const protocol = p.protocol orelse (if (template) |t| t.protocol else null) orelse return .{ .unavailable = .needs_route };
     // Every baked row states an api-key header, and a grant presents a bearer under the same member.
@@ -302,12 +303,12 @@ fn localAvailability(
         .oauth => |stored| stored.grant.headers,
         else => &.{},
     };
-    if (provider.resolve.headerConflict(mechanism.headerName(), pinned, headers)) {
+    if (ai.resolve.headerConflict(mechanism.headerName(), pinned, headers)) {
         return .{ .unavailable = .needs_route };
     }
 
     return .{ .ready = .{
-        .instance = .{
+        .route = .{
             .base_url = base_url,
             .protocol = protocol,
             .auth = mechanism,

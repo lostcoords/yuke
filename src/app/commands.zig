@@ -2,11 +2,11 @@
 //! Each handler owns its write transaction.
 
 const std = @import("std");
+const ai = @import("ai");
 const proto = @import("proto");
 const App = @import("app.zig").App;
 const provider_config = @import("../provider/config/providers.zig");
 const provider_registry = @import("../provider/registry.zig");
-const provider_ai = @import("../provider/provider.zig").ai;
 const provider_oauth = @import("../provider/provider.zig").oauth;
 const login_runtime = @import("../provider/oauth/login_runtime.zig");
 const login_task = @import("../provider/oauth/login_task.zig");
@@ -56,7 +56,7 @@ pub fn authLogin(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Aut
     // One provider holds one login, so a second attempt would race the first for the same grant.
     if (runtime.logins.byProvider(params.provider_id) != null) return error.LoginInProgress;
 
-    const row = provider_ai.catalog.find(params.provider_id) orelse return error.UnknownProvider;
+    const row = ai.catalog.find(params.provider_id) orelse return error.UnknownProvider;
     const flow = login_runtime.Flow.parse(flowName(row.auth) orelse return error.NoLoginFlow) orelse return error.NoLoginFlow;
 
     // The slot arena owns the code and the url, because the login outlives this request arena.
@@ -106,7 +106,7 @@ pub fn authRemove(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Au
 }
 
 /// Report the flow one catalog row names. Only an OAuth provider names one.
-fn flowName(auth: provider_ai.catalog.Auth) ?[]const u8 {
+fn flowName(auth: ai.catalog.Auth) ?[]const u8 {
     return switch (auth) {
         .oauth => |name| name,
         .api_key => null,
@@ -138,8 +138,6 @@ const testing = std.testing;
 test "auth.list reports the providers the environment offers, not only the file" {
     const zio = @import("zio");
     const database = @import("../store/store.zig");
-    const provider = @import("../provider/provider.zig");
-
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
 
@@ -147,7 +145,7 @@ test "auth.list reports the providers the environment offers, not only the file"
     defer env.deinit();
     try env.put("ANTHROPIC_API_KEY", "sk-env");
 
-    var transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+    var transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
     var runtime: App = undefined;
     try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), &env, transport.transport());
     defer runtime.logins.deinit();

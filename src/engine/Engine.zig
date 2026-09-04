@@ -1,6 +1,7 @@
 //! The engine owns resident sessions and turn tasks and borrows process resources through `Deps`.
 
 const std = @import("std");
+const ai = @import("ai");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
 const provider = @import("../provider/provider.zig");
@@ -25,7 +26,7 @@ pub const Deps = struct {
     /// The merged provider view. A turn resolves a model against it.
     providers: *provider_store,
     /// Every resolved route opens its response through this transport.
-    route_transport: provider.transport.Transport,
+    route_transport: ai.transport.Transport,
     env: *const std.process.Environ.Map,
     /// The tools this process can run. The engine borrows the set from the extension owner.
     tools: toolset.ToolSet = .{},
@@ -138,7 +139,7 @@ pub fn jitter(self: *const Engine) f64 {
 
 /// These test dependencies use an empty environment. The map has no allocation to free.
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
-var test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+var test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
 
 test "activation restores durable pending input into the runtime queue" {
     var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });

@@ -36,6 +36,7 @@ fn codeOf(reason: ai.failure.Reason) proto.enums.RunErrorCode {
         .auth_rejected, .permission_denied => .auth,
         .quota_exhausted => .quota_exhausted,
         .out_of_memory => .internal,
+        .request_too_large => .context_overflow,
         .malformed_selector, .unknown_provider, .unknown_model => .unknown_model,
         .server_error, .bad_status, .bad_url, .invalid_headers, .unknown => .provider,
     };
@@ -68,4 +69,11 @@ test "an engine error keeps its own code, which the library cannot name" {
     try testing.expectEqual(proto.enums.RunErrorCode.unsupported_reasoning, classify(error.UnsupportedReasoning).code);
     try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, classify(error.TurnTooLarge).code);
     try testing.expectEqual(proto.enums.RunErrorCode.unknown_model, classify(error.UnknownModel).code);
+}
+
+test "the library request bound reports context overflow" {
+    const detail = classify(error.RequestTooLarge);
+    try testing.expectEqual(Class.permanent, detail.class);
+    try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, detail.code);
+    try testing.expectEqualStrings("the request exceeds the library size limit", detail.message);
 }

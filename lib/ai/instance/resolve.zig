@@ -5,7 +5,7 @@ const instance = @import("instance.zig");
 const transport = @import("../transport.zig");
 
 const Header = instance.Header;
-const ProviderInstance = instance.ProviderInstance;
+const Route = instance.Route;
 
 /// A pinned header can collide with a generated one, and a pinned header is source input.
 pub const Error = error{ HeaderConflict, InvalidCredential } || std.mem.Allocator.Error;
@@ -18,7 +18,7 @@ const protocol_path = std.enums.EnumArray(instance.Protocol, []const u8).init(.{
 });
 
 /// Build the full URL in `gpa`. A final slash on the base gives one separator, not two.
-pub fn endpointUrl(gpa: std.mem.Allocator, p: *const ProviderInstance) std.mem.Allocator.Error![]u8 {
+pub fn endpointUrl(gpa: std.mem.Allocator, p: *const Route) std.mem.Allocator.Error![]u8 {
     const base = std.mem.trimEnd(u8, p.base_url, "/");
     return std.mem.concat(gpa, u8, &.{ base, protocol_path.get(p.protocol) });
 }
@@ -64,10 +64,10 @@ pub fn headerConflict(generated: ?[]const u8, pinned: []const Header, configured
     return false;
 }
 
-/// Append the credential and pinned headers to `out`, and copy every value into `gpa`.
+/// Append the credential and pinned headers to `out`, and copy each string into `arena`, which `out.deinit` cannot free.
 pub fn authHeaders(
-    gpa: std.mem.Allocator,
-    p: *const ProviderInstance,
+    arena: std.mem.Allocator,
+    p: *const Route,
     credential: Credential,
     out: *std.ArrayList(Header),
 ) Error!void {
@@ -82,32 +82,26 @@ pub fn authHeaders(
         .none => {},
         .api_key => |kind| {
             const key = secret.?; // The credential check proves that this route has a secret.
-            try out.append(gpa, .{
+            try out.append(arena, .{
                 .name = generated.?,
                 .value = switch (kind) {
-                    .x_api_key => try gpa.dupe(u8, key),
-                    .authorization_bearer => try bearer(gpa, key),
+                    .x_api_key => try arena.dupe(u8, key),
+                    .authorization_bearer => try bearer(arena, key),
                 },
             });
         },
     }
 
-    for (identity) |h| try out.append(gpa, .{
-        .name = try gpa.dupe(u8, h.name),
-        .value = try gpa.dupe(u8, h.value),
-    });
-    for (p.headers) |h| try out.append(gpa, .{
-        .name = try gpa.dupe(u8, h.name),
-        .value = try gpa.dupe(u8, h.value),
-    });
+    for (identity) |h| try out.append(arena, try h.cloneLeaky(arena));
+    for (p.headers) |h| try out.append(arena, try h.cloneLeaky(arena));
 }
 
-/// Build the request one route sends: its endpoint, its credential headers, and `body`.
-pub fn request(gpa: std.mem.Allocator, p: *const ProviderInstance, credential: Credential, body: []u8) Error!transport.Request {
+/// Build the request one route sends, and copy its URL and headers into `arena`.
+pub fn request(arena: std.mem.Allocator, p: *const Route, credential: Credential, body: []u8) Error!transport.Request {
     var headers: std.ArrayList(Header) = .empty;
-    try authHeaders(gpa, p, credential, &headers);
+    try authHeaders(arena, p, credential, &headers);
     return .{
-        .url = try endpointUrl(gpa, p),
+        .url = try endpointUrl(arena, p),
         .headers = headers.items,
         .body = body,
     };
@@ -124,24 +118,16 @@ fn header(headers: []const Header, name: []const u8) ?[]const u8 {
     return null;
 }
 
-test "endpoint url appends the protocol path" {
-    const url = try endpointUrl(testing.allocator, &.{
-        .base_url = "https://api.anthropic.com/v1",
-        .protocol = .anthropic_messages,
-        .auth = .{ .api_key = .x_api_key },
-    });
-    defer testing.allocator.free(url);
-    try testing.expectEqualStrings("https://api.anthropic.com/v1/messages", url);
-}
-
-test "endpoint url collapses a trailing slash on the base" {
-    const url = try endpointUrl(testing.allocator, &.{
-        .base_url = "https://api.anthropic.com/v1/",
-        .protocol = .anthropic_messages,
-        .auth = .{ .api_key = .x_api_key },
-    });
-    defer testing.allocator.free(url);
-    try testing.expectEqualStrings("https://api.anthropic.com/v1/messages", url);
+test "endpoint url appends the protocol path and collapses a trailing slash" {
+    for ([_][]const u8{ "https://api.anthropic.com/v1", "https://api.anthropic.com/v1/" }) |base| {
+        const url = try endpointUrl(testing.allocator, &.{
+            .base_url = base,
+            .protocol = .anthropic_messages,
+            .auth = .{ .api_key = .x_api_key },
+        });
+        defer testing.allocator.free(url);
+        try testing.expectEqualStrings("https://api.anthropic.com/v1/messages", url);
+    }
 }
 
 test "anthropic api key uses x-api-key plus the pinned version header" {
@@ -239,28 +225,25 @@ test "a credential must match the authentication mechanism" {
     try testing.expectEqual(@as(usize, 0), out.items.len);
 }
 
-test "one call turns a route and a credential into a sendable request" {
+test "one call turns a route and a credential into a request that owns its strings" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     var body = "{}".*;
+    var version = "2023-06-01".*;
+    var key = "sk-secret".*;
 
     const built = try request(arena.allocator(), &.{
         .base_url = "https://api.anthropic.com/v1/",
         .protocol = .anthropic_messages,
         .auth = .{ .api_key = .x_api_key },
-        .headers = &.{.{ .name = "anthropic-version", .value = "2023-06-01" }},
-    }, .{ .api_key = "sk-secret" }, &body);
+        .headers = &.{.{ .name = "anthropic-version", .value = &version }},
+    }, .{ .api_key = &key }, &body);
 
-    // The trailing slash collapses, and both the credential and the pinned header arrive.
+    // The request outlives the route and the credential, so a later overwrite must not reach it.
+    @memset(&version, 'x');
+    @memset(&key, 'x');
     try testing.expectEqualStrings("https://api.anthropic.com/v1/messages", built.url);
     try testing.expectEqualStrings("sk-secret", header(built.headers, "x-api-key").?);
     try testing.expectEqualStrings("2023-06-01", header(built.headers, "anthropic-version").?);
     try testing.expectEqualStrings("{}", built.body);
-
-    // A credential the mechanism cannot present fails here rather than at the provider.
-    try testing.expectError(error.InvalidCredential, request(arena.allocator(), &.{
-        .base_url = "https://example.test/v1",
-        .protocol = .openai_chat,
-        .auth = .{ .api_key = .authorization_bearer },
-    }, .none, &body));
 }

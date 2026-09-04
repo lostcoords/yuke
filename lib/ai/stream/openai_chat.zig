@@ -324,6 +324,20 @@ test "text turn: started, deltas, stopped, done with usage" {
     try testing.expectEqual(@as(u64, 20), done.usage.cache_read);
 }
 
+test "unknown finish reason keeps its raw provider value" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"pause_turn"}]}
+        ,
+        "[DONE]",
+    });
+
+    const done = h.out.items[3].done;
+    try testing.expectEqual(types.FinishReason.unknown, done.stop_reason);
+    try testing.expectEqualStrings("pause_turn", done.raw_stop_reason);
+}
+
 test "tool turn: input deltas stream and the whole call surfaces at stop" {
     var h = Harness.init();
     defer h.deinit();

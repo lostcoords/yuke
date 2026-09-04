@@ -1,5 +1,6 @@
 //! Neutral events name dense blocks and borrow every source slice until the consumer drains them.
 
+const std = @import("std");
 const types = @import("../types.zig");
 
 /// A block becomes at most one message part, so the part cap bounds the blocks a reducer holds.
@@ -54,6 +55,20 @@ pub const BlockResult = union(enum) {
     reasoning: Reasoning,
     redacted_reasoning: Redacted,
     tool: ToolCall,
+
+    /// Copy every string into `gpa`, which must be an arena, because a result frees nothing itself.
+    pub fn cloneLeaky(self: BlockResult, gpa: std.mem.Allocator) std.mem.Allocator.Error!BlockResult {
+        return switch (self) {
+            .text => .text,
+            .reasoning => |value| .{ .reasoning = .{ .signature = try gpa.dupe(u8, value.signature) } },
+            .redacted_reasoning => |value| .{ .redacted_reasoning = .{ .data = try gpa.dupe(u8, value.data) } },
+            .tool => |value| .{ .tool = .{
+                .call_id = try gpa.dupe(u8, value.call_id),
+                .name = try gpa.dupe(u8, value.name),
+                .arguments = try gpa.dupe(u8, value.arguments),
+            } },
+        };
+    }
 };
 
 pub const Reasoning = struct {

@@ -1,6 +1,7 @@
 //! The process composition root. It owns every process resource and one engine.
 
 const std = @import("std");
+const ai = @import("ai");
 const builtin = @import("builtin");
 const zio = @import("zio");
 const zqlite = @import("zqlite");
@@ -24,7 +25,7 @@ pub const App = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
     /// The HTTP client outlives the app tasks, because they read through it.
-    http_transport: provider.http_transport.HttpTransport,
+    http_transport: ai.http_transport.HttpTransport,
     db: database.Database,
     logins: login_runtime.Logins,
     store: provider_store,
@@ -50,7 +51,7 @@ pub const App = struct {
         self.* = .{
             .gpa = gpa,
             .io = io,
-            .http_transport = provider.http_transport.HttpTransport.init(gpa, io, provider_idle_timeout),
+            .http_transport = ai.http_transport.HttpTransport.init(gpa, io, provider_idle_timeout),
             .db = undefined,
             .logins = .init(gpa),
             .store = .init(gpa, io, env),
@@ -95,7 +96,7 @@ pub const App = struct {
     }
 
     /// Build one app around a test database. The caller closes the owned resources.
-    pub fn initTest(self: *App, gpa: std.mem.Allocator, io: std.Io, db: database.Database, env: *const std.process.Environ.Map, route_transport: provider.transport.Transport) !void {
+    pub fn initTest(self: *App, gpa: std.mem.Allocator, io: std.Io, db: database.Database, env: *const std.process.Environ.Map, route_transport: ai.transport.Transport) !void {
         self.* = .{
             .gpa = gpa,
             .io = io,
@@ -213,7 +214,7 @@ fn ensureDataDir(io: std.Io, dir: []const u8) !void {
 
 /// The test dependencies. An empty environment allocates nothing, so no test frees it.
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
-var test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+var test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
 
 test "a catalog replacement announces the merged revision" {
     const testing = std.testing;

@@ -11,7 +11,8 @@ const Session = @import("../session/session.zig").Session;
 const database = @import("../store/store.zig");
 const turn_context = @import("context.zig");
 const registry = @import("../provider/registry.zig");
-const retry = @import("ai").retry;
+const ai = @import("ai");
+const retry = ai.retry;
 
 const ids = proto.ids;
 const message = proto.message;
@@ -20,13 +21,12 @@ const message_store = database.message;
 const run_store = database.run;
 const session_store = database.session;
 const event_store = database.event;
-const event = provider.event;
+const event = ai.event;
 
 const agent_name = "claude";
 const max_output_tokens: u32 = 8192;
 
-/// The response gate must launch a prepared run exactly once. Callers hold the token as `?Launch`.
-/// `release` clears the token before launch. `launchSlot` asserts the slot phase to catch a re-launch.
+/// The response gate must launch a prepared run exactly once through an optional token.
 pub const Launch = struct {
     slot: *RunSlot,
 
@@ -194,16 +194,17 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
     const arena = round_state.allocator();
 
     // Build once for the round. Every attempt then sends the same bytes and the same tool prefix.
-    const request = roundRequest(engine, arena, slot, streamer) catch |err| {
+    var request = roundRequest(engine, arena, slot, streamer) catch |err| {
         std.log.warn("run {d} could not build its request: {t}", .{ slot.runId(), err });
         return .{ .failed = failure(err) };
     };
+    defer request.deinit();
 
     var number: u8 = 1;
     while (true) : (number += 1) {
         streamer.reset();
-        var info: provider.transport.AttemptInfo = .{};
-        const terminal = streamAttempt(engine, arena, slot, streamer, request, &info) catch |err| {
+        var info: ai.transport.AttemptInfo = .{};
+        const terminal = streamAttempt(engine, arena, slot, streamer, &request, &info) catch |err| {
             const decision = retry.decide(engine.deps.retry_policy, .{
                 .err = err,
                 .info = info,
@@ -293,8 +294,8 @@ fn streamAttempt(
     arena: std.mem.Allocator,
     slot: *RunSlot,
     streamer: *Streamer,
-    request: provider.transport.Request,
-    info: *provider.transport.AttemptInfo,
+    request: *const ai.PreparedRequest,
+    info: *ai.transport.AttemptInfo,
 ) anyerror!Terminal {
     const result = switch (runChild(engine, slot, streamChild, .{ engine, arena, slot, streamer, request, info })) {
         .canceled, .aborted => return .canceled,
@@ -312,7 +313,7 @@ fn streamAttempt(
 }
 
 /// Build the request for one round. A retry re-sends these bytes, so the cached prefix still matches.
-fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !provider.transport.Request {
+fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !ai.PreparedRequest {
     const model = slot.config.model;
 
     // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
@@ -325,10 +326,10 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, strea
 }
 
 /// Open the response and stream it into the draft, in a child so a cancel can interrupt a blocked read.
-fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, request: provider.transport.Request, info: *provider.transport.AttemptInfo) !void {
+fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, request: *const ai.PreparedRequest, info: *ai.transport.AttemptInfo) !void {
     defer slot.wake_event.set(engine.deps.io);
     try checkCanceled(engine.deps.io, slot);
-    const body = try engine.deps.route_transport.open(arena, request, info);
+    const body = try engine.deps.route_transport.open(arena, request.transport_request, info);
     std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
     defer {
@@ -336,7 +337,7 @@ fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, stream
         body.deinit();
     }
     try checkCanceled(engine.deps.io, slot);
-    try streamWithReducer(engine, body, streamer, slot.protocol);
+    try ai.consume(engine.deps.gpa, body, request.protocol, streamer, Streamer.onEvent);
 }
 
 /// Resolve the session level against the model. An unset level omits the control.
@@ -344,7 +345,7 @@ fn reasoningFor(
     model: *const registry.ModelSpec,
     level: []const u8,
     output_limit: u32,
-) !provider.ir.ReasoningControl {
+) !ai.ir.ReasoningControl {
     if (level.len == 0) return .default;
     if (std.mem.eql(u8, level, "off")) {
         // A model that states it cannot stop would reject the control, so refuse before the request.
@@ -355,11 +356,11 @@ fn reasoningFor(
         return error.UnsupportedReasoning;
     if (model.dialect.anthropic_adaptive) return .adaptive;
     if (thinkingBudget(model, output_limit)) |tokens| return .{ .budget = tokens };
-    const effort = std.meta.stringToEnum(provider.ir.Effort, level) orelse return error.UnsupportedReasoning;
+    const effort = std.meta.stringToEnum(ai.ir.Effort, level) orelse return error.UnsupportedReasoning;
     return .{ .effort = effort };
 }
 
-fn hasReasoningLevel(levels: []const provider.model.ReasoningLevel, wanted: []const u8) bool {
+fn hasReasoningLevel(levels: []const ai.model.ReasoningLevel, wanted: []const u8) bool {
     for (levels) |level| switch (level) {
         .none => {},
         .named => |name| if (std.mem.eql(u8, name, wanted)) return true,
@@ -370,8 +371,7 @@ fn hasReasoningLevel(levels: []const provider.model.ReasoningLevel, wanted: []co
 /// The smallest budget an Anthropic-shaped endpoint accepts.
 const thinking_budget_min: u64 = 1024;
 
-/// Size the budget for a level. Thinking shares the output ceiling, so the answer keeps a part.
-/// Anthropic's own starting point for a complex task. A budget over 32k needs batch processing.
+/// Anthropic starts a complex task at this absolute budget, while larger budgets need batch processing.
 const thinking_budget_default: u64 = 16_000;
 
 /// Choose the thinking budget. Anthropic states absolute starting points, never a share of the ceiling.
@@ -399,46 +399,41 @@ fn resolvedRequest(
     slot: *RunSlot,
     transcript: []const proto.message.Message,
     r: registry.Match,
-) !provider.transport.Request {
+) !ai.PreparedRequest {
     // A provider the merge could not complete has no route, so it cannot serve a turn.
     const route = switch (r.provider.availability) {
         .ready => |ready| ready,
         .unavailable => return error.UnknownModel,
     };
-    slot.protocol = provider.protocolToProto(route.instance.protocol);
+    slot.protocol = provider.protocolToProto(route.route.protocol);
 
     const output_limit = if (r.model.limits.max_output_tokens) |limit|
         std.math.cast(u32, limit) orelse max_output_tokens
     else
         max_output_tokens;
 
-    const body_bytes = try provider.requestBody(arena, transcript, route.instance.protocol, .{
-        .model = r.model.upstream_id,
+    const request_ir = try provider.build.build(arena, transcript, .{
+        .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
+        .modalities = r.model.modalities,
+    });
+
+    // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
+    const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
+    return ai.prepare(engine.deps.gpa, .{
+        .id = r.model.upstream_id,
+        .route = route.route,
+        .credential = secret,
+        .caps = r.model.caps,
+        .dialect = r.model.dialect,
+    }, .{
+        .blocks = request_ir.blocks,
         .system = slot.config.system_prompt,
         .tools = engine.deps.tools.getDecls(engine.deps.tools.ctx),
-        .max_output_tokens = output_limit,
-        .reasoning = try reasoningFor(r.model, slot.config.reasoning, output_limit),
-        .thinking_format = r.model.dialect.thinking_format,
-        .reasoning_replay = r.model.dialect.reasoning_replay,
-        .max_tokens_field = r.model.dialect.max_tokens_field,
-        .responses_dialect = route.instance.responses_dialect,
-        .cache = provider.instance.CachePolicy.markerFor(route.instance.cache, r.model.caps.cache_breakpoint),
-    }, .{ .protocol = slot.protocol, .model = slot.config.model }, r.model.modalities);
-
-    // Read the credential and the clock here, so a rotated key or a lapsed grant needs no rebuild.
-    const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
-    return provider.resolve.request(arena, &route.instance, secret, body_bytes);
-}
-
-/// Reduce the response stream with the reducer for `protocol`.
-fn streamWithReducer(engine: *Engine, body: provider.transport.ResponseBody, streamer: *Streamer, protocol: proto.enums.ProviderProtocol) !void {
-    switch (provider.protocolFromProto(protocol)) {
-        inline else => |p| {
-            var reducer = provider.Adapter(p).Reducer.init(engine.deps.gpa);
-            defer reducer.deinit();
-            try provider.transport.stream(engine.deps.gpa, body, &reducer, streamer, Streamer.onEvent);
+        .options = .{
+            .max_output_tokens = output_limit,
+            .reasoning = try reasoningFor(r.model, slot.config.reasoning, output_limit),
         },
-    }
+    });
 }
 
 const Terminal = union(enum) {
@@ -461,8 +456,7 @@ fn failure(err: anyerror) Failure {
 /// A round is intermediate (a tool round; the run continues) or final (the run ends).
 const RoundCompletion = enum { intermediate, final };
 
-/// Commit the current round's assistant message. A final round also appends run.done and terminalizes
-/// the slot. An intermediate round keeps the run open (phase `.running`).
+/// Commit the current round, and terminalize the run only when this is the final round.
 fn commitRound(
     engine: *Engine,
     arena: std.mem.Allocator,
@@ -632,8 +626,7 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
     return slot;
 }
 
-/// Hydrate each queued session and start its run after the catalog loads.
-/// Restart durable work when a view opens a session; cross-process ownership stays undefined.
+/// Restart durable queued work when a view opens its session.
 pub fn resumeSession(engine: *Engine, rt: *Session) !void {
     if (rt.active_run != null) return;
     if (rt.queueDepth() == 0) return;
@@ -645,10 +638,7 @@ fn checkCanceled(io: std.Io, slot: *const RunSlot) !void {
     if (slot.cancel_requested) return error.Canceled;
 }
 
-/// Map each provider StreamEvent to a canonical broadcast. Fold it into the session, then publish it.
-/// The reducer is the peer boundary. It emits dense, ordered, kind-checked events. So the fold trusts them.
-/// Report whether an event carries model output. An empty delta carries none, so it does not close
-/// the retry window.
+/// Report whether an event carries model output that closes the retry window.
 fn isSemantic(ev: event.StreamEvent) bool {
     return switch (ev) {
         .block_started, .block_stopped => true,
@@ -908,14 +898,14 @@ fn emptyPart(part_id: ids.PartId, kind: event.BlockKind) message.AssistantPart {
 
 test "an unset level omits the control and off disables it" {
     const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m" };
-    try std.testing.expectEqual(provider.ir.ReasoningControl.default, try reasoningFor(&model, "", 8192));
-    try std.testing.expectEqual(provider.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
+    try std.testing.expectEqual(ai.ir.ReasoningControl.default, try reasoningFor(&model, "", 8192));
+    try std.testing.expectEqual(ai.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
 }
 
 test "an adaptive row resolves to adaptive for every level that is not off" {
     const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .anthropic_adaptive = true } };
-    try std.testing.expectEqual(provider.ir.ReasoningControl.adaptive, try reasoningFor(&model, "high", 8192));
-    try std.testing.expectEqual(provider.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
+    try std.testing.expectEqual(ai.ir.ReasoningControl.adaptive, try reasoningFor(&model, "high", 8192));
+    try std.testing.expectEqual(ai.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
 }
 
 test "a budget row states one budget, whatever effort the caller names" {
@@ -937,7 +927,7 @@ test "a budget is clamped by the feed bounds and refused when it reaches the cei
 
     // A budget that reaches the ceiling falls back to the effort control.
     const tiny: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .reasoning_budget = .from(1024, null) } };
-    try std.testing.expectEqual(provider.ir.Effort.high, (try reasoningFor(&tiny, "high", 1024)).effort);
+    try std.testing.expectEqual(ai.ir.Effort.high, (try reasoningFor(&tiny, "high", 1024)).effort);
 
     // The published maximum still wins, so a model that caps itself below the default is honoured.
     try std.testing.expectEqual(@as(u64, 2000), (try reasoningFor(&capped, "high", 64000)).budget);
@@ -946,7 +936,7 @@ test "a budget is clamped by the feed bounds and refused when it reaches the cei
 test "a selected level outside the model list is unsupported" {
     const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }} };
     try std.testing.expectError(error.UnsupportedReasoning, reasoningFor(&model, "turbo", 8192));
-    try std.testing.expectEqual(provider.ir.Effort.high, (try reasoningFor(&model, "high", 8192)).effort);
+    try std.testing.expectEqual(ai.ir.Effort.high, (try reasoningFor(&model, "high", 8192)).effort);
 
     const unlisted: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m" };
     try std.testing.expectError(error.UnsupportedReasoning, reasoningFor(&unlisted, "turbo", 8192));
@@ -964,7 +954,7 @@ const zio = @import("zio");
 const provider_store = @import("../provider/provider_store.zig");
 
 var stream_test_env: std.process.Environ.Map = .init(std.testing.allocator);
-var stream_test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+var stream_test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
 
 /// Drive `Streamer.onEvent` over a real engine, session, and draft. The caller reads the draft parts.
 const StreamerFixture = struct {

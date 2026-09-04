@@ -35,7 +35,13 @@ pub fn resolve(selector: []const u8, credential: credentials.Credential) Error!c
     for (provider.models) |*spec| {
         if (!std.mem.eql(u8, spec.id, parts.model)) continue;
         // A gateway may rename a model, so the request sends the upstream id.
-        return .{ .id = spec.upstream_id, .provider = provider.route, .credential = credential, .caps = spec.caps };
+        return .{
+            .id = spec.upstream_id,
+            .route = provider.route,
+            .credential = credential,
+            .caps = spec.caps,
+            .dialect = spec.dialect,
+        };
     }
     return Error.UnknownModel;
 }
@@ -85,11 +91,21 @@ test "a selector resolves against the baked table" {
 
     const resolved = try resolve(selector, .{ .api_key = "sk-test" });
     // The whole route reaches the call, so a dropped protocol or header fails here.
-    try testing.expectEqualDeep(row.route, resolved.provider);
+    try testing.expectEqualDeep(row.route, resolved.route);
     try testing.expectEqualStrings("sk-test", resolved.credential.api_key);
 
     try testing.expectError(Error.UnknownProvider, resolve("nope/model", .none));
     try testing.expectError(Error.UnknownModel, resolve("anthropic/nope", .none));
+}
+
+test "catalog errors have a permanent user-facing classification" {
+    const failure = @import("failure.zig");
+    // A catalog error that classifies as unknown would hide a caller's selector mistake.
+    inline for (@typeInfo(Error).error_set.?) |raised| {
+        const got = failure.classify(@field(anyerror, raised.name));
+        try testing.expectEqual(failure.Class.permanent, got.class);
+        try testing.expect(got.reason != .unknown);
+    }
 }
 
 test "the credential comes from the variable the catalog names" {

@@ -1,11 +1,12 @@
 //! Tests for the provider registry. They fix the two composition rules and the availability states.
 
 const std = @import("std");
+const ai = @import("ai");
 const proto = @import("proto");
 const provider = @import("provider.zig");
 const registry = @import("registry.zig");
-const instance = provider.instance;
-const catalog = provider.ai.catalog;
+const instance = ai.instance;
+const catalog = ai.catalog;
 
 const resolve = registry.resolve;
 const credential = registry.credential;
@@ -73,11 +74,11 @@ test "an id and a key alone resolve a full route from the catalog" {
     try testing.expectEqualStrings("Acme", rows[0].name); // The catalog names it.
 
     const route = rows[0].availability.ready;
-    try testing.expectEqualStrings("https://api.example/v1", route.instance.base_url);
-    try testing.expectEqual(instance.Protocol.openai_chat, route.instance.protocol);
-    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.instance.auth.api_key);
+    try testing.expectEqualStrings("https://api.example/v1", route.route.base_url);
+    try testing.expectEqual(instance.Protocol.openai_chat, route.route.protocol);
+    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
     try testing.expectEqualStrings("sk-minimal", route.credential.literal);
-    try testing.expectEqualStrings("x-catalog-version", route.instance.headers[0].name);
+    try testing.expectEqualStrings("x-catalog-version", route.route.headers[0].name);
 
     // The models come from the catalog too, so the picker is complete.
     try testing.expectEqual(@as(usize, 1), rows[0].models.len);
@@ -97,9 +98,9 @@ test "a local field beats the catalog field by field" {
 
     const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{})} });
     const route = rows[0].availability.ready;
-    try testing.expectEqualStrings("https://pinned.example/v1", route.instance.base_url);
-    try testing.expectEqual(instance.Protocol.openai_chat, route.instance.protocol);
-    try testing.expectEqual(@as(usize, 0), route.instance.headers.len);
+    try testing.expectEqualStrings("https://pinned.example/v1", route.route.base_url);
+    try testing.expectEqual(instance.Protocol.openai_chat, route.route.protocol);
+    try testing.expectEqual(@as(usize, 0), route.route.headers.len);
 }
 
 test "local model reasoning levels reach the registry" {
@@ -150,8 +151,8 @@ test "a local codex grant routes with a bearer and its account header" {
     const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")} });
     const route = rows[0].availability.ready;
     // The file stores only the grant, so the catalog row is what selects this shape.
-    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.instance.auth.api_key);
-    try testing.expectEqual(instance.ResponsesDialect.codex, route.instance.responses_dialect);
+    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
+    try testing.expectEqual(instance.ResponsesDialect.codex, route.route.responses_dialect);
     try testing.expectEqualStrings("tok", route.credential.oauth.grant.access_token);
     try testing.expectEqualStrings("ChatGPT-Account-ID", route.credential.oauth.grant.headers[0].name);
     try testing.expectEqualStrings("acct", route.credential.oauth.grant.headers[0].value);
@@ -232,7 +233,7 @@ test "a keyless entry routes with no credential" {
 
     const rows = try resolve(arena.allocator(), .{ .local = &loaded });
     const route = rows[0].availability.ready;
-    try testing.expect(route.instance.auth == .none);
+    try testing.expect(route.route.auth == .none);
     try testing.expect(route.credential == .none);
 }
 
@@ -334,7 +335,7 @@ test "load composes the file over the real baked table" {
 
     // A synthetic row could never produce this URL, so the route demonstrably came from the table.
     const keyed = registry.find(snapshot.rows, "anthropic").?;
-    try testing.expectEqualStrings("https://api.anthropic.com/v1", keyed.availability.ready.instance.base_url);
+    try testing.expectEqualStrings("https://api.anthropic.com/v1", keyed.availability.ready.route.base_url);
     try testing.expect(keyed.models.len != 0); // The baked models reach the picker with no copy.
 
     // Stage 1 bakes this name. Without it the engine cannot start the login at all.
@@ -375,7 +376,7 @@ test "the environment alone offers a provider the file never names" {
     const route = row.availability.ready;
     // The row names the variable, so a rotated key reaches the next run with no rebuild.
     try testing.expectEqualStrings("ANTHROPIC_API_KEY", route.credential.env);
-    try testing.expectEqualStrings("https://api.anthropic.com/v1", route.instance.base_url);
+    try testing.expectEqualStrings("https://api.anthropic.com/v1", route.route.base_url);
     try testing.expect(row.models.len != 0);
 
     // A provider whose variable is unset is never offered, so no picker lists a dead route.
@@ -410,7 +411,7 @@ test "the file beats the environment and extends the baked model list" {
     defer env.deinit();
     try env.put("ANTHROPIC_API_KEY", "sk-env");
 
-    const baked = provider.ai.catalog.find("anthropic").?;
+    const baked = ai.catalog.find("anthropic").?;
     var buf: [512]u8 = undefined;
     const doc = try std.fmt.bufPrint(&buf,
         \\{{"version":1,"providers":[{{"id":"anthropic","api_key":"sk-file","models":[
