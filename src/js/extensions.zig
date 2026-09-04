@@ -45,6 +45,7 @@ pub const Extensions = struct {
         try host.evalModule("import \"yuke:builtins\";", "builtins.js");
 
         app.engine.installTools(tool_run.toolSet(host));
+        app.engine.installHooks(tool_run.hookSet(host));
     }
 
     pub fn deinit(self: *Extensions) void {
@@ -219,4 +220,80 @@ test "a plugin notice reaches every attached frontend" {
     try std.testing.expectEqual(proto.enums.NoticeLevel.warn, capture.level);
     try std.testing.expectEqualStrings("reporter", capture.source[0..capture.source_len]);
     try std.testing.expectEqualStrings("build failed", capture.message[0..capture.message_len]);
+}
+
+test "a hook chain replaces a payload and the first block ends it" {
+    const ai = @import("ai");
+    const database = @import("../store/store.zig");
+
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = user_entry, .data =
+        \\import { plugins } from "yuke";
+        \\plugins.use({ name: "gate", apply: (ctx) => {
+        \\  ctx.hook("tool.before", (ev) => ({ replace: { name: ev.name, arguments: "rewritten" } }));
+        \\  ctx.hook("tool.before", (ev) => (ev.arguments === "rewritten" ? { block: "denied" } : undefined));
+        \\  ctx.hook("tool.after", async (ev) => ({ replace: { output: ev.output + "!", is_error: false } }));
+        \\}});
+    });
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
+
+    var reactor = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    defer reactor.deinit();
+    var env: std.process.Environ.Map = .init(gpa.allocator());
+    defer env.deinit();
+    var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+    var app_runtime: App = undefined;
+    try app_runtime.initTest(gpa.allocator(), reactor.io(), try database.Database.openTest(), &env, canned.transport());
+    var extensions: Extensions = undefined;
+    try extensions.init(gpa.allocator(), reactor.io(), &app_runtime, .{
+        .host = .{ .headless = true, .cwd = root, .env = &env },
+        .boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";",
+        .config_dir = root,
+    });
+    defer {
+        extensions.deinit();
+        app_runtime.engine.close();
+        app_runtime.db.deinit();
+        app_runtime.store.deinit();
+        app_runtime.logins.deinit();
+    }
+    try std.testing.expect(!extensions.user_entry_fault);
+
+    // A point no handler holds must never reach the owner, so a turn pays nothing for it.
+    try std.testing.expect(extensions.host.hooks.holds(.@"tool.before"));
+    try std.testing.expect(extensions.host.hooks.holds(.@"tool.after"));
+    try std.testing.expect(!extensions.host.hooks.holds(.@"request.build"));
+
+    // The first handler rewrites the arguments, so the second one sees them and ends the chain.
+    const blocked = try settleHook(&extensions, "tool.before", "{\"name\":\"bash\",\"arguments\":\"original\"}");
+    defer std.testing.allocator.free(blocked);
+    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"denied\"}", blocked);
+
+    // An async handler settles through the same poll a tool call uses.
+    const replaced = try settleHook(&extensions, "tool.after", "{\"output\":\"ok\",\"is_error\":false}");
+    defer std.testing.allocator.free(replaced);
+    try std.testing.expectEqualStrings("{\"type\":\"replace\",\"value\":{\"output\":\"ok!\",\"is_error\":false}}", replaced);
+}
+
+/// Submit one hook call and pump the owner until it settles. The owner frees the record's own
+/// text on its next sweep, so this copies the answer and the caller owns it.
+fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) ![]u8 {
+    const call = try extensions.host.calls.submitHook(point, payload);
+    try owner.pump(extensions.host);
+    var rounds: u32 = 0;
+    while (call.state != .settled) : (rounds += 1) {
+        if (rounds == 64) return error.HookNeverSettled;
+        extensions.wake.timedWait(.fromMilliseconds(1000)) catch {};
+        extensions.wake.reset();
+        try owner.pump(extensions.host);
+    }
+    try std.testing.expect(!call.is_error);
+    const text = try std.testing.allocator.dupe(u8, call.text.?);
+    extensions.host.calls.finish(call);
+    return text;
 }

@@ -10,6 +10,7 @@ const draft = @import("../session/draft.zig");
 const Session = @import("../session/session.zig").Session;
 const database = @import("../store/store.zig");
 const turn_context = @import("context.zig");
+const toolset = @import("toolset.zig");
 const registry = @import("../provider/registry.zig");
 const ai = @import("ai");
 const retry = ai.retry;
@@ -867,8 +868,7 @@ fn toolChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer
         defer _ = engine.deps.io.swapCancelProtection(old);
         try streamer.emitToolState(pt.part_id, .{ .running = .{ .started_at_ms = started } });
     }
-    const tools = engine.deps.tools;
-    const res = tools.run(tools.ctx, arena, pt.name, pt.arguments, workspace_root); // The cancel point.
+    const res = runHooked(engine, arena, pt, workspace_root); // The cancel point.
     const duration = engine.nowMillis() -| started; // Saturate; the wall clock can move backward.
     const old = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old);
@@ -879,6 +879,49 @@ fn toolChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer
     else
         .{ .completed = .{ .output = res.output, .view = res.view, .duration_ms = duration } };
     try streamer.emitToolState(pt.part_id, settled);
+}
+
+/// One tool call the model asked for. A `tool.before` handler may replace either field.
+const ToolCall = struct {
+    name: []const u8,
+    arguments: []const u8,
+};
+
+/// What the model reads after a tool answers. A `tool.after` handler may replace either field.
+const ToolResult = struct {
+    output: []const u8,
+    is_error: bool,
+};
+
+/// Run one tool through its hooks. A block answers the model, and the process runs nothing.
+fn runHooked(engine: *Engine, arena: std.mem.Allocator, pt: PendingTool, workspace_root: []const u8) toolset.Outcome {
+    const hooks = engine.deps.hooks;
+    var call: ToolCall = .{ .name = pt.name, .arguments = pt.arguments };
+    switch (hooks.askIfHeld(arena, .@"tool.before", call)) {
+        .proceed => {},
+        // A handler that answers an unreadable call keeps the one the model chose.
+        .replace => |json| call = std.json.parseFromSliceLeaky(ToolCall, arena, json, .{ .ignore_unknown_fields = true }) catch call,
+        .block => |reason| return .{ .output = reason, .is_error = true },
+    }
+
+    const tools = engine.deps.tools;
+    const res = tools.run(tools.ctx, arena, call.name, call.arguments, workspace_root); // The cancel point.
+
+    const after = hooks.askIfHeld(arena, .@"tool.after", .{
+        .name = call.name,
+        .arguments = call.arguments,
+        .output = res.output,
+        .is_error = res.is_error,
+    });
+    return switch (after) {
+        .proceed => res,
+        .replace => |json| blk: {
+            const changed = std.json.parseFromSliceLeaky(ToolResult, arena, json, .{ .ignore_unknown_fields = true }) catch break :blk res;
+            // The view describes the output the tool produced, so a replaced output carries none.
+            break :blk .{ .output = changed.output, .is_error = changed.is_error };
+        },
+        .block => |reason| .{ .output = reason, .is_error = true },
+    };
 }
 
 /// Reject a provider payload that would exceed the stream cap. This is peer input. Return an error.

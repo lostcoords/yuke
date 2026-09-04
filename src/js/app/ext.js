@@ -1,6 +1,7 @@
 // yuke:ext — the plugin runtime: a Scope owns revertible effects, a Context registers, and `advice` wraps methods.
 import { events } from "yuke:kernel";
 import { defineTool, removeTool } from "yuke:tools";
+import { installDispatcher, setPoints } from "yuke:hooks";
 
 /** @typedef {() => void} Disposer */
 /** @typedef {() => unknown} Effect */
@@ -18,6 +19,8 @@ import { defineTool, removeTool } from "yuke:tools";
 /** @typedef {Context & Record<string, any>} InjectContext */
 /** @typedef {(ctx: InjectContext) => unknown} InjectApply */
 /** @typedef {{ name: string, apply: PluginApply }} Plugin */
+/** @typedef {(payload: any) => unknown} HookHandler */
+/** @typedef {{ owner: string, fn: HookHandler }} HookEntry */
 
 const NOOP = () => {};
 
@@ -411,6 +414,75 @@ function injectInto(parent, id, names, apply) {
   });
 }
 
+// --- hooks: the points a plugin answers ---
+// A fact reads as `x.verbed` and needs no answer. A point reads as `x.verb` and the runtime waits.
+/** @type {Record<string, HookEntry[]>} */
+const HOOKS = Object.create(null);
+
+// State which points now hold a handler, so a turn never submits a call no handler wants.
+/** @returns {void} */
+function publishPoints() {
+  setPoints(Object.keys(HOOKS));
+}
+
+// Register one handler at the end of its chain. An unknown point throws and registers nothing.
+/** @param {string} point @param {string} owner @param {HookHandler} fn @returns {Disposer} */
+function addHook(point, owner, fn) {
+  const list = HOOKS[point] || (HOOKS[point] = []);
+  const entry = { owner, fn };
+  list.push(entry);
+  try {
+    publishPoints();
+  } catch (e) {
+    list.pop();
+    if (list.length === 0 && HOOKS[point] === list) delete HOOKS[point];
+    throw e;
+  }
+
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    const at = list.indexOf(entry);
+    if (at >= 0) list.splice(at, 1);
+    // Drop the key only while it still holds this list, so a later add keeps its own.
+    if (list.length === 0 && HOOKS[point] === list) delete HOOKS[point];
+    publishPoints();
+  };
+}
+
+// Fold one chain and answer one decision. The runtime calls this, and it never throws.
+/** @param {string} point @param {any} payload @returns {Promise<unknown>} */
+async function dispatch(point, payload) {
+  const list = HOOKS[point];
+  if (!list) return undefined;
+
+  let value = payload;
+  let replaced = false;
+  // A handler can register or withdraw another, so the fold walks a copy of the chain.
+  for (const entry of list.slice()) {
+    let answer;
+    try {
+      answer = await entry.fn(value);
+    } catch (e) {
+      // A throwing handler is a plugin bug, not a decision, so the chain goes on without it.
+      events.emit("ext.error", e, "hook:" + point);
+      continue;
+    }
+    if (answer == null) continue;
+    if (answer.block !== undefined) return { type: "block", reason: String(answer.block) };
+    // Each later handler reads what this one wrote, so a chain composes without a merge rule.
+    if (answer.replace !== undefined) {
+      value = answer.replace;
+      replaced = true;
+    }
+  }
+
+  return replaced ? { type: "replace", value } : undefined;
+}
+
+installDispatcher(dispatch);
+
 // --- interaction: the service a frontend installs ---
 // A frontend answers a question and shows a message. It is always present, so it gates no block.
 /** @typedef {{ confirm(title: string, message?: string): Promise<boolean | undefined>, select(title: string, options: string[]): Promise<string | undefined>, input(title: string, placeholder?: string): Promise<string | undefined>, notify(message: string, level?: "info" | "warn" | "error"): void }} InteractionSurface */
@@ -505,6 +577,13 @@ export class Context {
   /** @param {string} name @param {unknown} value @returns {Disposer} */
   provide(name, value) {
     return this.scope.effect(() => services.provide(name, value));
+  }
+
+  // Answer one point. The chain runs in registration order and this plugin's turn reverts on unload.
+  /** @param {string} point @param {HookHandler} fn @returns {Disposer} */
+  hook(point, fn) {
+    if (typeof fn !== "function") throw new TypeError("hook needs a handler function");
+    return this.scope.effect(() => addHook(point, this.id, fn));
   }
 
   // The tools this plugin owns. A dispose withdraws them, so an unload leaves no tool behind.

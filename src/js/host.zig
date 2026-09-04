@@ -10,6 +10,7 @@ const fs_module = @import("native/fs.zig");
 const exec_module = @import("native/exec.zig");
 const diff_module = @import("native/diff.zig");
 const tools_module = @import("native/tools.zig");
+const hooks_module = @import("native/hooks.zig");
 const interaction_module = @import("native/interaction.zig");
 const tools_table = @import("tools.zig");
 const hooks_table = @import("hooks.zig");
@@ -206,6 +207,7 @@ pub const Host = struct {
         try exec_module.install(self);
         try diff_module.install(self);
         try tools_module.install(self);
+        try hooks_module.install(self);
         try interaction_module.install(self);
         return self;
     }
@@ -924,6 +926,7 @@ test {
     _ = @import("native/exec.zig");
     _ = @import("native/diff.zig");
     _ = @import("native/tools.zig");
+    _ = @import("native/hooks.zig");
     _ = @import("tools.zig");
     _ = @import("hooks.zig");
     _ = @import("host_js_test.zig");

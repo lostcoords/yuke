@@ -36,7 +36,7 @@ pub const Decision = union(enum) {
     /// The handler changes nothing, so the next handler reads the same value.
     proceed: misc.Empty,
     /// The payload the next handler reads instead. Its shape matches the point.
-    replace: std.json.Value,
+    replace: Replaced,
     /// The action never runs, and the reason reaches the model in place of a result.
     block: Blocked,
 
@@ -49,6 +49,11 @@ pub const Decision = union(enum) {
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         return tagged.stringify(@This(), self, jw);
     }
+};
+
+pub const Replaced = struct {
+    /// The whole payload, not a patch, because a point defines one shape and not a merge rule.
+    value: std.json.Value,
 };
 
 pub const Blocked = struct {
@@ -78,6 +83,21 @@ test "a decision uses the tagged wire shape" {
     , .{});
     defer proceed.deinit();
     try testing.expect(proceed.value == .proceed);
+}
+
+test "a replace decision carries its payload both ways" {
+    const parsed = try std.json.parseFromSlice(Decision, testing.allocator,
+        \\{"type":"replace","value":{"name":"bash","arguments":"{}"}}
+    , .{});
+    defer parsed.deinit();
+    try testing.expectEqualStrings("bash", parsed.value.replace.value.object.get("name").?.string);
+
+    // A handler answer must survive the round trip, because the next handler reads what this wrote.
+    const written = try std.json.Stringify.valueAlloc(testing.allocator, parsed.value, .{});
+    defer testing.allocator.free(written);
+    try testing.expectEqualStrings(
+        \\{"type":"replace","value":{"name":"bash","arguments":"{}"}}
+    , written);
 }
 
 test "a decision rejects an unknown arm" {

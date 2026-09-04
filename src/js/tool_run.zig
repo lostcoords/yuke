@@ -95,7 +95,7 @@ fn decisionOf(out: std.mem.Allocator, point: proto.hook.Point, text: []const u8)
     };
     return switch (parsed) {
         .proceed => .proceed,
-        .replace => |value| .{ .replace = std.json.Stringify.valueAlloc(out, value, .{}) catch return .proceed },
+        .replace => |replaced| .{ .replace = std.json.Stringify.valueAlloc(out, replaced.value, .{}) catch return .proceed },
         .block => |blocked| .{ .block = out.dupe(u8, blocked.reason) catch return .proceed },
     };
 }
