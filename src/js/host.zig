@@ -564,6 +564,24 @@ test "eval returns an integer" {
     try std.testing.expectEqual(@as(i32, 42), try host.evalInt("globalThis.n"));
 }
 
+test "an ascii name sort without localeCompare keeps order" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.eval(
+        \\const names = ["minimax", "opencode", "opencode-responses"];
+        \\const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+        \\globalThis.out = names.slice().sort(cmp).join(",");
+    , "sort.js");
+    const out = try host.ctx.eval("globalThis.out", "r.js", .{});
+    defer host.ctx.freeValue(out);
+    const text = try host.ctx.toCStringLen(out);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("minimax,opencode,opencode-responses", text);
+}
+
 test "two hosts do not share globals" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);

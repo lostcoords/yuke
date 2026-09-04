@@ -254,7 +254,8 @@ function openModelPicker(ctx) {
   const current = chatEntry();
   const currentId = current && current.session ? current.session.model : null;
   const show = () => {
-    const models = catalogOf().models.slice().sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
+    // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
+    const models = catalogOf().models.slice().sort((a, b) => (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     if (models.length === 0) {
       notice.show("no model in the catalog");
       return null;
