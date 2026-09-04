@@ -62,7 +62,7 @@ pub const ReasoningBudget = union(enum) {
 pub const Dialect = struct {
     thinking_format: ThinkingFormat = .none,
     reasoning_replay: ReasoningReplay = .none,
-    max_tokens_field: MaxTokensField = .@"max-tokens",
+    max_tokens_field: MaxTokensField = .max_tokens,
     anthropic_adaptive: bool = false,
     reasoning_budget: ReasoningBudget = .unsupported,
 };

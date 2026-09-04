@@ -24,7 +24,7 @@ pub const Request = struct {
     reasoning: ir.ReasoningControl = .default,
     thinking_format: ir.ThinkingFormat = .none,
     reasoning_replay: ir.ReasoningReplay = .none,
-    max_tokens_field: ir.MaxTokensField = .@"max-tokens",
+    max_tokens_field: ir.MaxTokensField = .max_tokens,
     /// Constrain the response to a schema. A null schema leaves the response free.
     output_schema: ?ir.OutputSchema = null,
 };
@@ -34,7 +34,7 @@ pub const TextOptions = struct {
     max_output_tokens: u32 = 1024,
     reasoning: ir.ReasoningControl = .default,
     thinking_format: ir.ThinkingFormat = .none,
-    max_tokens_field: ir.MaxTokensField = .@"max-tokens",
+    max_tokens_field: ir.MaxTokensField = .max_tokens,
 };
 
 pub const Content = union(enum) {

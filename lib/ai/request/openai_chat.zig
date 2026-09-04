@@ -19,8 +19,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.objectField("store");
     try jw.write(false);
     try jw.objectField(switch (request.max_tokens_field) {
-        .@"max-tokens" => "max_tokens",
-        .@"max-completion-tokens" => "max_completion_tokens",
+        .max_tokens => "max_tokens",
+        .max_completion_tokens => "max_completion_tokens",
     });
     try jw.write(request.max_output_tokens);
     try writeReasoning(&jw, request.thinking_format, request.reasoning);
@@ -279,8 +279,8 @@ fn writeReasoning(
             try jw.objectField("enable_thinking");
             try jw.write(on);
         },
-        .@"string-thinking" => try json.field(jw, "thinking", level),
-        .@"ant-ling" => if (on) try json.nested(jw, "reasoning", "effort", level),
+        .string_thinking => try json.field(jw, "thinking", level),
+        .ant_ling => if (on) try json.nested(jw, "reasoning", "effort", level),
         .deepseek => {
             try json.nested(jw, "thinking", "type", switch_shape);
             if (on) try json.field(jw, "reasoning_effort", level);
@@ -387,7 +387,7 @@ test "the output-token member follows the host" {
     try expectJson(
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_completion_tokens":8,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
-        .{ .model = "m", .max_output_tokens = 8, .max_tokens_field = .@"max-completion-tokens" },
+        .{ .model = "m", .max_output_tokens = 8, .max_tokens_field = .max_completion_tokens },
         .{ .blocks = &blocks },
     );
 }
@@ -401,8 +401,8 @@ test "each host dialect spells the reasoning control its own way" {
         .{ .format = .zai, .expected = "\"thinking\":{\"type\":\"enabled\",\"clear_thinking\":false}" },
         .{ .format = .qwen, .expected = "\"enable_thinking\":true" },
         .{ .format = .together, .expected = "\"reasoning\":{\"enabled\":true}" },
-        .{ .format = .@"string-thinking", .expected = "\"thinking\":\"high\"" },
-        .{ .format = .@"ant-ling", .expected = "\"reasoning\":{\"effort\":\"high\"}" },
+        .{ .format = .string_thinking, .expected = "\"thinking\":\"high\"" },
+        .{ .format = .ant_ling, .expected = "\"reasoning\":{\"effort\":\"high\"}" },
     };
     for (cases) |case| {
         var buf: std.Io.Writer.Allocating = .init(testing.allocator);

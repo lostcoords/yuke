@@ -419,7 +419,7 @@ fn dialectOf(
     return .{
         .thinking_format = named(model.ThinkingFormat, thinking, .none),
         .reasoning_replay = named(model.ReasoningReplay, replay, .none),
-        .max_tokens_field = named(model.MaxTokensField, max_tokens, .@"max-tokens"),
+        .max_tokens_field = named(model.MaxTokensField, max_tokens, .max_tokens),
         .anthropic_adaptive = adaptive orelse false,
         .reasoning_budget = .from(budget_min, budget_max),
     };
@@ -491,6 +491,6 @@ test "every dialect name the catalog publishes decodes" {
     inline for (.{ "reasoning_content", "reasoning_details" }) |name| {
         try testing.expect(dialectOf(null, name, null, null, null, null).reasoning_replay != .none);
     }
-    const renamed = dialectOf(null, null, "max-completion-tokens", null, null, null);
-    try testing.expectEqual(model.MaxTokensField.@"max-completion-tokens", renamed.max_tokens_field);
+    const renamed = dialectOf(null, null, "max_completion_tokens", null, null, null);
+    try testing.expectEqual(model.MaxTokensField.max_completion_tokens, renamed.max_tokens_field);
 }

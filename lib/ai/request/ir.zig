@@ -75,7 +75,7 @@ pub const Effort = enum { minimal, low, medium, high, xhigh, max };
 pub const ResponsesDialect = enum { standard, codex };
 
 /// Select the output-token member an OpenAI-chat host accepts. Only OpenAI itself renamed it.
-pub const MaxTokensField = enum { @"max-tokens", @"max-completion-tokens" };
+pub const MaxTokensField = enum { max_tokens, max_completion_tokens };
 
 /// Select how a prior assistant turn returns its reasoning in an OpenAI-chat request.
 /// DeepSeek rejects a thinking turn that comes back without it.
@@ -90,8 +90,8 @@ pub const ThinkingFormat = enum {
     zai,
     qwen,
     together,
-    @"string-thinking",
-    @"ant-ling",
+    string_thinking,
+    ant_ling,
 };
 
 /// The reasoning control one request asks for, resolved against the model.
@@ -119,7 +119,7 @@ pub const Request = struct {
     /// Only OpenAI-chat reads this field.
     reasoning_replay: ReasoningReplay = .none,
     /// Only OpenAI-chat reads this field. A compatible host keeps the original member.
-    max_tokens_field: MaxTokensField = .@"max-tokens",
+    max_tokens_field: MaxTokensField = .max_tokens,
     /// Only Responses reads this field. The bound credential selects it, not the model.
     responses_dialect: ResponsesDialect = .standard,
     /// Only Anthropic reads this field. The instance cache policy sets it.
