@@ -1,9 +1,6 @@
 //! The tools `index.js` registered. Each one owns a live JavaScript handler.
 //!
-//! A provider caches on the request prefix, and the tool definitions lead that prefix. A change to
-//! this table therefore drops the cached prefix of every later request in a live session. Register
-//! from an explicit action, such as a plugin load or a user command, and never from a background
-//! event. The table stays sorted by name, so the load order of a plugin cannot move the prefix.
+//! The table stays sorted by name, so the load order of a plugin never moves the advertised prefix.
 //!
 //! The host owns this table, so a handler stays reachable for the life of the context.
 //! A plugin registers and withdraws a tool at any time, and the engine asks for the set.
