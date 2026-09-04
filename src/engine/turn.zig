@@ -72,9 +72,11 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
     const rt = engine.sessions.get(session_id) orelse unreachable;
     std.debug.assert(rt.active_run == slot);
 
+    // Only a value that outlives one round belongs here, such as the workspace root and commit data.
+    // A round builds its request on its own arena, because that memory would otherwise grow all run.
     var arena_state = std.heap.ArenaAllocator.init(engine.deps.gpa);
     defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    const run_arena = arena_state.allocator();
 
     // Clear a live draft on an early return. A commit fold nulls it first on the normal path.
     defer if (rt.draft != null) {
@@ -106,14 +108,14 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
         } } };
         // Fold the start into the session, then publish. The fold opens the draft.
         rt.apply(started_note.params) catch |err| {
-            commitFinal(engine, arena, slot, null, streamer.usage, .{ .failed = failure(err) });
+            commitFinal(engine, run_arena, slot, null, streamer.usage, .{ .failed = failure(err) });
             return;
         };
         const live = &rt.draft.?;
         engine.sinks.emit(started_note);
         session_events.announceActivity(engine, rt); // `run.started` says a run exists, not what it does.
 
-        const terminal = streamRound(engine, arena, slot, &streamer);
+        const terminal = streamRound(engine, slot, &streamer);
 
         // Settle any tool parts into a terminal state. The request builder rejects a pending tool.
         const has_tools = hasToolPart(live);
@@ -121,25 +123,25 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
             if (terminal == .success and terminal.success == .tool_calls) {
                 // Resolve the session root once, then pass it to each asynchronous tool call.
                 if (!root_resolved) {
-                    workspace_root = workspaceRoot(engine, arena, session_id.raw) catch null;
+                    workspace_root = workspaceRoot(engine, run_arena, session_id.raw) catch null;
                     root_resolved = true;
                 }
-                settlePendingTools(engine, arena, slot, &streamer, workspace_root, live) catch |err| {
+                settlePendingTools(engine, run_arena, slot, &streamer, workspace_root, live) catch |err| {
                     faultSlot(engine, session_id, slot, err);
                     return;
                 };
                 if (workspace_root == null) {
-                    commitFinal(engine, arena, slot, live, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
+                    commitFinal(engine, run_arena, slot, live, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
                     return;
                 }
             } else {
                 // Cancel any pending tool part; a canceled/failed stream or a malformed tool_use lands here.
-                settlePendingTools(engine, arena, slot, &streamer, null, live) catch |err| {
+                settlePendingTools(engine, run_arena, slot, &streamer, null, live) catch |err| {
                     faultSlot(engine, session_id, slot, err);
                     return;
                 };
                 if (terminal == .success) {
-                    commitFinal(engine, arena, slot, live, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
+                    commitFinal(engine, run_arena, slot, live, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
                     return;
                 }
             }
@@ -148,24 +150,24 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
         // A cancel forces the canceled terminal. A failed stream or a plain answer also ends the turn.
         const commit_terminal: Terminal = if (slot.cancel_requested) .canceled else terminal;
         if (commit_terminal != .success or !has_tools) {
-            commitFinal(engine, arena, slot, live, streamer.usage, commit_terminal);
+            commitFinal(engine, run_arena, slot, live, streamer.usage, commit_terminal);
             return;
         }
 
         // A tool round: commit it and start the next round. The commit fold extends the transcript.
-        _ = commitRound(engine, arena, slot, live, streamer.usage, terminal, .intermediate) catch |err| {
+        _ = commitRound(engine, run_arena, slot, live, streamer.usage, terminal, .intermediate) catch |err| {
             faultSlot(engine, session_id, slot, err);
             return;
         };
         // A cancel at the round boundary ends the run without a new empty round.
         if (slot.cancel_requested) {
-            finishRunOpen(engine, arena, slot, .{ .canceled = .{} }) catch |err| faultSlot(engine, session_id, slot, err);
+            finishRunOpen(engine, run_arena, slot, .{ .canceled = .{} }) catch |err| faultSlot(engine, session_id, slot, err);
             return;
         }
         // A finite max_rounds ends the turn after the capped tool round. null is unlimited.
         if (slot.config.max_rounds) |cap| {
             if (slot.progress.rounds_committed >= cap) {
-                finishRunOpen(engine, arena, slot, .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } }) catch |err| faultSlot(engine, session_id, slot, err);
+                finishRunOpen(engine, run_arena, slot, .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } }) catch |err| faultSlot(engine, session_id, slot, err);
                 return;
             }
         }
@@ -185,7 +187,12 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
 }
 
 /// Stream one round, and resend the same request while the classifier allows it.
-fn streamRound(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) Terminal {
+fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
+    // The request and its attempts die with this round, so a long run never accumulates them.
+    var round_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
+    defer round_state.deinit();
+    const arena = round_state.allocator();
+
     // Build once for the round. Every attempt then sends the same bytes and the same tool prefix.
     const request = roundRequest(engine, arena, slot, streamer) catch |err| {
         std.log.warn("run {d} could not build its request: {t}", .{ slot.runId(), err });
@@ -607,6 +614,8 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
     std.debug.assert(rt.active_run == null);
     std.debug.assert(rt.queueDepth() > 0);
 
+    // Only a value that outlives one round belongs here, such as the workspace root and commit data.
+    // A round builds its request on its own arena, because that memory would otherwise grow all run.
     var arena_state = std.heap.ArenaAllocator.init(engine.deps.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
