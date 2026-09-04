@@ -254,10 +254,10 @@ test "a transport failure keeps a poll alive but ends a refresh" {
     defer arena.deinit();
     var out: [512]u8 = undefined;
 
-    var timed_out: oauth.CannedHttp = .{ .replies = &.{.{ .fail = error.CloudTimeout }} };
+    var timed_out: oauth.CannedHttp = .{ .replies = &.{.{ .fail = error.ConnectionResetByPeer }} };
     try testing.expectError(oauth.Error.Transient, poll(arena.allocator(), timed_out.seam(), "dc", 0, &out));
 
-    var rotating: oauth.CannedHttp = .{ .replies = &.{.{ .fail = error.CloudTimeout }} };
+    var rotating: oauth.CannedHttp = .{ .replies = &.{.{ .fail = error.ConnectionResetByPeer }} };
     try testing.expectError(oauth.Error.Ambiguous, refresh(arena.allocator(), rotating.seam(), "rt", 0, &out));
 
     // A request that never left is safe to repeat on either call.

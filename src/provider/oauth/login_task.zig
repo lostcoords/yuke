@@ -37,7 +37,7 @@ pub fn run(runtime: *App, slot: *login_runtime.LoginSlot) void {
 }
 
 fn drive(runtime: *App, slot: *login_runtime.LoginSlot) !proto.auth.AuthLoginOutcome {
-    var client: http.Client = .init(runtime.gpa, runtime.io, .none);
+    var client: http.Client = .init(runtime.gpa, runtime.io);
     defer client.deinit();
     const seam = oauth.Http.fromClient(&client);
 
@@ -161,7 +161,7 @@ pub fn refreshOnce(runtime: *App, margin_ms: u64) !bool {
     const previous = runtime.io.swapCancelProtection(.blocked);
     defer _ = runtime.io.swapCancelProtection(previous);
 
-    var client: http.Client = .init(runtime.gpa, runtime.io, .none);
+    var client: http.Client = .init(runtime.gpa, runtime.io);
     defer client.deinit();
     const seam = oauth.Http.fromClient(&client);
 

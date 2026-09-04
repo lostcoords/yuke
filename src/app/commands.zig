@@ -74,7 +74,7 @@ pub fn authLogin(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Aut
     };
     errdefer runtime.logins.remove(login_id);
 
-    var client: net_http.Client = .init(runtime.gpa, runtime.io, .none);
+    var client: net_http.Client = .init(runtime.gpa, runtime.io);
     defer client.deinit();
     const body = try arena.alloc(u8, net_http.max_oauth_response_bytes);
     const seam = provider_oauth.Http.fromClient(&client);

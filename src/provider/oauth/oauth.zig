@@ -192,9 +192,9 @@ test "a rotating call cannot repeat what a poll may repeat" {
     try testing.expectEqual(Error.PreFlight, classify(error.PreFlight, true));
     try testing.expectEqual(Error.PreFlight, classify(error.PreFlight, false));
     // The refresh spent its token, so an unknown outcome is terminal.
-    try testing.expectEqual(Error.Ambiguous, classify(error.CloudTimeout, true));
+    try testing.expectEqual(Error.Ambiguous, classify(error.ConnectionResetByPeer, true));
     // The poll holds a reusable device code, so the same failure keeps the login alive.
-    try testing.expectEqual(Error.Transient, classify(error.CloudTimeout, false));
+    try testing.expectEqual(Error.Transient, classify(error.ConnectionResetByPeer, false));
 }
 
 test "an interval falls back when it is absent, zero, or a string" {
