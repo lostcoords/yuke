@@ -27,7 +27,7 @@ pub fn Adapter(comptime protocol: types.Protocol) type {
     };
 }
 
-/// Validate one request and serialize it into the body `protocol` expects, using `arena`.
+/// Validate one request, then serialize it into the body `protocol` expects with `arena`.
 pub fn serialize(arena: std.mem.Allocator, protocol: types.Protocol, request: ir.Request, request_ir: ir.RequestIr) ![]u8 {
     try ir.validate(arena, request, request_ir);
     var body: std.Io.Writer.Allocating = .init(arena);

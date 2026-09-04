@@ -143,7 +143,6 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
 }
 
 /// Return the last user text block, the only place this endpoint accepts a breakpoint.
-/// Instructions cannot carry one, and an assistant block is not the developer message the guide names.
 fn lastUserText(blocks: []const ir.Block) ?usize {
     var i = blocks.len;
     while (i > 0) {
@@ -309,8 +308,7 @@ test "a named effort rides on the responses request" {
     );
 }
 
-// gpt-5.1 and later list `off`, which the endpoint spells `none`. Omitting the control instead
-// would leave the model at its own default, which reasons.
+// gpt-5.1 and later list `off`, and this endpoint spells it `none`.
 test "off asks for no reasoning rather than omitting the control" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
     try expectJson(

@@ -51,8 +51,7 @@ pub const Credential = union(enum) {
     }
 };
 
-/// Report whether the generated header, the pinned headers, and `configured` name one header twice.
-/// The registry calls this before it reports a route ready, so no route is ready and then unusable.
+/// Report whether the generated, pinned, and configured headers name one header twice.
 pub fn headerConflict(generated: ?[]const u8, pinned: []const Header, configured: []const Header) bool {
     for (configured) |h| {
         if (generated) |name| if (std.ascii.eqlIgnoreCase(name, h.name)) return true;
@@ -64,7 +63,7 @@ pub fn headerConflict(generated: ?[]const u8, pinned: []const Header, configured
     return false;
 }
 
-/// Append the credential and pinned headers to `out`. Every value is duplicated into `gpa`.
+/// Append the credential and pinned headers to `out`, and copy every value into `gpa`.
 pub fn authHeaders(
     gpa: std.mem.Allocator,
     p: *const ProviderInstance,

@@ -1,5 +1,4 @@
-//! The request IR maps provider-neutral input to flat blocks.
-//! IR strings borrow caller input. Keep the source storage alive through serialization.
+//! The request IR maps provider-neutral input to flat blocks, and borrows every caller string.
 
 const std = @import("std");
 const types = @import("../types.zig");
@@ -104,8 +103,7 @@ pub const ResponsesDialect = enum { standard, codex };
 /// Select the output-token member an OpenAI-chat host accepts. Only OpenAI itself renamed it.
 pub const MaxTokensField = enum { max_tokens, max_completion_tokens };
 
-/// Select how a prior assistant turn returns its reasoning in an OpenAI-chat request.
-/// DeepSeek rejects a thinking turn that comes back without it.
+/// Select how a prior assistant turn returns its reasoning, which DeepSeek requires.
 pub const ReasoningReplay = enum { none, reasoning, reasoning_content, reasoning_details };
 
 /// Select the reasoning control an OpenAI-chat host accepts. The dialects disagree.
@@ -157,8 +155,7 @@ pub const Request = struct {
 
 /// These options control the transcript fold.
 pub const Options = struct {
-    /// Replay reasoning only from a turn with this provenance.
-    /// A null target drops all prior reasoning because signatures are model-specific.
+    /// Replay reasoning only from a turn with this provenance, because a signature names one model.
     target: ?types.ModelIdentity = null,
     /// What the target model reads. An attachment it cannot read becomes a note instead.
     modalities: types.Modalities = .{},

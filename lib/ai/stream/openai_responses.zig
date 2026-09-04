@@ -1,5 +1,4 @@
-//! Map OpenAI Responses SSE data to neutral stream events.
-//! Deltas borrow caller `scratch`. Terminal results and `done` borrow reducer buffers until `deinit`. Malformed peer input returns `error.Protocol`.
+//! Map OpenAI Responses SSE data to neutral stream events, and return `error.Protocol` on bad input.
 
 const std = @import("std");
 const event = @import("event.zig");
@@ -285,8 +284,7 @@ pub const Reducer = struct {
         const status = json.childStr(response, "status") orelse return error.Protocol;
         if (!std.mem.eql(u8, status, "completed")) return error.Protocol;
         try self.recordUsage(response);
-        // This API has no tool stop reason: a response carrying a function call still reports
-        // `completed`. The blocks decide instead, or the engine refuses the tool part it was sent.
+        // This API reports `completed` even for a response that holds a function call.
         self.stop_reason = if (self.refused) .refusal else if (self.hasToolBlock()) .tool_calls else .stop;
         try self.setRawStopReason("completed");
         try self.emitDone(out);
@@ -552,8 +550,7 @@ test "tool turn: input deltas stream and authoritative arguments surface at stop
     try testing.expectEqualStrings("call_1", call.call_id);
     try testing.expectEqualStrings("run", call.name);
     try testing.expectEqualStrings("{\"cmd\":\"zig test\"}", call.arguments);
-    // This API reports `completed` for a function call too, so the blocks decide the stop reason.
-    // Reporting `stop` here makes the engine refuse the very tool part it was sent.
+    // A `stop` here makes the engine refuse the tool part it received.
     try testing.expectEqual(types.FinishReason.tool_calls, h.out.items[4].done.stop_reason);
 }
 

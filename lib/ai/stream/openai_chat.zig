@@ -1,6 +1,4 @@
 //! Map OpenAI Chat Completions SSE data to neutral stream events.
-//! The dialect has no block-stop event, so a new block or `[DONE]` stops the open block.
-//! Deltas borrow caller `scratch`. Terminal results and `done` borrow reducer buffers until `deinit`. Malformed peer input returns `error.Protocol`.
 
 const std = @import("std");
 const event = @import("event.zig");
@@ -179,6 +177,7 @@ pub const Reducer = struct {
         if (json.childObj(usage, "completion_tokens_details")) |d| self.usage.reasoning = try json.countOf(d, "reasoning_tokens");
     }
 
+    /// This dialect sends no block-stop event, so a new block or `[DONE]` stops the open one.
     fn startBlock(
         self: *Reducer,
         kind: event.BlockKind,
@@ -458,7 +457,7 @@ test "a refusal streams as text and reports refusal" {
     try testing.expectEqualStrings("I cannot help", h.out.items[1].text_delta.text);
     const done = h.out.items[h.out.items.len - 1].done;
     try testing.expectEqual(types.FinishReason.refusal, done.stop_reason);
-    try testing.expectEqualStrings("stop", done.raw_stop_reason); // The provider value stays intact.
+    try testing.expectEqualStrings("stop", done.raw_stop_reason);
 }
 
 test "malformed JSON degrades to a protocol error" {

@@ -1,8 +1,4 @@
-//! Neutral events use a closed block-based shape.
-//! It assigns dense `BlockId` values, emits block events and one `done`, and borrows source slices until the consumer drains the stream.
-//! Several blocks can stay open at one time, because the Responses API interleaves output items.
-//! The consumer numbers its own parts in emit order, so a block id is never a part id.
-//! A reducer stops or drops each open block before `done`; a dropped block opens no part.
+//! Neutral events name dense blocks and borrow every source slice until the consumer drains them.
 
 const types = @import("../types.zig");
 
@@ -72,8 +68,7 @@ pub const Redacted = struct {
 pub const ToolCall = struct {
     call_id: []const u8,
     name: []const u8,
-    /// Complete JSON object text from the provider or joined deltas.
-    /// The consumer validates this value.
+    /// Complete JSON object text, from the provider or from joined deltas. The consumer validates it.
     arguments: []const u8,
 };
 

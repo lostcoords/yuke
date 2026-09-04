@@ -1,5 +1,4 @@
-//! Convert SSE bytes into `data` payloads with standard line endings.
-//! A blank line emits a payload. It joins `data:` fields with a newline and ignores `event:` because providers encode the type in JSON.
+//! Convert SSE bytes into `data` payloads, joined with a newline and emitted on a blank line.
 
 const std = @import("std");
 

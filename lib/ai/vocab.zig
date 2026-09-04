@@ -1,5 +1,4 @@
-//! The closed vocabularies the serializers and the routes share, without the generated table.
-//! The catalog generator imports this rather than `ai.zig`, so a missing table cannot block a rebuild.
+//! The vocabularies the generator shares with the library, less the table it writes.
 
 pub const types = @import("types.zig");
 pub const ir = @import("request/ir.zig");

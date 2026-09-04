@@ -1,5 +1,4 @@
-//! Map Anthropic Messages SSE data to neutral stream events.
-//! Deltas borrow caller `scratch`. Drain `out` before the next `decode`. Terminal results and `done` borrow reducer buffers until `deinit`. Malformed peer input returns `error.Protocol`.
+//! Map Anthropic Messages SSE data to neutral stream events, and drain `out` before the next decode.
 
 const std = @import("std");
 const event = @import("event.zig");
@@ -93,8 +92,7 @@ pub const Reducer = struct {
         try self.foldPromptUsage(usage);
     }
 
-    /// Fold the cumulative prompt counts from both events. `input` holds the cache subsets.
-    /// Keep the larger value of each, because a max counts a repeated report one time.
+    /// Fold the cumulative prompt counts, keeping the larger of each so a repeat counts one time.
     fn foldPromptUsage(self: *Reducer, usage: std.json.ObjectMap) Error!void {
         const cache_read = try json.countOf(usage, "cache_read_input_tokens");
         const cache_write = try json.countOf(usage, "cache_creation_input_tokens");
@@ -115,8 +113,7 @@ pub const Reducer = struct {
         const cb = json.fieldGet(root, "content_block") orelse return error.Protocol;
         const cb_type = json.fieldStr(cb, "type") orelse return error.Protocol;
 
-        // Borrow the fields now and own them after the block holds a slot. A failed copy leaks nothing.
-        // `deinit` frees each field that the block owns.
+        // Borrow the fields now and own them once the block holds a slot, so a failed copy leaks nothing.
         var kind: event.BlockKind = .text;
         var ignored = false;
         var call_id: []const u8 = "";

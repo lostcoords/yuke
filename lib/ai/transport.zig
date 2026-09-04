@@ -33,8 +33,7 @@ pub const AttemptInfo = struct {
     pub const Delivery = enum { definitely_unsent, possibly_sent };
 };
 
-/// Open one provider response through an injected transport.
-/// The run's reader child calls open. The returned body borrows `arena` for the turn.
+/// Open one provider response through an injected transport, whose body borrows `arena`.
 pub const Transport = struct {
     ctx: *anyopaque,
     vtable: *const VTable,
@@ -48,15 +47,13 @@ pub const Transport = struct {
     }
 };
 
-/// A response body provides one provider response. The reader child reads to end of stream, then deinits.
-/// A blocking adapter must use cancelable `std.Io` and return `error.Canceled` after cancellation.
+/// One provider response. A blocking adapter uses cancelable `std.Io` and returns `error.Canceled`.
 pub const ResponseBody = struct {
     ctx: *anyopaque,
     vtable: *const VTable,
 
     pub const VTable = struct {
-        /// Fill a non-empty `buf` with one or more bytes, or return 0 at end of stream.
-        /// A real adapter must retry a non-EOF zero-byte read and map only std EndOfStream to 0.
+        /// Fill a non-empty `buf` with one or more bytes, and return zero only at end of stream.
         read: *const fn (ctx: *anyopaque, buf: []u8) anyerror!usize,
         deinit: *const fn (ctx: *anyopaque) void,
     };
@@ -69,8 +66,7 @@ pub const ResponseBody = struct {
     }
 };
 
-/// Pull the response and hand each StreamEvent to `onEvent`. Reset scratch after each read.
-/// This prevents parse trees from accumulating for the whole turn. The callback must copy each borrowed slice before it returns.
+/// Hand each StreamEvent to `onEvent`, which copies what it keeps before the next read resets scratch.
 pub fn stream(
     gpa: std.mem.Allocator,
     body: ResponseBody,

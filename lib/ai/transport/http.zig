@@ -121,8 +121,7 @@ const HttpBody = struct {
         return self.readWithIdleTimeout(buf);
     }
 
-    /// Bound each read with the idle deadline. A read past the deadline maps to Error.Timeout.
-    /// A run cancel yields error.Canceled. The child read separates it from the deadline.
+    /// Bound each read with the idle deadline, and let the child read separate a cancel from it.
     fn readWithIdleTimeout(self: *HttpBody, buf: []u8) anyerror!usize {
         switch (self.idle_timeout) {
             .none => return self.readRaw(buf),
@@ -149,8 +148,7 @@ const HttpBody = struct {
         return self.readRaw(buf);
     }
 
-    /// Return the bytes the stream has now, never a full buffer.
-    /// `readSliceShort` returns short only at end of stream, so it would hold each SSE event until 4 KiB arrived.
+    /// Return the bytes the stream holds now, because a full-buffer read would delay every SSE event.
     fn readAvailable(self: *HttpBody, buf: []u8) std.Io.Reader.Error!usize {
         self.reader.fill(1) catch |err| switch (err) {
             error.EndOfStream => return 0,
@@ -189,10 +187,7 @@ const HttpBody = struct {
     }
 };
 
-/// Map a non-200 status to a stable class. A 429 never reaches here; `classify429` reads its body.
-/// The 505...599 range covers Anthropic's 529 overloaded status, which must stay repeatable.
-/// Read the retry headers into `info`. The caller must call this before `response.reader()`.
-/// That call invalidates every head string slice.
+/// Read the retry headers before `response.reader()`, which invalidates every head string slice.
 fn readRetryHeaders(head: std.http.Client.Response.Head, info: *transport.AttemptInfo) void {
     var it = head.iterateHeaders();
     while (it.next()) |h| {
@@ -212,6 +207,7 @@ fn readRetryHeaders(head: std.http.Client.Response.Head, info: *transport.Attemp
     }
 }
 
+/// Map a non-200 status to a stable class. The 505...599 range covers Anthropic's 529.
 fn mapStatus(status: std.http.Status) Error {
     return switch (@intFromEnum(status)) {
         401 => Error.AuthFailed,
@@ -223,8 +219,7 @@ fn mapStatus(status: std.http.Status) Error {
     };
 }
 
-/// Classify a 429 as a rate limit or a quota error. Bound the body read with the idle timeout.
-/// An unreadable body gives `RateLimitUnknown`. A spend cap and a rate limit share the status.
+/// Classify a 429 from its body, because a spend cap and a rate limit share the status.
 fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
     hb.reader = hb.response.reader(&hb.transfer_buffer);
     var buf: [2048]u8 = undefined;
@@ -237,8 +232,6 @@ fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
     return if (bodyIsRateLimit(arena, buf[0..n])) Error.RateLimited else Error.RateLimitUnknown;
 }
 
-/// Report whether the error body names an exhausted quota. OpenAI marks it in `error.code` or
-/// `error.type`. Anthropic marks a tier spend cap in `error.details.error_code`.
 /// Report whether the error body names a temporary rate limit. Absence of proof is not proof.
 fn bodyIsRateLimit(arena: Allocator, body: []const u8) bool {
     const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return false;
@@ -248,6 +241,7 @@ fn bodyIsRateLimit(arena: Allocator, body: []const u8) bool {
     return false;
 }
 
+/// Report whether the error body names an exhausted quota, by code, type, or spend-limit detail.
 fn bodyIsQuota(arena: Allocator, body: []const u8) bool {
     const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return false;
     const err = json.fieldGet(value, "error") orelse return false;

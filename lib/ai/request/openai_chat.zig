@@ -124,7 +124,7 @@ fn writeUserMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !void {
     try jw.endObject();
 }
 
-/// Name the member carrying replayed reasoning; `reasoning_details` needs an array the reducer drops.
+/// Name the member that carries replayed reasoning, or null when the host takes none.
 fn replayField(replay: ir.ReasoningReplay) ?[]const u8 {
     return switch (replay) {
         .none, .reasoning_details => null,

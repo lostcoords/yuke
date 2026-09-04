@@ -17,7 +17,7 @@ pub const ModelIdentity = struct {
     model: []const u8,
 };
 
-/// One kind a model reads or writes. A source name outside this set is dropped, never guessed.
+/// One kind a model reads or writes. The reader drops a source name outside this set.
 pub const Modality = enum { text, image, audio, video, pdf };
 
 /// What a model takes and what it returns.

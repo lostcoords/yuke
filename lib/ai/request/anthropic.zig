@@ -1,5 +1,4 @@
 //! Serialize an Anthropic Messages request from the neutral IR.
-//! With `request.cache`, mark the system block and the last eligible content block. Some compatible hosts answer 400, so the instance policy decides.
 
 const std = @import("std");
 const ir = @import("ir.zig");
@@ -72,7 +71,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.endObject();
 }
 
-/// Write the thinking control. Compatible hosts take `adaptive`; Anthropic takes a budget.
+/// Write the thinking control. A compatible host takes `adaptive`, and Anthropic takes a budget.
 fn writeThinking(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void {
     const kind: []const u8 = switch (reasoning) {
         // An effort is a whole-request control, so `output_config` carries it instead.
@@ -104,7 +103,7 @@ fn writeOutputConfig(jw: *std.json.Stringify, reasoning: ir.ReasoningControl, sc
     try jw.beginObject();
     if (effort) |value| try json.field(jw, "effort", @tagName(value));
     if (schema) |output| {
-        // Anthropic constrains sampling from the schema alone; it takes no name and no strict flag.
+        // Anthropic constrains the response from the schema alone, with no name and no strict flag.
         try jw.objectField("format");
         try jw.beginObject();
         try json.field(jw, "type", "json_schema");
@@ -179,18 +178,15 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
 
 /// Write one attachment. An image is an `image` block and every other document is a `document` block.
 fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media, cache: bool) !void {
+    const plain_text = std.mem.startsWith(u8, media.mime, "text/");
+    const document = plain_text or std.mem.eql(u8, media.mime, "application/pdf");
     const kind: []const u8 = switch (media.modality()) {
         .image => "image",
-        .pdf => "document",
+        // A document is a PDF or plain text, and no other type has a source shape on this API.
+        .pdf => if (document) "document" else return error.UnsupportedContent,
         // Anthropic reads no sound and no moving picture.
         .audio, .video, .text => return error.UnsupportedContent,
     };
-
-    // A document is a PDF or plain text; any other media type has no source shape on this API.
-    const plain_text = std.mem.startsWith(u8, media.mime, "text/");
-    const is_document = std.mem.eql(u8, kind, "document");
-    const is_pdf = std.mem.eql(u8, media.mime, "application/pdf");
-    if (is_document and !plain_text and !is_pdf) return error.UnsupportedContent;
 
     try jw.beginObject();
     try json.field(jw, "type", kind);

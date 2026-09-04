@@ -69,7 +69,7 @@ pub fn audioFormat(mime: []const u8) ![]const u8 {
 const testing = std.testing;
 
 test "base64 survives the chunk boundary it encodes across" {
-    // The writer encodes 3072 bytes at a time, so only the last chunk may pad.
+    // The writer encodes 3 * 1024 bytes at a time, so only the last chunk can pad.
     var data: [3 * 1024 + 7]u8 = undefined;
     for (&data, 0..) |*byte, i| byte.* = @truncate(i);
 
@@ -89,5 +89,5 @@ test "base64 survives the chunk boundary it encodes across" {
     const out = try testing.allocator.alloc(u8, try decoder.calcSizeForSlice(encoded));
     defer testing.allocator.free(out);
     try decoder.decode(out, encoded);
-    try testing.expectEqualSlices(u8, &data, out); // a lost or doubled byte would show here
+    try testing.expectEqualSlices(u8, &data, out);
 }

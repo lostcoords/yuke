@@ -8,7 +8,7 @@ pub const Protocol = types.Protocol;
 /// Select the API-key header.
 pub const ApiKeyHeader = enum { x_api_key, authorization_bearer };
 
-/// Name how an endpoint caches. A null policy is unverified, not a statement that it cannot.
+/// Name how an endpoint caches. A null policy means the control plane did not verify the host.
 pub const CachePolicy = enum {
     unsupported,
     /// The host caches a repeated prefix on its own, so a request marks nothing.
@@ -17,7 +17,6 @@ pub const CachePolicy = enum {
     openai_breakpoint,
 
     /// Report the marker for one route and model. Only a model that states it takes one gets one.
-    /// Unknown marks nothing here: a wrong marker can fail every request, a missing one costs a cache miss.
     pub fn markerFor(self: ?CachePolicy, accepts_breakpoint: ?bool) types.CacheMarker {
         return if (accepts_breakpoint == true) marker(self) else .none;
     }
@@ -169,8 +168,7 @@ test "only a model that states it takes a marker is marked" {
     const anthropic: ?CachePolicy = .anthropic_breakpoint;
     try testing.expectEqual(types.CacheMarker.anthropic, CachePolicy.markerFor(anthropic, true));
 
-    // MiniMax M3 caches and its own documentation warns against an explicit marker, and the feed
-    // states no capability for it. Unknown must not become a marker on every request.
+    // MiniMax M3 caches but refuses a marker, so an unknown capability must never write one.
     try testing.expectEqual(types.CacheMarker.none, CachePolicy.markerFor(anthropic, null));
     try testing.expectEqual(types.CacheMarker.none, CachePolicy.markerFor(anthropic, false));
 
