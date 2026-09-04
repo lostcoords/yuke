@@ -1,7 +1,6 @@
 //! One type owns the local `providers.json` file and the merged view it produces.
 
 const std = @import("std");
-const database = @import("../store/store.zig");
 const provider = @import("provider.zig");
 const provider_registry = @import("registry.zig");
 
@@ -14,8 +13,6 @@ path: ?[]u8 = null,
 local: ?provider.config.Loaded = null,
 /// One merged snapshot serves catalog reads and provider requests.
 merged: provider_registry.Registry,
-/// One control-plane fetch at a time. Two would race the stored ETag.
-fetching: bool = false,
 /// One credential edit at a time. The file write yields, so a second edit would lose an update.
 edit_lock: std.Io.Mutex = .init,
 
@@ -38,7 +35,7 @@ pub const Edit = union(enum) {
 };
 
 /// Apply one edit and install the result, so no caller builds a layer from a stale read.
-pub fn edit(self: *@This(), arena: std.mem.Allocator, provider_id: []const u8, change: Edit, db: *database.Database) !bool {
+pub fn edit(self: *@This(), arena: std.mem.Allocator, provider_id: []const u8, change: Edit) !bool {
     const path = self.path orelse return error.NoConfigDirectory;
     // Two clients can edit at once, so the read, the write, and the install are one critical section.
     try self.edit_lock.lock(self.io);
@@ -60,7 +57,7 @@ pub fn edit(self: *@This(), arena: std.mem.Allocator, provider_id: []const u8, c
         try next.append(arena, applyTo(.{ .id = provider_id }, change).?);
     }
 
-    return self.install(next.items, path, db);
+    return self.install(next.items, path);
 }
 
 /// Return the entry one edit produces, or null to drop it entirely.
@@ -121,7 +118,7 @@ pub fn forgetGrant(self: *@This(), provider_id: []const u8) void {
 }
 
 /// Render the layer, parse it, write it, then install it. A document that cannot load never lands.
-fn install(self: *@This(), providers: []const provider.config.LocalProvider, path: []const u8, db: *database.Database) !bool {
+fn install(self: *@This(), providers: []const provider.config.LocalProvider, path: []const u8) !bool {
     const bytes = try provider.config.serialize(self.gpa, providers);
     defer self.gpa.free(bytes);
 
@@ -129,7 +126,7 @@ fn install(self: *@This(), providers: []const provider.config.LocalProvider, pat
     errdefer next.deinit();
     // Build the replacement before the write. A later failure would leave the file ahead of memory,
     // and the next edit would then serialize the stale layer back over the file.
-    var next_merged = try self.load(db, &next);
+    var next_merged = try self.load(&next);
     errdefer next_merged.deinit();
     try provider.config.writeFileBytes(self.io, path, bytes);
 
@@ -140,8 +137,8 @@ fn install(self: *@This(), providers: []const provider.config.LocalProvider, pat
 }
 
 /// Install a layer the caller already built and wrote. Startup and a test seed use this.
-pub fn installLocal(self: *@This(), next: *provider.config.Loaded, db: *database.Database) !bool {
-    const next_merged = try self.load(db, next);
+pub fn installLocal(self: *@This(), next: *provider.config.Loaded) !bool {
+    const next_merged = try self.load(next);
     var previous = self.local;
     self.local = next.*;
     next.* = undefined;
@@ -150,13 +147,13 @@ pub fn installLocal(self: *@This(), next: *provider.config.Loaded, db: *database
 }
 
 /// Rebuild the merged view from the layers the store already holds.
-pub fn rebuild(self: *@This(), db: *database.Database) !bool {
-    const next = try self.load(db, if (self.local) |*loaded| loaded else null);
+pub fn rebuild(self: *@This()) !bool {
+    const next = try self.load(if (self.local) |*loaded| loaded else null);
     return self.swap(next);
 }
 
-fn load(self: *@This(), db: *database.Database, local: ?*provider.config.Loaded) !provider_registry.Registry {
-    return provider_registry.Registry.load(self.gpa, db, .{ .local = local, .env = self.env });
+fn load(self: *@This(), local: ?*provider.config.Loaded) !provider_registry.Registry {
+    return provider_registry.Registry.load(self.gpa, .{ .local = local, .env = self.env });
 }
 
 /// Take the replacement and free the live view, because a direct assignment frees live routes.

@@ -82,7 +82,7 @@ pub const App = struct {
             } else loaded.deinit();
         }
 
-        _ = try self.store.rebuild(&self.db);
+        _ = try self.store.rebuild();
 
         // The engine borrows every process resource, so it is built after all of them exist.
         self.engine = Engine.init(.{
@@ -128,7 +128,7 @@ pub const App = struct {
             .unchanged => return .current,
             .unavailable => return .catalog_unavailable,
             .updated => |etag| {
-                const changed = try self.store.rebuild(&self.db);
+                const changed = try self.store.rebuild();
                 // The stored ETag means the live snapshot holds that document, so it commits first.
                 try catalog_store.setEtag(&self.db, etag);
                 if (changed) self.announceCatalogChanged();

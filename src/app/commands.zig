@@ -5,8 +5,7 @@ const std = @import("std");
 const proto = @import("proto");
 const App = @import("app.zig").App;
 const provider_config = @import("../provider/config/providers.zig");
-const catalog_store = @import("../catalog/store.zig");
-const catalog_feed = @import("../catalog/feed.zig");
+const provider_ai = @import("../provider/provider.zig").ai;
 const provider_oauth = @import("../provider/provider.zig").oauth;
 const login_runtime = @import("../provider/oauth/login_runtime.zig");
 const login_task = @import("../provider/oauth/login_task.zig");
@@ -44,7 +43,7 @@ pub fn authSetApiKey(runtime: *App, arena: std.mem.Allocator, params: proto.auth
     if (!proto.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
     if (params.api_key.len == 0) return error.BadApiKey;
 
-    if (try runtime.store.edit(arena, params.provider_id, .{ .set_api_key = params.api_key }, &runtime.db)) runtime.announceCatalogChanged();
+    if (try runtime.store.edit(arena, params.provider_id, .{ .set_api_key = params.api_key })) runtime.announceCatalogChanged();
     runtime.announceAuthChanged(params.provider_id, .api_key);
     return .{};
 }
@@ -56,7 +55,7 @@ pub fn authLogin(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Aut
     // One provider holds one login, so a second attempt would race the first for the same grant.
     if (runtime.logins.byProvider(params.provider_id) != null) return error.LoginInProgress;
 
-    const row = try catalog_store.provider(&runtime.db, arena, params.provider_id) orelse return error.UnknownProvider;
+    const row = provider_ai.catalog.find(params.provider_id) orelse return error.UnknownProvider;
     const flow = login_runtime.Flow.parse(flowName(row.auth) orelse return error.NoLoginFlow) orelse return error.NoLoginFlow;
 
     // The slot arena owns the code and the url, because the login outlives this request arena.
@@ -100,15 +99,17 @@ pub fn authCancelLogin(runtime: *App, _: std.mem.Allocator, params: proto.auth.A
 pub fn authRemove(runtime: *App, arena: std.mem.Allocator, params: proto.auth.AuthRemoveParams) !proto.misc.Empty {
     if (!proto.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
 
-    if (try runtime.store.edit(arena, params.provider_id, .remove_credential, &runtime.db)) runtime.announceCatalogChanged();
+    if (try runtime.store.edit(arena, params.provider_id, .remove_credential)) runtime.announceCatalogChanged();
     runtime.announceAuthChanged(params.provider_id, null);
     return .{};
 }
 
 /// Report the flow one catalog row names. Only an OAuth provider names one.
-fn flowName(auth: ?catalog_feed.Auth) ?[]const u8 {
-    const named = auth orelse return null;
-    return if (named.kind == .oauth) named.flow else null;
+fn flowName(auth: provider_ai.catalog.Auth) ?[]const u8 {
+    return switch (auth) {
+        .oauth => |name| name,
+        .api_key => null,
+    };
 }
 
 /// Report the flows one provider accepts. Only a catalog row naming a known flow offers one.

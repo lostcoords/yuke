@@ -1,11 +1,9 @@
-//! Assemble every provider the engine offers, through two resolvers and no shared merge.
+//! Assemble every provider the engine offers by composing one file layer over the baked table.
 
 const std = @import("std");
 const proto = @import("proto");
 const provider = @import("provider.zig");
-const feed = @import("../catalog/feed.zig");
-const store = @import("../catalog/store.zig");
-const Database = @import("../store/store.zig").Database;
+const catalog = provider.ai.catalog;
 
 const instance = provider.instance;
 const model = provider.model;
@@ -103,11 +101,12 @@ pub const Match = struct {
 /// The sources one merge reads. Each one is absent when its layer is not configured.
 pub const Sources = struct {
     local: ?*const provider.config.Loaded = null,
-    catalog: []const feed.Provider = &.{},
+    /// The baked table. A test names its own rows, so this is not always the whole catalog.
+    catalog: []const catalog.Provider = &.{},
     env: ?*const EnvMap = null,
 };
 
-/// What one snapshot build needs. `load` reads the stored catalog itself, so it is not a member.
+/// What one snapshot build needs. `load` always reads the whole baked table, so it names no catalog.
 pub const Inputs = struct {
     local: ?*const provider.config.Loaded = null,
     env: ?*const EnvMap = null,
@@ -125,15 +124,15 @@ pub const Registry = struct {
         return .{ .arena = .init(gpa) };
     }
 
-    /// Read the stored catalog and build one owned snapshot.
-    pub fn load(gpa: std.mem.Allocator, db: *Database, inputs: Inputs) !Registry {
+    /// Build one owned snapshot over the baked table.
+    pub fn load(gpa: std.mem.Allocator, inputs: Inputs) !Registry {
         var self: Registry = .init(gpa);
         errdefer self.deinit();
         const arena = self.arena.allocator();
 
         self.rows = try resolve(arena, .{
             .local = inputs.local,
-            .catalog = try storedRows(db, arena, inputs.local),
+            .catalog = &catalog.providers,
             .env = inputs.env,
         });
 
@@ -160,16 +159,11 @@ pub const Registry = struct {
     }
 };
 
-/// Build the provider list. The result borrows `arena` and the sources.
+/// Compose `providers.json` with the baked catalog. The file wins field by field.
+/// The result borrows `arena` and the sources.
 pub fn resolve(arena: std.mem.Allocator, sources: Sources) ![]const Provider {
     var out: std.ArrayList(Provider) = .empty;
-    try appendLocal(arena, &out, sources);
-    return out.items;
-}
-
-/// Compose `providers.json` with the open catalog. The file wins field by field.
-fn appendLocal(arena: std.mem.Allocator, out: *std.ArrayList(Provider), sources: Sources) !void {
-    const loaded = sources.local orelse return;
+    const loaded = sources.local orelse return out.items;
     for (loaded.providers) |p| {
         const from_catalog = findCatalog(sources.catalog, p.id);
         const availability = localAvailability(arena, p, from_catalog, sources.env);
@@ -178,33 +172,39 @@ fn appendLocal(arena: std.mem.Allocator, out: *std.ArrayList(Provider), sources:
             .login_flow = if (from_catalog) |c| loginFlow(c.auth) else null,
             .name = if (from_catalog) |c| c.name else p.id,
             .origin = .local,
+            // The baked models already hold the effective shape, so only a file entry allocates.
             .models = if (p.models.len != 0)
                 try localModels(arena, p.models)
-            else
-                try catalogModels(arena, from_catalog),
+            else if (from_catalog) |c| c.models else &.{},
             .availability = availability,
         });
     }
+    return out.items;
 }
 
 /// Resolve the local credential, then complete the route from the catalog template.
 fn localAvailability(
     arena: std.mem.Allocator,
     p: provider.config.LocalProvider,
-    from_catalog: ?feed.Provider,
+    from_catalog: ?*const catalog.Provider,
     env: ?*const EnvMap,
 ) Availability {
-    const base_url = p.base_url orelse (if (from_catalog) |c| c.base_url else null) orelse return .{ .unavailable = .needs_route };
-    const protocol = p.protocol orelse (if (from_catalog) |c| c.protocol else null) orelse return .{ .unavailable = .needs_route };
-    const catalog_auth: ?feed.Auth = if (from_catalog) |c| c.auth else null;
-    const headers = p.headers orelse (if (from_catalog) |c| c.headers else &.{});
+    const template: ?*const instance.ProviderInstance = if (from_catalog) |c| &c.route else null;
+    const base_url = p.base_url orelse (if (template) |t| t.base_url else null) orelse return .{ .unavailable = .needs_route };
+    const protocol = p.protocol orelse (if (template) |t| t.protocol else null) orelse return .{ .unavailable = .needs_route };
+    // Every baked row states an api-key header, and a grant presents a bearer under the same member.
+    const catalog_header: ?instance.ApiKeyHeader = if (template) |t| switch (t.auth) {
+        .api_key => |header| header,
+        .none => null,
+    } else null;
+    const headers = p.headers orelse (if (template) |t| t.headers else &.{});
 
     var mechanism: instance.AuthMechanism = .none;
     var source: CredentialSource = .none;
     var dialect = p.responses_dialect orelse .standard;
     if (p.auth) |auth| switch (auth) {
         .api_key => |key| {
-            const header = key.header orelse (if (catalog_auth) |a| a.header else null) orelse return .{ .unavailable = .needs_route };
+            const header = key.header orelse catalog_header orelse return .{ .unavailable = .needs_route };
             mechanism = .{ .api_key = header };
             // The entry names an API-key route and holds no value, so the user must supply one.
             const from_file = key.source orelse return .{ .unavailable = .needs_credential };
@@ -220,7 +220,7 @@ fn localAvailability(
         },
         .oauth => |grant| {
             // The catalog states how a provider authenticates. The file only stores the grant.
-            const flow = (if (catalog_auth) |a| a.flow else null) orelse return .{ .unavailable = .needs_route };
+            const flow = (if (from_catalog) |c| loginFlow(c.auth) else null) orelse return .{ .unavailable = .needs_route };
             switch (oauthRoute(arena, flow, grant.access_token, grant.account_id, grant.expires_at_ms)) {
                 .unavailable => |reason| return .{ .unavailable = reason },
                 .ready => |route| {
@@ -230,8 +230,8 @@ fn localAvailability(
                 },
             }
         },
-    } else if (catalog_auth != null) {
-        // The file names no credential and the catalog says the provider needs one.
+    } else if (from_catalog != null) {
+        // The file names no credential, and every baked route presents one.
         return .{ .unavailable = .needs_credential };
     }
 
@@ -251,7 +251,7 @@ fn localAvailability(
             .protocol = protocol,
             .auth = mechanism,
             .headers = headers,
-            .cache = p.cache orelse (if (from_catalog) |c| c.cache else .unsupported),
+            .cache = p.cache orelse (if (template) |t| t.cache else null),
             .responses_dialect = dialect,
         },
         .credential = source,
@@ -297,24 +297,15 @@ fn oauthRoute(
 }
 
 /// Report the flow a provider logs in with. Only an OAuth provider names one.
-fn loginFlow(auth: ?feed.Auth) ?[]const u8 {
-    const row = auth orelse return null;
-    return if (row.kind == .oauth) row.flow else null;
+fn loginFlow(auth: catalog.Auth) ?[]const u8 {
+    return switch (auth) {
+        .oauth => |flow| flow,
+        .api_key => null,
+    };
 }
 
-/// Read the catalog row of each configured provider. The catalog never adds a provider by itself.
-fn storedRows(db: *Database, arena: std.mem.Allocator, local: ?*const provider.config.Loaded) ![]const feed.Provider {
-    const loaded = local orelse return &.{};
-    var out: std.ArrayList(feed.Provider) = .empty;
-    try out.ensureTotalCapacityPrecise(arena, loaded.providers.len);
-    for (loaded.providers) |p| {
-        if (try store.provider(db, arena, p.id)) |row| out.appendAssumeCapacity(row);
-    }
-    return out.items;
-}
-
-fn findCatalog(rows: []const feed.Provider, id: []const u8) ?feed.Provider {
-    for (rows) |c| if (std.mem.eql(u8, c.id, id)) return c;
+fn findCatalog(rows: []const catalog.Provider, id: []const u8) ?*const catalog.Provider {
+    for (rows) |*c| if (std.mem.eql(u8, c.id, id)) return c;
     return null;
 }
 
@@ -358,34 +349,6 @@ fn levels(arena: std.mem.Allocator, patch: []const ?[]const u8) ![]const model.R
     return out;
 }
 
-/// Read a dialect name. An unknown name degrades, because the source set is open.
-fn named(comptime T: type, name: ?[]const u8, fallback: T) T {
-    const value = name orelse return fallback;
-    return std.meta.stringToEnum(T, value) orelse fallback;
-}
-
-/// Convert the rows of an open source. The feed and the bundle publish one model shape, and they
-/// differ only in what each one may omit, so one projection serves both.
-fn sourceModels(arena: std.mem.Allocator, models: anytype) ![]const ModelSpec {
-    const out = try arena.alloc(ModelSpec, models.len);
-    for (models, 0..) |m, i| out[i] = .{
-        .id = m.id,
-        .upstream_id = m.upstream_id,
-        .name = m.name,
-        .limits = m.limits,
-        .cost = m.cost,
-        .caps = .{ .tools = m.flags.supports_tools, .vision = m.flags.supports_vision },
-        .reasoning_levels = try levels(arena, m.reasoning_levels),
-        .dialect = dialectOf(m.flags.thinking_format, m.flags.reasoning_replay, m.flags.max_tokens_field, m.flags.anthropic_adaptive, m.flags.reasoning_budget_min, m.flags.reasoning_budget_max),
-    };
-    return out;
-}
-
-fn catalogModels(arena: std.mem.Allocator, row: ?feed.Provider) ![]const ModelSpec {
-    const p = row orelse return &.{};
-    return sourceModels(arena, p.models);
-}
-
 /// Convert a local binding, which holds closed enums and no display name.
 fn localModels(arena: std.mem.Allocator, models: []const instance.ModelBinding) ![]const ModelSpec {
     const out = try arena.alloc(ModelSpec, models.len);
@@ -406,23 +369,6 @@ fn localModels(arena: std.mem.Allocator, models: []const instance.ModelBinding) 
         },
     };
     return out;
-}
-
-fn dialectOf(
-    thinking: ?[]const u8,
-    replay: ?[]const u8,
-    max_tokens: ?[]const u8,
-    adaptive: ?bool,
-    budget_min: ?i64,
-    budget_max: ?u64,
-) model.Dialect {
-    return .{
-        .thinking_format = named(model.ThinkingFormat, thinking, .none),
-        .reasoning_replay = named(model.ReasoningReplay, replay, .none),
-        .max_tokens_field = named(model.MaxTokensField, max_tokens, .max_tokens),
-        .anthropic_adaptive = adaptive orelse false,
-        .reasoning_budget = .from(budget_min, budget_max),
-    };
 }
 
 // ── The wire projection. ──
@@ -491,20 +437,6 @@ fn revisionOf(
 
 test {
     _ = @import("registry_test.zig");
-}
-
-// Pin every dialect name the cloud catalog publishes. An undecoded name drops a request rule in silence.
-test "the dialect names the catalog publishes today decode" {
-    const testing = std.testing;
-
-    inline for (.{ "zai", "openrouter", "qwen", "deepseek", "openai" }) |name| {
-        try testing.expect(dialectOf(name, null, null, null, null, null).thinking_format != .none);
-    }
-    inline for (.{ "reasoning_content", "reasoning_details" }) |name| {
-        try testing.expect(dialectOf(null, name, null, null, null, null).reasoning_replay != .none);
-    }
-    const renamed = dialectOf(null, null, "max_completion_tokens", null, null, null);
-    try testing.expectEqual(model.MaxTokensField.max_completion_tokens, renamed.max_tokens_field);
 }
 
 // The catalog lists `off` as a level, but it disables thinking rather than naming an effort.

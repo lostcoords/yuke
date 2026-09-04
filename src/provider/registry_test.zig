@@ -3,37 +3,38 @@
 const std = @import("std");
 const proto = @import("proto");
 const provider = @import("provider.zig");
-const feed = @import("../catalog/feed.zig");
 const registry = @import("registry.zig");
 const instance = provider.instance;
+const catalog = provider.ai.catalog;
 
 const resolve = registry.resolve;
 const credential = registry.credential;
 const EnvMap = std.process.Environ.Map;
 const testing = std.testing;
 
-fn catalogRow(id: []const u8, name: []const u8, models: []const feed.Model) feed.Provider {
+fn catalogRow(id: []const u8, name: []const u8, models: []const registry.ModelSpec) catalog.Provider {
     return .{
         .id = id,
         .name = name,
-        .base_url = "https://api.example/v1",
-        .protocol = .openai_chat,
-        .auth = .{ .kind = .api_key, .header = .authorization_bearer },
-        .cache = .unsupported,
-        .headers = &.{.{ .name = "x-catalog-version", .value = "1" }},
+        .auth = .{ .api_key = null },
+        .route = .{
+            .base_url = "https://api.example/v1",
+            .protocol = .openai_chat,
+            .auth = .{ .api_key = .authorization_bearer },
+            .cache = .unsupported,
+            .headers = &.{.{ .name = "x-catalog-version", .value = "1" }},
+        },
         .models = models,
     };
 }
 
-const catalog_model: feed.Model = .{
+const catalog_model: registry.ModelSpec = .{
     .id = "cm",
     .upstream_id = "cm",
     .name = "Catalog Model",
     .limits = .{ .context_window = 1000, .max_output_tokens = 100 },
-    .cost = .{ .input = 1, .output = 2, .cache_read = null, .cache_write = null },
-    .flags = .{ .supports_tools = true, .supports_vision = false },
-    .reasoning_levels = &.{},
-    .status = null,
+    .cost = .{ .input = 1, .output = 2 },
+    .caps = .{ .tools = true, .vision = false },
 };
 
 test "a local provider with an absent environment key reports that it needs one" {
@@ -304,15 +305,38 @@ test "an environment credential resolves through the production path" {
     try testing.expectEqualStrings("ACME_KEY", route.credential.env);
     try testing.expectEqualStrings("sk-from-env", credential(route.credential, &env, 0).?.api_key);
 }
-fn oauthCatalogRow(id: []const u8, flow: []const u8) feed.Provider {
+fn oauthCatalogRow(id: []const u8, flow: []const u8) catalog.Provider {
     return .{
         .id = id,
         .name = id,
-        .base_url = "https://api.example/v1",
-        .protocol = .openai_responses,
-        .auth = .{ .kind = .oauth, .flow = flow },
-        .cache = .unsupported,
-        .headers = &.{},
+        .auth = .{ .oauth = flow },
+        .route = .{
+            .base_url = "https://api.example/v1",
+            .protocol = .openai_responses,
+            // Every grant presents a bearer, so the baked route names that header.
+            .auth = .{ .api_key = .authorization_bearer },
+            .cache = .unsupported,
+        },
         .models = &.{},
     };
+}
+
+test "load composes the file over the real baked table" {
+    // Every merge rule above is fixed on a hand-made row. This fixes only that `load` reads the real one.
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"version":1,"providers":[{"id":"anthropic","api_key":"sk-baked"},
+        \\ {"id":"openai-codex","auth":{"oauth":{"access_token":"tok","expires_at_ms":9000000000000}}}]}
+    );
+    defer loaded.deinit();
+
+    var snapshot = try registry.Registry.load(testing.allocator, .{ .local = &loaded });
+    defer snapshot.deinit();
+
+    // A synthetic row could never produce this URL, so the route demonstrably came from the table.
+    const keyed = registry.find(snapshot.rows, "anthropic").?;
+    try testing.expectEqualStrings("https://api.anthropic.com/v1", keyed.availability.ready.instance.base_url);
+    try testing.expect(keyed.models.len != 0); // The baked models reach the picker with no copy.
+
+    // Stage 1 bakes this name. Without it the engine cannot start the login at all.
+    try testing.expectEqualStrings("codex", registry.find(snapshot.rows, "openai-codex").?.login_flow.?);
 }

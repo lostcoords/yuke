@@ -8,7 +8,6 @@ const poller = @import("../../net/poller.zig");
 const App = @import("../../app/app.zig").App;
 const login_runtime = @import("login_runtime.zig");
 const CredentialLock = @import("credential_lock.zig");
-const catalog_store = @import("../../catalog/store.zig");
 
 const oauth = provider.oauth;
 const xai = provider.oauth_xai;
@@ -109,7 +108,7 @@ fn install(runtime: *App, arena: std.mem.Allocator, slot: *login_runtime.LoginSl
         .expires_at_ms = tokens.expires_at_ms,
         .account_id = tokens.account_id,
     };
-    if (try runtime.store.edit(arena, slot.provider_id, .{ .set_grant = grant }, &runtime.db)) runtime.announceCatalogChanged();
+    if (try runtime.store.edit(arena, slot.provider_id, .{ .set_grant = grant })) runtime.announceCatalogChanged();
     runtime.announceAuthChanged(slot.provider_id, .oauth);
 }
 
@@ -230,10 +229,11 @@ fn dueGrant(runtime: *App, arena: std.mem.Allocator, margin_ms: u64) !?Due {
         if (auth.oauth.refresh_token == null) continue;
         if (auth.oauth.expires_at_ms > now_ms +| margin_ms) continue;
 
-        const row = try catalog_store.provider(&runtime.db, arena, p.id) orelse continue;
-        const named = row.auth orelse continue;
-        if (named.kind != .oauth) continue;
-        const flow = login_runtime.Flow.parse(named.flow orelse continue) orelse continue;
+        const row = provider.ai.catalog.find(p.id) orelse continue;
+        const flow = switch (row.auth) {
+            .oauth => |name| login_runtime.Flow.parse(name) orelse continue,
+            .api_key => continue,
+        };
         // The refresh yields, so a concurrent edit could free the layer these slices point into.
         return .{
             .provider_id = try arena.dupe(u8, p.id),
@@ -258,7 +258,7 @@ fn refreshFlow(arena: std.mem.Allocator, flow: login_runtime.Flow, seam: oauth.H
 
 /// Lapse the grant, so the run path refuses it and the client asks the human to log in again.
 fn store(runtime: *App, arena: std.mem.Allocator, due: Due, grant: provider.config.Grant) !void {
-    if (try runtime.store.edit(arena, due.provider_id, .{ .set_grant = grant }, &runtime.db)) runtime.announceCatalogChanged();
+    if (try runtime.store.edit(arena, due.provider_id, .{ .set_grant = grant })) runtime.announceCatalogChanged();
     runtime.announceAuthChanged(due.provider_id, .oauth);
 }
 
@@ -271,5 +271,5 @@ fn reloadLocal(runtime: *App) !void {
         return;
     };
     errdefer next.deinit();
-    _ = try runtime.store.installLocal(&next, &runtime.db);
+    _ = try runtime.store.installLocal(&next);
 }
