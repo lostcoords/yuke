@@ -33,6 +33,10 @@ pub const Caps = struct {
     structured_output: ?bool = null,
     /// Whether the model can stop reasoning. Null is unknown, so a caller may still ask.
     disable_reasoning: ?bool = null,
+    /// Whether the model caches a repeated prefix at all, by any mechanism.
+    prompt_caching: ?bool = null,
+    /// Whether the model accepts an explicit marker. MiniMax M3 caches and refuses one.
+    cache_breakpoint: ?bool = null,
 };
 
 /// One kind a model reads or writes. The request IR names the same set.

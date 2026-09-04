@@ -16,6 +16,12 @@ pub const CachePolicy = enum {
     anthropic_breakpoint,
     openai_breakpoint,
 
+    /// Report the marker for one route and model. Only a model that states it takes one gets one.
+    /// Unknown marks nothing here: a wrong marker can fail every request, a missing one costs a cache miss.
+    pub fn markerFor(self: ?CachePolicy, accepts_breakpoint: ?bool) types.CacheMarker {
+        return if (accepts_breakpoint == true) marker(self) else .none;
+    }
+
     /// Report the marker a request writes. A new policy must answer here.
     pub fn marker(self: ?CachePolicy) types.CacheMarker {
         return switch (self orelse return .none) {
@@ -157,6 +163,21 @@ test "decode a model with behavioral flags" {
     try testing.expectEqual(@as(usize, 2), parsed.value.reasoning_levels.len);
     try testing.expect(parsed.value.reasoning_levels[0] == null);
     try testing.expectEqualStrings("high", parsed.value.reasoning_levels[1].?);
+}
+
+test "only a model that states it takes a marker is marked" {
+    const anthropic: ?CachePolicy = .anthropic_breakpoint;
+    try testing.expectEqual(types.CacheMarker.anthropic, CachePolicy.markerFor(anthropic, true));
+
+    // MiniMax M3 caches and its own documentation warns against an explicit marker, and the feed
+    // states no capability for it. Unknown must not become a marker on every request.
+    try testing.expectEqual(types.CacheMarker.none, CachePolicy.markerFor(anthropic, null));
+    try testing.expectEqual(types.CacheMarker.none, CachePolicy.markerFor(anthropic, false));
+
+    // A host that caches on its own takes no marker whatever the model says.
+    try testing.expectEqual(types.CacheMarker.none, CachePolicy.markerFor(.automatic, true));
+    try testing.expectEqual(types.CacheMarker.none, CachePolicy.markerFor(null, true));
+    try testing.expectEqual(types.CacheMarker.openai, CachePolicy.markerFor(.openai_breakpoint, true));
 }
 
 test "header validation rejects what std.http asserts on" {

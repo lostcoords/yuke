@@ -23,6 +23,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
         .max_completion_tokens => "max_completion_tokens",
     });
     try jw.write(request.max_output_tokens);
+    // This endpoint writes no cache marker: OpenAI documents explicit breakpoints for Responses alone.
     try writeReasoning(&jw, request.thinking_format, request.reasoning);
     try writeResponseFormat(&jw, request.output_schema);
 

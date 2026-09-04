@@ -10,10 +10,14 @@ const resolve = @import("instance/resolve.zig");
 const transport = @import("transport.zig");
 const types = @import("types.zig");
 
+const model_types = @import("model.zig");
+
 pub const Model = struct {
     id: []const u8,
     provider: instance.ProviderInstance,
     credential: resolve.Credential,
+    /// What this model states it can do. An unknown capability is never a refusal.
+    caps: model_types.Caps = .{},
 };
 
 pub const Request = struct {
@@ -164,7 +168,7 @@ fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
         .reasoning_replay = request.reasoning_replay,
         .max_tokens_field = request.max_tokens_field,
         .responses_dialect = model.provider.responses_dialect,
-        .cache = instance.CachePolicy.marker(model.provider.cache),
+        .cache = instance.CachePolicy.markerFor(model.provider.cache, model.caps.cache_breakpoint),
         .output_schema = request.output_schema,
     };
     return adapter.serialize(arena, model.provider.protocol, value, .{ .blocks = request.blocks });

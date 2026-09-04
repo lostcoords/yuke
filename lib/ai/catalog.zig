@@ -34,7 +34,7 @@ pub fn resolve(selector: []const u8, credential: credentials.Credential) Error!c
     for (provider.models) |*spec| {
         if (!std.mem.eql(u8, spec.id, parts.model)) continue;
         // A gateway may rename a model, so the request sends the upstream id.
-        return .{ .id = spec.upstream_id, .provider = provider.route, .credential = credential };
+        return .{ .id = spec.upstream_id, .provider = provider.route, .credential = credential, .caps = spec.caps };
     }
     return Error.UnknownModel;
 }

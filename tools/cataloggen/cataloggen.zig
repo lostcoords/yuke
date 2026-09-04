@@ -197,6 +197,8 @@ fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
     // An absent capability stays unknown, so a caller may still try it.
     try emitOptionalBool(w, flags, "supports_structured_output", "structured_output");
     try emitOptionalBool(w, flags, "can_disable_reasoning", "disable_reasoning");
+    try emitOptionalBool(w, flags, "supports_prompt_caching", "prompt_caching");
+    try emitOptionalBool(w, flags, "supports_cache_breakpoint", "cache_breakpoint");
     try w.writeAll(" },\n");
     try emitModalities(run, try object(try member(spec, "modalities")));
     if (try member(spec, "status") != .null) {

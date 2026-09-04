@@ -21,6 +21,10 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.objectField("store");
     try jw.write(false);
 
+    // GPT-5.6 and later cache only what a breakpoint marks, and top-level instructions cannot carry one.
+    const cache_index = if (request.cache == .openai) lastUserText(request_ir.blocks) else null;
+    if (cache_index != null) try json.nested(&jw, "prompt_cache_options", "mode", "explicit");
+
     // The Codex backend refuses the sampling limits an API key accepts.
     switch (request.responses_dialect) {
         .standard => {
@@ -59,7 +63,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.objectField("input");
     try jw.beginArray();
     var message: ?Message = null;
-    for (request_ir.blocks) |block| {
+    for (request_ir.blocks, 0..) |block, index| {
         switch (block.value) {
             .text => |text| switch (block.role) {
                 .user => {
@@ -67,6 +71,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                     try jw.beginObject();
                     try json.field(&jw, "type", "input_text");
                     try json.field(&jw, "text", text);
+                    if (cache_index == index) try json.nested(&jw, "prompt_cache_breakpoint", "mode", "explicit");
                     try jw.endObject();
                 },
                 .assistant => {
@@ -132,6 +137,17 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try closeMessage(&jw, &message);
     try jw.endArray();
     try jw.endObject();
+}
+
+/// Return the last user text block, the only place this endpoint accepts a breakpoint.
+/// Instructions cannot carry one, and an assistant block is not the developer message the guide names.
+fn lastUserText(blocks: []const ir.Block) ?usize {
+    var i = blocks.len;
+    while (i > 0) {
+        i -= 1;
+        if (blocks[i].role == .user and blocks[i].value == .text) return i;
+    }
+    return null;
 }
 
 const Message = enum { user, assistant };
@@ -387,4 +403,35 @@ test "each attachment kind reaches its own input part" {
         .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
     );
+}
+
+test "an explicit breakpoint marks the last user text and nothing else" {
+    const blocks = [_]ir.Block{
+        .{ .role = .user, .value = .{ .text = "one" } },
+        .{ .role = .assistant, .value = .{ .text = "two" } },
+        .{ .role = .user, .value = .{ .text = "three" } },
+    };
+    try expectJson(
+        \\{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_options":{"mode":"explicit"},"max_output_tokens":8,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"one"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}
+    ,
+        .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai },
+        .{ .blocks = &blocks },
+    );
+
+    // A route that marks nothing, or marks another protocol's shape, writes neither member.
+    inline for (.{ types.CacheMarker.none, types.CacheMarker.anthropic }) |marker| {
+        var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer buf.deinit();
+        try serialize(&buf.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = marker }, .{ .blocks = &blocks });
+        try testing.expect(std.mem.indexOf(u8, buf.written(), "prompt_cache") == null);
+    }
+}
+
+test "a turn with no user text carries no breakpoint and no options member" {
+    // The endpoint refuses a breakpoint on instructions, so a tool-result-only turn marks nothing.
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c1", .content = "ok", .is_error = false } } }};
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try serialize(&buf.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai }, .{ .blocks = &blocks });
+    try testing.expect(std.mem.indexOf(u8, buf.written(), "prompt_cache") == null);
 }
