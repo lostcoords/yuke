@@ -48,9 +48,62 @@ pub const CredentialSource = union(enum) {
 /// A `union(enum)` renders as one tagged key, so an api_key entry keeps the shape it always had.
 const FileAuth = LocalAuth;
 
-/// The file writes a header and a model in the shapes the provider layer already defines.
+/// The file writes a header in the shape the provider layer already defines.
 const FileHeader = instance.Header;
-const FileModel = instance.ModelBinding;
+
+/// How one model reads and writes, in the flat shape the file states it.
+pub const FileFlags = struct {
+    supports_vision: bool = false,
+    supports_tools: bool = true,
+    reasoning_replay: request_ir.ReasoningReplay = .none,
+    thinking_format: request_ir.ThinkingFormat = .none,
+    anthropic_adaptive: bool = false,
+    reasoning_budget_min: ?i64 = null,
+    reasoning_budget_max: ?u64 = null,
+    max_tokens_field: request_ir.MaxTokensField = .max_tokens,
+};
+
+/// One model `providers.json` defines. The library owns the effective shape, so this projects onto it.
+pub const FileModel = struct {
+    id: []const u8,
+    upstream_id: []const u8,
+    /// A limit the file omits stays unknown, and the run falls back to its own ceiling.
+    limits: ai.model.Limits = .{},
+    /// A price the file omits stays unknown. A local endpoint publishes none.
+    cost: ai.model.Cost = .{},
+    /// A null level means the model takes no effort at all.
+    reasoning_levels: []const ?[]const u8 = &.{},
+    flags: FileFlags = .{},
+};
+
+/// Project the file's models onto the library shape. The result borrows `arena`.
+pub fn modelSpecs(arena: Allocator, models: []const FileModel) ![]const ai.model.ModelSpec {
+    const out = try arena.alloc(ai.model.ModelSpec, models.len);
+    for (models, 0..) |m, i| out[i] = .{
+        .id = m.id,
+        .upstream_id = m.upstream_id,
+        // The file writes no display name, so the id names the model everywhere it is shown.
+        .name = m.id,
+        .limits = m.limits,
+        .cost = m.cost,
+        .caps = .{ .tools = m.flags.supports_tools, .vision = m.flags.supports_vision },
+        .reasoning_levels = try levels(arena, m.reasoning_levels),
+        .dialect = .{
+            .thinking_format = m.flags.thinking_format,
+            .reasoning_replay = m.flags.reasoning_replay,
+            .max_tokens_field = m.flags.max_tokens_field,
+            .anthropic_adaptive = m.flags.anthropic_adaptive,
+            .reasoning_budget = .from(m.flags.reasoning_budget_min, m.flags.reasoning_budget_max),
+        },
+    };
+    return out;
+}
+
+fn levels(arena: Allocator, patch: []const ?[]const u8) ![]const ai.model.ReasoningLevel {
+    const out = try arena.alloc(ai.model.ReasoningLevel, patch.len);
+    for (patch, 0..) |level, i| out[i] = .from(level);
+    return out;
+}
 
 /// The file shape. Only `id` is required, and a catalog row can supply an absent routing field.
 const FileProvider = struct {
@@ -353,7 +406,7 @@ pub const LocalProvider = struct {
     cache: ?instance.CachePolicy = null,
     responses_dialect: ?instance.ResponsesDialect = null,
     headers: ?[]const instance.Header = null,
-    models: []const instance.ModelBinding = &.{},
+    models: []const FileModel = &.{},
 };
 
 const testing = std.testing;
@@ -625,4 +678,57 @@ test "the written file is private" {
     const st = try file.stat(io);
     const mode: u64 = @intCast(st.permissions.toMode());
     try testing.expectEqual(@as(u64, 0), mode & 0o077);
+}
+
+test "a file model decodes its flags and projects onto the library shape" {
+    var loaded = try loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"deepseek","base_url":"https://api.deepseek.com/v1","protocol":"openai_chat",
+        \\ "models":[{"id":"r1","upstream_id":"deepseek-reasoner",
+        \\ "limits":{"context_window":65536,"max_output_tokens":8192},
+        \\ "reasoning_levels":[null,"high"],
+        \\ "flags":{"reasoning_replay":"reasoning_content","thinking_format":"deepseek",
+        \\ "max_tokens_field":"max_completion_tokens","supports_vision":true,"reasoning_budget_max":32000}}]}
+    ));
+    defer loaded.deinit();
+
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const spec = (try modelSpecs(arena.allocator(), loaded.providers[0].models))[0];
+
+    try testing.expectEqualStrings("deepseek-reasoner", spec.upstream_id);
+    try testing.expectEqualStrings("r1", spec.name); // The file writes no display name.
+    try testing.expectEqual(@as(?u64, 65536), spec.limits.context_window);
+    try testing.expectEqual(request_ir.ThinkingFormat.deepseek, spec.dialect.thinking_format);
+    try testing.expectEqual(request_ir.ReasoningReplay.reasoning_content, spec.dialect.reasoning_replay);
+    try testing.expectEqual(request_ir.MaxTokensField.max_completion_tokens, spec.dialect.max_tokens_field);
+    try testing.expectEqual(@as(?u64, 32000), spec.dialect.reasoning_budget.range.max);
+    try testing.expect(spec.caps.vision.? and spec.caps.tools.?); // `supports_tools` defaults true.
+    try testing.expect(spec.reasoning_levels[0] == .none);
+    try testing.expectEqualStrings("high", spec.reasoning_levels[1].named);
+
+    // A price the file omits is unknown, not zero. A local endpoint publishes none.
+    try testing.expect(spec.cost.input == null);
+}
+
+test "a file model may omit its limits entirely" {
+    var loaded = try loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat",
+        \\ "models":[{"id":"qwen3","upstream_id":"qwen3:8b"}]}
+    ));
+    defer loaded.deinit();
+
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const spec = (try modelSpecs(arena.allocator(), loaded.providers[0].models))[0];
+    // The run falls back to its own ceiling, so a local endpoint needs no invented number.
+    try testing.expect(spec.limits.max_output_tokens == null);
+}
+
+test "the shipped sample document still loads" {
+    // The sample is documentation, so a schema change must not leave it silently unparseable.
+    var loaded = try loadBytes(testing.allocator, @embedFile("providers.sample.json"));
+    defer loaded.deinit();
+    try testing.expectEqual(@as(usize, 2), loaded.providers.len);
+    try testing.expectEqualStrings("minimax", loaded.providers[0].id);
+    try testing.expect(loaded.providers[0].models[0].flags.anthropic_adaptive);
 }

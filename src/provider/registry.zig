@@ -220,7 +220,7 @@ fn mergedModels(
     const baked: []const ModelSpec = if (from_catalog) |c| c.models else &.{};
     // The baked models already hold the effective shape, so only a file entry allocates.
     if (p.models.len == 0) return baked;
-    const extra = try localModels(arena, p.models);
+    const extra = try provider.config.modelSpecs(arena, p.models);
     if (baked.len == 0) return extra;
 
     var out: std.ArrayList(ModelSpec) = .empty;
@@ -396,36 +396,6 @@ pub fn findModel(rows: []const Provider, selector: []const u8) ?Match {
         return null; // The provider serves no model of that name.
     }
     return null;
-}
-
-// ── Model conversion. Each source states what it knows; the spec states the effective value. ──
-
-fn levels(arena: std.mem.Allocator, patch: []const ?[]const u8) ![]const model.ReasoningLevel {
-    const out = try arena.alloc(model.ReasoningLevel, patch.len);
-    for (patch, 0..) |level, i| out[i] = .from(level);
-    return out;
-}
-
-/// Convert a local binding, which holds closed enums and no display name.
-fn localModels(arena: std.mem.Allocator, models: []const instance.ModelBinding) ![]const ModelSpec {
-    const out = try arena.alloc(ModelSpec, models.len);
-    for (models, 0..) |m, i| out[i] = .{
-        .id = m.id,
-        .upstream_id = m.upstream_id,
-        .name = m.id,
-        .limits = .{ .context_window = m.limits.context_window, .max_output_tokens = m.limits.max_output_tokens },
-        .cost = .{ .input = m.cost.input, .output = m.cost.output, .cache_read = m.cost.cache_read, .cache_write = m.cost.cache_write },
-        .caps = .{ .tools = m.flags.supports_tools, .vision = m.flags.supports_vision },
-        .reasoning_levels = try levels(arena, m.reasoning_levels),
-        .dialect = .{
-            .thinking_format = m.flags.thinking_format,
-            .reasoning_replay = m.flags.reasoning_replay,
-            .max_tokens_field = m.flags.max_tokens_field,
-            .anthropic_adaptive = m.flags.anthropic_adaptive,
-            .reasoning_budget = .from(m.flags.reasoning_budget_min, m.flags.reasoning_budget_max),
-        },
-    };
-    return out;
 }
 
 // ── The wire projection. ──
