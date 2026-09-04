@@ -32,7 +32,7 @@ pub fn findModel(provider_id: []const u8, model_id: []const u8) ?*const model.Mo
 }
 
 /// The catalog revision these rows come from.
-pub const revision = "518584b5e6af36b279e5a653e151c7de05967097aa0cf8cf1b9a6b3cc393dd5dca11567e0c97acebefde1a6be38b76e545531c5756d3fe0afbf856bb9ab03679";
+pub const revision = "0793efc2b2900c467d0ed220654bb46ee385931b4e80cddc225be7a00830f52d5d7300d946828bb0af2d85fb51ce628add3e8cf69ecbae325be58b6b8057f404";
 
 pub const providers = [_]Provider{
     .{
@@ -64,7 +64,7 @@ pub const providers = [_]Provider{
                     .cache_write = 12.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -82,7 +82,7 @@ pub const providers = [_]Provider{
                     .cache_write = 12.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -100,7 +100,7 @@ pub const providers = [_]Provider{
                     .cache_write = 1.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .reasoning_budget = .{ .range = .{
                         .min = 1024,
@@ -122,7 +122,7 @@ pub const providers = [_]Provider{
                     .cache_write = 1.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .reasoning_budget = .{ .range = .{
                         .min = 1024,
@@ -144,7 +144,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{},
             },
             .{
@@ -162,7 +162,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{},
             },
             .{
@@ -180,7 +180,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -198,7 +198,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -216,7 +216,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -234,7 +234,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -252,7 +252,7 @@ pub const providers = [_]Provider{
                     .cache_write = 3.75,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .reasoning_budget = .{ .range = .{
                         .min = 1024,
@@ -274,7 +274,7 @@ pub const providers = [_]Provider{
                     .cache_write = 3.75,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .reasoning_budget = .{ .range = .{
                         .min = 1024,
@@ -296,7 +296,7 @@ pub const providers = [_]Provider{
                     .cache_write = 3.75,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -314,7 +314,7 @@ pub const providers = [_]Provider{
                     .cache_write = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{},
             },
         },
@@ -529,7 +529,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.125,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{},
             },
             .{
@@ -546,7 +546,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.175,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{},
             },
             .{
@@ -579,7 +579,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.175,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{},
             },
             .{
@@ -596,7 +596,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.175,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{},
             },
             .{
@@ -613,7 +613,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{},
             },
             .{
@@ -630,7 +630,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.075,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{},
             },
             .{
@@ -647,7 +647,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{},
             },
             .{
@@ -680,7 +680,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{},
             },
             .{
@@ -714,7 +714,7 @@ pub const providers = [_]Provider{
                     .cache_write = 5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -732,7 +732,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -750,7 +750,7 @@ pub const providers = [_]Provider{
                     .cache_write = 5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -768,7 +768,7 @@ pub const providers = [_]Provider{
                     .cache_write = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{},
             },
             .{
@@ -1023,7 +1023,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1182,7 +1182,7 @@ pub const providers = [_]Provider{
                     .cache_write = 1.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1202,7 +1202,7 @@ pub const providers = [_]Provider{
                     .cache_write = 18.75,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1222,7 +1222,7 @@ pub const providers = [_]Provider{
                     .cache_write = 18.75,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1242,7 +1242,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1262,7 +1262,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1282,7 +1282,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1302,7 +1302,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1322,7 +1322,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1342,7 +1342,7 @@ pub const providers = [_]Provider{
                     .cache_write = 3.75,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1362,7 +1362,7 @@ pub const providers = [_]Provider{
                     .cache_write = 3.75,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1382,7 +1382,7 @@ pub const providers = [_]Provider{
                     .cache_write = 3.75,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1402,7 +1402,7 @@ pub const providers = [_]Provider{
                     .cache_write = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1437,7 +1437,7 @@ pub const providers = [_]Provider{
                     .output = 1.25,
                 },
                 .caps = .{ .tools = false, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1455,7 +1455,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1473,7 +1473,7 @@ pub const providers = [_]Provider{
                     .output = 0.3,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1491,7 +1491,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1509,7 +1509,7 @@ pub const providers = [_]Provider{
                     .output = 3,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1527,7 +1527,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1545,7 +1545,7 @@ pub const providers = [_]Provider{
                     .output = 0.4,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1660,7 +1660,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1711,7 +1711,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.55,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1762,7 +1762,7 @@ pub const providers = [_]Provider{
                     .output = 0.8,
                 },
                 .caps = .{ .tools = false, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1781,7 +1781,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.135,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1800,7 +1800,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.1345,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1818,7 +1818,7 @@ pub const providers = [_]Provider{
                     .output = 0.41,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1837,7 +1837,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.017721,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_content,
@@ -1857,7 +1857,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.016,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1871,12 +1871,12 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 384000,
                 },
                 .cost = .{
-                    .input = 0.44,
-                    .output = 1.32,
-                    .cache_read = 0.014,
+                    .input = 0.22,
+                    .output = 0.66,
+                    .cache_read = 0.007,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1895,7 +1895,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.086855,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_content,
@@ -1915,7 +1915,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03718,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -1933,7 +1933,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1953,7 +1953,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.083333,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -1991,7 +1991,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.083333,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -2065,7 +2065,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.083333,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_details,
@@ -2120,7 +2120,7 @@ pub const providers = [_]Provider{
                     .output = 3,
                 },
                 .caps = .{ .tools = false, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -2138,7 +2138,7 @@ pub const providers = [_]Provider{
                     .output = 3,
                 },
                 .caps = .{ .tools = false, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -2158,7 +2158,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.083333,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -2176,7 +2176,7 @@ pub const providers = [_]Provider{
                     .output = 1.5,
                 },
                 .caps = .{ .tools = false, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -2196,7 +2196,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.083333,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -2216,7 +2216,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.375,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_details,
@@ -2237,7 +2237,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.375,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_details,
@@ -2421,7 +2421,7 @@ pub const providers = [_]Provider{
                     .output = 0.34,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -2439,7 +2439,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -2458,7 +2458,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.05,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -2476,7 +2476,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -2576,7 +2576,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.05,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -2595,7 +2595,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.025,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -2614,7 +2614,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.004,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -2633,7 +2633,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.0042,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -2652,7 +2652,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.012,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -2670,7 +2670,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -2755,7 +2755,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.006,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3064,7 +3064,7 @@ pub const providers = [_]Provider{
                     .output = 2.2,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3183,7 +3183,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.06,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3201,7 +3201,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3372,7 +3372,7 @@ pub const providers = [_]Provider{
                     .output = 7.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -3457,7 +3457,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.015,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -3591,7 +3591,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.07,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_details,
@@ -3611,7 +3611,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.16,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_details,
@@ -3648,7 +3648,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -3699,7 +3699,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.0025,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3718,7 +3718,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.025,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3768,7 +3768,7 @@ pub const providers = [_]Provider{
                     .output = 3,
                 },
                 .caps = .{ .tools = false, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3786,7 +3786,7 @@ pub const providers = [_]Provider{
                     .output = 0.4,
                 },
                 .caps = .{ .tools = false, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3805,7 +3805,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3823,7 +3823,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3841,7 +3841,7 @@ pub const providers = [_]Provider{
                     .output = 0.4,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -3859,7 +3859,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -3878,7 +3878,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.1875,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -3896,7 +3896,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -3914,7 +3914,7 @@ pub const providers = [_]Provider{
                     .output = 0.2,
                 },
                 .caps = .{ .tools = false, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3932,7 +3932,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = false, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3951,7 +3951,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.04,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -3969,7 +3969,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -4361,7 +4361,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.125,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4418,7 +4418,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4437,7 +4437,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.175,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4510,7 +4510,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.175,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4529,7 +4529,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4548,7 +4548,7 @@ pub const providers = [_]Provider{
                     .cache_read = 2,
                 },
                 .caps = .{ .tools = false, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4567,7 +4567,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.075,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4586,7 +4586,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4623,7 +4623,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4661,7 +4661,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4681,7 +4681,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4701,7 +4701,7 @@ pub const providers = [_]Provider{
                     .cache_write = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4721,7 +4721,7 @@ pub const providers = [_]Provider{
                     .cache_write = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4741,7 +4741,7 @@ pub const providers = [_]Provider{
                     .cache_write = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4761,7 +4761,7 @@ pub const providers = [_]Provider{
                     .cache_write = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4885,7 +4885,7 @@ pub const providers = [_]Provider{
                     .cache_read = 7.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -4903,7 +4903,7 @@ pub const providers = [_]Provider{
                     .output = 600,
                 },
                 .caps = .{ .tools = false, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -4922,7 +4922,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -4941,7 +4941,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.55,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -4978,7 +4978,7 @@ pub const providers = [_]Provider{
                     .output = 80,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -4997,7 +4997,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.275,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -5102,7 +5102,7 @@ pub const providers = [_]Provider{
                     .output = 1.5,
                 },
                 .caps = .{ .tools = false, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -5136,7 +5136,7 @@ pub const providers = [_]Provider{
                     .output = 8,
                 },
                 .caps = .{ .tools = false, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -5186,7 +5186,7 @@ pub const providers = [_]Provider{
                     .output = 8,
                 },
                 .caps = .{ .tools = false, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -5205,7 +5205,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.009,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -5223,7 +5223,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -5242,7 +5242,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -5260,7 +5260,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -5377,7 +5377,7 @@ pub const providers = [_]Provider{
                     .output = 0.24,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5395,7 +5395,7 @@ pub const providers = [_]Provider{
                     .output = 1.82,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5446,7 +5446,7 @@ pub const providers = [_]Provider{
                     .output = 0.5,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5496,7 +5496,7 @@ pub const providers = [_]Provider{
                     .output = 0.28,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5514,7 +5514,7 @@ pub const providers = [_]Provider{
                     .output = 0.455,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5636,7 +5636,7 @@ pub const providers = [_]Provider{
                     .output = 3.9,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5800,7 +5800,7 @@ pub const providers = [_]Provider{
                     .output = 2.4,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5818,7 +5818,7 @@ pub const providers = [_]Provider{
                     .output = 1.56,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5837,7 +5837,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5856,7 +5856,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.225,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5874,7 +5874,7 @@ pub const providers = [_]Provider{
                     .output = 0.15,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5892,7 +5892,7 @@ pub const providers = [_]Provider{
                     .output = 0.26,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5910,7 +5910,7 @@ pub const providers = [_]Provider{
                     .output = 1.56,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5929,7 +5929,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.375,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5948,7 +5948,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.12,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5967,7 +5967,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.05,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -5986,7 +5986,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.234375,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -6005,7 +6005,7 @@ pub const providers = [_]Provider{
                     .cache_write = 1.28375,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -6024,7 +6024,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.40625,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -6044,7 +6044,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.038,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -6064,7 +6064,7 @@ pub const providers = [_]Provider{
                     .cache_write = 1.84375,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -6084,7 +6084,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.4,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -6122,7 +6122,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.085,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -6142,7 +6142,7 @@ pub const providers = [_]Provider{
                     .cache_write = 0.2,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -6264,7 +6264,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.15,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -6365,7 +6365,7 @@ pub const providers = [_]Provider{
                     .output = 0.57,
                 },
                 .caps = .{ .tools = false, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -6432,7 +6432,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.033,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -6451,7 +6451,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.06,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -6470,7 +6470,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.042,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -6539,7 +6539,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.17,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -6558,7 +6558,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.1,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -6576,7 +6576,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -6594,7 +6594,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -6629,7 +6629,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.015,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -6648,7 +6648,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.006,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -6683,7 +6683,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -6721,7 +6721,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -6795,7 +6795,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.0028,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_details,
@@ -6815,7 +6815,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.0036,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_content,
@@ -6835,7 +6835,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.11,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -6854,7 +6854,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.025,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -6873,7 +6873,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.11,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -6892,7 +6892,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.11,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -6911,7 +6911,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.055,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -6930,7 +6930,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.08,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_details,
@@ -6950,7 +6950,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.01,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_details,
@@ -6970,7 +6970,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.12,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_content,
@@ -6990,7 +6990,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.24,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_content,
@@ -7010,7 +7010,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.1794,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_content,
@@ -7030,7 +7030,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.1932,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_content,
@@ -7049,7 +7049,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -7106,7 +7106,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.24,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -7146,7 +7146,7 @@ pub const providers = [_]Provider{
                     .cache_write = 1.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -7166,7 +7166,7 @@ pub const providers = [_]Provider{
                     .cache_write = 6.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -7186,7 +7186,7 @@ pub const providers = [_]Provider{
                     .cache_write = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -7205,7 +7205,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.013,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -7264,7 +7264,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.29,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -7284,7 +7284,7 @@ pub const providers = [_]Provider{
                     .cache_write = 2.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -7303,7 +7303,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.075,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -7395,7 +7395,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.0028,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -7415,7 +7415,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.0028,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -7435,7 +7435,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.003625,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -7659,7 +7659,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .openai,
                 },
@@ -7677,7 +7677,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "low" }, .{ .named = "medium" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openai,
                 },
@@ -7791,7 +7791,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openai,
                 },
@@ -7999,7 +7999,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openai,
                 },
@@ -8329,7 +8329,7 @@ pub const providers = [_]Provider{
                     .output = 7.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .openai,
                 },
@@ -8347,7 +8347,7 @@ pub const providers = [_]Provider{
                     .output = 7.5,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .openai,
                 },
@@ -8397,7 +8397,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .openai,
                 },
@@ -8415,7 +8415,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .openai,
                 },
@@ -8656,7 +8656,7 @@ pub const providers = [_]Provider{
                     .output = 0.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -8674,7 +8674,7 @@ pub const providers = [_]Provider{
                     .output = 3,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -8709,7 +8709,7 @@ pub const providers = [_]Provider{
                     .output = 1.25,
                 },
                 .caps = .{ .tools = false, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -8728,7 +8728,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -8748,7 +8748,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -8768,7 +8768,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.13,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -8852,7 +8852,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -8888,7 +8888,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
@@ -8908,7 +8908,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -8979,7 +8979,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.17,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "max" }, .{ .named = "xhigh" }, .{ .named = "high" }, .{ .named = "medium" }, .{ .named = "low" }, .{ .named = "off" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                 },
@@ -8998,7 +8998,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.26,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -9018,7 +9018,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.26,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
@@ -9038,7 +9038,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
@@ -9073,7 +9073,7 @@ pub const providers = [_]Provider{
                     .output = 1.49,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openai,
                 },
@@ -9126,7 +9126,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.007,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -9146,7 +9146,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.007,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -9166,7 +9166,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.044,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -9186,7 +9186,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.14,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -9206,7 +9206,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.26,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
@@ -9226,7 +9226,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
@@ -9282,7 +9282,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.16,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_content,
@@ -9302,7 +9302,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.19,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                     .reasoning_replay = .reasoning_content,
@@ -9322,7 +9322,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -9342,7 +9342,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.06,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
@@ -9381,7 +9381,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.119,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -9400,7 +9400,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.01,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .zai,
                 },
@@ -9419,7 +9419,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.08,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                 },
@@ -9438,7 +9438,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .qwen,
                 },
@@ -9457,7 +9457,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.21,
                 },
                 .caps = .{ .tools = true, .vision = false },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -9477,7 +9477,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.45,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
                     .reasoning_replay = .reasoning_content,
@@ -9619,7 +9619,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.06,
                 },
                 .caps = .{ .tools = true, .vision = true },
-                .reasoning_levels = &.{ .{ .named = "off" }, .{ .named = "high" } },
+                .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .anthropic_adaptive = true,
                 },
