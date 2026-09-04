@@ -58,6 +58,8 @@ pub fn countOf(o: std.json.ObjectMap, key: []const u8) error{Protocol}!u64 {
     return switch (value) {
         .integer => |n| std.math.cast(u64, n) orelse error.Protocol,
         .number_string => |s| std.fmt.parseInt(u64, s, 10) catch error.Protocol,
+        // Anthropic declares every usage count nullable, so a null is an absent count.
+        .null => 0,
         else => error.Protocol,
     };
 }

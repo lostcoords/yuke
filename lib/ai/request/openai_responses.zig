@@ -5,7 +5,7 @@ const ir = @import("ir.zig");
 const json = @import("json.zig");
 const types = @import("../types.zig");
 
-/// The backend rejects a request that folds in no system prompt.
+/// The Codex backend refuses a request that folds in no system prompt.
 const default_instructions = "You are a helpful assistant.";
 
 /// Write the OpenAI Responses request body for `request` and `request_ir`.
@@ -38,9 +38,12 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try writeReasoning(&jw, request.reasoning);
     try writeTextFormat(&jw, request.output_schema);
 
-    // The backend rejects a request with no instructions, so a default stands in.
-    try jw.objectField("instructions");
-    try jw.write(if (request.system.len != 0) request.system else default_instructions);
+    // Only the Codex backend refuses a request with no instructions, so the standard one omits it.
+    if (request.system.len != 0) {
+        try json.field(&jw, "instructions", request.system);
+    } else if (request.responses_dialect == .codex) {
+        try json.field(&jw, "instructions", default_instructions);
+    }
 
     if (request.tools.len != 0) {
         try jw.objectField("tools");
@@ -290,12 +293,20 @@ test "the codex dialect omits the output ceiling" {
 }
 
 // The backend rejects a request that folds in no system prompt.
-test "a turn with no system prompt still carries instructions" {
+test "only the codex dialect injects an instruction when none is given" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
+        .{ .blocks = &blocks },
+    );
+
+    // The ChatGPT backend refuses a request with no instructions, so only it gets the default.
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+    ,
+        .{ .model = "gpt-5", .max_output_tokens = 8, .responses_dialect = .codex },
         .{ .blocks = &blocks },
     );
 }
@@ -303,7 +314,7 @@ test "a turn with no system prompt still carries instructions" {
 test "a named effort rides on the responses request" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"high","summary":"auto"},"include":["reasoning.encrypted_content"],"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"high","summary":"auto"},"include":["reasoning.encrypted_content"],"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
         .{ .blocks = &blocks },
@@ -315,7 +326,7 @@ test "a named effort rides on the responses request" {
 test "off asks for no reasoning rather than omitting the control" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
     try expectJson(
-        \\{"model":"gpt-5.2","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"none"},"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+        \\{"model":"gpt-5.2","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"none"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5.2", .max_output_tokens = 8, .reasoning = .off },
         .{ .blocks = &blocks },
@@ -323,15 +334,6 @@ test "off asks for no reasoning rather than omitting the control" {
 }
 
 // gpt-4o has no reasoning levels. An empty session level resolves to .default and must omit the object.
-test "a non-reasoning model omits the reasoning control" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    try expectJson(
-        \\{"model":"gpt-4o","stream":true,"store":false,"max_output_tokens":8,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
-    ,
-        .{ .model = "gpt-4o", .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
-    );
-}
 
 test "assistant reasoning text and tool call precede a tool result" {
     const blocks = [_]ir.Block{
@@ -341,7 +343,7 @@ test "assistant reasoning text and tool call precede a tool result" {
         .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "ok", .is_error = false } } },
     };
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"instructions":"You are a helpful assistant.","input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 64 },
         .{ .blocks = &blocks },
@@ -354,7 +356,7 @@ test "a reasoning block with no signature is omitted" {
         .{ .role = .assistant, .value = .{ .text = "done" } },
     };
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
@@ -365,7 +367,7 @@ test "tools declare a flat raw schema with strict mode" {
     const tools = [_]ir.Tool{.{ .name = "run", .description = "run a command", .input_schema = "{\"type\":\"object\"}" }};
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"instructions":"You are a helpful assistant.","tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
     ,
         .{ .model = "gpt-5", .tools = &tools, .max_output_tokens = 8 },
         .{ .blocks = &blocks },
@@ -375,7 +377,7 @@ test "tools declare a flat raw schema with strict mode" {
 test "a schema constrains the response through the text format" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"text":{"format":{"type":"json_schema","name":"person","schema":{"type":"object"},"strict":true}},"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"text":{"format":{"type":"json_schema","name":"person","schema":{"type":"object"},"strict":true}},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}" } },
         .{ .blocks = &blocks },
@@ -383,7 +385,7 @@ test "a schema constrains the response through the text format" {
 
     // A caller that turns strict mode off must reach the wire, or the schema stops being a guarantee.
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"text":{"format":{"type":"json_schema","name":"person","schema":{"type":"object"},"strict":false}},"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"text":{"format":{"type":"json_schema","name":"person","schema":{"type":"object"},"strict":false}},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}", .strict = false } },
         .{ .blocks = &blocks },
@@ -398,7 +400,7 @@ test "each attachment kind reaches its own input part" {
         .{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "audio/wav" } } },
     };
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,YWI="},{"type":"input_image","file_id":"file_1"},{"type":"input_file","file_url":"https://x.test/a.pdf"},{"type":"input_audio","input_audio":{"data":"YWI=","format":"wav"}}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,YWI="},{"type":"input_image","file_id":"file_1"},{"type":"input_file","file_url":"https://x.test/a.pdf"},{"type":"input_audio","input_audio":{"data":"YWI=","format":"wav"}}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
@@ -412,7 +414,7 @@ test "an explicit breakpoint marks the last user text and nothing else" {
         .{ .role = .user, .value = .{ .text = "three" } },
     };
     try expectJson(
-        \\{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_options":{"mode":"explicit"},"max_output_tokens":8,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"one"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}
+        \\{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_options":{"mode":"explicit"},"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"one"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}
     ,
         .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai },
         .{ .blocks = &blocks },

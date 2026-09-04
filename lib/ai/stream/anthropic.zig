@@ -596,3 +596,25 @@ test "decode frees everything on allocation failure at every point" {
         \\{"type":"message_stop"}
     }});
 }
+
+test "a null usage count reads as absent rather than failing the turn" {
+    var h = Harness.init();
+    defer h.deinit();
+
+    // Anthropic declares every usage count nullable, and a null once aborted the whole turn.
+    try h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":null,"cache_creation_input_tokens":null}}}
+        ,
+        \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3,"cache_creation_input_tokens":null}}
+        ,
+        \\{"type":"message_stop"}
+    });
+
+    for (h.out.items) |ev| switch (ev) {
+        .done => |d| {
+            try testing.expectEqual(@as(u64, 10), d.usage.input);
+            try testing.expectEqual(@as(u64, 3), d.usage.output);
+        },
+        else => {},
+    };
+}

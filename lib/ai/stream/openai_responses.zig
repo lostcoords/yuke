@@ -160,7 +160,7 @@ pub const Reducer = struct {
 
     fn onContentPartAdded(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         _ = try contentIndex(root);
-        const output = try self.messageOutput(try self.outputFor(root));
+        const output = try self.outputFor(root);
         const part = json.fieldGet(root, "part") orelse return error.Protocol;
         const part_type = json.fieldStr(part, "type") orelse return error.Protocol;
 
@@ -206,14 +206,14 @@ pub const Reducer = struct {
     }
 
     fn onTextDone(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const output = try self.messageOutput(try self.outputFor(root));
-        const id = output.text orelse return error.Protocol;
+        // An item with no open text block never sent a text delta, so this event does not belong to it.
+        const id = (try self.outputFor(root)).text orelse return error.Protocol;
         try self.stopBlockIfOpen(id, out);
     }
 
     fn onContentPartDone(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         _ = try contentIndex(root);
-        const output = try self.messageOutput(try self.outputFor(root));
+        const output = try self.outputFor(root);
         const part = json.fieldGet(root, "part") orelse return error.Protocol;
         const part_type = json.fieldStr(part, "type") orelse return error.Protocol;
 
@@ -349,11 +349,6 @@ pub const Reducer = struct {
         return output;
     }
 
-    fn messageOutput(_: *Reducer, output: *Output) Error!*Output {
-        if (output.kind != .message) return error.Protocol;
-        return output;
-    }
-
     fn outputBlockId(self: *Reducer, output: *Output, kind: event.BlockKind) Error!event.BlockId {
         const id = switch (kind) {
             .text => output.text orelse return error.Protocol,
@@ -465,8 +460,11 @@ fn contentIndex(root: std.json.Value) Error!usize {
     return json.fieldIndex(root, "content_index") orelse error.Protocol;
 }
 
+/// Name the block one content part belongs to. An unmapped part type is a no-op, never a failure.
 fn partSlot(output: *Output, part_type: []const u8) ?PartSlot {
     if (std.mem.eql(u8, part_type, "output_text")) return .{ .slot = &output.text, .kind = .text };
+    // A content part can name a reasoning item, so the part type decides the slot.
+    if (std.mem.eql(u8, part_type, "reasoning_text")) return .{ .slot = &output.reasoning, .kind = .reasoning };
     if (std.mem.eql(u8, part_type, "summary_text")) return .{ .slot = &output.reasoning, .kind = .reasoning };
     if (std.mem.eql(u8, part_type, "refusal")) return .{ .slot = &output.text, .kind = .text };
     return null;

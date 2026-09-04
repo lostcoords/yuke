@@ -105,7 +105,8 @@ pub const Reducer = struct {
             try self.appendTextDelta(text, out);
         }
 
-        if (json.fieldStr(delta, "reasoning_content")) |text| {
+        const reasoning_text = json.fieldStr(delta, "reasoning_content") orelse json.fieldStr(delta, "reasoning");
+        if (reasoning_text) |text| {
             try self.appendReasoningDelta(text, out);
         }
 
@@ -139,7 +140,8 @@ pub const Reducer = struct {
 
     fn onToolCall(self: *Reducer, call: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         const index = try toolIndex(call);
-        const function = json.fieldGet(call, "function") orelse return error.Protocol;
+        // Only `index` is required on a chunk, so an entry with no function carries nothing to add.
+        const function = json.fieldGet(call, "function") orelse return;
         const block_index = self.findTool(index) orelse blk: {
             try self.stopOpen(out);
             break :blk try self.startBlock(
@@ -499,4 +501,27 @@ test "decode frees everything on allocation failure at every point" {
         ,
         "[DONE]",
     }});
+}
+
+test "a chunk with no function and an openrouter reasoning field are both handled" {
+    var h = Harness.init();
+    defer h.deinit();
+
+    // Only `index` is required on a tool-call chunk, so an entry with no function must not abort.
+    try h.feed(&.{
+        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function"}]}}]}
+        ,
+        // OpenRouter names the field `reasoning`; DeepSeek names it `reasoning_content`.
+        \\{"choices":[{"index":0,"delta":{"reasoning":"why"}}]}
+        ,
+        \\{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}
+    });
+
+    var reasoning: std.ArrayList(u8) = .empty;
+    defer reasoning.deinit(testing.allocator);
+    for (h.out.items) |ev| switch (ev) {
+        .reasoning_delta => |d| try reasoning.appendSlice(testing.allocator, d.text),
+        else => {},
+    };
+    try testing.expectEqualStrings("why", reasoning.items);
 }
