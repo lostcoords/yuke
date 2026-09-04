@@ -228,6 +228,8 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
                 .url => |value| try json.field(jw, "image_url", value),
                 .file_id => |value| try json.field(jw, "file_id", value),
             }
+            // The schema requires `detail`, and `auto` is the documented default.
+            try json.field(jw, "detail", "auto");
         },
         .pdf => {
             try json.field(jw, "type", "input_file");
@@ -242,22 +244,8 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
                 .file_id => |value| try json.field(jw, "file_id", value),
             }
         },
-        .audio => {
-            const format = try json.audioFormat(media.mime);
-            const data = switch (media.source) {
-                .bytes => |value| value,
-                // The part carries raw base64 with no envelope, so it names neither a URL nor a handle.
-                .url, .file_id => return error.UnsupportedContent,
-            };
-            try json.field(jw, "type", "input_audio");
-            try jw.objectField("input_audio");
-            try jw.beginObject();
-            try jw.objectField("data");
-            try json.writeBase64(jw, "", data);
-            try json.field(jw, "format", format);
-            try jw.endObject();
-        },
-        .video, .text => return error.UnsupportedContent,
+        // This API takes text, image and file alone. Sound needs the Chat Completions endpoint.
+        .audio, .video, .text => return error.UnsupportedContent,
     }
     try jw.endObject();
 }
@@ -392,15 +380,22 @@ test "a schema constrains the response through the text format" {
     );
 }
 
+test "this api reads no sound, so audio never reaches an input part" {
+    // The Responses input union is text, image and file alone; audio needs Chat Completions.
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "audio/wav" } } }};
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
+}
+
 test "each attachment kind reaches its own input part" {
     const blocks = [_]ir.Block{
         .{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" } } },
         .{ .role = .user, .value = .{ .media = .{ .source = .{ .file_id = "file_1" }, .mime = "image/jpeg" } } },
         .{ .role = .user, .value = .{ .media = .{ .source = .{ .url = "https://x.test/a.pdf" }, .mime = "application/pdf" } } },
-        .{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "audio/wav" } } },
     };
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,YWI="},{"type":"input_image","file_id":"file_1"},{"type":"input_file","file_url":"https://x.test/a.pdf"},{"type":"input_audio","input_audio":{"data":"YWI=","format":"wav"}}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,YWI=","detail":"auto"},{"type":"input_image","file_id":"file_1","detail":"auto"},{"type":"input_file","file_url":"https://x.test/a.pdf"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },

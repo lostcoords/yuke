@@ -186,16 +186,23 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media, cache: bool) !void
         .audio, .video, .text => return error.UnsupportedContent,
     };
 
+    // A document is a PDF or plain text; any other media type has no source shape on this API.
+    const plain_text = std.mem.startsWith(u8, media.mime, "text/");
+    const is_document = std.mem.eql(u8, kind, "document");
+    const is_pdf = std.mem.eql(u8, media.mime, "application/pdf");
+    if (is_document and !plain_text and !is_pdf) return error.UnsupportedContent;
+
     try jw.beginObject();
     try json.field(jw, "type", kind);
     try jw.objectField("source");
     try jw.beginObject();
     switch (media.source) {
         .bytes => |data| {
-            try json.field(jw, "type", "base64");
+            // Plain text rides in a `text` source, which carries the characters rather than base64.
+            try json.field(jw, "type", if (plain_text) "text" else "base64");
             try json.field(jw, "media_type", media.mime);
             try jw.objectField("data");
-            try json.writeBase64(jw, "", data);
+            if (plain_text) try jw.write(data) else try json.writeBase64(jw, "", data);
         },
         .url => |value| {
             try json.field(jw, "type", "url");
@@ -390,4 +397,20 @@ test "an effort and a schema share the one output_config" {
         },
         .{ .blocks = &blocks },
     );
+}
+
+test "a plain-text document rides in a text source, and an unknown type is refused" {
+    const text_doc = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "note" }, .mime = "text/plain" } } }};
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"note"}}]}]}
+    ,
+        .{ .model = "claude", .max_output_tokens = 8 },
+        .{ .blocks = &text_doc },
+    );
+
+    // A document is a PDF or plain text; anything else has no source shape and must not be mislabelled.
+    const spreadsheet = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "application/zip" } } }};
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, .{ .blocks = &spreadsheet }));
 }
