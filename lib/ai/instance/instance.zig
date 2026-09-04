@@ -9,7 +9,18 @@ pub const Protocol = types.Protocol;
 pub const ApiKeyHeader = enum { x_api_key, authorization_bearer };
 
 /// Select whether the endpoint accepts Anthropic `cache_control`.
-pub const CachePolicy = enum { unsupported, ephemeral };
+pub const CachePolicy = enum {
+    unsupported,
+    ephemeral,
+
+    /// Report whether a request marks its own cache breakpoints. A new policy must answer here.
+    pub fn marksBreakpoints(self: CachePolicy) bool {
+        return switch (self) {
+            .unsupported => false,
+            .ephemeral => true,
+        };
+    }
+};
 
 /// Select which header presents the credential. The mechanism never holds the secret.
 pub const AuthMechanism = union(enum) {
