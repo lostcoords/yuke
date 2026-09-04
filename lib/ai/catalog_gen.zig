@@ -32,13 +32,13 @@ pub fn findModel(provider_id: []const u8, model_id: []const u8) ?*const model.Mo
 }
 
 /// The catalog revision these rows come from.
-pub const revision = "b1f91a29b1ce68bccfcc44eb029202a69643d11dbf021c0757d44f376fc08ae5bc4ba57098d77e96439aec86bfb1d6b613d0c70f6c7439c7e703e812e8b4c3ef";
+pub const revision = "518584b5e6af36b279e5a653e151c7de05967097aa0cf8cf1b9a6b3cc393dd5dca11567e0c97acebefde1a6be38b76e545531c5756d3fe0afbf856bb9ab03679";
 
 pub const providers = [_]Provider{
     .{
         .id = "anthropic",
         .name = "Anthropic",
-        .env = &.{},
+        .env = &.{"ANTHROPIC_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://api.anthropic.com/v1",
@@ -322,7 +322,7 @@ pub const providers = [_]Provider{
     .{
         .id = "openai",
         .name = "OpenAI",
-        .env = &.{},
+        .env = &.{"OPENAI_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://api.openai.com/v1",
@@ -932,7 +932,7 @@ pub const providers = [_]Provider{
     .{
         .id = "openrouter",
         .name = "OpenRouter",
-        .env = &.{},
+        .env = &.{"OPENROUTER_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://openrouter.ai/api/v1",
@@ -7370,7 +7370,7 @@ pub const providers = [_]Provider{
     .{
         .id = "deepseek",
         .name = "DeepSeek",
-        .env = &.{},
+        .env = &.{"DEEPSEEK_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://api.deepseek.com/v1",
@@ -7446,7 +7446,7 @@ pub const providers = [_]Provider{
     .{
         .id = "groq",
         .name = "Groq",
-        .env = &.{},
+        .env = &.{"GROQ_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://api.groq.com/openai/v1",
@@ -7713,7 +7713,7 @@ pub const providers = [_]Provider{
     .{
         .id = "xai",
         .name = "xAI",
-        .env = &.{},
+        .env = &.{"XAI_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://api.x.ai/v1",
@@ -7921,7 +7921,7 @@ pub const providers = [_]Provider{
     .{
         .id = "xai-grok",
         .name = "xAI",
-        .env = &.{},
+        .env = &.{"XAI_API_KEY"},
         .auth = .oauth,
         .route = .{
             .base_url = "https://api.x.ai/v1",
@@ -8129,7 +8129,7 @@ pub const providers = [_]Provider{
     .{
         .id = "mistral",
         .name = "Mistral",
-        .env = &.{},
+        .env = &.{"MISTRAL_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://api.mistral.ai/v1",
@@ -8566,7 +8566,7 @@ pub const providers = [_]Provider{
     .{
         .id = "togetherai",
         .name = "Together AI",
-        .env = &.{},
+        .env = &.{"TOGETHER_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://api.together.ai/v1",
@@ -9049,7 +9049,7 @@ pub const providers = [_]Provider{
     .{
         .id = "cerebras",
         .name = "Cerebras",
-        .env = &.{},
+        .env = &.{"CEREBRAS_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://api.cerebras.ai/v1",
@@ -9101,7 +9101,7 @@ pub const providers = [_]Provider{
     .{
         .id = "fireworks-ai",
         .name = "Fireworks AI",
-        .env = &.{},
+        .env = &.{"FIREWORKS_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://api.fireworks.ai/inference/v1",
@@ -9488,7 +9488,7 @@ pub const providers = [_]Provider{
     .{
         .id = "minimax",
         .name = "MiniMax (minimax.io)",
-        .env = &.{},
+        .env = &.{"MINIMAX_API_KEY"},
         .auth = .api_key,
         .route = .{
             .base_url = "https://api.minimax.io/anthropic/v1",

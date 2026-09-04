@@ -25,7 +25,7 @@ pub const request_openai_responses = @import("request/openai_responses.zig");
 
 pub const model = @import("model.zig");
 /// The baked provider table. It needs no network and no control-plane account.
-pub const catalog = @import("catalog_gen.zig");
+pub const catalog = @import("catalog.zig");
 pub const instance = @import("instance/instance.zig");
 pub const resolve = @import("instance/resolve.zig");
 pub const transport = @import("transport.zig");
@@ -62,20 +62,4 @@ pub fn requestBody(arena: std.mem.Allocator, protocol: Protocol, request: ir.Req
 
 test {
     std.testing.refAllDecls(@This());
-}
-
-test "the baked catalog resolves a provider and a model" {
-    const anthropic_provider = catalog.find("anthropic").?;
-    try std.testing.expectEqual(Protocol.anthropic_messages, anthropic_provider.route.protocol);
-    try std.testing.expect(anthropic_provider.models.len != 0);
-    try std.testing.expect(catalog.find("no-such-provider") == null);
-    try std.testing.expect(catalog.findModel("anthropic", "no-such-model") == null);
-
-    // Every baked route must be usable, or a preset would fail at request time.
-    for (catalog.providers) |row| {
-        try std.testing.expect(row.id.len != 0);
-        try std.testing.expect(std.mem.startsWith(u8, row.route.base_url, "https://"));
-        try std.testing.expect(!std.mem.endsWith(u8, row.route.base_url, "/"));
-        for (row.models) |spec| try std.testing.expect(spec.id.len != 0 and spec.upstream_id.len != 0);
-    }
 }
