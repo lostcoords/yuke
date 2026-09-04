@@ -124,12 +124,12 @@ fn writeUserMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !void {
 }
 
 /// Name the member that carries a replayed reasoning text, or null when the host takes none.
-/// `reasoning-details` needs the provider array back byte for byte, which the reducer drops.
+/// `reasoning_details` needs the provider array back byte for byte, which the reducer drops.
 fn replayField(replay: ir.ReasoningReplay) ?[]const u8 {
     return switch (replay) {
-        .none, .@"reasoning-details" => null,
+        .none, .reasoning_details => null,
         .reasoning => "reasoning",
-        .@"reasoning-content" => "reasoning_content",
+        .reasoning_content => "reasoning_content",
     };
 }
 
@@ -329,7 +329,7 @@ test "a replay host carries the reasoning back on the assistant message" {
     try expectJson(
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}],"reasoning_content":"ponder"}]}
     ,
-        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-content" },
+        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning_content },
         .{ .blocks = &blocks },
     );
     try expectJson(
@@ -341,7 +341,7 @@ test "a replay host carries the reasoning back on the assistant message" {
 }
 
 // The array form needs the provider structure back byte for byte, which we do not keep yet.
-test "reasoning-details replays nothing rather than send a string" {
+test "reasoning_details replays nothing rather than send a string" {
     const blocks = [_]ir.Block{
         .{ .role = .assistant, .value = .{ .reasoning = .{ .text = "ponder", .signature = "" } } },
         .{ .role = .assistant, .value = .{ .text = "answer" } },
@@ -349,7 +349,7 @@ test "reasoning-details replays nothing rather than send a string" {
     try expectJson(
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}]}]}
     ,
-        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-details" },
+        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning_details },
         .{ .blocks = &blocks },
     );
 }
@@ -363,7 +363,7 @@ test "a replayed reasoning text is escaped and joined across blocks" {
     try expectJson(
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"ok"}],"reasoning_content":"say \"hi\"\nthen stop"}]}
     ,
-        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-content" },
+        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning_content },
         .{ .blocks = &blocks },
     );
 }
@@ -376,7 +376,7 @@ test "a reasoning block with no text leaves content null" {
     try expectJson(
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":null,"reasoning_content":"only"}]}
     ,
-        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-content" },
+        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning_content },
         .{ .blocks = &blocks },
     );
 }

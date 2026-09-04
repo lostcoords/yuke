@@ -480,3 +480,17 @@ fn revisionOf(
 test {
     _ = @import("registry_test.zig");
 }
+
+// Pin every dialect name the cloud catalog publishes. An undecoded name drops a request rule in silence.
+test "every dialect name the catalog publishes decodes" {
+    const testing = std.testing;
+
+    inline for (.{ "zai", "openrouter", "qwen", "deepseek", "openai" }) |name| {
+        try testing.expect(dialectOf(name, null, null, null, null, null).thinking_format != .none);
+    }
+    inline for (.{ "reasoning_content", "reasoning_details" }) |name| {
+        try testing.expect(dialectOf(null, name, null, null, null, null).reasoning_replay != .none);
+    }
+    const renamed = dialectOf(null, null, "max-completion-tokens", null, null, null);
+    try testing.expectEqual(model.MaxTokensField.@"max-completion-tokens", renamed.max_tokens_field);
+}

@@ -128,12 +128,12 @@ test "decode a model with behavioral flags" {
     const json =
         \\{"id":"deepseek-r1","upstream_id":"deepseek-reasoner","limits":{"context_window":65536,"max_output_tokens":8192},
         \\ "reasoning_levels":[null,"high"],
-        \\ "flags":{"reasoning_replay":"reasoning-content","thinking_format":"deepseek","max_tokens_field":"max-completion-tokens","supports_vision":true,"reasoning_budget_max":32000}}
+        \\ "flags":{"reasoning_replay":"reasoning_content","thinking_format":"deepseek","max_tokens_field":"max-completion-tokens","supports_vision":true,"reasoning_budget_max":32000}}
     ;
     const parsed = try std.json.parseFromSlice(ModelBinding, testing.allocator, json, .{});
     defer parsed.deinit();
     const f = parsed.value.flags;
-    try testing.expectEqual(ReasoningReplay.@"reasoning-content", f.reasoning_replay);
+    try testing.expectEqual(ReasoningReplay.reasoning_content, f.reasoning_replay);
     try testing.expectEqual(ThinkingFormat.deepseek, f.thinking_format);
     try testing.expectEqual(MaxTokensField.@"max-completion-tokens", f.max_tokens_field);
     try testing.expect(f.supports_vision);

@@ -79,7 +79,7 @@ pub const MaxTokensField = enum { @"max-tokens", @"max-completion-tokens" };
 
 /// Select how a prior assistant turn returns its reasoning in an OpenAI-chat request.
 /// DeepSeek rejects a thinking turn that comes back without it.
-pub const ReasoningReplay = enum { none, reasoning, @"reasoning-content", @"reasoning-details" };
+pub const ReasoningReplay = enum { none, reasoning, reasoning_content, reasoning_details };
 
 /// Select the reasoning control an OpenAI-chat host accepts. The dialects disagree.
 pub const ThinkingFormat = enum {
