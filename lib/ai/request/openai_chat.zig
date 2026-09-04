@@ -23,6 +23,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
         .max_completion_tokens => "max_completion_tokens",
     });
     try jw.write(request.max_output_tokens);
+    try json.sampling(&jw, request.temperature, request.top_p);
     // This endpoint writes no cache marker: OpenAI documents explicit breakpoints for Responses alone.
     try writeReasoning(&jw, request.thinking_format, request.reasoning);
     try writeResponseFormat(&jw, request.output_schema);
@@ -588,4 +589,14 @@ test "a part refuses a source its shape cannot carry" {
         defer buf.deinit();
         try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "m", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
     }
+}
+
+test "sampling members reach the chat request" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"temperature":1.5,"top_p":0.1,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8, .temperature = 1.5, .top_p = 0.1 },
+        .{ .blocks = &blocks },
+    );
 }

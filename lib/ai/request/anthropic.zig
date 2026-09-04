@@ -18,6 +18,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.objectField("stream");
     try jw.write(true);
 
+    try json.sampling(&jw, request.temperature, request.top_p);
+
     try writeThinking(&jw, request.reasoning);
     try writeOutputConfig(&jw, request.reasoning, request.output_schema);
     const cache = request.cache == .anthropic;
@@ -409,4 +411,22 @@ test "a plain-text document rides in a text source, and an unknown type is refus
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
     try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, .{ .blocks = &spreadsheet }));
+}
+
+test "sampling members ride beside the token ceiling" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hi" } }};
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"temperature":0.7,"top_p":0.9,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
+    ,
+        .{ .model = "claude", .max_output_tokens = 8, .temperature = 0.7, .top_p = 0.9 },
+        .{ .blocks = &blocks },
+    );
+
+    // A null value leaves the endpoint default, so the member never reaches the wire.
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"temperature":0,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
+    ,
+        .{ .model = "claude", .max_output_tokens = 8, .temperature = 0 },
+        .{ .blocks = &blocks },
+    );
 }

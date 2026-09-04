@@ -31,6 +31,10 @@ pub const Request = struct {
     max_tokens_field: ir.MaxTokensField = .max_tokens,
     /// Constrain the response to a schema. A null schema leaves the response free.
     output_schema: ?ir.OutputSchema = null,
+    /// Sampling temperature. A null value leaves the endpoint default.
+    temperature: ?f64 = null,
+    /// Nucleus sampling mass. A null value leaves the endpoint default.
+    top_p: ?f64 = null,
 };
 
 pub const TextOptions = struct {
@@ -170,6 +174,8 @@ fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
         .responses_dialect = model.provider.responses_dialect,
         .cache = instance.CachePolicy.markerFor(model.provider.cache, model.caps.cache_breakpoint),
         .output_schema = request.output_schema,
+        .temperature = request.temperature,
+        .top_p = request.top_p,
     };
     return adapter.serialize(arena, model.provider.protocol, value, .{ .blocks = request.blocks });
 }

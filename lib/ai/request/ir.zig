@@ -149,6 +149,10 @@ pub const Request = struct {
     responses_dialect: ResponsesDialect = .standard,
     /// The marker this request writes. The instance cache policy selects it.
     cache: types.CacheMarker = .none,
+    /// Sampling temperature. A null value leaves the endpoint default, which every host defines.
+    temperature: ?f64 = null,
+    /// Nucleus sampling mass. Anthropic asks that a request set this or `temperature`, not both.
+    top_p: ?f64 = null,
     /// Constrain the response to a schema. A null schema leaves the response free.
     output_schema: ?OutputSchema = null,
 };
@@ -172,6 +176,10 @@ pub fn validate(arena: std.mem.Allocator, request: Request, request_ir: RequestI
         if (tool.name.len == 0 or !stringValid(tool.name) or !stringValid(tool.description)) return error.InvalidRequest;
         try validateObject(arena, tool.input_schema);
     }
+    // A non-finite value serializes to text no JSON parser accepts.
+    if (request.temperature) |value| if (!std.math.isFinite(value) or value < 0) return error.InvalidRequest;
+    if (request.top_p) |value| if (!std.math.isFinite(value) or value < 0 or value > 1) return error.InvalidRequest;
+
     if (request.output_schema) |output| {
         if (output.name.len == 0 or !stringValid(output.name)) return error.InvalidRequest;
         // An empty schema constrains nothing, so it is a caller mistake rather than a default.
@@ -260,4 +268,31 @@ test "an output schema must name a JSON object" {
     var unnamed = base;
     unnamed.output_schema = .{ .name = "", .schema = "{}" };
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), unnamed, request_ir));
+}
+
+test "a sampling value outside its domain is refused" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const blocks = [_]Block{.{ .role = .user, .value = .{ .text = "hi" } }};
+    const request_ir: RequestIr = .{ .blocks = &blocks };
+    const base: Request = .{ .model = "m", .max_output_tokens = 1 };
+
+    var hot = base;
+    hot.temperature = -0.1;
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), hot, request_ir));
+
+    // A non-finite value serializes to text no JSON parser accepts.
+    var nan = base;
+    nan.temperature = std.math.nan(f64);
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), nan, request_ir));
+
+    var mass = base;
+    mass.top_p = 1.5;
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), mass, request_ir));
+
+    var ok = base;
+    ok.temperature = 2;
+    ok.top_p = 1;
+    try validate(arena.allocator(), ok, request_ir);
 }

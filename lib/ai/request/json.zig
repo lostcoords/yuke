@@ -91,3 +91,15 @@ test "base64 survives the chunk boundary it encodes across" {
     try decoder.decode(out, encoded);
     try testing.expectEqualSlices(u8, &data, out);
 }
+
+/// Write the sampling members a request states. An absent member leaves the endpoint default.
+pub fn sampling(jw: *std.json.Stringify, temperature: ?f64, top_p: ?f64) !void {
+    if (temperature) |value| {
+        try jw.objectField("temperature");
+        try jw.write(value);
+    }
+    if (top_p) |value| {
+        try jw.objectField("top_p");
+        try jw.write(value);
+    }
+}

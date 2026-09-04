@@ -30,6 +30,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
         .standard => {
             try jw.objectField("max_output_tokens");
             try jw.write(request.max_output_tokens);
+            try json.sampling(&jw, request.temperature, request.top_p);
         },
         .codex => {},
     }
@@ -429,4 +430,22 @@ test "a turn with no user text carries no breakpoint and no options member" {
     defer buf.deinit();
     try serialize(&buf.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai }, .{ .blocks = &blocks });
     try testing.expect(std.mem.indexOf(u8, buf.written(), "prompt_cache") == null);
+}
+
+test "the codex dialect refuses the sampling members too" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"temperature":0.7,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+    ,
+        .{ .model = "gpt-5", .max_output_tokens = 8, .temperature = 0.7 },
+        .{ .blocks = &blocks },
+    );
+
+    // The ChatGPT backend refuses every sampling limit, exactly as it refuses the token ceiling.
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+    ,
+        .{ .model = "gpt-5", .max_output_tokens = 8, .temperature = 0.7, .responses_dialect = .codex },
+        .{ .blocks = &blocks },
+    );
 }
