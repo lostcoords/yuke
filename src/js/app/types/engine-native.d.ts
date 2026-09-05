@@ -38,8 +38,8 @@ declare module "yuke:engine-native" {
     setDefaultSystemPrompt(prompt: string | null): void;
     /** Install the one sink. `drain` calls it on the owner, never from an engine task. */
     setEventSink(fn: (ev: EngineEvent) => void): void;
-    /** Run one command. It throws on a seam failure and returns the response JSON otherwise. */
-    request(method: string, params: string): string;
+    /** Resolve with the response JSON, or reject with an error that carries the refusal code. */
+    request(method: string, params: string): Promise<string>;
     /** Pin a session for one open view. Returns false when the engine cannot open it. */
     sessionOpen(sessionId: string): boolean;
     /** Drop one view's pin. Every open owes exactly one close. */

@@ -6,6 +6,8 @@ const app = @import("app.zig");
 const call = @import("call.zig");
 const extensions_mod = @import("../js/extensions.zig");
 const interactions_mod = @import("../js/interactions.zig");
+const tools_table = @import("../js/tools.zig");
+const Host = extensions_mod.Host;
 const zio = @import("zio");
 
 const App = app.App;
@@ -112,9 +114,71 @@ pub const Rpc = struct {
     notifications: *NotificationQueue,
     wake: *zio.ResetEvent,
     interactions: ?InteractionPort = null,
+    /// The host whose gate reads a hooked input. A test stream without a host serves every line inline.
+    host: ?*Host = null,
+    /// The inputs the gate holds. Each one writes its answer after the owner settles its call.
+    inputs: std.ArrayList(GatedInput) = .empty,
     fatal: bool = false,
     /// Set while a line goes out. Two writers would interleave one line inside another.
     writing: bool = false,
+
+    /// Leave every held input and free the list. The owner sweeps the call records on its next pump.
+    pub fn deinit(self: *Rpc) void {
+        for (self.inputs.items) |input| input.drop(self.gpa);
+        self.inputs.deinit(self.gpa);
+        self.* = undefined;
+    }
+
+    /// Hand one input to the gate. The answer goes out from `drainInputs` once the owner settles the call.
+    fn gateInput(self: *Rpc, host: *Host, request: Line) void {
+        if (self.inputs.items.len == queue_slots) {
+            self.flushNotifications();
+            if (request.id) |id| self.writeFailure(id, .queue_full, "too many requests are pending") catch |err| self.failWrite(err);
+            return;
+        }
+        const params = self.gpa.dupe(u8, request.params) catch unreachable;
+        const id = if (request.id) |value| self.gpa.dupe(u8, value) catch unreachable else null;
+        self.inputs.append(self.gpa, .{ .id = id, .params = params, .call = host.calls.submitInput(params) }) catch unreachable;
+    }
+
+    /// Write every gated input the owner settled. The owner is the only writer.
+    pub fn drainInputs(self: *Rpc) void {
+        var i: usize = 0;
+        while (i < self.inputs.items.len) {
+            const input = self.inputs.items[i];
+            if (input.call.state != .settled) {
+                i += 1;
+                continue;
+            }
+            _ = self.inputs.orderedRemove(i);
+            defer input.drop(self.gpa);
+            self.flushNotifications();
+            if (self.fatal) return;
+            if (input.id) |id| self.writeGated(id, input.call);
+        }
+    }
+
+    /// Decode the gate's `{result}` or `{failure}` object and write it under `id`.
+    fn writeGated(self: *Rpc, id: []const u8, call_record: *const tools_table.Call) void {
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const text = call_record.text orelse "";
+        const answer = if (call_record.is_error) null else std.json.parseFromSliceLeaky(GateAnswer, arena, text, .{ .ignore_unknown_fields = true }) catch null;
+        const decoded = answer orelse {
+            std.log.err("rpc: the input gate answered: {s}", .{text});
+            self.writeFailure(id, .internal, "the input gate failed") catch |err| self.failWrite(err);
+            return;
+        };
+        if (decoded.failure) |failure| {
+            const code = std.meta.stringToEnum(proto.enums.ErrorCode, failure.code) orelse .internal;
+            self.writeFailure(id, code, failure.message) catch |err| self.failWrite(err);
+            return;
+        }
+        var body: std.Io.Writer.Allocating = .init(arena);
+        std.json.Stringify.value(decoded.result, .{}, &body.writer) catch unreachable;
+        self.writeResult(id, body.written()) catch |err| self.failWrite(err);
+    }
 
     /// Queue one engine event without entering the owner or waiting on stdout.
     fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
@@ -209,6 +273,25 @@ const Request = union(enum) {
     }
 };
 
+/// One `session.send_input` the gate holds. The record owns the parameter bytes for the whole call.
+const GatedInput = struct {
+    id: ?[]u8,
+    params: []u8,
+    call: *tools_table.Call,
+
+    fn drop(self: GatedInput, gpa: std.mem.Allocator) void {
+        self.call.finish();
+        if (self.id) |id| gpa.free(id);
+        gpa.free(self.params);
+    }
+};
+
+/// What the gate answers: the command result, or the refusal with its wire code.
+const GateAnswer = struct {
+    result: std.json.Value = .null,
+    failure: ?struct { code: []const u8, message: []const u8 } = null,
+};
+
 /// Read requests on a task and run JavaScript only on the owner task. The caller owns `extensions`.
 pub fn runIo(extensions: *extensions_mod.Extensions) !void {
     const gpa = extensions.host.gpa;
@@ -234,11 +317,13 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         .notifications = &notifications,
         .wake = &extensions.host.wake,
         .interactions = interactionPort(&extensions.host.interactions),
+        .host = extensions.host,
     };
     application.engine.sinks.add(.{ .ctx = @ptrCast(&rpc), .on_event = Rpc.onEvent });
     defer {
         application.engine.sinks.remove(@ptrCast(&rpc));
         drainNotifications(gpa, &notifications);
+        rpc.deinit();
     }
 
     var readers: zio.Group = .init;
@@ -275,10 +360,12 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
                 },
             }
             absorbOwnerPump(extensions);
+            rpc.drainInputs();
             if (rpc.fatal) return error.RpcFailed;
         } else |_| {}
 
         absorbOwnerPump(extensions);
+        rpc.drainInputs();
         rpc.flushNotifications();
         if (rpc.fatal) return error.RpcFailed;
         if (received) continue;
@@ -360,10 +447,18 @@ pub fn serve(gpa: std.mem.Allocator, rpc: *Rpc, line: []const u8) void {
         return;
     };
 
+    serveParsed(arena, rpc, request);
+}
+
+fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
     if (std.mem.eql(u8, request.method, "interaction.respond")) {
         serveInteraction(arena, rpc, request);
         return;
     }
+    // A hooked input waits on JavaScript, so it leaves the owner and answers later.
+    if (rpc.host) |host| if (std.mem.eql(u8, request.method, "session.send_input") and host.hooks.holds(.@"input.before")) {
+        return rpc.gateInput(host, request);
+    };
 
     var body: std.Io.Writer.Allocating = .init(arena);
     const failure = call.call(rpc.app, arena, request.method, request.params, &body.writer) catch |err| {

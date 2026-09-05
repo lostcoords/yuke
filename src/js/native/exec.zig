@@ -96,7 +96,7 @@ fn execTask(host: *Host, op: *pending.Op, req: Request) void {
         .cwd = req.cwd,
         .timeout_ms = req.timeout_ms,
         .max_stream_bytes = max_stream_bytes,
-    }) catch |err| return op.finish(.{ .failed = errorMessage(err) });
+    }) catch |err| return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
 
     op.finish(.{ .json = encode(host.gpa, arena.allocator(), result) });
 }

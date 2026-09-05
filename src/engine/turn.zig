@@ -194,18 +194,25 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
     defer round_state.deinit();
     const arena = round_state.allocator();
 
-    // Build once for the round. Every attempt then sends the same bytes and the same tool prefix.
-    var request = roundRequest(engine, arena, slot, streamer) catch |err| {
+    // A request hook can await indefinitely, so the build runs as a child a run cancel can reach.
+    var request: ?ai.PreparedRequest = null;
+    defer if (request) |*prepared| prepared.deinit();
+    const built = switch (runChild(engine, slot, requestChild, .{ engine, arena, slot, streamer, &request })) {
+        .canceled, .aborted => return .canceled,
+        .returned => |result| result,
+    };
+    built catch |err| {
+        if (err == error.Canceled) return .canceled;
         std.log.warn("run {d} could not build its request: {t}", .{ slot.runId(), err });
         return .{ .failed = failure(err) };
     };
-    defer request.deinit();
+    std.debug.assert(request != null);
 
     var number: u8 = 1;
     while (true) : (number += 1) {
         streamer.reset();
         var info: ai.transport.AttemptInfo = .{};
-        const terminal = streamAttempt(engine, arena, slot, streamer, &request, &info) catch |err| {
+        const terminal = streamAttempt(engine, arena, slot, streamer, &request.?, &info) catch |err| {
             const decision = retry.decide(engine.deps.retry_policy, .{
                 .err = err,
                 .info = info,
@@ -313,6 +320,13 @@ fn streamAttempt(
     }
 }
 
+fn requestChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, out: *?ai.PreparedRequest) !void {
+    std.debug.assert(out.* == null);
+    defer slot.wake_event.set(engine.deps.io);
+    try checkCanceled(engine.deps.io, slot);
+    out.* = try roundRequest(engine, arena, slot, streamer);
+}
+
 /// Build the request for one round. A retry re-sends these bytes, so the cached prefix still matches.
 fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !ai.PreparedRequest {
     const model = slot.config.model;
@@ -402,37 +416,41 @@ fn resolvedRequest(
     r: registry.Match,
 ) !ai.PreparedRequest {
     // A provider the merge could not complete has no route, so it cannot serve a turn.
-    const route = switch (r.provider.availability) {
+    const live_route = switch (r.provider.availability) {
         .ready => |ready| ready,
         .unavailable => return error.UnknownModel,
     };
+    // The registry and the tool table can rebuild while a build hook waits, so this round holds its own copies.
+    const route = try proto.dupe(arena, live_route);
+    const model = try proto.dupe(arena, r.model.*);
     slot.protocol = provider.protocolToProto(route.route.protocol);
 
-    const output_limit = if (r.model.limits.max_output_tokens) |limit|
+    const output_limit = if (model.limits.max_output_tokens) |limit|
         std.math.cast(u32, limit) orelse max_output_tokens
     else
         max_output_tokens;
 
     const request_ir = try provider.build.build(arena, transcript, .{
         .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
-        .modalities = r.model.modalities,
+        .modalities = model.modalities,
     });
 
     var build: RequestBuild = .{
-        .model = r.model.upstream_id,
+        .model = model.upstream_id,
         .system = slot.config.system_prompt,
-        .tools = engine.deps.tools.getDecls(engine.deps.tools.ctx),
+        .tools = try proto.dupe(arena, engine.deps.tools.getDecls(engine.deps.tools.ctx)),
         .max_output_tokens = output_limit,
     };
     switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", build)) {
         .proceed => {},
         // A handler that answers an unreadable request keeps the one this round already holds.
-        .replace => |json| build = std.json.parseFromSliceLeaky(RequestBuild, arena, json, .{ .ignore_unknown_fields = true }) catch build,
+        .replace => |value| build = std.json.parseFromValueLeaky(RequestBuild, arena, value, .{ .ignore_unknown_fields = true }) catch build,
         .block => |reason| {
             // The wire message names a class, so record the reason before the error loses it.
             std.log.warn("run {d} stopped at request.build: {s}", .{ slot.runId(), reason });
             return error.HookBlocked;
         },
+        .canceled => return error.Canceled,
     }
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
@@ -441,8 +459,8 @@ fn resolvedRequest(
         .id = build.model,
         .route = route.route,
         .credential = secret,
-        .caps = r.model.caps,
-        .dialect = r.model.dialect,
+        .caps = model.caps,
+        .dialect = model.dialect,
     }, .{
         .blocks = request_ir.blocks,
         .system = build.system,
@@ -450,7 +468,7 @@ fn resolvedRequest(
         .options = .{
             .max_output_tokens = build.max_output_tokens,
             // The budget shares the ceiling, so it follows whatever the chain left there.
-            .reasoning = try reasoningFor(r.model, slot.config.reasoning, build.max_output_tokens),
+            .reasoning = try reasoningFor(&model, slot.config.reasoning, build.max_output_tokens),
         },
     });
     errdefer prepared.deinit();
@@ -462,7 +480,7 @@ fn resolvedRequest(
         .body = prepared.transport_request.body,
     })) {
         .proceed => {},
-        .replace => |json| if (std.json.parseFromSliceLeaky(RequestSend, arena, json, .{ .ignore_unknown_fields = true })) |sent| {
+        .replace => |value| if (std.json.parseFromValueLeaky(RequestSend, arena, value, .{ .ignore_unknown_fields = true })) |sent| {
             prepared.transport_request = .{
                 .url = sent.url,
                 .headers = sent.headers,
@@ -474,6 +492,7 @@ fn resolvedRequest(
             std.log.warn("run {d} stopped at request.send: {s}", .{ slot.runId(), reason });
             return error.HookBlocked;
         },
+        .canceled => return error.Canceled,
     }
     return prepared;
 }
@@ -485,11 +504,7 @@ const RequestSend = struct {
     body: []const u8,
 };
 
-/// The neutral request one round sends, before any serializer reads it.
-///
-/// The transcript blocks stay out on purpose. An attachment carries megabytes, and a handler that
-/// only edits the system prompt must not pay to encode them. Filtering a transcript needs its own
-/// point, where that cost is the caller's choice.
+/// The build hook omits transcript blocks to avoid copies of attachment data.
 const RequestBuild = struct {
     model: []const u8,
     system: []const u8,
@@ -904,13 +919,13 @@ fn settlePendingTools(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot,
             try streamer.emitToolState(pt.part_id, .{ .canceled = .{} });
             continue;
         }
-        try runOneTool(engine, arena, slot, streamer, workspace_root.?, pt);
+        try runOneTool(engine, slot, streamer, workspace_root.?, pt);
     }
 }
 
 /// Run one tool in a child task, so a cancel can interrupt a blocked call.
-fn runOneTool(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, workspace_root: []const u8, pt: PendingTool) !void {
-    return switch (runChild(engine, slot, toolChild, .{ engine, arena, slot, streamer, workspace_root, pt })) {
+fn runOneTool(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_root: []const u8, pt: PendingTool) !void {
+    return switch (runChild(engine, slot, toolChild, .{ engine, slot, streamer, workspace_root, pt })) {
         .canceled => {}, // The child settled its part canceled. The next part still settles.
         .aborted => error.Canceled,
         .returned => |result| result,
@@ -918,7 +933,7 @@ fn runOneTool(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streame
 }
 
 /// Run one tool and emit exactly one terminal state despite cancellation.
-fn toolChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, workspace_root: []const u8, pt: PendingTool) !void {
+fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_root: []const u8, pt: PendingTool) !void {
     std.debug.assert(slot.phase == .running); // the run loop owns the slot for this round
     std.debug.assert(slot.progress.current != null); // the round opened the message
     defer slot.wake_event.set(engine.deps.io);
@@ -928,7 +943,15 @@ fn toolChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer
         defer _ = engine.deps.io.swapCancelProtection(old);
         try streamer.emitToolState(pt.part_id, .{ .running = .{ .started_at_ms = started } });
     }
-    const res = runHooked(engine, arena, pt, workspace_root); // The cancel point.
+    // The session folds the state before this arena releases the tool result.
+    var scratch_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
+    defer scratch_state.deinit();
+    const res = runHooked(engine, scratch_state.allocator(), pt, workspace_root) catch {
+        const cancel_old = engine.deps.io.swapCancelProtection(.blocked);
+        defer _ = engine.deps.io.swapCancelProtection(cancel_old);
+        try streamer.emitToolState(pt.part_id, .{ .canceled = .{} });
+        return;
+    };
     const duration = engine.nowMillis() -| started; // Saturate; the wall clock can move backward.
     const old = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old);
@@ -947,9 +970,7 @@ const ToolCall = struct {
     arguments: []const u8,
 };
 
-/// What the model reads after a tool answers, and what the view shows beside it.
-/// A handler that replaces the output states the view too, because a stale view would
-/// show the reader one thing while the model reads another.
+/// A replacement owns both the output and the view so they cannot disagree.
 const ToolResult = struct {
     output: []const u8,
     is_error: bool,
@@ -957,14 +978,15 @@ const ToolResult = struct {
 };
 
 /// Run one tool through its hooks. A block answers the model, and the process runs nothing.
-fn runHooked(engine: *Engine, arena: std.mem.Allocator, pt: PendingTool, workspace_root: []const u8) toolset.Outcome {
+fn runHooked(engine: *Engine, arena: std.mem.Allocator, pt: PendingTool, workspace_root: []const u8) !toolset.Outcome {
     const hooks = engine.deps.hooks;
     var call: ToolCall = .{ .name = pt.name, .arguments = pt.arguments };
     switch (hooks.askIfHeld(arena, .@"tool.before", call)) {
         .proceed => {},
         // A handler that answers an unreadable call keeps the one the model chose.
-        .replace => |json| call = std.json.parseFromSliceLeaky(ToolCall, arena, json, .{ .ignore_unknown_fields = true }) catch call,
+        .replace => |value| call = std.json.parseFromValueLeaky(ToolCall, arena, value, .{ .ignore_unknown_fields = true }) catch call,
         .block => |reason| return .{ .output = reason, .is_error = true },
+        .canceled => return error.Canceled,
     }
 
     const tools = engine.deps.tools;
@@ -979,11 +1001,12 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, pt: PendingTool, workspa
     });
     return switch (after) {
         .proceed => res,
-        .replace => |json| blk: {
-            const changed = std.json.parseFromSliceLeaky(ToolResult, arena, json, .{ .ignore_unknown_fields = true }) catch break :blk res;
+        .replace => |value| blk: {
+            const changed = std.json.parseFromValueLeaky(ToolResult, arena, value, .{ .ignore_unknown_fields = true }) catch break :blk res;
             break :blk .{ .output = changed.output, .view = changed.view, .is_error = changed.is_error };
         },
         .block => |reason| .{ .output = reason, .is_error = true },
+        .canceled => return error.Canceled,
     };
 }
 
@@ -1072,6 +1095,14 @@ const StreamerFixture = struct {
     session: *Session,
 
     const session_id = [_]u8{9} ** 16;
+    /// The one user turn a request test serializes.
+    const hello: message.Message = .{ .user = .{
+        .id = 0,
+        .input_id = 1,
+        .content = &.{.{ .text = .{ .text = "hello" } }},
+        .skill = null,
+        .time = .{ .created_at_ms = 0 },
+    } };
 
     fn init(self: *StreamerFixture) !void {
         self.runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
@@ -1244,4 +1275,156 @@ test "part ids restart for each round" {
     try std.testing.expectEqual(@as(usize, 1), parts.len);
     try std.testing.expectEqual(@as(ids.PartId, 0), parts[0].id());
     try std.testing.expectEqualStrings("b", parts[0].tool.call_id.?);
+}
+
+test "a build hook can discard the live registry and tools before the request serializes" {
+    const hookset = @import("hookset.zig");
+    const State = struct {
+        source: std.heap.ArenaAllocator,
+        tools: []const ai.ir.Tool,
+        discarded: bool = false,
+
+        fn decls(ctx: *anyopaque) []const ai.ir.Tool {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            return self.tools;
+        }
+
+        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+            return point == .@"request.build";
+        }
+
+        fn ask(ctx: *anyopaque, _: std.mem.Allocator, point: proto.hook.Point, _: []const u8) hookset.Decision {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            std.debug.assert(point == .@"request.build");
+            std.debug.assert(!self.discarded);
+            self.source.deinit();
+            self.tools = &.{};
+            self.discarded = true;
+            return .proceed;
+        }
+    };
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var state: State = .{ .source = .init(std.testing.allocator), .tools = &.{} };
+    defer if (!state.discarded) state.source.deinit();
+    const source = state.source.allocator();
+    const model = try source.create(registry.ModelSpec);
+    model.* = try proto.dupe(source, registry.ModelSpec{
+        .id = "mock",
+        .upstream_id = "model-before",
+        .name = "Before",
+        .caps = .{ .tools = true },
+        .cost = .{ .input = 1.5 },
+    });
+    const row = try source.create(registry.Provider);
+    row.* = try proto.dupe(source, registry.Provider{
+        .id = "provider-before",
+        .name = "Before",
+        .models = &.{},
+        .availability = .{ .ready = .{
+            .route = .{
+                .base_url = "https://example.test/v1",
+                .protocol = .openai_chat,
+                .auth = .{ .api_key = .authorization_bearer },
+                .headers = &.{.{ .name = "X-Source", .value = "before" }},
+            },
+            .credential = .{ .literal = "secret-before" },
+        } },
+    });
+    state.tools = try proto.dupe(source, @as([]const ai.ir.Tool, &.{.{
+        .name = "tool_before",
+        .description = "Before",
+        .input_schema = "{\"type\":\"object\",\"properties\":{}}",
+    }}));
+    f.engine.installTools(.{ .ctx = &state, .getDecls = State.decls });
+    f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
+    const transcript = [_]message.Message{StreamerFixture.hello};
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var prepared = try resolvedRequest(arena.allocator(), &f.engine, f.slot, &transcript, .{ .provider = row, .model = model });
+    defer prepared.deinit();
+    try std.testing.expect(state.discarded);
+    const body = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, prepared.transport_request.body, .{});
+    defer body.deinit();
+    try std.testing.expectEqualStrings("model-before", body.value.object.get("model").?.string);
+    const tool = body.value.object.get("tools").?.array.items[0].object.get("function").?;
+    try std.testing.expectEqualStrings("tool_before", tool.object.get("name").?.string);
+    try std.testing.expect(std.mem.startsWith(u8, prepared.transport_request.url, "https://example.test/v1/"));
+    var auth_seen = false;
+    var source_seen = false;
+    for (prepared.transport_request.headers) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, "authorization")) {
+            try std.testing.expectEqualStrings("Bearer secret-before", header.value);
+            auth_seen = true;
+        }
+        if (std.mem.eql(u8, header.name, "X-Source")) {
+            try std.testing.expectEqualStrings("before", header.value);
+            source_seen = true;
+        }
+    }
+    try std.testing.expect(auth_seen and source_seen);
+}
+
+test "a run cancel interrupts either request hook before it settles" {
+    const hookset = @import("hookset.zig");
+    const State = struct {
+        io: std.Io,
+        slot: *RunSlot,
+        point: proto.hook.Point,
+        entered: std.Io.Event = .unset,
+        parked: std.Io.Event = .unset,
+        timed_out: bool = false,
+        asked: bool = false,
+
+        fn holds(ctx: *anyopaque, point: proto.hook.Point) bool {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            return point == self.point;
+        }
+
+        fn ask(ctx: *anyopaque, _: std.mem.Allocator, point: proto.hook.Point, _: []const u8) hookset.Decision {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            std.debug.assert(point == self.point);
+            std.debug.assert(!self.asked);
+            self.asked = true;
+            self.entered.set(self.io);
+            self.parked.waitTimeout(self.io, .{ .duration = .{ .raw = .fromSeconds(1), .clock = .awake } }) catch |err| switch (err) {
+                error.Canceled => return .canceled,
+                error.Timeout => self.timed_out = true,
+            };
+            return .proceed;
+        }
+
+        fn cancel(self: *@This()) !void {
+            try self.entered.wait(self.io);
+            self.slot.cancel_requested = true;
+            self.slot.wake_event.set(self.io);
+        }
+    };
+    for ([_]proto.hook.Point{ .@"request.build", .@"request.send" }) |point| {
+        var f: StreamerFixture = undefined;
+        try f.init();
+        defer f.deinit();
+        f.slot.gpa.free(f.slot.config.model);
+        f.slot.config.model = try f.slot.gpa.dupe(u8, "mock/model");
+        f.slot.phase = .running;
+        f.store.merged.rows = &.{.{
+            .id = "mock",
+            .name = "Mock",
+            .models = &.{.{ .id = "model", .upstream_id = "model", .name = "Model" }},
+            .availability = .{ .ready = .{
+                .route = .{ .base_url = "https://example.test", .protocol = .openai_chat, .auth = .none },
+                .credential = .none,
+            } },
+        }};
+        try f.session.transcript.append(StreamerFixture.hello);
+        var state: State = .{ .io = f.engine.deps.io, .slot = f.slot, .point = point };
+        f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
+        var canceller = try state.io.concurrent(State.cancel, .{&state});
+        defer canceller.cancel(state.io) catch {};
+        var streamer = f.streamer();
+        defer streamer.blocks.deinit(std.testing.allocator);
+        try std.testing.expect(streamRound(&f.engine, f.slot, &streamer) == .canceled);
+        try std.testing.expect(state.asked and !state.timed_out);
+    }
 }

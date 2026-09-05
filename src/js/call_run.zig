@@ -1,12 +1,10 @@
-//! The owner side of a tool or hook call: start the handler, poll its promise, and settle the record.
+//! The owner side of a tool, hook, or input call: start the handler, poll its promise, and settle the record.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
 const proto = @import("proto");
 const Host = @import("host.zig").Host;
 const table = @import("tools.zig");
-const toolset = @import("../engine/toolset.zig");
-const hookset = @import("../engine/hookset.zig");
 const utf8 = @import("../utf8.zig");
 const pending = @import("pending.zig");
 
@@ -37,7 +35,19 @@ fn start(host: *Host, call: *table.Call) void {
     switch (call.kind) {
         .tool => startTool(host, call),
         .hook => startHook(host, call),
+        .input => startInput(host, call),
     }
+}
+
+/// Parse the JSON the submitter wrote. A bad document settles the call and answers null.
+fn parseArguments(host: *Host, call: *table.Call) ?Value {
+    const text = host.gpa.dupeZ(u8, call.arguments) catch unreachable;
+    defer host.gpa.free(text);
+    const parsed = host.ctx.parseJSON(text, "call-arguments.json");
+    if (!host.ctx.isException(parsed)) return parsed;
+    pending.dropException(host.ctx);
+    settleText(host, call, "the arguments are not valid JSON", true);
+    return null;
 }
 
 /// Hand one point and its payload to the chain folder. The folder answers one Promise for the chain.
@@ -45,14 +55,7 @@ fn startHook(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     // A withdrawn folder answers no point, so the call proceeds rather than failing the round.
     const folder = host.hooks.dispatch orelse return settleText(host, call, "", false);
-
-    const payload = host.gpa.dupeZ(u8, call.arguments) catch unreachable;
-    defer host.gpa.free(payload);
-    const parsed = ctx.parseJSON(payload, "hook-payload.json");
-    if (ctx.isException(parsed)) {
-        pending.dropException(ctx);
-        return settleText(host, call, "the hook payload is not valid JSON", true);
-    }
+    const parsed = parseArguments(host, call) orelse return;
     defer ctx.freeValue(parsed);
 
     const point = ctx.newString(call.name);
@@ -65,32 +68,27 @@ fn startHook(host: *Host, call: *table.Call) void {
     host.enterSlice();
     var argv = [_]Value{ point, parsed };
     const answer = ctx.call(folder, quickjs.UNDEFINED, &argv);
-    if (ctx.isException(answer)) {
-        const exc = ctx.getException();
-        defer ctx.freeValue(exc);
-        return settleValue(host, call, exc, true);
-    }
-    if (!ctx.isPromise(answer)) {
-        ctx.freeValue(answer);
-        return settleText(host, call, "the hook dispatcher must return a Promise", true);
-    }
-    call.promise = answer; // the call holds the root until it settles
-    call.state = .running;
-    poll(host, call);
+    acceptPromise(host, call, answer);
+}
+
+/// Hand one `session.send_input` to the gate. The gate answers `{result}` or `{failure}` and never rejects.
+fn startInput(host: *Host, call: *table.Call) void {
+    const ctx = host.ctx;
+    const gate = host.hooks.gate orelse return settleText(host, call, "no input gate is installed", true);
+    const parsed = parseArguments(host, call) orelse return;
+    defer ctx.freeValue(parsed);
+
+    host.enterSlice();
+    var argv = [_]Value{parsed};
+    const answer = ctx.call(gate, quickjs.UNDEFINED, &argv);
+    acceptPromise(host, call, answer);
 }
 
 fn startTool(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     const at = host.tools.find(call.name) orelse
         return settleText(host, call, "the tool is not registered", true);
-
-    const args = host.gpa.dupeZ(u8, call.arguments) catch unreachable;
-    defer host.gpa.free(args);
-    const parsed = ctx.parseJSON(args, "tool-arguments.json");
-    if (ctx.isException(parsed)) {
-        pending.dropException(ctx);
-        return settleText(host, call, "the arguments are not valid JSON", true);
-    }
+    const parsed = parseArguments(host, call) orelse return;
     defer ctx.freeValue(parsed);
 
     // The handler reads `signal.aborted` between its awaits, so a canceled turn can stop early.
@@ -112,6 +110,12 @@ fn startTool(host: *Host, call: *table.Call) void {
     host.enterSlice();
     var argv = [_]Value{ parsed, call.signal, context };
     const answer = ctx.call(host.tools.handlers.items[at], quickjs.UNDEFINED, &argv);
+    acceptPromise(host, call, answer);
+}
+
+fn acceptPromise(host: *Host, call: *table.Call, answer: Value) void {
+    std.debug.assert(call.state == .queued);
+    const ctx = host.ctx;
     if (ctx.isException(answer)) {
         const exc = ctx.getException();
         defer ctx.freeValue(exc);
@@ -119,7 +123,11 @@ fn startTool(host: *Host, call: *table.Call) void {
     }
     if (!ctx.isPromise(answer)) {
         ctx.freeValue(answer);
-        return settleText(host, call, "the tool execute function must return a Promise", true);
+        return settleText(host, call, switch (call.kind) {
+            .tool => "the tool execute function must return a Promise",
+            .hook => "the hook dispatcher must return a Promise",
+            .input => "the input gate must return a Promise",
+        }, true);
     }
     call.promise = answer; // the call holds the root until it settles
     call.state = .running;
@@ -142,13 +150,17 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
     if (is_error) {
         const message = errorText(ctx, value);
         defer if (message) |text| ctx.freeCString(text.ptr);
-        const fallback = if (call.kind == .hook) "the hook failed" else "the tool failed";
+        const fallback: []const u8 = switch (call.kind) {
+            .tool => "the tool failed",
+            .hook => "the hook failed",
+            .input => "the input gate failed",
+        };
         return settleText(host, call, if (message) |text| text else fallback, true);
     }
     // An empty answer is the proceed decision for a hook, and empty output for a tool.
     if (ctx.isUndefined(value) or ctx.isNull(value)) return settleText(host, call, "", false);
-    // A hook answers one decision object, which never carries model text or a view.
-    if (call.kind == .hook) return stringifyValue(host, call, value);
+    // A hook or the gate answers one object, which never carries model text or a view.
+    if (call.kind != .tool) return stringifyValue(host, call, value);
     if (ctx.isString(value)) {
         const text = ctx.toCStringLen(value) catch {
             pending.dropException(ctx);

@@ -1,6 +1,7 @@
 // yuke:client — the in-process JavaScript seam over `yuke:engine-native`.
 import { native } from "yuke:engine-native";
 import { events } from "yuke:core";
+import { sendInput } from "yuke:ext";
 
 /** @typedef {import("yuke:engine-native").ViewPart} ViewPart */
 /** @typedef {import("yuke:engine-native").ViewCut} ViewCut */
@@ -15,21 +16,16 @@ events.on("engine.drained", (ev) => {
   if (name) events.emit(name, ev);
 });
 
-// One request against the engine, synchronous behind a Promise; each caller casts its parameters to the wire type, so a wrong shape fails `tsc`.
+// The native task answers JSON after the command and its hooks settle.
 /** @param {string} method @param {Wire.RequestParams} params @returns {Promise<any>} */
-function request(method, params) {
-  let text;
+async function request(method, params) {
+  const text = await native.request(method, JSON.stringify(params));
   try {
-    text = native.request(method, JSON.stringify(params));
-  } catch (reason) {
-    return Promise.reject(reason);
-  }
-  try {
-    return Promise.resolve(JSON.parse(text));
+    return JSON.parse(text);
   } catch {
     const error = new Error("malformed engine result");
     error.name = "EngineError";
-    return Promise.reject(error);
+    throw error;
   }
 }
 
@@ -141,12 +137,10 @@ function partTextPage(sessionId, messageId, partId, field, offset = 0, limit = 0
   return JSON.parse(native.partText(sessionId, messageId, partId, field, offset, limit));
 }
 
+// Input goes through the gate in `yuke:ext`, so a plugin reads it before the engine does.
 /** @param {string} id @param {string} text @returns {Promise<Wire.SessionSendInputResult>} */
 function sessionSendInput(id, text) {
-  return request("session.send_input", /** @type {Wire.SessionSendInputParams} */ ({
-    session_id: id,
-    input: { type: "content", content: [{ type: "text", text }] },
-  }));
+  return sendInput({ session_id: id, input: { type: "content", content: [{ type: "text", text }] } });
 }
 
 /** @param {string} id @param {boolean} [clearQueue] @returns {Promise<Wire.SessionCancelRunResult>} */

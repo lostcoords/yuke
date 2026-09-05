@@ -1,7 +1,8 @@
 // yuke:ext — the plugin runtime: a Scope owns revertible effects, a Context registers, and `advice` wraps methods.
 import { events } from "yuke:kernel";
 import { defineTool, removeTool } from "yuke:tools";
-import { installDispatcher, setPoints } from "yuke:hooks";
+import { installDispatcher, installInputGate, setPoints } from "yuke:hooks";
+import { native } from "yuke:engine-native";
 
 /** @typedef {() => void} Disposer */
 /** @typedef {() => unknown} Effect */
@@ -21,6 +22,9 @@ import { installDispatcher, setPoints } from "yuke:hooks";
 /** @typedef {{ name: string, apply: PluginApply }} Plugin */
 /** @typedef {(payload: any) => unknown} HookHandler */
 /** @typedef {{ owner: string, fn: HookHandler }} HookEntry */
+/** @typedef {{ block?: unknown, replace?: unknown }} HookAnswer */
+/** @typedef {{ type: "block", reason: string } | { type: "replace", value: any }} HookDecision */
+/** @typedef {{ owner: Scope | null, cleanup: Disposer | null }} ScopeEntry */
 
 const NOOP = () => {};
 
@@ -30,8 +34,10 @@ export class Scope {
   constructor(name) {
     this.name = name || "scope";
     this.alive = true;
-    /** @type {Disposer[]} */
+    /** @type {ScopeEntry[]} */
     this._disposers = []; // registration order; reverted in reverse
+    /** @type {ScopeEntry | null} */
+    this._parentEntry = null;
   }
 
   // Run `fn` now. Collect the disposer it returns. The handle reverts this one effect, once.
@@ -47,22 +53,45 @@ export class Scope {
       return NOOP;
     }
 
-    let done = false;
-    const entry = () => {
-      if (done) return;
-      done = true;
-      cleanup();
+    const entry = this._addEntry(/** @type {Disposer} */ (cleanup));
+    return () => {
+      const owner = entry.owner;
+      if (owner) owner._runEntry(entry);
     };
-    this._disposers.push(entry);
+  }
 
+  /** @param {Disposer} cleanup @returns {ScopeEntry} */
+  _addEntry(cleanup) {
+    /** @type {ScopeEntry} */
+    const entry = { owner: this, cleanup };
+    this._disposers.push(entry);
     return entry;
+  }
+
+  /** @param {ScopeEntry} entry @returns {void} */
+  _runEntry(entry) {
+    const cleanup = this._takeEntry(entry);
+    if (cleanup) cleanup();
+  }
+
+  /** @param {ScopeEntry} entry @returns {Disposer | null} */
+  _takeEntry(entry) {
+    if (entry.owner !== this) return null;
+    entry.owner = null;
+    const at = this._disposers.indexOf(entry);
+    if (at >= 0) this._disposers.splice(at, 1);
+    const cleanup = entry.cleanup;
+    entry.cleanup = null;
+    return cleanup;
   }
 
   // A child scope is an effect on this scope, so one LIFO stack owns the whole tree.
   /** @param {string | undefined} name @returns {Scope} */
   child(name) {
+    if (!this.alive) throw new TypeError("effect on a disposed scope: " + this.name);
     const s = new Scope(name);
-    this.effect(() => () => s.dispose());
+    const parentEntry = this._addEntry(() => s.dispose());
+    s._parentEntry = parentEntry;
 
     return s;
   }
@@ -73,9 +102,16 @@ export class Scope {
     if (!this.alive) return;
     this.alive = false;
 
-    for (const d of this._disposers.splice(0).reverse()) {
+    const parentEntry = this._parentEntry;
+    this._parentEntry = null;
+    if (parentEntry) {
+      const parent = parentEntry.owner;
+      if (parent) parent._takeEntry(parentEntry);
+    }
+
+    for (const entry of this._disposers.splice(0).reverse()) {
       try {
-        d();
+        this._runEntry(entry);
       } catch (e) {
         // A silent teardown failure hides a plugin bug, so report it on the shared bus.
         events.emit("ext.error", e, this.name);
@@ -452,7 +488,7 @@ function addHook(point, owner, fn) {
 }
 
 // Fold one chain and answer one decision. The runtime calls this, and it never throws.
-/** @param {string} point @param {any} payload @returns {Promise<unknown>} */
+/** @param {string} point @param {any} payload @returns {Promise<HookDecision | undefined>} */
 async function dispatch(point, payload) {
   const list = HOOKS[point];
   if (!list) return undefined;
@@ -461,20 +497,21 @@ async function dispatch(point, payload) {
   let replaced = false;
   // A handler can register or withdraw another, so the fold walks a copy of the chain.
   for (const entry of list.slice()) {
-    let answer;
     try {
-      answer = await entry.fn(value);
+      const result = await entry.fn(value);
+      if (result == null) continue;
+      const answer = /** @type {HookAnswer} */ (result);
+      const block = answer.block;
+      if (block !== undefined) return { type: "block", reason: String(block) };
+      // Each later handler reads what this one wrote, so a chain composes without a merge rule.
+      const replace = answer.replace;
+      if (replace !== undefined) {
+        value = replace;
+        replaced = true;
+      }
     } catch (e) {
       // A throwing handler is a plugin bug, not a decision, so the chain goes on without it.
-      events.emit("ext.error", e, "hook:" + point);
-      continue;
-    }
-    if (answer == null) continue;
-    if (answer.block !== undefined) return { type: "block", reason: String(answer.block) };
-    // Each later handler reads what this one wrote, so a chain composes without a merge rule.
-    if (answer.replace !== undefined) {
-      value = answer.replace;
-      replaced = true;
+      events.emit("ext.error", e, entry.owner);
     }
   }
 
@@ -482,6 +519,28 @@ async function dispatch(point, payload) {
 }
 
 installDispatcher(dispatch);
+
+// Fold `input.before` over one input and then issue it. Every frontend enters here, so the engine never waits on a hook.
+/** @param {Wire.SessionSendInputParams} params @returns {Promise<Wire.SessionSendInputResult>} */
+export async function sendInput(params) {
+  if (params.input.type === "content") {
+    const decision = await dispatch("input.before", { session_id: params.session_id, content: params.input.content });
+    if (decision?.type === "block") {
+      const error = new Error("an extension stopped the input");
+      error.name = "EngineError";
+      /** @type {any} */ (error).code = "bad_request";
+      throw error;
+    }
+    if (decision?.type === "replace") params = { ...params, input: { type: "content", content: decision.value.content } };
+  }
+  return JSON.parse(await native.request("session.send_input", JSON.stringify(params)));
+}
+
+// The RPC frontend reads one object for both outcomes, because a call record carries text and no code.
+installInputGate((params) => sendInput(params).then(
+  (result) => ({ result }),
+  (e) => ({ failure: { code: e.code || "internal", message: e.message || String(e) } }),
+));
 
 // --- interaction: the service a frontend installs ---
 // A frontend answers a question and shows a message. It is always present, so it gates no block.

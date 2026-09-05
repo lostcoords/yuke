@@ -4,8 +4,7 @@ const std = @import("std");
 const misc = @import("misc.zig");
 const tagged = @import("tagged.zig");
 
-/// Every point a handler can answer. Each name states a call site, so the set stays closed.
-/// A fact reads as `x.verbed` and needs no answer; a point reads as `x.verb` and waits for one.
+/// The closed set of points that wait for a plugin decision.
 pub const Point = enum {
     /// Once per round, over the neutral request the serializer has not read yet.
     @"request.build",

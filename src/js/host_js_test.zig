@@ -168,7 +168,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
     defer host.destroy();
     try host.evalModule(
         \\import { command, keymap, events, status, style, root, context, parseContext, config, defineConfig, Emitter, View, Node } from "yuke:core";
-        \\import { Scope, Context, advice, services, plugins } from "yuke:ext";
+        \\import { Scope, Context, advice, services, plugins, rootScope } from "yuke:ext";
         \\import { tui } from "yuke:tui";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -315,6 +315,16 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  check("plugin-lifecycle", present && gone && back);
         \\}
         \\
+        \\// A disposed plugin releases its root entry, so reloads do not retain one capture each.
+        \\{
+        \\  const held = rootScope._disposers.length;
+        \\  for (let i = 0; i < 32; i++) {
+        \\    plugins.use({ name: "short", apply() {} });
+        \\    plugins.dispose("short");
+        \\  }
+        \\  check("plugin-root-entry-released", rootScope._disposers.length === held);
+        \\}
+        \\
         \\// A second use of a live name disposes the first, so nothing stacks on reload.
         \\{
         \\  let disposals = 0;
@@ -358,6 +368,20 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  kid.effect(() => () => order.push("kid"));
         \\  parent.dispose();
         \\  check("scope-child", order.join(",") === "kid,parent" && !kid.alive);
+        \\}
+        \\
+        \\// A child disposal detaches its parent entry, so repeated unloads do not retain cleanup captures.
+        \\{
+        \\  const parent = new Scope("detach");
+        \\  const kid = parent.child("kid");
+        \\  check("child-entry-held", parent._disposers.length === 1);
+        \\  kid.dispose();
+        \\  check("child-entry-detached", parent._disposers.length === 0);
+        \\  const off = parent.effect(() => () => {});
+        \\  check("effect-entry-held", parent._disposers.length === 1);
+        \\  off();
+        \\  check("effect-entry-detached", parent._disposers.length === 0);
+        \\  parent.dispose();
         \\}
         \\
         \\// An effect on a disposed scope throws.
@@ -4527,6 +4551,38 @@ fn pumpOwnerUntilSettled(host: *Host, call: *tools_table.Call) !void {
 fn dropCall(host: *Host, call: *tools_table.Call) !void {
     call.finish();
     try host.pump();
+}
+
+test "a hook fault in one result does not stop later handlers" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { events } from "yuke:kernel";
+        \\import { plugins } from "yuke:ext";
+        \\globalThis.faults = [];
+        \\events.on("ext.error", (e, owner) => globalThis.faults.push(String(owner) + ":" + e.message));
+        \\plugins.use({ name: "getter", apply(ctx) {
+        \\  ctx.hook("input.before", () => ({ get block() { throw new Error("getter"); } }));
+        \\} });
+        \\plugins.use({ name: "convert", apply(ctx) {
+        \\  ctx.hook("input.before", () => ({ block: { toString() { throw new Error("convert"); } } }));
+        \\} });
+        \\plugins.use({ name: "later", apply(ctx) {
+        \\  ctx.hook("input.before", () => ({ block: "accepted" }));
+        \\} });
+    , "hook-fault.js");
+
+    const call = host.calls.submitHook("input.before", "{}");
+    try pumpUntilSettled(host, call, null);
+    try std.testing.expect(!call.is_error);
+    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"accepted\"}", call.text.?);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
+        \\globalThis.faults.join(",") === "getter:getter,convert:convert" ? 1 : 0
+    ));
+    try dropCall(host, call);
 }
 
 test "the owner runs an async handler and answers its resolved value" {

@@ -15,7 +15,7 @@ const digest = @import("engine/digest.zig");
 const paging = @import("engine/paging.zig");
 const project = @import("engine/project.zig");
 const app = @import("../../app/app.zig");
-const App = app.App;
+const pending = @import("../pending.zig");
 const engine_call = @import("../../app/call.zig");
 const turn = @import("../../engine/turn.zig");
 const domain_session = @import("../../session/session.zig");
@@ -227,27 +227,24 @@ fn jsPartText(ctx: Context, _: Value, args: []const Value) Value {
     return ctx.newString(aw.written());
 }
 
-/// Run one command and answer with its result JSON, with no envelope. A refusal throws with its wire code.
+/// Run one command on the owner and answer a settled Promise, so a caller reads every outcome one way.
 fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
-    const engine = Host.fromContext(ctx).engine;
-    const runtime = engine.runtime orelse return ctx.throwPlainError("the engine is not ready");
-    if (args.len < 2) return ctx.throwPlainError("a call needs a method and parameters");
-
-    const method = ctx.toCStringLen(args[0]) catch return ctx.throwPlainError("the method must be a string");
+    const host = Host.fromContext(ctx);
+    if (host.phase != .open) return pending.rejected(ctx, "the host is closed");
+    const runtime = host.engine.runtime orelse return pending.rejected(ctx, "the engine is not ready");
+    if (args.len < 2) return pending.rejected(ctx, "a call needs a method and parameters");
+    const method = module.string(ctx, args[0]) orelse return pending.rejected(ctx, "the method must be a string");
     defer ctx.freeCString(method.ptr);
-    const params = ctx.toCStringLen(args[1]) catch return ctx.throwPlainError("the parameters must be JSON");
+    const params = module.string(ctx, args[1]) orelse return pending.rejected(ctx, "the parameters must be JSON");
     defer ctx.freeCString(params.ptr);
 
-    var arena_state: std.heap.ArenaAllocator = .init(engine.gpa);
-    defer arena_state.deinit();
-
-    var aw: std.Io.Writer.Allocating = .init(engine.gpa);
-    defer aw.deinit();
-
-    const failure = engine_call.call(runtime, arena_state.allocator(), method, params, &aw.writer) catch
-        return ctx.throwPlainError("internal error");
-    if (failure) |refused| return throwFailure(ctx, refused);
-    return ctx.newString(aw.written());
+    var arena: std.heap.ArenaAllocator = .init(host.gpa);
+    defer arena.deinit();
+    var out: std.Io.Writer.Allocating = .init(arena.allocator());
+    const failure = engine_call.call(runtime, arena.allocator(), method, params, &out.writer) catch
+        return pending.rejected(ctx, "internal error");
+    if (failure) |refused| return pending.rejectedWith(ctx, .{ .message = refused.message, .code = @tagName(refused.code) });
+    return pending.resolved(ctx, ctx.newString(out.written()));
 }
 
 /// Set the default prompt for sessions created without an explicit prompt.
@@ -268,18 +265,6 @@ fn jsSetDefaultSystemPrompt(ctx: Context, _: Value, args: []const Value) Value {
     return quickjs.UNDEFINED;
 }
 
-/// Raise a refusal as a JavaScript error that carries its wire code, so a view can branch on it.
-fn throwFailure(ctx: Context, failure: engine_call.Failure) Value {
-    const err = ctx.newError();
-    module.set(ctx, err, "message", ctx.newString(failure.message));
-    module.set(ctx, err, "code", ctx.newString(@tagName(failure.code)));
-    if (ctx.hasException()) {
-        ctx.freeValue(err);
-        return module.throwPending(ctx);
-    }
-    return ctx.throw(err);
-}
-
 const testing = std.testing;
 
 test "a request reaches a command and answers with its result" {
@@ -297,34 +282,41 @@ test "a request reaches a command and answers with its result" {
     defer runtime.db.deinit();
     defer runtime.engine.close();
 
-    const host = Host.create(testing.allocator);
+    const host = Host.createWith(testing.allocator, rt.io(), .{});
     defer host.destroy();
 
     // With no engine, a view read answers its empty projection and a request refuses.
     try host.evalModule(
         \\import { native } from "yuke:engine-native";
-        \\let threw = 0;
-        \\try { native.request("catalog.list", "{}"); } catch { threw = 1; }
-        \\globalThis.detached = threw;
+        \\globalThis.detached = 0;
+        \\native.request("catalog.list", "{}").catch(() => { globalThis.detached = 1; });
     , "detached.js");
+    try pumpRequests(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.detached"));
 
     // With the engine attached, the same call reaches `commands.catalogList`.
     host.engine.attach(&runtime);
     try host.evalModule(
         \\import { native } from "yuke:engine-native";
-        \\const r = JSON.parse(native.request("catalog.list", "{}"));
-        \\globalThis.ok = r && Array.isArray(r.models) ? 1 : 0;
+        \\native.request("catalog.list", "{}").then((text) => {
+        \\  const r = JSON.parse(text);
+        \\  globalThis.ok = r && Array.isArray(r.models) ? 1 : 0;
+        \\});
     , "attached.js");
+    try pumpRequests(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ok"));
 
     // A command with real parameters must decode them, not fall back to an empty object.
     try host.evalModule(
         \\import { native } from "yuke:engine-native";
-        \\const r = JSON.parse(native.request("session.create", JSON.stringify({ workspace_path: "/tmp/yuke-probe" })));
-        \\globalThis.created = r && r.session ? 1 : 0;
-        \\globalThis.sid = r && r.session ? r.session.id : "";
+        \\native.request("session.create", JSON.stringify({ workspace_path: "/tmp/yuke-probe" })).then((text) => {
+        \\  const r = JSON.parse(text);
+        \\  globalThis.created = r && r.session ? 1 : 0;
+        \\  globalThis.sid = r && r.session ? r.session.id : "";
+        \\  native.sessionOpen(globalThis.sid);
+        \\});
     , "create.js");
+    try pumpRequests(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.created"));
 
     // The client shape of an input must decode. A wrong shape refuses every message a person sends.
@@ -333,7 +325,7 @@ test "a request reaches a command and answers with its result" {
         \\globalThis.sent = 0;
         \\client.sessionSendInput(globalThis.sid, "probe").then(() => { globalThis.sent = 1; }, () => { globalThis.sent = 2; });
     , "send.js");
-    try host.drainJobs();
+    try pumpRequests(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.sent"));
 
     // The text a person typed must come back. A default limit reads one page, never zero bytes.
@@ -350,11 +342,16 @@ test "a request reaches a command and answers with its result" {
     try host.evalModule(
         \\import { native } from "yuke:engine-native";
         \\globalThis.code = "";
-        \\try { native.request("session.config", JSON.stringify({ session_id: "00".repeat(16), config_rev: 1 })); }
-        \\catch (e) { globalThis.code = e.code || ""; }
-        \\globalThis.isUnknown = globalThis.code === "unknown_session" ? 1 : 0;
+        \\native.request("session.config", JSON.stringify({ session_id: "00".repeat(16), config_rev: 1 })).catch((e) => {
+        \\  globalThis.isUnknown = e.code === "unknown_session" ? 1 : 0;
+        \\});
     , "refuse.js");
+    try pumpRequests(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.isUnknown"));
+    try host.evalModule(
+        \\import { native } from "yuke:engine-native";
+        \\native.sessionClose(globalThis.sid);
+    , "close.js");
     host.engine.detach();
 }
 
@@ -362,4 +359,14 @@ test {
     _ = digest;
     _ = paging;
     _ = project;
+}
+
+fn pumpRequests(host: *Host) !void {
+    for (0..64) |_| {
+        try host.pump();
+        if (host.ops.live.items.len == 0) return;
+        host.wake.reset();
+        if (!host.hasPending()) host.wake.timedWait(.fromMilliseconds(1000)) catch {};
+    }
+    return error.RequestNeverSettled;
 }

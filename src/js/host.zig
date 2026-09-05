@@ -16,7 +16,7 @@ const interaction_module = @import("native/interaction.zig");
 const tools_table = @import("tools.zig");
 const hooks_table = @import("hooks.zig");
 const interactions_table = @import("interactions.zig");
-const tool_run = @import("tool_run.zig");
+const call_run = @import("call_run.zig");
 const pending = @import("pending.zig");
 
 /// Limit the client heap. Scripts fail when they exceed this limit.
@@ -186,7 +186,7 @@ pub const Host = struct {
         };
         self.tasks.concurrent(self.io, task, .{ self, started.op, payload }) catch {
             payload.free(self.gpa);
-            started.op.finish(.{ .failed = "the host cannot start another operation" });
+            started.op.finish(.{ .failed = .{ .message = "the host cannot start another operation" } });
         };
         return started.promise;
     }
@@ -200,7 +200,7 @@ pub const Host = struct {
         const faulted = self.ops.settle(self.ctx);
         try self.drainJobs();
         // The first drain settles a promise a handler awaited, the poll reads it, and the second drain runs what the handler queued.
-        tool_run.pump(self);
+        call_run.pump(self);
         try self.drainJobs();
         std.debug.assert(!self.ops.anyDone()); // no task ran, so nothing new finished
         if (faulted) {
@@ -242,7 +242,7 @@ pub const Host = struct {
         // Phase 1: stop event delivery so no engine task reaches a closing context.
         self.engine.detach();
         // A turn task may wait on a tool call. Answer each one, or that task never wakes.
-        tool_run.abortAll(self);
+        call_run.abortAll(self);
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
         self.interactions.close();

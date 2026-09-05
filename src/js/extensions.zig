@@ -43,9 +43,10 @@ pub const Extensions = struct {
     }
 
     pub fn deinit(self: *Extensions) void {
-        // Stop and join every turn before the engine drops its borrowed host set.
+        // A command must leave before the last turn stops, or it could start another run.
+        self.host.tasks.cancel(self.host.io);
         self.app.engine.stopTurns();
-        self.app.engine.clearTools();
+        self.app.engine.clearExtensions();
         self.host.destroy();
         self.* = undefined;
     }
@@ -71,7 +72,7 @@ const tools_table = @import("tools.zig");
 const kernel_boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";
 
 /// One headless host over a canned engine, with the user entry the test writes. It must not move after `init`.
-const Fixture = struct {
+pub const Fixture = struct {
     gpa: std.heap.DebugAllocator(.{}),
     tmp: std.testing.TmpDir,
     root_buf: [std.fs.max_path_bytes]u8,
@@ -81,7 +82,7 @@ const Fixture = struct {
     app: App,
     extensions: Extensions,
 
-    fn init(self: *Fixture, entry: []const u8, boot: [:0]const u8) !void {
+    pub fn init(self: *Fixture, entry: []const u8, boot: [:0]const u8) !void {
         self.gpa = .init;
         self.tmp = std.testing.tmpDir(.{});
         try self.tmp.dir.writeFile(std.testing.io, .{ .sub_path = user_entry, .data = entry });
@@ -98,7 +99,7 @@ const Fixture = struct {
         try std.testing.expect(!self.extensions.user_entry_fault);
     }
 
-    fn deinit(self: *Fixture) void {
+    pub fn deinit(self: *Fixture) void {
         self.extensions.deinit();
         self.app.engine.close();
         self.app.db.deinit();
@@ -340,4 +341,98 @@ test "a throwing user entry is a JavaScriptFault the loop absorbs" {
         evalUserEntry(host, dir_buf[0..dir_len]),
     );
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "bad config") != null);
+}
+
+fn pumpUntil(host: *Host, expression: [:0]const u8) !void {
+    for (0..64) |_| {
+        try host.pump();
+        if (try host.evalInt(expression) != 0) return;
+        host.wake.reset();
+        if (!host.hasPending()) host.wake.timedWait(.fromMilliseconds(100)) catch {};
+    }
+    return error.RequestNeverSettled;
+}
+
+const deferred_input =
+    \\import { plugins } from "yuke";
+    \\import { native } from "yuke:engine-native";
+    \\import { sendInput } from "yuke:ext";
+    \\globalThis.request = (method, params = {}) => native.request(method, JSON.stringify(params)).then(JSON.parse);
+    \\globalThis.sendInput = sendInput;
+    \\plugins.use({ name: "gate", apply(ctx) {
+    \\  ctx.hook("input.before", (ev) => new Promise((resolve) => {
+    \\    globalThis.payload = ev;
+    \\    globalThis.release = resolve;
+    \\    globalThis.waiting = 1;
+    \\  }));
+    \\} });
+;
+
+fn startDeferredInput(host: *Host) !void {
+    try host.evalModule(
+        \\globalThis.finished = 0;
+        \\globalThis.waiting = 0;
+        \\request("session.create", { workspace_path: "/tmp/yuke-hooks" }).then((result) => {
+        \\  globalThis.sid = result.session.id;
+        \\  return sendInput({ session_id: sid, input: { type: "content", content: [{ type: "text", text: "original" }] } });
+        \\}).then(() => { globalThis.finished = 1; }, (e) => { globalThis.failure = e.code; globalThis.finished = 2; });
+    , "input-start.js");
+    try pumpUntil(host, "globalThis.waiting === 1");
+}
+
+test "an input hook leaves the owner free and its replacement reaches the store" {
+    var f: Fixture = undefined;
+    try f.init(deferred_input, kernel_boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+    try startDeferredInput(host);
+
+    try host.evalModule(
+        \\request("initialize").then(() => { globalThis.responsive = 1; });
+    , "input-concurrent.js");
+    try pumpUntil(host, "globalThis.responsive === 1");
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.finished"));
+    try host.evalModule(
+        \\release({ replace: { ...payload, content: [{ type: "text", text: "replaced" }] } });
+    , "input-release.js");
+    try pumpUntil(host, "globalThis.finished !== 0");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.finished"));
+    try host.evalModule(
+        \\request("session.history", { session_id: sid, before_message_id: Number.MAX_SAFE_INTEGER }).then((history) => {
+        \\  globalThis.stored = history.messages.some((m) => m.type === "user" && m.content[0].text === "replaced") ? 1 : 2;
+        \\}).catch(() => { globalThis.stored = 3; });
+    , "input-history.js");
+    try pumpUntil(host, "globalThis.stored > 0");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.stored"));
+}
+
+test "an input hook cannot revive a session removed while it waits" {
+    var f: Fixture = undefined;
+    try f.init(deferred_input, kernel_boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+    try startDeferredInput(host);
+    try host.evalModule(
+        \\request("session.remove", { session_id: sid }).then(() => { globalThis.removed = 1; });
+    , "input-remove.js");
+    try pumpUntil(host, "globalThis.removed === 1");
+    try host.eval("release();", "input-release.js");
+    try pumpUntil(host, "globalThis.finished !== 0");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.finished === 2 && globalThis.failure === 'unknown_session'"));
+}
+
+test "a blocked input answers its code and reaches no store" {
+    var f: Fixture = undefined;
+    try f.init(deferred_input, kernel_boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+    try startDeferredInput(host);
+    try host.eval("release({ block: 'denied' });", "input-block.js");
+    try pumpUntil(host, "globalThis.finished !== 0");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.finished === 2 && globalThis.failure === 'bad_request'"));
+    try host.evalModule(
+        \\request("session.history", { session_id: sid, before_message_id: Number.MAX_SAFE_INTEGER }).then((history) => { globalThis.empty = history.messages.length === 0 ? 1 : 2; }).catch(() => { globalThis.empty = 3; });
+    , "input-after-block.js");
+    try pumpUntil(host, "globalThis.empty > 0");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.empty"));
 }

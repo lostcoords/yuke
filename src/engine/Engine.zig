@@ -76,7 +76,7 @@ pub fn installHooks(self: *Engine, set: hookset.HookSet) void {
 }
 
 /// Drop the tool and hook sets after all turn tasks leave the engine.
-pub fn clearTools(self: *Engine) void {
+pub fn clearExtensions(self: *Engine) void {
     std.debug.assert(self.closing);
     self.deps.tools = .{};
     self.deps.hooks = .{};

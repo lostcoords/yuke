@@ -133,9 +133,9 @@ fn readTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.env };
 
     const text = local.readAll(arena.allocator(), req.path, max_read_bytes) catch |err|
-        return op.finish(.{ .failed = errorMessage(err) });
+        return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
     const owned = host.gpa.dupe(u8, text) catch
-        return op.finish(.{ .failed = "out of memory" });
+        return op.finish(.{ .failed = .{ .message = "out of memory" } });
     op.finish(.{ .text = owned });
 }
 
@@ -145,7 +145,7 @@ fn readRangeTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer arena.deinit();
     var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.env };
     const got = local.readRange(arena.allocator(), req.path, req.range, read_limits) catch |err|
-        return op.finish(.{ .failed = errorMessage(err) });
+        return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
     const json = encodeRange(host.gpa, got);
     op.finish(.{ .json = json });
 }

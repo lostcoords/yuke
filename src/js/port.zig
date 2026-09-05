@@ -70,7 +70,8 @@ fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payl
     // The owner sleeps between frames, so a queued call must wake it.
     host.wake.set();
 
-    call.done.wait() catch return .proceed;
+    call.done.wait() catch return .canceled;
+    if (host.phase != .open) return .canceled;
     std.debug.assert(call.state == .settled); // the owner sets the event once, and only on a settle
     const text = call.text orelse return .proceed;
     if (call.is_error) {
@@ -83,17 +84,35 @@ fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payl
 
 /// Read the decision the chain answered. Text the point cannot describe proceeds.
 fn decisionOf(out: std.mem.Allocator, point: proto.hook.Point, text: []const u8) hookset.Decision {
-    const parsed = std.json.parseFromSliceLeaky(proto.hook.Decision, out, text, .{}) catch {
+    const parsed = std.json.parseFromSliceLeaky(proto.hook.Decision, out, text, .{ .allocate = .alloc_always }) catch {
         std.log.warn("hook {s} answered an unreadable decision", .{point.wireName()});
         return .proceed;
     };
     return switch (parsed) {
         .proceed => .proceed,
-        .replace => |replaced| .{ .replace = std.json.Stringify.valueAlloc(out, replaced.value, .{}) catch return .proceed },
-        .block => |blocked| .{ .block = out.dupe(u8, blocked.reason) catch return .proceed },
+        .replace => |replaced| .{ .replace = replaced.value },
+        .block => |blocked| .{ .block = blocked.reason },
     };
 }
 
 fn fault(out: std.mem.Allocator, message: []const u8) toolset.Outcome {
     return .{ .output = out.dupe(u8, message) catch message, .is_error = true };
+}
+
+test "hook decisions own text after the call answer leaves" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const out = arena.allocator();
+
+    const blocked_text = try std.testing.allocator.dupe(u8, "{\"type\":\"block\",\"reason\":\"denied\"}");
+    const blocked = decisionOf(out, .@"input.before", blocked_text);
+    std.testing.allocator.free(blocked_text);
+    try std.testing.expect(blocked == .block);
+    try std.testing.expectEqualStrings("denied", blocked.block);
+
+    const replaced_text = try std.testing.allocator.dupe(u8, "{\"type\":\"replace\",\"value\":{\"name\":\"bash\"}}");
+    const replaced = decisionOf(out, .@"tool.before", replaced_text);
+    std.testing.allocator.free(replaced_text);
+    try std.testing.expect(replaced == .replace);
+    try std.testing.expectEqualStrings("bash", replaced.replace.object.get("name").?.string);
 }

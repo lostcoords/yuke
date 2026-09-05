@@ -12,7 +12,6 @@ test {
     _ = @import("app/commands.zig");
     _ = @import("app/call.zig");
     _ = @import("engine/sink.zig");
-    _ = @import("app/rpc.zig");
     _ = @import("session/session.zig");
     _ = @import("session/draft.zig");
     _ = @import("session/transcript.zig");

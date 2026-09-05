@@ -1,7 +1,4 @@
-//! The port the engine calls to ask a hook. The process supplies the implementation.
-//!
-//! The engine never names a handler. It states a point and a payload, and the host folds whatever
-//! chain holds that point. A process with no extensions proceeds, so every call site stays the same.
+//! The engine asks the process to fold a hook chain without access to JavaScript.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -10,10 +7,12 @@ const proto = @import("proto");
 pub const Decision = union(enum) {
     /// No handler changed the value, so the call site uses what it already holds.
     proceed,
-    /// The payload the call site uses instead, as the JSON the point defines.
-    replace: []const u8,
+    /// The payload the call site uses instead, as the parsed JSON the point defines.
+    replace: std.json.Value,
     /// The action never runs. The reason reaches the model in place of a result.
     block: []const u8,
+    /// Cancellation stopped the call before the chain answered.
+    canceled,
 };
 
 pub const HookSet = struct {
@@ -37,6 +36,7 @@ pub const HookSet = struct {
     ) Decision {
         if (!self.holds(self.ctx, point)) return .proceed;
         const json = std.json.Stringify.valueAlloc(out, payload, .{}) catch return .proceed;
+        defer out.free(json);
         return self.ask(self.ctx, out, point, json);
     }
 };

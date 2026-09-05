@@ -101,16 +101,16 @@ pub const Tools = struct {
 };
 
 /// What one call asks for. The kind selects the handler the owner runs and the answer it records.
-pub const Kind = enum { tool, hook };
+pub const Kind = enum { tool, hook, input };
 
 /// One call in flight. A turn task submits it and waits; the owner answers it.
 ///
 /// The submitter touches no QuickJS value, so it never frees the Promise; it marks itself done and the owner sweeps the record.
 pub const Call = struct {
     kind: Kind = .tool,
-    /// The tool name, or the hook point. The submitter owns these bytes for the whole call.
+    /// The tool name, the hook point, or the input method. The submitter owns these bytes for the whole call.
     name: []const u8,
-    /// The tool arguments, or the hook payload. Raw JSON either way.
+    /// The tool arguments, the hook payload, or the input parameters. Raw JSON either way.
     arguments: []const u8,
     /// The workspace a tool runs against. A hook call leaves it empty.
     workspace_root: []u8,
@@ -176,6 +176,11 @@ pub const Calls = struct {
     /// Queue one hook question. The point names it, and the payload is the JSON that point defines.
     pub fn submitHook(self: *Calls, point: []const u8, payload: []const u8) *Call {
         return self.submitCall(.hook, point, payload, "");
+    }
+
+    /// Queue one `session.send_input` for the gate, which folds `input.before` before it issues the command.
+    pub fn submitInput(self: *Calls, params: []const u8) *Call {
+        return self.submitCall(.input, "session.send_input", params, "");
     }
 
     fn submitCall(self: *Calls, kind: Kind, name: []const u8, arguments: []const u8, workspace_root: []const u8) *Call {

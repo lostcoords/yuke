@@ -121,8 +121,10 @@ export class Chat {
           client.sessionClose(r.session.id);
           return null;
         }
+        // `open` moves the token, so the first message takes the plain send path and its own failure notice.
         this.open(r.session.id);
-        return client.sessionSendInput(r.session.id, text);
+        this.send(text);
+        return null;
       })
       .catch((e) => {
         // A cancelled create must not restore text into a pane the user already moved on from.

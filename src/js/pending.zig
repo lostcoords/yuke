@@ -23,7 +23,13 @@ pub const Result = union(enum) {
     json: [:0]u8,
     boolean: bool,
     undefined,
-    failed: []const u8,
+    failed: Failure,
+};
+
+/// A static operation error with an optional code for command refusals.
+pub const Failure = struct {
+    message: []const u8,
+    code: ?[]const u8 = null,
 };
 
 /// Answer a resolved promise. `JS_NewSettledPromise` borrows the value, so this frees it.
@@ -34,16 +40,21 @@ pub fn resolved(ctx: Context, value: Value) Value {
 
 /// Answer a rejected promise that carries an Error, so `catch (e)` reads `e.message`, and leave no exception pending.
 pub fn rejected(ctx: Context, message: []const u8) Value {
+    return rejectedWith(ctx, .{ .message = message });
+}
+
+pub fn rejectedWith(ctx: Context, failure: Failure) Value {
     dropException(ctx);
-    const err = errorWith(ctx, message) orelse return ctx.newSettledPromise(true, quickjs.UNDEFINED);
+    const err = errorWith(ctx, failure) orelse return ctx.newSettledPromise(true, quickjs.UNDEFINED);
     defer ctx.freeValue(err);
     return ctx.newSettledPromise(true, err);
 }
 
 /// Build one Error, or answer null with the exception cleared when the QuickJS heap is full.
-fn errorWith(ctx: Context, message: []const u8) ?Value {
+fn errorWith(ctx: Context, failure: Failure) ?Value {
     const err = ctx.newError();
-    if (!ctx.isException(err)) ctx.setPropertyStr(err, "message", ctx.newString(message)) catch {};
+    if (!ctx.isException(err)) ctx.setPropertyStr(err, "message", ctx.newString(failure.message)) catch {};
+    if (!ctx.hasException()) if (failure.code) |code| ctx.setPropertyStr(err, "code", ctx.newString(code)) catch {};
     if (!ctx.hasException()) return err;
     ctx.freeValue(err);
     dropException(ctx);
@@ -136,7 +147,7 @@ pub const Ops = struct {
             .json => |bytes| ctx.parseJSON(bytes, "yuke:primitive"),
             .boolean => |value| ctx.newBool(value),
             .undefined => quickjs.UNDEFINED,
-            .failed => |message| errorWith(ctx, message) orelse quickjs.UNDEFINED,
+            .failed => |failure| errorWith(ctx, failure) orelse quickjs.UNDEFINED,
         };
         // A failed conversion is an exception value no resolver may see, so clear it and reject with undefined to leave the pending set.
         if (ctx.isException(value)) {
