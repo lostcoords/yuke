@@ -61,17 +61,71 @@ pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
     _ = try host.evalFile(path);
 }
 
+// ---------------------------------------------------------------- tests
+
+const ai = @import("ai");
+const database = @import("../store/store.zig");
+const tools_table = @import("tools.zig");
+
+/// The boot a headless test host runs: the kernel and the plugin bus, and nothing of the view tier.
+const kernel_boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";
+
+/// One headless host over a canned engine, with the user entry the test writes. It must not move after `init`.
+const Fixture = struct {
+    gpa: std.heap.DebugAllocator(.{}),
+    tmp: std.testing.TmpDir,
+    root_buf: [std.fs.max_path_bytes]u8,
+    reactor: *zio.Runtime,
+    env: std.process.Environ.Map,
+    canned: ai.transport.CannedTransport,
+    app: App,
+    extensions: Extensions,
+
+    fn init(self: *Fixture, entry: []const u8, boot: [:0]const u8) !void {
+        self.gpa = .init;
+        self.tmp = std.testing.tmpDir(.{});
+        try self.tmp.dir.writeFile(std.testing.io, .{ .sub_path = user_entry, .data = entry });
+        const root = self.root_buf[0..try self.tmp.dir.realPath(std.testing.io, &self.root_buf)];
+        self.reactor = try zio.Runtime.init(self.gpa.allocator(), .{ .executors = .exact(1) });
+        self.env = .init(self.gpa.allocator());
+        self.canned = .{ .bytes = ai.transport.canned_reply };
+        try self.app.initTest(self.gpa.allocator(), self.reactor.io(), try database.Database.openTest(), &self.env, self.canned.transport());
+        try self.extensions.init(self.gpa.allocator(), self.reactor.io(), &self.app, .{
+            .host = .{ .headless = true, .cwd = root, .env = &self.env },
+            .boot = boot,
+            .config_dir = root,
+        });
+        try std.testing.expect(!self.extensions.user_entry_fault);
+    }
+
+    fn deinit(self: *Fixture) void {
+        self.extensions.deinit();
+        self.app.engine.close();
+        self.app.db.deinit();
+        self.app.store.deinit();
+        self.app.logins.deinit();
+        self.env.deinit();
+        self.reactor.deinit();
+        self.tmp.cleanup();
+        std.debug.assert(self.gpa.deinit() == .ok);
+    }
+};
+
+/// Drive the owner until one call settles, the way `serve` does between frames.
+fn pumpUntilSettled(host: *Host, call: *tools_table.Call) !void {
+    try host.pump();
+    var rounds: u32 = 0;
+    while (call.state != .settled) : (rounds += 1) {
+        if (rounds == 64) return error.CallNeverSettled;
+        host.wake.timedWait(.fromMilliseconds(1000)) catch {};
+        host.wake.reset();
+        try host.pump();
+    }
+}
+
 test "headless extensions pump an async JavaScript tool" {
-    const ai = @import("ai");
-    const database = @import("../store/store.zig");
-
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "note.txt", .data = "from rpc" });
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = user_entry, .data =
+    var f: Fixture = undefined;
+    try f.init(
         \\import { defineConfig, tools } from "yuke";
         \\defineConfig({ systemPrompt: "configured by JavaScript" });
         \\import { fs } from "yuke:fs";
@@ -81,31 +135,11 @@ test "headless extensions pump an async JavaScript tool" {
         \\  parameters: { type: "object", properties: { path: { type: "string" } } },
         \\  execute: async ({ path }) => ({ text: await fs.readFile(path) }),
         \\});
-    });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-
-    var reactor = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
-    defer reactor.deinit();
-    var env: std.process.Environ.Map = .init(gpa.allocator());
-    defer env.deinit();
-    var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
-    var app_runtime: App = undefined;
-    try app_runtime.initTest(gpa.allocator(), reactor.io(), try database.Database.openTest(), &env, canned.transport());
-    var extensions: Extensions = undefined;
-    try extensions.init(gpa.allocator(), reactor.io(), &app_runtime, .{
-        .host = .{ .headless = true, .cwd = root, .env = &env },
-        .boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";",
-        .config_dir = root,
-    });
-    defer {
-        extensions.deinit();
-        app_runtime.engine.close();
-        app_runtime.db.deinit();
-        app_runtime.store.deinit();
-        app_runtime.logins.deinit();
-    }
-    try std.testing.expect(!extensions.user_entry_fault);
+    , kernel_boot);
+    defer f.deinit();
+    try f.tmp.dir.writeFile(std.testing.io, .{ .sub_path = "note.txt", .data = "from rpc" });
+    const extensions = &f.extensions;
+    const app_runtime = &f.app;
     // The engine asks the host, so the user tool and every built-in reach the provider together.
     const installed = app_runtime.engine.deps.tools;
     const advertised = installed.getDecls(installed.ctx);
@@ -130,14 +164,7 @@ test "headless extensions pump an async JavaScript tool" {
     try std.testing.expect(app_runtime.engine.default_system_prompt == null);
 
     const call = extensions.host.calls.submit("read_note", "{\"path\":\"note.txt\"}", "");
-    try extensions.host.pump();
-    var rounds: u32 = 0;
-    while (call.state != .settled) : (rounds += 1) {
-        if (rounds == 64) return error.CallNeverSettled;
-        extensions.host.wake.timedWait(.fromMilliseconds(1000)) catch {};
-        extensions.host.wake.reset();
-        try extensions.host.pump();
-    }
+    try pumpUntilSettled(extensions.host, call);
     try std.testing.expect(!call.is_error);
     try std.testing.expectEqualStrings("{\"text\":\"from rpc\"}", call.text.?);
     call.finish();
@@ -145,41 +172,12 @@ test "headless extensions pump an async JavaScript tool" {
 }
 
 test "a plugin notice reaches every attached frontend" {
-    const ai = @import("ai");
-    const database = @import("../store/store.zig");
-    const rpc_boot = @import("../app/rpc.zig").boot;
     const proto = @import("proto");
-
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = user_entry, .data = "" });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-
-    var reactor = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
-    defer reactor.deinit();
-    var env: std.process.Environ.Map = .init(gpa.allocator());
-    defer env.deinit();
-    var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
-    var app_runtime: App = undefined;
-    try app_runtime.initTest(gpa.allocator(), reactor.io(), try database.Database.openTest(), &env, canned.transport());
-    var extensions: Extensions = undefined;
-    try extensions.init(gpa.allocator(), reactor.io(), &app_runtime, .{
-        .host = .{ .headless = true, .cwd = root, .env = &env },
-        .boot = rpc_boot,
-        .config_dir = root,
-    });
-    defer {
-        extensions.deinit();
-        app_runtime.engine.close();
-        app_runtime.db.deinit();
-        app_runtime.store.deinit();
-        app_runtime.logins.deinit();
-    }
-    try std.testing.expect(!extensions.user_entry_fault);
+    var f: Fixture = undefined;
+    try f.init("", @import("../app/rpc.zig").boot);
+    defer f.deinit();
+    const extensions = &f.extensions;
+    const app_runtime = &f.app;
 
     // A frontend attaches here, so the notice has somewhere to arrive.
     const Capture = struct {
@@ -217,15 +215,8 @@ test "a plugin notice reaches every attached frontend" {
 }
 
 test "a hook chain replaces a payload and the first block ends it" {
-    const ai = @import("ai");
-    const database = @import("../store/store.zig");
-
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = user_entry, .data =
+    var f: Fixture = undefined;
+    try f.init(
         \\import { plugins } from "yuke";
         \\plugins.use({ name: "gate", apply: (ctx) => {
         \\  ctx.hook("tool.before", (ev) => ({ replace: { name: ev.name, arguments: "rewritten" } }));
@@ -235,31 +226,10 @@ test "a hook chain replaces a payload and the first block ends it" {
         \\  ctx.hook("input.before", (ev) => (ev.content[0].text === "no" ? { block: "refused" } : undefined));
         \\  ctx.on("run.started", (ev) => { globalThis.sawRun = ev.session; });
         \\}});
-    });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-
-    var reactor = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
-    defer reactor.deinit();
-    var env: std.process.Environ.Map = .init(gpa.allocator());
-    defer env.deinit();
-    var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
-    var app_runtime: App = undefined;
-    try app_runtime.initTest(gpa.allocator(), reactor.io(), try database.Database.openTest(), &env, canned.transport());
-    var extensions: Extensions = undefined;
-    try extensions.init(gpa.allocator(), reactor.io(), &app_runtime, .{
-        .host = .{ .headless = true, .cwd = root, .env = &env },
-        .boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";",
-        .config_dir = root,
-    });
-    defer {
-        extensions.deinit();
-        app_runtime.engine.close();
-        app_runtime.db.deinit();
-        app_runtime.store.deinit();
-        app_runtime.logins.deinit();
-    }
-    try std.testing.expect(!extensions.user_entry_fault);
+    , kernel_boot);
+    defer f.deinit();
+    const extensions = &f.extensions;
+    const app_runtime = &f.app;
 
     // A point no handler holds must never reach the owner, so a turn pays nothing for it.
     try std.testing.expect(extensions.host.hooks.holds(.@"tool.before"));
@@ -287,17 +257,17 @@ test "a hook chain replaces a payload and the first block ends it" {
     ));
 
     // The first handler rewrites the arguments, so the second one sees them and ends the chain.
-    const blocked = try settleHook(&extensions, "tool.before", "{\"name\":\"bash\",\"arguments\":\"original\"}");
+    const blocked = try settleHook(extensions, "tool.before", "{\"name\":\"bash\",\"arguments\":\"original\"}");
     defer std.testing.allocator.free(blocked);
     try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"denied\"}", blocked);
 
     // An async handler settles through the same poll a tool call uses.
-    const replaced = try settleHook(&extensions, "tool.after", "{\"output\":\"ok\",\"is_error\":false}");
+    const replaced = try settleHook(extensions, "tool.after", "{\"output\":\"ok\",\"is_error\":false}");
     defer std.testing.allocator.free(replaced);
     try std.testing.expectEqualStrings("{\"type\":\"replace\",\"value\":{\"output\":\"ok!\",\"is_error\":false}}", replaced);
 
     // A handler reads the whole neutral request, so an untouched field survives the round trip.
-    const built = try settleHook(&extensions, "request.build", "{\"model\":\"m\",\"system\":\"original\",\"tools\":[],\"max_output_tokens\":64}");
+    const built = try settleHook(extensions, "request.build", "{\"model\":\"m\",\"system\":\"original\",\"tools\":[],\"max_output_tokens\":64}");
     defer std.testing.allocator.free(built);
     try std.testing.expectEqualStrings(
         "{\"type\":\"replace\",\"value\":{\"model\":\"m\",\"system\":\"from the chain\",\"tools\":[],\"max_output_tokens\":64}}",
@@ -305,11 +275,11 @@ test "a hook chain replaces a payload and the first block ends it" {
     );
 
     // A handler that answers nothing leaves the input as the user wrote it.
-    const allowed = try settleHook(&extensions, "input.before", "{\"session_id\":\"s\",\"content\":[{\"type\":\"text\",\"text\":\"yes\"}]}");
+    const allowed = try settleHook(extensions, "input.before", "{\"session_id\":\"s\",\"content\":[{\"type\":\"text\",\"text\":\"yes\"}]}");
     defer std.testing.allocator.free(allowed);
     try std.testing.expectEqualStrings("", allowed);
 
-    const refused = try settleHook(&extensions, "input.before", "{\"session_id\":\"s\",\"content\":[{\"type\":\"text\",\"text\":\"no\"}]}");
+    const refused = try settleHook(extensions, "input.before", "{\"session_id\":\"s\",\"content\":[{\"type\":\"text\",\"text\":\"no\"}]}");
     defer std.testing.allocator.free(refused);
     try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"refused\"}", refused);
 }
@@ -318,16 +288,58 @@ test "a hook chain replaces a payload and the first block ends it" {
 /// text on its next sweep, so this copies the answer and the caller owns it.
 fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) ![]u8 {
     const call = extensions.host.calls.submitHook(point, payload);
-    try extensions.host.pump();
-    var rounds: u32 = 0;
-    while (call.state != .settled) : (rounds += 1) {
-        if (rounds == 64) return error.HookNeverSettled;
-        extensions.host.wake.timedWait(.fromMilliseconds(1000)) catch {};
-        extensions.host.wake.reset();
-        try extensions.host.pump();
-    }
+    try pumpUntilSettled(extensions.host, call);
     try std.testing.expect(!call.is_error);
     const text = try std.testing.allocator.dupe(u8, call.text.?);
     call.finish();
     return text;
+}
+
+test "a user entry file evaluates and a missing one is not an error" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = user_entry,
+        .data = "globalThis.result = 5;\n",
+    });
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
+    const dir = dir_buf[0..dir_len];
+
+    const host = Host.create(gpa.allocator());
+    defer host.destroy();
+    try evalUserEntry(host, dir);
+    try std.testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.result"));
+
+    try evalUserEntry(host, null);
+    var empty = std.testing.tmpDir(.{});
+    defer empty.cleanup();
+    var empty_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const empty_len = try empty.dir.realPath(std.testing.io, &empty_buf);
+    try evalUserEntry(host, empty_buf[0..empty_len]);
+}
+
+test "a throwing user entry is a JavaScriptFault the loop absorbs" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = user_entry,
+        .data = "throw new Error('bad config');\n",
+    });
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
+
+    const host = Host.create(gpa.allocator());
+    defer host.destroy();
+    try std.testing.expectError(
+        error.JavaScriptFault,
+        evalUserEntry(host, dir_buf[0..dir_len]),
+    );
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "bad config") != null);
 }

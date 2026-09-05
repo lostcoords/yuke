@@ -356,8 +356,17 @@ pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: pro
 const testing = std.testing;
 const seedHistory = paging.seedHistory;
 const partTextOf = paging.partTextOf;
-const fieldPage = paging.fieldPage;
 const pageLimit = paging.pageLimit;
+
+/// The `cut` entry of one part for `field`, read from the JSON the writer produced, so a test pins no key order.
+fn cutOf(arena: std.mem.Allocator, json: []const u8, part: usize, field: []const u8) !?std.json.ObjectMap {
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, json, .{});
+    const cuts = parsed.array.items[part].object.get("cut") orelse return null;
+    for (cuts.array.items) |cut| {
+        if (std.mem.eql(u8, cut.object.get("field").?.string, field)) return cut.object;
+    }
+    return null;
+}
 
 test "a huge tool result projects into a bounded parts response" {
     const gpa = testing.allocator;
@@ -394,13 +403,17 @@ test "a huge tool result projects into a bounded parts response" {
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
     try writeMessageParts(&aw.writer, &sess, 1, null);
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
 
     // Three megabytes of source must not become a three-megabyte projection. One page per string bounds it.
     try testing.expect(aw.written().len < 4 * max_page_bytes);
     // The response still says how large the output really is, so a view can page it.
-    try testing.expect(std.mem.indexOf(u8, aw.written(), "{\"field\":\"output\",\"bytes\":1048576,\"next\":65536}") != null);
+    const output = (try cutOf(arena.allocator(), aw.written(), 0, "output")).?;
+    try testing.expectEqual(@as(i64, @intCast(huge.len)), output.get("bytes").?.integer);
+    try testing.expectEqual(@as(i64, max_page_bytes), output.get("next").?.integer);
     // The one diff line is far over the line cap, and the response says so instead of eliding in silence.
-    try testing.expect(std.mem.indexOf(u8, aw.written(), "{\"field\":\"view.0.diff\",\"total\":1}") != null);
+    try testing.expectEqual(@as(i64, 1), (try cutOf(arena.allocator(), aw.written(), 0, "view.0.diff")).?.get("total").?.integer);
 
     // `partText` reads that output one bounded page at a time.
     const text = partTextOf(&sess, 1, 0, "output") orelse return error.TestUnexpectedResult;
@@ -443,7 +456,9 @@ test "a diff of many files stays inside the response budget" {
 
     try testing.expect(aw.written().len < 2 * max_part_bytes);
     // The diff says how many lines the whole patch holds, so a row can mark what it hides.
-    try testing.expect(std.mem.indexOf(u8, aw.written(), "\"field\":\"view.0.diff\",\"total\":10000") != null);
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    try testing.expectEqual(@as(i64, 10_000), (try cutOf(arena.allocator(), aw.written(), 0, "view.0.diff")).?.get("total").?.integer);
 }
 
 test "many huge parts each stay inside the part budget and none is dropped" {
@@ -561,20 +576,18 @@ test "a text part over the inline bound reports more and pages back whole" {
     defer aw.deinit();
     try writeMessageParts(&aw.writer, &sess, 1, null);
 
-    // The cut names the field, the whole size, and where a reader resumes, so the view pages without a second prefix read.
-    try testing.expect(std.mem.indexOf(u8, aw.written(), "\"cut\":[{\"field\":\"text\",\"bytes\":72000,\"next\":65535}]") != null);
+    // The cut names the field, the whole size, and where a reader resumes on a character boundary.
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const cut = (try cutOf(arena.allocator(), aw.written(), 0, "text")).?;
+    try testing.expectEqual(@as(i64, @intCast(long.len)), cut.get("bytes").?.integer);
+    try testing.expectEqual(@as(i64, @intCast(utf8.floor(long, max_page_bytes))), cut.get("next").?.integer);
 
     const whole = partTextOf(&sess, 1, 0, "text") orelse return error.TestUnexpectedResult;
     try testing.expectEqual(long.len, whole.len);
 
     // The page loop echoes `next`, so it must rebuild the text with no gap and no repeat.
-    var rebuilt: std.ArrayList(u8) = .empty;
-    defer rebuilt.deinit(gpa);
-    var offset: u64 = 0;
-    while (fieldPage(whole, offset, pageLimit(1000))) |page| {
-        try testing.expect(std.unicode.utf8ValidateSlice(page.text)); // no page ever splits a character
-        try rebuilt.appendSlice(gpa, page.text);
-        offset = page.next orelse break;
-    }
-    try testing.expectEqualStrings(whole, rebuilt.items);
+    const rebuilt = try paging.rebuildFieldPages(gpa, whole, pageLimit(1000));
+    defer gpa.free(rebuilt);
+    try testing.expectEqualStrings(whole, rebuilt);
 }

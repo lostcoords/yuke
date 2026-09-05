@@ -202,20 +202,26 @@ test "a page limit always holds one whole character" {
     try testing.expectEqual(@as(usize, 64), pageLimit(64));
 }
 
-test "a field pages whole characters and advances on the smallest page" {
-    const text = "\u{1F642}a\u{2014}b\u{00E9}";
+/// Read `text` page by page through `fieldPage`, as a view does, and answer the text the pages rebuild.
+pub fn rebuildFieldPages(gpa: std.mem.Allocator, text: []const u8, want: usize) ![]u8 {
     var rebuilt: std.ArrayList(u8) = .empty;
-    defer rebuilt.deinit(testing.allocator);
-
+    errdefer rebuilt.deinit(gpa);
     var offset: u64 = 0;
-    while (fieldPage(text, offset, pageLimit(1))) |page| {
+    while (fieldPage(text, offset, want)) |page| {
         try testing.expect(std.unicode.utf8ValidateSlice(page.text)); // no page ever splits a character
-        try rebuilt.appendSlice(testing.allocator, page.text);
+        try rebuilt.appendSlice(gpa, page.text);
         const next = page.next orelse break;
         try testing.expect(next > offset); // a page always advances, so the loop ends
         offset = next;
     }
-    try testing.expectEqualStrings(text, rebuilt.items);
+    return rebuilt.toOwnedSlice(gpa);
+}
+
+test "a field pages whole characters and advances on the smallest page" {
+    const text = "\u{1F642}a\u{2014}b\u{00E9}";
+    const rebuilt = try rebuildFieldPages(testing.allocator, text, pageLimit(1));
+    defer testing.allocator.free(rebuilt);
+    try testing.expectEqualStrings(text, rebuilt);
 
     // An offset inside a character resumes at the next one instead of answering orphan bytes.
     const inside = fieldPage(text, 1, pageLimit(0)).?;

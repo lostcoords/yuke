@@ -128,56 +128,6 @@ pub fn runIo(env: *std.process.Environ.Map, extensions: *extensions_mod.Extensio
     try serve(host, &ch);
 }
 
-test "a user entry file evaluates and a missing one is not an error" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{
-        .sub_path = extensions_mod.user_entry,
-        .data = "globalThis.result = 5;\n",
-    });
-    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
-    const dir = dir_buf[0..dir_len];
-
-    const host = Host.create(gpa.allocator());
-    defer host.destroy();
-    try extensions_mod.evalUserEntry(host, dir);
-    try std.testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.result"));
-
-    try extensions_mod.evalUserEntry(host, null);
-    var empty = std.testing.tmpDir(.{});
-    defer empty.cleanup();
-    var empty_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const empty_len = try empty.dir.realPath(std.testing.io, &empty_buf);
-    try extensions_mod.evalUserEntry(host, empty_buf[0..empty_len]);
-}
-
-test "a throwing user entry is a JavaScriptFault the loop absorbs" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{
-        .sub_path = extensions_mod.user_entry,
-        .data = "throw new Error('bad config');\n",
-    });
-    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
-
-    const host = Host.create(gpa.allocator());
-    defer host.destroy();
-    try std.testing.expectError(
-        error.JavaScriptFault,
-        extensions_mod.evalUserEntry(host, dir_buf[0..dir_len]),
-    );
-    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "bad config") != null);
-    try absorbScriptFault(host, extensions_mod.evalUserEntry(host, dir_buf[0..dir_len]));
-}
-
 /// Run `start`, then process queued events with `step`. Native quit ends the loop, but a script error does not.
 pub fn serve(host: *Host, ch: *Channel) !void {
     std.debug.assert(host.phase == .open);

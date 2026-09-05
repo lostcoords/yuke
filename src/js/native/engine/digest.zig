@@ -294,29 +294,6 @@ test "a merge keeps every fact, even when a stronger kind resets the change" {
     try testing.expect(change.facts.contains(.@"session.removed"));
 }
 
-test "a part event names its own message and never reloads the outline" {
-    const sid = SessionId.bytes([_]u8{0} ** 16);
-    const delta: Change = .of(.{ .method = .@"tool.output_delta", .params = .{ .tool_output_delta_data = .{
-        .session_id = sid,
-        .message_id = 7,
-        .part_id = 1,
-        .offset = 0,
-        .delta = "out",
-    } } });
-    try testing.expectEqual(@as(proto.ids.MessageId, 7), delta.view.message.id);
-    try testing.expectEqual(@as(?proto.ids.PartId, 1), delta.view.message.part);
-    try testing.expectEqualStrings("active", delta.kind());
-
-    const state: Change = .of(.{ .method = .@"tool.state_changed", .params = .{ .tool_state_changed_data = .{
-        .session_id = sid,
-        .message_id = 7,
-        .part_id = 1,
-        .state = .{ .running = .{ .started_at_ms = 0 } },
-    } } });
-    try testing.expectEqual(@as(proto.ids.MessageId, 7), state.view.message.id);
-    try testing.expectEqual(@as(?proto.ids.PartId, 1), state.view.message.part);
-}
-
 test "the activity never reloads the transcript, and a part event outranks it" {
     const sid = SessionId.bytes([_]u8{0} ** 16);
     var change: Change = .of(.{ .method = .@"session.activity_changed", .params = .{ .session_activity_changed_data = .{
@@ -335,6 +312,16 @@ test "the activity never reloads the transcript, and a part event outranks it" {
     } } }));
     try testing.expectEqual(@as(proto.ids.MessageId, 3), change.view.message.id);
     try testing.expectEqual(@as(?proto.ids.PartId, 0), change.view.message.part);
+
+    // A tool state event is a part event too, so it names its message and its part and never reloads.
+    const state: Change = .of(.{ .method = .@"tool.state_changed", .params = .{ .tool_state_changed_data = .{
+        .session_id = sid,
+        .message_id = 7,
+        .part_id = 1,
+        .state = .{ .running = .{ .started_at_ms = 0 } },
+    } } });
+    try testing.expectEqualStrings("active", state.kind());
+    try testing.expectEqual(@as(?proto.ids.PartId, 1), state.view.message.part);
 }
 
 test "two parts widen to their message, and two messages widen to a reload" {

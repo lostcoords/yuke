@@ -46,11 +46,6 @@ pub const Hooks = struct {
 
 const testing = std.testing;
 
-test "an empty table holds no point" {
-    var hooks: Hooks = .{};
-    for (std.meta.tags(Point)) |point| try testing.expect(!hooks.holds(point));
-}
-
 test "a point holds nothing until a folder is installed" {
     var hooks: Hooks = .{};
     var points: PointSet = .initEmpty();

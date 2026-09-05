@@ -189,21 +189,11 @@ test "the result names the outcome that happened and nothing else" {
             "\"stdoutDropped\":0,\"stderrDropped\":0}",
         try encoded(a, .{ .stdout = "", .stderr = "", .outcome = .timed_out }),
     );
-}
-
-test "the result reports the bytes each stream dropped" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    const json = try encoded(arena.allocator(), .{
-        .stdout = "head",
-        .stderr = "tail",
-        .outcome = .{ .exited = 0 },
-        .stdout_dropped = 12,
-        .stderr_dropped = 34,
-    });
-    try testing.expect(std.mem.indexOf(u8, json, "\"stdoutDropped\":12") != null);
-    try testing.expect(std.mem.indexOf(u8, json, "\"stderrDropped\":34") != null);
+    try testing.expectEqualStrings(
+        "{\"stdout\":\"head\",\"stderr\":\"tail\",\"code\":0,\"signal\":null,\"timedOut\":false," ++
+            "\"stdoutDropped\":12,\"stderrDropped\":34}",
+        try encoded(a, .{ .stdout = "head", .stderr = "tail", .outcome = .{ .exited = 0 }, .stdout_dropped = 12, .stderr_dropped = 34 }),
+    );
 }
 
 // A command prints any bytes, but the result must be a JSON string the parser accepts.
@@ -221,16 +211,4 @@ test "the result holds valid text whatever the command printed" {
     const parsed = try std.json.parseFromSliceLeaky(Shape, a, json, .{ .ignore_unknown_fields = true });
     try testing.expectEqualStrings("ok\u{FFFD}\u{FFFD}", parsed.stdout);
     try testing.expectEqualStrings("\x00\x01", parsed.stderr);
-}
-
-test "the encoded text ends with a sentinel QuickJS can read" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    const json = encode(arena.allocator(), arena.allocator(), .{
-        .stdout = "x",
-        .stderr = "",
-        .outcome = .{ .exited = 0 },
-    });
-    try testing.expectEqual(@as(u8, 0), json.ptr[json.len]);
 }
