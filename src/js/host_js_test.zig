@@ -2007,6 +2007,11 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
         \\check("bad-link", renderRows("[foo](bad url)", 80).some((r) => r.segments.some((s) => s.text.indexOf("bad") >= 0)));
         \\// A table renders a column border.
         \\check("table", renderRows("| a | b |\n|---|---|\n| 1 | 2 |", 80).some((r) => r.segments.some((s) => s.group === "MdTableBorder")));
+        \\// Cells align in columns, and a long cell wraps inside its column instead of breaking the row.
+        \\const aligned = renderRows("| a | bb |\n|---|---|\n| ccc | d |", 80).map((r) => r.segments.map((s) => s.text).join(""));
+        \\check("table-aligned", aligned[0] === "a   │ bb" && aligned[2] === "ccc │ d" && aligned[1] === "────┼───");
+        \\const cellWrap = renderRows("| k | value |\n|---|---|\n| x | one two three four five six |", 20).map((r) => r.segments.map((s) => s.text).join(""));
+        \\check("table-wraps", cellWrap.length > 3 && cellWrap.every((line) => line.length <= 20) && cellWrap[2].startsWith("x │ one"));
         \\
         \\// A long paragraph wraps to width and keeps every word.
         \\const wrapped = renderRows("alpha bravo charlie delta", 11);

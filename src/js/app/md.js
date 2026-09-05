@@ -774,6 +774,28 @@ function hardBreakPieces(pieces, width) {
   return out;
 }
 
+const TABLE_GAP = " │ ";
+
+// Each column takes its widest cell; when the columns do not fit, the widest one gives up cells first, down to a floor.
+/** @param {Segment[][][]} cells @param {number} available @returns {number[]} */
+function columnWidths(cells, available) {
+  const widths = /** @type {number[]} */ ([]);
+  for (const row of cells) {
+    row.forEach((segs, c) => {
+      const w = segs.reduce((n, s) => n + term.measure(s.text), 0);
+      widths[c] = Math.max(widths[c] || 0, w);
+    });
+  }
+  let total = widths.reduce((n, w) => n + w, 0);
+  while (total > available) {
+    const widest = widths.indexOf(Math.max(...widths));
+    if (/** @type {number} */ (widths[widest]) <= 3) break;
+    widths[widest] = /** @type {number} */ (widths[widest]) - 1;
+    total -= 1;
+  }
+  return widths;
+}
+
 /** @param {string} text @param {string} [group] @returns {Row} */
 function plainRow(text, group) {
   return { segments: [{ text, group: group || "MdText" }] };
@@ -829,20 +851,35 @@ function renderBlock(block, width) {
       return rows;
     }
     case "table": {
+      // Cells align in columns: the widest column shrinks first, and a long cell wraps inside its own column.
+      const cells = block.rows.map((sourceCells) => {
+        const row = sourceCells.slice(0, block.columns);
+        while (row.length < block.columns) row.push({ text: "", runs: [] });
+        return row.map((cell) => resolveSegments(parseInline(cell.text), cell.runs));
+      });
+      const gap = term.measure(TABLE_GAP);
+      const widths = columnWidths(cells, Math.max(1, width - gap * (block.columns - 1)));
       const rows = /** @type {Row[]} */ ([]);
-      for (let r = 0; r < block.rows.length; r++) {
-        const sourceCells = /** @type {TableCell[]} */ (block.rows[r]);
-        const cells = sourceCells.slice(0, block.columns);
-        while (cells.length < block.columns) cells.push({ text: "", runs: [] });
-        const segs = [];
-        for (let c = 0; c < cells.length; c++) {
-          if (c > 0) segs.push({ text: " │ ", group: "MdTableBorder" });
-          const cell = /** @type {TableCell} */ (cells[c]);
-          for (const s of resolveSegments(parseInline(cell.text), cell.runs)) segs.push(s);
+      cells.forEach((row, r) => {
+        const lines = row.map((segs, c) => wrapSegments(segs, /** @type {number} */ (widths[c])));
+        const height = Math.max(...lines.map((l) => l.length));
+        for (let k = 0; k < height; k++) {
+          const segs = /** @type {Segment[]} */ ([]);
+          for (let c = 0; c < row.length; c++) {
+            if (c > 0) segs.push({ text: TABLE_GAP, group: "MdTableBorder" });
+            let w = 0;
+            for (const s of (/** @type {Row[]} */ (lines[c])[k] || { segments: [] }).segments) {
+              segs.push(s);
+              w += term.measure(s.text);
+            }
+            // The last column carries no padding, so a copied row ends at its text.
+            const pad = /** @type {number} */ (widths[c]) - w;
+            if (c + 1 < row.length && pad > 0) segs.push({ text: " ".repeat(pad), group: "MdText" });
+          }
+          rows.push({ segments: segs });
         }
-        for (const row of wrapSegments(segs, width)) rows.push(row);
-        if (r === 0) rows.push({ segments: [{ text: ruleText(width), group: "MdTableBorder", src: block.sepAt, srcEnd: block.sepEnd, mark: true }] });
-      }
+        if (r === 0) rows.push({ segments: [{ text: widths.map((w) => "─".repeat(w)).join("─┼─"), group: "MdTableBorder", src: block.sepAt, srcEnd: block.sepEnd, mark: true }] });
+      });
       return rows;
     }
     default:
