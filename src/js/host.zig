@@ -44,9 +44,6 @@ const shared_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:interaction", .source = @embedFile("app/interaction.js") },
 };
 
-/// The modules a headless frontend can load. The loader refuses every view module.
-pub const headless_baked = shared_baked;
-
 /// The view tier loads on top of the shared set, so the two lists cannot drift apart.
 pub const default_baked = shared_baked ++ [_]loader_mod.BakedModule{
     .{ .name = "yuke:tui", .source = @embedFile("app/tui.js") },
@@ -70,8 +67,6 @@ pub const default_baked = shared_baked ++ [_]loader_mod.BakedModule{
 };
 
 pub const Options = struct {
-    /// An empty slice takes the set that `headless` selects. A non-empty slice replaces it.
-    baked: []const loader_mod.BakedModule = &.{},
     /// A headless frontend owns no terminal, so it bakes no view module and installs no `yuke:term`.
     headless: bool = false,
     max_file_bytes: usize = loader_mod.default_max_file_bytes,
@@ -118,7 +113,7 @@ pub const Host = struct {
     /// The tasks running those calls. `close` cancels them before the context dies.
     tasks: std.Io.Group = .init,
 
-    pub const Phase = enum { open, closing, drained, destroyed };
+    pub const Phase = enum { open, closing, drained };
 
     /// Allocate a host with the test I/O.
     pub fn create(gpa: std.mem.Allocator) *Host {
@@ -135,8 +130,7 @@ pub const Host = struct {
         const ctx = quickjs.Context.init(runtime);
         std.debug.assert(ctx.ptr != null);
 
-        const mode_baked: []const loader_mod.BakedModule = if (opts.headless) &headless_baked else &default_baked;
-        const baked: []const loader_mod.BakedModule = if (opts.baked.len == 0) mode_baked else opts.baked;
+        const baked: []const loader_mod.BakedModule = if (opts.headless) &shared_baked else &default_baked;
         const ld: loader_mod.Loader = .{
             .gpa = gpa,
             .io = io,
@@ -186,7 +180,7 @@ pub const Host = struct {
     /// Start one primitive on its own task and answer the pending promise its caller returns.
     /// The task reads only the bytes `payload` owns, because a task must never touch JavaScript.
     /// A refused start rejects the promise. Only a QuickJS heap that is full throws at the caller.
-    pub fn startTask(self: *Host, comptime task: anytype, payload: anytype) quickjs.Value {
+    pub fn startTask(self: *Host, comptime Payload: type, comptime task: fn (*Host, *pending.Op, Payload) void, payload: Payload) quickjs.Value {
         std.debug.assert(self.phase == .open);
         const started = self.ops.start(self.ctx) orelse {
             payload.free(self.gpa);
@@ -231,7 +225,6 @@ pub const Host = struct {
 
     /// Drain jobs, release QuickJS resources, and destroy the host.
     pub fn destroy(self: *Host) void {
-        std.debug.assert(self.phase != .destroyed);
         if (self.phase == .open) {
             self.close() catch {};
         }
@@ -247,10 +240,7 @@ pub const Host = struct {
         self.paint.glyphs.deinit();
         self.ctx.deinit();
         self.runtime.deinit();
-        self.loader.deinit();
-        const gpa = self.gpa;
-        self.phase = .destroyed;
-        gpa.destroy(self);
+        self.gpa.destroy(self);
     }
 
     /// Stop JavaScript work, drain jobs, and close the host.
@@ -371,7 +361,6 @@ pub const Host = struct {
 
     /// QuickJS calls this in the bytecode loop: do not allocate or run JavaScript, and bound every live phase.
     pub fn onInterrupt(self: *Host) bool {
-        if (self.phase == .destroyed) return true;
         self.interrupt_count = self.interrupt_count +| 1;
         return self.interrupt_count > self.interrupt_budget;
     }

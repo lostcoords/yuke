@@ -129,7 +129,7 @@ test "headless extensions pump an async JavaScript tool" {
     try std.testing.expectEqual(@as(i32, 1), try extensions.host.evalInt("globalThis.configRejected"));
     try std.testing.expect(app_runtime.engine.default_system_prompt == null);
 
-    const call = extensions.host.calls.submit("read_note", "{\"path\":\"note.txt\"}");
+    const call = extensions.host.calls.submit("read_note", "{\"path\":\"note.txt\"}", "");
     try extensions.host.pump();
     var rounds: u32 = 0;
     while (call.state != .settled) : (rounds += 1) {
@@ -140,7 +140,7 @@ test "headless extensions pump an async JavaScript tool" {
     }
     try std.testing.expect(!call.is_error);
     try std.testing.expectEqualStrings("{\"text\":\"from rpc\"}", call.text.?);
-    extensions.host.calls.finish(call);
+    call.finish();
     try extensions.host.pump();
 }
 
@@ -328,6 +328,6 @@ fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) !
     }
     try std.testing.expect(!call.is_error);
     const text = try std.testing.allocator.dupe(u8, call.text.?);
-    extensions.host.calls.finish(call);
+    call.finish();
     return text;
 }

@@ -105,7 +105,7 @@ fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
         host.gpa.free(root);
         return rejected(ctx, "the path must be a string");
     };
-    return host.startTask(readTask, ReadRequest{ .path = path, .root = root });
+    return host.startTask(ReadRequest, readTask, .{ .path = path, .root = root });
 }
 
 /// Read bounded whole lines. The task owns the path and returns a small JSON range descriptor.
@@ -121,7 +121,7 @@ fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
         host.gpa.free(root);
         return rejected(ctx, "the read range is invalid");
     };
-    return host.startTask(readRangeTask, ReadRequest{ .path = path, .root = root, .range = range });
+    return host.startTask(ReadRequest, readRangeTask, .{ .path = path, .root = root, .range = range });
 }
 
 /// Read one file on a task. It writes bytes into the op and never enters JavaScript.

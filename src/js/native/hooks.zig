@@ -56,7 +56,3 @@ fn jsSetPoints(ctx: Context, _: Value, args: []const Value) Value {
     host.hooks.setPoints(points);
     return quickjs.UNDEFINED;
 }
-
-test {
-    _ = proto.hook.Point;
-}

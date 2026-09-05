@@ -15,7 +15,6 @@ const Value = quickjs.Value;
 
 /// Start queued calls and poll running calls after the owner drains jobs.
 pub fn pump(host: *Host) void {
-    std.debug.assert(host.phase != .destroyed);
     // A start can queue nothing new, so one pass over the list visits every call exactly once.
     for (host.calls.live.items) |call| switch (call.state) {
         .queued => if (!call.submitter_done) start(host, call),
@@ -82,7 +81,7 @@ fn startHook(host: *Host, call: *table.Call) void {
 
 fn startTool(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
-    const tool = host.tools.find(call.name) orelse
+    const at = host.tools.find(call.name) orelse
         return settleText(host, call, "the tool is not registered", true);
 
     const args = host.gpa.dupeZ(u8, call.arguments) catch unreachable;
@@ -112,7 +111,7 @@ fn startTool(host: *Host, call: *table.Call) void {
     defer ctx.freeValue(context);
     host.enterSlice();
     var argv = [_]Value{ parsed, call.signal, context };
-    const answer = ctx.call(tool.handler, quickjs.UNDEFINED, &argv);
+    const answer = ctx.call(host.tools.handlers.items[at], quickjs.UNDEFINED, &argv);
     if (ctx.isException(answer)) {
         const exc = ctx.getException();
         defer ctx.freeValue(exc);

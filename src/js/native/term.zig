@@ -1,3 +1,5 @@
+//! The native `yuke:term` module: the frame, the cells, the measurements, and the quit that the view tier draws through.
+
 const std = @import("std");
 const quickjs = @import("quickjs");
 const term_pkg = @import("term");
@@ -84,16 +86,16 @@ pub const tick_ms_max: u32 = 2000;
 /// Register `yuke:term` and its one `term` object, which the host also keeps as a root for size updates.
 pub fn install(host: *Host) void {
     module.installObject(host, "yuke:term", "term", &.{
-        .{ .name = "beginFrame", .arity = 0, .call = beginFrame },
-        .{ .name = "endFrame", .arity = 0, .call = endFrame },
-        .{ .name = "fill", .arity = 4, .call = fill },
-        .{ .name = "text", .arity = 3, .call = text },
-        .{ .name = "measure", .arity = 1, .call = measure },
-        .{ .name = "graphemes", .arity = 1, .call = graphemes },
-        .{ .name = "cursor", .arity = 3, .call = cursor },
-        .{ .name = "setNeedsTick", .arity = 2, .call = setNeedsTick },
-        .{ .name = "copy", .arity = 1, .call = copyToClipboard },
-        .{ .name = "quit", .arity = 0, .call = quit },
+        .{ .name = "beginFrame", .arity = 0, .call = jsBeginFrame },
+        .{ .name = "endFrame", .arity = 0, .call = jsEndFrame },
+        .{ .name = "fill", .arity = 4, .call = jsFill },
+        .{ .name = "text", .arity = 3, .call = jsText },
+        .{ .name = "measure", .arity = 1, .call = jsMeasure },
+        .{ .name = "graphemes", .arity = 1, .call = jsGraphemes },
+        .{ .name = "cursor", .arity = 3, .call = jsCursor },
+        .{ .name = "setNeedsTick", .arity = 2, .call = jsSetNeedsTick },
+        .{ .name = "copy", .arity = 1, .call = jsCopy },
+        .{ .name = "quit", .arity = 0, .call = jsQuit },
     }, addRoots);
 }
 
@@ -110,21 +112,21 @@ fn rethrow(ctx: Context) Value {
     return ctx.throwTypeError("yuke:term");
 }
 
-fn beginFrame(ctx: Context, _: Value, _: []const Value) Value {
+fn jsBeginFrame(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (host.paint.render == null) return ctx.throwTypeError("term.beginFrame: no host");
     startFrame(host);
     return quickjs.UNDEFINED;
 }
 
-fn endFrame(ctx: Context, _: Value, _: []const Value) Value {
+fn jsEndFrame(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (host.paint.render == null) return ctx.throwTypeError("term.endFrame: no host");
     commitFrame(host);
     return quickjs.UNDEFINED;
 }
 
-fn fill(ctx: Context, _: Value, args: []const Value) Value {
+fn jsFill(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const render = host.paint.render orelse return ctx.throwTypeError("term.fill: no host");
     if (args.len < 4) return ctx.throwTypeError("term.fill(x, y, w, h, style?)");
@@ -151,7 +153,7 @@ fn fill(ctx: Context, _: Value, args: []const Value) Value {
     return quickjs.UNDEFINED;
 }
 
-fn text(ctx: Context, _: Value, args: []const Value) Value {
+fn jsText(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const render = host.paint.render orelse return ctx.throwTypeError("term.text: no host");
     if (args.len < 3) return ctx.throwTypeError("term.text(x, y, s, style?)");
@@ -178,14 +180,14 @@ fn text(ctx: Context, _: Value, args: []const Value) Value {
     return quickjs.UNDEFINED;
 }
 
-fn measure(ctx: Context, _: Value, args: []const Value) Value {
+fn jsMeasure(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len < 1) return ctx.throwTypeError("term.measure(s)");
     const s = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
     defer ctx.freeCString(s.ptr);
     return ctx.newInt32(measureUtf8(s));
 }
 
-fn graphemes(ctx: Context, _: Value, args: []const Value) Value {
+fn jsGraphemes(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 1) return ctx.throwTypeError("term.graphemes(s)");
     const s = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
@@ -206,7 +208,7 @@ fn graphemes(ctx: Context, _: Value, args: []const Value) Value {
     return int32Array(ctx, triples.items);
 }
 
-fn cursor(ctx: Context, _: Value, args: []const Value) Value {
+fn jsCursor(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const render = host.paint.render orelse return ctx.throwTypeError("term.cursor: no host");
     if (args.len < 3) return ctx.throwTypeError("term.cursor(x, y, visible)");
@@ -230,7 +232,7 @@ fn cursor(ctx: Context, _: Value, args: []const Value) Value {
 }
 
 /// Put text on the clipboard through OSC 52 and return the bytes sent, or -1 over `clipboardMax`; OSC 52 has no acknowledgement.
-fn copyToClipboard(ctx: Context, _: Value, args: []const Value) Value {
+fn jsCopy(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const render = host.paint.render orelse return ctx.throwTypeError("term.copy: no host");
     if (args.len < 1 or !ctx.isString(args[0])) return ctx.throwTypeError("term.copy(text): text is a string");
@@ -245,14 +247,14 @@ fn copyToClipboard(ctx: Context, _: Value, args: []const Value) Value {
     return ctx.newInt32(@intCast(payload.len));
 }
 
-fn quit(ctx: Context, _: Value, _: []const Value) Value {
+fn jsQuit(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
     host.paint.needs_tick = false;
     host.paint.quit_requested = true;
     return quickjs.UNDEFINED;
 }
 
-fn setNeedsTick(ctx: Context, _: Value, args: []const Value) Value {
+fn jsSetNeedsTick(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 1) return ctx.throwTypeError("term.setNeedsTick(enabled, periodMs?)");
     const enabled = ctx.toBool(args[0]) catch return rethrow(ctx);

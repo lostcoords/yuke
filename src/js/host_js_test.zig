@@ -4521,7 +4521,7 @@ fn pumpOwnerUntilSettled(host: *Host, call: *tools_table.Call) !void {
 
 /// Leave the call, then let the owner sweep the record it owns.
 fn dropCall(host: *Host, call: *tools_table.Call) !void {
-    host.calls.finish(call);
+    call.finish();
     try host.pump();
 }
 
@@ -4543,7 +4543,7 @@ test "the owner runs an async handler and answers its resolved value" {
 
     // A synchronous callback violates the tool contract.
     {
-        const call = host.calls.submit("sync", "{\"city\":\"Tokyo\"}");
+        const call = host.calls.submit("sync", "{\"city\":\"Tokyo\"}", "");
         try pumpUntilSettled(host, call, null);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("the tool execute function must return a Promise", call.text.?);
@@ -4551,20 +4551,20 @@ test "the owner runs an async handler and answers its resolved value" {
     }
     // A Promise settles through the job drain, so one pump is still enough.
     {
-        const call = host.calls.submit("later", "{\"city\":\"Kyoto\"}");
+        const call = host.calls.submit("later", "{\"city\":\"Kyoto\"}", "");
         try pumpUntilSettled(host, call, null);
         try std.testing.expectEqualStrings("{\"got\":\"Kyoto\",\"async\":true}", call.text.?);
         try dropCall(host, call);
     }
     // A string passes through, because a text tool must not gain quotes.
     {
-        const call = host.calls.submit("text", "{\"city\":\"Osaka\"}");
+        const call = host.calls.submit("text", "{\"city\":\"Osaka\"}", "");
         try pumpUntilSettled(host, call, null);
         try std.testing.expectEqualStrings("just text", call.text.?);
         try dropCall(host, call);
     }
     {
-        const call = host.calls.submit("nothing", "{\"city\":\"Nara\"}");
+        const call = host.calls.submit("nothing", "{\"city\":\"Nara\"}", "");
         try pumpUntilSettled(host, call, null);
         try std.testing.expect(!call.is_error);
         try std.testing.expectEqualStrings("", call.text.?);
@@ -4593,7 +4593,7 @@ test "a failed handler answers the model with an error it can read" {
         .{ .name = "cycles", .want = "the tool answered a value that is not JSON" },
     };
     for (cases) |case| {
-        const call = host.calls.submit(case.name, "{\"city\":\"Tokyo\"}");
+        const call = host.calls.submit(case.name, "{\"city\":\"Tokyo\"}", "");
         try pumpUntilSettled(host, call, null);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings(case.want, call.text.?);
@@ -4602,14 +4602,14 @@ test "a failed handler answers the model with an error it can read" {
 
     // A name that no tool owns, and arguments that are not JSON, are engine input, not a crash.
     {
-        const call = host.calls.submit("absent", "{}");
+        const call = host.calls.submit("absent", "{}", "");
         try pumpUntilSettled(host, call, null);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("the tool is not registered", call.text.?);
         try dropCall(host, call);
     }
     {
-        const call = host.calls.submit("throws", "not json");
+        const call = host.calls.submit("throws", "not json", "");
         try pumpUntilSettled(host, call, null);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("the arguments are not valid JSON", call.text.?);
@@ -4645,7 +4645,7 @@ test "a handler that awaits a primitive answers when the task finishes" {
     , "await.js");
 
     // The handler holds a task, not the owner, so the call settles only after the read finishes.
-    const call = host.calls.submit("read_note", "{\"path\":\"note.txt\"}");
+    const call = host.calls.submit("read_note", "{\"path\":\"note.txt\"}", "");
     try host.pump();
     try std.testing.expectEqual(tools_table.Call.State.running, call.state);
 
@@ -4677,14 +4677,14 @@ test "a handler reads the signal after the turn leaves" {
         \\});
     , "signal.js");
 
-    const call = host.calls.submit("watch", "{\"city\":\"Tokyo\"}");
+    const call = host.calls.submit("watch", "{\"city\":\"Tokyo\"}", "");
     try host.pump();
     try expectSeen(host, "live"); // the handler read the flag at its start
     _ = try host.evalInt("globalThis.check(), 0");
     try expectSeen(host, "live");
 
     // The turn leaves, so the next pass marks the signal and sweeps the record.
-    host.calls.finish(call);
+    call.finish();
     try host.pump();
     try std.testing.expectEqual(@as(usize, 0), host.calls.live.items.len);
     _ = try host.evalInt("globalThis.check(), 0");
@@ -4708,7 +4708,7 @@ test "closing the host answers a call nobody would settle" {
         \\});
     , "hang.js");
 
-    const call = host.calls.submit("hangs", "{\"city\":\"Tokyo\"}");
+    const call = host.calls.submit("hangs", "{\"city\":\"Tokyo\"}", "");
     try host.pump();
     try std.testing.expectEqual(tools_table.Call.State.running, call.state);
 
@@ -4744,8 +4744,8 @@ test "defineTool registers a tool and states its raw schema" {
     , "tool.js");
     try expectJs(host, "ok");
 
-    try std.testing.expectEqual(@as(usize, 1), host.tools.list.items.len);
-    const tool = host.tools.find("get_weather").?;
+    try std.testing.expectEqual(@as(usize, 1), host.tools.decls.items.len);
+    const tool = host.tools.decls.items[host.tools.find("get_weather").?];
     try std.testing.expectEqualStrings("Report the weather of one city.", tool.description);
     // The schema reaches the provider unchanged, so an enum and a shorter `required` survive.
     try std.testing.expectEqualStrings(
@@ -4791,7 +4791,7 @@ test "defineTool refuses every definition a provider would reject" {
     try expectJs(host, "ok");
 
     // Only the one valid registration reached the table.
-    try std.testing.expectEqual(@as(usize, 1), host.tools.list.items.len);
+    try std.testing.expectEqual(@as(usize, 1), host.tools.decls.items.len);
 }
 
 test "a tool registers after boot and keeps the advertised order stable" {
@@ -4852,85 +4852,85 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     , "builtins-test.js");
 
     {
-        const call = host.calls.submitAt("read", "{\"path\":\"a.txt\",\"start\":2,\"end\":3}", root);
+        const call = host.calls.submit("read", "{\"path\":\"a.txt\",\"start\":2,\"end\":3}", root);
         try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expectEqualStrings("2: two\n3: two", call.text.?);
-        host.calls.finish(call);
+        call.finish();
         try host.pump();
     }
     {
-        const call = host.calls.submitAt("read", "{\"path\":\"long.txt\"}", root);
+        const call = host.calls.submit("read", "{\"path\":\"long.txt\"}", root);
         try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.endsWith(u8, call.text.?, "[The tool cut 1 line(s) at 8000 bytes.]"));
-        host.calls.finish(call);
+        call.finish();
         try host.pump();
     }
     {
-        const call = host.calls.submitAt("read", "{\"path\":\"missing.txt\"}", root);
+        const call = host.calls.submit("read", "{\"path\":\"missing.txt\"}", root);
         try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("read: the path does not exist", call.text.?);
-        host.calls.finish(call);
+        call.finish();
         try host.pump();
     }
     {
-        const call = host.calls.submitAt("read", "{\"path\":1}", root);
+        const call = host.calls.submit("read", "{\"path\":1}", root);
         try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("read: the argument path must be a string", call.text.?);
-        host.calls.finish(call);
+        call.finish();
         try host.pump();
     }
     {
-        const call = host.calls.submitAt("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", root);
+        const call = host.calls.submit("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", root);
         try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "more than one") != null);
-        host.calls.finish(call);
+        call.finish();
         try host.pump();
     }
     {
-        const call = host.calls.submitAt("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\",\"replace_all\":true}", root);
+        const call = host.calls.submit("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\",\"replace_all\":true}", root);
         try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "replaced 2") != null);
         try std.testing.expect(call.view_json != null);
-        host.calls.finish(call);
+        call.finish();
         try host.pump();
     }
     {
-        const call = host.calls.submitAt("write", "{\"path\":\"new.txt\",\"content\":\"fresh\\n\"}", root);
+        const call = host.calls.submit("write", "{\"path\":\"new.txt\",\"content\":\"fresh\\n\"}", root);
         try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "wrote 6 bytes") != null);
         try std.testing.expect(call.view_json != null);
-        host.calls.finish(call);
+        call.finish();
         try host.pump();
     }
     {
-        const call = host.calls.submitAt("write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", root);
+        const call = host.calls.submit("write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", root);
         try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(call.view_json == null);
-        host.calls.finish(call);
+        call.finish();
         try host.pump();
     }
     {
-        const call = host.calls.submitAt("exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", root);
+        const call = host.calls.submit("exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", root);
         try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expectEqualStrings("out\n[stderr]\nerr\n[exit code: 3]", call.text.?);
-        host.calls.finish(call);
+        call.finish();
         try host.pump();
     }
     {
-        const call = host.calls.submitAt("exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", root);
+        const call = host.calls.submit("exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", root);
         try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "[The command passed its 300 ms timeout.") != null);
-        host.calls.finish(call);
+        call.finish();
         try host.pump();
     }
 }
@@ -4953,11 +4953,11 @@ test "a user edit tool overrides the baked edit tool" {
         \\import "yuke:builtins";
     , "builtins.js");
 
-    const call = host.calls.submit("edit", "{}");
+    const call = host.calls.submit("edit", "{}", "");
     try pumpUntilSettled(host, call, null);
     try std.testing.expect(!call.is_error);
     try std.testing.expectEqualStrings("user edit", call.text.?);
-    host.calls.finish(call);
+    call.finish();
     try host.pump();
 }
 
@@ -5680,7 +5680,7 @@ test "a plugin owns the tools it defines and withdraws them on unload" {
     , "drop.js");
     try expectJs(host, "ok");
     try std.testing.expectEqual(@as(usize, 0), host.tools.decls.items.len);
-    try std.testing.expectEqual(@as(usize, 0), host.tools.list.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.tools.decls.items.len);
 
     // The name is free again, so a reload can register it.
     try host.evalModule(

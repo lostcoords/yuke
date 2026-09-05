@@ -78,9 +78,6 @@ pub const boot =
 /// The largest run of messages one frame absorbs, so steady input never starves the screen.
 const drain_max = 64;
 
-/// Bound a test send at one second, so a stalled `serve` fails rather than hangs.
-const send_tries_max = 100;
-
 /// Open the TTY, enter the alternate screen, and run until quit. The caller owns `extensions`.
 pub fn runIo(env: *std.process.Environ.Map, extensions: *extensions_mod.Extensions) !void {
     const gpa = extensions.host.gpa;
@@ -488,6 +485,9 @@ fn sendThrowThenQuit(ch: *Channel) !void {
     try sendBounded(ch, Msg.from(.{ .key_press = .{ .codepoint = 'x' } }));
     try sendBounded(ch, Msg.from(.{ .key_press = .{ .codepoint = 'q' } }));
 }
+
+/// Bound a test send at one second, so a stalled `serve` fails rather than hangs.
+const send_tries_max = 100;
 
 /// Send with a bound, so a stalled consumer fails the test instead of parking the producer forever.
 fn sendBounded(ch: *Channel, msg: Msg) !void {

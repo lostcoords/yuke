@@ -41,10 +41,6 @@ pub const Loader = struct {
     baked: []const BakedModule,
     max_file_bytes: usize,
 
-    pub fn deinit(self: *Loader) void {
-        self.* = undefined;
-    }
-
     pub fn onNormalize(
         self: *Loader,
         ctx: quickjs.Context,

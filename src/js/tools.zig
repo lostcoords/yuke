@@ -28,31 +28,26 @@ pub const RegisterError = error{
     InvalidName,
 };
 
-/// One registered tool. The table owns every field.
-pub const Tool = struct {
-    name: []u8,
-    description: []u8,
-    /// Raw JSON Schema text, as the provider carries it.
-    input_schema: []u8,
-    /// The handler, held as a GC root until the table dies.
-    handler: Value,
-};
-
+/// The registered tools, sorted by name. `decls[i]` is what the provider sees and `handlers[i]` is its GC root.
 pub const Tools = struct {
     gpa: std.mem.Allocator,
-    list: std.ArrayList(Tool) = .empty,
     decls: std.ArrayList(ir.Tool) = .empty,
+    handlers: std.ArrayList(Value) = .empty,
 
     pub fn deinit(self: *Tools, ctx: Context) void {
-        for (self.list.items) |tool| {
-            ctx.freeValue(tool.handler);
-            self.gpa.free(tool.name);
-            self.gpa.free(tool.description);
-            self.gpa.free(tool.input_schema);
+        for (self.decls.items, self.handlers.items) |decl, handler| {
+            ctx.freeValue(handler);
+            self.freeDecl(decl);
         }
-        self.list.deinit(self.gpa);
         self.decls.deinit(self.gpa);
+        self.handlers.deinit(self.gpa);
         self.* = undefined;
+    }
+
+    fn freeDecl(self: *Tools, decl: ir.Tool) void {
+        self.gpa.free(decl.name);
+        self.gpa.free(decl.description);
+        self.gpa.free(decl.input_schema);
     }
 
     /// Add one tool. The table copies the text and takes the handler reference on success only.
@@ -64,24 +59,13 @@ pub const Tools = struct {
         const slot = self.lookup(name);
         if (slot.found) return error.DuplicateName;
 
-        const owned_name = self.gpa.dupe(u8, name) catch unreachable;
-        const owned_description = utf8.sanitize(self.gpa, description) catch unreachable;
-        const owned_schema = utf8.sanitize(self.gpa, input_schema) catch unreachable;
-
         // The provider caches on the request prefix, so the advertised order must not follow load order.
-        const at = slot.at;
-        self.list.insert(self.gpa, at, .{
-            .name = owned_name,
-            .description = owned_description,
-            .input_schema = owned_schema,
-            .handler = handler,
+        self.decls.insert(self.gpa, slot.at, .{
+            .name = self.gpa.dupe(u8, name) catch unreachable,
+            .description = utf8.sanitize(self.gpa, description) catch unreachable,
+            .input_schema = utf8.sanitize(self.gpa, input_schema) catch unreachable,
         }) catch unreachable;
-        self.decls.insert(self.gpa, at, .{
-            .name = owned_name,
-            .description = owned_description,
-            .input_schema = owned_schema,
-        }) catch unreachable;
-        std.debug.assert(self.list.items.len == self.decls.items.len);
+        self.handlers.insert(self.gpa, slot.at, handler) catch unreachable;
     }
 
     /// Where `name` sits in the sorted table, and whether a tool already holds it.
@@ -89,21 +73,21 @@ pub const Tools = struct {
 
     /// One ordered scan answers the insert position and the duplicate question together.
     fn lookup(self: *const Tools, name: []const u8) Lookup {
-        std.debug.assert(self.list.items.len == self.decls.items.len);
-        for (self.list.items, 0..) |tool, i| {
-            switch (std.mem.order(u8, name, tool.name)) {
+        std.debug.assert(self.decls.items.len == self.handlers.items.len);
+        for (self.decls.items, 0..) |decl, i| {
+            switch (std.mem.order(u8, name, decl.name)) {
                 .lt => return .{ .at = i, .found = false },
                 .eq => return .{ .at = i, .found = true },
                 .gt => {},
             }
         }
-        return .{ .at = self.list.items.len, .found = false };
+        return .{ .at = self.decls.items.len, .found = false };
     }
 
-    /// Return the tool with `name`, or null.
-    pub fn find(self: *const Tools, name: []const u8) ?*const Tool {
-        const at = self.lookup(name);
-        return if (at.found) &self.list.items[at.at] else null;
+    /// Return the index of the tool with `name`, or null.
+    pub fn find(self: *const Tools, name: []const u8) ?usize {
+        const slot = self.lookup(name);
+        return if (slot.found) slot.at else null;
     }
 
     /// Remove the tool named `name` and answer false when no tool holds it.
@@ -111,13 +95,9 @@ pub const Tools = struct {
         const slot = self.lookup(name);
         if (!slot.found) return false;
 
-        const at = slot.at;
-        const tool = self.list.orderedRemove(at); // Ordered, so the sorted advertisement holds.
-        _ = self.decls.orderedRemove(at);
-        ctx.freeValue(tool.handler);
-        self.gpa.free(tool.name);
-        self.gpa.free(tool.description);
-        self.gpa.free(tool.input_schema);
+        // Ordered, so the sorted advertisement holds.
+        self.freeDecl(self.decls.orderedRemove(slot.at));
+        ctx.freeValue(self.handlers.orderedRemove(slot.at));
         return true;
     }
 };
@@ -171,6 +151,12 @@ pub const Call = struct {
         self.state = .settled;
         self.done.set();
     }
+
+    /// Leave one call. The submitter calls this, so it frees nothing and enters no JavaScript.
+    pub fn finish(self: *Call) void {
+        std.debug.assert(!self.submitter_done); // one submitter leaves one time
+        self.submitter_done = true;
+    }
 };
 
 /// Every call the owner has not swept. The host owns it beside the table.
@@ -186,11 +172,7 @@ pub const Calls = struct {
     }
 
     /// Queue one call. This runs on a turn task, so it enters no JavaScript.
-    pub fn submit(self: *Calls, name: []const u8, arguments: []const u8) *Call {
-        return self.submitAt(name, arguments, "");
-    }
-
-    pub fn submitAt(self: *Calls, name: []const u8, arguments: []const u8, workspace_root: []const u8) *Call {
+    pub fn submit(self: *Calls, name: []const u8, arguments: []const u8, workspace_root: []const u8) *Call {
         return self.submitCall(.tool, name, arguments, workspace_root);
     }
 
@@ -205,12 +187,6 @@ pub const Calls = struct {
         call.* = .{ .kind = kind, .name = name, .arguments = arguments, .workspace_root = root };
         self.live.append(self.gpa, call) catch unreachable;
         return call;
-    }
-
-    /// Leave one call. The submitter calls this, so it frees nothing and enters no JavaScript.
-    pub fn finish(_: *Calls, call: *Call) void {
-        std.debug.assert(!call.submitter_done); // one submitter leaves one time
-        call.submitter_done = true;
     }
 
     /// Free every record the submitter left. Only the owner calls this, because it frees a Promise.
@@ -329,6 +305,6 @@ test "the declarations follow the registered tools" {
     try testing.expectEqualStrings("gamma", tools.decls.items[2].name);
     try testing.expectEqualStrings("the second", tools.decls.items[1].description);
     try testing.expectEqualStrings("{\"type\":\"object\",\"properties\":{}}", tools.decls.items[1].input_schema);
-    try testing.expectEqualStrings("beta", tools.find("beta").?.name);
+    try testing.expectEqual(@as(?usize, 1), tools.find("beta"));
     try testing.expect(tools.find("delta") == null);
 }

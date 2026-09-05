@@ -126,13 +126,11 @@ pub const Table = struct {
             .confirm => |answer| .{ .boolean = answer.value },
             .select => |answer| blk: {
                 for (request.value.select.options) |option| {
-                    if (std.mem.eql(u8, option, answer.value))
-                        break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch unreachable };
-                }
-                return error.InvalidSelection;
+                    if (std.mem.eql(u8, option, answer.value)) break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch unreachable };
+                } else return error.InvalidSelection;
             },
             .input => |answer| blk: {
-                try validateText(answer.value, true);
+                try validateText(answer.value, .optional);
                 break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch unreachable };
             },
         };
@@ -162,27 +160,27 @@ fn matches(request: proto.interaction.InteractionRequest, response: proto.intera
 fn validate(request: proto.interaction.InteractionRequest) Error!void {
     switch (request) {
         .confirm => |value| {
-            try validateText(value.title, false);
-            try validateText(value.message, true);
+            try validateText(value.title, .required);
+            try validateText(value.message, .optional);
         },
         .select => |value| {
-            try validateText(value.title, false);
+            try validateText(value.title, .required);
             if (value.options.len == 0 or value.options.len > max_options) return error.InvalidRequest;
             for (value.options, 0..) |option, i| {
-                try validateText(option, false);
+                try validateText(option, .required);
                 for (value.options[0..i]) |previous| {
                     if (std.mem.eql(u8, option, previous)) return error.InvalidRequest;
                 }
             }
         },
         .input => |value| {
-            try validateText(value.title, false);
-            if (value.placeholder) |placeholder| try validateText(placeholder, true);
+            try validateText(value.title, .required);
+            if (value.placeholder) |placeholder| try validateText(placeholder, .optional);
         },
     }
 }
 
-fn validateText(text: []const u8, empty: bool) Error!void {
-    if ((!empty and text.len == 0) or text.len > max_text_bytes or !std.unicode.utf8ValidateSlice(text))
+fn validateText(text: []const u8, presence: enum { required, optional }) Error!void {
+    if ((presence == .required and text.len == 0) or text.len > max_text_bytes or !std.unicode.utf8ValidateSlice(text))
         return error.InvalidRequest;
 }

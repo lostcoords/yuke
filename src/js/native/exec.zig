@@ -79,7 +79,7 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
         return rejected(ctx, "timeoutMs must be a whole number of milliseconds up to 600000");
     };
 
-    return host.startTask(execTask, Request{ .command = command, .root = root, .cwd = cwd, .timeout_ms = timeout_ms });
+    return host.startTask(Request, execTask, .{ .command = command, .root = root, .cwd = cwd, .timeout_ms = timeout_ms });
 }
 
 /// Run one command on a task. It writes JSON text into the op and never enters JavaScript.

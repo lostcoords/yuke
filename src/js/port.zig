@@ -22,10 +22,10 @@ fn declsFor(ctx: *anyopaque) []const ir.Tool {
 /// Submit one call and wait at the turn cancellation point for the owner to answer it.
 fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: []const u8, workspace_root: []const u8) toolset.Outcome {
     const host: *Host = @ptrCast(@alignCast(ctx));
-    const call = host.calls.submitAt(name, arguments, workspace_root);
+    const call = host.calls.submit(name, arguments, workspace_root);
     // The owner sweeps the record, so leaving is the last thing this task does with it.
     defer {
-        host.calls.finish(call);
+        call.finish();
         host.wake.set();
     }
     // The owner sleeps between frames, so a queued call must wake it.
@@ -64,7 +64,7 @@ fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payl
     const call = host.calls.submitHook(point.wireName(), payload);
     // The owner sweeps the record, so leaving is the last thing this task does with it.
     defer {
-        host.calls.finish(call);
+        call.finish();
         host.wake.set();
     }
     // The owner sleeps between frames, so a queued call must wake it.

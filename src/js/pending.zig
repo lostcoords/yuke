@@ -22,9 +22,7 @@ pub const Result = union(enum) {
     text: []u8,
     /// A structured answer, as the JSON text the owner parses. QuickJS reads it to the sentinel.
     json: [:0]u8,
-    int: i64,
     boolean: bool,
-    nothing,
     undefined,
     failed: []const u8,
 };
@@ -129,7 +127,7 @@ pub const Ops = struct {
                 continue;
             };
             _ = self.live.orderedRemove(i);
-            if (self.call(ctx, op, result)) faulted = true;
+            if (call(ctx, op, result)) faulted = true;
             self.freeResult(result);
             ctx.freeValue(op.resolve);
             ctx.freeValue(op.reject);
@@ -140,16 +138,13 @@ pub const Ops = struct {
 
     /// Answer whether the resolver threw. A pending exception would change the meaning of the
     /// next JavaScript call, so the caller clears it and reports the fault.
-    fn call(self: *Ops, ctx: Context, op: *Op, result: Result) bool {
-        _ = self;
+    fn call(ctx: Context, op: *Op, result: Result) bool {
         const failed = result == .failed;
         const value = switch (result) {
             .text => |text| ctx.newString(text),
             // A task builds this text, so a parse failure is our bug, not the caller's input.
             .json => |bytes| ctx.parseJSON(bytes, "yuke:primitive"),
-            .int => |n| ctx.newInt64(n),
             .boolean => |value| ctx.newBool(value),
-            .nothing => quickjs.NULL,
             .undefined => quickjs.UNDEFINED,
             .failed => |message| errorWith(ctx, message) orelse quickjs.UNDEFINED,
         };
