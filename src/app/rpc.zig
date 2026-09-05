@@ -232,7 +232,7 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         .out = &out_file.interface,
         .gpa = gpa,
         .notifications = &notifications,
-        .wake = &extensions.wake,
+        .wake = &extensions.host.wake,
         .interactions = interactionPort(&extensions.host.interactions),
     };
     application.engine.sinks.add(.{ .ctx = @ptrCast(&rpc), .on_event = Rpc.onEvent });
@@ -243,7 +243,7 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
 
     var readers: zio.Group = .init;
     var in_file = std.Io.File.stdin().reader(io, in_buf);
-    try readers.spawn(readerTask, .{ &in_file.interface, &requests, &extensions.wake, gpa });
+    try readers.spawn(readerTask, .{ &in_file.interface, &requests, &extensions.host.wake, gpa });
     defer {
         readers.cancel();
         drainRequests(gpa, &requests);
@@ -283,14 +283,14 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         if (rpc.fatal) return error.RpcFailed;
         if (received) continue;
 
-        extensions.wake.reset();
+        extensions.host.wake.reset();
         if (requests.tryReceive()) |request| {
             requests.trySend(request) catch unreachable;
-            extensions.wake.set();
+            extensions.host.wake.set();
             continue;
         } else |_| {}
         if (extensions.host.hasPending()) continue;
-        extensions.wake.wait() catch return;
+        extensions.host.wake.wait() catch return;
     }
 }
 
@@ -343,12 +343,9 @@ pub fn drainNotifications(gpa: std.mem.Allocator, notifications: *NotificationQu
 
 /// Keep the RPC stream alive after a script fault. The owner has consumed the exception.
 fn absorbOwnerPump(extensions: *extensions_mod.Extensions) void {
-    extensions.host.pump() catch |err| switch (err) {
-        error.JavaScriptFault => {
-            std.log.warn("rpc: JavaScript fault: {s}", .{extensions.host.faultText()});
-            extensions.host.clearFault();
-        },
-        else => std.log.warn("rpc: JavaScript pump failed: {t}", .{err}),
+    extensions.host.pump() catch {
+        std.log.warn("rpc: JavaScript fault: {s}", .{extensions.host.faultText()});
+        extensions.host.clearFault();
     };
 }
 

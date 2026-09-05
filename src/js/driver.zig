@@ -113,7 +113,7 @@ pub fn runIo(env: *std.process.Environ.Map, extensions: *extensions_mod.Extensio
     defer {
         // Stop all producers, then drain the queued messages, then close the channel.
         tty.shutdownInput();
-        extensions.wake.set();
+        extensions.host.wake.set();
         group.cancel();
         drainChannel(gpa, &ch);
         ch.close(.immediate);
