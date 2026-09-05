@@ -13,6 +13,8 @@ pub const HighWater = struct {
     run_id_high: u64,
     input_id_high: u64,
     config_rev_high: u64,
+    /// Every committed message ever stored. No path deletes a message row.
+    message_count: u64,
 };
 
 /// Allocate the next seq and append the event. Return the seq. Run inside a write transaction.
@@ -91,6 +93,7 @@ pub fn highWater(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !?
         .run_id_high = row.value.run_id_high,
         .input_id_high = row.value.input_id_high,
         .config_rev_high = row.value.config_rev_high,
+        .message_count = row.value.message_count,
     };
 }
 

@@ -349,6 +349,12 @@ function shiftSrc(segments, base) {
   return segments.map((seg) => (seg.src == null ? seg : { ...seg, src: seg.src + base, srcEnd: /** @type {number} */ (seg.srcEnd) + base }));
 }
 
+// A stale render keeps its parts and documents, so the next build reparses only what changed.
+/** @param {{ w: number }} c @returns {void} */
+function stale(c) {
+  c.w = -1;
+}
+
 // Move a rendered part to a new source base. The rows are shared with the message cache, so they are replaced, never edited.
 /** @param {PartCache} c @param {number} base @returns {void} */
 function rebasePart(c, base) {
@@ -607,7 +613,7 @@ function errorRows(id, error, width, srcBase) {
   return { rows, source: label };
 }
 
-// Exact row counts outlive a bounded cache of rendered messages.
+// The chat transcript: message descriptors, exact row counts, and a bounded cache of rendered rows.
 export class Transcript {
   /** @param {TranscriptOptions} [opts] */
   constructor(opts = {}) {
@@ -654,7 +660,6 @@ export class Transcript {
     this._dragging = false;
     this._didDrag = false;
     this._press = null;
-    this._trimCaches();
   }
 
   // Set both ends. `{ inclusive: true }` grows the later end by one grapheme.
@@ -676,9 +681,6 @@ export class Transcript {
       else a = grow(a);
     }
     this.selection = { anchor: a, cursor: b };
-    this._rowsFor(a.id);
-    this._rowsFor(b.id);
-    this._trimCaches();
   }
 
   /** @param {Position} a @param {Position} b @returns {number} */
@@ -694,17 +696,12 @@ export class Transcript {
     this.clearSelection();
   }
 
-  // The engine never changes a committed message under its id, so its render survives; the draft and the rest go.
+  // A committed message never changes under its id, so its render survives; the draft goes because a commit folds its reasoning.
   /** @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void} */
   setOutline(messages, active) {
-    const previous = new Map(this._messages.map(m => [String(m.id), m]));
     const keep = new Set();
-    for (const m of messages || []) {
-      const key = String(m.id);
-      const old = previous.get(key);
-      if (old && !sameId(m.id, this._active?.id) && old.type === m.type) keep.add(key);
-    }
-    for (const key of this._rows.keys()) if (!keep.has(key)) this._evict(key);
+    for (const m of messages || []) if (!sameId(m.id, this._active?.id)) keep.add(String(m.id));
+    for (const key of new Set([...this._rows.keys(), ...this._docs.keys(), ...this._parts.keys()])) if (!keep.has(key)) this._evict(key);
     for (const key of this._counts.keys()) if (!keep.has(key)) this._counts.delete(key);
     this._messages = messages || [];
     this._active = active || null;
@@ -750,32 +747,30 @@ export class Transcript {
     this._parts.delete(key);
   }
 
-  // A pinned message is on the screen or under a live position, so its rows must stay exact.
-  /** @param {string} key @returns {boolean} */
-  _pinned(key) {
-    return this._viewport.has(key) || sameId(key, this._active?.id) || sameId(key, this._press?.id) ||
-      sameId(key, this.selection?.anchor.id) || sameId(key, this.selection?.cursor.id);
-  }
-
+  // The oldest renders leave first, but a message on the screen or under a live position never leaves.
   /** @returns {void} */
   _trimCaches() {
+    if (this._rows.size <= CACHE_MESSAGES) return;
+    const pinned = new Set(this._viewport);
+    for (const id of [this._active?.id, this._press?.id, this.selection?.anchor.id, this.selection?.cursor.id]) if (id != null) pinned.add(String(id));
     for (const key of this._rows.keys()) {
       if (this._rows.size <= CACHE_MESSAGES) break;
-      if (!this._pinned(key)) this._evict(key);
+      if (!pinned.has(key)) this._evict(key);
     }
   }
 
+  // The render and the count of one message are stale, and the prefix sums from it onward with them.
   /** @param {number} id @returns {void} */
-  _dropRows(id) {
+  _markStale(id) {
     const key = String(id);
     const c = this._rows.get(key);
-    if (c) c.w = -1;
+    if (c) stale(c);
     this._counts.delete(key);
     const i = this._indexOf(id);
     if (i >= 0) this._prefix.length = Math.min(this._prefix.length, i + 1);
   }
 
-  // Each missing count costs one temporary message; later reads use only the numeric index.
+  // A missing count renders its message once and lets the cache drop the rows; later reads use the counts alone.
   /** @returns {void} */
   _indexRows() {
     for (let i = this._prefix.length - 1; ; i++) {
@@ -815,12 +810,12 @@ export class Transcript {
     const touches = !!sel && (sameId(sel.anchor.id, id) || sameId(sel.cursor.id, id));
     const anchors = touches ? this._anchors() : null;
     if (!this._active || !sameId(this._active.id, id)) {
-      if (this._active) this._dropRows(this._active.id);
+      if (this._active) this._markStale(this._active.id);
       this._active = { id, type: "assistant" };
       this._resetOrder();
     }
     this._refreshParts(id, partId);
-    this._dropRows(id);
+    this._markStale(id);
     if (touches) this._reanchor(anchors);
   }
 
@@ -834,11 +829,11 @@ export class Transcript {
     if (fresh) {
       state.list[at] = fresh;
       const c = state.rows.get(String(partId));
-      if (c) c.w = -1;
+      if (c) stale(c);
       return;
     }
     state.list = null;
-    for (const c of state.rows.values()) c.w = -1;
+    for (const c of state.rows.values()) stale(c);
   }
 
   // A width change rewraps every row but keeps every parse; the selection moves back to the same source offsets.
@@ -847,7 +842,7 @@ export class Transcript {
     if (width === this._width) return;
     const anchors = this._anchors();
     this._width = width;
-    for (const c of this._rows.values()) c.w = -1;
+    for (const c of this._rows.values()) stale(c);
     this._counts.clear();
     this._prefix = [0];
     if (this.selection) this._reanchor(anchors);
@@ -1011,6 +1006,8 @@ export class Transcript {
       this._rows.set(key, c);
       return c.rows;
     }
+    // Trim before the build, so the entry this call adds cannot leave in the same call.
+    this._trimCaches();
 
     let rows;
     let source = null;
@@ -1040,13 +1037,12 @@ export class Transcript {
     this._rows.delete(key);
     this._rows.set(key, { w: width, rows, source: source == null ? "" : source, blocks });
     this._counts.set(key, rows.length);
-    this._trimCaches();
     return rows;
   }
 
-  // The parts of one message, read once and held until a delta or an eviction drops them.
-  /** @param {number} id @returns {Wire.AssistantPart[]} */
-  _partList(id) {
+  // The parts of one message and their renders, read once and held until a delta or an eviction drops them.
+  /** @param {number} id @returns {PartState} */
+  _partState(id) {
     const key = String(id);
     let state = this._parts.get(key);
     if (!state) {
@@ -1061,7 +1057,7 @@ export class Transcript {
       } catch (_) {}
       state.list = list.filter((p) => p && (p.type === "text" || p.type === "tool" || p.type === "reasoning"));
     }
-    return state.list;
+    return state;
   }
 
   /** @param {number} id @param {number} partId @returns {Wire.AssistantPart | null} */
@@ -1094,10 +1090,10 @@ export class Transcript {
     const k = this._expandKey(id, partId);
     let part = null;
     if (this.partsOf) {
-      for (const p of this._partList(id)) if (p && sameId(p.id, partId)) part = p;
+      for (const p of this._partState(id).list || []) if (sameId(p.id, partId)) part = p;
     }
     this._expand.set(k, !this._isExpanded(id, partId, part));
-    this._dropRows(id);
+    this._markStale(id);
     root.invalidate();
   }
 
@@ -1177,13 +1173,12 @@ export class Transcript {
   // Each part renders once per width, fold, and live state, so a delta rebuilds one part and re-bases the rest.
   /** @param {MessageDescriptor} m @param {number} width @returns {{ rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[] }} */
   _partRows(m, width) {
-    const parts = this._partList(m.id);
-    const state = /** @type {PartState} */ (this._parts.get(String(m.id)));
+    const state = this._partState(m.id);
     const seen = new Set();
     const rows = /** @type {TranscriptRow[]} */ ([]);
     const blocks = /** @type {{ kind: string, at: number, end: number }[]} */ ([]);
     let source = "";
-    for (const part of parts) {
+    for (const part of state.list || []) {
       if (source) source += "\n";
       const base = source.length;
       const key = String(part.id);
@@ -1407,12 +1402,10 @@ export class Transcript {
   codeBlocks() {
     const out = [];
     for (const m of this.messages()) {
-      let doc = this._docs.get(String(m.id));
-      if (!doc) {
-        doc = new Document();
-      }
-      // A changed source makes the cached rows stale, because this call is outside a draw.
-      if (doc.setText(this.textOf(m.id))) this._dropRows(m.id);
+      const held = this._docs.get(String(m.id));
+      const doc = held || new Document();
+      // A changed source makes the held render stale, because this call is outside a draw.
+      if (doc.setText(this.textOf(m.id)) && held) this._markStale(m.id);
       for (const b of doc.codeBlocks()) out.push({ id: m.id, lang: b.lang, text: b.text });
     }
     return out;

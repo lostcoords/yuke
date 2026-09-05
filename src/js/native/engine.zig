@@ -141,12 +141,7 @@ pub const Change = struct {
 
         /// Rank the kinds so a merge keeps the stronger one.
         fn rank(self: View) u8 {
-            return switch (self) {
-                .quiet => 0,
-                .message => 1,
-                .reload => 2,
-                .gone => 3,
-            };
+            return @intFromEnum(self);
         }
     };
 
@@ -159,34 +154,34 @@ pub const Change = struct {
 
     /// Reload only when the message set or the draft state changes.
     fn viewOf(note: proto.rpc.Notification) View {
-        return switch (note.method) {
-            .@"session.removed" => .gone,
+        return switch (note.params) {
+            .session_removed_data => .gone,
             // These move the parts of one message and leave the outline alone.
-            .@"message.part_added",
-            .@"message.part_delta",
-            .@"message.part_finalized",
-            .@"tool.state_changed",
-            .@"tool.output_delta",
-            => .{ .message = .{ .id = messageOf(note).?, .part = partOf(note) } }, // the engine builds these, so each one names its message
+            .message_part_added_data => |d| .{ .message = .{ .id = d.message_id, .part = d.part.id() } },
+            inline .message_part_delta_data,
+            .message_part_finalized_data,
+            .tool_state_changed_data,
+            .tool_output_delta_data,
+            => |d| .{ .message = .{ .id = d.message_id, .part = d.part_id } },
             // These open or close the draft, or move the committed set.
-            .@"message.started",
-            .@"message.discarded",
-            .@"message.committed",
-            .@"transcript.truncated",
+            .message_started_data,
+            .message_discarded_data,
+            .message_committed_data,
+            .transcript_truncated_data,
             => .reload,
             // The rest carries no transcript state. The activity, the queue, and the run draw elsewhere.
-            .@"session.summary_changed",
-            .@"session.activity_changed",
-            .@"catalog.changed",
-            .@"auth.login_finished",
-            .@"auth.changed",
+            .session_summary_changed_data,
+            .session_activity_changed_data,
+            .catalog_changed_data,
+            .auth_login_finished_data,
+            .auth_changed_data,
             .notice,
-            .@"interaction.requested",
-            .@"run.started",
-            .@"run.done",
-            .@"config.changed",
-            .@"input.queued",
-            .@"input.canceled",
+            .interaction_requested_data,
+            .run_started_data,
+            .run_done_data,
+            .config_changed_data,
+            .input_queued_data,
+            .input_canceled_data,
             => .quiet,
         };
     }
@@ -222,21 +217,6 @@ pub const Change = struct {
 fn sessionOf(note: proto.rpc.Notification) ?SessionId {
     return switch (note.params) {
         inline else => |payload| if (@hasField(@TypeOf(payload), "session_id")) payload.session_id else null,
-    };
-}
-
-/// Read the message an event names. A commit carries the whole message instead, so it names none.
-fn messageOf(note: proto.rpc.Notification) ?proto.ids.MessageId {
-    return switch (note.params) {
-        inline else => |payload| if (@hasField(@TypeOf(payload), "message_id")) payload.message_id else null,
-    };
-}
-
-/// Read the part an event names. An added part carries itself, and the rest carry an id.
-fn partOf(note: proto.rpc.Notification) ?proto.ids.PartId {
-    return switch (note.params) {
-        .message_part_added_data => |payload| payload.part.id(),
-        inline else => |payload| if (@hasField(@TypeOf(payload), "part_id")) payload.part_id else null,
     };
 }
 
@@ -345,13 +325,13 @@ const Cut = struct {
     };
 };
 
-/// One parts response may inline this many bytes. A part past it still appears, with its text paged.
-pub const max_response_bytes: usize = 4 * max_page_bytes;
+/// One part may inline this many bytes across its strings, whichever call asks for it. The rest is paged.
+pub const max_part_bytes: usize = 4 * max_page_bytes;
 
-/// What a parts response carries as it writes: the cuts of the part in hand, and the bytes it may still inline.
+/// What a part carries as it writes: its cuts, and the bytes it may still inline.
 const Parts = struct {
     cuts: Cuts = .{},
-    left: usize = max_response_bytes,
+    left: usize = max_part_bytes,
 
     /// Spend up to `want` bytes of the budget and answer what it allowed.
     fn take(self: *Parts, want: usize) usize {
@@ -409,7 +389,7 @@ fn writeCapped(w: *std.Io.Writer, parts: *Parts, field: Cut.Field, list: []const
 
 /// Write one part. Every string it holds is bounded, whatever the tool produced.
 fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart) !void {
-    parts.cuts = .{};
+    parts.* = .{};
     switch (p) {
         .text => |t| try writeTextPart(w, parts, "text", t.id, t.text),
         .reasoning => |r| try writeTextPart(w, parts, "reasoning", r.id, r.text),
@@ -583,14 +563,14 @@ fn writeFloor(w: *std.Io.Writer, parts: *Parts, text: []const u8) !bool {
 }
 
 /// Write the parts of one message as a JSON array. With `only`, write just that part, so a delta reads one part.
-fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: u64, only: ?u64) !void {
+fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: proto.ids.MessageId, only: ?proto.ids.PartId) !void {
     var parts: Parts = .{};
     var written: usize = 0;
     try w.writeByte('[');
     if (s.draft) |*d| if (d.message_id == mid) {
         for (d.parts.items) |*p| {
             const wire = domain_draft.partToWire(p);
-            if (only != null and wire.id() != only.?) continue;
+            if (only) |want| if (wire.id() != want) continue;
             if (written > 0) try w.writeByte(',');
             written += 1;
             try writePart(w, &parts, wire);
@@ -601,7 +581,7 @@ fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: u64, on
         if (entry.message.id() != mid) continue;
         switch (entry.message) {
             .assistant => |a| for (a.content) |p| {
-                if (only != null and p.id() != only.?) continue;
+                if (only) |want| if (p.id() != want) continue;
                 if (written > 0) try w.writeByte(',');
                 written += 1;
                 try writePart(w, &parts, p);
@@ -1218,7 +1198,15 @@ test "a field pages whole characters and advances on the smallest page" {
 }
 
 test "a merge keeps every fact, even when a stronger kind resets the change" {
-    var change: Change = .of(.{ .method = .@"run.started", .params = undefined });
+    const sid = SessionId.bytes([_]u8{0} ** 16);
+    var change: Change = .of(.{ .method = .@"run.started", .params = .{ .run_started_data = .{
+        .session_id = sid,
+        .seq = 1,
+        .run_id = 1,
+        .kind = .turn,
+        .config_rev = 0,
+        .started_at_ms = 0,
+    } } });
     try testing.expect(change.facts.contains(.@"run.started"));
     try testing.expectEqual(Change.View.quiet, change.view); // a run carries no transcript state
 
@@ -1304,8 +1292,7 @@ test "a message pages whole characters when the window splits one" {
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    for (messages) |m| try sess.transcript.append(m);
-    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
+    try seedHistory(&sess, &messages);
 
     var rebuilt: std.ArrayList(u8) = .empty;
     defer rebuilt.deinit(gpa);
@@ -1399,6 +1386,12 @@ test "a request reaches a command and answers with its result" {
     host.engine.detach();
 }
 
+/// Seed a test session with committed messages the way hydrate does.
+fn seedHistory(sess: *domain_session.Session, messages: []const proto.message.Message) !void {
+    for (messages) |m| try sess.transcript.append(m);
+    sess.sealHistory(1, false);
+}
+
 test "a huge tool result projects into a bounded parts response" {
     const gpa = testing.allocator;
     const sid = SessionId.bytes([_]u8{3} ** 16);
@@ -1429,8 +1422,7 @@ test "a huge tool result projects into a bounded parts response" {
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    for (messages) |m| try sess.transcript.append(m);
-    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
+    try seedHistory(&sess, &messages);
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
@@ -1476,19 +1468,18 @@ test "a diff of many files stays inside the response budget" {
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    for (messages) |m| try sess.transcript.append(m);
-    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
+    try seedHistory(&sess, &messages);
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
     try writeMessageParts(&aw.writer, &sess, 1, null);
 
-    try testing.expect(aw.written().len < max_response_bytes + max_page_bytes);
+    try testing.expect(aw.written().len < 2 * max_part_bytes);
     // The diff says how many lines the whole patch holds, so a row can mark what it hides.
     try testing.expect(std.mem.indexOf(u8, aw.written(), "\"field\":\"view.0.diff\",\"total\":10000") != null);
 }
 
-test "many huge parts stay inside the response budget and none is dropped" {
+test "many huge parts each stay inside the part budget and none is dropped" {
     const gpa = testing.allocator;
     const sid = SessionId.bytes([_]u8{6} ** 16);
     var sess = domain_session.Session.init(gpa, sid);
@@ -1518,15 +1509,14 @@ test "many huge parts stay inside the response budget and none is dropped" {
         .content = content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    for (messages) |m| try sess.transcript.append(m);
-    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
+    try seedHistory(&sess, &messages);
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
     try writeMessageParts(&aw.writer, &sess, 1, null);
 
     // 128 megabytes of source project into the budget and its own structure, never into a copy.
-    try testing.expect(aw.written().len < max_response_bytes + max_page_bytes);
+    try testing.expect(aw.written().len < (part_count + 1) * max_part_bytes);
 
     // The budget shortens a first page; it never drops a part, because `partText` still reaches the rest.
     try testing.expectEqual(part_count, std.mem.count(u8, aw.written(), "\"type\":\"tool\""));
@@ -1560,8 +1550,7 @@ test "every cut address resolves to its own field, never a neighbour" {
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    for (messages) |m| try sess.transcript.append(m);
-    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
+    try seedHistory(&sess, &messages);
 
     // Each address answers its own field. Before the address existed, every one of these gave the output.
     try testing.expectEqualStrings("{\"command\":\"zig build\"}", partTextOf(&sess, 1, 0, "arguments").?);
@@ -1599,8 +1588,7 @@ test "a text part over the inline bound reports more and pages back whole" {
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    for (messages) |m| try sess.transcript.append(m);
-    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
+    try seedHistory(&sess, &messages);
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();

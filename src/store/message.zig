@@ -158,9 +158,9 @@ fn messageId(message: proto.message.Message) u64 {
     };
 }
 
-/// The newest messages of one session, oldest-first; `next` parses one row into the allocator it is given.
+/// The newest messages of one session, oldest-first. The caller gives `next` the allocator for one row.
 pub const Tail = struct {
-    rows: sql.Statement(queries_gen.MessageTail.sql).Rows(queries_gen.MessageTail.Row),
+    rows: queries_gen.MessageTail.Rows,
 
     pub fn next(self: *Tail, scratch: std.mem.Allocator) !?proto.message.Message {
         const row = (try self.rows.next(scratch)) orelse return null;
@@ -178,14 +178,6 @@ pub const Tail = struct {
 pub fn tail(db: *Database, session_id: [16]u8, limit: usize) !Tail {
     std.debug.assert(limit > 0);
     return .{ .rows = try db.queries.message_tail.rows(.{ .session_id = session_id, .limit = @as(i64, @intCast(limit)) }) };
-}
-
-/// Count the committed messages of one session.
-pub fn count(db: *Database, session_id: [16]u8) !u64 {
-    var buffer: [64]u8 = undefined;
-    var fixed = std.heap.FixedBufferAllocator.init(&buffer);
-    const row = try db.queries.message_count.one(fixed.allocator(), .{ .session_id = session_id });
-    return row.value.total;
 }
 
 /// Read a backward page from the log and return it oldest first. before_message_id is exclusive;
@@ -476,7 +468,7 @@ test "historyPage returns a page oldest-first with has_more" {
     try testing.expect(!older.has_more);
 }
 
-test "tail streams the newest messages oldest-first and count reports the rest" {
+test "tail streams the newest messages oldest-first" {
     var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -504,9 +496,8 @@ test "tail streams the newest messages oldest-first and count reports the rest" 
         seen[n] = messageId(m);
         _ = scratch.reset(.retain_capacity);
     }
+    try testing.expectEqual(2, n);
     try testing.expectEqualSlices(u64, &.{ 2, 3 }, seen[0..n]);
-    try testing.expectEqual(@as(u64, 3), try count(&db, sid));
-    try testing.expectEqual(@as(u64, 0), try count(&db, [_]u8{9} ** 16));
 }
 
 test "appendCommittedMessage rejects a missing session" {

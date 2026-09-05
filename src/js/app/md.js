@@ -144,30 +144,29 @@ function srcAt(runs, i, end) {
   return end ? o + 1 : o;
 }
 
-// Split the text from line-start offset `from` into blocks with absolute `at`/`end` offsets; a stream re-reads only its tail.
+// Split the text from the line start `from` into blocks with absolute `at`/`end` offsets. A stream re-reads only its tail.
 /** @param {string} text @param {number} [from] @returns {Block[]} */
 function segment(text, from = 0) {
-  const lines = /** @type {StringList} */ (text.split("\n"));
+  if (from > 0 && text[from - 1] !== "\n") throw new Error("segment restart is not a line start");
+  const lines = /** @type {StringList} */ ((from > 0 ? text.slice(from) : text).split("\n"));
   const starts = /** @type {NumberList} */ (new Array(lines.length + 1));
-  let i = 0;
   {
-    let off = 0;
+    let off = from;
     for (let k = 0; k < lines.length; k++) {
       starts[k] = off;
-      if (off < from) i = k + 1;
       const sourceLine = /** @type {string} */ (lines[k]);
       off += sourceLine.length + 1;
     }
     starts[lines.length] = /** @type {number} */ (off);
   }
-  if (starts[i] !== from) throw new Error("segment restart is not a line start");
   const blocks = /** @type {Block[]} */ ([]);
+  let i = 0;
 
-  /** @param {Block} b @param {number} from @param {number} to @returns {void} */
-  const push = (b, from, to) => {
-    b.raw = lines.slice(from, to).join("\n");
-    b.at = /** @type {number} */ (starts[from]);
-    b.end = /** @type {number} */ (starts[to]) - 1;
+  /** @param {Block} b @param {number} first @param {number} last @returns {void} */
+  const push = (b, first, last) => {
+    b.raw = lines.slice(first, last).join("\n");
+    b.at = /** @type {number} */ (starts[first]);
+    b.end = /** @type {number} */ (starts[last]) - 1;
     blocks.push(b);
   };
 

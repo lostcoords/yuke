@@ -2050,7 +2050,7 @@ test "yuke:md an appended stream parses like a fresh document" {
         \\  "a | b\n---|---\n1 | 2\n\n```zig\nconst x = 1;\nconst y = 2;\n```\n\n---\n\nlast **bold** para\nwith a|pipe\n---|---\nx|y\n";
         \\const stream = new Document();
         \\const fails = [];
-        \\for (let n = 1; n <= text.length; n += 3) {
+        \\for (let n = 1; n <= text.length; n++) {
         \\  const head = text.slice(0, n);
         \\  stream.setText(head);
         \\  const fresh = new Document();
@@ -5973,7 +5973,6 @@ test "yuke:ui transcript renders evicted history exactly" {
         \\frame(32, 8);
         \\check("tail-rows", JSON.stringify(t.rows(32, wide.length - 8, 8)) === JSON.stringify(wide.slice(-8)));
         \\check("tail-sticks", t.pager.atBottom() && t.pager.stuck);
-        \\check("bounded", t._rows.size < messages.length);
         \\builds = 0;
         \\t.rowCount(32);
         \\t.rows(32, wide.length - 8, 8);
@@ -6013,10 +6012,20 @@ test "yuke:ui transcript renders evicted history exactly" {
         \\const previous = t.partStep(next, -1);
         \\check("part-motion-local", next?.id === "m51" && previous?.id === "m50" && builds <= 4);
         \\
-        \\// A code-block query over plain text parses on demand and keeps no document per message.
+        \\// A code-block query over plain text parses on demand and leaves the row index alone.
         \\const code = new Transcript({ textOf: (id) => "```zig\nconst x = " + id + ";\n```" });
         \\code.setOutline(messages, null);
-        \\check("code-blocks", code.codeBlocks().length === messages.length && code._docs.size < messages.length);
+        \\const codeTotal = code.rowCount(32);
+        \\builds = 0;
+        \\const codeRowsOf = code._rowsOf;
+        \\code._rowsOf = function(m, w) { builds++; return codeRowsOf.call(this, m, w); };
+        \\check("code-blocks", code.codeBlocks().length === messages.length && code.rowCount(32) === codeTotal && builds === 0);
+        \\
+        \\// Message ids repeat across sessions, so an empty outline clears even a message whose fold moved after its eviction.
+        \\parts.m40 = [{ type: "text", id: 2, text: "other session" }];
+        \\t.setOutline([], null);
+        \\t.setOutline([{ id: "m40", type: "assistant" }], null);
+        \\check("switch-clears-parts", t.rows(18, 0, 4).some((r) => (r.segments || []).map(s => s.text).join("").includes("other session")));
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "transcript-eviction.js");
     try expectJs(host, "ok");
@@ -6047,7 +6056,7 @@ test "yuke:ui transcript keeps committed renders across a reload" {
         \\const shows = (text) => t.rows(40, 0, 12).some((r) => (r.segments || []).map(s => s.text).join("").includes(text));
         \\t.setOutline([{ id: "old", type: "assistant" }, { id: "gone", type: "assistant" }], { id: "live", type: "assistant" });
         \\draw();
-        \\const oldRows = t._rows.get("old");
+        \\const oldRows = JSON.stringify(t.rows(40, 0, t.rowCountOf("old")));
         \\const liveCount = t.rowCountOf("live");
         \\check("active-expanded", t.rows(40, t._globalRow({ id: "live", row: 0, col: 0 }), 4).some((r) => r.marker === "▾"));
         \\const rebuilt = [];
@@ -6056,21 +6065,16 @@ test "yuke:ui transcript keeps committed renders across a reload" {
         \\
         \\// A commit reloads the outline: the committed render stays, and only the former draft rebuilds, now collapsed.
         \\t.setOutline([{ id: "old", type: "assistant" }, { id: "gone", type: "assistant" }, { id: "live", type: "assistant" }], null);
-        \\t.rowCount(40);
+        \\const committedCount = t.rowCount(40);
         \\t._rowsOf = rowsOf;
-        \\check("old-cache-reused", t._rows.get("old") === oldRows);
+        \\check("old-render-kept", JSON.stringify(t.rows(40, 0, t.rowCountOf("old"))) === oldRows);
         \\check("only-draft-rebuilt", rebuilt.join(",") === "live");
         \\check("draft-collapsed", t.rowCountOf("live") < liveCount && t.rows(40, t._globalRow({ id: "live", row: 0, col: 0 }), 3).some((r) => r.marker === "▸"));
         \\
-        \\// A truncation removes the rows and the count of the message it cut.
+        \\// A truncation removes the rows of the message it cut.
+        \\const goneCount = t.rowCountOf("gone");
         \\t.setOutline([{ id: "old", type: "assistant" }, { id: "live", type: "assistant" }], null);
-        \\check("truncated-removed", !t._rows.has("gone") && !t._counts.has("gone"));
-        \\
-        \\// Message ids repeat across sessions, so the empty outline between two sessions clears the old render.
-        \\parts.old = [{ type: "text", id: 0, text: "other session" }];
-        \\t.setOutline([], null);
-        \\t.setOutline([{ id: "old", type: "assistant" }], null);
-        \\check("switch-refreshes-content", shows("other session"));
+        \\check("truncated-removed", t.rowCountOf("gone") === 0 && t.rowCount(40) === committedCount - goneCount && !shows("truncated"));
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "transcript-reload-reuse.js");
     try expectJs(host, "ok");

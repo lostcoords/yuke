@@ -344,6 +344,7 @@ fn RowQuery(
 
         pub const Params = ParamsType;
         pub const Row = RowType;
+        pub const Rows = Statement(statement_sql).Rows(Row);
         pub const sql = statement_sql;
 
         statement: Statement(statement_sql),

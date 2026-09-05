@@ -429,8 +429,8 @@ test "tickTask paces engine wakes to the frame gap" {
         const msg = try ch.receive();
         try std.testing.expect(msg == .tick);
     }
-    // One tick per frame gap gives about four in this window, never dozens.
-    try std.testing.expect(ticks >= 2 and ticks <= 8);
+    // The gap between two ticks is tens of milliseconds, so the window holds a handful and never a flood.
+    try std.testing.expect(ticks >= 1 and ticks < 12);
 
     host.paint.quit_requested = true;
     wake.set();

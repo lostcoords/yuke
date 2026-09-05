@@ -75,7 +75,7 @@ pub const AppendEvent = sql.ExecQuery(
 );
 
 pub const ReadHigh = sql.OptionalQuery(
-    \\SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
+    \\SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high, message_count
     \\    FROM sessions WHERE id = :id;
 ,
     struct {
@@ -87,6 +87,7 @@ pub const ReadHigh = sql.OptionalQuery(
         run_id_high: u64,
         input_id_high: u64,
         config_rev_high: u64,
+        message_count: u64,
     },
 );
 
@@ -289,17 +290,6 @@ pub const MessageTail = sql.ManyQuery(
     struct {
         message_id: u64,
         payload: []const u8,
-    },
-);
-
-pub const MessageCount = sql.OneQuery(
-    \\SELECT count(*) AS total FROM messages WHERE session_id = :session_id;
-,
-    struct {
-        session_id: [16]u8,
-    },
-    struct {
-        total: u64,
     },
 );
 
@@ -655,7 +645,6 @@ pub const Queries = struct {
     advance_message: AdvanceMessage,
     message_page: MessagePage,
     message_tail: MessageTail,
-    message_count: MessageCount,
     last_assistant_usage: LastAssistantUsage,
     insert_session: InsertSession,
     session_exists: SessionExists,

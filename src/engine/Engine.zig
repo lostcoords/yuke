@@ -116,17 +116,14 @@ pub fn hydrate(self: *Engine, resident: *Session) !void {
     const sid = resident.id.raw;
     const hw = (try database.event.highWater(self.deps.db, scratch.allocator(), sid)) orelse return; // no session row
     const limit = transcript.default_max_messages;
-    const total = try database.message.count(self.deps.db, sid);
     var history = try database.message.tail(self.deps.db, sid, limit);
     defer history.deinit();
     // The scratch holds one message at a time, so the load peak follows the largest message, not the history.
-    var finalized: u64 = 0;
     while (try history.next(scratch.allocator())) |m| {
         try resident.transcript.append(m);
-        finalized = m.id();
         _ = scratch.reset(.retain_capacity);
     }
-    resident.installSnapshot(.{ .base_seq = hw.seq_high, .finalized_message_id = finalized, .has_more = total > limit });
+    resident.sealHistory(hw.seq_high, hw.message_count > limit);
     // Pending inputs are historical. Fold them directly, so they do not advance the durable cursor.
     const pending = try database.input.list(self.deps.db, scratch.allocator(), sid);
     for (pending) |entry| {

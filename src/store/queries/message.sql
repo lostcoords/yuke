@@ -79,12 +79,6 @@ FROM (
 ) t JOIN events e ON e.session_id = t.session_id AND e.seq = t.seq
 ORDER BY t.message_id ASC;
 
--- name: MessageCount :one
--- Count the committed messages of one session, so a load knows whether older ones exist.
--- session_id: [16]u8!
--- total: u64!
-SELECT count(*) AS total FROM messages WHERE session_id = :session_id;
-
 -- name: LastAssistantUsage :optional
 -- Return the newest committed assistant usage for the live context gauge, or no row.
 -- The session_context view serves the same value for a page.
