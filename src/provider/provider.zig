@@ -4,7 +4,7 @@ const std = @import("std");
 const proto = @import("proto");
 const ai = @import("ai");
 
-pub const build = @import("request/build.zig");
+pub const request_builder = @import("request_builder.zig");
 
 pub const config = @import("config/providers.zig");
 

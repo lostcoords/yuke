@@ -430,7 +430,7 @@ fn resolvedRequest(
     else
         max_output_tokens;
 
-    const request_ir = try provider.build.build(arena, transcript, .{
+    const request_ir = try provider.request_builder.build(arena, transcript, .{
         .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
         .modalities = model.modalities,
     });

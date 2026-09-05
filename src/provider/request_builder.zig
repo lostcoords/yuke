@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const proto = @import("proto");
-const provider = @import("../provider.zig");
+const provider = @import("provider.zig");
 const ai = @import("ai");
 const ir = ai.ir;
 const types = ai.types;
