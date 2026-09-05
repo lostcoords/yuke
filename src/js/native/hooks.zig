@@ -9,25 +9,18 @@ const std = @import("std");
 const quickjs = @import("quickjs");
 const proto = @import("proto");
 const Host = @import("../host.zig").Host;
+const module = @import("module.zig");
 const table = @import("../hooks.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
-const Module = Context.Module;
 
-/// Register the closed `yuke:hooks` module and export its two functions.
+/// Register `yuke:hooks` and its functions.
 pub fn install(host: *Host) void {
-    std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:hooks", init).?;
-    host.ctx.addModuleExport(m, "installDispatcher") catch unreachable;
-    host.ctx.addModuleExport(m, "setPoints") catch unreachable;
-}
-
-fn init(ctx: Context, m: Module) c_int {
-    std.debug.assert(Host.fromContext(ctx).phase == .open);
-    ctx.setModuleExport(m, "installDispatcher", ctx.newFunction("installDispatcher", 1, jsInstallDispatcher)) catch return -1;
-    ctx.setModuleExport(m, "setPoints", ctx.newFunction("setPoints", 1, jsSetPoints)) catch return -1;
-    return 0;
+    module.installFunctions(host, "yuke:hooks", &.{
+        .{ .name = "installDispatcher", .arity = 1, .call = jsInstallDispatcher },
+        .{ .name = "setPoints", .arity = 1, .call = jsSetPoints },
+    });
 }
 
 /// `installDispatcher(fn)` takes the folder the runtime calls as `fn(point, payload)`.
@@ -46,7 +39,7 @@ fn jsSetPoints(ctx: Context, _: Value, args: []const Value) Value {
 
     const length = ctx.getPropertyStr(args[0], "length");
     defer ctx.freeValue(length);
-    const count = ctx.toInt64(length) catch return exception(ctx);
+    const count = ctx.toInt64(length) catch return module.throwPending(ctx);
     if (count < 0 or count > std.meta.tags(table.Point).len) return ctx.throwTypeError("setPoints holds more names than there are points");
 
     var points: table.PointSet = .initEmpty();
@@ -55,18 +48,13 @@ fn jsSetPoints(ctx: Context, _: Value, args: []const Value) Value {
         const item = ctx.getPropertyUint32(args[0], @intCast(i));
         defer ctx.freeValue(item);
         if (!ctx.isString(item)) return ctx.throwTypeError("a hook point must be a string");
-        const name = ctx.toCStringLen(item) catch return exception(ctx);
+        const name = ctx.toCStringLen(item) catch return module.throwPending(ctx);
         defer ctx.freeCString(name.ptr);
         const point = table.Point.parse(name) orelse return ctx.throwTypeError("no such hook point");
         points.insert(point);
     }
     host.hooks.setPoints(points);
     return quickjs.UNDEFINED;
-}
-
-/// Answer the exception sentinel and leave the pending exception in place.
-fn exception(ctx: Context) Value {
-    return ctx.throw(ctx.getException());
 }
 
 test {

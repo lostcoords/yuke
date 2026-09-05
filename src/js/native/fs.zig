@@ -7,6 +7,7 @@
 const std = @import("std");
 const quickjs = @import("quickjs");
 const Host = @import("../host.zig").Host;
+const module = @import("module.zig");
 const os = @import("../host/operations.zig");
 const LocalHost = @import("../host/local.zig").LocalHost;
 const paths = @import("../../paths.zig");
@@ -17,7 +18,6 @@ const rejected = pending.rejected;
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
-const Module = Context.Module;
 
 /// The most entries one listing returns. A larger directory reports `more` and stops.
 pub const max_entries: u32 = 512;
@@ -25,37 +25,15 @@ pub const max_entries: u32 = 512;
 /// The most bytes `readFile` returns. A tool that needs more should read a range.
 pub const max_read_bytes: u32 = 10 * 1024 * 1024;
 
-/// Register the closed `yuke:fs` module and export `fs`.
+/// Register `yuke:fs` and its one `fs` object.
 pub fn install(host: *Host) void {
-    std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:fs", init).?;
-    host.ctx.addModuleExport(m, "fs") catch unreachable;
-}
-
-fn init(ctx: Context, m: Module) c_int {
-    const host = Host.fromContext(ctx);
-    std.debug.assert(host.phase == .open);
-
-    const fs_obj = ctx.newObject();
-    if (ctx.isException(fs_obj)) return -1;
-    bindAll(ctx, fs_obj) catch {
-        ctx.freeValue(fs_obj);
-        return -1;
-    };
-    ctx.setModuleExport(m, "fs", fs_obj) catch return -1;
-    return 0;
-}
-
-fn bindAll(ctx: Context, obj: Value) !void {
-    try bind(ctx, obj, "list", 1, jsList);
-    try bind(ctx, obj, "readFile", 1, jsReadFile);
-    try bind(ctx, obj, "readRange", 2, jsReadRange);
-    try bind(ctx, obj, "writeFile", 2, jsWriteFile);
-    try bind(ctx, obj, "stat", 1, jsStat);
-}
-
-fn bind(ctx: Context, obj: Value, name: [:0]const u8, arity: c_int, comptime f: fn (Context, Value, []const Value) Value) !void {
-    try ctx.setPropertyStr(obj, name, ctx.newFunction(name, arity, f));
+    module.installObject(host, "yuke:fs", "fs", &.{
+        .{ .name = "list", .arity = 1, .call = jsList },
+        .{ .name = "readFile", .arity = 1, .call = jsReadFile },
+        .{ .name = "readRange", .arity = 2, .call = jsReadRange },
+        .{ .name = "writeFile", .arity = 2, .call = jsWriteFile },
+        .{ .name = "stat", .arity = 1, .call = jsStat },
+    }, null);
 }
 
 /// Map a host error to the sentence a script reads. The set is closed, so a new one needs a message.
@@ -72,7 +50,7 @@ fn errorMessage(err: os.HostError) []const u8 {
 }
 
 /// Take the path argument, or the directory the process runs in when it is absent.
-fn pathArg(ctx: Context, _: *Host, arena: std.mem.Allocator, args: []const Value, idx: usize, root: []const u8) ?[]const u8 {
+fn pathArg(ctx: Context, arena: std.mem.Allocator, args: []const Value, idx: usize, root: []const u8) ?[]const u8 {
     if (args.len <= idx or ctx.isUndefined(args[idx]) or ctx.isNull(args[idx])) return root;
     const raw = ctx.toCStringLen(args[idx]) catch return null;
     defer ctx.freeCString(raw.ptr);
@@ -111,7 +89,6 @@ const ReadRequest = struct {
     }
 };
 
-const max_line = std.math.maxInt(u32);
 const read_limits: os.ReadLimits = .{
     .max_lines = 2000,
     .max_line_bytes = 8000,
@@ -184,10 +161,7 @@ fn boundArg(ctx: Context, obj: Value, name: [:0]const u8) error{InvalidOption}!?
     const value = ctx.getPropertyStr(obj, name);
     defer ctx.freeValue(value);
     if (ctx.isUndefined(value) or ctx.isNull(value)) return null;
-    if (!ctx.isNumber(value)) return error.InvalidOption;
-    const n = ctx.toFloat64(value) catch return error.InvalidOption;
-    if (!(n >= 1 and n <= max_line) or @floor(n) != n) return error.InvalidOption;
-    return @intFromFloat(n);
+    return @intCast(module.integer(ctx, value, 1, std.math.maxInt(u32)) orelse return error.InvalidOption);
 }
 
 fn encodeRange(gpa: std.mem.Allocator, got: os.RangeRead) [:0]u8 {
@@ -219,7 +193,7 @@ fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
     defer call.close();
 
     if (args.len < 2) return rejected(ctx, "writeFile needs a path and content");
-    const path = pathArg(ctx, host, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string");
+    const path = pathArg(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string");
     if (!ctx.isString(args[1])) return rejected(ctx, "the content must be a string");
     const raw = ctx.toCStringLen(args[1]) catch return rejected(ctx, "the content must be a string");
     defer ctx.freeCString(raw.ptr);
@@ -234,7 +208,7 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     var call = Call.open(host, host.cwd);
     defer call.close();
 
-    const path = pathArg(ctx, host, call.alloc(), args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string");
+    const path = pathArg(ctx, call.alloc(), args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string");
     const info = call.local.stat(call.alloc(), path) catch |err| switch (err) {
         error.NotFound => return resolved(ctx, quickjs.NULL),
         else => return rejected(ctx, errorMessage(err)),
@@ -245,7 +219,7 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     // A full QuickJS heap throws at the caller, because no promise can be built for it either.
     if (ctx.hasException()) {
         ctx.freeValue(out);
-        return ctx.throw(ctx.getException());
+        return module.throwPending(ctx);
     }
     return resolved(ctx, out);
 }
@@ -258,7 +232,7 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     defer call.close();
     const arena = call.alloc();
 
-    const requested = pathArg(ctx, host, arena, args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string");
+    const requested = pathArg(ctx, arena, args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string");
     const path = paths.canonicalizeWorkspace(arena, host.env, requested) catch
         return rejected(ctx, "the path is not a directory this process can read");
     const page = call.local.listDir(arena, path, .{ .limit = max_entries, .include_files = false }) catch |err|
@@ -269,7 +243,7 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     std.json.Stringify.value(pageOf(arena, path, page), .{}, &aw.writer) catch unreachable;
     // The page is our own JSON, so the parse fails only once the QuickJS heap is full.
     const value = ctx.parseJSON(aw.written(), "yuke:fs");
-    if (ctx.isException(value)) return ctx.throw(ctx.getException());
+    if (ctx.isException(value)) return module.throwPending(ctx);
     return resolved(ctx, value);
 }
 

@@ -9,6 +9,7 @@ const ir = @import("ai").ir;
 const toolset = @import("../engine/toolset.zig");
 const hookset = @import("../engine/hookset.zig");
 const utf8 = @import("../utf8.zig");
+const pending = @import("pending.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -142,14 +143,14 @@ fn startHook(host: *Host, call: *table.Call) void {
     defer host.gpa.free(payload);
     const parsed = ctx.parseJSON(payload, "hook-payload.json");
     if (ctx.isException(parsed)) {
-        dropException(ctx);
+        pending.dropException(ctx);
         return settleText(host, call, "the hook payload is not valid JSON", true);
     }
     defer ctx.freeValue(parsed);
 
     const point = ctx.newString(call.name);
     if (ctx.isException(point)) {
-        dropException(ctx);
+        pending.dropException(ctx);
         return settleText(host, call, "out of memory", true);
     }
     defer ctx.freeValue(point);
@@ -180,7 +181,7 @@ fn startTool(host: *Host, call: *table.Call) void {
     defer host.gpa.free(args);
     const parsed = ctx.parseJSON(args, "tool-arguments.json");
     if (ctx.isException(parsed)) {
-        dropException(ctx);
+        pending.dropException(ctx);
         return settleText(host, call, "the arguments are not valid JSON", true);
     }
     defer ctx.freeValue(parsed);
@@ -197,7 +198,7 @@ fn startTool(host: *Host, call: *table.Call) void {
         ctx.freeValue(context);
         ctx.freeValue(call.signal);
         call.signal = quickjs.UNDEFINED;
-        dropException(ctx);
+        pending.dropException(ctx);
         return settleText(host, call, "out of memory", true);
     }
     defer ctx.freeValue(context);
@@ -243,7 +244,7 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
     if (call.kind == .hook) return stringifyValue(host, call, value);
     if (ctx.isString(value)) {
         const text = ctx.toCStringLen(value) catch {
-            dropException(ctx);
+            pending.dropException(ctx);
             return settleText(host, call, "the tool answered text the host cannot read", true);
         };
         defer ctx.freeCString(text.ptr);
@@ -259,7 +260,7 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
         defer ctx.freeValue(text_value);
         if (ctx.isString(text_value)) {
             const text = ctx.toCStringLen(text_value) catch {
-                dropException(ctx);
+                pending.dropException(ctx);
                 return settleText(host, call, "the tool answered text the host cannot read", true);
             };
             defer ctx.freeCString(text.ptr);
@@ -269,11 +270,11 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
             const json = ctx.jsonStringify(view_value, quickjs.UNDEFINED, quickjs.UNDEFINED);
             defer ctx.freeValue(json);
             if (!ctx.isString(json)) {
-                dropException(ctx);
+                pending.dropException(ctx);
                 return settleText(host, call, "the tool answered a view that is not JSON", true);
             }
             const view_text = ctx.toCStringLen(json) catch {
-                dropException(ctx);
+                pending.dropException(ctx);
                 return settleText(host, call, "the tool answered a view that is not JSON", true);
             };
             defer ctx.freeCString(view_text.ptr);
@@ -289,11 +290,11 @@ fn stringifyValue(host: *Host, call: *table.Call, value: Value) void {
     const json = ctx.jsonStringify(value, quickjs.UNDEFINED, quickjs.UNDEFINED);
     defer ctx.freeValue(json);
     if (!ctx.isString(json)) {
-        dropException(ctx);
+        pending.dropException(ctx);
         return settleText(host, call, "the tool answered a value that is not JSON", true);
     }
     const text = ctx.toCStringLen(json) catch {
-        dropException(ctx);
+        pending.dropException(ctx);
         return settleText(host, call, "the tool answered a value that is not JSON", true);
     };
     defer ctx.freeCString(text.ptr);
@@ -307,39 +308,22 @@ fn errorText(ctx: Context, value: Value) ?[:0]const u8 {
         defer ctx.freeValue(message);
         if (ctx.isString(message)) {
             return ctx.toCStringLen(message) catch {
-                dropException(ctx);
+                pending.dropException(ctx);
                 return null;
             };
         }
     }
     return ctx.toCStringLen(value) catch {
-        dropException(ctx);
+        pending.dropException(ctx);
         return null;
     };
 }
 
 /// Sanitize the answer as UTF-8 and wake the submitter.
 fn settleText(host: *Host, call: *table.Call, text: []const u8, is_error: bool) void {
-    const owned = utf8.sanitize(host.gpa, text) catch {
-        call.settle(null, true);
-        return;
-    };
-    call.settle(owned, is_error);
+    call.settle(utf8.sanitize(host.gpa, text) catch unreachable, is_error);
 }
 
 fn settleTextAndView(host: *Host, call: *table.Call, text: []const u8, view_json: []const u8) void {
-    const owned_text = utf8.sanitize(host.gpa, text) catch {
-        call.settle(null, true);
-        return;
-    };
-    errdefer host.gpa.free(owned_text);
-    const owned_view = utf8.sanitize(host.gpa, view_json) catch {
-        call.settle(null, true);
-        return;
-    };
-    call.settleView(owned_text, owned_view);
-}
-
-fn dropException(ctx: Context) void {
-    if (ctx.hasException()) ctx.freeValue(ctx.getException());
+    call.settleView(utf8.sanitize(host.gpa, text) catch unreachable, utf8.sanitize(host.gpa, view_json) catch unreachable);
 }

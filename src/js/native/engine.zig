@@ -10,6 +10,8 @@ const quickjs = @import("quickjs");
 const zio = @import("zio");
 const proto = @import("proto");
 const host_mod = @import("../host.zig");
+const module = @import("module.zig");
+const utf8 = @import("../../utf8.zig");
 const app = @import("../../app/app.zig");
 const App = app.App;
 const engine_call = @import("../../app/call.zig");
@@ -21,7 +23,6 @@ const domain_draft = @import("../../session/draft.zig");
 const Host = host_mod.Host;
 const Context = quickjs.Context;
 const Value = quickjs.Value;
-const Module = Context.Module;
 const SessionId = proto.ids.SessionId;
 
 /// One text read copies at most this many bytes. A view asks again for the next page.
@@ -225,32 +226,6 @@ fn sessionOf(note: proto.rpc.Notification) ?SessionId {
 /// The widest UTF-8 character, so a page below this size can hold no character.
 const max_char_bytes: usize = 4;
 
-/// Return the length of `text` without a trailing character that its bytes do not complete.
-fn utf8Whole(text: []const u8) usize {
-    var i = text.len;
-    var seen: usize = 0;
-    while (i > 0 and seen < max_char_bytes) {
-        i -= 1;
-        seen += 1;
-        if ((text[i] & 0xC0) == 0x80) continue;
-        const need = std.unicode.utf8ByteSequenceLength(text[i]) catch return i;
-        return if (need <= seen) text.len else i;
-    }
-    return text.len;
-}
-
-/// Return the largest length at or below `limit` that ends on a UTF-8 character boundary.
-fn utf8Floor(text: []const u8, limit: usize) usize {
-    return utf8Whole(text[0..@min(limit, text.len)]);
-}
-
-/// Return the count of leading bytes that continue a character cut off before `text`.
-fn utf8Head(text: []const u8) usize {
-    var i: usize = 0;
-    while (i < text.len and (text[i] & 0xC0) == 0x80) i += 1;
-    return i;
-}
-
 fn messageError(m: proto.message.Message) ?proto.message.MessageError {
     return switch (m) {
         .assistant => |a| a.@"error",
@@ -381,7 +356,7 @@ const Cuts = struct {
 
 /// Write `"name":"..."` with the text cut on a character boundary. Record the whole size when cut.
 fn writeCapped(w: *std.Io.Writer, parts: *Parts, field: Cut.Field, list: []const u8, index: u32, name: []const u8, text: []const u8) !void {
-    const end = utf8Floor(text, parts.take(@min(text.len, max_page_bytes)));
+    const end = utf8.floor(text, parts.take(@min(text.len, max_page_bytes)));
     try w.print("\"{s}\":", .{name});
     try std.json.Stringify.encodeJsonString(text[0..end], .{}, w);
     if (end < text.len) parts.cuts.add(.{ .field = field, .list = list, .index = index, .size = text.len, .next = end });
@@ -400,7 +375,7 @@ fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart) !
 
 /// Write a text-bearing part. A cut text names itself in `cut`, so a view knows to page the rest.
 fn writeTextPart(w: *std.Io.Writer, parts: *Parts, kind: []const u8, id: u64, text: []const u8) !void {
-    const end = utf8Floor(text, parts.take(@min(text.len, max_page_bytes)));
+    const end = utf8.floor(text, parts.take(@min(text.len, max_page_bytes)));
     try w.print("{{\"type\":\"{s}\",\"id\":{d},\"text\":", .{ kind, id });
     try std.json.Stringify.encodeJsonString(text[0..end], .{}, w);
     if (end < text.len) parts.cuts.add(.{ .field = .text, .size = text.len, .next = end });
@@ -557,7 +532,7 @@ fn writeDiff(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, d: 
 
 /// Write one diff string cut to the budget and the line cap. Answer whether the cap shortened it.
 fn writeFloor(w: *std.Io.Writer, parts: *Parts, text: []const u8) !bool {
-    const end = utf8Floor(text, parts.take(@min(text.len, max_inline_line_bytes)));
+    const end = utf8.floor(text, parts.take(@min(text.len, max_inline_line_bytes)));
     try std.json.Stringify.encodeJsonString(text[0..end], .{}, w);
     return end < text.len;
 }
@@ -660,8 +635,8 @@ fn textPage(s: *domain_session.Session, mid: u64, offset: usize, want: usize, ra
 
     // A window is copied at byte offsets, so it can split a character at each end.
     const win = raw.written();
-    const from = utf8Head(win);
-    const end = from + utf8Whole(win[from..]);
+    const from = utf8.head(win);
+    const end = from + utf8.whole(win[from..]);
     const next = offset + end;
     // A page with no whole character means the text ends in a broken one, so the read stops here.
     return .{ .text = win[from..end], .next = if (next > offset and next < window.total) next else null, .total = window.total };
@@ -729,8 +704,8 @@ fn fieldPage(text: []const u8, offset: u64, want: usize) ?FieldPage {
     std.debug.assert(want >= max_char_bytes); // pageLimit resolved this, so a whole character always fits
     if (offset >= text.len) return null;
     const from: usize = @intCast(offset);
-    const start = from + utf8Head(text[from..]); // an offset inside a character resumes at the next one
-    const cut = start + utf8Floor(text[start..], want);
+    const start = from + utf8.head(text[from..]); // an offset inside a character resumes at the next one
+    const cut = start + utf8.floor(text[start..], want);
     if (cut == start) return null;
     return .{ .text = text[start..cut], .next = if (cut < text.len) cut else null };
 }
@@ -782,31 +757,14 @@ fn pageLimit(raw: ?u64) usize {
 
 fn u64Arg(ctx: Context, args: []const Value, idx: usize) ?u64 {
     if (args.len <= idx) return null;
-    const n = ctx.toFloat64(args[idx]) catch return null;
-    if (!(n >= 0)) return null; // a NaN fails this test, which is what we want
-    return std.math.lossyCast(u64, n);
+    return module.integer(ctx, args[idx], 0, std.math.maxInt(u64));
 }
 
 /// Resolve the live runtime a view reads. A view that never opened the session gets null.
-fn runtimeArg(engine: *Engine, ctx: Context, args: []const Value) ?*Session {
-    const runtime = engine.runtime orelse return null;
+fn runtimeArg(ctx: Context, args: []const Value) ?*Session {
+    const runtime = Host.fromContext(ctx).engine.runtime orelse return null;
     const sid = sidArg(ctx, args, 0) orelse return null;
     return runtime.engine.sessions.get(sid);
-}
-
-/// Write a projection into a QuickJS string. `fallback` answers a session the view cannot read.
-fn projectString(
-    engine: *Engine,
-    ctx: Context,
-    args: []const Value,
-    fallback: [:0]const u8,
-    comptime write: fn (*std.Io.Writer, *domain_session.Session) anyerror!void,
-) Value {
-    const rt = runtimeArg(engine, ctx, args) orelse return ctx.newString(fallback);
-    var aw: std.Io.Writer.Allocating = .init(engine.gpa);
-    defer aw.deinit();
-    write(&aw.writer, rt) catch return ctx.newString(fallback);
-    return ctx.newString(aw.written());
 }
 
 /// `factNames()` answers every fact the engine can publish, so a bus declares them without drift.
@@ -829,7 +787,7 @@ fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
 fn built(ctx: Context, value: Value) Value {
     if (!ctx.hasException()) return value;
     ctx.freeValue(value);
-    return ctx.throw(ctx.getException());
+    return module.throwPending(ctx);
 }
 
 /// Return the QuickJS allocation counters, separate from the process footprint.
@@ -887,13 +845,16 @@ fn jsSessionClose(ctx: Context, _: Value, args: []const Value) Value {
 }
 
 fn jsSessionOutline(ctx: Context, _: Value, args: []const Value) Value {
-    const engine = Host.fromContext(ctx).engine;
-    return projectString(engine, ctx, args, "null", writeOutline);
+    const rt = runtimeArg(ctx, args) orelse return ctx.newString("null");
+    var aw: std.Io.Writer.Allocating = .init(Host.fromContext(ctx).engine.gpa);
+    defer aw.deinit();
+    writeOutline(&aw.writer, rt) catch return ctx.newString("null");
+    return ctx.newString(aw.written());
 }
 
 fn jsSessionParts(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
-    const rt = runtimeArg(engine, ctx, args) orelse return ctx.newString("[]");
+    const rt = runtimeArg(ctx, args) orelse return ctx.newString("[]");
     const mid = u64Arg(ctx, args, 1) orelse return ctx.newString("[]");
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer aw.deinit();
@@ -904,7 +865,7 @@ fn jsSessionParts(ctx: Context, _: Value, args: []const Value) Value {
 /// One part of a message as a one-element JSON array, or `[]` when the message or the part is gone.
 fn jsSessionPart(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
-    const rt = runtimeArg(engine, ctx, args) orelse return ctx.newString("[]");
+    const rt = runtimeArg(ctx, args) orelse return ctx.newString("[]");
     const mid = u64Arg(ctx, args, 1) orelse return ctx.newString("[]");
     const pid = u64Arg(ctx, args, 2) orelse return ctx.newString("[]");
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
@@ -918,7 +879,7 @@ fn jsSessionPart(ctx: Context, _: Value, args: []const Value) Value {
 fn jsSessionText(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
     const empty = "{\"text\":\"\",\"next\":null,\"bytes\":0}";
-    const rt = runtimeArg(engine, ctx, args) orelse return ctx.newString(empty);
+    const rt = runtimeArg(ctx, args) orelse return ctx.newString(empty);
     const mid = u64Arg(ctx, args, 1) orelse return ctx.newString(empty);
     const offset: usize = @intCast(u64Arg(ctx, args, 2) orelse 0);
     const want = pageLimit(u64Arg(ctx, args, 3));
@@ -942,7 +903,7 @@ fn jsSessionText(ctx: Context, _: Value, args: []const Value) Value {
 fn jsPartText(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
     const empty = "{\"text\":\"\",\"next\":null}";
-    const rt = runtimeArg(engine, ctx, args) orelse return ctx.newString(empty);
+    const rt = runtimeArg(ctx, args) orelse return ctx.newString(empty);
     const mid = u64Arg(ctx, args, 1) orelse return ctx.newString(empty);
     const part_id = u64Arg(ctx, args, 2) orelse return ctx.newString(empty);
     if (args.len <= 3) return ctx.newString(empty);
@@ -999,7 +960,7 @@ fn jsSetDefaultSystemPrompt(ctx: Context, _: Value, args: []const Value) Value {
         runtime.engine.setDefaultSystemPrompt(null) catch unreachable;
         return quickjs.UNDEFINED;
     }
-    const prompt = ctx.toCStringLen(args[0]) catch return ctx.throw(ctx.getException());
+    const prompt = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
     defer ctx.freeCString(prompt.ptr);
     if (prompt.len > max_system_prompt_bytes)
         return ctx.throwTypeError("the default system prompt exceeds the protocol string limit");
@@ -1014,7 +975,7 @@ fn throwFailure(ctx: Context, failure: engine_call.Failure) Value {
     set(ctx, err, "code", ctx.newString(@tagName(failure.code)));
     if (ctx.hasException()) {
         ctx.freeValue(err);
-        return ctx.throw(ctx.getException());
+        return module.throwPending(ctx);
     }
     return ctx.throw(err);
 }
@@ -1093,74 +1054,25 @@ fn call(engine: *Engine, ctx: Context, ev: Value) void {
     Host.fromContext(ctx).noteFault();
 }
 
+/// Register `yuke:engine-native` and its one `native` object.
 pub fn install(host: *Host) void {
-    std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:engine-native", init).?;
-    host.ctx.addModuleExport(m, "native") catch unreachable;
-}
-
-fn init(ctx: Context, m: Module) c_int {
-    std.debug.assert(Host.fromContext(ctx).phase == .open);
-    const native = ctx.newObject();
-    if (ctx.isException(native)) return -1;
-    if (bindAll(ctx, native) != 0) {
-        ctx.freeValue(native);
-        return -1;
-    }
-    // `setModuleExport` consumes `native` on success and on failure, so the catch must not free it.
-    ctx.setModuleExport(m, "native", native) catch return -1;
-    return 0;
-}
-
-fn bindAll(ctx: Context, native: Value) c_int {
-    bind(ctx, native, "setDefaultSystemPrompt", 1, jsSetDefaultSystemPrompt) catch return -1;
-    bind(ctx, native, "setEventSink", 1, jsSetEventSink) catch return -1;
-    bind(ctx, native, "factNames", 0, jsFactNames) catch return -1;
-    bind(ctx, native, "memoryUsage", 0, jsMemoryUsage) catch return -1;
-    bind(ctx, native, "request", 2, jsRequest) catch return -1;
-    bind(ctx, native, "sessionOpen", 1, jsSessionOpen) catch return -1;
-    bind(ctx, native, "sessionClose", 1, jsSessionClose) catch return -1;
-    bind(ctx, native, "sessionOutline", 1, jsSessionOutline) catch return -1;
-    bind(ctx, native, "sessionParts", 2, jsSessionParts) catch return -1;
-    bind(ctx, native, "sessionPart", 3, jsSessionPart) catch return -1;
-    bind(ctx, native, "sessionText", 4, jsSessionText) catch return -1;
-    bind(ctx, native, "partText", 6, jsPartText) catch return -1;
-    return 0;
-}
-
-fn bind(ctx: Context, obj: Value, name: [*:0]const u8, length: c_int, comptime fn_: fn (Context, Value, []const Value) Value) !void {
-    try ctx.setPropertyStr(obj, name, ctx.newFunction(name, length, fn_));
+    module.installObject(host, "yuke:engine-native", "native", &.{
+        .{ .name = "setDefaultSystemPrompt", .arity = 1, .call = jsSetDefaultSystemPrompt },
+        .{ .name = "setEventSink", .arity = 1, .call = jsSetEventSink },
+        .{ .name = "factNames", .arity = 0, .call = jsFactNames },
+        .{ .name = "memoryUsage", .arity = 0, .call = jsMemoryUsage },
+        .{ .name = "request", .arity = 2, .call = jsRequest },
+        .{ .name = "sessionOpen", .arity = 1, .call = jsSessionOpen },
+        .{ .name = "sessionClose", .arity = 1, .call = jsSessionClose },
+        .{ .name = "sessionOutline", .arity = 1, .call = jsSessionOutline },
+        .{ .name = "sessionParts", .arity = 2, .call = jsSessionParts },
+        .{ .name = "sessionPart", .arity = 3, .call = jsSessionPart },
+        .{ .name = "sessionText", .arity = 4, .call = jsSessionText },
+        .{ .name = "partText", .arity = 6, .call = jsPartText },
+    }, null);
 }
 
 const testing = std.testing;
-
-test "utf8Floor never cuts a character in half" {
-    try testing.expectEqual(@as(usize, 5), utf8Floor("hello", 64)); // shorter than the limit
-    try testing.expectEqual(@as(usize, 3), utf8Floor("hello", 3)); // an ASCII cut is exact
-    // "é" is two bytes, so a cut at 1 walks back to 0.
-    try testing.expectEqual(@as(usize, 0), utf8Floor("é", 1));
-    try testing.expectEqual(@as(usize, 2), utf8Floor("é", 2));
-    // "aé" cuts back to 1 rather than splitting the second character.
-    try testing.expectEqual(@as(usize, 1), utf8Floor("aé", 2));
-    // A four-byte emoji walks back to the character start from every interior offset.
-    try testing.expectEqual(@as(usize, 0), utf8Floor("😀", 1));
-    try testing.expectEqual(@as(usize, 0), utf8Floor("😀", 3));
-    try testing.expectEqual(@as(usize, 4), utf8Floor("😀", 4));
-}
-
-test "the head and the whole length trim a window to characters" {
-    // A copied window has no bytes past its end, so the walk goes back to the last lead byte.
-    try testing.expectEqual(@as(usize, 2), utf8Whole("ab\xF0\x9F\x99")); // three bytes of a four-byte character
-    try testing.expectEqual(@as(usize, 6), utf8Whole("ab\u{1F642}")); // the character is whole
-    try testing.expectEqual(@as(usize, 3), utf8Whole("abc"));
-    try testing.expectEqual(@as(usize, 0), utf8Whole(""));
-    try testing.expectEqual(@as(usize, 0), utf8Whole("\xF0")); // a lone lead byte completes nothing
-
-    // A window can also open inside a character, and those bytes belong to the page before it.
-    try testing.expectEqual(@as(usize, 3), utf8Head("\x9F\x99\x82ab")); // the tail of a four-byte character
-    try testing.expectEqual(@as(usize, 0), utf8Head("ab"));
-    try testing.expectEqual(@as(usize, 0), utf8Head(""));
-}
 
 test "a page limit always holds one whole character" {
     try testing.expectEqual(max_page_bytes, pageLimit(null));

@@ -4,55 +4,36 @@ const std = @import("std");
 const quickjs = @import("quickjs");
 const proto = @import("proto");
 const Host = @import("../host.zig").Host;
+const module = @import("module.zig");
 const interactions = @import("../interactions.zig");
 const pending = @import("../pending.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
-const Module = Context.Module;
 
-const Binding = struct { name: [*:0]const u8, length: c_int, function: fn (Context, Value, []const Value) Value };
-
-const bindings = [_]Binding{
-    .{ .name = "request", .length = 2, .function = jsRequest },
-    .{ .name = "notify", .length = 3, .function = jsNotify },
-    .{ .name = "cancel", .length = 1, .function = jsCancel },
-};
-
+/// Register `yuke:interaction-native` and its one `native` object, which also states the host limits.
 pub fn install(host: *Host) void {
-    std.debug.assert(host.phase == .open);
-    const module = host.ctx.newModule("yuke:interaction-native", init).?;
-    host.ctx.addModuleExport(module, "native") catch unreachable;
+    module.installObject(host, "yuke:interaction-native", "native", &.{
+        .{ .name = "request", .arity = 2, .call = jsRequest },
+        .{ .name = "notify", .arity = 3, .call = jsNotify },
+        .{ .name = "cancel", .arity = 1, .call = jsCancel },
+    }, addLimits);
 }
 
-fn init(ctx: Context, module: Module) c_int {
-    std.debug.assert(Host.fromContext(ctx).phase == .open);
-    const native = ctx.newObject();
-    if (ctx.isException(native)) return -1;
-    build(ctx, native) catch {
-        ctx.freeValue(native);
-        return -1;
-    };
-    ctx.setModuleExport(module, "native", native) catch return -1;
-    return 0;
-}
-
-/// Bind the calls and publish the limits, so the JavaScript checks match the host checks.
-fn build(ctx: Context, native: Value) !void {
-    inline for (bindings) |binding| {
-        try ctx.setPropertyStr(native, binding.name, ctx.newFunction(binding.name, binding.length, binding.function));
-    }
-    try ctx.setPropertyStr(native, "maxTextBytes", ctx.newInt64(interactions.max_text_bytes));
-    try ctx.setPropertyStr(native, "maxOptions", ctx.newInt64(interactions.max_options));
+/// Publish the limits, so the JavaScript checks match the host checks.
+fn addLimits(_: *Host, ctx: Context, native: Value) void {
+    module.set(ctx, native, "maxTextBytes", ctx.newInt64(interactions.max_text_bytes));
+    module.set(ctx, native, "maxOptions", ctx.newInt64(interactions.max_options));
 }
 
 fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const id = interactionId(ctx, args) orelse return pending.rejected(ctx, "interaction.request needs a safe positive integer id");
-    const json = jsonArg(ctx, args) orelse return pending.rejected(ctx, "interaction.request needs a JSON string");
+    if (args.len < 2) return pending.rejected(ctx, "interaction.request needs an id and a JSON string");
+    const id = module.integer(ctx, args[0], 1, interactions.max_safe_id) orelse return pending.rejected(ctx, "interaction.request needs a safe positive integer id");
+    const json = module.string(ctx, args[1]) orelse return pending.rejected(ctx, "interaction.request needs a JSON string");
     defer ctx.freeCString(json.ptr);
     return host.interactions.start(&host.ops, ctx, host.owner_wake, id, json) catch |err| switch (err) {
-        error.Exception => ctx.throw(ctx.getException()),
+        error.Exception => module.throwPending(ctx),
         else => pending.rejected(ctx, errorMessage(err)),
     };
 }
@@ -79,20 +60,8 @@ fn jsNotify(ctx: Context, _: Value, args: []const Value) Value {
 }
 
 fn jsCancel(ctx: Context, _: Value, args: []const Value) Value {
-    const id = interactionId(ctx, args) orelse return ctx.newBool(false);
-    return ctx.newBool(Host.fromContext(ctx).interactions.cancel(id));
-}
-
-fn interactionId(ctx: Context, args: []const Value) ?u64 {
-    if (args.len == 0) return null;
-    const raw = ctx.toFloat64(args[0]) catch return null;
-    if (!std.math.isFinite(raw) or raw < 1 or raw > interactions.max_safe_id or @floor(raw) != raw) return null;
-    return @intFromFloat(raw);
-}
-
-fn jsonArg(ctx: Context, args: []const Value) ?[:0]const u8 {
-    if (args.len < 2 or !ctx.isString(args[1])) return null;
-    return ctx.toCStringLen(args[1]) catch null;
+    const id = if (args.len == 0) null else module.integer(ctx, args[0], 1, interactions.max_safe_id);
+    return ctx.newBool(Host.fromContext(ctx).interactions.cancel(id orelse return ctx.newBool(false)));
 }
 
 fn errorMessage(err: interactions.Error) [:0]const u8 {

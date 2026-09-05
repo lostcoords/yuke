@@ -8,6 +8,7 @@
 const std = @import("std");
 const quickjs = @import("quickjs");
 const Host = @import("../host.zig").Host;
+const module = @import("module.zig");
 const diff = @import("../../diff/diff.zig");
 const pending = @import("../pending.zig");
 
@@ -16,22 +17,15 @@ const rejected = pending.rejected;
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
-const Module = Context.Module;
 
 /// The largest side this module compares. A line table costs about 20 bytes for each line.
 pub const max_side_bytes: usize = 1024 * 1024;
 
-/// Register the closed `yuke:diff` module and export `diff`.
+/// Register `yuke:diff` and its functions.
 pub fn install(host: *Host) void {
-    std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:diff", init).?;
-    host.ctx.addModuleExport(m, "diff") catch unreachable;
-}
-
-fn init(ctx: Context, m: Module) c_int {
-    std.debug.assert(Host.fromContext(ctx).phase == .open);
-    ctx.setModuleExport(m, "diff", ctx.newFunction("diff", 3, jsDiff)) catch return -1;
-    return 0;
+    module.installFunctions(host, "yuke:diff", &.{
+        .{ .name = "diff", .arity = 3, .call = jsDiff },
+    });
 }
 
 /// Compare two texts and answer `{path, hunks}`. `path` only labels the result.
@@ -44,11 +38,11 @@ fn jsDiff(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 3) return rejected(ctx, "diff needs a path, an old text, and a new text");
 
-    const path = stringArg(ctx, args[0]) orelse return rejected(ctx, "the path must be a string");
+    const path = module.string(ctx, args[0]) orelse return rejected(ctx, "the path must be a string");
     defer ctx.freeCString(path.ptr);
-    const old = stringArg(ctx, args[1]) orelse return rejected(ctx, "the old text must be a string");
+    const old = module.string(ctx, args[1]) orelse return rejected(ctx, "the old text must be a string");
     defer ctx.freeCString(old.ptr);
-    const new = stringArg(ctx, args[2]) orelse return rejected(ctx, "the new text must be a string");
+    const new = module.string(ctx, args[2]) orelse return rejected(ctx, "the new text must be a string");
     defer ctx.freeCString(new.ptr);
 
     var arena_state: std.heap.ArenaAllocator = .init(host.gpa);
@@ -68,7 +62,7 @@ fn jsDiff(ctx: Context, _: Value, args: []const Value) Value {
     // A full QuickJS heap throws at the caller, because no promise can be built for it either.
     if (ctx.hasException()) {
         ctx.freeValue(file);
-        return ctx.throw(ctx.getException());
+        return module.throwPending(ctx);
     }
     return resolved(ctx, file);
 }
@@ -104,12 +98,6 @@ fn hunkOf(ctx: Context, arena: std.mem.Allocator, hunk: diff.Hunk) Value {
         append(ctx, list, i, ctx.newString(text));
     }
     return out;
-}
-
-/// Borrow one string argument. A value of another type answers null; nothing is converted.
-fn stringArg(ctx: Context, value: Value) ?[:0]const u8 {
-    if (!ctx.isString(value)) return null;
-    return ctx.toCStringLen(value) catch null;
 }
 
 /// Set one property, or drop the value once the QuickJS heap is full; the caller reads the exception at the end.

@@ -6,25 +6,18 @@
 const std = @import("std");
 const quickjs = @import("quickjs");
 const Host = @import("../host.zig").Host;
+const module = @import("module.zig");
 const table = @import("../tools.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
-const Module = Context.Module;
 
-/// Register the closed `yuke:tools` module and export its two functions.
+/// Register `yuke:tools` and its functions.
 pub fn install(host: *Host) void {
-    std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:tools", init).?;
-    host.ctx.addModuleExport(m, "defineTool") catch unreachable;
-    host.ctx.addModuleExport(m, "removeTool") catch unreachable;
-}
-
-fn init(ctx: Context, m: Module) c_int {
-    std.debug.assert(Host.fromContext(ctx).phase == .open);
-    ctx.setModuleExport(m, "defineTool", ctx.newFunction("defineTool", 2, jsDefineTool)) catch return -1;
-    ctx.setModuleExport(m, "removeTool", ctx.newFunction("removeTool", 1, jsRemoveTool)) catch return -1;
-    return 0;
+    module.installFunctions(host, "yuke:tools", &.{
+        .{ .name = "defineTool", .arity = 2, .call = jsDefineTool },
+        .{ .name = "removeTool", .arity = 1, .call = jsRemoveTool },
+    });
 }
 
 /// `defineTool(name, {description, parameters, execute})`.
@@ -38,12 +31,12 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     if (!ctx.isString(args[0])) return ctx.throwTypeError("the tool name must be a string");
     if (!ctx.isObject(args[1])) return ctx.throwTypeError("the tool definition must be an object");
 
-    const name = ctx.toCStringLen(args[0]) catch return exception(ctx);
+    const name = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
     defer ctx.freeCString(name.ptr);
     const description = ctx.getPropertyStr(args[1], "description");
     defer ctx.freeValue(description);
     if (!ctx.isString(description)) return ctx.throwTypeError("the tool needs a description string");
-    const description_text = ctx.toCStringLen(description) catch return exception(ctx);
+    const description_text = ctx.toCStringLen(description) catch return module.throwPending(ctx);
     defer ctx.freeCString(description_text.ptr);
     if (description_text.len == 0) return ctx.throwTypeError("the tool description must not be empty");
 
@@ -62,12 +55,12 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     defer ctx.freeValue(schema);
     if (!ctx.isString(schema)) {
         ctx.freeValue(execute);
-        if (ctx.isException(schema)) return exception(ctx);
+        if (ctx.isException(schema)) return module.throwPending(ctx);
         return ctx.throwTypeError("the tool parameters must convert to JSON");
     }
     const schema_text = ctx.toCStringLen(schema) catch {
         ctx.freeValue(execute);
-        return exception(ctx);
+        return module.throwPending(ctx);
     };
     defer ctx.freeCString(schema_text.ptr);
 
@@ -82,14 +75,9 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
 fn jsRemoveTool(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 1 or !ctx.isString(args[0])) return ctx.throwTypeError("removeTool needs a name string");
-    const name = ctx.toCStringLen(args[0]) catch return exception(ctx);
+    const name = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
     defer ctx.freeCString(name.ptr);
     return ctx.newBool(host.tools.remove(ctx, name));
-}
-
-/// Answer the exception sentinel and leave the pending exception in place.
-fn exception(ctx: Context) Value {
-    return ctx.throw(ctx.getException());
 }
 
 /// Report why the schema is refused, or null when it is usable.

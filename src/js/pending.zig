@@ -55,7 +55,7 @@ fn errorWith(ctx: Context, message: []const u8) ?Value {
 }
 
 /// Free the exception QuickJS left, so the next call starts from a clean context.
-fn dropException(ctx: Context) void {
+pub fn dropException(ctx: Context) void {
     if (ctx.hasException()) ctx.freeValue(ctx.getException());
 }
 

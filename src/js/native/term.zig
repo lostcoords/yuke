@@ -2,10 +2,10 @@ const std = @import("std");
 const quickjs = @import("quickjs");
 const term_pkg = @import("term");
 const Host = @import("../host.zig").Host;
+const module = @import("module.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
-const Module = Context.Module;
 
 /// The largest clipboard payload `term.copy` accepts. JavaScript reads it to report a refusal.
 pub const clipboard_max = term_pkg.Render.clipboard_max;
@@ -13,61 +13,28 @@ pub const clipboard_max = term_pkg.Render.clipboard_max;
 pub const tick_ms_min: u32 = 50;
 pub const tick_ms_max: u32 = 2000;
 
-/// Register the closed `yuke:term` module and export `term`.
+/// Register `yuke:term` and its one `term` object, which the host also keeps as a root for size updates.
 pub fn install(host: *Host) void {
-    std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:term", init).?;
-    host.ctx.addModuleExport(m, "term") catch unreachable;
+    module.installObject(host, "yuke:term", "term", &.{
+        .{ .name = "beginFrame", .arity = 0, .call = beginFrame },
+        .{ .name = "endFrame", .arity = 0, .call = endFrame },
+        .{ .name = "fill", .arity = 4, .call = fill },
+        .{ .name = "text", .arity = 3, .call = text },
+        .{ .name = "measure", .arity = 1, .call = measure },
+        .{ .name = "graphemes", .arity = 1, .call = graphemes },
+        .{ .name = "cursor", .arity = 3, .call = cursor },
+        .{ .name = "setNeedsTick", .arity = 2, .call = setNeedsTick },
+        .{ .name = "copy", .arity = 1, .call = copyToClipboard },
+        .{ .name = "quit", .arity = 0, .call = quit },
+    }, addRoots);
 }
 
-fn init(ctx: Context, m: Module) c_int {
-    const host = Host.fromContext(ctx);
-    std.debug.assert(host.phase == .open);
-
-    const term_obj = ctx.newObject();
-    if (ctx.isException(term_obj)) return -1;
-
-    if (bindAll(ctx, host, term_obj) != 0) {
-        ctx.freeValue(term_obj);
-        return -1;
-    }
-
+fn addRoots(host: *Host, ctx: Context, term_obj: Value) void {
+    module.set(ctx, term_obj, "clipboardMax", ctx.newInt32(clipboard_max));
+    module.set(ctx, term_obj, "cwd", ctx.newString(host.cwd));
+    module.set(ctx, term_obj, "width", ctx.newInt32(host.paint.width));
+    module.set(ctx, term_obj, "height", ctx.newInt32(host.paint.height));
     host.paint.term_obj = ctx.dupValue(term_obj);
-    ctx.setModuleExport(m, "term", term_obj) catch {
-        // The export call owns `term_obj`, even when it fails.
-        ctx.freeValue(host.paint.term_obj);
-        host.paint.term_obj = quickjs.UNDEFINED;
-        return -1;
-    };
-    return 0;
-}
-
-fn bindAll(ctx: Context, host: *Host, term_obj: Value) c_int {
-    bind(ctx, term_obj, "beginFrame", 0, beginFrame) catch return -1;
-    bind(ctx, term_obj, "endFrame", 0, endFrame) catch return -1;
-    bind(ctx, term_obj, "fill", 4, fill) catch return -1;
-    bind(ctx, term_obj, "text", 3, text) catch return -1;
-    bind(ctx, term_obj, "measure", 1, measure) catch return -1;
-    bind(ctx, term_obj, "graphemes", 1, graphemes) catch return -1;
-    bind(ctx, term_obj, "cursor", 3, cursor) catch return -1;
-    bind(ctx, term_obj, "setNeedsTick", 2, setNeedsTick) catch return -1;
-    bind(ctx, term_obj, "copy", 1, copyToClipboard) catch return -1;
-    bind(ctx, term_obj, "quit", 0, quit) catch return -1;
-    ctx.setPropertyStr(term_obj, "clipboardMax", ctx.newInt32(clipboard_max)) catch return -1;
-    ctx.setPropertyStr(term_obj, "cwd", ctx.newString(host.cwd)) catch return -1;
-    ctx.setPropertyStr(term_obj, "width", ctx.newInt32(host.paint.width)) catch return -1;
-    ctx.setPropertyStr(term_obj, "height", ctx.newInt32(host.paint.height)) catch return -1;
-    return 0;
-}
-
-fn bind(
-    ctx: Context,
-    obj: Value,
-    name: [*:0]const u8,
-    length: c_int,
-    comptime fn_: fn (Context, Value, []const Value) Value,
-) !void {
-    try ctx.setPropertyStr(obj, name, ctx.newFunction(name, length, fn_));
 }
 
 fn rethrow(ctx: Context) Value {

@@ -6,6 +6,7 @@
 const std = @import("std");
 const quickjs = @import("quickjs");
 const Host = @import("../host.zig").Host;
+const module = @import("module.zig");
 const os = @import("../host/operations.zig");
 const LocalHost = @import("../host/local.zig").LocalHost;
 const pending = @import("../pending.zig");
@@ -15,7 +16,6 @@ const rejected = pending.rejected;
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
-const Module = Context.Module;
 
 /// The command deadline. A caller raises it up to `max_timeout_ms`.
 pub const default_timeout_ms: u32 = 120_000;
@@ -24,17 +24,11 @@ pub const max_timeout_ms: u32 = 600_000;
 /// The cap for each stream. A command that prints more loses its middle, not its result.
 pub const max_stream_bytes: u32 = 64 * 1024;
 
-/// Register the closed `yuke:exec` module and export `exec`.
+/// Register `yuke:exec` and its functions.
 pub fn install(host: *Host) void {
-    std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:exec", init).?;
-    host.ctx.addModuleExport(m, "exec") catch unreachable;
-}
-
-fn init(ctx: Context, m: Module) c_int {
-    std.debug.assert(Host.fromContext(ctx).phase == .open);
-    ctx.setModuleExport(m, "exec", ctx.newFunction("exec", 2, jsExec)) catch return -1;
-    return 0;
+    module.installFunctions(host, "yuke:exec", &.{
+        .{ .name = "exec", .arity = 2, .call = jsExec },
+    });
 }
 
 /// One command, copied so the task can read it after the call returns.
@@ -57,7 +51,7 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len == 0) return rejected(ctx, "exec needs a command");
 
     // The task cannot touch JavaScript, so every argument is copied before it starts.
-    const command = ownedString(ctx, host.gpa, args[0]) orelse return rejected(ctx, "the command must be a string");
+    const command = module.owned(ctx, host.gpa, args[0]) orelse return rejected(ctx, "the command must be a string");
     // A blank command exits 0 and would tell a caller that it finished work.
     if (std.mem.trim(u8, command, " \t\r\n").len == 0) {
         host.gpa.free(command);
@@ -69,7 +63,7 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     const root = if (ctx.isUndefined(root_arg) or ctx.isNull(root_arg))
         host.gpa.dupe(u8, host.cwd) catch unreachable
     else
-        ownedString(ctx, host.gpa, root_arg) orelse {
+        module.owned(ctx, host.gpa, root_arg) orelse {
             host.gpa.free(command);
             return rejected(ctx, "the workspace root must be a string");
         };
@@ -149,20 +143,13 @@ fn errorMessage(err: os.HostError) []const u8 {
 }
 
 /// Copy one string argument. A value that is not a string answers null.
-fn ownedString(ctx: Context, gpa: std.mem.Allocator, value: Value) ?[]u8 {
-    if (!ctx.isString(value)) return null;
-    const raw = ctx.toCStringLen(value) catch return null;
-    defer ctx.freeCString(raw.ptr);
-    return gpa.dupe(u8, raw) catch unreachable;
-}
-
 /// Copy one optional string option. An absent option answers null; a wrong type is an error.
 fn optionalString(ctx: Context, gpa: std.mem.Allocator, options: Value, name: [:0]const u8) error{InvalidOption}!?[]u8 {
     if (!ctx.isObject(options)) return null;
     const value = ctx.getPropertyStr(options, name);
     defer ctx.freeValue(value);
     if (ctx.isUndefined(value) or ctx.isNull(value)) return null;
-    return ownedString(ctx, gpa, value) orelse error.InvalidOption;
+    return module.owned(ctx, gpa, value) orelse error.InvalidOption;
 }
 
 /// Read `timeoutMs`, or answer the default. The range matches the built-in `exec` tool.
@@ -172,10 +159,7 @@ fn timeoutOf(ctx: Context, options: Value) error{InvalidOption}!u32 {
     const value = ctx.getPropertyStr(options, "timeoutMs");
     defer ctx.freeValue(value);
     if (ctx.isUndefined(value) or ctx.isNull(value)) return default_timeout_ms;
-    if (!ctx.isNumber(value)) return error.InvalidOption;
-    const ms = ctx.toFloat64(value) catch return error.InvalidOption;
-    if (!(ms >= 1 and ms <= max_timeout_ms) or @floor(ms) != ms) return error.InvalidOption;
-    return @intFromFloat(ms);
+    return @intCast(module.integer(ctx, value, 1, max_timeout_ms) orelse return error.InvalidOption);
 }
 
 const testing = std.testing;

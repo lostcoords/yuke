@@ -1,4 +1,5 @@
 const std = @import("std");
+const utf8 = @import("../utf8.zig");
 const builtin = @import("builtin");
 const quickjs = @import("quickjs");
 const zio = @import("zio");
@@ -501,7 +502,7 @@ pub const Host = struct {
     fn appendFaultText(self: *Host, text: []const u8) void {
         std.debug.assert(self.fault_text_len <= self.fault_text.len);
         const room = self.fault_text.len - self.fault_text_len;
-        const n = utf8PrefixLen(text, room);
+        const n = utf8.floor(text, room);
         std.debug.assert(n <= room);
         @memcpy(self.fault_text[self.fault_text_len..][0..n], text[0..n]);
         self.fault_text_len += n;
@@ -509,9 +510,7 @@ pub const Host = struct {
 
     /// Drop a pending exception before the next owner turn.
     fn dropPendingException(self: *Host) void {
-        if (!self.ctx.hasException()) return;
-        const exc = self.ctx.getException();
-        self.ctx.freeValue(exc);
+        pending.dropException(self.ctx);
     }
 
     /// Return the last script fault text, or an empty slice when the Host has no fault.
@@ -535,13 +534,6 @@ pub const Host = struct {
 };
 
 /// Return the longest prefix of `text` that fits in `max` bytes and ends a UTF-8 sequence.
-fn utf8PrefixLen(text: []const u8, max: usize) usize {
-    if (text.len <= max) return text.len;
-    var n = max;
-    while (n > 0 and std.unicode.utf8ByteSequenceLength(text[n]) == error.Utf8InvalidStartByte) n -= 1;
-    return n;
-}
-
 /// Return the text before the first line break. A fault line uses one row.
 fn firstLine(text: []const u8) []const u8 {
     const end = std.mem.indexOfAny(u8, text, "\r\n") orelse text.len;
