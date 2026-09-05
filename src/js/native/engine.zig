@@ -855,8 +855,9 @@ fn jsMemoryUsage(ctx: Context, _: Value, _: []const Value) Value {
 
 fn jsSetEventSink(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
+    if (args.len < 1 or !ctx.isFunction(args[0])) return ctx.throwTypeError("setEventSink needs a function");
     ctx.freeValue(engine.sink);
-    engine.sink = if (args.len > 0) ctx.dupValue(args[0]) else quickjs.UNDEFINED;
+    engine.sink = ctx.dupValue(args[0]);
     return quickjs.UNDEFINED;
 }
 

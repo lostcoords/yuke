@@ -30,8 +30,8 @@ declare module "yuke:fs" {
     writeFile(path: string, contents: string, workspaceRoot?: string): Promise<number>;
     /** Resolves null when nothing is at the path. */
     stat(path?: string | null): Promise<Stat | null>;
-    /** Lists the directories of one path as JSON text of a `Page`. */
-    list(path?: string | null): Promise<string>;
+    /** Lists the directories of one path. */
+    list(path?: string | null): Promise<Page>;
   };
 
   interface RangeRead {

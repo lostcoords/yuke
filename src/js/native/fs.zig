@@ -77,7 +77,7 @@ fn pathArg(ctx: Context, _: *Host, arena: std.mem.Allocator, args: []const Value
     const raw = ctx.toCStringLen(args[idx]) catch return null;
     defer ctx.freeCString(raw.ptr);
     if (raw.len == 0) return root;
-    return arena.dupe(u8, raw) catch null;
+    return arena.dupe(u8, raw) catch unreachable;
 }
 
 /// One scratch arena and one local host for a single call. The host anchors a relative path.
@@ -123,7 +123,7 @@ const read_limits: os.ReadLimits = .{
 fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     // The task cannot touch JavaScript, so the path is copied before it starts.
-    const root = ownedRoot(ctx, host, args, 1) orelse return rejected(ctx, "the workspace root must be a string");
+    const root = ownedPath(ctx, host, args, 1) orelse return rejected(ctx, "the workspace root must be a string");
     const path = ownedPath(ctx, host, args, 0) orelse {
         host.gpa.free(root);
         return rejected(ctx, "the path must be a string");
@@ -134,7 +134,7 @@ fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
 /// Read bounded whole lines. The task owns the path and returns a small JSON range descriptor.
 fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = ownedRoot(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string");
+    const root = ownedPath(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string");
     const path = ownedPath(ctx, host, args, 0) orelse {
         host.gpa.free(root);
         return rejected(ctx, "the path must be a string");
@@ -201,32 +201,26 @@ fn encodeRange(gpa: std.mem.Allocator, got: os.RangeRead) [:0]u8 {
     return list.toOwnedSliceSentinel(gpa, 0) catch unreachable;
 }
 
-/// Copy one path argument so a task can read it after the call returns.
+/// Copy one path argument so a task can read it after the call returns. An absent or empty one is the cwd.
 fn ownedPath(ctx: Context, host: *Host, args: []const Value, idx: usize) ?[]u8 {
-    if (args.len <= idx or ctx.isUndefined(args[idx]) or ctx.isNull(args[idx])) return host.gpa.dupe(u8, host.cwd) catch null;
+    if (args.len <= idx or ctx.isUndefined(args[idx]) or ctx.isNull(args[idx])) return host.gpa.dupe(u8, host.cwd) catch unreachable;
+    if (!ctx.isString(args[idx])) return null;
     const raw = ctx.toCStringLen(args[idx]) catch return null;
     defer ctx.freeCString(raw.ptr);
-    if (raw.len == 0) return host.gpa.dupe(u8, host.cwd) catch null;
-    return host.gpa.dupe(u8, raw) catch null;
-}
-
-fn ownedRoot(ctx: Context, host: *Host, args: []const Value, idx: usize) ?[]u8 {
-    if (args.len <= idx or ctx.isUndefined(args[idx]) or ctx.isNull(args[idx])) return host.gpa.dupe(u8, host.cwd) catch null;
-    const raw = ctx.toCStringLen(args[idx]) catch return null;
-    defer ctx.freeCString(raw.ptr);
-    return host.gpa.dupe(u8, if (raw.len == 0) host.cwd else raw) catch null;
+    return host.gpa.dupe(u8, if (raw.len == 0) host.cwd else raw) catch unreachable;
 }
 
 /// Replace a file's whole content. It answers the byte count it wrote.
 fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = ownedRoot(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string");
+    const root = ownedPath(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string");
     defer host.gpa.free(root);
     var call = Call.open(host, root);
     defer call.close();
 
     if (args.len < 2) return rejected(ctx, "writeFile needs a path and content");
     const path = pathArg(ctx, host, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string");
+    if (!ctx.isString(args[1])) return rejected(ctx, "the content must be a string");
     const raw = ctx.toCStringLen(args[1]) catch return rejected(ctx, "the content must be a string");
     defer ctx.freeCString(raw.ptr);
 
@@ -270,19 +264,21 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     const page = call.local.listDir(arena, path, .{ .limit = max_entries, .include_files = false }) catch |err|
         return rejected(ctx, errorMessage(err));
 
-    const answer = pageOf(arena, path, page) catch return rejected(ctx, "out of memory");
     var aw: std.Io.Writer.Allocating = .init(host.gpa);
     defer aw.deinit();
-    std.json.Stringify.value(answer, .{}, &aw.writer) catch return rejected(ctx, "out of memory");
-    return resolved(ctx, ctx.newString(aw.written()));
+    std.json.Stringify.value(pageOf(arena, path, page), .{}, &aw.writer) catch unreachable;
+    // The page is our own JSON, so the parse fails only once the QuickJS heap is full.
+    const value = ctx.parseJSON(aw.written(), "yuke:fs");
+    if (ctx.isException(value)) return ctx.throw(ctx.getException());
+    return resolved(ctx, value);
 }
 
 /// Build the answer. Each entry carries its whole path, so the caller never joins one itself.
-fn pageOf(arena: std.mem.Allocator, path: []const u8, page: os.DirPage) !Page {
-    const entries = try arena.alloc(Page.Entry, page.items.len);
+fn pageOf(arena: std.mem.Allocator, path: []const u8, page: os.DirPage) Page {
+    const entries = arena.alloc(Page.Entry, page.items.len) catch unreachable;
     for (page.items, entries) |item, *entry| entry.* = .{
         .name = item.name,
-        .path = try std.fs.path.join(arena, &.{ path, item.name }),
+        .path = std.fs.path.join(arena, &.{ path, item.name }) catch unreachable,
         .is_git_repo = item.is_git_repo,
     };
     return .{
@@ -331,7 +327,7 @@ test "list answers the directories of a real path and marks a repository" {
 
     var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     defer aw.deinit();
-    try std.json.Stringify.value(try pageOf(arena, root, page), .{}, &aw.writer);
+    try std.json.Stringify.value(pageOf(arena, root, page), .{}, &aw.writer);
 
     const parsed = try std.json.parseFromSlice(Page, testing.allocator, aw.written(), .{});
     defer parsed.deinit();

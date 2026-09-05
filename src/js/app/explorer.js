@@ -50,10 +50,8 @@ function openExplorer(startPath) {
     content.query = "";
     fs.list(path ?? null).then(show, fail);
 
-    /** @param {string} json */
-    function show(json) {
-      /** @type {FsPage} */
-      const page = JSON.parse(json);
+    /** @param {FsPage} page */
+    function show(page) {
       state.path = page.path;
       state.parent = page.parent;
 

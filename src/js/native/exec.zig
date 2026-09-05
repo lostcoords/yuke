@@ -65,10 +65,14 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     }
 
     const options: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;
-    const root = ownedString(ctx, host.gpa, if (args.len > 2) args[2] else quickjs.UNDEFINED) orelse host.gpa.dupe(u8, host.cwd) catch {
-        host.gpa.free(command);
-        return rejected(ctx, "the workspace root must be a string");
-    };
+    const root_arg: Value = if (args.len > 2) args[2] else quickjs.UNDEFINED;
+    const root = if (ctx.isUndefined(root_arg) or ctx.isNull(root_arg))
+        host.gpa.dupe(u8, host.cwd) catch unreachable
+    else
+        ownedString(ctx, host.gpa, root_arg) orelse {
+            host.gpa.free(command);
+            return rejected(ctx, "the workspace root must be a string");
+        };
     const cwd = optionalString(ctx, host.gpa, options, "cwd") catch {
         host.gpa.free(command);
         host.gpa.free(root);
@@ -149,7 +153,7 @@ fn ownedString(ctx: Context, gpa: std.mem.Allocator, value: Value) ?[]u8 {
     if (!ctx.isString(value)) return null;
     const raw = ctx.toCStringLen(value) catch return null;
     defer ctx.freeCString(raw.ptr);
-    return gpa.dupe(u8, raw) catch null;
+    return gpa.dupe(u8, raw) catch unreachable;
 }
 
 /// Copy one optional string option. An absent option answers null; a wrong type is an error.

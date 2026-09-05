@@ -3904,10 +3904,10 @@ test "the explorer turns one directory listing into rows" {
         \\let asked = "unset";
         \\fs.list = (path) => {
         \\  asked = path;
-        \\  return Promise.resolve(JSON.stringify({
+        \\  return Promise.resolve({
         \\    path: "/w", parent: "/", more: true,
         \\    entries: [{ name: "a", path: "/w/a", is_git_repo: true }, { name: "b", path: "/w/b", is_git_repo: false }],
-        \\  }));
+        \\  });
         \\};
         \\command.perform("app:explorer");
         \\await Promise.resolve();
