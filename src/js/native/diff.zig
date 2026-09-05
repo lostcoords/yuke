@@ -22,10 +22,10 @@ const Module = Context.Module;
 pub const max_side_bytes: usize = 1024 * 1024;
 
 /// Register the closed `yuke:diff` module and export `diff`.
-pub fn install(host: *Host) error{OutOfMemory}!void {
+pub fn install(host: *Host) void {
     std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:diff", init) orelse return error.OutOfMemory;
-    host.ctx.addModuleExport(m, "diff") catch return error.OutOfMemory;
+    const m = host.ctx.newModule("yuke:diff", init).?;
+    host.ctx.addModuleExport(m, "diff") catch unreachable;
 }
 
 fn init(ctx: Context, m: Module) c_int {
@@ -61,47 +61,38 @@ fn jsDiff(ctx: Context, _: Value, args: []const Value) Value {
     else
         diff.compare(arena, old, new, .{}) catch |err| switch (err) {
             error.TooDifferent => &.{}, // The change is too large for a reader-friendly view.
-            error.OutOfMemory => return rejected(ctx, "out of memory"),
+            error.OutOfMemory => unreachable,
         };
 
-    const file = fileOf(ctx, arena, path, hunks) catch return rejected(ctx, "out of memory");
+    const file = fileOf(ctx, arena, path, hunks);
+    // A full QuickJS heap throws at the caller, because no promise can be built for it either.
+    if (ctx.hasException()) {
+        ctx.freeValue(file);
+        return ctx.throw(ctx.getException());
+    }
     return resolved(ctx, file);
 }
 
-/// Build `{path, hunks}`. Every failure here is a failed allocation inside QuickJS.
-fn fileOf(ctx: Context, arena: std.mem.Allocator, path: []const u8, hunks: []const diff.Hunk) error{OutOfMemory}!Value {
+/// Build `{path, hunks}`. The caller reads the exception once the whole value is built.
+fn fileOf(ctx: Context, arena: std.mem.Allocator, path: []const u8, hunks: []const diff.Hunk) Value {
     const out = ctx.newObject();
-    if (ctx.isException(out)) return error.OutOfMemory;
-    errdefer ctx.freeValue(out);
-
-    try set(ctx, out, "path", ctx.newString(path));
+    set(ctx, out, "path", ctx.newString(path));
     const list = ctx.newArray();
-    if (ctx.isException(list)) return error.OutOfMemory;
     // `set` takes the array reference, so the loop below writes through the one the object holds.
-    try set(ctx, out, "hunks", list);
-
-    for (hunks, 0..) |hunk, i| {
-        const mapped = try hunkOf(ctx, arena, hunk);
-        try append(ctx, list, i, mapped);
-    }
+    set(ctx, out, "hunks", list);
+    for (hunks, 0..) |hunk, i| append(ctx, list, i, hunkOf(ctx, arena, hunk));
     return out;
 }
 
 /// Build one hunk. The start values stay as the difference states them: 1-based, 0 for an empty side.
-fn hunkOf(ctx: Context, arena: std.mem.Allocator, hunk: diff.Hunk) error{OutOfMemory}!Value {
+fn hunkOf(ctx: Context, arena: std.mem.Allocator, hunk: diff.Hunk) Value {
     const out = ctx.newObject();
-    if (ctx.isException(out)) return error.OutOfMemory;
-    errdefer ctx.freeValue(out);
-
-    try set(ctx, out, "oldStart", ctx.newInt64(hunk.old_start));
-    try set(ctx, out, "oldLines", ctx.newInt64(hunk.old_lines));
-    try set(ctx, out, "newStart", ctx.newInt64(hunk.new_start));
-    try set(ctx, out, "newLines", ctx.newInt64(hunk.new_lines));
-
+    set(ctx, out, "oldStart", ctx.newInt64(hunk.old_start));
+    set(ctx, out, "oldLines", ctx.newInt64(hunk.old_lines));
+    set(ctx, out, "newStart", ctx.newInt64(hunk.new_start));
+    set(ctx, out, "newLines", ctx.newInt64(hunk.new_lines));
     const list = ctx.newArray();
-    if (ctx.isException(list)) return error.OutOfMemory;
-    try set(ctx, out, "lines", list);
-
+    set(ctx, out, "lines", list);
     for (hunk.lines, 0..) |line, i| {
         // The wire carries plain strings. The leading mark identifies the operation.
         const mark: u8 = switch (line.op) {
@@ -109,8 +100,8 @@ fn hunkOf(ctx: Context, arena: std.mem.Allocator, hunk: diff.Hunk) error{OutOfMe
             .delete => '-',
             .insert => '+',
         };
-        const text = try std.fmt.allocPrint(arena, "{c}{s}", .{ mark, line.text });
-        try append(ctx, list, i, ctx.newString(text));
+        const text = std.fmt.allocPrint(arena, "{c}{s}", .{ mark, line.text }) catch unreachable;
+        append(ctx, list, i, ctx.newString(text));
     }
     return out;
 }
@@ -121,14 +112,14 @@ fn stringArg(ctx: Context, value: Value) ?[:0]const u8 {
     return ctx.toCStringLen(value) catch null;
 }
 
-/// Set one property. `setPropertyStr` takes the value even when it fails, so this never frees it.
-fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) error{OutOfMemory}!void {
-    if (ctx.isException(value)) return error.OutOfMemory;
-    ctx.setPropertyStr(obj, name, value) catch return error.OutOfMemory;
+/// Set one property, or drop the value once the QuickJS heap is full; the caller reads the exception at the end.
+fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
+    if (ctx.hasException()) return ctx.freeValue(value);
+    ctx.setPropertyStr(obj, name, value) catch {};
 }
 
-/// Append one entry. `setPropertyUint32` takes the value even when it fails.
-fn append(ctx: Context, list: Value, index: usize, value: Value) error{OutOfMemory}!void {
-    if (ctx.isException(value)) return error.OutOfMemory;
-    ctx.setPropertyUint32(list, @intCast(index), value) catch return error.OutOfMemory;
+/// Append one entry under the same rule as `set`.
+fn append(ctx: Context, list: Value, index: usize, value: Value) void {
+    if (ctx.hasException()) return ctx.freeValue(value);
+    ctx.setPropertyUint32(list, @intCast(index), value) catch {};
 }

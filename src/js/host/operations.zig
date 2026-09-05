@@ -10,7 +10,6 @@ pub const HostError = error{
     InvalidUtf8,
     HostFailure,
     Canceled,
-    OutOfMemory,
 };
 
 /// A handler adds argument errors and semantic refusals to `HostError`.

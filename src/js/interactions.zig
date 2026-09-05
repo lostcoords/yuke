@@ -23,7 +23,8 @@ pub const Error = error{
     Unknown,
     ResponseMismatch,
     InvalidSelection,
-    OutOfMemory,
+    /// The QuickJS heap is full. The exception stays pending, so the caller throws it.
+    Exception,
 };
 
 /// One question. The arena owns every slice `value` holds.
@@ -83,13 +84,10 @@ pub const Table = struct {
         ) catch return error.InvalidRequest;
         try validate(value);
 
-        const request = self.gpa.create(Request) catch return error.OutOfMemory;
-        errdefer self.gpa.destroy(request);
-        self.live.append(self.gpa, request) catch return error.OutOfMemory;
-        errdefer _ = self.live.pop();
-
-        const started = ops.start(ctx, wake) catch return error.OutOfMemory;
+        const started = ops.start(ctx, wake) orelse return error.Exception;
+        const request = self.gpa.create(Request) catch unreachable;
         request.* = .{ .arena = arena, .id = id, .value = value, .op = started.op };
+        self.live.append(self.gpa, request) catch unreachable;
         return started.promise;
     }
 
@@ -131,13 +129,13 @@ pub const Table = struct {
             .select => |answer| blk: {
                 for (request.value.select.options) |option| {
                     if (std.mem.eql(u8, option, answer.value))
-                        break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch return error.OutOfMemory };
+                        break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch unreachable };
                 }
                 return error.InvalidSelection;
             },
             .input => |answer| blk: {
                 try validateText(answer.value, true);
-                break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch return error.OutOfMemory };
+                break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch unreachable };
             },
         };
     }

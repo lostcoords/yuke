@@ -94,7 +94,7 @@ test "a user entry file evaluates and a missing one is not an error" {
     const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
     const dir = dir_buf[0..dir_len];
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try extensions_mod.evalUserEntry(host, dir);
     try std.testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.result"));
@@ -120,7 +120,7 @@ test "a throwing user entry is a JavaScriptFault the loop absorbs" {
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
     const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -286,7 +286,7 @@ test "serve stops when q arrives" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
 
     var slot: [1]Msg = undefined;
@@ -304,7 +304,7 @@ test "serve folds a wheel run into one dispatch and keeps the next button" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.eval(
         \\globalThis.seen = [];
@@ -333,7 +333,7 @@ test "a closed channel unblocks serve" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
 
     try host.eval("globalThis.seen = 0; globalThis.onEvent = () => { globalThis.seen++; };", "count.js");
@@ -355,7 +355,7 @@ test "serve keeps the loop after onEvent throw" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -380,7 +380,7 @@ test "tickTask enqueues a tick while armed" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
 
     var wake: zio.ResetEvent = .init;
@@ -409,7 +409,7 @@ test "tickTask paces engine wakes to the frame gap" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
 
     var wake: zio.ResetEvent = .init;

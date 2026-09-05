@@ -25,10 +25,10 @@ pub const max_timeout_ms: u32 = 600_000;
 pub const max_stream_bytes: u32 = 64 * 1024;
 
 /// Register the closed `yuke:exec` module and export `exec`.
-pub fn install(host: *Host) error{OutOfMemory}!void {
+pub fn install(host: *Host) void {
     std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:exec", init) orelse return error.OutOfMemory;
-    host.ctx.addModuleExport(m, "exec") catch return error.OutOfMemory;
+    const m = host.ctx.newModule("yuke:exec", init).?;
+    host.ctx.addModuleExport(m, "exec") catch unreachable;
 }
 
 fn init(ctx: Context, m: Module) c_int {
@@ -102,23 +102,19 @@ fn execTask(host: *Host, op: *pending.Op, req: Request) void {
         .max_stream_bytes = max_stream_bytes,
     }) catch |err| return op.finish(.{ .failed = errorMessage(err) });
 
-    const json = encode(host.gpa, arena.allocator(), result) catch
-        return op.finish(.{ .failed = "out of memory" });
-    op.finish(.{ .json = json });
+    op.finish(.{ .json = encode(host.gpa, arena.allocator(), result) });
 }
 
 /// Build the result text. A command prints any bytes, so each stream becomes valid UTF-8 first.
-fn encode(gpa: std.mem.Allocator, scratch: std.mem.Allocator, r: os.ExecResult) error{OutOfMemory}![:0]u8 {
-    const stdout = try utf8.sanitize(scratch, r.stdout);
-    const stderr = try utf8.sanitize(scratch, r.stderr);
+fn encode(gpa: std.mem.Allocator, scratch: std.mem.Allocator, r: os.ExecResult) [:0]u8 {
+    const stdout = utf8.sanitize(scratch, r.stdout) catch unreachable;
+    const stderr = utf8.sanitize(scratch, r.stderr) catch unreachable;
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
-    errdefer aw.deinit();
-    write(&aw.writer, stdout, stderr, r) catch return error.OutOfMemory;
+    write(&aw.writer, stdout, stderr, r) catch unreachable;
     var list = aw.toArrayList();
-    errdefer list.deinit(gpa);
     // QuickJS reads the JSON text to the sentinel, so the buffer must carry one.
-    return list.toOwnedSliceSentinel(gpa, 0);
+    return list.toOwnedSliceSentinel(gpa, 0) catch unreachable;
 }
 
 /// Write one result. `code` and `signal` are null for each outcome that did not produce them.
@@ -145,7 +141,6 @@ fn errorMessage(err: os.HostError) []const u8 {
         error.InvalidUtf8 => "the working directory name holds invalid UTF-8",
         error.Canceled => "the command was canceled",
         error.HostFailure => "the host could not run the command",
-        error.OutOfMemory => "out of memory",
     };
 }
 
@@ -244,7 +239,7 @@ test "the encoded text ends with a sentinel QuickJS can read" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
 
-    const json = try encode(arena.allocator(), arena.allocator(), .{
+    const json = encode(arena.allocator(), arena.allocator(), .{
         .stdout = "x",
         .stderr = "",
         .outcome = .{ .exited = 0 },

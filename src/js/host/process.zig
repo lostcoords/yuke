@@ -26,23 +26,23 @@ const Drain = struct {
 
     /// Join the head and the tail with one notice between them. The result comes from `scratch`.
     /// Each end stops on a byte, so the notice counts the codepoint the cap cut in half.
-    fn text(self: *Drain, scratch: std.mem.Allocator) error{OutOfMemory}![]const u8 {
+    fn text(self: *Drain, scratch: std.mem.Allocator) []const u8 {
         if (self.dropped == 0) {
             if (self.tail.items.len == 0) return self.head.items;
             // No byte went, so the two ends stay adjacent. The join restores the exact stream.
             var whole: std.ArrayList(u8) = .empty;
-            try whole.appendSlice(scratch, self.head.items);
-            try whole.appendSlice(scratch, self.tail.items);
-            return whole.toOwnedSlice(scratch);
+            whole.appendSlice(scratch, self.head.items) catch unreachable;
+            whole.appendSlice(scratch, self.tail.items) catch unreachable;
+            return whole.toOwnedSlice(scratch) catch unreachable;
         }
         const head = headFloor(self.head.items);
         const tail = tailCeil(self.tail.items);
         const trimmed = (self.head.items.len - head.len) + (self.tail.items.len - tail.len);
         var joined: std.ArrayList(u8) = .empty;
-        try joined.appendSlice(scratch, head);
-        try joined.print(scratch, "\n[The tool dropped {d} bytes here.]\n", .{self.dropped + trimmed});
-        try joined.appendSlice(scratch, tail);
-        return joined.toOwnedSlice(scratch);
+        joined.appendSlice(scratch, head) catch unreachable;
+        joined.print(scratch, "\n[The tool dropped {d} bytes here.]\n", .{self.dropped + trimmed}) catch unreachable;
+        joined.appendSlice(scratch, tail) catch unreachable;
+        return joined.toOwnedSlice(scratch) catch unreachable;
     }
 };
 
@@ -104,8 +104,8 @@ pub fn run(io: std.Io, root: []const u8, env: ?*const std.process.Environ.Map, s
 
     const term = child.wait(io) catch return error.HostFailure;
     return .{
-        .stdout = try out.text(scratch),
-        .stderr = try err.text(scratch),
+        .stdout = out.text(scratch),
+        .stderr = err.text(scratch),
         .outcome = if (timed_out)
             .timed_out
         else switch (term) {
@@ -175,12 +175,11 @@ fn joinGroup(io: std.Io, group: *std.Io.Group, done: *std.Io.Event) void {
 /// Resolve the working directory. A null `cwd` uses the workspace root itself.
 fn resolveCwd(scratch: std.mem.Allocator, root: []const u8, env: ?*const std.process.Environ.Map, cwd: ?[]const u8) h.HostError![]const u8 {
     const rel = cwd orelse return root;
-    return paths.anchorAt(scratch, env, root, rel) catch error.OutOfMemory;
+    return paths.anchorAt(scratch, env, root, rel) catch unreachable;
 }
 
 fn mapDrainError(err: anyerror) h.HostError {
     return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
         error.Canceled => error.Canceled,
         else => error.HostFailure,
     };
@@ -201,10 +200,7 @@ fn drain(io: std.Io, scratch: std.mem.Allocator, state: *Drain) void {
             },
         };
         const to_head = @min(chunk.len, half -| state.head.items.len);
-        if (to_head != 0) state.head.appendSlice(scratch, chunk[0..to_head]) catch {
-            state.err = error.OutOfMemory;
-            return;
-        };
+        if (to_head != 0) state.head.appendSlice(scratch, chunk[0..to_head]) catch unreachable;
         if (to_head < chunk.len) keepTail(scratch, state, chunk[to_head..], half);
         reader.interface.toss(chunk.len); // Consume every byte, so the writer never blocks.
         if (state.err != null) return;
@@ -213,10 +209,7 @@ fn drain(io: std.Io, scratch: std.mem.Allocator, state: *Drain) void {
 
 /// Append to the tail and drop the oldest bytes above `half`. The dropped count names the gap.
 fn keepTail(scratch: std.mem.Allocator, state: *Drain, bytes: []const u8, half: usize) void {
-    state.tail.appendSlice(scratch, bytes) catch {
-        state.err = error.OutOfMemory;
-        return;
-    };
+    state.tail.appendSlice(scratch, bytes) catch unreachable;
     if (state.tail.items.len <= half) return;
     const excess = state.tail.items.len - half;
     std.mem.copyForwards(u8, state.tail.items, state.tail.items[excess..]);

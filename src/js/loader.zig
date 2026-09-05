@@ -12,7 +12,6 @@ pub const BakedModule = struct {
 pub const ResolveError = error{
     EmptyPath,
     MissingBase,
-    OutOfMemory,
 };
 
 /// True for the public facade name and every internal module name.
@@ -27,13 +26,13 @@ pub fn resolve(
     name: []const u8,
 ) ResolveError![]u8 {
     if (name.len == 0) return error.EmptyPath;
-    if (isBaked(name)) return allocator.dupe(u8, name);
-    if (std.fs.path.isAbsolute(name)) return std.fs.path.resolve(allocator, &.{name});
+    if (isBaked(name)) return allocator.dupe(u8, name) catch unreachable;
+    if (std.fs.path.isAbsolute(name)) return std.fs.path.resolve(allocator, &.{name}) catch unreachable;
 
     if (base.len == 0) return error.MissingBase;
     if (isBaked(base)) return error.MissingBase;
     const dir = std.fs.path.dirname(base) orelse return error.MissingBase;
-    return std.fs.path.resolve(allocator, &.{ dir, name });
+    return std.fs.path.resolve(allocator, &.{ dir, name }) catch unreachable;
 }
 
 pub const Loader = struct {
@@ -57,29 +56,25 @@ pub const Loader = struct {
         return dupJs(ctx, path);
     }
 
-    /// QuickJS wants null for every failure, so an out-of-memory result also reads as null here.
     pub fn onLoadModule(self: *Loader, ctx: quickjs.Context, name: []const u8) ?quickjs.Context.Module {
         if (isBaked(name)) {
             const source = findBaked(self.baked, name) orelse return null;
             return compile(ctx, source, name);
         }
-        const source = (self.readModule(name) catch null) orelse return null;
+        const source = self.readModule(name) orelse return null;
         defer self.gpa.free(source);
         return compile(ctx, source, name);
     }
 
     /// Read a module file the caller frees, or null when it is absent, too large, or unreadable.
-    pub fn readModule(self: *Loader, path: []const u8) error{OutOfMemory}!?[:0]u8 {
+    pub fn readModule(self: *Loader, path: []const u8) ?[:0]u8 {
         if (!std.fs.path.isAbsolute(path)) return null;
         var file = std.Io.Dir.openFileAbsolute(self.io, path, .{}) catch return null;
         defer file.close(self.io);
         // Read to the end instead of to a stat size, so a file that grows cannot yield a prefix.
         var reader = file.readerStreaming(self.io, &.{});
         const limit: std.Io.Limit = .limited(self.max_file_bytes + 1);
-        const buf = reader.interface.allocRemainingAlignedSentinel(self.gpa, limit, .of(u8), 0) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return null,
-        };
+        const buf = reader.interface.allocRemainingAlignedSentinel(self.gpa, limit, .of(u8), 0) catch return null;
         if (buf.len > self.max_file_bytes) {
             self.gpa.free(buf);
             return null;

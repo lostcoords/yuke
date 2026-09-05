@@ -14,10 +14,10 @@ pub const tick_ms_min: u32 = 50;
 pub const tick_ms_max: u32 = 2000;
 
 /// Register the closed `yuke:term` module and export `term`.
-pub fn install(host: *Host) error{OutOfMemory}!void {
+pub fn install(host: *Host) void {
     std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:term", init) orelse return error.OutOfMemory;
-    host.ctx.addModuleExport(m, "term") catch return error.OutOfMemory;
+    const m = host.ctx.newModule("yuke:term", init).?;
+    host.ctx.addModuleExport(m, "term") catch unreachable;
 }
 
 fn init(ctx: Context, m: Module) c_int {
@@ -131,7 +131,7 @@ fn text(ctx: Context, _: Value, args: []const Value) Value {
 
     const style = parseStyle(ctx, if (args.len > 3) args[3] else null) catch return rethrow(ctx);
     ensureFrame(host);
-    const copy = host.paint.glyphs.allocator().dupe(u8, s) catch return ctx.throwOutOfMemory();
+    const copy = host.paint.glyphs.allocator().dupe(u8, s) catch unreachable;
     const win = render.window();
     _ = win.child(.{
         .x_off = @intCast(x),
@@ -165,7 +165,7 @@ fn graphemes(ctx: Context, _: Value, args: []const Value) Value {
         const bytes = g.bytes(s);
         const n = utf16Len(bytes);
         const w: i32 = @intCast(term_pkg.gwidth.gwidth(bytes, .unicode));
-        triples.appendSlice(host.gpa, &.{ u16_off, n, w }) catch return ctx.throwOutOfMemory();
+        triples.appendSlice(host.gpa, &.{ u16_off, n, w }) catch unreachable;
         u16_off += n;
     }
     return int32Array(ctx, triples.items);
@@ -395,7 +395,7 @@ fn evalOk(host: *Host, src: [:0]const u8) !i32 {
 test "an extra yuke:term export name fails" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -406,7 +406,7 @@ test "an extra yuke:term export name fails" {
 test "measure and graphemes use cell width and UTF-16 offsets" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
 
     // Printable ASCII takes the byte-length path, so both ends of the range must measure as one.
@@ -471,7 +471,7 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
 test "setNeedsTick clamps and quit blocks a later arm" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -489,7 +489,7 @@ test "setNeedsTick clamps and quit blocks a later arm" {
 test "beginFrame without a renderer throws" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -515,7 +515,7 @@ test "paint copies graphemes, skips negative coords, and diffs" {
 
     var out: std.Io.Writer.Allocating = .init(gpa.allocator());
     defer out.deinit();
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.bindRender(&render, &out.writer);
 
@@ -560,7 +560,7 @@ test "a failed endFrame keeps the frame dirty and retries" {
     try render.resize(&sink.writer, .{ .rows = 1, .cols = 1, .x_pixel = 0, .y_pixel = 0 });
 
     var fail: std.Io.Writer = .failing;
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.bindRender(&render, &fail);
 

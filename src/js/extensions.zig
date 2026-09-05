@@ -27,7 +27,7 @@ pub const Extensions = struct {
         self.app = app;
         self.user_entry_fault = false;
         self.wake = .init;
-        const host = try Host.createWith(gpa, io, opts.host);
+        const host = Host.createWith(gpa, io, opts.host);
         errdefer host.destroy();
         self.host = host;
         host.owner_wake = &self.wake;
@@ -37,9 +37,8 @@ pub const Extensions = struct {
         host.interrupt_budget = std.math.maxInt(u32);
         try host.evalModule(opts.boot, "boot.js");
         host.interrupt_budget = host_mod.default_interrupt_budget;
-        evalUserEntry(host, opts.config_dir) catch |err| switch (err) {
-            error.JavaScriptFault => self.user_entry_fault = true,
-            else => return err,
+        evalUserEntry(host, opts.config_dir) catch {
+            self.user_entry_fault = true;
         };
         // Load built-ins last so a user tool with the same name wins.
         try host.evalModule("import \"yuke:builtins\";", "builtins.js");
@@ -62,7 +61,7 @@ pub const user_entry = "index.js";
 /// Evaluate `<config_dir>/index.js`; an absent file is valid.
 pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
     const dir = config_dir orelse return;
-    const path = try std.fs.path.joinZ(host.gpa, &.{ dir, user_entry });
+    const path = std.fs.path.joinZ(host.gpa, &.{ dir, user_entry }) catch unreachable;
     defer host.gpa.free(path);
     _ = try host.evalFile(path);
 }
@@ -135,7 +134,7 @@ test "headless extensions pump an async JavaScript tool" {
     try std.testing.expectEqual(@as(i32, 1), try extensions.host.evalInt("globalThis.configRejected"));
     try std.testing.expect(app_runtime.engine.default_system_prompt == null);
 
-    const call = try extensions.host.calls.submit("read_note", "{\"path\":\"note.txt\"}");
+    const call = extensions.host.calls.submit("read_note", "{\"path\":\"note.txt\"}");
     try owner.pump(extensions.host);
     var rounds: u32 = 0;
     while (call.state != .settled) : (rounds += 1) {
@@ -323,7 +322,7 @@ test "a hook chain replaces a payload and the first block ends it" {
 /// Submit one hook call and pump the owner until it settles. The owner frees the record's own
 /// text on its next sweep, so this copies the answer and the caller owns it.
 fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) ![]u8 {
-    const call = try extensions.host.calls.submitHook(point, payload);
+    const call = extensions.host.calls.submitHook(point, payload);
     try owner.pump(extensions.host);
     var rounds: u32 = 0;
     while (call.state != .settled) : (rounds += 1) {

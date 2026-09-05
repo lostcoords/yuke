@@ -16,11 +16,11 @@ const Value = quickjs.Value;
 const Module = Context.Module;
 
 /// Register the closed `yuke:hooks` module and export its two functions.
-pub fn install(host: *Host) error{OutOfMemory}!void {
+pub fn install(host: *Host) void {
     std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:hooks", init) orelse return error.OutOfMemory;
-    host.ctx.addModuleExport(m, "installDispatcher") catch return error.OutOfMemory;
-    host.ctx.addModuleExport(m, "setPoints") catch return error.OutOfMemory;
+    const m = host.ctx.newModule("yuke:hooks", init).?;
+    host.ctx.addModuleExport(m, "installDispatcher") catch unreachable;
+    host.ctx.addModuleExport(m, "setPoints") catch unreachable;
 }
 
 fn init(ctx: Context, m: Module) c_int {

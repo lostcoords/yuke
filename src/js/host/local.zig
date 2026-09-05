@@ -19,12 +19,12 @@ pub const LocalHost = struct {
         var file = std.Io.Dir.cwd().openFile(self.io, full, .{}) catch |err| return mapError(err);
         defer file.close(self.io);
         // One buffered line at a time. The scan never holds the whole file, whatever its size.
-        const buffer = scratch.alloc(u8, limits.max_line_bytes) catch return error.OutOfMemory;
+        const buffer = scratch.alloc(u8, limits.max_line_bytes) catch unreachable;
         // One byte more than the limit. A line AT the limit then finds its delimiter and stays whole.
-        const line_buf = scratch.alloc(u8, limits.max_line_bytes + 1) catch return error.OutOfMemory;
+        const line_buf = scratch.alloc(u8, limits.max_line_bytes + 1) catch unreachable;
         var reader = file.reader(self.io, buffer);
         return scan(scratch, &reader.interface, line_buf, range, limits) catch |err| switch (err) {
-            error.InvalidUtf8, error.OutOfMemory => |e| e,
+            error.InvalidUtf8 => |e| e,
             // The open call accepts a directory on POSIX. The first read reports this case.
             error.ReadFailed => if (reader.err) |e| mapError(e) else error.HostFailure,
         };
@@ -103,7 +103,7 @@ pub const LocalHost = struct {
     }
 };
 
-const ScanError = error{ InvalidUtf8, OutOfMemory, ReadFailed };
+const ScanError = error{ InvalidUtf8, ReadFailed };
 
 /// The next byte after a streamed line.
 const NextByte = enum { newline, other, eof };
@@ -138,8 +138,8 @@ fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, rang
             return .{ .text = text.items, .next_line = std.math.cast(u32, line_no), .long_lines = long_lines };
         }
         // `line` borrows `line_buf`. Copy it before the next call reuses that buffer.
-        try text.appendSlice(scratch, line);
-        try text.append(scratch, '\n');
+        text.appendSlice(scratch, line) catch unreachable;
+        text.append(scratch, '\n') catch unreachable;
         std.debug.assert(text.items.len <= limits.max_bytes);
         kept += 1;
         line_no += 1;
@@ -224,7 +224,6 @@ fn mapError(err: NativeError) h.HostError {
         error.AccessDenied, error.PermissionDenied => error.AccessDenied,
         // `readFileAlloc` reports the byte limit this way. The caller must see the size, not a fault.
         error.StreamTooLong, error.FileTooBig => error.TooLarge,
-        error.OutOfMemory => error.OutOfMemory,
         error.Canceled => error.Canceled,
         else => error.HostFailure,
     };
@@ -325,7 +324,7 @@ const PageBuilder = struct {
 
 /// Scan the whole directory and keep the first page of names after `options.after`.
 fn selectPage(io: std.Io, dir: std.Io.Dir, scratch: std.mem.Allocator, options: h.ListOptions) h.HostError!PageBuilder {
-    var builder = try PageBuilder.init(scratch, options.limit);
+    var builder = PageBuilder.init(scratch, options.limit) catch unreachable;
     var it = dir.iterate();
     while (it.next(io) catch |err| return mapError(err)) |entry| {
         if (std.mem.eql(u8, entry.name, ".") or std.mem.eql(u8, entry.name, "..")) continue;

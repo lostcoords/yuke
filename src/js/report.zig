@@ -46,7 +46,7 @@ fn bindTestHost(
     render: *term_pkg.Render,
     out: *std.Io.Writer,
 ) !*Host {
-    const host = try Host.create(gpa);
+    const host = Host.create(gpa);
     errdefer host.destroy();
     host.bindRender(render, out);
     return host;

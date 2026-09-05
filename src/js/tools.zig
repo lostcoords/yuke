@@ -26,7 +26,6 @@ pub const max_name_bytes: usize = 64;
 pub const RegisterError = error{
     DuplicateName,
     InvalidName,
-    OutOfMemory,
 };
 
 /// One registered tool. The table owns every field.
@@ -65,27 +64,23 @@ pub const Tools = struct {
         const slot = self.lookup(name);
         if (slot.found) return error.DuplicateName;
 
-        const owned_name = try self.gpa.dupe(u8, name);
-        errdefer self.gpa.free(owned_name);
-        const owned_description = try utf8.sanitize(self.gpa, description);
-        errdefer self.gpa.free(owned_description);
-        const owned_schema = try utf8.sanitize(self.gpa, input_schema);
-        errdefer self.gpa.free(owned_schema);
+        const owned_name = self.gpa.dupe(u8, name) catch unreachable;
+        const owned_description = utf8.sanitize(self.gpa, description) catch unreachable;
+        const owned_schema = utf8.sanitize(self.gpa, input_schema) catch unreachable;
 
         // The provider caches on the request prefix, so the advertised order must not follow load order.
         const at = slot.at;
-        try self.list.insert(self.gpa, at, .{
+        self.list.insert(self.gpa, at, .{
             .name = owned_name,
             .description = owned_description,
             .input_schema = owned_schema,
             .handler = handler,
-        });
-        errdefer _ = self.list.orderedRemove(at);
-        try self.decls.insert(self.gpa, at, .{
+        }) catch unreachable;
+        self.decls.insert(self.gpa, at, .{
             .name = owned_name,
             .description = owned_description,
             .input_schema = owned_schema,
-        });
+        }) catch unreachable;
         std.debug.assert(self.list.items.len == self.decls.items.len);
     }
 
@@ -191,26 +186,24 @@ pub const Calls = struct {
     }
 
     /// Queue one call. This runs on a turn task, so it enters no JavaScript.
-    pub fn submit(self: *Calls, name: []const u8, arguments: []const u8) error{OutOfMemory}!*Call {
+    pub fn submit(self: *Calls, name: []const u8, arguments: []const u8) *Call {
         return self.submitAt(name, arguments, "");
     }
 
-    pub fn submitAt(self: *Calls, name: []const u8, arguments: []const u8, workspace_root: []const u8) error{OutOfMemory}!*Call {
+    pub fn submitAt(self: *Calls, name: []const u8, arguments: []const u8, workspace_root: []const u8) *Call {
         return self.submitCall(.tool, name, arguments, workspace_root);
     }
 
     /// Queue one hook question. The point names it, and the payload is the JSON that point defines.
-    pub fn submitHook(self: *Calls, point: []const u8, payload: []const u8) error{OutOfMemory}!*Call {
+    pub fn submitHook(self: *Calls, point: []const u8, payload: []const u8) *Call {
         return self.submitCall(.hook, point, payload, "");
     }
 
-    fn submitCall(self: *Calls, kind: Kind, name: []const u8, arguments: []const u8, workspace_root: []const u8) error{OutOfMemory}!*Call {
-        const call = try self.gpa.create(Call);
-        errdefer self.gpa.destroy(call);
-        const root = try self.gpa.dupe(u8, workspace_root);
-        errdefer self.gpa.free(root);
+    fn submitCall(self: *Calls, kind: Kind, name: []const u8, arguments: []const u8, workspace_root: []const u8) *Call {
+        const call = self.gpa.create(Call) catch unreachable;
+        const root = self.gpa.dupe(u8, workspace_root) catch unreachable;
         call.* = .{ .kind = kind, .name = name, .arguments = arguments, .workspace_root = root };
-        try self.live.append(self.gpa, call);
+        self.live.append(self.gpa, call) catch unreachable;
         return call;
     }
 

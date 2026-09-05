@@ -28,7 +28,7 @@ fn declsFor(ctx: *anyopaque) []const ir.Tool {
 /// Submit one call and wait at the turn cancellation point for the owner to answer it.
 fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: []const u8, workspace_root: []const u8) toolset.Outcome {
     const host: *Host = @ptrCast(@alignCast(ctx));
-    const call = host.calls.submitAt(name, arguments, workspace_root) catch return fault(out, "the host cannot queue another tool call");
+    const call = host.calls.submitAt(name, arguments, workspace_root);
     // The owner sweeps the record, so leaving is the last thing this task does with it.
     defer {
         host.calls.finish(call);
@@ -67,7 +67,7 @@ fn holdsFor(ctx: *anyopaque, point: proto.hook.Point) bool {
 /// Submit one point and wait for the folded chain. A handler fault proceeds, because it is a bug.
 fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
     const host: *Host = @ptrCast(@alignCast(ctx));
-    const call = host.calls.submitHook(point.wireName(), payload) catch return .proceed;
+    const call = host.calls.submitHook(point.wireName(), payload);
     // The owner sweeps the record, so leaving is the last thing this task does with it.
     defer {
         host.calls.finish(call);
@@ -138,8 +138,7 @@ fn startHook(host: *Host, call: *table.Call) void {
     // A withdrawn folder answers no point, so the call proceeds rather than failing the round.
     const folder = host.hooks.dispatch orelse return settleText(host, call, "", false);
 
-    const payload = host.gpa.dupeZ(u8, call.arguments) catch
-        return settleText(host, call, "out of memory", true);
+    const payload = host.gpa.dupeZ(u8, call.arguments) catch unreachable;
     defer host.gpa.free(payload);
     const parsed = ctx.parseJSON(payload, "hook-payload.json");
     if (ctx.isException(parsed)) {
@@ -177,8 +176,7 @@ fn startTool(host: *Host, call: *table.Call) void {
     const tool = host.tools.find(call.name) orelse
         return settleText(host, call, "the tool is not registered", true);
 
-    const args = host.gpa.dupeZ(u8, call.arguments) catch
-        return settleText(host, call, "out of memory", true);
+    const args = host.gpa.dupeZ(u8, call.arguments) catch unreachable;
     defer host.gpa.free(args);
     const parsed = ctx.parseJSON(args, "tool-arguments.json");
     if (ctx.isException(parsed)) {
@@ -189,34 +187,21 @@ fn startTool(host: *Host, call: *table.Call) void {
 
     // The handler reads `signal.aborted` between its awaits, so a canceled turn can stop early.
     call.signal = ctx.newObject();
-    if (ctx.isException(call.signal)) {
+    const context = ctx.newObject();
+    if (!ctx.hasException()) {
+        ctx.setPropertyStr(call.signal, "aborted", quickjs.FALSE) catch {};
+        ctx.setPropertyStr(context, "workspaceRoot", ctx.newString(call.workspace_root)) catch {};
+    }
+    // A full QuickJS heap fails the call, not the host, so the two roots go and the call settles.
+    if (ctx.hasException()) {
+        ctx.freeValue(context);
+        ctx.freeValue(call.signal);
         call.signal = quickjs.UNDEFINED;
         dropException(ctx);
         return settleText(host, call, "out of memory", true);
     }
-    ctx.setPropertyStr(call.signal, "aborted", quickjs.FALSE) catch {
-        dropException(ctx);
-        return settleText(host, call, "out of memory", true);
-    };
-
-    host.enterSlice();
-    const context = ctx.newObject();
-    if (ctx.isException(context)) {
-        dropException(ctx);
-        return settleText(host, call, "out of memory", true);
-    }
-    const root = ctx.newString(call.workspace_root);
-    if (ctx.isException(root)) {
-        ctx.freeValue(context);
-        dropException(ctx);
-        return settleText(host, call, "out of memory", true);
-    }
-    ctx.setPropertyStr(context, "workspaceRoot", root) catch {
-        ctx.freeValue(context);
-        dropException(ctx);
-        return settleText(host, call, "out of memory", true);
-    };
     defer ctx.freeValue(context);
+    host.enterSlice();
     var argv = [_]Value{ parsed, call.signal, context };
     const answer = ctx.call(tool.handler, quickjs.UNDEFINED, &argv);
     if (ctx.isException(answer)) {

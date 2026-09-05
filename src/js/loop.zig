@@ -16,7 +16,7 @@ const Winsize = term_pkg.Winsize;
 /// Dispatch a `start` event.
 pub fn start(host: *Host) Error!void {
     std.debug.assert(host.phase == .open);
-    const obj = try objectType(host.ctx, "start");
+    const obj = objectType(host.ctx, "start");
     _ = try dispatch(host, obj);
 }
 
@@ -38,14 +38,14 @@ pub fn step(host: *Host, ev: Event) Error!void {
 /// Dispatch a paste as its own event type, so a text input inserts `text` with one edit.
 pub fn stepPaste(host: *Host, text: []const u8) Error!void {
     std.debug.assert(host.phase == .open);
-    const obj = try pasteObject(host.ctx, text);
+    const obj = pasteObject(host.ctx, text);
     _ = try dispatch(host, obj);
 }
 
 /// Dispatch a `tick` event on the reactor owner.
 pub fn stepTick(host: *Host) Error!void {
     std.debug.assert(host.phase == .open);
-    const obj = try objectType(host.ctx, "tick");
+    const obj = objectType(host.ctx, "tick");
     _ = try dispatch(host, obj);
 }
 
@@ -54,7 +54,7 @@ const KeyKind = enum { press, release };
 
 /// Dispatch a key. Without `onEvent`, `q` quits so a boot failure leaves an exit.
 fn stepKey(host: *Host, key: Key, kind: KeyKind) Error!void {
-    const obj = try keyObject(host.ctx, key, kind);
+    const obj = keyObject(host.ctx, key, kind);
     if (try dispatch(host, obj)) return;
     if (kind == .press and (key.codepoint == 'q' or key.codepoint == 'Q')) {
         host.paint.needs_tick = false;
@@ -67,7 +67,7 @@ pub fn stepMouseRepeat(host: *Host, m: Mouse, count: u32) Error!void {
     std.debug.assert(host.phase == .open);
     std.debug.assert(count >= 1);
     const cell = if (host.paint.render) |r| r.vx.translateMouse(m) else m;
-    const obj = try mouseObject(host.ctx, cell, count);
+    const obj = mouseObject(host.ctx, cell, count);
     _ = try dispatch(host, obj);
 }
 
@@ -117,14 +117,14 @@ pub fn flushWheel(host: *Host, run: *?WheelRun) Error!void {
 
 /// Dispatch a focus change the terminal reported.
 fn stepFocus(host: *Host, focused: bool) Error!void {
-    const obj = try focusObject(host.ctx, focused);
+    const obj = focusObject(host.ctx, focused);
     _ = try dispatch(host, obj);
 }
 
 fn stepResize(host: *Host, ws: Winsize) Error!void {
     host.resize(ws);
     const ctx = host.ctx;
-    const obj = try objectType(ctx, "resize");
+    const obj = objectType(ctx, "resize");
     ctx.setPropertyStr(obj, "w", ctx.newInt32(host.paint.width)) catch {
         ctx.freeValue(obj);
         return error.JavaScriptFault;
@@ -140,6 +140,11 @@ fn stepResize(host: *Host, ws: Winsize) Error!void {
 fn dispatch(host: *Host, obj: Value) Error!bool {
     const ctx = host.ctx;
     defer ctx.freeValue(obj);
+    // A builder that found the QuickJS heap full left an exception pending, and that is a fault like any other.
+    if (ctx.hasException()) {
+        host.noteFault();
+        return error.JavaScriptFault;
+    }
 
     const global = ctx.getGlobalObject();
     defer ctx.freeValue(global);
@@ -180,19 +185,14 @@ pub fn flushFrame(host: *Host) Error!void {
     term_mod.commitFrame(host);
 }
 
-fn objectType(ctx: Context, typ: []const u8) Error!Value {
+fn objectType(ctx: Context, typ: []const u8) Value {
     const obj = ctx.newObject();
-    if (ctx.isException(obj)) return error.JavaScriptFault;
-    ctx.setPropertyStr(obj, "type", ctx.newString(typ)) catch {
-        ctx.freeValue(obj);
-        return error.JavaScriptFault;
-    };
+    put(ctx, obj, "type", ctx.newString(typ));
     return obj;
 }
 
-fn keyObject(ctx: Context, key: Key, kind: KeyKind) Error!Value {
-    const obj = try objectType(ctx, "key");
-    errdefer ctx.freeValue(obj);
+fn keyObject(ctx: Context, key: Key, kind: KeyKind) Value {
+    const obj = objectType(ctx, "key");
 
     const code = keyCode(key.codepoint);
     var char_buf: [4]u8 = undefined;
@@ -208,13 +208,11 @@ fn keyObject(ctx: Context, key: Key, kind: KeyKind) Error!Value {
     put(ctx, obj, "text", ctx.newString(key.text orelse ""));
     // Drop `caps_lock` and `num_lock`. A lock state must not change the binding that matches.
     put(ctx, obj, "mods", ctx.newInt32(bits & 0x3f));
-    if (ctx.hasException()) return error.JavaScriptFault;
     return obj;
 }
 
-fn mouseObject(ctx: Context, m: Mouse, count: u32) Error!Value {
-    const obj = try objectType(ctx, "mouse");
-    errdefer ctx.freeValue(obj);
+fn mouseObject(ctx: Context, m: Mouse, count: u32) Value {
+    const obj = objectType(ctx, "mouse");
 
     // Normalize the mouse modifiers to the key bit layout: shift 1, alt 2, ctrl 4.
     const bits: u3 = @bitCast(m.mods);
@@ -224,29 +222,24 @@ fn mouseObject(ctx: Context, m: Mouse, count: u32) Error!Value {
     put(ctx, obj, "event", ctx.newString(@tagName(m.type)));
     put(ctx, obj, "mods", ctx.newInt32(bits));
     put(ctx, obj, "count", ctx.newInt32(@intCast(count)));
-    if (ctx.hasException()) return error.JavaScriptFault;
     return obj;
 }
 
-fn focusObject(ctx: Context, focused: bool) Error!Value {
-    const obj = try objectType(ctx, "focus");
-    errdefer ctx.freeValue(obj);
-
+fn focusObject(ctx: Context, focused: bool) Value {
+    const obj = objectType(ctx, "focus");
     put(ctx, obj, "focused", ctx.newBool(focused));
-    if (ctx.hasException()) return error.JavaScriptFault;
     return obj;
 }
 
-fn pasteObject(ctx: Context, text: []const u8) Error!Value {
-    const obj = try objectType(ctx, "paste");
-    errdefer ctx.freeValue(obj);
-
+fn pasteObject(ctx: Context, text: []const u8) Value {
+    const obj = objectType(ctx, "paste");
     put(ctx, obj, "text", ctx.newString(text));
-    if (ctx.hasException()) return error.JavaScriptFault;
     return obj;
 }
 
+/// Set one property, or drop the value once the QuickJS heap is full; `dispatch` reads the exception.
 fn put(ctx: Context, obj: Value, name: [*:0]const u8, val: Value) void {
+    if (ctx.hasException()) return ctx.freeValue(val);
     ctx.setPropertyStr(obj, name, val) catch {};
 }
 
@@ -292,7 +285,7 @@ fn keyCode(cp: u21) []const u8 {
 test "start and stepTick deliver their event type" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.eval("globalThis.onEvent = function(ev) { globalThis.seen = ev.type; };", "onEvent.js");
     try start(host);
@@ -315,7 +308,7 @@ test "a parser key paints and a missing endFrame still commits" {
 
     var out: std.Io.Writer.Allocating = .init(gpa.allocator());
     defer out.deinit();
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.bindRender(&render, &out.writer);
 
@@ -339,7 +332,7 @@ test "a parser key paints and a missing endFrame still commits" {
 test "a paste arrives as one paste event with the whole text" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
 
@@ -352,7 +345,7 @@ test "a paste arrives as one paste event with the whole text" {
 test "a large paste reaches JavaScript in one event" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.eval("globalThis.n = 0; globalThis.onEvent = (ev) => { globalThis.n++; globalThis.len = ev.text.length; };", "onEvent.js");
 
@@ -367,7 +360,7 @@ test "a large paste reaches JavaScript in one event" {
 test "onEvent throw is a JavaScriptFault" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.eval("globalThis.onEvent = function(ev) { throw new Error('nope'); };", "onEvent.js");
     try std.testing.expectError(error.JavaScriptFault, start(host));
@@ -378,7 +371,7 @@ test "onEvent throw is a JavaScriptFault" {
 test "q with no handler requests quit" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try step(host, .{ .key_press = .{ .codepoint = 'q' } });
     try std.testing.expect(host.paint.quit_requested);
@@ -387,7 +380,7 @@ test "q with no handler requests quit" {
 test "a mouse event reaches JavaScript with the cell, the button, and the modifiers" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
 
@@ -409,7 +402,7 @@ test "a mouse event reaches JavaScript with the cell, the button, and the modifi
 test "focus in and focus out reach JavaScript" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.eval("globalThis.seen = []; globalThis.onEvent = (ev) => { globalThis.seen.push(ev.type + ':' + ev.focused); };", "onEvent.js");
 
@@ -421,7 +414,7 @@ test "focus in and focus out reach JavaScript" {
 test "a key reports the modifiers and no lock state" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
     try step(host, .{ .key_press = .{
@@ -447,7 +440,7 @@ test "resize updates term.width before JS reads ev.w" {
 
     var out: std.Io.Writer.Allocating = .init(gpa.allocator());
     defer out.deinit();
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.bindRender(&render, &out.writer);
 

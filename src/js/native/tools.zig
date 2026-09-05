@@ -13,11 +13,11 @@ const Value = quickjs.Value;
 const Module = Context.Module;
 
 /// Register the closed `yuke:tools` module and export its two functions.
-pub fn install(host: *Host) error{OutOfMemory}!void {
+pub fn install(host: *Host) void {
     std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:tools", init) orelse return error.OutOfMemory;
-    host.ctx.addModuleExport(m, "defineTool") catch return error.OutOfMemory;
-    host.ctx.addModuleExport(m, "removeTool") catch return error.OutOfMemory;
+    const m = host.ctx.newModule("yuke:tools", init).?;
+    host.ctx.addModuleExport(m, "defineTool") catch unreachable;
+    host.ctx.addModuleExport(m, "removeTool") catch unreachable;
 }
 
 fn init(ctx: Context, m: Module) c_int {
@@ -117,6 +117,5 @@ fn registerMessage(err: table.RegisterError) [*:0]const u8 {
     return switch (err) {
         error.DuplicateName => "another tool already has this name",
         error.InvalidName => "the tool name must be 1 to 64 characters of a-z, A-Z, 0-9, _ or -",
-        error.OutOfMemory => "out of memory",
     };
 }

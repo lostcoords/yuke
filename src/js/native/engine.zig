@@ -812,26 +812,30 @@ fn projectString(
 /// `factNames()` answers every fact the engine can publish, so a bus declares them without drift.
 fn jsFactNames(ctx: Context, _: Value, _: []const Value) Value {
     const names = ctx.newArray();
-    if (ctx.isException(names)) return names;
     for (std.meta.tags(proto.enums.BroadcastName), 0..) |fact, i| {
-        const name = ctx.newString(@tagName(fact));
-        if (ctx.isException(name)) {
-            ctx.freeValue(names);
-            return name;
-        }
-        ctx.setPropertyUint32(names, @intCast(i), name) catch {
-            ctx.freeValue(names);
-            return ctx.throw(ctx.getException());
-        };
+        if (ctx.hasException()) break;
+        ctx.setPropertyUint32(names, @intCast(i), ctx.newString(@tagName(fact))) catch {};
     }
-    return names;
+    return built(ctx, names);
+}
+
+/// Set one property, or drop the value once the QuickJS heap is full; the builder reads the exception at its end.
+fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
+    if (ctx.hasException()) return ctx.freeValue(value);
+    ctx.setPropertyStr(obj, name, value) catch {};
+}
+
+/// Answer a built value, or free it and throw once the QuickJS heap is full.
+fn built(ctx: Context, value: Value) Value {
+    if (!ctx.hasException()) return value;
+    ctx.freeValue(value);
+    return ctx.throw(ctx.getException());
 }
 
 /// Return the QuickJS allocation counters, separate from the process footprint.
 fn jsMemoryUsage(ctx: Context, _: Value, _: []const Value) Value {
     const usage = Host.fromContext(ctx).runtime.computeMemoryUsage();
     const out = ctx.newObject();
-    if (ctx.isException(out)) return out;
     const fields = [_]struct { [:0]const u8, i64 }{
         .{ "heap", usage.malloc_size },
         .{ "limit", usage.malloc_limit },
@@ -845,11 +849,8 @@ fn jsMemoryUsage(ctx: Context, _: Value, _: []const Value) Value {
         .{ "arrayCount", usage.array_count },
         .{ "fastArrayElements", usage.fast_array_elements },
     };
-    for (fields) |field| ctx.setPropertyStr(out, field[0], ctx.newFloat64(@floatFromInt(field[1]))) catch {
-        ctx.freeValue(out);
-        return ctx.throw(ctx.getException());
-    };
-    return out;
+    for (fields) |field| set(ctx, out, field[0], ctx.newFloat64(@floatFromInt(field[1])));
+    return built(ctx, out);
 }
 
 fn jsSetEventSink(ctx: Context, _: Value, args: []const Value) Value {
@@ -994,23 +995,26 @@ fn jsSetDefaultSystemPrompt(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len < 1 or (!ctx.isString(args[0]) and !ctx.isNull(args[0])))
         return ctx.throwTypeError("the default system prompt must be a string or null");
     if (ctx.isNull(args[0])) {
-        runtime.engine.setDefaultSystemPrompt(null) catch return ctx.throwOutOfMemory();
+        runtime.engine.setDefaultSystemPrompt(null) catch unreachable;
         return quickjs.UNDEFINED;
     }
-    const prompt = ctx.toCStringLen(args[0]) catch return ctx.throwOutOfMemory();
+    const prompt = ctx.toCStringLen(args[0]) catch return ctx.throw(ctx.getException());
     defer ctx.freeCString(prompt.ptr);
     if (prompt.len > max_system_prompt_bytes)
         return ctx.throwTypeError("the default system prompt exceeds the protocol string limit");
-    runtime.engine.setDefaultSystemPrompt(prompt) catch return ctx.throwOutOfMemory();
+    runtime.engine.setDefaultSystemPrompt(prompt) catch unreachable;
     return quickjs.UNDEFINED;
 }
 
 /// Raise a refusal as a JavaScript error that carries its wire code, so a view can branch on it.
 fn throwFailure(ctx: Context, failure: engine_call.Failure) Value {
     const err = ctx.newError();
-    if (ctx.isException(err)) return err;
-    ctx.setPropertyStr(err, "message", ctx.newString(failure.message)) catch return err;
-    ctx.setPropertyStr(err, "code", ctx.newString(@tagName(failure.code))) catch return err;
+    set(ctx, err, "message", ctx.newString(failure.message));
+    set(ctx, err, "code", ctx.newString(@tagName(failure.code)));
+    if (ctx.hasException()) {
+        ctx.freeValue(err);
+        return ctx.throw(ctx.getException());
+    }
     return ctx.throw(err);
 }
 
@@ -1038,64 +1042,60 @@ pub fn drain(engine: *Engine, ctx: Context) bool {
     engine.faulted = false;
     if (index) emitIndex(engine, ctx, index_facts);
     for (batch[0..count]) |entry| emitSession(engine, ctx, entry.id, entry.change);
-    // A throwing sink leaves a pending exception. Capture and clear it, as a key press does.
-    if (engine.faulted) Host.fromContext(ctx).noteFault();
     return engine.faulted;
 }
 
 fn emitIndex(engine: *Engine, ctx: Context, facts: FactSet) void {
     const ev = ctx.newObject();
-    if (ctx.isException(ev)) return;
     defer ctx.freeValue(ev);
-    ctx.setPropertyStr(ev, "type", ctx.newString("index")) catch return;
-    setFacts(ctx, ev, facts) catch return;
-    if (call(engine, ctx, ev)) engine.faulted = true;
+    set(ctx, ev, "type", ctx.newString("index"));
+    setFacts(ctx, ev, facts);
+    call(engine, ctx, ev);
 }
 
 /// Name every fact the digest holds. A plugin reads the names; the view reads `kind` instead.
-fn setFacts(ctx: Context, ev: Value, facts: FactSet) !void {
+fn setFacts(ctx: Context, ev: Value, facts: FactSet) void {
     const names = ctx.newArray();
-    if (ctx.isException(names)) return error.OutOfMemory;
-    errdefer ctx.freeValue(names);
     var index: u32 = 0;
     var it = facts.iterator();
     while (it.next()) |fact| : (index += 1) {
-        const name = ctx.newString(@tagName(fact));
-        if (ctx.isException(name)) return error.OutOfMemory;
-        try ctx.setPropertyUint32(names, index, name);
+        if (ctx.hasException()) break;
+        ctx.setPropertyUint32(names, index, ctx.newString(@tagName(fact))) catch {};
     }
-    try ctx.setPropertyStr(ev, "facts", names);
+    set(ctx, ev, "facts", names);
 }
 
 fn emitSession(engine: *Engine, ctx: Context, sid: SessionId, change: Change) void {
     const ev = ctx.newObject();
-    if (ctx.isException(ev)) return;
     defer ctx.freeValue(ev);
     const hex = std.fmt.bytesToHex(sid.raw, .lower);
-    ctx.setPropertyStr(ev, "type", ctx.newString("session")) catch return;
-    ctx.setPropertyStr(ev, "session", ctx.newString(hex[0..])) catch return;
-    ctx.setPropertyStr(ev, "kind", ctx.newString(change.kind())) catch return;
-    setFacts(ctx, ev, change.facts) catch return;
+    set(ctx, ev, "type", ctx.newString("session"));
+    set(ctx, ev, "session", ctx.newString(hex[0..]));
+    set(ctx, ev, "kind", ctx.newString(change.kind()));
+    setFacts(ctx, ev, change.facts);
     if (change.view == .message) {
-        ctx.setPropertyStr(ev, "id", ctx.newFloat64(@floatFromInt(change.view.message.id))) catch return;
-        if (change.view.message.part) |part|
-            ctx.setPropertyStr(ev, "part", ctx.newFloat64(@floatFromInt(part))) catch return;
+        set(ctx, ev, "id", ctx.newFloat64(@floatFromInt(change.view.message.id)));
+        if (change.view.message.part) |part| set(ctx, ev, "part", ctx.newFloat64(@floatFromInt(part)));
     }
-    if (call(engine, ctx, ev)) engine.faulted = true;
+    call(engine, ctx, ev);
 }
 
-/// Call the sink and answer whether it threw. A pending exception would change the meaning of
-/// the next JavaScript call, so the caller clears it and reports the fault.
-fn call(engine: *Engine, ctx: Context, ev: Value) bool {
-    const result = ctx.call(engine.sink, quickjs.UNDEFINED, &.{ev});
-    defer ctx.freeValue(result);
-    return ctx.isException(result);
+/// Call the sink with a whole event. A full QuickJS heap during the build or a throwing sink faults the drain.
+fn call(engine: *Engine, ctx: Context, ev: Value) void {
+    if (!ctx.hasException()) {
+        const result = ctx.call(engine.sink, quickjs.UNDEFINED, &.{ev});
+        defer ctx.freeValue(result);
+        if (!ctx.isException(result)) return;
+    }
+    // The fault takes the exception now, so the next event of the same drain still goes out.
+    engine.faulted = true;
+    Host.fromContext(ctx).noteFault();
 }
 
-pub fn install(host: *Host) error{OutOfMemory}!void {
+pub fn install(host: *Host) void {
     std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:engine-native", init) orelse return error.OutOfMemory;
-    host.ctx.addModuleExport(m, "native") catch return error.OutOfMemory;
+    const m = host.ctx.newModule("yuke:engine-native", init).?;
+    host.ctx.addModuleExport(m, "native") catch unreachable;
 }
 
 fn init(ctx: Context, m: Module) c_int {
@@ -1325,7 +1325,7 @@ test "a request reaches a command and answers with its result" {
     defer runtime.db.deinit();
     defer runtime.engine.close();
 
-    const host = try Host.create(testing.allocator);
+    const host = Host.create(testing.allocator);
     defer host.destroy();
 
     // With no engine, a view read answers its empty projection and a request refuses.
@@ -1614,7 +1614,7 @@ test "a text part over the inline bound reports more and pages back whole" {
 }
 
 test "a throwing event sink faults once and leaves no pending exception" {
-    const host = try Host.create(testing.allocator);
+    const host = Host.create(testing.allocator);
     defer host.destroy();
 
     try host.evalModule(

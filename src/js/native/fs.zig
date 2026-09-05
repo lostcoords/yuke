@@ -26,10 +26,10 @@ pub const max_entries: u32 = 512;
 pub const max_read_bytes: u32 = 10 * 1024 * 1024;
 
 /// Register the closed `yuke:fs` module and export `fs`.
-pub fn install(host: *Host) error{OutOfMemory}!void {
+pub fn install(host: *Host) void {
     std.debug.assert(host.phase == .open);
-    const m = host.ctx.newModule("yuke:fs", init) orelse return error.OutOfMemory;
-    host.ctx.addModuleExport(m, "fs") catch return error.OutOfMemory;
+    const m = host.ctx.newModule("yuke:fs", init).?;
+    host.ctx.addModuleExport(m, "fs") catch unreachable;
 }
 
 fn init(ctx: Context, m: Module) c_int {
@@ -68,7 +68,6 @@ fn errorMessage(err: os.HostError) []const u8 {
         error.InvalidUtf8 => "the file holds invalid UTF-8",
         error.Canceled => "the call was canceled",
         error.HostFailure => "the file system reported a failure",
-        error.OutOfMemory => "out of memory",
     };
 }
 
@@ -172,7 +171,7 @@ fn readRangeTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.env };
     const got = local.readRange(arena.allocator(), req.path, req.range, read_limits) catch |err|
         return op.finish(.{ .failed = errorMessage(err) });
-    const json = encodeRange(host.gpa, got) catch return op.finish(.{ .failed = "out of memory" });
+    const json = encodeRange(host.gpa, got);
     op.finish(.{ .json = json });
 }
 
@@ -191,17 +190,15 @@ fn boundArg(ctx: Context, obj: Value, name: [:0]const u8) error{InvalidOption}!?
     return @intFromFloat(n);
 }
 
-fn encodeRange(gpa: std.mem.Allocator, got: os.RangeRead) error{OutOfMemory}![:0]u8 {
+fn encodeRange(gpa: std.mem.Allocator, got: os.RangeRead) [:0]u8 {
     var aw: std.Io.Writer.Allocating = .init(gpa);
-    errdefer aw.deinit();
     std.json.Stringify.value(.{
         .text = got.text,
         .next = got.next_line,
         .longLines = got.long_lines,
-    }, .{ .emit_null_optional_fields = true }, &aw.writer) catch return error.OutOfMemory;
+    }, .{ .emit_null_optional_fields = true }, &aw.writer) catch unreachable;
     var list = aw.toArrayList();
-    errdefer list.deinit(gpa);
-    return list.toOwnedSliceSentinel(gpa, 0);
+    return list.toOwnedSliceSentinel(gpa, 0) catch unreachable;
 }
 
 /// Copy one path argument so a task can read it after the call returns.
@@ -249,9 +246,13 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
         else => return rejected(ctx, errorMessage(err)),
     };
     const out = ctx.newObject();
-    if (ctx.isException(out)) return out;
-    ctx.setPropertyStr(out, "isDirectory", ctx.newBool(info.is_dir)) catch return out;
-    ctx.setPropertyStr(out, "lastModifiedMs", ctx.newInt64(@intCast(info.last_modified_ms))) catch return out;
+    ctx.setPropertyStr(out, "isDirectory", ctx.newBool(info.is_dir)) catch {};
+    ctx.setPropertyStr(out, "lastModifiedMs", ctx.newInt64(@intCast(info.last_modified_ms))) catch {};
+    // A full QuickJS heap throws at the caller, because no promise can be built for it either.
+    if (ctx.hasException()) {
+        ctx.freeValue(out);
+        return ctx.throw(ctx.getException());
+    }
     return resolved(ctx, out);
 }
 

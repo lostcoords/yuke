@@ -44,27 +44,14 @@ pub fn rejected(ctx: Context, message: []const u8) Value {
     return ctx.newSettledPromise(true, err);
 }
 
-/// Build one Error, or answer null when the context cannot allocate one.
-/// Each failure here sets an exception, so this clears it and the caller settles with undefined.
+/// Build one Error, or answer null with the exception cleared when the QuickJS heap is full.
 fn errorWith(ctx: Context, message: []const u8) ?Value {
     const err = ctx.newError();
-    if (ctx.isException(err)) {
-        dropException(ctx);
-        return null;
-    }
-    const text = ctx.newString(message);
-    if (ctx.isException(text)) {
-        ctx.freeValue(err);
-        dropException(ctx);
-        return null;
-    }
-    // `setPropertyStr` takes the value even when it fails, so only the object is left to free.
-    ctx.setPropertyStr(err, "message", text) catch {
-        ctx.freeValue(err);
-        dropException(ctx);
-        return null;
-    };
-    return err;
+    if (!ctx.isException(err)) ctx.setPropertyStr(err, "message", ctx.newString(message)) catch {};
+    if (!ctx.hasException()) return err;
+    ctx.freeValue(err);
+    dropException(ctx);
+    return null;
 }
 
 /// Free the exception QuickJS left, so the next call starts from a clean context.
@@ -108,16 +95,14 @@ pub const Ops = struct {
     }
 
     /// Start one op and answer the pending promise its caller returns to JavaScript.
-    pub fn start(self: *Ops, ctx: Context, wake: ?*zio.ResetEvent) !struct { op: *Op, promise: Value } {
-        const op = try self.gpa.create(Op);
-        errdefer self.gpa.destroy(op);
-        try self.live.append(self.gpa, op);
-        errdefer _ = self.live.pop();
-
+    /// Null means the QuickJS heap is full; the exception stays pending for the caller to throw.
+    pub fn start(self: *Ops, ctx: Context, wake: ?*zio.ResetEvent) ?struct { op: *Op, promise: Value } {
         var funcs: [2]Value = undefined;
         const promise = ctx.newPromiseCapability(&funcs);
-        if (ctx.isException(promise)) return error.OutOfMemory;
+        if (ctx.isException(promise)) return null;
+        const op = self.gpa.create(Op) catch unreachable;
         op.* = .{ .resolve = funcs[0], .reject = funcs[1], .wake = wake };
+        self.live.append(self.gpa, op) catch unreachable;
         return .{ .op = op, .promise = promise };
     }
 

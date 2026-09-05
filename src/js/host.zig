@@ -31,10 +31,7 @@ pub const fault_text_max: usize = 512;
 /// Report this when QuickJS gives no readable text for the exception.
 pub const unknown_fault = "script fault with no message";
 
-pub const Error = error{
-    OutOfMemory,
-    JavaScriptFault,
-};
+pub const Error = error{JavaScriptFault};
 
 /// The modules every frontend loads. A headless frontend loads these and nothing else.
 const shared_baked = [_]loader_mod.BakedModule{
@@ -141,37 +138,29 @@ pub const Host = struct {
     pub const Phase = enum { open, closing, drained, destroyed };
 
     /// Allocate a host with the test I/O.
-    pub fn create(gpa: std.mem.Allocator) Error!*Host {
+    pub fn create(gpa: std.mem.Allocator) *Host {
         std.debug.assert(builtin.is_test);
         return createWith(gpa, std.testing.io, .{});
     }
 
     /// Allocate a host and install its limits, interrupt handler, and loader.
-    pub fn createWith(gpa: std.mem.Allocator, io: std.Io, opts: Options) Error!*Host {
-        const self = try gpa.create(Host);
-        errdefer gpa.destroy(self);
-
-        const runtime = quickjs.Runtime.init(gpa) catch return error.OutOfMemory;
-        errdefer runtime.deinit();
+    pub fn createWith(gpa: std.mem.Allocator, io: std.Io, opts: Options) *Host {
+        const self = gpa.create(Host) catch unreachable;
+        const runtime = quickjs.Runtime.init(gpa) catch unreachable;
         runtime.setMemoryLimit(memory_limit);
         runtime.setMaxStackSize(stack_limit);
-
         const ctx = quickjs.Context.init(runtime);
-        if (ctx.ptr == null) return error.OutOfMemory;
-        errdefer ctx.deinit();
+        std.debug.assert(ctx.ptr != null);
 
         const mode_baked: []const loader_mod.BakedModule = if (opts.headless) &headless_baked else &default_baked;
         const baked: []const loader_mod.BakedModule = if (opts.baked.len == 0) mode_baked else opts.baked;
-        var ld: loader_mod.Loader = .{
+        const ld: loader_mod.Loader = .{
             .gpa = gpa,
             .io = io,
             .baked = baked,
             .max_file_bytes = opts.max_file_bytes,
         };
-        errdefer ld.deinit();
-
-        const eng = engine_module.Engine.create(gpa, ctx) catch return error.OutOfMemory;
-        errdefer eng.destroy();
+        const eng = engine_module.Engine.create(gpa, ctx) catch unreachable;
 
         self.* = .{
             .gpa = gpa,
@@ -195,31 +184,30 @@ pub const Host = struct {
             .calls = .{ .gpa = gpa },
             .interactions = .{ .gpa = gpa },
         };
-        errdefer self.paint.glyphs.deinit();
         runtime.setRuntimeOpaque(self);
         ctx.setContextOpaque(self);
         runtime.setInterruptHandler(self);
         runtime.setModuleLoader(&self.loader);
         // A headless host never binds a renderer, so it must not offer the terminal module either.
-        if (!opts.headless) try term_module.install(self);
-        try engine_module.install(self);
-        try fs_module.install(self);
-        try exec_module.install(self);
-        try diff_module.install(self);
-        try tools_module.install(self);
-        try hooks_module.install(self);
-        try interaction_module.install(self);
+        if (!opts.headless) term_module.install(self);
+        engine_module.install(self);
+        fs_module.install(self);
+        exec_module.install(self);
+        diff_module.install(self);
+        tools_module.install(self);
+        hooks_module.install(self);
+        interaction_module.install(self);
         return self;
     }
 
     /// Start one primitive on its own task and answer the pending promise its caller returns.
     /// The task reads only the bytes `payload` owns, because a task must never touch JavaScript.
-    /// A refused start rejects the promise. A primitive never throws at its caller.
+    /// A refused start rejects the promise. Only a QuickJS heap that is full throws at the caller.
     pub fn startTask(self: *Host, comptime task: anytype, payload: anytype) quickjs.Value {
         std.debug.assert(self.phase == .open);
-        const started = self.ops.start(self.ctx, self.owner_wake) catch {
+        const started = self.ops.start(self.ctx, self.owner_wake) orelse {
             payload.free(self.gpa);
-            return pending.rejected(self.ctx, "out of memory");
+            return self.ctx.throw(self.ctx.getException());
         };
         self.tasks.concurrent(self.io, task, .{ self, started.op, payload }) catch {
             payload.free(self.gpa);
@@ -411,7 +399,7 @@ pub const Host = struct {
     /// Evaluate a module file from disk. Return false when the loader cannot read the file.
     pub fn evalFile(self: *Host, path: [:0]const u8) Error!bool {
         std.debug.assert(self.phase == .open);
-        const source = (try self.loader.readModule(path)) orelse return false;
+        const source = self.loader.readModule(path) orelse return false;
         defer self.gpa.free(source);
         try self.evalModule(source, path);
         return true;
@@ -564,7 +552,7 @@ test "eval returns an integer" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
 
     try host.eval("globalThis.n = 40 + 2", "smoke.js");
@@ -575,7 +563,7 @@ test "an ascii name sort without localeCompare keeps order" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.eval(
         \\const names = ["minimax", "opencode", "opencode-responses"];
@@ -593,9 +581,9 @@ test "two hosts do not share globals" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const a = try Host.create(gpa.allocator());
+    const a = Host.create(gpa.allocator());
     defer a.destroy();
-    const b = try Host.create(gpa.allocator());
+    const b = Host.create(gpa.allocator());
     defer b.destroy();
 
     try a.eval("globalThis.n = 1", "a.js");
@@ -608,7 +596,7 @@ test "a syntax error is a JavaScriptFault" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try std.testing.expectError(error.JavaScriptFault, host.eval("this is not js", "bad.js"));
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "bad.js:1") != null);
@@ -620,7 +608,7 @@ test "drainJobs runs a then callback" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try host.eval("globalThis.hit = 0; Promise.resolve().then(() => { globalThis.hit = 7; })", "job.js");
     try std.testing.expectEqual(@as(i32, 7), try host.evalInt("globalThis.hit"));
@@ -630,7 +618,7 @@ test "an infinite loop hits the interrupt budget" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.interrupt_budget = 0;
     try std.testing.expectError(error.JavaScriptFault, host.eval("while (true) {}", "spin.js"));
@@ -641,7 +629,7 @@ test "close interrupts a leftover spinning job" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.budget = 0;
     try host.eval("Promise.resolve().then(() => { while (true) {} })", "spin.js");
@@ -658,7 +646,7 @@ test "close drains then destroy frees the runtime" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.budget = 0;
     try host.eval("Promise.resolve().then(() => {})", "close.js");
@@ -673,7 +661,7 @@ test "drainJobs yields when the budget is hit" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.budget = 1;
     try host.eval(
@@ -690,7 +678,7 @@ test "a memory-limit hit is a catchable fault" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.runtime.setMemoryLimit(256 * 1024);
     try std.testing.expectEqual(@as(i64, 256 * 1024), host.runtime.computeMemoryUsage().malloc_limit);
@@ -706,7 +694,7 @@ test "a module that never settles is a fault" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -719,7 +707,7 @@ test "a rejected module reports the reason" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -732,7 +720,7 @@ test "fault text truncates on a UTF-8 boundary" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -750,7 +738,7 @@ test "a throwing toString still leaves the context clean" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try std.testing.expectError(error.JavaScriptFault, host.eval(
         "throw { toString() { throw new Error('nested'); } };",
@@ -766,7 +754,7 @@ test "an unknown yuke module is a JavaScriptFault" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -787,7 +775,7 @@ test "resize keeps unicode width after a write fail" {
     try render.resize(&sink.writer, .{ .rows = 2, .cols = 4, .x_pixel = 0, .y_pixel = 0 });
 
     var fail: std.Io.Writer = .failing;
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.bindRender(&render, &fail);
     // Only `resize` can put the method back, so the assertion cannot pass on `bindRender` alone.
@@ -812,7 +800,7 @@ test "an event asks for a frame and the flush paints it once" {
 
     var out: std.Io.Writer.Allocating = .init(gpa.allocator());
     defer out.deinit();
-    const host = try Host.create(gpa.allocator());
+    const host = Host.create(gpa.allocator());
     defer host.destroy();
     host.bindRender(&render, &out.writer);
 
@@ -856,7 +844,7 @@ test "import a file beside the entry" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = try Host.createWith(gpa.allocator(), std.testing.io, .{});
+    const host = Host.createWith(gpa.allocator(), std.testing.io, .{});
     defer host.destroy();
 
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -882,7 +870,7 @@ test "a file outside the entry directory loads" {
     const shared_len = try outside.dir.realPathFile(std.testing.io, "shared.js", &shared_buf);
     const shared = shared_buf[0..shared_len];
 
-    const host = try Host.createWith(gpa.allocator(), std.testing.io, .{});
+    const host = Host.createWith(gpa.allocator(), std.testing.io, .{});
     defer host.destroy();
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
@@ -906,7 +894,7 @@ test "an oversize module file does not load" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = try Host.createWith(gpa.allocator(), std.testing.io, .{ .max_file_bytes = 8 });
+    const host = Host.createWith(gpa.allocator(), std.testing.io, .{ .max_file_bytes = 8 });
     defer host.destroy();
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});

@@ -19,10 +19,10 @@ const bindings = [_]Binding{
     .{ .name = "cancel", .length = 1, .function = jsCancel },
 };
 
-pub fn install(host: *Host) error{OutOfMemory}!void {
+pub fn install(host: *Host) void {
     std.debug.assert(host.phase == .open);
-    const module = host.ctx.newModule("yuke:interaction-native", init) orelse return error.OutOfMemory;
-    host.ctx.addModuleExport(module, "native") catch return error.OutOfMemory;
+    const module = host.ctx.newModule("yuke:interaction-native", init).?;
+    host.ctx.addModuleExport(module, "native") catch unreachable;
 }
 
 fn init(ctx: Context, module: Module) c_int {
@@ -51,8 +51,10 @@ fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
     const id = interactionId(ctx, args) orelse return pending.rejected(ctx, "interaction.request needs a safe positive integer id");
     const json = jsonArg(ctx, args) orelse return pending.rejected(ctx, "interaction.request needs a JSON string");
     defer ctx.freeCString(json.ptr);
-    return host.interactions.start(&host.ops, ctx, host.owner_wake, id, json) catch |err|
-        pending.rejected(ctx, errorMessage(err));
+    return host.interactions.start(&host.ops, ctx, host.owner_wake, id, json) catch |err| switch (err) {
+        error.Exception => ctx.throw(ctx.getException()),
+        else => pending.rejected(ctx, errorMessage(err)),
+    };
 }
 
 /// Broadcast one message to every attached frontend. Nothing answers it.
@@ -102,6 +104,6 @@ fn errorMessage(err: interactions.Error) [:0]const u8 {
         error.Unknown => "the interaction is not pending",
         error.ResponseMismatch => "the interaction response has the wrong type",
         error.InvalidSelection => "the interaction selected an unknown option",
-        error.OutOfMemory => "out of memory",
+        error.Exception => unreachable, // the caller throws it
     };
 }

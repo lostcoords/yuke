@@ -9,7 +9,7 @@ const zio = @import("zio");
 const testing = std.testing;
 
 test "an interaction question and its answer share the RPC stream" {
-    const host = try Host.create(testing.allocator);
+    const host = Host.create(testing.allocator);
     defer host.destroy();
     try host.evalModule(rpc.boot ++
         \\
