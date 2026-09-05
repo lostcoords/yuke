@@ -4,7 +4,6 @@ const std = @import("std");
 const term_pkg = @import("term");
 const Host = @import("host.zig").Host;
 const tools_table = @import("tools.zig");
-const owner = @import("owner.zig");
 
 fn expectJs(host: *Host, want: []const u8) !void {
     const out = try host.ctx.eval("globalThis.result", "r.js", .{});
@@ -52,7 +51,7 @@ const Paint = struct {
     }
 
     fn bind(self: *Paint, host: *Host) void {
-        host.bindRender(&self.render, &self.out.writer);
+        host.paint.bindRender(host.ctx, &self.render, &self.out.writer);
     }
 };
 
@@ -4458,8 +4457,6 @@ test "yuke:fs reads, writes and stats a real directory through promises" {
     defer rt.deinit();
     const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
     defer host.destroy();
-    var wake: zio.ResetEvent = .init;
-    host.owner_wake = &wake;
     try host.evalModule(
         \\import { fs } from "yuke:fs";
         \\const fail = [];
@@ -4480,18 +4477,18 @@ test "yuke:fs reads, writes and stats a real directory through promises" {
         \\  globalThis.done = fail.length ? 2 : 1;
         \\})();
     , "fsp.js");
-    try pumpUntilIdle(host, &wake);
+    try pumpUntilIdle(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.done"));
 }
 
 /// Run the reactor until every primitive settles, the way the owner's loop does.
 /// A task only runs while this waits, so the wait is what lets the file read happen.
-fn pumpUntilIdle(host: *Host, wake: *zio.ResetEvent) !void {
+fn pumpUntilIdle(host: *Host) !void {
     var rounds: u32 = 0;
     while (host.ops.live.items.len != 0) : (rounds += 1) {
         if (rounds == 64) return error.PrimitiveNeverSettled;
-        wake.timedWait(.fromMilliseconds(1000)) catch {};
-        wake.reset();
+        host.wake.timedWait(.fromMilliseconds(1000)) catch {};
+        host.wake.reset();
         try host.pump();
     }
     try host.pump();
@@ -4511,13 +4508,14 @@ fn pumpUntilSettled(host: *Host, call: *tools_table.Call, wake: ?*zio.ResetEvent
 }
 
 /// Drive the shared headless owner pump until one tool call settles.
-fn pumpOwnerUntilSettled(host: *Host, call: *tools_table.Call, wake: *zio.ResetEvent) !void {
+fn pumpOwnerUntilSettled(host: *Host, call: *tools_table.Call) !void {
+    const wake = &host.wake;
     var rounds: u32 = 0;
     while (call.state != .settled) : (rounds += 1) {
         if (rounds == 64) return error.CallNeverSettled;
         wake.timedWait(.fromMilliseconds(1000)) catch {};
         wake.reset();
-        try owner.pump(host);
+        try host.pump();
     }
 }
 
@@ -4635,8 +4633,6 @@ test "a handler that awaits a primitive answers when the task finishes" {
     defer rt.deinit();
     const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
     defer host.destroy();
-    var wake: zio.ResetEvent = .init;
-    host.owner_wake = &wake;
 
     try host.evalModule(
         \\import { defineTool } from "yuke:tools";
@@ -4650,10 +4646,10 @@ test "a handler that awaits a primitive answers when the task finishes" {
 
     // The handler holds a task, not the owner, so the call settles only after the read finishes.
     const call = host.calls.submit("read_note", "{\"path\":\"note.txt\"}");
-    try owner.pump(host);
+    try host.pump();
     try std.testing.expectEqual(tools_table.Call.State.running, call.state);
 
-    try pumpOwnerUntilSettled(host, call, &wake);
+    try pumpOwnerUntilSettled(host, call);
     try std.testing.expect(!call.is_error);
     try std.testing.expectEqualStrings("{\"text\":\"from disk\"}", call.text.?);
     try dropCall(host, call);
@@ -4851,15 +4847,13 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     defer rt.deinit();
     const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = "/tmp" });
     defer host.destroy();
-    var wake: zio.ResetEvent = .init;
-    host.owner_wake = &wake;
     try host.evalModule(
         \\import "yuke:builtins";
     , "builtins-test.js");
 
     {
         const call = host.calls.submitAt("read", "{\"path\":\"a.txt\",\"start\":2,\"end\":3}", root);
-        try pumpOwnerUntilSettled(host, call, &wake);
+        try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expectEqualStrings("2: two\n3: two", call.text.?);
         host.calls.finish(call);
@@ -4867,7 +4861,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submitAt("read", "{\"path\":\"long.txt\"}", root);
-        try pumpOwnerUntilSettled(host, call, &wake);
+        try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.endsWith(u8, call.text.?, "[The tool cut 1 line(s) at 8000 bytes.]"));
         host.calls.finish(call);
@@ -4875,7 +4869,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submitAt("read", "{\"path\":\"missing.txt\"}", root);
-        try pumpOwnerUntilSettled(host, call, &wake);
+        try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("read: the path does not exist", call.text.?);
         host.calls.finish(call);
@@ -4883,7 +4877,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submitAt("read", "{\"path\":1}", root);
-        try pumpOwnerUntilSettled(host, call, &wake);
+        try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("read: the argument path must be a string", call.text.?);
         host.calls.finish(call);
@@ -4891,7 +4885,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submitAt("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", root);
-        try pumpOwnerUntilSettled(host, call, &wake);
+        try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "more than one") != null);
         host.calls.finish(call);
@@ -4899,7 +4893,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submitAt("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\",\"replace_all\":true}", root);
-        try pumpOwnerUntilSettled(host, call, &wake);
+        try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "replaced 2") != null);
         try std.testing.expect(call.view_json != null);
@@ -4908,7 +4902,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submitAt("write", "{\"path\":\"new.txt\",\"content\":\"fresh\\n\"}", root);
-        try pumpOwnerUntilSettled(host, call, &wake);
+        try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "wrote 6 bytes") != null);
         try std.testing.expect(call.view_json != null);
@@ -4917,7 +4911,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submitAt("write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", root);
-        try pumpOwnerUntilSettled(host, call, &wake);
+        try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(call.view_json == null);
         host.calls.finish(call);
@@ -4925,7 +4919,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submitAt("exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", root);
-        try pumpOwnerUntilSettled(host, call, &wake);
+        try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expectEqualStrings("out\n[stderr]\nerr\n[exit code: 3]", call.text.?);
         host.calls.finish(call);
@@ -4933,7 +4927,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submitAt("exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", root);
-        try pumpOwnerUntilSettled(host, call, &wake);
+        try pumpOwnerUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "[The command passed its 300 ms timeout.") != null);
         host.calls.finish(call);
@@ -4982,8 +4976,6 @@ test "yuke:exec runs commands on tasks and reports each outcome" {
     defer rt.deinit();
     const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
     defer host.destroy();
-    var wake: zio.ResetEvent = .init;
-    host.owner_wake = &wake;
 
     try host.evalModule(
         \\import { exec } from "yuke:exec";
@@ -5015,7 +5007,7 @@ test "yuke:exec runs commands on tasks and reports each outcome" {
         \\  globalThis.result = fail.length ? fail.join(",") : "ok";
         \\})();
     , "exec.js");
-    try pumpUntilIdle(host, &wake);
+    try pumpUntilIdle(host);
     try expectJs(host, "ok");
 }
 
@@ -5027,8 +5019,6 @@ test "yuke:exec ends a command that passes its deadline" {
     defer rt.deinit();
     const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = "/tmp" });
     defer host.destroy();
-    var wake: zio.ResetEvent = .init;
-    host.owner_wake = &wake;
 
     // The deadline must stop the command and name the outcome. A failed kill would wait 30 seconds.
     const started: std.Io.Timestamp = .now(rt.io(), .awake);
@@ -5043,7 +5033,7 @@ test "yuke:exec ends a command that passes its deadline" {
     try std.testing.expectEqual(@as(usize, 1), host.ops.live.items.len);
     try std.testing.expectEqual(@as(i32, 7), try host.evalInt("3 + 4"));
 
-    try pumpUntilIdle(host, &wake);
+    try pumpUntilIdle(host);
     try expectJs(host, "ok");
     try std.testing.expect(started.durationTo(.now(rt.io(), .awake)).toNanoseconds() < 20 * std.time.ns_per_s);
 }
@@ -5099,8 +5089,6 @@ test "a primitive stays pending until the owner lets its task run" {
     defer rt.deinit();
     const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
     defer host.destroy();
-    var wake: zio.ResetEvent = .init;
-    host.owner_wake = &wake;
 
     try host.evalModule(
         \\import { fs } from "yuke:fs";
@@ -5113,7 +5101,7 @@ test "a primitive stays pending until the owner lets its task run" {
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.settled"));
     try std.testing.expectEqual(@as(usize, 1), host.ops.live.items.len);
 
-    try pumpUntilIdle(host, &wake);
+    try pumpUntilIdle(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.settled"));
 }
 
@@ -5131,8 +5119,6 @@ test "a throwing await handler faults once and leaves no pending exception" {
     defer rt.deinit();
     const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
     defer host.destroy();
-    var wake: zio.ResetEvent = .init;
-    host.owner_wake = &wake;
 
     // A resolver that throws must not leave an exception for the next owner turn.
     try host.evalModule(
@@ -5144,8 +5130,8 @@ test "a throwing await handler faults once and leaves no pending exception" {
     var rounds: u32 = 0;
     while (host.ops.live.items.len != 0) : (rounds += 1) {
         if (rounds == 64) return error.PrimitiveNeverSettled;
-        wake.timedWait(.fromMilliseconds(1000)) catch {};
-        wake.reset();
+        host.wake.timedWait(.fromMilliseconds(1000)) catch {};
+        host.wake.reset();
         // The throw happens in a job, so `pump` reports it through the job drain, not the settle.
         host.pump() catch |err| try std.testing.expectEqual(host_mod.Error.JavaScriptFault, err);
     }
@@ -5818,7 +5804,7 @@ test "RPC interaction answers correlated promises out of order" {
         .interaction_id = first.interaction_id,
         .response = .{ .confirm = .{ .value = true } },
     });
-    try owner.pump(host);
+    try host.pump();
     try expectJs(host, "[true,\"blue\"]");
 }
 
@@ -5845,7 +5831,7 @@ test "disposing an interaction consumer cancels only its pending dialog" {
         \\import { plugins } from "yuke:ext";
         \\plugins.dispose("ask");
     , "interaction-dispose.js");
-    try owner.pump(host);
+    try host.pump();
     try expectJs(host, "canceled");
     try std.testing.expectError(error.Unknown, host.interactions.respond(.{
         .interaction_id = interaction_id,
@@ -5899,7 +5885,7 @@ test "a composition with no answerer refuses every question" {
         \\  ctx.interaction.confirm("allow").catch((e) => { globalThis.result = globalThis.sync + ":" + e.name; });
         \\} });
     , "no-answerer.js");
-    try owner.pump(host);
+    try host.pump();
     try expectJs(host, "InteractionUnavailable:InteractionUnavailable");
 }
 

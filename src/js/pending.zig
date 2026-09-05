@@ -64,7 +64,7 @@ pub const Op = struct {
     resolve: Value,
     reject: Value,
     /// The owner sleeps on this. The op captures it so a task needs nothing but its own pointer.
-    wake: ?*zio.ResetEvent,
+    wake: *zio.ResetEvent,
     /// Null while the task runs. The task writes it once, and the owner reads it once.
     result: ?Result = null,
 
@@ -73,13 +73,14 @@ pub const Op = struct {
     pub fn finish(self: *Op, result: Result) void {
         std.debug.assert(self.result == null); // a task finishes its op once
         self.result = result;
-        if (self.wake) |event| event.set();
+        self.wake.set();
     }
 };
 
 /// Every op this host has started and not yet settled. The owner drains it between frames.
 pub const Ops = struct {
     gpa: std.mem.Allocator,
+    wake: *zio.ResetEvent,
     live: std.ArrayList(*Op) = .empty,
 
     pub fn deinit(self: *Ops, ctx: Context) void {
@@ -96,12 +97,12 @@ pub const Ops = struct {
 
     /// Start one op and answer the pending promise its caller returns to JavaScript.
     /// Null means the QuickJS heap is full; the exception stays pending for the caller to throw.
-    pub fn start(self: *Ops, ctx: Context, wake: ?*zio.ResetEvent) ?struct { op: *Op, promise: Value } {
+    pub fn start(self: *Ops, ctx: Context) ?struct { op: *Op, promise: Value } {
         var funcs: [2]Value = undefined;
         const promise = ctx.newPromiseCapability(&funcs);
         if (ctx.isException(promise)) return null;
         const op = self.gpa.create(Op) catch unreachable;
-        op.* = .{ .resolve = funcs[0], .reject = funcs[1], .wake = wake };
+        op.* = .{ .resolve = funcs[0], .reject = funcs[1], .wake = self.wake };
         self.live.append(self.gpa, op) catch unreachable;
         return .{ .op = op, .promise = promise };
     }

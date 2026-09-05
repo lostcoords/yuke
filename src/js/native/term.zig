@@ -7,6 +7,74 @@ const module = @import("module.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
+/// State shared by the renderer and the `yuke:term` module.
+pub const Paint = struct {
+    render: ?*term_pkg.Render = null,
+    writer: ?*std.Io.Writer = null,
+    width: u16 = 80,
+    height: u16 = 24,
+    dirty: bool = false,
+    in_frame: bool = false,
+    /// True while the owner drains its queue. The frame then paints once, after the last event.
+    defer_frame: bool = false,
+    needs_tick: bool = false,
+    tick_period_ms: u32 = 450,
+    quit_requested: bool = false,
+    term_obj: quickjs.Value = quickjs.UNDEFINED,
+    /// Own grapheme bytes for the open frame. Reset after the grid clears.
+    glyphs: std.heap.ArenaAllocator = undefined,
+
+    /// Apply a terminal size to the renderer and cached JavaScript objects.
+    pub fn resize(self: *Paint, ctx: Context, winsize: term_pkg.Winsize) void {
+        if (winsize.cols == 0 or winsize.rows == 0) return;
+        if (self.width == winsize.cols and self.height == winsize.rows) return;
+        // A failed write after the grid swapped keeps the frame dirty, so the next commit flushes.
+        var resize_dirty = false;
+        if (self.render) |render| {
+            // `bindRender` sets the render and the writer together, so a render implies a writer.
+            std.debug.assert(self.writer != null);
+            const writer = self.writer.?;
+            render.resize(writer, winsize) catch {
+                if (render.window().width != winsize.cols or render.window().height != winsize.rows)
+                    return;
+                resize_dirty = true;
+            };
+            render.vx.screen.width_method = .unicode;
+        }
+        self.width = winsize.cols;
+        self.height = winsize.rows;
+        self.dirty = resize_dirty;
+        self.in_frame = false;
+        self.syncSizeProps(ctx);
+    }
+
+    /// Bind the renderer and its writer. `runIo` and the render tests call it.
+    pub fn bindRender(self: *Paint, ctx: Context, render: *term_pkg.Render, writer: *std.Io.Writer) void {
+        render.vx.caps.unicode = .unicode;
+        render.vx.screen.width_method = .unicode;
+        self.render = render;
+        self.writer = writer;
+        const win = render.window();
+        self.width = win.width;
+        self.height = win.height;
+        self.syncSizeProps(ctx);
+    }
+
+    /// Copy the cached size to the retained `term` object.
+    pub fn syncSizeProps(self: *Paint, ctx: Context) void {
+        if (ctx.isUndefined(self.term_obj)) return;
+        ctx.setPropertyStr(self.term_obj, "width", ctx.newInt32(self.width)) catch {};
+        ctx.setPropertyStr(self.term_obj, "height", ctx.newInt32(self.height)) catch {};
+    }
+
+    pub fn freeRoots(self: *Paint, ctx: Context) void {
+        if (!ctx.isUndefined(self.term_obj)) {
+            ctx.freeValue(self.term_obj);
+            self.term_obj = quickjs.UNDEFINED;
+        }
+    }
+};
+
 /// The largest clipboard payload `term.copy` accepts. JavaScript reads it to report a refusal.
 pub const clipboard_max = term_pkg.Render.clipboard_max;
 
@@ -205,7 +273,7 @@ fn setNeedsTick(ctx: Context, _: Value, args: []const Value) Value {
     host.paint.needs_tick = enabled;
     // Wake on a fresh arm or period change. A disable waits for the current timer.
     if (enabled and (!was_armed or period != old_period)) {
-        if (host.owner_wake) |wake| wake.set();
+        host.wake.set();
     }
     return quickjs.UNDEFINED;
 }
@@ -484,7 +552,7 @@ test "paint copies graphemes, skips negative coords, and diffs" {
     defer out.deinit();
     const host = Host.create(gpa.allocator());
     defer host.destroy();
-    host.bindRender(&render, &out.writer);
+    host.paint.bindRender(host.ctx, &render, &out.writer);
 
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -529,7 +597,7 @@ test "a failed endFrame keeps the frame dirty and retries" {
     var fail: std.Io.Writer = .failing;
     const host = Host.create(gpa.allocator());
     defer host.destroy();
-    host.bindRender(&render, &fail);
+    host.paint.bindRender(host.ctx, &render, &fail);
 
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -542,7 +610,7 @@ test "a failed endFrame keeps the frame dirty and retries" {
 
     var out: std.Io.Writer.Allocating = .init(gpa.allocator());
     defer out.deinit();
-    host.bindRender(&render, &out.writer);
+    host.paint.bindRender(host.ctx, &render, &out.writer);
     try host.evalModule(
         \\import { term } from "yuke:term";
         \\term.endFrame();

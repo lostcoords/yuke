@@ -32,7 +32,7 @@ fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
     const id = module.integer(ctx, args[0], 1, interactions.max_safe_id) orelse return pending.rejected(ctx, "interaction.request needs a safe positive integer id");
     const json = module.string(ctx, args[1]) orelse return pending.rejected(ctx, "interaction.request needs a JSON string");
     defer ctx.freeCString(json.ptr);
-    return host.interactions.start(&host.ops, ctx, host.owner_wake, id, json) catch |err| switch (err) {
+    return host.interactions.start(&host.ops, ctx, id, json) catch |err| switch (err) {
         error.Exception => module.throwPending(ctx),
         else => pending.rejected(ctx, errorMessage(err)),
     };

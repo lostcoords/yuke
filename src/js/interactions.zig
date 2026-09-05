@@ -4,7 +4,6 @@ const std = @import("std");
 const quickjs = @import("quickjs");
 const proto = @import("proto");
 const pending = @import("pending.zig");
-const zio = @import("zio");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -65,7 +64,6 @@ pub const Table = struct {
         self: *Table,
         ops: *pending.Ops,
         ctx: Context,
-        wake: ?*zio.ResetEvent,
         id: proto.ids.InteractionId,
         json: []const u8,
     ) Error!Value {
@@ -84,7 +82,7 @@ pub const Table = struct {
         ) catch return error.InvalidRequest;
         try validate(value);
 
-        const started = ops.start(ctx, wake) orelse return error.Exception;
+        const started = ops.start(ctx) orelse return error.Exception;
         const request = self.gpa.create(Request) catch unreachable;
         request.* = .{ .arena = arena, .id = id, .value = value, .op = started.op };
         self.live.append(self.gpa, request) catch unreachable;

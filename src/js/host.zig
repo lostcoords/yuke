@@ -81,24 +81,6 @@ pub const Options = struct {
     env: ?*const std.process.Environ.Map = null,
 };
 
-/// State shared by the renderer and the `yuke:term` module.
-pub const Paint = struct {
-    render: ?*term_pkg.Render = null,
-    writer: ?*std.Io.Writer = null,
-    width: u16 = 80,
-    height: u16 = 24,
-    dirty: bool = false,
-    in_frame: bool = false,
-    /// True while the owner drains its queue. The frame then paints once, after the last event.
-    defer_frame: bool = false,
-    needs_tick: bool = false,
-    tick_period_ms: u32 = 450,
-    quit_requested: bool = false,
-    term_obj: quickjs.Value = quickjs.UNDEFINED,
-    /// Own grapheme bytes for the open frame. Reset after the grid clears.
-    glyphs: std.heap.ArenaAllocator = undefined,
-};
-
 /// Own one QuickJS runtime and context. The TUI owner calls `eval` and `destroy`.
 pub const Host = struct {
     gpa: std.mem.Allocator,
@@ -112,7 +94,7 @@ pub const Host = struct {
     /// Hold the last script fault text. The Host owns these bytes and `report.zig` paints them.
     fault_text: [fault_text_max]u8,
     fault_text_len: usize,
-    paint: Paint,
+    paint: term_module.Paint,
     /// Engine seam state for `yuke:engine-native`.
     engine: *engine_module.Engine,
     /// The directory the process runs in. The caller owns these bytes for the life of the host.
@@ -131,8 +113,8 @@ pub const Host = struct {
     calls: tools_table.Calls,
     /// Every headless interaction that waits for a correlated frontend answer.
     interactions: interactions_table.Table,
-    /// The owner wake event. Tasks set it after work reaches the owner queue.
-    owner_wake: ?*zio.ResetEvent = null,
+    /// The owner sleeps on this. A task sets it after work reaches the owner queue.
+    wake: zio.ResetEvent = .init,
     /// The tasks running those calls. `close` cancels them before the context dies.
     tasks: std.Io.Group = .init,
 
@@ -161,7 +143,7 @@ pub const Host = struct {
             .baked = baked,
             .max_file_bytes = opts.max_file_bytes,
         };
-        const eng = engine_module.Engine.create(gpa, ctx) catch unreachable;
+        const eng = engine_module.Engine.create(gpa, ctx, &self.wake) catch unreachable;
 
         self.* = .{
             .gpa = gpa,
@@ -179,7 +161,7 @@ pub const Host = struct {
             .cwd = opts.cwd,
             .io = io,
             .env = opts.env,
-            .ops = .{ .gpa = gpa },
+            .ops = .{ .gpa = gpa, .wake = &self.wake },
             .tools = .{ .gpa = gpa },
             .hooks = .{},
             .calls = .{ .gpa = gpa },
@@ -206,7 +188,7 @@ pub const Host = struct {
     /// A refused start rejects the promise. Only a QuickJS heap that is full throws at the caller.
     pub fn startTask(self: *Host, comptime task: anytype, payload: anytype) quickjs.Value {
         std.debug.assert(self.phase == .open);
-        const started = self.ops.start(self.ctx, self.owner_wake) orelse {
+        const started = self.ops.start(self.ctx) orelse {
             payload.free(self.gpa);
             return self.ctx.throw(self.ctx.getException());
         };
@@ -225,6 +207,9 @@ pub const Host = struct {
     /// owner suspends again.
     pub fn pump(self: *Host) Error!void {
         std.debug.assert(self.phase == .open);
+        self.enterSlice();
+        // Engine events reach JavaScript here, on the owner, never from an engine task.
+        if (engine_module.drain(self.engine, self.ctx)) return error.JavaScriptFault;
         const faulted = self.ops.settle(self.ctx);
         try self.drainJobs();
         // The drain above settles a Promise a handler awaited, so the poll reads it in this pass.
@@ -258,7 +243,7 @@ pub const Host = struct {
         self.tools.deinit(self.ctx);
         self.hooks.deinit(self.ctx);
         self.engine.destroy();
-        self.freePaintRoots();
+        self.paint.freeRoots(self.ctx);
         self.paint.glyphs.deinit();
         self.ctx.deinit();
         self.runtime.deinit();
@@ -298,59 +283,6 @@ pub const Host = struct {
     pub fn fromContext(ctx: quickjs.Context) *Host {
         const ptr = ctx.getContextOpaque() orelse unreachable;
         return @ptrCast(@alignCast(ptr));
-    }
-
-    /// Apply a terminal size to the renderer and cached JavaScript objects.
-    pub fn resize(self: *Host, winsize: term_pkg.Winsize) void {
-        std.debug.assert(self.phase == .open);
-        if (winsize.cols == 0 or winsize.rows == 0) return;
-        if (self.paint.width == winsize.cols and self.paint.height == winsize.rows) return;
-        // A failed write after the grid swapped keeps the frame dirty, so the next commit flushes.
-        var resize_dirty = false;
-        if (self.paint.render) |render| {
-            // `bindRender` sets the render and the writer together, so a render implies a writer.
-            std.debug.assert(self.paint.writer != null);
-            const writer = self.paint.writer.?;
-            render.resize(writer, winsize) catch {
-                if (render.window().width != winsize.cols or render.window().height != winsize.rows)
-                    return;
-                resize_dirty = true;
-            };
-            render.vx.screen.width_method = .unicode;
-        }
-        self.paint.width = winsize.cols;
-        self.paint.height = winsize.rows;
-        self.paint.dirty = resize_dirty;
-        self.paint.in_frame = false;
-        self.syncSizeProps();
-    }
-
-    /// Bind a renderer and writer. This path is for tests without a TTY.
-    pub fn bindRender(self: *Host, render: *term_pkg.Render, writer: *std.Io.Writer) void {
-        std.debug.assert(self.phase == .open);
-        render.vx.caps.unicode = .unicode;
-        render.vx.screen.width_method = .unicode;
-        self.paint.render = render;
-        self.paint.writer = writer;
-        const win = render.window();
-        self.paint.width = win.width;
-        self.paint.height = win.height;
-        self.syncSizeProps();
-    }
-
-    /// Copy the cached size to the retained `term` object.
-    pub fn syncSizeProps(self: *Host) void {
-        const ctx = self.ctx;
-        if (ctx.isUndefined(self.paint.term_obj)) return;
-        ctx.setPropertyStr(self.paint.term_obj, "width", ctx.newInt32(self.paint.width)) catch {};
-        ctx.setPropertyStr(self.paint.term_obj, "height", ctx.newInt32(self.paint.height)) catch {};
-    }
-
-    fn freePaintRoots(self: *Host) void {
-        if (!self.ctx.isUndefined(self.paint.term_obj)) {
-            self.ctx.freeValue(self.paint.term_obj);
-            self.paint.term_obj = quickjs.UNDEFINED;
-        }
     }
 
     /// Evaluate source on the owner, then drain jobs.
@@ -769,10 +701,10 @@ test "resize keeps unicode width after a write fail" {
     var fail: std.Io.Writer = .failing;
     const host = Host.create(gpa.allocator());
     defer host.destroy();
-    host.bindRender(&render, &fail);
+    host.paint.bindRender(host.ctx, &render, &fail);
     // Only `resize` can put the method back, so the assertion cannot pass on `bindRender` alone.
     render.vx.screen.width_method = .wcwidth;
-    host.resize(.{ .rows = 3, .cols = 8, .x_pixel = 0, .y_pixel = 0 });
+    host.paint.resize(host.ctx, .{ .rows = 3, .cols = 8, .x_pixel = 0, .y_pixel = 0 });
     try std.testing.expectEqual(term_pkg.gwidth.Method.unicode, render.vx.screen.width_method);
     try std.testing.expectEqual(@as(u16, 8), host.paint.width);
     try std.testing.expectEqual(@as(u16, 3), host.paint.height);
@@ -794,7 +726,7 @@ test "an event asks for a frame and the flush paints it once" {
     defer out.deinit();
     const host = Host.create(gpa.allocator());
     defer host.destroy();
-    host.bindRender(&render, &out.writer);
+    host.paint.bindRender(host.ctx, &render, &out.writer);
 
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -900,7 +832,6 @@ test {
     _ = @import("loop.zig");
     _ = @import("driver.zig");
     _ = @import("report.zig");
-    _ = @import("owner.zig");
     _ = @import("native/engine.zig");
     _ = @import("native/fs.zig");
     _ = @import("native/exec.zig");

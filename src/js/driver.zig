@@ -6,10 +6,61 @@ const extensions_mod = @import("extensions.zig");
 const Host = host_mod.Host;
 const tui_loop = @import("loop.zig");
 const report = @import("report.zig");
-const owner = @import("owner.zig");
 
-const Msg = owner.Msg;
-const Channel = owner.Channel;
+const Event = term_pkg.Event;
+
+pub const Channel = zio.Channel(Msg);
+
+/// One owner message: a parser event with owned key or paste text, or a synthetic tick.
+pub const Msg = union(enum) {
+    event: EventBuf,
+    paste: []const u8,
+    tick,
+
+    pub fn from(ev: Event) Msg {
+        return switch (ev) {
+            .paste => |text| .{ .paste = text },
+            else => .{ .event = EventBuf.from(ev) },
+        };
+    }
+
+    /// Free an owned paste payload. Every other variant owns nothing.
+    pub fn deinit(self: *Msg, gpa: std.mem.Allocator) void {
+        switch (self.*) {
+            .paste => |text| gpa.free(text),
+            else => {},
+        }
+    }
+};
+
+/// A parser event plus a copy of its key text. The copy survives the next parse.
+pub const EventBuf = struct {
+    ev: Event,
+    text: [128]u8 = undefined,
+    n: u8 = 0,
+
+    pub fn from(ev: Event) EventBuf {
+        var m: EventBuf = .{ .ev = ev };
+        const key = switch (ev) {
+            .key_press, .key_release => |k| k,
+            else => return m,
+        };
+        const t = key.text orelse return m;
+        m.n = @intCast(@min(t.len, m.text.len));
+        @memcpy(m.text[0..m.n], t[0..m.n]);
+        return m;
+    }
+
+    pub fn event(self: *EventBuf) Event {
+        if (self.n == 0) return self.ev;
+        var ev = self.ev;
+        switch (ev) {
+            .key_press, .key_release => |*k| k.text = self.text[0..self.n],
+            else => {},
+        }
+        return ev;
+    }
+};
 
 const frame_buf_bytes = 256 * 1024;
 
@@ -53,7 +104,7 @@ pub fn runIo(env: *std.process.Environ.Map, extensions: *extensions_mod.Extensio
 
     const ws = try tty.getWinsize();
     try render.resize(writer, ws);
-    host.bindRender(&render, writer);
+    host.paint.bindRender(host.ctx, &render, writer);
     if (extensions.user_entry_fault) report.paintFault(host);
 
     var input: term_pkg.Input = .{ .gpa = gpa };
@@ -171,9 +222,6 @@ fn applyMsg(host: *Host, msg: *Msg, wheel: *?tui_loop.WheelRun) !void {
         },
         .tick => {
             try absorbScriptFault(host, tui_loop.flushWheel(host, wheel));
-            // Engine events reach JavaScript here, on the owner, never from an engine task.
-            // A throwing sink paints its fault, the same way a throwing key handler does.
-            if (owner.drainEngine(host)) report.paintFault(host);
             try absorbScriptFault(host, tui_loop.stepTick(host));
         },
         .paste => |text| {
@@ -197,7 +245,7 @@ const engine_frame: zio.Duration = .fromMilliseconds(33);
 
 /// The tick task enqueues plain messages. It never calls QuickJS.
 fn tickTask(host: *Host, ch: *Channel) !void {
-    const wake = host.owner_wake.?;
+    const wake = &host.wake;
     var last: zio.Timestamp = .zero;
     while (!host.paint.quit_requested) {
         const due = tickDue(host, last) orelse {
@@ -383,8 +431,6 @@ test "tickTask enqueues a tick while armed" {
     const host = Host.create(gpa.allocator());
     defer host.destroy();
 
-    var wake: zio.ResetEvent = .init;
-    host.owner_wake = &wake;
     host.paint.needs_tick = true;
     host.paint.tick_period_ms = 50;
 
@@ -399,7 +445,7 @@ test "tickTask enqueues a tick while armed" {
 
     host.paint.needs_tick = false;
     host.paint.quit_requested = true;
-    wake.set();
+    host.wake.set();
 }
 
 test "tickTask paces engine wakes to the frame gap" {
@@ -412,8 +458,6 @@ test "tickTask paces engine wakes to the frame gap" {
     const host = Host.create(gpa.allocator());
     defer host.destroy();
 
-    var wake: zio.ResetEvent = .init;
-    host.owner_wake = &wake;
     // No owner drains here, so the engine stays pending and the task must not flood the channel.
     host.engine.index_dirty = true;
 
@@ -433,7 +477,7 @@ test "tickTask paces engine wakes to the frame gap" {
     try std.testing.expect(ticks >= 1 and ticks < 12);
 
     host.paint.quit_requested = true;
-    wake.set();
+    host.wake.set();
 }
 
 fn sendQuit(ch: *Channel) !void {
@@ -475,4 +519,21 @@ fn sendWheelBurst(ch: *Channel) void {
     for (0..5) |_| ch.send(wheelMsg(.wheel_down)) catch {};
     ch.send(wheelMsg(.wheel_up)) catch {};
     ch.close(.graceful);
+}
+
+test "a paste message owns its text" {
+    const gpa = std.testing.allocator;
+    const text = try gpa.dupe(u8, "pasted");
+    var msg = Msg.from(.{ .paste = text });
+    defer msg.deinit(gpa);
+    try std.testing.expectEqualStrings("pasted", msg.paste);
+}
+
+test "queued key text survives a later parse" {
+    var input: term_pkg.Input = .{};
+    try input.push("ab");
+    const first = (try input.next()).?;
+    var buf = EventBuf.from(first);
+    _ = try input.next();
+    try std.testing.expectEqualStrings("a", buf.event().key_press.text.?);
 }

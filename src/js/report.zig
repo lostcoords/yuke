@@ -48,7 +48,7 @@ fn bindTestHost(
 ) !*Host {
     const host = Host.create(gpa);
     errdefer host.destroy();
-    host.bindRender(render, out);
+    host.paint.bindRender(host.ctx, render, out);
     return host;
 }
 

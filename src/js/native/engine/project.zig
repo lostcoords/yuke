@@ -561,8 +561,7 @@ test "a text part over the inline bound reports more and pages back whole" {
     defer aw.deinit();
     try writeMessageParts(&aw.writer, &sess, 1, null);
 
-    // The view learns the text is cut and how large it really is, which is what asks it to page.
-    // The cut names the field, the whole size, and where a reader resumes, so the prefix is not re-fetched.
+    // The cut names the field, the whole size, and where a reader resumes, so the view pages without a second prefix read.
     try testing.expect(std.mem.indexOf(u8, aw.written(), "\"cut\":[{\"field\":\"text\",\"bytes\":72000,\"next\":65535}]") != null);
 
     const whole = partTextOf(&sess, 1, 0, "text") orelse return error.TestUnexpectedResult;

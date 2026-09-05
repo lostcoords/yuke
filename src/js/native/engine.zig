@@ -177,8 +177,7 @@ fn jsSessionPart(ctx: Context, _: Value, args: []const Value) Value {
     return ctx.newString(aw.written());
 }
 
-/// One page of a message's whole text: `{"text":...,"next":N|null,"bytes":T}`.
-/// The walk visits every part but copies only the window, so cost follows the page, not the message.
+/// One page of a message's whole text: `{"text":...,"next":N|null,"bytes":T}`. The cost follows the page, not the message.
 fn jsSessionText(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
     const empty = "{\"text\":\"\",\"next\":null,\"bytes\":0}";
@@ -229,8 +228,7 @@ fn jsPartText(ctx: Context, _: Value, args: []const Value) Value {
     return ctx.newString(aw.written());
 }
 
-/// Run one command and answer with its result JSON. A refusal throws with its wire code.
-/// There is no envelope: the caller names a method, and the engine answers with the result itself.
+/// Run one command and answer with its result JSON, with no envelope. A refusal throws with its wire code.
 fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
     const runtime = engine.runtime orelse return ctx.throwPlainError("the engine is not ready");

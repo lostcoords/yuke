@@ -32,13 +32,13 @@ pub const Engine = struct {
     /// Set when the dirty set overflowed; `drain` then reports an index change, so no lost event leaves a stale view.
     dirty_overflow: bool = false,
     /// The owner sleeps until this fires. An engine task sets it so a change reaches the next frame.
-    wake: ?*zio.ResetEvent = null,
+    wake: *zio.ResetEvent,
     /// An event sink threw. `drain` reports it so the owner can note the fault, as a key press does.
     faulted: bool = false,
 
-    pub fn create(gpa: std.mem.Allocator, ctx: Context) !*Engine {
+    pub fn create(gpa: std.mem.Allocator, ctx: Context, wake: *zio.ResetEvent) !*Engine {
         const self = try gpa.create(Engine);
-        self.* = .{ .gpa = gpa, .ctx = ctx, .sink = quickjs.UNDEFINED };
+        self.* = .{ .gpa = gpa, .ctx = ctx, .sink = quickjs.UNDEFINED, .wake = wake };
         return self;
     }
 
@@ -83,7 +83,7 @@ pub const Engine = struct {
 
     /// Wake the owner so it drains this event on the next frame, not on the next keystroke.
     fn wakeOwner(self: *Engine) void {
-        if (self.wake) |event| event.set();
+        self.wake.set();
     }
 
     fn markDirty(self: *Engine, id: SessionId, change: Change) void {

@@ -3,8 +3,7 @@
 const std = @import("std");
 const zio = @import("zio");
 const host_mod = @import("host.zig");
-const tool_run = @import("tool_run.zig");
-const owner = @import("owner.zig");
+const port = @import("port.zig");
 const App = @import("../app/app.zig").App;
 
 pub const Host = host_mod.Host;
@@ -15,23 +14,19 @@ pub const Options = struct {
     config_dir: ?[]const u8 = null,
 };
 
-/// Own the QuickJS host and the wake event that all non-owner tasks use.
+/// Own the QuickJS host and the plugin graph it evaluated.
 pub const Extensions = struct {
     app: *App,
     host: *Host,
-    wake: zio.ResetEvent = .init,
     user_entry_fault: bool = false,
 
     /// Create one host, evaluate the common graph and install its tools in the engine.
     pub fn init(self: *Extensions, gpa: std.mem.Allocator, io: std.Io, app: *App, opts: Options) !void {
         self.app = app;
         self.user_entry_fault = false;
-        self.wake = .init;
         const host = Host.createWith(gpa, io, opts.host);
         errdefer host.destroy();
         self.host = host;
-        host.owner_wake = &self.wake;
-        host.engine.wake = &self.wake;
         host.engine.attach(app);
 
         host.interrupt_budget = std.math.maxInt(u32);
@@ -43,8 +38,8 @@ pub const Extensions = struct {
         // Load built-ins last so a user tool with the same name wins.
         try host.evalModule("import \"yuke:builtins\";", "builtins.js");
 
-        app.engine.installTools(tool_run.toolSet(host));
-        app.engine.installHooks(tool_run.hookSet(host));
+        app.engine.installTools(port.toolSet(host));
+        app.engine.installHooks(port.hookSet(host));
     }
 
     pub fn deinit(self: *Extensions) void {
@@ -135,18 +130,18 @@ test "headless extensions pump an async JavaScript tool" {
     try std.testing.expect(app_runtime.engine.default_system_prompt == null);
 
     const call = extensions.host.calls.submit("read_note", "{\"path\":\"note.txt\"}");
-    try owner.pump(extensions.host);
+    try extensions.host.pump();
     var rounds: u32 = 0;
     while (call.state != .settled) : (rounds += 1) {
         if (rounds == 64) return error.CallNeverSettled;
-        extensions.wake.timedWait(.fromMilliseconds(1000)) catch {};
-        extensions.wake.reset();
-        try owner.pump(extensions.host);
+        extensions.host.wake.timedWait(.fromMilliseconds(1000)) catch {};
+        extensions.host.wake.reset();
+        try extensions.host.pump();
     }
     try std.testing.expect(!call.is_error);
     try std.testing.expectEqualStrings("{\"text\":\"from rpc\"}", call.text.?);
     extensions.host.calls.finish(call);
-    try owner.pump(extensions.host);
+    try extensions.host.pump();
 }
 
 test "a plugin notice reaches every attached frontend" {
@@ -286,7 +281,7 @@ test "a hook chain replaces a payload and the first block ends it" {
         .config_rev = 0,
         .started_at_ms = 1,
     } } });
-    try owner.pump(extensions.host);
+    try extensions.host.pump();
     try std.testing.expectEqual(@as(i32, 1), try extensions.host.evalInt(
         \\globalThis.sawRun === "abababababababababababababababab" ? 1 : 0
     ));
@@ -323,13 +318,13 @@ test "a hook chain replaces a payload and the first block ends it" {
 /// text on its next sweep, so this copies the answer and the caller owns it.
 fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) ![]u8 {
     const call = extensions.host.calls.submitHook(point, payload);
-    try owner.pump(extensions.host);
+    try extensions.host.pump();
     var rounds: u32 = 0;
     while (call.state != .settled) : (rounds += 1) {
         if (rounds == 64) return error.HookNeverSettled;
-        extensions.wake.timedWait(.fromMilliseconds(1000)) catch {};
-        extensions.wake.reset();
-        try owner.pump(extensions.host);
+        extensions.host.wake.timedWait(.fromMilliseconds(1000)) catch {};
+        extensions.host.wake.reset();
+        try extensions.host.pump();
     }
     try std.testing.expect(!call.is_error);
     const text = try std.testing.allocator.dupe(u8, call.text.?);

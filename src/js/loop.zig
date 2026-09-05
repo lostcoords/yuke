@@ -122,7 +122,7 @@ fn stepFocus(host: *Host, focused: bool) Error!void {
 }
 
 fn stepResize(host: *Host, ws: Winsize) Error!void {
-    host.resize(ws);
+    host.paint.resize(host.ctx, ws);
     const ctx = host.ctx;
     const obj = objectType(ctx, "resize");
     ctx.setPropertyStr(obj, "w", ctx.newInt32(host.paint.width)) catch {
@@ -167,6 +167,7 @@ fn dispatch(host: *Host, obj: Value) Error!bool {
 
 /// Paint the frame the handlers asked for; the owner calls this once per drained queue, so a burst costs one paint.
 pub fn flushFrame(host: *Host) Error!void {
+    host.enterSlice();
     const ctx = host.ctx;
     const global = ctx.getGlobalObject();
     defer ctx.freeValue(global);
@@ -310,7 +311,7 @@ test "a parser key paints and a missing endFrame still commits" {
     defer out.deinit();
     const host = Host.create(gpa.allocator());
     defer host.destroy();
-    host.bindRender(&render, &out.writer);
+    host.paint.bindRender(host.ctx, &render, &out.writer);
 
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -442,7 +443,7 @@ test "resize updates term.width before JS reads ev.w" {
     defer out.deinit();
     const host = Host.create(gpa.allocator());
     defer host.destroy();
-    host.bindRender(&render, &out.writer);
+    host.paint.bindRender(host.ctx, &render, &out.writer);
 
     try host.evalModule(
         \\import { term } from "yuke:term";

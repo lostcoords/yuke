@@ -6,7 +6,6 @@ const app = @import("app.zig");
 const call = @import("call.zig");
 const extensions_mod = @import("../js/extensions.zig");
 const interactions_mod = @import("../js/interactions.zig");
-const owner = @import("../js/owner.zig");
 const zio = @import("zio");
 
 const App = app.App;
@@ -344,7 +343,7 @@ pub fn drainNotifications(gpa: std.mem.Allocator, notifications: *NotificationQu
 
 /// Keep the RPC stream alive after a script fault. The owner has consumed the exception.
 fn absorbOwnerPump(extensions: *extensions_mod.Extensions) void {
-    owner.pump(extensions.host) catch |err| switch (err) {
+    extensions.host.pump() catch |err| switch (err) {
         error.JavaScriptFault => {
             std.log.warn("rpc: JavaScript fault: {s}", .{extensions.host.faultText()});
             extensions.host.clearFault();
