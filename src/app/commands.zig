@@ -26,6 +26,16 @@ pub fn catalogList(runtime: *App, _: std.mem.Allocator, params: proto.catalog.Ca
     } };
 }
 
+/// Handle catalog.reload: read providers.json again, then publish the revision when it moved.
+pub fn catalogReload(runtime: *App, _: std.mem.Allocator, _: proto.misc.Empty) !proto.catalog.CatalogReloadResult {
+    const changed = runtime.store.reload() catch |err| {
+        std.log.warn("cannot reread providers.json: {t}", .{err});
+        return error.BadProvidersFile;
+    };
+    if (changed) runtime.announceCatalogChanged();
+    return .{ .catalog_rev = runtime.store.merged.revision, .changed = changed };
+}
+
 /// Handle auth.list: report the credential runtime of every local provider.
 pub fn authList(runtime: *App, arena: std.mem.Allocator, _: proto.misc.Empty) !proto.auth.AuthListResult {
     var out: std.ArrayList(proto.auth.AuthProvider) = .empty;
@@ -56,8 +66,8 @@ pub fn authLogin(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Aut
     // One provider holds one login, so a second attempt would race the first for the same grant.
     if (runtime.logins.byProvider(params.provider_id) != null) return error.LoginInProgress;
 
-    const row = ai.catalog.find(params.provider_id) orelse return error.UnknownProvider;
-    const flow = login_runtime.Flow.parse(flowName(row.auth) orelse return error.NoLoginFlow) orelse return error.NoLoginFlow;
+    const row = provider_registry.find(runtime.store.merged.rows, params.provider_id) orelse return error.UnknownProvider;
+    const flow = login_runtime.Flow.parse(row.login_flow orelse return error.NoLoginFlow) orelse return error.NoLoginFlow;
 
     // The slot arena owns the code and the url, because the login outlives this request arena.
     var slot_arena: std.heap.ArenaAllocator = .init(runtime.gpa);
@@ -103,14 +113,6 @@ pub fn authRemove(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Au
     if (try runtime.store.edit(arena, params.provider_id, .remove_credential)) runtime.announceCatalogChanged();
     runtime.announceAuthChanged(params.provider_id, null);
     return .{};
-}
-
-/// Report the flow one catalog row names. Only an OAuth provider names one.
-fn flowName(auth: ai.catalog.Auth) ?[]const u8 {
-    return switch (auth) {
-        .oauth => |name| name,
-        .api_key => null,
-    };
 }
 
 /// Report the flows one provider accepts. Only a catalog row naming a known flow offers one.
@@ -173,3 +175,64 @@ test "auth.list reports the providers the environment offers, not only the file"
     try testing.expect(codex.?.credential_kind == null);
     try testing.expect(codex.?.can_login);
 }
+
+test "catalog.reload reads the file again and reports whether the revision moved" {
+    const zio = @import("zio");
+    const database = @import("../store/store.zig");
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var env: std.process.Environ.Map = .init(testing.allocator);
+    defer env.deinit();
+    var transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+    var runtime: App = undefined;
+    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), &env, transport.transport());
+    defer runtime.logins.deinit();
+    defer runtime.store.deinit();
+    defer runtime.db.deinit();
+    defer runtime.engine.close();
+    _ = try runtime.store.rebuild();
+
+    var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = dir_buf[0..try tmp.dir.realPath(rt.io(), &dir_buf)];
+    runtime.store.path = try std.fs.path.join(testing.allocator, &.{ dir, "providers.json" });
+    const path = runtime.store.path.?;
+
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var sink: CatalogSink = .{};
+    runtime.engine.sinks.add(.{ .ctx = &sink, .on_event = CatalogSink.onEvent });
+
+    // Another process wrote a provider the running engine never saw.
+    try provider_config.writeFileBytes(rt.io(), path,
+        \\{"version":1,"providers":[{"id":"local","base_url":"http://127.0.0.1:1/v1","protocol":"openai_chat",
+        \\ "models":[{"id":"m","upstream_id":"m","reasoning_levels":[]}]}]}
+    );
+    const first = try catalogReload(&runtime, a, .{});
+    try testing.expect(first.changed);
+    try testing.expectEqual(@as(usize, 1), sink.changed);
+    try testing.expect(provider_registry.find(runtime.store.merged.rows, "local") != null);
+    try testing.expect(std.mem.eql(u8, &first.catalog_rev.raw, &runtime.store.merged.revision.raw));
+
+    // The same bytes again produce the same revision.
+    try testing.expect(!(try catalogReload(&runtime, a, .{})).changed);
+
+    // A broken file never replaces the layer in memory.
+    try provider_config.writeFileBytes(rt.io(), path, "{\"version\":1,\"providers\":[{\"id\":");
+    try testing.expectError(error.BadProvidersFile, catalogReload(&runtime, a, .{}));
+    try testing.expect(provider_registry.find(runtime.store.merged.rows, "local") != null);
+    try testing.expectEqual(@as(usize, 1), sink.changed); // The unchanged and the failed reload stayed quiet.
+}
+
+/// Count the catalog announcements one reload test triggers.
+const CatalogSink = struct {
+    changed: usize = 0,
+
+    fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
+        const self: *CatalogSink = @ptrCast(@alignCast(ctx));
+        if (note.method == .@"catalog.changed") self.changed += 1;
+    }
+};

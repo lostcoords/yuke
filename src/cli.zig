@@ -109,13 +109,13 @@ test "parse selects the rpc transport" {
     try testing.expect(parse(&.{}).command == .tui); // no transport keeps the view
 }
 
-test "parse rejects a conflict, a duplicate, and an unknown flag" {
+test "parse rejects a duplicate flag, an unknown flag, and an unknown command" {
     try testing.expectEqual(Failure.duplicate_flag, parse(&.{ "--rpc", "--rpc" }).diagnostic.failure);
     try testing.expectEqual(Failure.unknown_flag, parse(&.{"--foo"}).diagnostic.failure);
     try testing.expectEqual(Failure.unknown_command, parse(&.{"serve"}).diagnostic.failure);
 }
 
-test "parse reports help for both scopes" {
+test "parse reports help for the root scope" {
     try testing.expectEqual(Scope.root, parse(&.{"--help"}).help);
     try testing.expectEqual(Scope.root, parse(&.{"-h"}).help);
 }

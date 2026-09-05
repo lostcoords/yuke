@@ -66,6 +66,7 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "ModelInfo", .field = "id", .alias = "ModelId" },
     .{ .owner = "CatalogListParams", .field = "since_rev", .alias = "CatalogRev" },
     .{ .owner = "CatalogListResultUnchanged", .field = "catalog_rev", .alias = "CatalogRev" },
+    .{ .owner = "CatalogReloadResult", .field = "catalog_rev", .alias = "CatalogRev" },
     .{ .owner = "CatalogListResultFull", .field = "catalog_rev", .alias = "CatalogRev" },
     .{ .owner = "CatalogRefreshResult", .field = "catalog_rev", .alias = "CatalogRev" },
     .{ .owner = "Request", .field = "id", .alias = "RequestId" },

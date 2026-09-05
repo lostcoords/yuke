@@ -59,6 +59,7 @@ pub const ResponseResult = union(enum) {
     session_history_result: session.SessionHistoryResult,
     session_config_result: session.SessionConfigResult,
     catalog_list_result: catalog.CatalogListResult,
+    catalog_reload_result: catalog.CatalogReloadResult,
     auth_list_result: auth.AuthListResult,
     auth_login_result: auth.AuthLoginResult,
 
@@ -121,6 +122,7 @@ pub const methods = [_]MethodSpec{
     .{ .name = .@"session.history", .params = session.SessionHistoryParams, .result = session.SessionHistoryResult, .params_optional = false },
     .{ .name = .@"session.config", .params = session.SessionConfigParams, .result = session.SessionConfigResult, .params_optional = false },
     .{ .name = .@"catalog.list", .params = catalog.CatalogListParams, .result = catalog.CatalogListResult, .params_optional = true },
+    .{ .name = .@"catalog.reload", .params = misc.Empty, .result = catalog.CatalogReloadResult, .params_optional = true },
     .{ .name = .@"auth.list", .params = misc.Empty, .result = auth.AuthListResult, .params_optional = true },
     .{ .name = .@"auth.set_api_key", .params = auth.AuthSetApiKeyParams, .result = misc.Empty, .params_optional = false },
     .{ .name = .@"auth.login", .params = auth.AuthLoginParams, .result = auth.AuthLoginResult, .params_optional = false },

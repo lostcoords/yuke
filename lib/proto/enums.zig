@@ -97,7 +97,8 @@ pub const MethodName = enum {
     @"session.config",
     /// List the model catalog.
     @"catalog.list",
-    /// Refresh the model catalog from providers.
+    /// Read providers.json again and rebuild the catalog.
+    @"catalog.reload",
     /// List the local providers and the credential each one holds.
     @"auth.list",
     /// Set an API key for a provider.

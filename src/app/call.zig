@@ -67,6 +67,7 @@ fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, param
     if (n == .@"session.cancel_run") return commands.sessionCancelRun(engine, arena, params);
     if (n == .@"session.remove") return commands.sessionRemove(engine, arena, params);
     if (n == .@"catalog.list") return app_commands.catalogList(runtime, arena, params);
+    if (n == .@"catalog.reload") return app_commands.catalogReload(runtime, arena, params);
     if (n == .@"auth.list") return app_commands.authList(runtime, arena, params);
     if (n == .@"auth.set_api_key") return app_commands.authSetApiKey(runtime, arena, params);
     if (n == .@"auth.remove") return app_commands.authRemove(runtime, arena, params);
@@ -89,6 +90,7 @@ fn bound(comptime name: proto.enums.MethodName) bool {
         .@"session.cancel_run",
         .@"session.remove",
         .@"catalog.list",
+        .@"catalog.reload",
         .@"auth.list",
         .@"auth.set_api_key",
         .@"auth.remove",
@@ -121,6 +123,7 @@ fn failureFor(err: anyerror) ?Failure {
         error.NoLoginFlow => .{ .code = .bad_request, .message = "the provider offers no login flow" },
         error.LoginInProgress => .{ .code = .bad_request, .message = "a login for this provider already runs" },
         error.NoConfigDirectory => .{ .code = .internal, .message = "no config directory holds providers.json" },
+        error.BadProvidersFile => .{ .code = .internal, .message = "providers.json did not load" },
         error.Unavailable => .{ .code = .internal, .message = "the engine stops" },
         else => null,
     };

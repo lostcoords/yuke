@@ -96,19 +96,7 @@ pub fn refresh(arena: std.mem.Allocator, seam: oauth.Http, refresh_token: []cons
         .payload = .{ .json = body },
         .body_out = body_out,
     }) catch |err| return oauth.classify(err, true);
-
-    if (response.status >= 200 and response.status < 300) {
-        const obj = oauth.parseObject(arena, response.body) orelse return oauth.Error.Ambiguous;
-        // A 2xx spent the token we sent. An unreadable replacement means it is lost, not retryable.
-        return tokensFrom(arena, obj, now_ms) catch oauth.Error.Ambiguous;
-    }
-    // A 401 means the grant is gone, whatever the body says.
-    if (response.status == 401) return oauth.Error.Permanent;
-
-    var buf: [64]u8 = undefined;
-    const code = oauth.errorCode(response.body, arena, &buf) orelse return oauth.Error.Transient;
-    for (permanent_refresh) |name| if (std.mem.eql(u8, code, name)) return oauth.Error.Permanent;
-    return oauth.Error.Transient;
+    return oauth.refreshOutcome(arena, response, &permanent_refresh, now_ms, tokensFrom);
 }
 
 /// Read one token response. The lifetime comes from the token itself, because `expires_in` can lie.
@@ -273,32 +261,15 @@ test "an unreadable jwt falls back instead of failing the login" {
     try testing.expect(got.account_id == null);
 }
 
-test "each documented refresh failure maps to one class" {
-    const Case = struct { status: u16, body: []const u8, want: oauth.Error };
-    for ([_]Case{
-        .{ .status = 401, .body = "{}", .want = oauth.Error.Permanent },
-        .{ .status = 400, .body = "{\"error\":\"invalid_grant\"}", .want = oauth.Error.Permanent },
-        .{ .status = 400, .body = "{\"error\":\"refresh_token_expired\"}", .want = oauth.Error.Permanent },
-        .{ .status = 400, .body = "{\"error\":\"refresh_token_reused\"}", .want = oauth.Error.Permanent },
-        .{ .status = 400, .body = "{\"error\":\"refresh_token_invalidated\"}", .want = oauth.Error.Permanent },
-        .{ .status = 400, .body = "{\"error\":\"teapot\"}", .want = oauth.Error.Transient },
-        .{ .status = 500, .body = "{}", .want = oauth.Error.Transient },
-    }) |case| {
+test "the codex refresh codes end the grant" {
+    for (permanent_refresh) |code| {
         var arena: std.heap.ArenaAllocator = .init(testing.allocator);
         defer arena.deinit();
         var out: [512]u8 = undefined;
-        const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = case.status, .body = case.body } }};
+        const body = try std.fmt.allocPrint(arena.allocator(), "{{\"error\":\"{s}\"}}", .{code});
+        const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = 400, .body = body } }};
         var canned: oauth.CannedHttp = .{ .replies = &replies };
 
-        try testing.expectError(case.want, refresh(arena.allocator(), canned.seam(), "rt", 0, &out));
+        try testing.expectError(oauth.Error.Permanent, refresh(arena.allocator(), canned.seam(), "rt", 0, &out));
     }
-}
-
-test "a rotated token that cannot be read is ambiguous, never retryable" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    var out: [512]u8 = undefined;
-    var canned: oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body = "{\"nonsense\":true}" } }} };
-
-    try testing.expectError(oauth.Error.Ambiguous, refresh(arena.allocator(), canned.seam(), "rt", 0, &out));
 }

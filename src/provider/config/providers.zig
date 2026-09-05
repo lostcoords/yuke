@@ -603,14 +603,6 @@ test "two credential forms are ambiguous" {
     )));
 }
 
-test "the shipped sample file is valid" {
-    const bytes = @embedFile("providers.sample.json");
-    var loaded = try loadBytes(testing.allocator, bytes);
-    defer loaded.deinit();
-    try testing.expectEqual(@as(usize, 2), loaded.providers.len);
-    try testing.expect(loaded.providers[1].auth == null); // The local server needs no key.
-}
-
 test "a missing providers array yields an empty layer" {
     var loaded = try loadBytes(testing.allocator, "{\"version\":1}");
     defer loaded.deinit();
@@ -731,4 +723,5 @@ test "the shipped sample document still loads" {
     try testing.expectEqual(@as(usize, 2), loaded.providers.len);
     try testing.expectEqualStrings("minimax", loaded.providers[0].id);
     try testing.expect(loaded.providers[0].models[0].flags.anthropic_adaptive);
+    try testing.expect(loaded.providers[1].auth == null); // The local server needs no key.
 }

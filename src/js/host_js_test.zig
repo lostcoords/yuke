@@ -2641,7 +2641,7 @@ test "yuke:client exposes the engine surface and answers a closed session" {
         \\import { client } from "yuke:client";
         \\const surface = ["request", "sessionList", "sessionOpen", "sessionClose",
         \\  "sessionOutline", "sessionText", "sessionTextPage", "sessionParts", "sessionPart", "partTextPage",
-        \\  "sessionSendInput", "sessionCancelRun", "sessionCreate", "catalogList"]
+        \\  "sessionSendInput", "sessionCancelRun", "sessionCreate", "catalogList", "catalogReload"]
         \\  .every((k) => typeof client[k] === "function");
         \\// No engine is attached in a unit test, so a view read answers its empty projection.
         \\const closed = client.sessionOutline("00".repeat(16)) === null;
@@ -2692,6 +2692,7 @@ test "yuke:defaults boots the shell, seeds the session feed, and wires commands"
         \\if (!plugins.get("catalog")) fail.push("catalog-plugin");
         \\if (!plugins.get("chat")) fail.push("chat-plugin");
         \\if (!plugins.get("explorer")) fail.push("explorer-plugin");
+        \\if (!command.available("catalog:reload")) fail.push("catalog-reload-command");
         \\
         \\
         \\// The status bar reports a pending key.

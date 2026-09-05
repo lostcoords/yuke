@@ -5,7 +5,7 @@ import { ui, NAV_KEYS } from "yuke:ui";
 import { notice, noticePlugin } from "yuke:notice";
 import { commandUiPlugin } from "yuke:command-ui";
 import { explorerPlugin } from "yuke:explorer";
-import { catalogOf, catalogPlugin } from "yuke:catalog";
+import { catalogOf, catalogPlugin, loadCatalog } from "yuke:catalog";
 import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { client } from "yuke:client";
 import { rowKey, rowLabel, activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
@@ -93,6 +93,10 @@ plugins.use({
         "copy:selection": () => withChat(c => copy(c.transcript.selectedText(), "selection")),
         "copy:source": () => withChat(c => copy(c.transcript.selectedSource(), "source")),
         "chat:new": () => withChat(c => c.newChat()),
+        "catalog:reload": () => client.catalogReload().then(
+          (r) => { notice.show(r.changed ? "providers reloaded" : "providers unchanged"); return loadCatalog(); },
+          (e) => notice.show("reload failed · " + e.message),
+        ),
         "debug:memory": () => {
           const m = client.memoryUsage();
           const mb = (/** @type {number} */ n) => (n / 1048576).toFixed(1) + "MB";

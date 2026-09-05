@@ -146,6 +146,17 @@ pub fn installLocal(self: *@This(), next: *provider.config.Loaded) !bool {
     return self.swap(next_merged);
 }
 
+/// Read `providers.json` again and install it under the edit lock, so a local edit cannot interleave.
+pub fn reload(self: *@This()) !bool {
+    const path = self.path orelse return false;
+    try self.edit_lock.lock(self.io);
+    defer self.edit_lock.unlock(self.io);
+
+    var next = try provider.config.load(self.gpa, self.io, path);
+    errdefer next.deinit();
+    return self.installLocal(&next);
+}
+
 /// Rebuild the merged view from the layers the store already holds.
 pub fn rebuild(self: *@This()) !bool {
     const next = try self.load(if (self.local) |*loaded| loaded else null);

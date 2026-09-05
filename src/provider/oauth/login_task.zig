@@ -30,18 +30,17 @@ pub fn start(arena: std.mem.Allocator, seam: oauth.Http, flow: login_runtime.Flo
 
 /// Own the slot until it publishes exactly one `auth.login_finished`.
 pub fn run(runtime: *App, slot: *login_runtime.LoginSlot) void {
-    const outcome = drive(runtime, slot) catch |err| blk: {
+    var client: http.Client = .init(runtime.gpa, runtime.io);
+    defer client.deinit();
+    const outcome = drive(runtime, slot, oauth.Http.fromClient(&client)) catch |err| blk: {
         std.log.err("login for {s} failed: {t}", .{ slot.provider_id, err });
         break :blk proto.auth.AuthLoginOutcome{ .failed = .{ .message = "the login could not finish" } };
     };
     finish(runtime, slot, outcome);
 }
 
-fn drive(runtime: *App, slot: *login_runtime.LoginSlot) !proto.auth.AuthLoginOutcome {
-    var client: http.Client = .init(runtime.gpa, runtime.io);
-    defer client.deinit();
-    const seam = oauth.Http.fromClient(&client);
-
+/// Poll through `seam` until one terminal outcome. A test replays the provider through it.
+fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto.auth.AuthLoginOutcome {
     const body = try runtime.gpa.alloc(u8, response_bytes);
     defer runtime.gpa.free(body);
 
@@ -155,7 +154,11 @@ pub fn refreshOnce(runtime: *App, margin_ms: u64) !bool {
 
     // Read the file again under the lock. Another process may have rotated this grant already,
     // and the layer in memory would still name the token it spent.
-    try reloadLocal(runtime);
+    // A stale layer could resend a token another process already spent, so a failed read ends the pass.
+    _ = runtime.store.reload() catch |err| {
+        std.log.warn("cannot reread providers.json: {t}", .{err});
+        return false;
+    };
 
     const due = try dueGrant(runtime, arena, margin_ms) orelse return false;
     // A cancel between the send and the write would leave the rotation unknown, so it waits.
@@ -263,14 +266,137 @@ fn store(runtime: *App, arena: std.mem.Allocator, due: Due, grant: provider.conf
     runtime.announceAuthChanged(due.provider_id, .oauth);
 }
 
-/// Read `providers.json` again and install it. The caller holds the credential lock, so no other
-/// process writes between the read and the install.
-fn reloadLocal(runtime: *App) !void {
-    const path = runtime.store.path orelse return;
-    var next = provider.config.load(runtime.gpa, runtime.io, path) catch |err| {
-        std.log.warn("cannot reread providers.json: {t}", .{err});
-        return;
-    };
-    errdefer next.deinit();
-    _ = try runtime.store.installLocal(&next);
+const testing = std.testing;
+
+/// One login under test. The engine borrows the runtime fields, so the probe must not move after `init`.
+const Probe = struct {
+    runtime: App = undefined,
+    env: std.process.Environ.Map,
+    slot: *login_runtime.LoginSlot = undefined,
+    canned: oauth.CannedHttp,
+    transport: ai.transport.CannedTransport = .{ .bytes = ai.transport.canned_reply },
+    outcome: ?proto.auth.AuthLoginOutcome = null,
+
+    fn init(self: *Probe, io: std.Io, replies: []const oauth.CannedHttp.Reply) !void {
+        const database = @import("../../store/store.zig");
+        self.* = .{ .env = .init(testing.allocator), .canned = .{ .replies = replies } };
+        try self.runtime.initTest(testing.allocator, io, try database.Database.openTest(), &self.env, self.transport.transport());
+    }
+
+    /// The engine borrows the store, the logins, and the database, so it closes first.
+    fn deinit(self: *Probe) void {
+        self.runtime.engine.close();
+        self.runtime.db.deinit();
+        self.runtime.store.deinit();
+        self.runtime.logins.deinit();
+        self.env.deinit();
+    }
+
+    /// Reserve one slot. The poller floor turns the one-millisecond interval into a one-second wait.
+    fn reserve(self: *Probe, provider_id: []const u8, flow: login_runtime.Flow) !void {
+        const arena: std.heap.ArenaAllocator = .init(testing.allocator);
+        self.slot = try self.runtime.logins.reserve(.bytes(@splat(7)), arena, provider_id, flow);
+        self.slot.start = .{ .user_code = "UC", .device_auth_id = "dai", .interval_ms = 1, .verification_url = "" };
+    }
+
+    fn driveTask(self: *Probe) !void {
+        self.outcome = try drive(&self.runtime, self.slot, self.canned.seam());
+    }
+};
+
+test "a canceled login stops before its first poll" {
+    const zio = @import("zio");
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    var probe: Probe = undefined;
+    try probe.init(rt.io(), &.{});
+    defer probe.deinit();
+    try probe.reserve("xai", .xai);
+    probe.slot.cancel_requested = true;
+
+    var task = try rt.spawn(Probe.driveTask, .{&probe});
+    try task.join();
+
+    try testing.expect(probe.outcome.? == .canceled);
+    try testing.expectEqual(@as(usize, 0), probe.canned.index); // The provider saw no request.
+}
+
+test "a refused poll fails the login and stores nothing" {
+    const zio = @import("zio");
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    var probe: Probe = undefined;
+    try probe.init(rt.io(), &.{.{ .answer = .{ .status = 400, .body = "{\"error\":\"access_denied\"}" } }});
+    defer probe.deinit();
+    try probe.reserve("xai", .xai);
+
+    var task = try rt.spawn(Probe.driveTask, .{&probe});
+    try task.join();
+
+    try testing.expectEqualStrings("the provider refused the login", probe.outcome.?.failed.message);
+    try testing.expectEqual(@as(usize, 1), probe.canned.index); // One poll ran and ended the login.
+    try testing.expect(probe.runtime.store.local == null);
+}
+
+test "an approved codex login stores the grant" {
+    const zio = @import("zio");
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var probe: Probe = undefined;
+    try probe.init(rt.io(), &.{
+        .{ .answer = .{ .status = 200, .body = "{\"authorization_code\":\"ac\",\"code_verifier\":\"cv\"}" } },
+        .{ .answer = .{ .status = 200, .body = "{\"access_token\":\"at\",\"refresh_token\":\"rt\",\"expires_in\":60}" } },
+    });
+    defer probe.deinit();
+    // The grant lands in a file, so the store needs a path the writer can create.
+    var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = dir_buf[0..try tmp.dir.realPath(rt.io(), &dir_buf)];
+    probe.runtime.store.path = try std.fs.path.join(testing.allocator, &.{ dir, "providers.json" });
+    try probe.reserve("openai-codex", .codex);
+
+    var task = try rt.spawn(Probe.driveTask, .{&probe});
+    try task.join();
+
+    try testing.expect(probe.outcome.? == .succeeded);
+    try testing.expectEqual(@as(usize, 2), probe.canned.index); // The poll and the exchange both ran.
+    const p = probe.runtime.store.local.?.providers[0];
+    try testing.expectEqualStrings("openai-codex", p.id);
+    try testing.expectEqualStrings("at", p.auth.?.oauth.access_token);
+    try testing.expectEqualStrings("rt", p.auth.?.oauth.refresh_token.?);
+}
+
+/// Keep the last notification, so a test can read what `finish` published.
+const NoteSink = struct {
+    method: ?proto.enums.BroadcastName = null,
+    count: usize = 0,
+
+    fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
+        const self: *NoteSink = @ptrCast(@alignCast(ctx));
+        self.method = note.method;
+        self.count += 1;
+    }
+};
+
+test "finish publishes one login_finished and drops the slot" {
+    const zio = @import("zio");
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    var probe: Probe = undefined;
+    try probe.init(rt.io(), &.{});
+    defer probe.deinit();
+    try probe.reserve("xai", .xai);
+    var sink: NoteSink = .{};
+    probe.runtime.engine.sinks.add(.{ .ctx = &sink, .on_event = NoteSink.onEvent });
+
+    finish(&probe.runtime, probe.slot, .{ .canceled = .{} });
+
+    try testing.expectEqual(proto.enums.BroadcastName.@"auth.login_finished", sink.method.?);
+    try testing.expectEqual(@as(usize, 1), sink.count);
+    try testing.expect(probe.runtime.logins.byProvider("xai") == null);
 }

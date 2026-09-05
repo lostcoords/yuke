@@ -40,6 +40,12 @@ export function loadCatalog() {
     });
 }
 
+// Read providers.json again, then refresh the catalog. A failed reload still refreshes what the engine holds.
+/** @returns {Promise<CatalogState>} */
+export function reloadCatalog() {
+  return client.catalogReload().catch(() => {}).then(loadCatalog);
+}
+
 // The context window of one model, or 0 when the catalog does not name it.
 /** @param {string | null | undefined} modelId @returns {number} */
 export function contextWindowOf(modelId) {

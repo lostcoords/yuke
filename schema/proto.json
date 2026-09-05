@@ -144,8 +144,16 @@
       "paramsOptional": true
     },
     {
+      "name": "catalog.reload",
+      "doc": "Read providers.json again and rebuild the catalog.",
+      "params": "Empty",
+      "result": "CatalogReloadResult",
+      "direction": "clientToServer",
+      "paramsOptional": true
+    },
+    {
       "name": "auth.list",
-      "doc": "Refresh the model catalog from providers. List the local providers and the credential each one holds.",
+      "doc": "List the local providers and the credential each one holds.",
       "params": "Empty",
       "result": "AuthListResult",
       "direction": "clientToServer",
@@ -534,7 +542,7 @@
     },
     {
       "name": "AuthRemoveParams",
-      "doc": "These parameters select the local credential to remove. OAuth waits for stage 10.",
+      "doc": "These parameters select the local credential to remove, an API key or a grant.",
       "fields": [
         {
           "name": "provider_id",
@@ -652,6 +660,22 @@
         {
           "name": "catalog_rev",
           "type": "CatalogRev",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "CatalogReloadResult",
+      "doc": "This result reports the merged catalog revision after `catalog.reload` and whether it moved.",
+      "fields": [
+        {
+          "name": "catalog_rev",
+          "type": "CatalogRev",
+          "presence": "required"
+        },
+        {
+          "name": "changed",
+          "type": "bool",
           "presence": "required"
         }
       ]
@@ -3302,6 +3326,9 @@
           "type": "CatalogListResult"
         },
         {
+          "type": "CatalogReloadResult"
+        },
+        {
           "type": "AuthListResult"
         },
         {
@@ -3764,9 +3791,14 @@
           "doc": "List the model catalog."
         },
         {
+          "name": "catalog.reload",
+          "wire": "catalog.reload",
+          "doc": "Read providers.json again and rebuild the catalog."
+        },
+        {
           "name": "auth.list",
           "wire": "auth.list",
-          "doc": "Refresh the model catalog from providers. List the local providers and the credential each one holds."
+          "doc": "List the local providers and the credential each one holds."
         },
         {
           "name": "auth.set_api_key",

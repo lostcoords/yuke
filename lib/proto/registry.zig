@@ -45,6 +45,7 @@ pub const structs = [_]TypeEntry{
     .{ .name = "CatalogListResultFull", .ty = catalog.CatalogListResultFull },
     .{ .name = "ProviderInfo", .ty = catalog.ProviderInfo },
     .{ .name = "CatalogListResultUnchanged", .ty = catalog.CatalogListResultUnchanged },
+    .{ .name = "CatalogReloadResult", .ty = catalog.CatalogReloadResult },
     .{ .name = "ModelCost", .ty = catalog.ModelCost },
     .{ .name = "ModelInfo", .ty = catalog.ModelInfo },
     .{ .name = "Request", .ty = rpc.Request },

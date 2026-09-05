@@ -163,6 +163,12 @@ function catalogList(sinceRev) {
   return request("catalog.list", /** @type {Wire.CatalogListParams} */ (sinceRev ? { since_rev: sinceRev } : {}));
 }
 
+// Read providers.json again. `changed` reports whether the catalog revision moved.
+/** @returns {Promise<Wire.CatalogReloadResult>} */
+function catalogReload() {
+  return request("catalog.reload", {});
+}
+
 // One object carries the whole surface, so a test or a plugin can replace a single method.
 export const client = {
   request,
@@ -180,4 +186,5 @@ export const client = {
   sessionCancelRun,
   sessionCreate,
   catalogList,
+  catalogReload,
 };

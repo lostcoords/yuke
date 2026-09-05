@@ -68,7 +68,7 @@ pub const AuthLoginResult = struct {
     user_code: []const u8,
 };
 
-/// These parameters select the local credential to remove. OAuth waits for stage 10.
+/// These parameters select the local credential to remove, an API key or a grant.
 pub const AuthRemoveParams = struct {
     provider_id: ids.ProviderId,
 };

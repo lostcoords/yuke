@@ -52,6 +52,12 @@ pub const CatalogListResultUnchanged = struct {
     catalog_rev: ids.CatalogRev,
 };
 
+/// This result reports the merged catalog revision after `catalog.reload` and whether it moved.
+pub const CatalogReloadResult = struct {
+    catalog_rev: ids.CatalogRev,
+    changed: bool,
+};
+
 /// These costs use United States dollars per million tokens.
 pub const ModelCost = struct {
     input: ?f64 = null,

@@ -100,6 +100,28 @@ pub fn classify(err: anyerror, rotating: bool) Error {
     return if (rotating) Error.Ambiguous else Error.Transient;
 }
 
+/// Read one refresh response. `permanent` lists the codes that end the grant for this flow.
+pub fn refreshOutcome(
+    arena: std.mem.Allocator,
+    response: http.Response,
+    permanent: []const []const u8,
+    now_ms: u64,
+    comptime tokensFrom: fn (std.mem.Allocator, std.json.ObjectMap, u64) Error!Tokens,
+) Error!Tokens {
+    if (response.status >= 200 and response.status < 300) {
+        const obj = parseObject(arena, response.body) orelse return Error.Ambiguous;
+        // A 2xx spent the token we sent. An unreadable replacement means it is lost, not retryable.
+        return tokensFrom(arena, obj, now_ms) catch Error.Ambiguous;
+    }
+    // A 401 means the grant is gone, whatever the body says.
+    if (response.status == 401) return Error.Permanent;
+
+    var buf: [64]u8 = undefined;
+    const code = errorCode(response.body, arena, &buf) orelse return Error.Transient;
+    for (permanent) |name| if (std.mem.eql(u8, code, name)) return Error.Permanent;
+    return Error.Transient;
+}
+
 /// Parse one response body as a JSON object. Any other shape is unreadable.
 pub fn parseObject(arena: std.mem.Allocator, body: []const u8) ?std.json.ObjectMap {
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return null;
@@ -174,20 +196,6 @@ pub const CannedHttp = struct {
     }
 };
 
-test "the error code reads the four documented names in order" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var buf: [64]u8 = undefined;
-
-    try testing.expectEqualStrings("invalid_grant", errorCode("{\"error\":{\"code\":\"INVALID_GRANT\"}}", a, &buf).?);
-    try testing.expectEqualStrings("slow_down", errorCode("{\"error\":\"slow_down\"}", a, &buf).?);
-    try testing.expectEqualStrings("expired_token", errorCode("{\"code\":\"expired_token\"}", a, &buf).?);
-    try testing.expectEqualStrings("access_denied", errorCode("{\"error_code\":\"access_denied\"}", a, &buf).?);
-    try testing.expect(errorCode("{\"other\":1}", a, &buf) == null);
-    try testing.expect(errorCode("not json", a, &buf) == null);
-}
-
 test "a rotating call cannot repeat what a poll may repeat" {
     try testing.expectEqual(Error.PreFlight, classify(error.PreFlight, true));
     try testing.expectEqual(Error.PreFlight, classify(error.PreFlight, false));
@@ -209,11 +217,18 @@ test "an interval falls back when it is absent, zero, or a string" {
     try testing.expectEqual(@as(u64, 7000), intervalFrom(parseObject(a, "{\"interval\":\"7\"}").?));
 }
 
-test "the error code prefers the first name that holds a usable string" {
+test "the error code reads each documented name and prefers the first usable one" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     var buf: [64]u8 = undefined;
+
+    try testing.expectEqualStrings("invalid_grant", errorCode("{\"error\":{\"code\":\"INVALID_GRANT\"}}", a, &buf).?);
+    try testing.expectEqualStrings("slow_down", errorCode("{\"error\":\"slow_down\"}", a, &buf).?);
+    try testing.expectEqualStrings("expired_token", errorCode("{\"code\":\"expired_token\"}", a, &buf).?);
+    try testing.expectEqualStrings("access_denied", errorCode("{\"error_code\":\"access_denied\"}", a, &buf).?);
+    try testing.expect(errorCode("{\"other\":1}", a, &buf) == null);
+    try testing.expect(errorCode("not json", a, &buf) == null);
 
     // Every name is present, so the documented order decides.
     try testing.expectEqualStrings("first", errorCode("{\"error\":{\"code\":\"first\"},\"code\":\"third\",\"error_code\":\"fourth\"}", a, &buf).?);
@@ -245,4 +260,37 @@ test "a blank string is no value, so a fallback field still gets its turn" {
     try testing.expect(str(a, obj, "empty") == null);
     // A value with content keeps its own spacing, because only the blank test trims.
     try testing.expectEqualStrings(" v ", str(a, obj, "kept").?);
+}
+
+/// A parser for the refresh tests. It reads one field, so an empty object is unreadable.
+fn testTokens(arena: std.mem.Allocator, obj: std.json.ObjectMap, now_ms: u64) Error!Tokens {
+    return .{ .access_token = str(arena, obj, "access_token") orelse return Error.BadResponse, .expires_at_ms = now_ms };
+}
+
+test "a refresh outcome maps each documented status and code to one class" {
+    const permanent = [_][]const u8{"gone"};
+    const Case = struct { status: u16, body: []const u8, want: Error };
+    for ([_]Case{
+        .{ .status = 401, .body = "{}", .want = Error.Permanent },
+        .{ .status = 400, .body = "{\"error\":\"gone\"}", .want = Error.Permanent },
+        // An unrecognized code is worth another try, because giving up costs the whole grant.
+        .{ .status = 400, .body = "{\"error\":\"teapot\"}", .want = Error.Transient },
+        .{ .status = 500, .body = "{}", .want = Error.Transient },
+        // The 2xx spent the token we sent, so a body we cannot read has lost the replacement.
+        .{ .status = 200, .body = "{\"nonsense\":true}", .want = Error.Ambiguous },
+        .{ .status = 200, .body = "not json", .want = Error.Ambiguous },
+    }) |case| {
+        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+        defer arena.deinit();
+        const got = refreshOutcome(arena.allocator(), .{ .status = case.status, .body = case.body }, &permanent, 0, testTokens);
+        try testing.expectError(case.want, got);
+    }
+}
+
+test "a refresh outcome hands a readable 2xx to the flow parser" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const got = try refreshOutcome(arena.allocator(), .{ .status = 200, .body = "{\"access_token\":\"at\"}" }, &.{}, 7, testTokens);
+    try testing.expectEqualStrings("at", got.access_token);
+    try testing.expectEqual(@as(u64, 7), got.expires_at_ms);
 }

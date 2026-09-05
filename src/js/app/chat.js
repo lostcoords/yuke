@@ -6,7 +6,7 @@ import { ChatView } from "yuke:transcript";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { feedItem } from "yuke:sessions";
-import { catalogOf, loadCatalog, chooseModel, defaultModel } from "yuke:catalog";
+import { catalogOf, reloadCatalog, chooseModel, defaultModel } from "yuke:catalog";
 
 
 /** @typedef {Extract<import("yuke:engine-native").EngineEvent, { type: "session" }>} NativeSessionEvent */
@@ -284,7 +284,8 @@ function openModelPicker(ctx) {
     p.content.selectKey(currentId);
     return p;
   };
-  loadCatalog().then(show);
+  // A login in another process lands in the file, so the picker reads it again before it lists.
+  reloadCatalog().then(show);
   return null;
 }
 

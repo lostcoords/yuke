@@ -65,15 +65,11 @@ pub const App = struct {
 
         // The app owns this path, because an invalid file fails startup and `auth.set_api_key` rewrites it.
         self.store.path = try configFilePath(gpa, env, "providers.json");
-        if (self.store.path) |path| {
-            var loaded = try provider.config.load(gpa, io, path);
-            if (loaded.providers.len > 0) {
-                self.store.local = loaded;
-                std.log.info("loaded {d} provider(s) from providers.json", .{loaded.providers.len});
-            } else loaded.deinit();
-        }
-
-        _ = try self.store.rebuild();
+        if (self.store.path != null) {
+            // An absent or empty file installs an empty layer, which every reader treats like none.
+            _ = try self.store.reload();
+            std.log.info("loaded {d} provider(s) from providers.json", .{self.store.local.?.providers.len});
+        } else _ = try self.store.rebuild();
 
         // The engine borrows every process resource, so it is built after all of them exist.
         self.engine = Engine.init(.{
