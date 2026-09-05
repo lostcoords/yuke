@@ -272,6 +272,37 @@ pub const MessagePage = sql.ManyQuery(
     },
 );
 
+pub const MessageTail = sql.ManyQuery(
+    \\SELECT t.message_id AS message_id, e.payload AS payload
+    \\FROM (
+    \\    SELECT session_id, message_id, seq FROM messages
+    \\    WHERE session_id = :session_id
+    \\    ORDER BY message_id DESC
+    \\    LIMIT :limit
+    \\) t JOIN events e ON e.session_id = t.session_id AND e.seq = t.seq
+    \\ORDER BY t.message_id ASC;
+,
+    struct {
+        session_id: [16]u8,
+        limit: i64,
+    },
+    struct {
+        message_id: u64,
+        payload: []const u8,
+    },
+);
+
+pub const MessageCount = sql.OneQuery(
+    \\SELECT count(*) AS total FROM messages WHERE session_id = :session_id;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        total: u64,
+    },
+);
+
 pub const LastAssistantUsage = sql.OptionalQuery(
     \\SELECT tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
     \\FROM messages
@@ -623,6 +654,8 @@ pub const Queries = struct {
     insert_message: InsertMessage,
     advance_message: AdvanceMessage,
     message_page: MessagePage,
+    message_tail: MessageTail,
+    message_count: MessageCount,
     last_assistant_usage: LastAssistantUsage,
     insert_session: InsertSession,
     session_exists: SessionExists,

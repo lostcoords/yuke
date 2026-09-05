@@ -123,52 +123,98 @@ pub const FactSet = std.EnumSet(proto.enums.BroadcastName);
 
 /// How one session changed since the last drain. A view redraws differently for each kind.
 pub const Change = struct {
-    /// The session is gone. This outranks every other kind.
-    removed: bool = false,
-    /// The outline changed, so the view must read it again.
-    structural: bool = false,
-    /// Only this message's text grew, so the view re-wraps one message.
-    delta_message: ?u64 = null,
+    /// The work this change leaves the transcript.
+    view: View = .quiet,
     /// Every fact this session saw since the last drain. A view ignores it; a plugin reads it.
     facts: FactSet = .initEmpty(),
 
-    /// Classify one event. A delta is the only cheap kind; everything else reloads the outline.
+    /// What one drain asks the transcript to do. The order of the fields is the merge order.
+    pub const View = union(enum) {
+        /// Nothing the transcript draws moved. The plugins still read the facts.
+        quiet,
+        /// Only this message moved. With a part, only that part moved, so the view re-wraps one part.
+        message: struct { id: proto.ids.MessageId, part: ?proto.ids.PartId },
+        /// The outline moved, so the view reads it again.
+        reload,
+        /// The session is gone. This outranks every other kind.
+        gone,
+
+        /// Rank the kinds so a merge keeps the stronger one.
+        fn rank(self: View) u8 {
+            return switch (self) {
+                .quiet => 0,
+                .message => 1,
+                .reload => 2,
+                .gone => 3,
+            };
+        }
+    };
+
+    /// Classify one event by the projection it moves, then record it as a fact.
     fn of(note: proto.rpc.Notification) Change {
-        var change: Change = switch (note.method) {
-            .@"session.removed" => .{ .removed = true },
-            .@"message.part_delta" => .{ .delta_message = note.params.message_part_delta_data.message_id },
-            else => .{ .structural = true },
-        };
+        var change: Change = .{ .view = viewOf(note) };
         change.facts.insert(note.method);
         return change;
+    }
+
+    /// Reload only when the message set or the draft state changes.
+    fn viewOf(note: proto.rpc.Notification) View {
+        return switch (note.method) {
+            .@"session.removed" => .gone,
+            // These move the parts of one message and leave the outline alone.
+            .@"message.part_added",
+            .@"message.part_delta",
+            .@"message.part_finalized",
+            .@"tool.state_changed",
+            .@"tool.output_delta",
+            => .{ .message = .{ .id = messageOf(note).?, .part = partOf(note) } }, // the engine builds these, so each one names its message
+            // These open or close the draft, or move the committed set.
+            .@"message.started",
+            .@"message.discarded",
+            .@"message.committed",
+            .@"transcript.truncated",
+            => .reload,
+            // The rest carries no transcript state. The activity, the queue, and the run draw elsewhere.
+            .@"session.summary_changed",
+            .@"session.activity_changed",
+            .@"catalog.changed",
+            .@"auth.login_finished",
+            .@"auth.changed",
+            .notice,
+            .@"interaction.requested",
+            .@"run.started",
+            .@"run.done",
+            .@"config.changed",
+            .@"input.queued",
+            .@"input.canceled",
+            => .quiet,
+        };
     }
 
     /// Fold a later event into an earlier one. The stronger kind wins, so no update is lost.
     fn merge(self: *Change, other: Change) void {
         // A fact never loses to a stronger kind, because the two answer different questions.
         self.facts.setUnion(other.facts);
-        if (other.removed) {
-            const facts = self.facts;
-            self.* = .{ .removed = true, .facts = facts };
-            return;
-        }
-        if (self.removed) return;
-        if (other.structural) {
-            self.structural = true;
-            self.delta_message = null;
-            return;
-        }
-        if (self.structural) return;
-        // Two deltas on different messages are not one re-wrap, so fall back to a reload.
-        if (self.delta_message) |held| {
-            if (other.delta_message != held) self.structural = true;
-        } else self.delta_message = other.delta_message;
+        self.view = strongest(self.view, other.view);
     }
 
+    /// Combine two kinds. Two parts widen to their message, and two messages widen to a reload.
+    fn strongest(a: View, b: View) View {
+        if (a == .message and b == .message) {
+            if (a.message.id != b.message.id) return .reload;
+            if (a.message.part != b.message.part) return .{ .message = .{ .id = a.message.id, .part = null } };
+        }
+        return if (b.rank() > a.rank()) b else a;
+    }
+
+    /// Name the kind for the sink. A view branches on this string; a plugin reads the facts instead.
     fn kind(self: Change) [:0]const u8 {
-        if (self.removed) return "gone";
-        if (self.structural or self.delta_message == null) return "reload";
-        return "active";
+        return switch (self.view) {
+            .quiet => "quiet",
+            .message => "active",
+            .reload => "reload",
+            .gone => "gone",
+        };
     }
 };
 
@@ -176,6 +222,21 @@ pub const Change = struct {
 fn sessionOf(note: proto.rpc.Notification) ?SessionId {
     return switch (note.params) {
         inline else => |payload| if (@hasField(@TypeOf(payload), "session_id")) payload.session_id else null,
+    };
+}
+
+/// Read the message an event names. A commit carries the whole message instead, so it names none.
+fn messageOf(note: proto.rpc.Notification) ?proto.ids.MessageId {
+    return switch (note.params) {
+        inline else => |payload| if (@hasField(@TypeOf(payload), "message_id")) payload.message_id else null,
+    };
+}
+
+/// Read the part an event names. An added part carries itself, and the rest carry an id.
+fn partOf(note: proto.rpc.Notification) ?proto.ids.PartId {
+    return switch (note.params) {
+        .message_part_added_data => |payload| payload.part.id(),
+        inline else => |payload| if (@hasField(@TypeOf(payload), "part_id")) payload.part_id else null,
     };
 }
 
@@ -521,21 +582,28 @@ fn writeFloor(w: *std.Io.Writer, parts: *Parts, text: []const u8) !bool {
     return end < text.len;
 }
 
-fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: u64) !void {
+/// Write the parts of one message as a JSON array. With `only`, write just that part, so a delta reads one part.
+fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: u64, only: ?u64) !void {
     var parts: Parts = .{};
+    var written: usize = 0;
     try w.writeByte('[');
     if (s.draft) |*d| if (d.message_id == mid) {
-        for (d.parts.items, 0..) |*p, i| {
-            if (i > 0) try w.writeByte(',');
-            try writePart(w, &parts, domain_draft.partToWire(p));
+        for (d.parts.items) |*p| {
+            const wire = domain_draft.partToWire(p);
+            if (only != null and wire.id() != only.?) continue;
+            if (written > 0) try w.writeByte(',');
+            written += 1;
+            try writePart(w, &parts, wire);
         }
         return w.writeByte(']');
     };
     for (s.transcript.list.items) |entry| {
         if (entry.message.id() != mid) continue;
         switch (entry.message) {
-            .assistant => |a| for (a.content, 0..) |p, i| {
-                if (i > 0) try w.writeByte(',');
+            .assistant => |a| for (a.content) |p| {
+                if (only != null and p.id() != only.?) continue;
+                if (written > 0) try w.writeByte(',');
+                written += 1;
                 try writePart(w, &parts, p);
             },
             else => {},
@@ -779,6 +847,31 @@ fn jsFactNames(ctx: Context, _: Value, _: []const Value) Value {
     return names;
 }
 
+/// Return the QuickJS allocation counters, separate from the process footprint.
+fn jsMemoryUsage(ctx: Context, _: Value, _: []const Value) Value {
+    const usage = Host.fromContext(ctx).runtime.computeMemoryUsage();
+    const out = ctx.newObject();
+    if (ctx.isException(out)) return out;
+    const fields = [_]struct { [:0]const u8, i64 }{
+        .{ "heap", usage.malloc_size },
+        .{ "limit", usage.malloc_limit },
+        .{ "strings", usage.str_size },
+        .{ "stringCount", usage.str_count },
+        .{ "objects", usage.obj_size },
+        .{ "objectCount", usage.obj_count },
+        .{ "properties", usage.prop_size },
+        .{ "propertyCount", usage.prop_count },
+        .{ "shapes", usage.shape_size },
+        .{ "arrayCount", usage.array_count },
+        .{ "fastArrayElements", usage.fast_array_elements },
+    };
+    for (fields) |field| ctx.setPropertyStr(out, field[0], ctx.newFloat64(@floatFromInt(field[1]))) catch {
+        ctx.freeValue(out);
+        return ctx.throw(ctx.getException());
+    };
+    return out;
+}
+
 fn jsSetEventSink(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
     ctx.freeValue(engine.sink);
@@ -822,7 +915,19 @@ fn jsSessionParts(ctx: Context, _: Value, args: []const Value) Value {
     const mid = u64Arg(ctx, args, 1) orelse return ctx.newString("[]");
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer aw.deinit();
-    writeMessageParts(&aw.writer, rt, mid) catch return ctx.newString("[]");
+    writeMessageParts(&aw.writer, rt, mid, null) catch return ctx.newString("[]");
+    return ctx.newString(aw.written());
+}
+
+/// One part of a message as a one-element JSON array, or `[]` when the message or the part is gone.
+fn jsSessionPart(ctx: Context, _: Value, args: []const Value) Value {
+    const engine = Host.fromContext(ctx).engine;
+    const rt = runtimeArg(engine, ctx, args) orelse return ctx.newString("[]");
+    const mid = u64Arg(ctx, args, 1) orelse return ctx.newString("[]");
+    const pid = u64Arg(ctx, args, 2) orelse return ctx.newString("[]");
+    var aw: std.Io.Writer.Allocating = .init(engine.gpa);
+    defer aw.deinit();
+    writeMessageParts(&aw.writer, rt, mid, pid) catch return ctx.newString("[]");
     return ctx.newString(aw.written());
 }
 
@@ -991,9 +1096,10 @@ fn emitSession(engine: *Engine, ctx: Context, sid: SessionId, change: Change) vo
     ctx.setPropertyStr(ev, "session", ctx.newString(hex[0..])) catch return;
     ctx.setPropertyStr(ev, "kind", ctx.newString(change.kind())) catch return;
     setFacts(ctx, ev, change.facts) catch return;
-    if (change.delta_message) |mid| {
-        if (!change.structural and !change.removed)
-            ctx.setPropertyStr(ev, "id", ctx.newFloat64(@floatFromInt(mid))) catch return;
+    if (change.view == .message) {
+        ctx.setPropertyStr(ev, "id", ctx.newFloat64(@floatFromInt(change.view.message.id))) catch return;
+        if (change.view.message.part) |part|
+            ctx.setPropertyStr(ev, "part", ctx.newFloat64(@floatFromInt(part))) catch return;
     }
     if (call(engine, ctx, ev)) engine.faulted = true;
 }
@@ -1029,11 +1135,13 @@ fn bindAll(ctx: Context, native: Value) c_int {
     bind(ctx, native, "setDefaultSystemPrompt", 1, jsSetDefaultSystemPrompt) catch return -1;
     bind(ctx, native, "setEventSink", 1, jsSetEventSink) catch return -1;
     bind(ctx, native, "factNames", 0, jsFactNames) catch return -1;
+    bind(ctx, native, "memoryUsage", 0, jsMemoryUsage) catch return -1;
     bind(ctx, native, "request", 2, jsRequest) catch return -1;
     bind(ctx, native, "sessionOpen", 1, jsSessionOpen) catch return -1;
     bind(ctx, native, "sessionClose", 1, jsSessionClose) catch return -1;
     bind(ctx, native, "sessionOutline", 1, jsSessionOutline) catch return -1;
     bind(ctx, native, "sessionParts", 2, jsSessionParts) catch return -1;
+    bind(ctx, native, "sessionPart", 3, jsSessionPart) catch return -1;
     bind(ctx, native, "sessionText", 4, jsSessionText) catch return -1;
     bind(ctx, native, "partText", 6, jsPartText) catch return -1;
     return 0;
@@ -1112,12 +1220,69 @@ test "a field pages whole characters and advances on the smallest page" {
 test "a merge keeps every fact, even when a stronger kind resets the change" {
     var change: Change = .of(.{ .method = .@"run.started", .params = undefined });
     try testing.expect(change.facts.contains(.@"run.started"));
+    try testing.expectEqual(Change.View.quiet, change.view); // a run carries no transcript state
 
     // A removal resets the kind, and a plugin still needs to know the run started first.
-    change.merge(.{ .removed = true, .facts = FactSet.initOne(.@"session.removed") });
-    try testing.expect(change.removed);
+    change.merge(.{ .view = .gone, .facts = FactSet.initOne(.@"session.removed") });
+    try testing.expectEqual(Change.View.gone, change.view);
     try testing.expect(change.facts.contains(.@"run.started"));
     try testing.expect(change.facts.contains(.@"session.removed"));
+}
+
+test "a part event names its own message and never reloads the outline" {
+    const sid = SessionId.bytes([_]u8{0} ** 16);
+    const delta: Change = .of(.{ .method = .@"tool.output_delta", .params = .{ .tool_output_delta_data = .{
+        .session_id = sid,
+        .message_id = 7,
+        .part_id = 1,
+        .offset = 0,
+        .delta = "out",
+    } } });
+    try testing.expectEqual(@as(proto.ids.MessageId, 7), delta.view.message.id);
+    try testing.expectEqual(@as(?proto.ids.PartId, 1), delta.view.message.part);
+    try testing.expectEqualStrings("active", delta.kind());
+
+    const state: Change = .of(.{ .method = .@"tool.state_changed", .params = .{ .tool_state_changed_data = .{
+        .session_id = sid,
+        .message_id = 7,
+        .part_id = 1,
+        .state = .{ .running = .{ .started_at_ms = 0 } },
+    } } });
+    try testing.expectEqual(@as(proto.ids.MessageId, 7), state.view.message.id);
+    try testing.expectEqual(@as(?proto.ids.PartId, 1), state.view.message.part);
+}
+
+test "the activity never reloads the transcript, and a part event outranks it" {
+    const sid = SessionId.bytes([_]u8{0} ** 16);
+    var change: Change = .of(.{ .method = .@"session.activity_changed", .params = .{ .session_activity_changed_data = .{
+        .session_id = sid,
+        .activity = .{ .state = .{ .idle = .{} }, .config = null, .queued = 0, .context_usage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 }, .pending_compaction = null },
+    } } });
+    try testing.expectEqualStrings("quiet", change.kind());
+
+    // A quiet event must not hold a later re-wrap back, and must not escalate one either.
+    change.merge(.of(.{ .method = .@"message.part_delta", .params = .{ .message_part_delta_data = .{
+        .session_id = sid,
+        .message_id = 3,
+        .part_id = 0,
+        .offset = 0,
+        .delta = "hi",
+    } } }));
+    try testing.expectEqual(@as(proto.ids.MessageId, 3), change.view.message.id);
+    try testing.expectEqual(@as(?proto.ids.PartId, 0), change.view.message.part);
+}
+
+test "two parts widen to their message, and two messages widen to a reload" {
+    var change: Change = .{ .view = .{ .message = .{ .id = 1, .part = 4 } } };
+    change.merge(.{ .view = .{ .message = .{ .id = 1, .part = 4 } } });
+    try testing.expectEqual(@as(?proto.ids.PartId, 4), change.view.message.part); // the same part stays one re-wrap
+
+    change.merge(.{ .view = .{ .message = .{ .id = 1, .part = 5 } } });
+    try testing.expectEqual(@as(proto.ids.MessageId, 1), change.view.message.id);
+    try testing.expectEqual(@as(?proto.ids.PartId, null), change.view.message.part);
+
+    change.merge(.{ .view = .{ .message = .{ .id = 2, .part = null } } });
+    try testing.expectEqualStrings("reload", change.kind());
 }
 
 test "a message pages whole characters when the window splits one" {
@@ -1139,7 +1304,8 @@ test "a message pages whole characters when the window splits one" {
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .messages = &messages, .has_more = false });
+    for (messages) |m| try sess.transcript.append(m);
+    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
 
     var rebuilt: std.ArrayList(u8) = .empty;
     defer rebuilt.deinit(gpa);
@@ -1263,11 +1429,12 @@ test "a huge tool result projects into a bounded parts response" {
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .messages = &messages, .has_more = false });
+    for (messages) |m| try sess.transcript.append(m);
+    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
-    try writeMessageParts(&aw.writer, &sess, 1);
+    try writeMessageParts(&aw.writer, &sess, 1, null);
 
     // Three megabytes of source must not become a three-megabyte projection. One page per string bounds it.
     try testing.expect(aw.written().len < 4 * max_page_bytes);
@@ -1309,11 +1476,12 @@ test "a diff of many files stays inside the response budget" {
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .messages = &messages, .has_more = false });
+    for (messages) |m| try sess.transcript.append(m);
+    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
-    try writeMessageParts(&aw.writer, &sess, 1);
+    try writeMessageParts(&aw.writer, &sess, 1, null);
 
     try testing.expect(aw.written().len < max_response_bytes + max_page_bytes);
     // The diff says how many lines the whole patch holds, so a row can mark what it hides.
@@ -1350,11 +1518,12 @@ test "many huge parts stay inside the response budget and none is dropped" {
         .content = content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .messages = &messages, .has_more = false });
+    for (messages) |m| try sess.transcript.append(m);
+    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
-    try writeMessageParts(&aw.writer, &sess, 1);
+    try writeMessageParts(&aw.writer, &sess, 1, null);
 
     // 128 megabytes of source project into the budget and its own structure, never into a copy.
     try testing.expect(aw.written().len < max_response_bytes + max_page_bytes);
@@ -1391,7 +1560,8 @@ test "every cut address resolves to its own field, never a neighbour" {
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .messages = &messages, .has_more = false });
+    for (messages) |m| try sess.transcript.append(m);
+    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
 
     // Each address answers its own field. Before the address existed, every one of these gave the output.
     try testing.expectEqualStrings("{\"command\":\"zig build\"}", partTextOf(&sess, 1, 0, "arguments").?);
@@ -1429,11 +1599,12 @@ test "a text part over the inline bound reports more and pages back whole" {
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .messages = &messages, .has_more = false });
+    for (messages) |m| try sess.transcript.append(m);
+    sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 1, .has_more = false });
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
-    try writeMessageParts(&aw.writer, &sess, 1);
+    try writeMessageParts(&aw.writer, &sess, 1, null);
 
     // The view learns the text is cut and how large it really is, which is what asks it to page.
     // The cut names the field, the whole size, and where a reader resumes, so the prefix is not re-fetched.
@@ -1465,8 +1636,8 @@ test "a throwing event sink faults once and leaves no pending exception" {
     , "sink.js");
 
     // Two dirty sessions: the drain must report the fault and still deliver both events.
-    host.engine.markDirty(SessionId.bytes([_]u8{1} ** 16), .{ .structural = true });
-    host.engine.markDirty(SessionId.bytes([_]u8{2} ** 16), .{ .structural = true });
+    host.engine.markDirty(SessionId.bytes([_]u8{1} ** 16), .{ .view = .reload });
+    host.engine.markDirty(SessionId.bytes([_]u8{2} ** 16), .{ .view = .reload });
     try testing.expect(drain(host.engine, host.ctx));
     try testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.seen"));
 
@@ -1479,6 +1650,6 @@ test "a throwing event sink faults once and leaves no pending exception" {
         \\import { native } from "yuke:engine-native";
         \\native.setEventSink(() => {});
     , "ok.js");
-    host.engine.markDirty(SessionId.bytes([_]u8{3} ** 16), .{ .structural = true });
+    host.engine.markDirty(SessionId.bytes([_]u8{3} ** 16), .{ .view = .reload });
     try testing.expect(!drain(host.engine, host.ctx));
 }

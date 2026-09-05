@@ -192,29 +192,43 @@ fn drainChannel(gpa: std.mem.Allocator, ch: *Channel) void {
     } else |_| {}
 }
 
+/// The shortest gap between two engine frames. Deltas merge in the engine, so a later drain loses nothing.
+const engine_frame: zio.Duration = .fromMilliseconds(33);
+
 /// The tick task enqueues plain messages. It never calls QuickJS.
 fn tickTask(host: *Host, ch: *Channel) !void {
     const wake = host.owner_wake.?;
-    while (true) {
-        if (!host.paint.needs_tick and !host.hasPending()) {
+    var last: zio.Timestamp = .zero;
+    while (!host.paint.quit_requested) {
+        const due = tickDue(host, last) orelse {
             wake.wait() catch return;
-            // An engine event woke this task, so deliver one tick and let the owner drain it.
-            if (host.hasPending() and !host.paint.quit_requested) ch.send(.tick) catch return;
-        } else if (!host.paint.needs_tick) {
-            if (!host.paint.quit_requested) ch.send(.tick) catch return;
-        } else {
-            const period = host.paint.tick_period_ms;
-            wake.timedWait(.fromMilliseconds(period)) catch |err| switch (err) {
-                error.Timeout => {
-                    if (host.paint.needs_tick and !host.paint.quit_requested) {
-                        ch.send(.tick) catch return;
-                    }
-                },
+            wake.reset();
+            continue;
+        };
+        const now = zio.now();
+        if (due.value > now.value) {
+            // A wake before the deadline re-reads it, because a pending engine event may owe an earlier tick.
+            wake.timedWait(.{ .deadline = due }) catch |err| switch (err) {
+                error.Timeout => {},
                 error.Canceled => return,
             };
+            wake.reset();
+            continue;
         }
-        wake.reset();
+        last = now;
+        ch.send(.tick) catch return;
     }
+}
+
+/// The next moment a tick is owed: the animation period or the engine frame gap, whichever is first.
+fn tickDue(host: *const Host, last: zio.Timestamp) ?zio.Timestamp {
+    var due: ?zio.Timestamp = null;
+    if (host.paint.needs_tick) due = last.addDuration(.fromMilliseconds(host.paint.tick_period_ms));
+    if (host.hasPending()) {
+        const engine = last.addDuration(engine_frame);
+        due = if (due) |d| (if (engine.value < d.value) engine else d) else engine;
+    }
+    return due;
 }
 
 /// Absorb a `JavaScriptFault`, paint the fault row, and keep the loop.
@@ -384,6 +398,40 @@ test "tickTask enqueues a tick while armed" {
     try std.testing.expect(msg == .tick);
 
     host.paint.needs_tick = false;
+    host.paint.quit_requested = true;
+    wake.set();
+}
+
+test "tickTask paces engine wakes to the frame gap" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+
+    var wake: zio.ResetEvent = .init;
+    host.owner_wake = &wake;
+    // No owner drains here, so the engine stays pending and the task must not flood the channel.
+    host.engine.index_dirty = true;
+
+    var slot: [1]Msg = undefined;
+    var ch = Channel.init(&slot);
+    var group: zio.Group = .init;
+    defer group.cancel();
+    try group.spawn(tickTask, .{ host, &ch });
+
+    const start = zio.now();
+    var ticks: u32 = 0;
+    while (start.untilNow(.monotonic).toMilliseconds() < 120) : (ticks += 1) {
+        const msg = try ch.receive();
+        try std.testing.expect(msg == .tick);
+    }
+    // One tick per frame gap gives about four in this window, never dozens.
+    try std.testing.expect(ticks >= 2 and ticks <= 8);
+
     host.paint.quit_requested = true;
     wake.set();
 }

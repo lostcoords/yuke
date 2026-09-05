@@ -64,6 +64,27 @@ WHERE m.session_id = :session_id AND m.message_id < :cursor_message_id
 ORDER BY m.message_id DESC
 LIMIT :limit;
 
+-- name: MessageTail :many
+-- Return the newest `limit` committed messages oldest-first, so a load appends them in order.
+-- session_id: [16]u8!
+-- limit: i64!
+-- message_id: u64!
+-- payload: []const u8!
+SELECT t.message_id AS message_id, e.payload AS payload
+FROM (
+    SELECT session_id, message_id, seq FROM messages
+    WHERE session_id = :session_id
+    ORDER BY message_id DESC
+    LIMIT :limit
+) t JOIN events e ON e.session_id = t.session_id AND e.seq = t.seq
+ORDER BY t.message_id ASC;
+
+-- name: MessageCount :one
+-- Count the committed messages of one session, so a load knows whether older ones exist.
+-- session_id: [16]u8!
+-- total: u64!
+SELECT count(*) AS total FROM messages WHERE session_id = :session_id;
+
 -- name: LastAssistantUsage :optional
 -- Return the newest committed assistant usage for the live context gauge, or no row.
 -- The session_context view serves the same value for a page.

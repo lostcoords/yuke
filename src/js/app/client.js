@@ -58,6 +58,12 @@ function sessionClose(sessionId) {
 }
 
 
+// What the JavaScript runtime holds right now. The process footprint also carries the Zig side.
+/** @returns {import("yuke:engine-native").MemoryUsage} */
+function memoryUsage() {
+  return native.memoryUsage();
+}
+
 // The transcript outline (message ids, roles, and the draft), or null when the session is not open.
 /** @param {string} sessionId @returns {import("yuke:engine-native").SessionOutline | null} */
 function sessionOutline(sessionId) {
@@ -84,24 +90,34 @@ function sessionText(sessionId, messageId, max = 0) {
 /** @param {string} sessionId @param {number} messageId @returns {Wire.AssistantPart[]} */
 function sessionParts(sessionId, messageId) {
   const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionParts(sessionId, messageId)));
-  return parts.map((p) => {
-    if (!p || !p.cut) return p;
-    // The part already carries the prefix, so a tail resumes at `next` and nothing is read twice.
-    if (p.type === "text" || p.type === "reasoning") {
-      const cut = p.cut.find((c) => c.field === "text" && c.next != null);
-      if (!cut) return p;
-      const tail = partTextFrom(sessionId, messageId, p.id, "text", /** @type {number} */ (cut.next));
-      return { ...p, text: p.text + tail, cut: p.cut.filter((c) => c !== cut) };
-    }
-    // A row parses the arguments for its header, so a cut one must be whole. The body views stay paged.
-    if (p.type === "tool") {
-      const cut = p.cut.find((c) => c.field === "arguments" && c.next != null);
-      if (!cut) return p;
-      const tail = partTextFrom(sessionId, messageId, p.id, "arguments", /** @type {number} */ (cut.next));
-      return { ...p, arguments: p.arguments + tail, cut: p.cut.filter((c) => c !== cut) };
-    }
-    return p;
-  });
+  return parts.map((p) => wholePart(sessionId, messageId, p));
+}
+
+// One part of a message, or null when it is gone. A delta re-reads one part, never the whole message.
+/** @param {string} sessionId @param {number} messageId @param {number} partId @returns {Wire.AssistantPart | null} */
+function sessionPart(sessionId, messageId, partId) {
+  const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId)));
+  return parts.length ? wholePart(sessionId, messageId, /** @type {ViewPart} */ (parts[0])) : null;
+}
+
+/** @param {string} sessionId @param {number} messageId @param {ViewPart} p @returns {ViewPart} */
+function wholePart(sessionId, messageId, p) {
+  if (!p || !p.cut) return p;
+  // The part already carries the prefix, so a tail resumes at `next` and nothing is read twice.
+  if (p.type === "text" || p.type === "reasoning") {
+    const cut = p.cut.find((c) => c.field === "text" && c.next != null);
+    if (!cut) return p;
+    const tail = partTextFrom(sessionId, messageId, p.id, "text", /** @type {number} */ (cut.next));
+    return { ...p, text: p.text + tail, cut: p.cut.filter((c) => c !== cut) };
+  }
+  // A row parses the arguments for its header, so a cut one must be whole. The body views stay paged.
+  if (p.type === "tool") {
+    const cut = p.cut.find((c) => c.field === "arguments" && c.next != null);
+    if (!cut) return p;
+    const tail = partTextFrom(sessionId, messageId, p.id, "arguments", /** @type {number} */ (cut.next));
+    return { ...p, arguments: p.arguments + tail, cut: p.cut.filter((c) => c !== cut) };
+  }
+  return p;
 }
 
 // The rest of one field from `offset`. Each page echoes the next byte offset back, so no caller counts bytes of its own.
@@ -162,10 +178,12 @@ export const client = {
   sessionList,
   sessionOpen,
   sessionClose,
+  memoryUsage,
   sessionOutline,
   sessionText,
   sessionTextPage,
   sessionParts,
+  sessionPart,
   partTextPage,
   sessionSendInput,
   sessionCancelRun,

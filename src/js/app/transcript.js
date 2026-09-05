@@ -11,10 +11,14 @@ import { Composer } from "yuke:ui";
 /** @typedef {{ a: { id: number, off: number, was: string }, b: { id: number, off: number, was: string } }} SelectionAnchors */
 /** @typedef {{ start: Position, end: Position, si: number, ei: number }} SelectionRange */
 /** @typedef {{ w: number, rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[] | null }} RowCache */
+/** @typedef {{ w: number, expanded: boolean, live: boolean, base: number, rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[], doc: Document | null }} PartCache */
+/** @typedef {{ list: Wire.AssistantPart[] | null, rows: Map<string, PartCache> }} PartState */
+/** @typedef {(id: number) => readonly Wire.AssistantPart[]} PartsOf */
+/** @typedef {(id: number, partId: number) => Wire.AssistantPart | null} PartOf */
 /** @typedef {{ id: number, lang: string, text: string }} CodeBlock */
-/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: ((id: number) => readonly Wire.AssistantPart[]) | null | undefined, onSelect?: ((text: string) => void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} TranscriptOptions */
+/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, onSelect?: ((text: string) => void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} TranscriptOptions */
 /** @typedef {"composer" | "transcript"} ChatRegion */
-/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: ((id: number) => readonly Wire.AssistantPart[]) | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} ChatViewOptions */
+/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} ChatViewOptions */
 /** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
 /** @typedef {string | number} ItemKey */
 /** @typedef {{ type: "mouse", col: number, row: number, button: string, event: string, mods: number, count: number }} MouseEvent */
@@ -27,6 +31,9 @@ const TX_GUTTER = 2;
 
 // Keep a long tool body inside the pager. The replica still holds the full output.
 const TOOL_BODY_CAP = 40;
+
+// Rendered messages beyond this count leave the cache oldest first; the viewport and live anchors never leave.
+const CACHE_MESSAGES = 16;
 
 /** @param {unknown} a @param {unknown} b @returns {boolean} */
 function sameId(a, b) {
@@ -342,6 +349,15 @@ function shiftSrc(segments, base) {
   return segments.map((seg) => (seg.src == null ? seg : { ...seg, src: seg.src + base, srcEnd: /** @type {number} */ (seg.srcEnd) + base }));
 }
 
+// Move a rendered part to a new source base. The rows are shared with the message cache, so they are replaced, never edited.
+/** @param {PartCache} c @param {number} base @returns {void} */
+function rebasePart(c, base) {
+  const delta = base - c.base;
+  c.rows = c.rows.map((r) => (r.segments ? { ...r, segments: shiftSrc(r.segments, delta) } : r));
+  c.blocks = c.blocks.map((b) => ({ kind: b.kind, at: b.at + delta, end: b.end + delta }));
+  c.base = base;
+}
+
 /** @param {string} src @param {number} width @param {string} group @returns {TranscriptRow[]} */
 function wrapBody(src, width, group) {
   src = src || "";
@@ -591,12 +607,13 @@ function errorRows(id, error, width, srcBase) {
   return { rows, source: label };
 }
 
-// A virtualized transcript of {id, type} descriptors plus a wrapped-row cache; only the streaming draft re-renders.
+// Exact row counts outlive a bounded cache of rendered messages.
 export class Transcript {
   /** @param {TranscriptOptions} [opts] */
   constructor(opts = {}) {
     this.textOf = opts.textOf || (() => "");
     this.partsOf = opts.partsOf || null;
+    this.partOf = opts.partOf || null;
     this.pager = new Pager();
     this.pager.setSource(this);
     /** @type {MessageDescriptor[]} */
@@ -604,14 +621,19 @@ export class Transcript {
     /** @type {MessageDescriptor | null} */
     this._active = null; // the streaming draft descriptor, or null
     this._width = -1;
-    /** @type {Map<number, RowCache>} */
-    this._rows = new Map(); // id -> { w, rows, source?, blocks? }
-    /** @type {Map<number, string>} */
-    this._sources = new Map(); // id -> display source, survives row-cache drops
-    /** @type {Map<number, Document>} */
-    this._docs = new Map(); // id -> md Document, for the textOf path
+    /** @type {Map<string, number>} */
+    this._positions = new Map();
+    /** @type {Map<string, number>} */
+    this._counts = new Map();
+    this._prefix = [0];
+    /** @type {Set<string>} */
+    this._viewport = new Set();
+    /** @type {Map<string, RowCache>} */
+    this._rows = new Map(); // id -> { w, rows, source, blocks }, oldest render first
     /** @type {Map<string, Document>} */
-    this._partDocs = new Map(); // id:partId -> md Document, for text parts
+    this._docs = new Map(); // id -> md Document, for the textOf path
+    /** @type {Map<string, PartState>} */
+    this._parts = new Map(); // id -> the part list and one render per part, for the partsOf path
     /** @type {Map<string, boolean>} */
     this._expand = new Map(); // id:partId -> user override
     // A selection holds two `{ id, row, col }` positions, where `row` counts rendered rows and `col` indexes the row text.
@@ -632,6 +654,7 @@ export class Transcript {
     this._dragging = false;
     this._didDrag = false;
     this._press = null;
+    this._trimCaches();
   }
 
   // Set both ends. `{ inclusive: true }` grows the later end by one grapheme.
@@ -653,6 +676,9 @@ export class Transcript {
       else a = grow(a);
     }
     this.selection = { anchor: a, cursor: b };
+    this._rowsFor(a.id);
+    this._rowsFor(b.id);
+    this._trimCaches();
   }
 
   /** @param {Position} a @param {Position} b @returns {number} */
@@ -668,17 +694,22 @@ export class Transcript {
     this.clearSelection();
   }
 
-  // Replace the outline and drop the caches, because a re-commit can change content under a stable id.
+  // The engine never changes a committed message under its id, so its render survives; the draft and the rest go.
   /** @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void} */
   setOutline(messages, active) {
+    const previous = new Map(this._messages.map(m => [String(m.id), m]));
+    const keep = new Set();
+    for (const m of messages || []) {
+      const key = String(m.id);
+      const old = previous.get(key);
+      if (old && !sameId(m.id, this._active?.id) && old.type === m.type) keep.add(key);
+    }
+    for (const key of this._rows.keys()) if (!keep.has(key)) this._evict(key);
+    for (const key of this._counts.keys()) if (!keep.has(key)) this._counts.delete(key);
     this._messages = messages || [];
     this._active = active || null;
-    this._rows.clear();
-    this._docs.clear();
-    this._sources.clear();
-    const live = this._liveIds();
-    this._pruneKeyed(this._partDocs, live);
-    this._pruneKeyed(this._expand, live);
+    this._resetOrder();
+    this._pruneKeyed(this._expand, this._liveIds());
     this.clearSelection();
   }
 
@@ -699,41 +730,134 @@ export class Transcript {
     }
   }
 
-  /** @param {number} id @returns {void} */
-  _dropRows(id) {
-    this._rows.delete(id);
-    /** @type {Map<number | string, RowCache>} */ (this._rows).delete(String(id));
+  /** @returns {void} */
+  _resetOrder() {
+    this._positions.clear();
+    for (let i = 0; ; i++) {
+      const m = this._at(i);
+      if (!m) break;
+      const key = String(m.id);
+      if (!this._positions.has(key)) this._positions.set(key, i);
+    }
+    this._prefix = [0];
   }
 
-  // A streaming delta on draft `id`: adopt it if new, and drop its cached rows so it re-renders.
+  // Eviction discards render data, but exact counts and fold overrides remain valid.
+  /** @param {string} key @returns {void} */
+  _evict(key) {
+    this._rows.delete(key);
+    this._docs.delete(key);
+    this._parts.delete(key);
+  }
+
+  // A pinned message is on the screen or under a live position, so its rows must stay exact.
+  /** @param {string} key @returns {boolean} */
+  _pinned(key) {
+    return this._viewport.has(key) || sameId(key, this._active?.id) || sameId(key, this._press?.id) ||
+      sameId(key, this.selection?.anchor.id) || sameId(key, this.selection?.cursor.id);
+  }
+
+  /** @returns {void} */
+  _trimCaches() {
+    for (const key of this._rows.keys()) {
+      if (this._rows.size <= CACHE_MESSAGES) break;
+      if (!this._pinned(key)) this._evict(key);
+    }
+  }
+
   /** @param {number} id @returns {void} */
-  setActive(id) {
+  _dropRows(id) {
+    const key = String(id);
+    const c = this._rows.get(key);
+    if (c) c.w = -1;
+    this._counts.delete(key);
+    const i = this._indexOf(id);
+    if (i >= 0) this._prefix.length = Math.min(this._prefix.length, i + 1);
+  }
+
+  // Each missing count costs one temporary message; later reads use only the numeric index.
+  /** @returns {void} */
+  _indexRows() {
+    for (let i = this._prefix.length - 1; ; i++) {
+      const m = this._at(i);
+      if (!m) break;
+      const key = String(m.id);
+      let count = this._counts.get(key);
+      if (count == null) count = this._rowsOf(m, this._width).length;
+      this._prefix.push(this._offset(i) + count);
+    }
+  }
+
+  /** @param {number} i @returns {number} */
+  _offset(i) {
+    const offset = this._prefix[i];
+    if (offset == null) throw new Error("invalid transcript row index");
+    return offset;
+  }
+
+  /** @param {number} row @returns {number} */
+  _messageAtRow(row) {
+    let lo = 0;
+    let hi = this._prefix.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this._offset(mid + 1) <= row) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  // A streaming delta on draft `id`: adopt it if new, then re-read one part `partId`, or every part without one.
+  /** @param {number} id @param {number} [partId] @returns {void} */
+  setActive(id, partId) {
     // The draft rewraps as tokens arrive, but an append never moves the source before it.
     const sel = this.selection;
     const touches = !!sel && (sameId(sel.anchor.id, id) || sameId(sel.cursor.id, id));
     const anchors = touches ? this._anchors() : null;
-    if (!this._active || !sameId(this._active.id, id)) this._active = { id, type: "assistant" };
+    if (!this._active || !sameId(this._active.id, id)) {
+      if (this._active) this._dropRows(this._active.id);
+      this._active = { id, type: "assistant" };
+      this._resetOrder();
+    }
+    this._refreshParts(id, partId);
     this._dropRows(id);
     if (touches) this._reanchor(anchors);
   }
 
-  // A width change rewraps every row, so the selection moves back to the same source instead of the same row index.
+  // Replace one part in the held list, or drop the list so the next render reads every part again.
+  /** @param {number} id @param {number} [partId] @returns {void} */
+  _refreshParts(id, partId) {
+    const state = this._parts.get(String(id));
+    if (!state || !state.list) return;
+    const at = partId == null ? -1 : state.list.findIndex((p) => p && sameId(p.id, partId));
+    const fresh = at < 0 || !this.partOf ? null : this._partOne(id, /** @type {number} */ (partId));
+    if (fresh) {
+      state.list[at] = fresh;
+      const c = state.rows.get(String(partId));
+      if (c) c.w = -1;
+      return;
+    }
+    state.list = null;
+    for (const c of state.rows.values()) c.w = -1;
+  }
+
+  // A width change rewraps every row but keeps every parse; the selection moves back to the same source offsets.
   /** @param {number} width @returns {void} */
   _invalidate(width) {
     if (width === this._width) return;
     const anchors = this._anchors();
     this._width = width;
-    this._rows.clear();
+    for (const c of this._rows.values()) c.w = -1;
+    this._counts.clear();
+    this._prefix = [0];
     if (this.selection) this._reanchor(anchors);
   }
 
   /** @param {number} id @returns {string} */
   _sourceOf(id) {
-    if (this._sources.has(id)) return /** @type {string} */ (this._sources.get(id));
-    const c = this._rows.get(id);
-    if (c && c.source != null) return c.source;
-    const doc = this._docs.get(id);
-    return doc ? doc.sourceText() : this.textOf(id);
+    this._rowsFor(id);
+    const c = this._rows.get(String(id));
+    return c ? c.source : this.textOf(id);
   }
 
   // The selection as source offsets. Return null when either end carries no source.
@@ -773,9 +897,9 @@ export class Transcript {
   /** @param {number} id @returns {{ kind: string, at: number, end: number }[]} */
   blocksOf(id) {
     this._rowsFor(id);
-    const c = this._rows.get(id);
+    const c = this._rows.get(String(id));
     if (c && c.blocks) return c.blocks;
-    const doc = this._docs.get(id);
+    const doc = this._docs.get(String(id));
     return doc ? doc.blocks() : [];
   }
 
@@ -791,7 +915,8 @@ export class Transcript {
   // The number of rendered rows in one message.
   /** @param {number} id @returns {number} */
   rowCountOf(id) {
-    return this._rowsFor(id).length;
+    if (this._width <= 0 || this._indexOf(id) < 0) return 0;
+    return this._counts.get(String(id)) ?? this._rowsFor(id).length;
   }
 
   // The rendered text of one row, or "" when the row is gone.
@@ -808,15 +933,11 @@ export class Transcript {
   // The row index of `pos` across every message, or -1 when the position is gone.
   /** @param {Position | null} pos @returns {number} */
   _globalRow(pos) {
-    if (!pos || this._width <= 0) return -1;
-    let base = 0;
-    for (let i = 0; ; i++) {
-      const m = this._at(i);
-      if (!m) return -1;
-      const rows = this._rowsOf(m, this._width);
-      if (sameId(m.id, pos.id)) return pos.row < rows.length ? base + pos.row : -1;
-      base += rows.length;
-    }
+    if (!pos || this._width <= 0 || pos.row < 0) return -1;
+    const i = this._indexOf(pos.id);
+    if (i < 0) return -1;
+    this._indexRows();
+    return pos.row < this._offset(i + 1) - this._offset(i) ? this._offset(i) + pos.row : -1;
   }
 
   // The source offset under a logical position, or -1 without one.
@@ -883,18 +1004,23 @@ export class Transcript {
 
   /** @param {MessageDescriptor} m @param {number} width @returns {TranscriptRow[]} */
   _rowsOf(m, width) {
-    const c = this._rows.get(m.id);
-    if (c && c.w === width) return c.rows;
+    const key = String(m.id);
+    const c = this._rows.get(key);
+    if (c && c.w === width) {
+      this._rows.delete(key);
+      this._rows.set(key, c);
+      return c.rows;
+    }
 
     let rows;
     let source = null;
     let blocks = null;
     if (m.type === "user") {
-      rows = userRows(m.id, this.textOf(m.id), width);
       source = this.textOf(m.id) || "";
+      rows = userRows(m.id, source, width);
     } else if (m.type === "compaction") {
-      rows = wrapPlain(m.id, this.textOf(m.id), width);
       source = this.textOf(m.id) || "";
+      rows = wrapPlain(m.id, source, width);
     } else if (this.partsOf) {
       const built = this._partRows(m, width);
       rows = built.rows;
@@ -902,7 +1028,7 @@ export class Transcript {
       blocks = built.blocks;
     } else {
       rows = this._assistantRows(m.id, width);
-      const doc = this._docs.get(m.id);
+      const doc = this._docs.get(String(m.id));
       source = doc ? doc.sourceText() : this.textOf(m.id) || "";
     }
     if (m.error) {
@@ -911,18 +1037,39 @@ export class Transcript {
       source = source && source.length ? source + "\n" + err.source : err.source;
       rows = rows.concat(err.rows);
     }
-    this._rows.set(m.id, { w: width, rows, source, blocks });
-    this._sources.set(m.id, source == null ? "" : source);
+    this._rows.delete(key);
+    this._rows.set(key, { w: width, rows, source: source == null ? "" : source, blocks });
+    this._counts.set(key, rows.length);
+    this._trimCaches();
     return rows;
   }
 
-  /** @param {number} id @returns {readonly Wire.AssistantPart[]} */
+  // The parts of one message, read once and held until a delta or an eviction drops them.
+  /** @param {number} id @returns {Wire.AssistantPart[]} */
   _partList(id) {
+    const key = String(id);
+    let state = this._parts.get(key);
+    if (!state) {
+      state = { list: null, rows: new Map() };
+      this._parts.set(key, state);
+    }
+    if (!state.list) {
+      let list = /** @type {readonly Wire.AssistantPart[]} */ ([]);
+      try {
+        const p = /** @type {PartsOf} */ (this.partsOf)(id);
+        if (Array.isArray(p)) list = p;
+      } catch (_) {}
+      state.list = list.filter((p) => p && (p.type === "text" || p.type === "tool" || p.type === "reasoning"));
+    }
+    return state.list;
+  }
+
+  /** @param {number} id @param {number} partId @returns {Wire.AssistantPart | null} */
+  _partOne(id, partId) {
     try {
-      const p = /** @type {(id: number) => readonly Wire.AssistantPart[]} */ (this.partsOf)(id);
-      return Array.isArray(p) ? p : [];
+      return /** @type {PartOf} */ (this.partOf)(id, partId);
     } catch (_) {
-      return [];
+      return null;
     }
   }
 
@@ -931,19 +1078,11 @@ export class Transcript {
     return String(id) + ":" + String(partId);
   }
 
-  /** @param {number} id @param {number} partId @returns {boolean} */
-  _reasoningLive(id, partId) {
-    if (!this._active || !sameId(this._active.id, id)) return false;
-    const parts = this._partList(id);
-    const part = parts.find((p) => p && sameId(p.id, partId));
-    return !!(part && part.type === "reasoning");
-  }
-
   /** @param {number} id @param {number} partId @param {Wire.AssistantPart | null | undefined} part @returns {boolean} */
   _isExpanded(id, partId, part) {
     const k = this._expandKey(id, partId);
     if (this._expand.has(k)) return /** @type {boolean} */ (this._expand.get(k));
-    if (part && part.type === "reasoning") return this._reasoningLive(id, partId);
+    if (part && part.type === "reasoning") return sameId(this._active?.id, id);
     const state = part == null ? part : part.type === "tool" ? part.state : undefined;
     return defaultExpanded(state);
   }
@@ -984,6 +1123,28 @@ export class Transcript {
     return null;
   }
 
+  /** @param {MessageDescriptor} m @returns {Position[]} */
+  _partStopsOf(m) {
+    const rows = this._rowsFor(m.id);
+    if (m.type === "user" || m.type === "compaction" || !this.partsOf) {
+      return rows.length ? [{ id: m.id, row: 0, col: 0 }] : [];
+    }
+    const out = [];
+    let lastPart = null;
+    for (let row = 0; row < rows.length; row++) {
+      const r = /** @type {TranscriptRow} */ (rows[row]);
+      const kind = r.kind;
+      if (kind === "tool-header" || kind === "reasoning-header" || kind === "error") {
+        out.push({ id: m.id, row, col: 0 });
+        lastPart = r.partId;
+      } else if (kind === "text" && r.partId !== lastPart) {
+        out.push({ id: m.id, row, col: 0 });
+        lastPart = r.partId;
+      }
+    }
+    return out;
+  }
+
   // Stops for J/K: user rows, text-part starts, tool and reasoning headers.
   /** @returns {Position[]} */
   partStops() {
@@ -991,112 +1152,84 @@ export class Transcript {
     for (let i = 0; ; i++) {
       const m = this._at(i);
       if (!m) break;
-      const rows = this._rowsFor(m.id);
-      if (m.type === "user" || m.type === "compaction" || !this.partsOf) {
-        if (rows.length) out.push({ id: m.id, row: 0, col: 0 });
-        continue;
-      }
-      let lastPart = null;
-      for (let row = 0; row < rows.length; row++) {
-        const r = /** @type {TranscriptRow} */ (rows[row]);
-        const kind = r.kind;
-        if (kind === "tool-header" || kind === "reasoning-header" || kind === "error") {
-          out.push({ id: m.id, row, col: 0 });
-          lastPart = r.partId;
-        } else if (kind === "text" && r.partId !== lastPart) {
-          out.push({ id: m.id, row, col: 0 });
-          lastPart = r.partId;
-        }
-      }
+      for (const stop of this._partStopsOf(m)) out.push(stop);
     }
     return out;
   }
 
-  // Next (dir > 0) or previous (dir < 0) part stop after `pos`.
+  // A part motion reads only the messages between the cursor and its next stop.
   /** @param {Position | null} pos @param {number} dir @returns {Position | null} */
   partStep(pos, dir) {
     if (!pos) return null;
-    const stops = this.partStops();
-    if (stops.length === 0) return null;
-    if (dir > 0) {
-      for (const s of stops) if (this._cmpPos(s, pos) > 0) return s;
-      return null;
-    }
-    for (let n = stops.length - 1; n >= 0; n--) {
-      const stop = /** @type {Position} */ (stops[n]);
-      if (this._cmpPos(stop, pos) < 0) return stop;
+    const step = dir > 0 ? 1 : -1;
+    for (let i = this._indexOf(pos.id); i >= 0; i += step) {
+      const m = this._at(i);
+      if (!m) break;
+      const stops = this._partStopsOf(m);
+      for (let n = step > 0 ? 0 : stops.length - 1; n >= 0 && n < stops.length; n += step) {
+        const stop = /** @type {Position} */ (stops[n]);
+        if (this._cmpPos(stop, pos) * step > 0) return stop;
+      }
     }
     return null;
   }
 
+  // Each part renders once per width, fold, and live state, so a delta rebuilds one part and re-bases the rest.
   /** @param {MessageDescriptor} m @param {number} width @returns {{ rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[] }} */
   _partRows(m, width) {
     const parts = this._partList(m.id);
+    const state = /** @type {PartState} */ (this._parts.get(String(m.id)));
+    const seen = new Set();
     const rows = /** @type {TranscriptRow[]} */ ([]);
     const blocks = /** @type {{ kind: string, at: number, end: number }[]} */ ([]);
     let source = "";
-    const contentW = Math.max(1, width - TX_GUTTER);
     for (const part of parts) {
-      const type = part && part.type;
-      if (type === "text") {
-        if (source) source += "\n";
-        const base = source.length;
-        const key = this._expandKey(m.id, part.id);
-        let doc = this._partDocs.get(key);
-        if (!doc) {
-          doc = new Document();
-          this._partDocs.set(key, doc);
-        }
-        doc.setText(/** @type {Extract<Wire.AssistantPart, { type: "text" }>} */ (part).text || "");
-        source += doc.sourceText();
-        for (const b of doc.blocks()) blocks.push({ kind: b.kind, at: b.at + base, end: b.end + base });
-        for (const r of doc.rows(contentW)) {
-          rows.push({ segments: shiftSrc(r.segments, base), indent: TX_GUTTER, key: m.id, partId: part.id, kind: "text" });
-        }
-      } else if (type === "tool") {
-        if (source) source += "\n";
-        const base = source.length;
-        const expanded = this._isExpanded(m.id, part.id, part);
-        const built = toolRows(/** @type {Extract<Wire.AssistantPart, { type: "tool" }>} */ (part), contentW, expanded);
-        source += built.source;
-        for (const r of built.rows) {
-          rows.push({
-            ...r,
-            segments: r.segments ? shiftSrc(r.segments, base) : r.segments,
-            indent: TX_GUTTER,
-            key: m.id,
-            partId: part.id,
-          });
-        }
-      } else if (type === "reasoning") {
-        if (source) source += "\n";
-        const base = source.length;
-        const live = this._reasoningLive(m.id, part.id);
-        const expanded = this._isExpanded(m.id, part.id, part);
-        const built = reasoningRows(/** @type {Extract<Wire.AssistantPart, { type: "reasoning" }>} */ (part), contentW, expanded, live);
-        source += built.source;
-        for (const r of built.rows) {
-          rows.push({
-            ...r,
-            segments: r.segments ? shiftSrc(r.segments, base) : r.segments,
-            indent: TX_GUTTER,
-            key: m.id,
-            partId: part.id,
-          });
-        }
+      if (source) source += "\n";
+      const base = source.length;
+      const key = String(part.id);
+      seen.add(key);
+      const expanded = part.type === "text" || this._isExpanded(m.id, part.id, part);
+      const live = part.type === "reasoning" && sameId(this._active?.id, m.id);
+      let c = state.rows.get(key);
+      if (!c || c.w !== width || c.expanded !== expanded || c.live !== live) {
+        c = this._buildPart(m.id, part, width, expanded, live, c ? c.doc : null);
+        state.rows.set(key, c);
       }
+      if (c.base !== base) rebasePart(c, base);
+      source += c.source;
+      for (const b of c.blocks) blocks.push(b);
+      for (const r of c.rows) rows.push(r);
     }
+    for (const key of state.rows.keys()) if (!seen.has(key)) state.rows.delete(key);
     rows.push({ text: "", key: m.id });
     return { rows, source, blocks };
+  }
+
+  // Render one part at source base 0. A text part keeps its document, so a delta re-wraps only the open block.
+  /** @param {number} id @param {Wire.AssistantPart} part @param {number} width @param {boolean} expanded @param {boolean} live @param {Document | null} doc @returns {PartCache} */
+  _buildPart(id, part, width, expanded, live, doc) {
+    const contentW = Math.max(1, width - TX_GUTTER);
+    const tag = { indent: TX_GUTTER, key: id, partId: part.id };
+    if (part.type === "text") {
+      if (!doc) doc = new Document();
+      doc.setText(part.text || "");
+      const rows = doc.rows(contentW).map((r) => ({ segments: r.segments, ...tag, kind: "text" }));
+      return { w: width, expanded, live, base: 0, rows, source: doc.sourceText(), blocks: doc.blocks(), doc };
+    }
+    const built = part.type === "tool"
+      ? toolRows(part, contentW, expanded)
+      : reasoningRows(/** @type {Extract<Wire.AssistantPart, { type: "reasoning" }>} */ (part), contentW, expanded, live);
+    const rows = built.rows.map((r) => ({ ...r, ...tag }));
+    return { w: width, expanded, live, base: 0, rows, source: built.source, blocks: [], doc: null };
   }
 
   // Assistant rows come from a per-message md Document, indented past the gutter, then a separator.
   /** @param {number} id @param {number} width @returns {TranscriptRow[]} */
   _assistantRows(id, width) {
-    let doc = this._docs.get(id);
+    let doc = this._docs.get(String(id));
     if (!doc) {
       doc = new Document();
-      this._docs.set(id, doc);
+      this._docs.set(String(id), doc);
     }
     doc.setText(this.textOf(id));
     const contentW = Math.max(1, width - TX_GUTTER);
@@ -1113,11 +1246,7 @@ export class Transcript {
   // The message order index of `id`, or -1. A position outside the outline has no selection.
   /** @param {number} id @returns {number} */
   _indexOf(id) {
-    for (let i = 0; ; i++) {
-      const m = this._at(i);
-      if (!m) return -1;
-      if (sameId(m.id, id)) return i;
-    }
+    return this._positions.get(String(id)) ?? -1;
   }
 
   // Order the two ends and resolve them to message indexes. Return null without a live selection.
@@ -1216,13 +1345,8 @@ export class Transcript {
     this._invalidate(width);
     const blank = this._emptyRows();
     if (blank) return blank.length;
-    let n = 0;
-    for (let i = 0; ; i++) {
-      const m = this._at(i);
-      if (!m) break;
-      n += this._rowsOf(m, width).length;
-    }
-    return n;
+    this._indexRows();
+    return this._offset(this._prefix.length - 1);
   }
 
   /** @param {number} width @param {number} top @param {number} height @returns {TranscriptRow[]} */
@@ -1231,25 +1355,26 @@ export class Transcript {
     this._invalidate(width);
     const blank = this._emptyRows();
     if (blank) return blank.slice(top, top + height);
+    this._indexRows();
+    const first = this._messageAtRow(top);
+    this._viewport.clear();
+    for (let i = first; i + 1 < this._prefix.length && this._offset(i) < top + height; i++) {
+      const m = /** @type {MessageDescriptor} */ (this._at(i));
+      this._viewport.add(String(m.id));
+    }
     const range = this._range();
     const out = [];
-    let base = 0;
-    for (let i = 0; ; i++) {
-      const m = this._at(i);
-      if (!m) break;
+    for (let i = first; i + 1 < this._prefix.length && this._offset(i) < top + height; i++) {
+      const m = /** @type {MessageDescriptor} */ (this._at(i));
       const rows = this._rowsOf(m, width);
-      for (let k = 0; k < rows.length; k++) {
-        const abs = base + k;
-        if (abs < top || abs >= top + height) continue;
+      const base = this._offset(i);
+      for (let k = Math.max(0, top - base); k < rows.length && base + k < top + height; k++) {
         const row = /** @type {TranscriptRow} */ (rows[k]);
-        // The row objects are cached, so a selection goes onto a copy.
         const r = range && this._rowRange(range, i, k, rowText(row).length);
-        // An empty range paints nothing, so only a real span goes onto the row copy.
         out.push(r && r.to > r.from ? { ...row, sel: r } : row);
       }
-      base += rows.length;
-      if (base >= top + height) break;
     }
+    this._trimCaches();
     return out;
   }
 
@@ -1282,13 +1407,12 @@ export class Transcript {
   codeBlocks() {
     const out = [];
     for (const m of this.messages()) {
-      let doc = this._docs.get(m.id);
+      let doc = this._docs.get(String(m.id));
       if (!doc) {
         doc = new Document();
-        this._docs.set(m.id, doc);
       }
       // A changed source makes the cached rows stale, because this call is outside a draw.
-      if (doc.setText(this.textOf(m.id))) this._rows.delete(m.id);
+      if (doc.setText(this.textOf(m.id))) this._dropRows(m.id);
       for (const b of doc.codeBlocks()) out.push({ id: m.id, lang: b.lang, text: b.text });
     }
     return out;
@@ -1307,20 +1431,17 @@ export class Transcript {
     const y = clamp ? Math.min(Math.max(row, rect.y), rect.y + rect.h - 1) : row;
     const g = this.pager.rowAtY(y);
     if (g < 0) return null;
-    let base = 0;
-    for (let i = 0; ; i++) {
-      const m = this._at(i);
-      if (!m) return null;
-      const rows = this._rowsOf(m, this._width);
-      if (g < base + rows.length) {
-        const line = /** @type {TranscriptRow} */ (rows[g - base]);
-        const body = rowText(line);
-        const x = Math.max(0, col - rect.x - (line.indent || 0));
-        const wrapRow = { start: 0, end: body.length, soft: false };
-        return { id: m.id, row: g - base, col: caretAtCol(body, wrapRow, x) };
-      }
-      base += rows.length;
-    }
+    this._indexRows();
+    const i = this._messageAtRow(g);
+    const m = this._at(i);
+    if (!m) return null;
+    const rows = this._rowsOf(m, this._width);
+    const k = g - this._offset(i);
+    const line = /** @type {TranscriptRow} */ (rows[k]);
+    const body = rowText(line);
+    const x = Math.max(0, col - rect.x - (line.indent || 0));
+    const wrapRow = { start: 0, end: body.length, soft: false };
+    return { id: m.id, row: k, col: caretAtCol(body, wrapRow, x) };
   }
 
   // A left drag selects text: a press records the start and a drag opens the range, so a click leaves no one-cell range.
@@ -1376,7 +1497,7 @@ export class ChatView {
   /** @param {ChatViewOptions} [opts] */
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.transcript = new Transcript({ textOf: opts.textOf, partsOf: opts.partsOf, onSelect: opts.onSelect, empty: opts.empty });
+    this.transcript = new Transcript({ textOf: opts.textOf, partsOf: opts.partsOf, partOf: opts.partOf, onSelect: opts.onSelect, empty: opts.empty });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
     // This field names the region that reads the keyboard. The mouse routes by rect instead.
     /** @type {ChatRegion} */

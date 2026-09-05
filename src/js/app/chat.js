@@ -32,6 +32,7 @@ export class Chat {
     this.view = new ChatView({
       textOf: id => (this.sessionId ? client.sessionText(this.sessionId, id) : ""),
       partsOf: id => (this.sessionId ? client.sessionParts(this.sessionId, id) : []),
+      partOf: (id, partId) => (this.sessionId ? client.sessionPart(this.sessionId, id, partId) : null),
       onSubmit: text => this.send(text),
       onSelect: text => {
         if (config.mouse.copyOnSelect) copy(text, "selection");
@@ -60,6 +61,8 @@ export class Chat {
     this.creating = false;
     this.sessionId = id;
     client.sessionOpen(id);
+    // Message ids repeat across sessions, so the old render must go before the new outline lands.
+    this.transcript.setOutline([], null);
     this.reload();
   }
 
@@ -89,10 +92,10 @@ export class Chat {
     root.invalidate();
   }
 
-  // A draft delta: re-wrap only the streaming message `id`.
-  /** @param {number} id */
-  active(id) {
-    this.transcript.setActive(id);
+  // A draft delta: re-wrap only the streaming message `id`, or only its part `partId` when the digest names one.
+  /** @param {number} id @param {number} [partId] */
+  active(id, partId) {
+    this.transcript.setActive(id, partId);
     root.invalidate();
   }
 
@@ -347,11 +350,12 @@ export const chatPlugin = {
     ctx.inject(["tui"], (ctx) => {
       // Two panes can show one session, so the event reaches every pane that names it.
       ctx.on("session.changed", /** @param {NativeSessionEvent} ev */ (ev => {
-        if (!ev) return;
+        // A quiet digest moved the activity, the queue or the run, none of which the transcript draws.
+        if (!ev || ev.kind === "quiet") return;
         for (const c of chats) {
           if (c.sessionId !== ev.session) continue;
           if (ev.kind === "gone") c.sessionGone();
-          else if (ev.kind === "active") c.active(/** @type {number} */ (ev.id));
+          else if (ev.kind === "active") c.active(/** @type {number} */ (ev.id), ev.part);
           else c.reload();
         }
       }));

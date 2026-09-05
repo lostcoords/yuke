@@ -2038,6 +2038,38 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
     try expectJs(host, "ok");
 }
 
+test "yuke:md an appended stream parses like a fresh document" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { Document } from "yuke:md";
+        \\// Every block kind, with lookahead cases: a setext heading, a table, and a fence that closes late.
+        \\const text = "Intro para\nsecond line\n\n# Head\n\nSetext\n===\n\n- one\n- two\n\n1. first\n2. second\n\n> quoted\n> more\n\n" +
+        \\  "a | b\n---|---\n1 | 2\n\n```zig\nconst x = 1;\nconst y = 2;\n```\n\n---\n\nlast **bold** para\nwith a|pipe\n---|---\nx|y\n";
+        \\const stream = new Document();
+        \\const fails = [];
+        \\for (let n = 1; n <= text.length; n += 3) {
+        \\  const head = text.slice(0, n);
+        \\  stream.setText(head);
+        \\  const fresh = new Document();
+        \\  fresh.setText(head);
+        \\  const same = JSON.stringify(stream.blocks()) === JSON.stringify(fresh.blocks()) &&
+        \\    JSON.stringify(stream.rows(24)) === JSON.stringify(fresh.rows(24)) &&
+        \\    JSON.stringify(stream.codeBlocks()) === JSON.stringify(fresh.codeBlocks());
+        \\  if (!same) fails.push(n);
+        \\}
+        \\// A rewrite that is not an append parses from the start again.
+        \\stream.setText("changed\n\n" + text);
+        \\const fresh = new Document();
+        \\fresh.setText("changed\n\n" + text);
+        \\if (JSON.stringify(stream.rows(24)) !== JSON.stringify(fresh.rows(24))) fails.push("rewrite");
+        \\globalThis.result = fails.length ? "differs at " + fails.join(",") : "ok";
+    , "md-stream.js");
+    try expectJs(host, "ok");
+}
+
 test "yuke:md maps a rendered row back to its markdown source" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -2580,7 +2612,7 @@ test "yuke:client exposes the engine surface and answers a closed session" {
     try host.evalModule(
         \\import { client } from "yuke:client";
         \\const surface = ["request", "sessionList", "sessionOpen", "sessionClose",
-        \\  "sessionOutline", "sessionText", "sessionTextPage", "sessionParts", "partTextPage",
+        \\  "sessionOutline", "sessionText", "sessionTextPage", "sessionParts", "sessionPart", "partTextPage",
         \\  "sessionSendInput", "sessionCancelRun", "sessionCreate", "catalogList"]
         \\  .every((k) => typeof client[k] === "function");
         \\// No engine is attached in a unit test, so a view read answers its empty projection.
@@ -4027,6 +4059,16 @@ test "the chat slice owns its listeners and its transcript commands" {
         \\check("active-moves-transcript", actives.join(",") === "7");
         \\events.emit("session.changed", { type: "session", session: "s1", kind: "delta" });
         \\check("other-kinds-reload", actives.join(",") === "7");
+        \\
+        \\// A quiet digest moves nothing the transcript draws, so neither branch runs.
+        \\let reloads = 0;
+        \\const realReload = chat.reload.bind(chat);
+        \\chat.reload = () => { reloads++; return realReload(); };
+        \\events.emit("session.changed", { type: "session", session: "s1", kind: "reload" });
+        \\check("reload-kind-reloads", reloads === 1);
+        \\events.emit("session.changed", { type: "session", session: "s1", kind: "quiet" });
+        \\check("quiet-draws-nothing", reloads === 1 && actives.join(",") === "7");
+        \\chat.reload = realReload;
         \\chat.transcript.setActive = realActive;
         \\
         \\chat.sessionId = null;
@@ -5882,4 +5924,154 @@ test "an install replaces the answerer and its disposer restores the last one" {
         \\globalThis.result = globalThis.heard.join(",");
     , "install-stack.js");
     try expectJs(host, "first:a,second:b,first:c");
+}
+
+test "yuke:ui transcript renders evicted history exactly" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var paint: Paint = undefined;
+    try paint.setup(gpa.allocator(), 12, 32);
+    defer paint.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    paint.bind(host);
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { Transcript } from "yuke:transcript";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const messages = [];
+        \\const parts = {};
+        \\for (let i = 0; i < 120; i++) {
+        \\  const id = "m" + i;
+        \\  messages.push({ id, type: "assistant" });
+        \\  parts[id] = [{ type: "text", id: 0, text: "alpha " + i + " bravo charlie delta ".repeat(4) + "\n```zig\nconst x = " + i + ";\n```" }];
+        \\}
+        \\parts.m0 = [{ type: "reasoning", id: 1, text: "old thought" }, { type: "text", id: 2, text: "old answer" }];
+        \\parts.m40 = [{ type: "reasoning", id: 1, text: "middle thought" }, { type: "text", id: 2, text: "middle answer" }];
+        \\parts.m119 = [{ type: "tool", id: 3, name: "exec", arguments: '{"command":"old"}', state: { type: "completed", output: "old output" } }];
+        \\const make = () => new Transcript({ partsOf: (id) => parts[id] || [] });
+        \\const t = make();
+        \\t.setOutline(messages, null);
+        \\const frame = (w, h) => { term.beginFrame(); t.draw({ x: 0, y: 0, w, h }); term.endFrame(); };
+        \\// Each reference message renders alone, so the index under test never checks itself.
+        \\const folds = { m0: 1, m119: 3 };
+        \\const reference = (w) => messages.flatMap((m) => {
+        \\  const one = make();
+        \\  one.setOutline([m], null);
+        \\  if (folds[m.id] != null) one.togglePart(m.id, folds[m.id]);
+        \\  return one.rows(w, 0, one.rowCount(w));
+        \\});
+        \\let builds = 0;
+        \\const rowsOf = t._rowsOf;
+        \\t._rowsOf = function(m, w) { const c = this._rows.get(String(m.id)); if (!c || c.w !== w) builds++; return rowsOf.call(this, m, w); };
+        \\
+        \\for (const id in folds) t.togglePart(id, folds[id]);
+        \\const wide = reference(32);
+        \\check("total", t.rowCount(32) === wide.length);
+        \\frame(32, 8);
+        \\check("tail-rows", JSON.stringify(t.rows(32, wide.length - 8, 8)) === JSON.stringify(wide.slice(-8)));
+        \\check("tail-sticks", t.pager.atBottom() && t.pager.stuck);
+        \\check("bounded", t._rows.size < messages.length);
+        \\builds = 0;
+        \\t.rowCount(32);
+        \\t.rows(32, wide.length - 8, 8);
+        \\check("warm-tail-builds-nothing", builds === 0);
+        \\check("tail-position", t.posAt(4, 7, false)?.id === "m119");
+        \\
+        \\// A selection spans evicted history, and survives an eviction and a resize.
+        \\t.select(t.posAtSource("m0", 0), t.posAtSource("m119", 1000000));
+        \\const selected = t.selectedText();
+        \\const source = t.selectedSource();
+        \\check("selection", selected.includes("old thought") && selected.includes("old output") && source.includes("middle answer"));
+        \\t.rows(32, 0, 8);
+        \\t.rows(32, wide.length - 8, 8);
+        \\check("selection-after-eviction", t.selectedText() === selected && t.selectedSource() === source);
+        \\const narrow = reference(18);
+        \\check("resize-total", t.rowCount(18) === narrow.length);
+        \\const plain = (rows) => rows.map(({ sel, ...row }) => row); // the reference holds no selection
+        \\check("resize-tail-rows", JSON.stringify(plain(t.rows(18, narrow.length - 8, 8))) === JSON.stringify(narrow.slice(-8)));
+        \\check("selection-after-resize", t.selectedSource() === source);
+        \\
+        \\// A fold on an evicted message changes the count and shows at its own location.
+        \\t.clearSelection();
+        \\t.rows(18, narrow.length - 8, 8);
+        \\check("middle-evicted", !t._rows.has("m40"));
+        \\const before = t.rowCount(18);
+        \\t.togglePart("m40", 1);
+        \\check("fold-count", t.rowCount(18) > before);
+        \\check("fold-marker", t.rows(18, t._globalRow({ id: "m40", row: 0, col: 0 }), 4).some((r) => r.marker === "▾"));
+        \\
+        \\// The viewport stays cached whole, and a part motion reads only its neighbours.
+        \\t.rows(18, 0, 8);
+        \\builds = 0;
+        \\t.rows(18, 0, 8);
+        \\check("viewport-cached", builds === 0);
+        \\builds = 0;
+        \\const next = t.partStep({ id: "m50", row: 0, col: 0 }, 1);
+        \\const previous = t.partStep(next, -1);
+        \\check("part-motion-local", next?.id === "m51" && previous?.id === "m50" && builds <= 4);
+        \\
+        \\// A code-block query over plain text parses on demand and keeps no document per message.
+        \\const code = new Transcript({ textOf: (id) => "```zig\nconst x = " + id + ";\n```" });
+        \\code.setOutline(messages, null);
+        \\check("code-blocks", code.codeBlocks().length === messages.length && code._docs.size < messages.length);
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "transcript-eviction.js");
+    try expectJs(host, "ok");
+}
+
+test "yuke:ui transcript keeps committed renders across a reload" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var paint: Paint = undefined;
+    try paint.setup(gpa.allocator(), 12, 40);
+    defer paint.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    paint.bind(host);
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { Transcript } from "yuke:transcript";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const parts = {
+        \\  old: [{ type: "text", id: 0, text: "old committed" }],
+        \\  gone: [{ type: "text", id: 0, text: "truncated" }],
+        \\  live: [{ type: "reasoning", id: 0, text: "live thought" }],
+        \\};
+        \\const t = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+        \\const draw = () => { term.beginFrame(); t.draw({ x: 0, y: 0, w: 40, h: 12 }); term.endFrame(); };
+        \\const shows = (text) => t.rows(40, 0, 12).some((r) => (r.segments || []).map(s => s.text).join("").includes(text));
+        \\t.setOutline([{ id: "old", type: "assistant" }, { id: "gone", type: "assistant" }], { id: "live", type: "assistant" });
+        \\draw();
+        \\const oldRows = t._rows.get("old");
+        \\const liveCount = t.rowCountOf("live");
+        \\check("active-expanded", t.rows(40, t._globalRow({ id: "live", row: 0, col: 0 }), 4).some((r) => r.marker === "▾"));
+        \\const rebuilt = [];
+        \\const rowsOf = t._rowsOf;
+        \\t._rowsOf = function(m, w) { rebuilt.push(String(m.id)); return rowsOf.call(this, m, w); };
+        \\
+        \\// A commit reloads the outline: the committed render stays, and only the former draft rebuilds, now collapsed.
+        \\t.setOutline([{ id: "old", type: "assistant" }, { id: "gone", type: "assistant" }, { id: "live", type: "assistant" }], null);
+        \\t.rowCount(40);
+        \\t._rowsOf = rowsOf;
+        \\check("old-cache-reused", t._rows.get("old") === oldRows);
+        \\check("only-draft-rebuilt", rebuilt.join(",") === "live");
+        \\check("draft-collapsed", t.rowCountOf("live") < liveCount && t.rows(40, t._globalRow({ id: "live", row: 0, col: 0 }), 3).some((r) => r.marker === "▸"));
+        \\
+        \\// A truncation removes the rows and the count of the message it cut.
+        \\t.setOutline([{ id: "old", type: "assistant" }, { id: "live", type: "assistant" }], null);
+        \\check("truncated-removed", !t._rows.has("gone") && !t._counts.has("gone"));
+        \\
+        \\// Message ids repeat across sessions, so the empty outline between two sessions clears the old render.
+        \\parts.old = [{ type: "text", id: 0, text: "other session" }];
+        \\t.setOutline([], null);
+        \\t.setOutline([{ id: "old", type: "assistant" }], null);
+        \\check("switch-refreshes-content", shows("other session"));
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "transcript-reload-reuse.js");
+    try expectJs(host, "ok");
 }

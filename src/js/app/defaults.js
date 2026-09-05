@@ -7,6 +7,7 @@ import { commandUiPlugin } from "yuke:command-ui";
 import { explorerPlugin } from "yuke:explorer";
 import { catalogOf, catalogPlugin } from "yuke:catalog";
 import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
+import { client } from "yuke:client";
 import { rowKey, rowLabel, activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
 import { composerVim } from "yuke:composer-vim";
 import { transcriptVim } from "yuke:transcript-vim";
@@ -92,6 +93,14 @@ plugins.use({
         "copy:selection": () => withChat(c => copy(c.transcript.selectedText(), "selection")),
         "copy:source": () => withChat(c => copy(c.transcript.selectedSource(), "source")),
         "chat:new": () => withChat(c => c.newChat()),
+        "debug:memory": () => {
+          const m = client.memoryUsage();
+          const mb = (/** @type {number} */ n) => (n / 1048576).toFixed(1) + "MB";
+          const k = (/** @type {number} */ n) => Math.round(n / 1000) + "k";
+          notice.show("js heap " + mb(m.heap) + " · str " + mb(m.strings) + "/" + k(m.stringCount) +
+            " · obj " + mb(m.objects) + "/" + k(m.objectCount) + " · prop " + mb(m.properties) + "/" + k(m.propertyCount) +
+            " · shape " + mb(m.shapes) + " · arr " + k(m.arrayCount));
+        },
         "chat:focus-toggle": () => withChat(c => {
           c.view.focusRegion(c.view.focus === "transcript" ? "composer" : "transcript");
           root.invalidate();

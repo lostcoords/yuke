@@ -157,20 +157,19 @@ pub const Session = struct {
         self.removeQueued(input_id);
     }
 
-    /// The engine hydrates the cache from SQLite on session activation.
+    /// The engine hydrates the cache from SQLite on session activation. The history reaches `transcript.append` first.
     pub const Snapshot = struct {
         base_seq: ids.Seq,
         finalized_message_id: ids.MessageId,
-        messages: []const message.Message,
         has_more: bool,
     };
 
-    /// Seed the projection from a store snapshot. Call once before the first fold on a fresh Session.
-    pub fn installSnapshot(self: *Session, snap: Snapshot) Error!void {
+    /// Seal the projection after the store history is in the transcript. Call once before the first fold on a fresh Session.
+    pub fn installSnapshot(self: *Session, snap: Snapshot) void {
         std.debug.assert(self.base_seq == 0 and self.finalized_message_id == 0); // a fresh projection
         std.debug.assert(self.draft == null and self.pending.items.len == 0);
-        std.debug.assert(self.transcript.list.items.len == 0);
-        for (snap.messages) |m| try self.transcript.append(m);
+        const items = self.transcript.list.items;
+        std.debug.assert(snap.finalized_message_id == (if (items.len > 0) items[items.len - 1].message.id() else 0)); // the newest resident message
         self.transcript.has_more = self.transcript.has_more or snap.has_more;
         self.base_seq = snap.base_seq;
         self.finalized_message_id = snap.finalized_message_id;

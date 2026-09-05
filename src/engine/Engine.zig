@@ -111,21 +111,24 @@ pub fn hydrate(self: *Engine, resident: *Session) !void {
     std.debug.assert(resident.active_run == null and resident.queueDepth() == 0);
     std.debug.assert(resident.transcript.list.items.len == 0);
     std.debug.assert(resident.base_seq == 0 and resident.finalized_message_id == 0);
-    var arena = std.heap.ArenaAllocator.init(self.deps.gpa);
-    defer arena.deinit();
-    const a = arena.allocator();
+    var scratch = std.heap.ArenaAllocator.init(self.deps.gpa);
+    defer scratch.deinit();
     const sid = resident.id.raw;
-    const hw = (try database.event.highWater(self.deps.db, a, sid)) orelse return; // no session row
-    const page = try database.message.historyPage(self.deps.db, a, sid, 0, transcript.default_max_messages);
-    const finalized: u64 = if (page.messages.len > 0) page.messages[page.messages.len - 1].id() else 0;
-    try resident.installSnapshot(.{
-        .base_seq = hw.seq_high,
-        .finalized_message_id = finalized,
-        .messages = page.messages,
-        .has_more = page.has_more,
-    });
+    const hw = (try database.event.highWater(self.deps.db, scratch.allocator(), sid)) orelse return; // no session row
+    const limit = transcript.default_max_messages;
+    const total = try database.message.count(self.deps.db, sid);
+    var history = try database.message.tail(self.deps.db, sid, limit);
+    defer history.deinit();
+    // The scratch holds one message at a time, so the load peak follows the largest message, not the history.
+    var finalized: u64 = 0;
+    while (try history.next(scratch.allocator())) |m| {
+        try resident.transcript.append(m);
+        finalized = m.id();
+        _ = scratch.reset(.retain_capacity);
+    }
+    resident.installSnapshot(.{ .base_seq = hw.seq_high, .finalized_message_id = finalized, .has_more = total > limit });
     // Pending inputs are historical. Fold them directly, so they do not advance the durable cursor.
-    const pending = try database.input.list(self.deps.db, a, sid);
+    const pending = try database.input.list(self.deps.db, scratch.allocator(), sid);
     for (pending) |entry| {
         try resident.queueOnQueued(.{ .session_id = resident.id, .seq = entry.seq, .input = entry.input });
     }

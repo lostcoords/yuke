@@ -144,22 +144,24 @@ function srcAt(runs, i, end) {
   return end ? o + 1 : o;
 }
 
-// Split the text into blocks with `at`/`end` source offsets and `raw` for the cache; only the tail block still changes.
-/** @param {string} text @returns {Block[]} */
-function segment(text) {
+// Split the text from line-start offset `from` into blocks with absolute `at`/`end` offsets; a stream re-reads only its tail.
+/** @param {string} text @param {number} [from] @returns {Block[]} */
+function segment(text, from = 0) {
   const lines = /** @type {StringList} */ (text.split("\n"));
   const starts = /** @type {NumberList} */ (new Array(lines.length + 1));
+  let i = 0;
   {
     let off = 0;
     for (let k = 0; k < lines.length; k++) {
       starts[k] = off;
+      if (off < from) i = k + 1;
       const sourceLine = /** @type {string} */ (lines[k]);
       off += sourceLine.length + 1;
     }
     starts[lines.length] = /** @type {number} */ (off);
   }
+  if (starts[i] !== from) throw new Error("segment restart is not a line start");
   const blocks = /** @type {Block[]} */ ([]);
-  let i = 0;
 
   /** @param {Block} b @param {number} from @param {number} to @returns {void} */
   const push = (b, from, to) => {
@@ -858,13 +860,15 @@ export class Document {
     this._cache = new Map();
   }
 
-  // Return true when the source changed, so a caller can drop its own cache for this document.
+  // Return true when the source changed. An append keeps every block but the last two, because only the tail can change.
   /** @param {string} text @returns {boolean} */
   setText(text) {
     text = String(text).replace(/\r\n?/g, "\n");
     if (text === this._src) return false;
+    const keep = this._src != null && text.startsWith(this._src) ? Math.max(0, this._blocks.length - 2) : 0;
+    const from = keep > 0 ? /** @type {Block} */ (this._blocks[keep]).at : 0;
     this._src = text;
-    this._blocks = segment(text);
+    this._blocks = this._blocks.slice(0, keep).concat(segment(text, from));
     // Drop cache entries for blocks that the new text no longer holds.
     const live = new Set();
     for (const b of this._blocks) if (!b.open) live.add(b.at);

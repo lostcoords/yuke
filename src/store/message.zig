@@ -6,6 +6,7 @@ const proto = @import("proto");
 const sql = @import("sql");
 const Database = @import("store.zig").Database;
 const event = @import("event.zig");
+const queries_gen = @import("queries_gen.zig");
 
 /// The metadata that a committed message adds for its role.
 const Meta = struct {
@@ -155,6 +156,36 @@ fn messageId(message: proto.message.Message) u64 {
     return switch (message) {
         inline else => |m| m.id,
     };
+}
+
+/// The newest messages of one session, oldest-first; `next` parses one row into the allocator it is given.
+pub const Tail = struct {
+    rows: sql.Statement(queries_gen.MessageTail.sql).Rows(queries_gen.MessageTail.Row),
+
+    pub fn next(self: *Tail, scratch: std.mem.Allocator) !?proto.message.Message {
+        const row = (try self.rows.next(scratch)) orelse return null;
+        const msg = try std.json.parseFromSliceLeaky(proto.message.Message, scratch, row.value.payload, .{ .ignore_unknown_fields = true });
+        if (messageId(msg) != row.value.message_id) return error.CorruptLog; // The row and body disagree.
+        return msg;
+    }
+
+    pub fn deinit(self: *Tail) void {
+        self.rows.deinit();
+    }
+};
+
+/// Open the newest `limit` committed messages oldest-first. The caller must `deinit` the tail.
+pub fn tail(db: *Database, session_id: [16]u8, limit: usize) !Tail {
+    std.debug.assert(limit > 0);
+    return .{ .rows = try db.queries.message_tail.rows(.{ .session_id = session_id, .limit = @as(i64, @intCast(limit)) }) };
+}
+
+/// Count the committed messages of one session.
+pub fn count(db: *Database, session_id: [16]u8) !u64 {
+    var buffer: [64]u8 = undefined;
+    var fixed = std.heap.FixedBufferAllocator.init(&buffer);
+    const row = try db.queries.message_count.one(fixed.allocator(), .{ .session_id = session_id });
+    return row.value.total;
 }
 
 /// Read a backward page from the log and return it oldest first. before_message_id is exclusive;
@@ -443,6 +474,39 @@ test "historyPage returns a page oldest-first with has_more" {
     try testing.expectEqual(@as(usize, 1), older.messages.len);
     try testing.expectEqual(@as(u64, 1), older.messages[0].user.id);
     try testing.expect(!older.has_more);
+}
+
+test "tail streams the newest messages oldest-first and count reports the rest" {
+    var db = try Database.openTest();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const sid = [_]u8{4} ** 16;
+    try seedSession(&db, sid);
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    for (1..4) |i| {
+        const n: u8 = @intCast(i);
+        const m: proto.message.Message = .{ .user = .{ .id = i, .content = &.{}, .input_id = i, .time = .{ .created_at_ms = 100 + i } } };
+        _ = try appendCommittedMessage(&db, a, sid, [_]u8{n} ** 16, 100 + i, m);
+    }
+    try db.conn.execNoArgs("COMMIT");
+
+    // The newest two arrive as 2 then 3, each parsed into a scratch the caller resets between rows.
+    var scratch = std.heap.ArenaAllocator.init(testing.allocator);
+    defer scratch.deinit();
+    var it = try tail(&db, sid, 2);
+    defer it.deinit();
+    var seen: [4]u64 = undefined;
+    var n: usize = 0;
+    while (try it.next(scratch.allocator())) |m| : (n += 1) {
+        seen[n] = messageId(m);
+        _ = scratch.reset(.retain_capacity);
+    }
+    try testing.expectEqualSlices(u64, &.{ 2, 3 }, seen[0..n]);
+    try testing.expectEqual(@as(u64, 3), try count(&db, sid));
+    try testing.expectEqual(@as(u64, 0), try count(&db, [_]u8{9} ** 16));
 }
 
 test "appendCommittedMessage rejects a missing session" {
