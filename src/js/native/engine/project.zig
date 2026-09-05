@@ -43,8 +43,7 @@ pub fn writeOutline(w: *std.Io.Writer, s: *domain_session.Session) !void {
     try w.writeByte('}');
 }
 
-/// A parts response bounds every string it writes, so one large tool result cannot grow it.
-/// Every value the writer cut appears once in the part's `cut` list, which names the field and its whole size.
+/// Every string a part inlines is bounded, and each cut value appears once in the part's `cut` list with its whole size.
 pub const max_inline_views: usize = 8;
 pub const max_inline_diff_lines: usize = 200;
 pub const max_inline_line_bytes: usize = 512;

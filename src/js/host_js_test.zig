@@ -4481,8 +4481,7 @@ test "yuke:fs reads, writes and stats a real directory through promises" {
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.done"));
 }
 
-/// Run the reactor until every primitive settles, the way the owner's loop does.
-/// A task only runs while this waits, so the wait is what lets the file read happen.
+/// Run the reactor until every primitive settles, as the owner loop does; a task runs only while this waits.
 fn pumpUntilIdle(host: *Host) !void {
     var rounds: u32 = 0;
     while (host.ops.live.items.len != 0) : (rounds += 1) {

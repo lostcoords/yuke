@@ -30,8 +30,7 @@ pub fn install(host: *Host) void {
 
 /// Compare two texts and answer `{path, hunks}`. `path` only labels the result.
 ///
-/// Answer no hunk when the pair is equal, when a side is above the cap, or when the change is
-/// too large to describe. A caller drops the view in each of the three cases.
+/// Answer no hunk for an equal pair, a side above the cap, or a change too large to describe; a caller drops the view in each case.
 ///
 /// A value that is not a string rejects. A conversion would run a script the argument carries.
 fn jsDiff(ctx: Context, _: Value, args: []const Value) Value {

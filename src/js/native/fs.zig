@@ -95,8 +95,7 @@ const read_limits: os.ReadLimits = .{
     .max_bytes = 64 * 1024,
 };
 
-/// Read a whole file as text. The read runs on its own task, so the owner keeps painting.
-/// It rejects a file that is not valid UTF-8.
+/// Read a whole file as text on its own task, so the owner keeps painting. A file that is not valid UTF-8 rejects.
 fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     // The task cannot touch JavaScript, so the path is copied before it starts.
@@ -126,8 +125,7 @@ fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
 
 /// Read one file on a task. It writes bytes into the op and never enters JavaScript.
 ///
-/// `Host.close` cancels this group and WAITS for it, so a task must always reach a cancellation
-/// point. Keep a task to input and output; unbounded work here would hang the shutdown.
+/// `Host.close` cancels this group and waits for it, so a task must reach a cancellation point; keep it to input and output.
 fn readTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer req.free(host.gpa);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
@@ -224,8 +222,7 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     return resolved(ctx, out);
 }
 
-/// List the directories inside one path as a `Page`. A null or absent argument lists the
-/// directory the TUI runs in. An unreadable path rejects, and the caller states the refusal.
+/// List the directories inside one path as a `Page`; a null or absent path is the directory the TUI runs in, and an unreadable one rejects.
 fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     var call = Call.open(host, host.cwd);

@@ -84,9 +84,7 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
 
 /// Run one command on a task. It writes JSON text into the op and never enters JavaScript.
 ///
-/// `Host.close` cancels this group and WAITS for it.
-/// A cancel kills the process group, so the command ends and the task returns.
-/// A descendant that calls `setsid` leaves that group.
+/// `Host.close` cancels this group and waits for it: a cancel kills the process group, so the task returns; a descendant that calls `setsid` leaves that group.
 fn execTask(host: *Host, op: *pending.Op, req: Request) void {
     defer req.free(host.gpa);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
@@ -142,7 +140,6 @@ fn errorMessage(err: os.HostError) []const u8 {
     };
 }
 
-/// Copy one string argument. A value that is not a string answers null.
 /// Copy one optional string option. An absent option answers null; a wrong type is an error.
 fn optionalString(ctx: Context, gpa: std.mem.Allocator, options: Value, name: [:0]const u8) error{InvalidOption}!?[]u8 {
     if (!ctx.isObject(options)) return null;
@@ -152,8 +149,7 @@ fn optionalString(ctx: Context, gpa: std.mem.Allocator, options: Value, name: [:
     return module.owned(ctx, gpa, value) orelse error.InvalidOption;
 }
 
-/// Read `timeoutMs`, or answer the default. The range matches the built-in `exec` tool.
-/// A number reaches JavaScript as a double, so a fraction must fail rather than truncate.
+/// Read `timeoutMs`, or answer the default. The range matches the built-in `exec` tool, and a fraction fails rather than truncates.
 fn timeoutOf(ctx: Context, options: Value) error{InvalidOption}!u32 {
     if (!ctx.isObject(options)) return default_timeout_ms;
     const value = ctx.getPropertyStr(options, "timeoutMs");

@@ -10,8 +10,7 @@ const paths = @import("../../paths.zig");
 /// The wait between SIGTERM and SIGKILL. A shell runs its SIGTERM trap in this time.
 const grace_ns: u64 = 2 * std.time.ns_per_s;
 
-/// One drain leg. It reads one stream to its end and keeps its head AND its tail. A build prints its
-/// error last, so a head-only cap would drop the part the model needs most.
+/// One drain leg: it reads one stream to its end and keeps its head and its tail, because a build prints its error last.
 const Drain = struct {
     file: std.Io.File,
     limit: u32,
@@ -25,8 +24,7 @@ const Drain = struct {
         return @max(1, self.limit / 2);
     }
 
-    /// Join the head and the tail with one notice between them. The result comes from `scratch`.
-    /// Each end stops on a byte, so the notice counts the codepoint the cap cut in half.
+    /// Join the head and the tail with one notice between them, from `scratch`; the notice counts the codepoint the cap cut in half.
     fn text(self: *Drain, scratch: std.mem.Allocator) []const u8 {
         if (self.dropped == 0) {
             if (self.tail.items.len == 0) return self.head.items;
@@ -47,8 +45,7 @@ const Drain = struct {
     }
 };
 
-/// Run `spec` and return its output. The caller must validate `spec`; this function returns an error
-/// instead of an assertion, because the function receives validated tool input.
+/// Run `spec` and return its output. It returns an error rather than an assertion, because `spec` is validated tool input.
 pub fn run(io: std.Io, root: []const u8, env: ?*const std.process.Environ.Map, scratch: std.mem.Allocator, spec: h.ExecSpec) h.HostError!h.ExecResult {
     if (spec.timeout_ms == 0 or spec.max_stream_bytes == 0) return error.HostFailure;
     const cwd = try resolveCwd(scratch, root, env, spec.cwd);
@@ -68,15 +65,13 @@ pub fn run(io: std.Io, root: []const u8, env: ?*const std.process.Environ.Map, s
     var out: Drain = .{ .file = child.stdout.?, .limit = spec.max_stream_bytes };
     var err: Drain = .{ .file = child.stderr.?, .limit = spec.max_stream_bytes };
     var group: std.Io.Group = .init;
-    // Every error path below must end the group and reap the child. A missed reap leaves a live
-    // process and two open pipe descriptors, because `child.wait` owns that cleanup.
+    // Every error path below must end the group and reap the child, because `child.wait` owns the pipe cleanup.
     errdefer terminate(io, &group, &child, pid);
 
     group.concurrent(io, drain, .{ io, scratch, &out }) catch return error.HostFailure;
     group.concurrent(io, drain, .{ io, scratch, &err }) catch return error.HostFailure;
 
-    // A process exits while its pipes still hold output. Both drains must reach the end before the
-    // reap, or the result loses the tail.
+    // A process exits while its pipes still hold output, so both drains must reach the end before the reap.
     const timed_out = try awaitDrains(io, &group, pid, spec.timeout_ms);
     if (out.err) |e| return mapDrainError(e);
     if (err.err) |e| return mapDrainError(e);
@@ -97,8 +92,7 @@ pub fn run(io: std.Io, root: []const u8, env: ?*const std.process.Environ.Map, s
     };
 }
 
-/// Wait for both drains. Escalate over the group on the deadline. Return true after a deadline.
-/// A cancel returns `error.Canceled`, never a deadline, so the model never reads a false timeout.
+/// Wait for both drains and escalate over the group at the deadline; true after a deadline, while a cancel is `error.Canceled` and never a false timeout.
 fn awaitDrains(io: std.Io, group: *std.Io.Group, pid: std.posix.pid_t, timeout_ms: u32) h.HostError!bool {
     var done: std.Io.Event = .unset;
     var waiter = io.concurrent(joinGroup, .{ io, group, &done }) catch return error.HostFailure;
@@ -117,8 +111,7 @@ fn awaitDrains(io: std.Io, group: *std.Io.Group, pid: std.posix.pid_t, timeout_m
     return false;
 }
 
-/// Kill the whole process group. The grace period blocks cancelation, so a canceled run still gives
-/// the shell its full time to run a SIGTERM trap.
+/// Kill the whole process group. The grace period blocks cancelation, so a canceled run still gives the shell its SIGTERM trap time.
 fn escalate(io: std.Io, pid: std.posix.pid_t) void {
     const old = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(old);
@@ -127,8 +120,7 @@ fn escalate(io: std.Io, pid: std.posix.pid_t) void {
     killGroup(pid, .KILL);
 }
 
-/// End the command and release every resource it holds. This runs on an error path, so it blocks
-/// cancelation. Without the reap the engine keeps a live process and two pipe descriptors.
+/// End the command and release every resource it holds. It blocks cancelation, because a missed reap leaks a process and two pipes.
 fn terminate(io: std.Io, group: *std.Io.Group, child: *std.process.Child, pid: std.posix.pid_t) void {
     escalate(io, pid);
     const old = io.swapCancelProtection(.blocked);
@@ -164,8 +156,7 @@ fn mapDrainError(err: anyerror) h.HostError {
     };
 }
 
-/// Read one stream to its end. Fill the head, then keep a moving tail. The read must continue past
-/// the limit. A full pipe blocks the writer, and the command never reaches its end.
+/// Read one stream to its end: fill the head, then keep a moving tail, and never stop at the limit, because a full pipe blocks the writer.
 fn drain(io: std.Io, scratch: std.mem.Allocator, state: *Drain) void {
     var buffer: [4096]u8 = undefined;
     var reader = state.file.reader(io, &buffer);
@@ -273,8 +264,7 @@ test "exec kills the whole process group at the deadline" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    // The shell exits at once, but the grandchild holds the pipe open. Only a group kill ends this.
-    // A single-child kill would leave the grandchild alive and the drain would never reach the end.
+    // The shell exits at once, but the grandchild holds the pipe open, so only a group kill lets the drain reach the end.
     const started: std.Io.Timestamp = .now(testing.io, .awake);
     const res = try runShell(arena.allocator(), "sleep 30 & echo started; exit 0", 400);
     // A failed group kill waits for the full sleep, so this bound is what proves the kill.

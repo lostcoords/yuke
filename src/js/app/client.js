@@ -15,10 +15,7 @@ events.on("engine.drained", (ev) => {
   if (name) events.emit(name, ev);
 });
 
-// One request against the engine. The call is synchronous, but the surface stays a Promise so a
-// caller does not change when a command later moves off the owner.
-// Every caller casts its parameters to the generated wire type, so a wrong shape fails `tsc`
-// instead of reaching the engine and refusing at run time.
+// One request against the engine, synchronous behind a Promise; each caller casts its parameters to the wire type, so a wrong shape fails `tsc`.
 /** @param {string} method @param {Wire.RequestParams} params @returns {Promise<any>} */
 function request(method, params) {
   let text;

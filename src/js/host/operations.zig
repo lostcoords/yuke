@@ -12,21 +12,17 @@ pub const HostError = error{
     Canceled,
 };
 
-/// A handler adds argument errors and semantic refusals to `HostError`.
-/// Each `ToolError` maps to one model-visible sentence.
 /// A 1-indexed inclusive line range. A null bound selects the first or the last line.
 pub const Range = struct { start: ?u32 = null, end: ?u32 = null };
 
-/// The bounds a range read must respect. These limits bound the read itself. The local host must not
-/// load the whole file. `max_bytes` bounds the file text; a caller adds its own numbering on top.
+/// The bounds of a range read, so the local host never loads the whole file; `max_bytes` bounds the text and a caller adds its numbering on top.
 pub const ReadLimits = struct {
     max_lines: u32,
     max_line_bytes: u32,
     max_bytes: u32,
 };
 
-/// The result of a bounded range read. `text` holds whole lines, each with a newline. The first line
-/// is always `Range.start`, so the caller already knows it.
+/// The result of a bounded range read: whole lines, each with a newline, from `Range.start` on.
 pub const RangeRead = struct {
     text: []const u8,
     /// The first line the read did NOT return, or null when it reached the range or the file end.

@@ -177,9 +177,7 @@ pub const Host = struct {
         return self;
     }
 
-    /// Start one primitive on its own task and answer the pending promise its caller returns.
-    /// The task reads only the bytes `payload` owns, because a task must never touch JavaScript.
-    /// A refused start rejects the promise. Only a QuickJS heap that is full throws at the caller.
+    /// Start one primitive on its own task and answer its promise. The task reads only what `payload` owns, a refusal rejects, and only a full QuickJS heap throws.
     pub fn startTask(self: *Host, comptime Payload: type, comptime task: fn (*Host, *pending.Op, Payload) void, payload: Payload) quickjs.Value {
         std.debug.assert(self.phase == .open);
         const started = self.ops.start(self.ctx) orelse {
@@ -193,12 +191,7 @@ pub const Host = struct {
         return started.promise;
     }
 
-    /// Settle every finished primitive and run the continuations it wakes. The owner calls this
-    /// between frames.
-    ///
-    /// One pass is enough: nothing here suspends, so no task runs, so no op can finish while this
-    /// walks. A continuation may start another primitive, but that one cannot complete until the
-    /// owner suspends again.
+    /// Settle every finished primitive and run what it wakes. The owner calls this between frames, and one pass is enough because nothing here suspends.
     pub fn pump(self: *Host) Error!void {
         std.debug.assert(self.phase == .open);
         self.enterSlice();
@@ -206,8 +199,7 @@ pub const Host = struct {
         if (engine_module.drain(self.engine, self.ctx)) return error.JavaScriptFault;
         const faulted = self.ops.settle(self.ctx);
         try self.drainJobs();
-        // The drain above settles a Promise a handler awaited, so the poll reads it in this pass.
-        // A started handler runs to its first await here, and the second drain runs what it queued.
+        // The first drain settles a promise a handler awaited, the poll reads it, and the second drain runs what the handler queued.
         tool_run.pump(self);
         try self.drainJobs();
         std.debug.assert(!self.ops.anyDone()); // no task ran, so nothing new finished
@@ -251,8 +243,7 @@ pub const Host = struct {
         self.engine.detach();
         // A turn task may wait on a tool call. Answer each one, or that task never wakes.
         tool_run.abortAll(self);
-        // `Group.cancel` cancels and joins, so every task has returned once this line does. That
-        // is what lets `Ops.deinit` free the ops a task held a pointer to.
+        // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
         self.interactions.close();
         if (self.ops.settle(self.ctx)) {
@@ -454,7 +445,6 @@ pub const Host = struct {
     }
 };
 
-/// Return the longest prefix of `text` that fits in `max` bytes and ends a UTF-8 sequence.
 /// Return the text before the first line break. A fault line uses one row.
 fn firstLine(text: []const u8) []const u8 {
     const end = std.mem.indexOfAny(u8, text, "\r\n") orelse text.len;

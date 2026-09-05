@@ -18,8 +18,7 @@ const utf8 = @import("../utf8.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
-/// The longest name a provider accepts. Anthropic states `^[a-zA-Z0-9_-]{1,64}$`, and OpenAI
-/// accepts the same shape, so one rule covers both.
+/// The longest name a provider accepts: Anthropic states `^[a-zA-Z0-9_-]{1,64}$` and OpenAI accepts the same shape.
 pub const max_name_bytes: usize = 64;
 
 /// Why one registration was refused. Each case answers one sentence to the script.
@@ -52,8 +51,7 @@ pub const Tools = struct {
 
     /// Add one tool. The table copies the text and takes the handler reference on success only.
     ///
-    /// `JS_ToCStringLen` writes WTF-8 for a lone surrogate, so the copies become valid UTF-8 here.
-    /// These strings reach a provider request, which accepts text and refuses a byte array.
+    /// `JS_ToCStringLen` writes WTF-8 for a lone surrogate, so the copies become valid UTF-8 here, because a provider request accepts text only.
     pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, handler: Value) RegisterError!void {
         if (!validName(name)) return error.InvalidName;
         const slot = self.lookup(name);
@@ -107,8 +105,7 @@ pub const Kind = enum { tool, hook };
 
 /// One call in flight. A turn task submits it and waits; the owner answers it.
 ///
-/// The submitter touches no QuickJS value, so it never frees the Promise. It marks itself done,
-/// and the owner sweeps the record on its next pass.
+/// The submitter touches no QuickJS value, so it never frees the Promise; it marks itself done and the owner sweeps the record.
 pub const Call = struct {
     kind: Kind = .tool,
     /// The tool name, or the hook point. The submitter owns these bytes for the whole call.
@@ -189,8 +186,7 @@ pub const Calls = struct {
         return call;
     }
 
-    /// Free every record the submitter left. Only the owner calls this, because it frees a Promise.
-    /// A handler that still runs keeps its own references; this drops only the root the call held.
+    /// Free every record the submitter left. Only the owner calls this, because it frees a Promise; a running handler keeps its own references.
     pub fn sweep(self: *Calls, ctx: Context) void {
         var i: usize = 0;
         while (i < self.live.items.len) {
@@ -209,8 +205,7 @@ pub const Calls = struct {
         }
     }
 
-    /// Report whether the owner has work. A queued call needs a start, a running call needs a poll
-    /// while JavaScript still has jobs, and a left call needs a sweep.
+    /// Report whether the owner has work: a queued call needs a start, a running one a poll while jobs remain, a left one a sweep.
     pub fn hasWork(self: *const Calls, jobs_pending: bool) bool {
         for (self.live.items) |call| {
             if (call.submitter_done) return true;

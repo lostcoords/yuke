@@ -20,7 +20,6 @@ const engine_call = @import("../../app/call.zig");
 const turn = @import("../../engine/turn.zig");
 const domain_session = @import("../../session/session.zig");
 const Session = domain_session.Session;
-const domain_draft = @import("../../session/draft.zig");
 
 const Host = host_mod.Host;
 const Context = quickjs.Context;

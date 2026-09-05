@@ -8,8 +8,7 @@ import { fs } from "yuke:fs";
 /** @typedef {{ path: string, parent: string | null, entries: FsEntry[], more: boolean }} FsPage */
 /** @typedef {{ key: string, notice: true, text: string, up?: never, dest?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, up: true, dest: string, notice?: never, text?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, name: string, path: string, is_git_repo?: boolean, notice?: never, up?: never, dest?: never, text?: never }} ExplorerRow */
 
-// A floating directory navigator over `yuke:fs`: Enter or → descends, ← goes up, and Esc closes.
-// The listing is a direct file-system read, like netrw; the promise settles at once.
+// A floating directory navigator over `yuke:fs`: Enter or → descends, ← goes up, Esc closes; the listing is a direct read, so the promise settles at once.
 /** @param {string | null | undefined} [startPath] */
 function openExplorer(startPath) {
   const state = /** @type {{ path: string, parent: string | null | undefined }} */ ({ path: startPath || "", parent: null });

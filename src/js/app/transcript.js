@@ -1141,18 +1141,6 @@ export class Transcript {
     return out;
   }
 
-  // Stops for J/K: user rows, text-part starts, tool and reasoning headers.
-  /** @returns {Position[]} */
-  partStops() {
-    const out = [];
-    for (let i = 0; ; i++) {
-      const m = this._at(i);
-      if (!m) break;
-      for (const stop of this._partStopsOf(m)) out.push(stop);
-    }
-    return out;
-  }
-
   // A part motion reads only the messages between the cursor and its next stop.
   /** @param {Position | null} pos @param {number} dir @returns {Position | null} */
   partStep(pos, dir) {

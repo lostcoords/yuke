@@ -50,8 +50,7 @@ pub const LocalHost = struct {
         defer dir.close(self.io);
         const permissions = try targetPermissions(dir, self.io, base);
 
-        // `File.Atomic` writes a temporary file beside the target, then renames it over the target.
-        // Its `deinit` removes that temporary file after a failure.
+        // `File.Atomic` writes a temporary file beside the target and renames it over; its `deinit` removes the temporary file after a failure.
         var atomic = dir.createFileAtomic(self.io, base, .{ .permissions = permissions, .replace = true }) catch |err| return mapError(err);
         defer atomic.deinit(self.io);
         // `openat` applies the process umask, so restore the permissions on the temporary file itself.
@@ -63,8 +62,7 @@ pub const LocalHost = struct {
         atomic.replace(self.io) catch |err| return mapError(err);
     }
 
-    /// Return the permissions for a replacement. Use the default permissions for a missing target.
-    /// Reject a symlink, a hard link, or a special file.
+    /// Return the permissions for a replacement, the default for a missing target; reject a symlink, a hard link, or a special file.
     fn targetPermissions(dir: std.Io.Dir, io: std.Io, base: []const u8) h.HostError!std.Io.File.Permissions {
         const info = dir.statFile(io, base, .{ .follow_symlinks = false }) catch |err| switch (err) {
             error.FileNotFound => return .default_file,
@@ -108,8 +106,7 @@ const ScanError = error{ InvalidUtf8, ReadFailed };
 /// The next byte after a streamed line.
 const NextByte = enum { newline, other, eof };
 
-/// Stream the requested lines. Stop at the first limit. `line_buf` holds one line, so memory stays
-/// bounded by the limits and not by the file size.
+/// Stream the requested lines and stop at the first limit. `line_buf` holds one line, so memory follows the limits, not the file size.
 fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, range: h.Range, limits: h.ReadLimits) ScanError!h.RangeRead {
     std.debug.assert(limits.max_lines > 0 and limits.max_line_bytes > 0);
     std.debug.assert(line_buf.len == limits.max_line_bytes + 1);
@@ -132,8 +129,7 @@ fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, rang
     while (true) {
         if (range.end) |last| if (line_no > last) break;
         const line = (try takeLine(reader, &writer, limits.max_line_bytes, &long_lines)) orelse break;
-        // The scan reads the line BEFORE it tests a limit, so a limit never reports a line that the
-        // file does not hold.
+        // The scan reads the line before it tests a limit, so a limit never reports a line the file does not hold.
         if (kept == limits.max_lines or text.items.len + line.len + 1 > limits.max_bytes) {
             return .{ .text = text.items, .next_line = std.math.cast(u32, line_no), .long_lines = long_lines };
         }
@@ -147,8 +143,7 @@ fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, rang
     return .{ .text = text.items, .long_lines = long_lines };
 }
 
-/// Take one line without its newline. The scan cuts a line above `max_bytes` and drops the rest of it.
-/// Return null at the end of the file. The result borrows the writer buffer until the next call.
+/// Take one line without its newline, cut above `max_bytes`, or null at the end of the file. The result borrows the writer buffer until the next call.
 fn takeLine(reader: *std.Io.Reader, writer: *std.Io.Writer, max_bytes: u32, long_lines: *u32) ScanError!?[]const u8 {
     writer.end = 0;
     var cut = false;
@@ -190,8 +185,7 @@ fn peekNext(reader: *std.Io.Reader) ScanError!NextByte {
     return if (byte == '\n') .newline else .other;
 }
 
-/// Return the length of the longest prefix that ends on a UTF-8 codepoint boundary. Return null when
-/// the trailing bytes are not the start of a valid sequence, because that data is invalid, not cut.
+/// Return the longest prefix that ends on a codepoint boundary, or null when the trailing bytes are invalid rather than cut.
 fn utf8Floor(bytes: []const u8) ?usize {
     if (std.unicode.utf8ValidateSlice(bytes)) return bytes.len;
     var i = bytes.len;
@@ -215,8 +209,7 @@ const NativeError = FsError || std.Io.Dir.ReadFileAllocError || std.Io.Dir.StatF
     std.Io.Dir.OpenError || std.Io.Dir.CreateFileAtomicError || std.Io.File.Writer.Error ||
     std.Io.File.SetPermissionsError || std.Io.Dir.RenameError;
 
-/// Map a native file-system error to `HostError`. Map an unlisted error to `HostFailure`. The open
-/// call accepts a directory on POSIX. The first read reports that case.
+/// Map a native file-system error to `HostError`, an unlisted one to `HostFailure`. An opened directory reports on the first read.
 fn mapError(err: NativeError) h.HostError {
     return switch (err) {
         error.FileNotFound, error.NotDir => error.NotFound,
@@ -229,8 +222,7 @@ fn mapError(err: NativeError) h.HostError {
     };
 }
 
-/// Reject a path that does not name a regular file. A read of a FIFO or a device blocks forever, so
-/// every read must check first. A read follows a symlink; a write must not.
+/// Reject a path that is not a regular file, because a FIFO or a device blocks a read forever. A read follows a symlink, a write must not.
 fn requireRegularFile(io: std.Io, path: []const u8) h.HostError!void {
     const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch |err| return mapError(err);
     if (stat.kind != .file) return error.NotAFile;

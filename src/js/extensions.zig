@@ -239,8 +239,7 @@ test "a hook chain replaces a payload and the first block ends it" {
     // A point no handler holds must cost nothing, so the set answers false for it.
     try std.testing.expect(!extensions.host.hooks.holds(.@"request.send"));
 
-    // The bus carried no engine fact before, so a headless plugin could register a handler that
-    // never fired. One published run must now reach it through the digest.
+    // A published run must reach a headless handler through the digest, because the bus carried no engine fact before.
     const proto = @import("proto");
     const session_id: proto.ids.SessionId = .bytes(@splat(0xab));
     app_runtime.engine.sinks.emit(.{ .method = .@"run.started", .params = .{ .run_started_data = .{
@@ -284,8 +283,7 @@ test "a hook chain replaces a payload and the first block ends it" {
     try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"refused\"}", refused);
 }
 
-/// Submit one hook call and pump the owner until it settles. The owner frees the record's own
-/// text on its next sweep, so this copies the answer and the caller owns it.
+/// Submit one hook call, pump the owner until it settles, and copy the answer, because the owner frees the record's text on its next sweep.
 fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) ![]u8 {
     const call = extensions.host.calls.submitHook(point, payload);
     try pumpUntilSettled(extensions.host, call);

@@ -22,9 +22,7 @@ pub fn install(host: *Host) void {
 
 /// `defineTool(name, {description, parameters, execute})`.
 ///
-/// `parameters` is a JSON Schema object, so a tool can state an enum, an array, or a nested
-/// object. The provider reads that schema, so a shape it refuses must fail here, at boot, and
-/// not inside a turn.
+/// `parameters` is a JSON Schema object, so a tool can state an enum, an array, or a nested object; a shape the provider refuses fails here at boot.
 fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 2) return ctx.throwTypeError("defineTool needs a name and a definition");
@@ -80,8 +78,7 @@ fn jsRemoveTool(ctx: Context, _: Value, args: []const Value) Value {
     return ctx.newBool(host.tools.remove(ctx, name));
 }
 
-/// Report why the schema is refused, or null when it is usable.
-/// The provider needs an object schema with a `properties` object; anything else returns a 400.
+/// Report why the schema is refused, or null when it is usable. The provider needs an object schema with a `properties` object.
 fn schemaFault(ctx: Context, parameters: Value) ?[*:0]const u8 {
     if (!ctx.isObject(parameters) or ctx.isArray(parameters))
         return "the tool parameters must be a JSON Schema object";

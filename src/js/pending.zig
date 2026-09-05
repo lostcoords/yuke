@@ -16,8 +16,7 @@ const zio = @import("zio");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
-/// What a finished task hands back. `text` and `json` are owned; `failed` names a closed error
-/// set, so it is static.
+/// What a finished task hands back. `text` and `json` are owned; `failed` names a closed error set, so it is static.
 pub const Result = union(enum) {
     text: []u8,
     /// A structured answer, as the JSON text the owner parses. QuickJS reads it to the sentinel.
@@ -33,8 +32,7 @@ pub fn resolved(ctx: Context, value: Value) Value {
     return ctx.newSettledPromise(false, value);
 }
 
-/// Answer a rejected promise carrying an Error, so `catch (e)` reads `e.message`.
-/// A pending exception changes the meaning of the next call, so this leaves none behind.
+/// Answer a rejected promise that carries an Error, so `catch (e)` reads `e.message`, and leave no exception pending.
 pub fn rejected(ctx: Context, message: []const u8) Value {
     dropException(ctx);
     const err = errorWith(ctx, message) orelse return ctx.newSettledPromise(true, quickjs.UNDEFINED);
@@ -66,8 +64,7 @@ pub const Op = struct {
     /// Null while the task runs. The task writes it once, and the owner reads it once.
     result: ?Result = null,
 
-    /// Record the outcome and wake the owner. This runs on a task, so it enters no JavaScript.
-    /// It touches nothing after the wake, because the owner may free this op at once.
+    /// Record the outcome and wake the owner. This runs on a task, so it enters no JavaScript and touches nothing after the wake.
     pub fn finish(self: *Op, result: Result) void {
         std.debug.assert(self.result == null); // a task finishes its op once
         self.result = result;
@@ -93,8 +90,7 @@ pub const Ops = struct {
         self.* = undefined;
     }
 
-    /// Start one op and answer the pending promise its caller returns to JavaScript.
-    /// Null means the QuickJS heap is full; the exception stays pending for the caller to throw.
+    /// Start one op and answer its pending promise. Null means the QuickJS heap is full, and the exception stays pending for the caller.
     pub fn start(self: *Ops, ctx: Context) ?struct { op: *Op, promise: Value } {
         var funcs: [2]Value = undefined;
         const promise = ctx.newPromiseCapability(&funcs);
@@ -111,12 +107,7 @@ pub const Ops = struct {
         return false;
     }
 
-    /// Settle every finished op. The owner calls this, so entering JavaScript here is correct.
-    /// Answer whether a resolver threw, so the owner reports one fault for the whole pass.
-    ///
-    /// A settle can start another op, so this re-reads the length each turn. `orderedRemove`
-    /// shifts the tail left, so `i` must NOT advance after a removal or it skips the entry that
-    /// moved into the freed slot.
+    /// Settle every finished op and answer whether a resolver threw. A settle can start another op, so the loop re-reads the length and holds `i` after a removal.
     pub fn settle(self: *Ops, ctx: Context) bool {
         var faulted = false;
         var i: usize = 0;
@@ -136,8 +127,7 @@ pub const Ops = struct {
         return faulted;
     }
 
-    /// Answer whether the resolver threw. A pending exception would change the meaning of the
-    /// next JavaScript call, so the caller clears it and reports the fault.
+    /// Answer whether the resolver threw; the caller clears the pending exception and reports the fault.
     fn call(ctx: Context, op: *Op, result: Result) bool {
         const failed = result == .failed;
         const value = switch (result) {
@@ -148,8 +138,7 @@ pub const Ops = struct {
             .undefined => quickjs.UNDEFINED,
             .failed => |message| errorWith(ctx, message) orelse quickjs.UNDEFINED,
         };
-        // A failed conversion is itself an exception value, which must never be handed to a
-        // resolver. Clear it and settle with undefined, so the promise still leaves the pending set.
+        // A failed conversion is an exception value no resolver may see, so clear it and reject with undefined to leave the pending set.
         if (ctx.isException(value)) {
             const exc = ctx.getException();
             ctx.freeValue(exc);
