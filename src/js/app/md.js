@@ -342,6 +342,7 @@ function isEscaped(text, index) {
 }
 
 const ESCAPABLE = "\\`*{}[]()#+-.!_>~|";
+const INLINE_MARKERS = new Set(["\\", "`", "[", "*", "_"]);
 
 /** @param {string | undefined} c @returns {boolean} */
 function isSpace(c) {
@@ -521,8 +522,11 @@ function parseInline(text, baseGroup) {
       i += d.count;
       continue;
     }
-    nodes.push({ kind: "text", text: /** @type {string} */ (c), at: /** @type {number} */ (units[i]), len: /** @type {string} */ (c).length });
-    i++;
+    // A run of plain characters is one node, because every rule above reads only its marker character.
+    let j = i + 1;
+    while (j < cps.length && !INLINE_MARKERS.has(/** @type {string} */ (cps[j]))) j++;
+    nodes.push({ kind: "text", text: cps.slice(i, j).join(""), at: /** @type {number} */ (units[i]), len: /** @type {number} */ (units[j]) - /** @type {number} */ (units[i]) });
+    i = j;
   }
 
   foldEmphasis(nodes, delims);
@@ -711,33 +715,30 @@ function segmentsToWords(segments) {
     if (cur) words.push(cur);
     cur = null;
   };
-  /** @param {string | undefined} c @returns {boolean} */
-  const blank = (c) => c === " " || c === "\t" || c === "\n";
   for (const seg of segments) {
-    let k = 0;
-    while (k <= seg.text.length) {
-      let e = k;
-      while (e < seg.text.length && !blank(seg.text[e])) e++;
-      if (e > k) {
-        if (!cur) {
-          cur = { pieces: [], w: 0, spaceGroup };
-          spaceGroup = null;
-        }
-        const piece = sliceSegment(seg, k, e);
-        cur.pieces.push(piece);
-        cur.w += term.measure(piece.text);
+    RUNS.lastIndex = 0;
+    let m;
+    while ((m = RUNS.exec(seg.text))) {
+      if (m[0][0] === " " || m[0][0] === "\t" || m[0][0] === "\n") {
+        close();
+        spaceGroup = seg.group;
+        continue;
       }
-      if (e >= seg.text.length) break;
-      let ws = e;
-      while (ws < seg.text.length && blank(seg.text[ws])) ws++;
-      close();
-      spaceGroup = seg.group;
-      k = ws;
+      if (!cur) {
+        cur = { pieces: [], w: 0, spaceGroup };
+        spaceGroup = null;
+      }
+      const piece = sliceSegment(seg, m.index, m.index + m[0].length);
+      cur.pieces.push(piece);
+      cur.w += term.measure(piece.text);
     }
   }
   close();
   return words;
 }
+
+// A blank run or a word, so a wrap walks a segment in runs instead of characters.
+const RUNS = /[ \t\n]+|[^ \t\n]+/g;
 
 /** @param {Segment[]} pieces @param {number} width @returns {BreakPiece[]} */
 function hardBreakPieces(pieces, width) {
