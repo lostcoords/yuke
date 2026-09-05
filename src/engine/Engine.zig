@@ -120,7 +120,7 @@ pub fn hydrate(self: *Engine, resident: *Session) !void {
     defer history.deinit();
     // The scratch holds one message at a time, so the load peak follows the largest message, not the history.
     while (try history.next(scratch.allocator())) |m| {
-        try resident.transcript.append(m);
+        try resident.transcript.appendSized(m.message, m.bytes);
         _ = scratch.reset(.retain_capacity);
     }
     resident.sealHistory(hw.seq_high, hw.message_count > limit);

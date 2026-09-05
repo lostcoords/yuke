@@ -55,10 +55,14 @@ pub const Transcript = struct {
 
     /// Append a committed message. Clone it into its own arena. Drop the oldest over a bound.
     pub fn append(self: *Transcript, m: message.Message) Error!void {
+        return self.appendSized(m, try messageBytes(m));
+    }
+
+    /// Append a message whose serialized size the caller already knows, as the store does.
+    pub fn appendSized(self: *Transcript, m: message.Message, size: usize) Error!void {
         var arena = std.heap.ArenaAllocator.init(self.gpa);
         errdefer arena.deinit();
         const owned = try proto.dupe(arena.allocator(), m);
-        const size = try messageBytes(m);
         try self.list.append(self.gpa, .{ .arena = arena, .message = owned, .bytes = size });
         self.total_bytes += size;
         self.evict();

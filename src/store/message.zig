@@ -7,6 +7,7 @@ const sql = @import("sql");
 const Database = @import("store.zig").Database;
 const event = @import("event.zig");
 const queries_gen = @import("queries_gen.zig");
+const transcript = @import("../session/transcript.zig");
 
 /// The metadata that a committed message adds for its role.
 const Meta = struct {
@@ -162,11 +163,12 @@ fn messageId(message: proto.message.Message) u64 {
 pub const Tail = struct {
     rows: queries_gen.MessageTail.Rows,
 
-    pub fn next(self: *Tail, scratch: std.mem.Allocator) !?proto.message.Message {
+    /// One message beside its stored size, which is the same serialization the transcript measures.
+    pub fn next(self: *Tail, scratch: std.mem.Allocator) !?transcript.Sized {
         const row = (try self.rows.next(scratch)) orelse return null;
         const msg = try std.json.parseFromSliceLeaky(proto.message.Message, scratch, row.value.payload, .{ .ignore_unknown_fields = true });
         if (messageId(msg) != row.value.message_id) return error.CorruptLog; // The row and body disagree.
-        return msg;
+        return .{ .message = msg, .bytes = row.value.payload.len };
     }
 
     pub fn deinit(self: *Tail) void {
@@ -493,7 +495,7 @@ test "tail streams the newest messages oldest-first" {
     var seen: [4]u64 = undefined;
     var n: usize = 0;
     while (try it.next(scratch.allocator())) |m| : (n += 1) {
-        seen[n] = messageId(m);
+        seen[n] = messageId(m.message);
         _ = scratch.reset(.retain_capacity);
     }
     try testing.expectEqual(2, n);
