@@ -3771,6 +3771,43 @@ test "the command ui registers its palette as one plugin" {
     try expectJs(host, "ok");
 }
 
+test "the palette lists only the commands that carry metadata" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = Host.create(gpa.allocator());
+    defer host.destroy();
+    // A keymap target is not a user action, so the palette must skip it and sort the rest by title.
+    try host.evalModule(
+        \\import { command, root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { commandUiPlugin } from "yuke:command-ui";
+        \\import { tuiPlugin } from "yuke:tui";
+        \\plugins.use(tuiPlugin);
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\plugins.use(commandUiPlugin);
+        \\
+        \\const off = command.add(null, { "test:shown": () => {}, "test:plumbing": () => {}, "test:first": () => {} }, {
+        \\  "test:shown": { title: "Zed", description: "the last one" },
+        \\  "test:first": { title: "Alpha", description: "the first one" },
+        \\});
+        \\const listed = command.list().map((c) => c.name);
+        \\check("list-skips-plumbing", listed.indexOf("test:plumbing") < 0);
+        \\check("list-sorts-by-title", listed.indexOf("test:first") < listed.indexOf("test:shown"));
+        \\
+        \\command.perform("ui:palette");
+        \\const p = root.overlays[root.overlays.length - 1].content;
+        \\check("palette-shows-meta", p.selectKey("test:shown") && p.selected().description === "the last one");
+        \\check("palette-hides-plumbing", !p.selectKey("test:plumbing"));
+        \\check("palette-hides-itself", !p.selectKey("ui:palette"));
+        \\root.popOverlay();
+        \\off();
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "meta.js");
+    try expectJs(host, "ok");
+}
+
 test "the palette hints only the strokes that run the command here" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -3788,10 +3825,11 @@ test "the palette hints only the strokes that run the command here" {
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\plugins.use(commandUiPlugin);
         \\
+        \\const meta = { title: "t", description: "d" };
         \\const offCmd = command.add(null, {
         \\  "test:plain": () => {}, "test:hidden": () => {},
         \\  "test:shadowed": () => {}, "test:winner": () => {},
-        \\});
+        \\}, { "test:plain": meta, "test:hidden": meta, "test:shadowed": meta, "test:winner": meta });
         \\const offA = keymap.add({ "ctrl+alt+a": "test:plain" });
         \\// No pane provides this atom, so the stroke never reaches the command.
         \\const offB = keymap.add({ "ctrl+alt+b": "test:hidden" }, "no_such_pane");

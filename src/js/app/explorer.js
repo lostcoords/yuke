@@ -88,6 +88,8 @@ export const explorerPlugin = {
           ctx.tui.overlay(picker.win);
           return picker;
         },
+      }, {
+        "app:explorer": { title: "Files", description: "browse the workspace" },
       });
       });
 },

@@ -22,9 +22,11 @@ export { config, defineConfig, Emitter, events };
 /** @typedef {{ type: "leaf" | "split", parent: Node | null, rect: Rect, view: ViewLike | null, kind: "row" | "col" | null, a: Node | null, b: Node | null, ratio: number }} NodeShape */
 /** @typedef {(...args: any[]) => unknown} CommandAction */
 /** @typedef {(...args: any[]) => boolean | [boolean, ...any[]]} CommandPredicate */
-/** @typedef {{ predicate: CommandPredicate | null, perform: CommandAction }} CommandEntry */
+/** @typedef {{ title: string, description: string }} CommandMeta */
+/** @typedef {{ predicate: CommandPredicate | null, perform: CommandAction, meta: CommandMeta | null }} CommandEntry */
+/** @typedef {{ name: string, title: string, description: string }} CommandListing */
 /** @typedef {{ [name: string]: CommandEntry[] }} CommandMap */
-/** @typedef {{ map: CommandMap, add: (predicate: string | CommandPredicate | null, map: Record<string, CommandAction>) => () => void, perform: (name: string, ...args: any[]) => boolean, available: (name: string) => boolean }} CommandRegistry */
+/** @typedef {{ map: CommandMap, add: (predicate: string | CommandPredicate | null, map: Record<string, CommandAction>, meta?: Record<string, CommandMeta>) => () => void, perform: (name: string, ...args: any[]) => boolean, available: (name: string) => boolean, list: () => CommandListing[] }} CommandRegistry */
 /** @typedef {string | ((ev: HostEvent) => boolean | void)} KeyBinding */
 /** @typedef {{ t: "atom", name: string } | { t: "eq", name: string, value: string, neg: boolean } | { t: "not", x: ContextNode } | { t: "and", a: ContextNode, b: ContextNode } | { t: "or", a: ContextNode, b: ContextNode }} ContextNode */
 /** @typedef {string | (() => string | null | undefined)} ContextFlag */
@@ -272,13 +274,13 @@ function once(fn) {
 export const command = {
   map: Object.create(null),
 
-  // Register a batch under one predicate; a later registration shadows an earlier one.
-  add(predicate, map) {
+  // Register a batch under one predicate; a later registration shadows an earlier one. `meta` marks a user action.
+  add(predicate, map, meta) {
     const pred = normalizePredicate(predicate);
     /** @type {Array<[string, CommandEntry]>} */
     const added = [];
     for (const name in map) {
-      const entry = { predicate: pred, perform: /** @type {CommandAction} */ (map[name]) };
+      const entry = { predicate: pred, perform: /** @type {CommandAction} */ (map[name]), meta: (meta && meta[name]) || null };
       const list = this.map[name] || (this.map[name] = []);
       list.unshift(entry);
       added.push([name, entry]);
@@ -306,7 +308,27 @@ export const command = {
   available(name) {
     return isAvailable(this.map[name]);
   },
+
+  // The available commands that carry metadata, in title order. A keymap target has none, so a palette never lists it.
+  list() {
+    /** @type {CommandListing[]} */
+    const out = [];
+    for (const name in this.map) {
+      const list = /** @type {CommandEntry[]} */ (this.map[name]);
+      const meta = metaOf(list);
+      if (meta && isAvailable(list)) out.push({ name, title: meta.title, description: meta.description });
+    }
+    // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
+    return out.sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
+  },
 };
+
+// The metadata of the newest entry that carries one, so a plain shadow keeps the listing under it.
+/** @param {CommandEntry[]} list @returns {CommandMeta | null} */
+function metaOf(list) {
+  for (const entry of list) if (entry.meta) return entry.meta;
+  return null;
+}
 
 // Return the newest entry whose predicate accepts, with the arguments to run it with.
 /** @param {CommandEntry[] | undefined} list @param {any[]} args @returns {{ entry: CommandEntry, args: any[] } | null} */
@@ -1712,7 +1734,7 @@ export function quit() {
 }
 
 // A bare key never quits. A stray key in a modal layer must not end the session.
-command.add(null, { quit });
+command.add(null, { quit }, { quit: { title: "Quit", description: "leave yuke" } });
 
 root.addTickable(keymap);
 

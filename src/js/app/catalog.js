@@ -94,6 +94,15 @@ export const catalogPlugin = {
       // The engine is in this process, so the catalog is readable at once and needs no connect event.
       loadCatalog();
 
+      ctx.tui.command(null, {
+        "catalog:reload": () => client.catalogReload().then(
+          (r) => { notice.show(r.changed ? "providers reloaded" : "providers unchanged"); return loadCatalog(); },
+          (e) => notice.show("reload failed · " + e.message),
+        ),
+      }, {
+        "catalog:reload": { title: "Reload providers", description: "read providers.json again" },
+      });
+
       ctx.tui.status({
         side: "right",
         order: 10,

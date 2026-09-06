@@ -374,6 +374,10 @@ export const chatPlugin = {
         "copy:message": () => openMessagePicker(ctx),
         "copy:code": () => openCodePicker(ctx),
         "model:pick": () => openModelPicker(ctx),
+      }, {
+        "copy:message": { title: "Copy message", description: "copy one message" },
+        "copy:code": { title: "Copy code", description: "copy one code block" },
+        "model:pick": { title: "Model", description: "choose the model for the next chat" },
       });
       });
 },

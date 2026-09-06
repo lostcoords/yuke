@@ -5,6 +5,7 @@ import { command, keymap, route, slot, context, status, style, root } from "yuke
 /** @typedef {() => void} Disposer */
 /** @typedef {Parameters<typeof command.add>[0]} CommandPredicate */
 /** @typedef {Parameters<typeof command.add>[1]} CommandMap */
+/** @typedef {NonNullable<Parameters<typeof command.add>[2]>} CommandMetaMap */
 /** @typedef {Parameters<typeof keymap.add>[0]} KeyBindings */
 /** @typedef {Parameters<typeof route.add>[0]} RouteWhere */
 /** @typedef {Parameters<typeof root.addTickable>[0]} Tickable */
@@ -26,12 +27,15 @@ function bindTo(ctx) {
   let ownsOverlays = false;
 
   const surface = {
-    /** @param {CommandPredicate} predicate @param {CommandMap} map @returns {Disposer} */
-    command(predicate, map) {
+    // `meta` names the user actions in `map`. A command without metadata stays a keymap target and never lists.
+    /** @param {CommandPredicate} predicate @param {CommandMap} map @param {CommandMetaMap} [meta] @returns {Disposer} */
+    command(predicate, map, meta) {
       const scoped = Object.create(null);
       for (const name in map) scoped[qualify(name)] = map[name];
+      const scopedMeta = Object.create(null);
+      for (const name in meta || {}) scopedMeta[qualify(name)] = /** @type {CommandMetaMap} */ (meta)[name];
 
-      return ctx.effect(() => command.add(predicate, scoped));
+      return ctx.effect(() => command.add(predicate, scoped, scopedMeta));
     },
 
     /** @param {KeyBindings} bindings @param {string} [at] @param {Parameters<typeof keymap.add>[2]} [opts] @returns {Disposer} */

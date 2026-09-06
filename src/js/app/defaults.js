@@ -5,7 +5,7 @@ import { ui, NAV_KEYS } from "yuke:ui";
 import { notice, noticePlugin } from "yuke:notice";
 import { commandUiPlugin } from "yuke:command-ui";
 import { explorerPlugin } from "yuke:explorer";
-import { catalogOf, catalogPlugin, loadCatalog } from "yuke:catalog";
+import { catalogPlugin } from "yuke:catalog";
 import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { client } from "yuke:client";
 import { rowKey, rowLabel, activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
@@ -76,6 +76,8 @@ plugins.use({
       // The interrupt command is available only with a session open.
       ctx.tui.command(() => { const c = focusedChat(); return c != null && c.sessionId != null; }, {
         "session:interrupt": () => withChat(c => c.interrupt()),
+      }, {
+        "session:interrupt": { title: "Interrupt", description: "stop the run" },
       });
 
       ctx.tui.command(null, {
@@ -93,10 +95,6 @@ plugins.use({
         "copy:selection": () => withChat(c => copy(c.transcript.selectedText(), "selection")),
         "copy:source": () => withChat(c => copy(c.transcript.selectedSource(), "source")),
         "chat:new": () => withChat(c => c.newChat()),
-        "catalog:reload": () => client.catalogReload().then(
-          (r) => { notice.show(r.changed ? "providers reloaded" : "providers unchanged"); return loadCatalog(); },
-          (e) => notice.show("reload failed · " + e.message),
-        ),
         "debug:memory": () => {
           const m = client.memoryUsage();
           const mb = (/** @type {number} */ n) => (n / 1048576).toFixed(1) + "MB";
@@ -111,6 +109,14 @@ plugins.use({
         }),
         "composer-vim:toggle": () => (plugins.get("composer-vim") ? plugins.dispose("composer-vim") : plugins.use(composerVim)),
         "transcript-vim:toggle": () => (plugins.get("transcript-vim") ? plugins.dispose("transcript-vim") : plugins.use(transcriptVim)),
+      }, {
+        "ui:sessions": { title: "Sessions", description: "open a session" },
+        "chat:new": { title: "New chat", description: "leave the session and start empty" },
+        "copy:reply": { title: "Copy reply", description: "copy the last assistant message" },
+        "copy:selection": { title: "Copy selection", description: "copy the selected text" },
+        "copy:source": { title: "Copy source", description: "copy the selected markdown" },
+        "composer-vim:toggle": { title: "Composer vim", description: "toggle vim keys in the composer" },
+        "transcript-vim:toggle": { title: "Transcript vim", description: "toggle vim keys in the transcript" },
       });
 
       // Global commands live on ctrl strokes and window nav behind ctrl+k, which leaves ctrl+w for the composer word-erase.
@@ -156,7 +162,7 @@ plugins.use(commandUiPlugin);
 plugins.use(explorerPlugin);
 plugins.use(catalogPlugin, { entry: chatEntry });
 plugins.use(chatPlugin);
-plugins.use(sessionsPlugin, { onCatalogChanged: () => { catalogOf().rev = null; } });
+plugins.use(sessionsPlugin);
 
 root.setRoot(workspace);
 root.focusView(chat.view);

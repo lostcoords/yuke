@@ -838,11 +838,6 @@ export class Picker {
     this.refilter();
   }
 
-  /** @param {T[]} items @returns {void} */
-  setItems(items) {
-    this.setSource(items);
-  }
-
   /** @param {ItemKey | null | undefined} k @returns {boolean} */
   selectKey(k) {
     return this.list.selectKey(k);

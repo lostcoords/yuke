@@ -5,15 +5,6 @@ import { client } from "yuke:client";
 /** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
 /** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */
 /** @typedef {{ id: string, title: string, activity: FeedActivity, session: Wire.Session }} SessionRow */
-/** @typedef {Extract<import("yuke:engine-native").EngineEvent, { type: "index" }>} NativeIndexEvent */
-/** @typedef {{ method: string, params: any }} BroadcastEvent */
-/** @typedef {{ onCatalogChanged?: () => void }} SessionsConfig */
-
-
-// The catalog belongs to the chat, so the owner supplies what a catalog change should do.
-/** @type {() => void} */
-let onCatalogChanged = () => {};
-
 const IDLE_ACTIVITY = /** @type {FeedActivity} */ ({
   state: { type: "idle" },
   queued: 0,
@@ -146,17 +137,8 @@ export function activityMark(activity) {
 // The feed registration. No view keeps the list on screen; the finder reads it on demand.
 export const sessionsPlugin = {
   name: "sessions",
-  /** @param {import("yuke:ext").Context} ctx @param {unknown} config @returns {void} */
-  apply(ctx, config) {
-    const cfg = /** @type {SessionsConfig} */ (config || {});
-    if (cfg.onCatalogChanged) {
-      const previous = onCatalogChanged;
-      onCatalogChanged = cfg.onCatalogChanged;
-      ctx.effect(() => () => {
-        onCatalogChanged = previous;
-      });
-    }
-
+  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  apply(ctx) {
     // The engine is in this process, so the list is available at once and needs no connect event.
     feed.refresh();
 

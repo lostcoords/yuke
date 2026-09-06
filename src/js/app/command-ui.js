@@ -1,24 +1,24 @@
-// yuke:command-ui — the palette that runs a command by name.
+// yuke:command-ui — the palette that runs a user command by title.
 import { command, keymap } from "yuke:core";
 import { ui } from "yuke:ui";
 
-// The first stroke that runs a command here, or "". `candidates` drops what the context shadows.
-/** @param {string} name @returns {string} */
-function keyHint(name) {
+// The first stroke that runs each command here. `candidates` drops what the context shadows.
+/** @returns {Record<string, string>} */
+function keyHints() {
+  /** @type {Record<string, string>} */
+  const hints = Object.create(null);
   for (const stroke in keymap.map) {
     const winner = keymap.candidates(stroke)[0];
-    if (winner && winner.fn === name) return stroke;
+    if (winner && typeof winner.fn === "string" && !(winner.fn in hints)) hints[winner.fn] = stroke;
   }
-  return "";
+  return hints;
 }
 
 function openPalette() {
-  const cmds = Object.keys(command.map)
-    .sort()
-    .filter((name) => command.available(name))
-    .map((name) => ({ name: name, hint: keyHint(name) }));
+  const hints = keyHints();
+  const cmds = command.list().map((c) => ({ ...c, hint: hints[c.name] || "" }));
 
-  const opened = ui.pick({
+  return ui.pick({
     title: "commands",
     footer: "type to filter · ↵ run · esc close",
     border: "rounded",
@@ -26,11 +26,10 @@ function openPalette() {
     height: 0.5,
     items: cmds,
     key: c => c.name,
-    filterText: c => c.name,
-    format: c => ({ text: c.name, right: c.hint }),
+    filterText: c => c.title,
+    format: c => ({ text: c.title, right: c.hint ? c.description + " · " + c.hint : c.description }),
     onAccept: c => command.perform(c.name),
   });
-  return opened;
 }
 
 export const commandUiPlugin = {
@@ -42,6 +41,6 @@ export const commandUiPlugin = {
         "ui:palette": () => ctx.tui.overlay(openPalette().win),
       });
       ctx.tui.keymap({ "ctrl+p": "ui:palette" });
-      });
-},
+    });
+  },
 };
