@@ -1,0 +1,8 @@
+{
+  "extends": "../../src/js/app/tsconfig.json",
+  "include": [
+    "typecheck.ts",
+    "../../src/js/app/types/**/*.d.ts",
+    "../../src/js/app/generated/**/*.d.ts"
+  ]
+}

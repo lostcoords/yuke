@@ -58,10 +58,10 @@ fn extractSource(a: std.mem.Allocator, docs: *DocMap, source: []const u8) !void 
             tree.tokenTag(var_decl.ast.mut_token) != .keyword_const) continue;
 
         const init_node = var_decl.ast.init_node.unwrap() orelse continue;
-        const container = tree.fullContainerDecl(&container_buffer, init_node) orelse continue;
         const type_name = tree.tokenSlice(var_decl.ast.mut_token + 1);
         if (try docComment(a, tree, tree.firstToken(node))) |doc| try docs.put(type_name, doc);
 
+        const container = tree.fullContainerDecl(&container_buffer, init_node) orelse continue;
         for (container.ast.members) |member| {
             const field = tree.fullContainerField(member) orelse continue;
             try putFieldDoc(a, docs, tree, type_name, field);
@@ -83,4 +83,26 @@ pub fn load(a: std.mem.Allocator, io: std.Io) !DocMap {
     }
 
     return docs;
+}
+
+test "docs include aliases and quoted fields but exclude private declarations" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var docs = DocMap.init(a);
+    try extractSource(a, &docs,
+        \\/// An identifier.
+        \\pub const Id = u64;
+        \\/// A request.
+        \\pub const Request = struct {
+        \\    /// The failure text.
+        \\    @"error": []const u8,
+        \\};
+        \\/// Private data.
+        \\const Private = struct {};
+    );
+    try std.testing.expectEqualStrings("An identifier.", docs.get("Id").?);
+    try std.testing.expectEqualStrings("A request.", docs.get("Request").?);
+    try std.testing.expectEqualStrings("The failure text.", docs.get("Request.error").?);
+    try std.testing.expect(docs.get("Private") == null);
 }

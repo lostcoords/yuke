@@ -180,19 +180,20 @@ pub fn build(b: *std.Build) void {
     });
     const run_gen_schema = b.addRunArtifact(gen_schema);
     run_gen_schema.setCwd(b.path("."));
-    const gen_dts = b.addExecutable(.{
-        .name = "gen-proto-dts",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/protogen/dts.zig"),
-            .target = host,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "proto", .module = proto_host },
-            },
-        }),
+    addSourceInputs(b, run_gen_schema, "lib/proto", ".zig");
+    const schema_output = run_gen_schema.captureStdOut(.{});
+    const dts_module = b.createModule(.{
+        .root_source_file = b.path("tools/protogen/dts.zig"),
+        .target = host,
+        .optimize = optimize,
     });
+    const gen_dts = b.addExecutable(.{ .name = "gen-proto-dts", .root_module = dts_module });
     const run_gen_dts = b.addRunArtifact(gen_dts);
-    run_gen_dts.setCwd(b.path("."));
+    run_gen_dts.addFileArg(schema_output);
+    const dts_output = run_gen_dts.captureStdOut(.{});
+    const generator_tests = b.step("test-protogen", "Test the protocol generators");
+    generator_tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = dts_module })).step);
+    generator_tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = gen_schema.root_module })).step);
 
     const exe = b.addExecutable(.{
         .name = "yuke",
@@ -228,11 +229,17 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_js_tests.step);
     test_step.dependOn(&run_layer_tests.step);
     test_step.dependOn(&database_sqlgen_check.step);
+    test_step.dependOn(generator_tests);
+
+    const check_schema = b.step("check-schema", "Check the generated protocol files without edits");
+    check_schema.dependOn(&b.addCheckFile(schema_output, .{ .expected_exact = @embedFile("schema/proto.json") }).step);
+    check_schema.dependOn(&b.addCheckFile(dts_output, .{ .expected_exact = @embedFile("src/js/app/generated/proto.d.ts") }).step);
+    test_step.dependOn(check_schema);
 
     const write_schema = b.addUpdateSourceFiles();
-    write_schema.addCopyFileToSource(run_gen_schema.captureStdOut(.{}), "schema/proto.json");
-    write_schema.addCopyFileToSource(run_gen_dts.captureStdOut(.{}), "src/js/app/generated/proto.d.ts");
-    const gen_schema_step = b.step("gen-schema", "Regenerate schema/proto.json from the proto types");
+    write_schema.addCopyFileToSource(schema_output, "schema/proto.json");
+    write_schema.addCopyFileToSource(dts_output, "src/js/app/generated/proto.d.ts");
+    const gen_schema_step = b.step("gen-schema", "Regenerate the JSON schema and TypeScript declarations");
     gen_schema_step.dependOn(&write_schema.step);
 }
 
@@ -255,6 +262,10 @@ fn addTestRun(
 /// Pass `dir_path` as a directory argument and hash every `.sql` file inside it.
 fn addSqlDir(b: *std.Build, run: *std.Build.Step.Run, dir_path: []const u8) void {
     run.addDirectoryArg(b.path(dir_path));
+    addSourceInputs(b, run, dir_path, ".sql");
+}
+
+fn addSourceInputs(b: *std.Build, run: *std.Build.Step.Run, dir_path: []const u8, suffix: []const u8) void {
     const io = b.graph.io;
     var dir = b.build_root.handle.openDir(io, dir_path, .{ .iterate = true }) catch |err| {
         std.debug.panic("open {s}: {s}", .{ dir_path, @errorName(err) });
@@ -263,7 +274,7 @@ fn addSqlDir(b: *std.Build, run: *std.Build.Step.Run, dir_path: []const u8) void
     var it = dir.iterate();
     while (it.next(io) catch |err| std.debug.panic("iterate {s}: {s}", .{ dir_path, @errorName(err) })) |entry| {
         if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".sql")) continue;
+        if (!std.mem.endsWith(u8, entry.name, suffix)) continue;
         run.addFileInput(b.path(b.fmt("{s}/{s}", .{ dir_path, entry.name })));
     }
 }

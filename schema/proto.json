@@ -61,7 +61,7 @@
       "params": "CreateSession",
       "result": "SessionResult",
       "direction": "clientToServer",
-      "paramsOptional": true
+      "paramsOptional": false
     },
     {
       "name": "session.patch",
@@ -3895,11 +3895,6 @@
           "name": "interaction.respond",
           "wire": "interaction.respond",
           "doc": "Answer one pending extension interaction."
-        },
-        {
-          "name": "skill.list",
-          "wire": "skill.list",
-          "doc": "Describe one filesystem path. List the skills this session can invoke."
         }
       ]
     },
@@ -4099,67 +4094,83 @@
   "aliases": [
     {
       "name": "ProviderId",
-      "base": "string"
+      "base": "string",
+      "doc": "This string identifies a provider."
     },
     {
       "name": "MessagePartDeltaData",
-      "base": "PartDelta"
+      "base": "PartDelta",
+      "doc": "The broadcast uses this shared message-part delta payload."
     },
     {
       "name": "ToolOutputDeltaData",
-      "base": "PartDelta"
+      "base": "PartDelta",
+      "doc": "The broadcast uses this shared tool-output delta payload."
     },
     {
       "name": "CatalogRev",
-      "base": "[64]u8"
+      "base": "[64]u8",
+      "doc": "This ID uses 64 raw bytes and 128 lowercase hexadecimal characters on the wire."
     },
     {
       "name": "ModelId",
-      "base": "string"
+      "base": "string",
+      "doc": "This string identifies a model."
     },
     {
       "name": "SessionId",
-      "base": "[16]u8"
+      "base": "[16]u8",
+      "doc": "This ID uses 16 raw bytes and 32 lowercase hexadecimal characters on the wire."
     },
     {
       "name": "LoginId",
-      "base": "[32]u8"
+      "base": "[32]u8",
+      "doc": "This ID uses 32 raw bytes and 64 lowercase hexadecimal characters on the wire."
     },
     {
       "name": "RequestId",
-      "base": "string"
+      "base": "string",
+      "doc": "This string identifies a request."
     },
     {
       "name": "MessageId",
-      "base": "u64"
+      "base": "u64",
+      "doc": "This numeric ID identifies a message."
     },
     {
       "name": "RunId",
-      "base": "u64"
+      "base": "u64",
+      "doc": "This numeric ID identifies a run."
     },
     {
       "name": "InputId",
-      "base": "u64"
+      "base": "u64",
+      "doc": "This numeric ID identifies an input."
     },
     {
       "name": "PartId",
-      "base": "u64"
+      "base": "u64",
+      "doc": "This numeric ID identifies a message part."
     },
     {
       "name": "Seq",
-      "base": "u64"
+      "base": "u64",
+      "doc": "This numeric value identifies an event sequence."
     },
     {
       "name": "SessionRevision",
-      "base": "u64"
+      "base": "u64",
+      "doc": "This numeric value identifies a session revision."
     },
     {
       "name": "ConfigRev",
-      "base": "u64"
+      "base": "u64",
+      "doc": "This numeric value identifies a run configuration revision."
     },
     {
       "name": "InteractionId",
-      "base": "u64"
+      "base": "u64",
+      "doc": "This numeric ID correlates a frontend interaction with its answer."
     }
   ]
 }

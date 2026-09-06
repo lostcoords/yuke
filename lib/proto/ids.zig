@@ -46,7 +46,6 @@ pub fn HexId(comptime N: usize) type {
 
 /// This ID uses 16 raw bytes and 32 lowercase hexadecimal characters on the wire.
 pub const SessionId = HexId(16);
-/// This ID uses 16 raw bytes and 32 lowercase hexadecimal characters on the wire.
 /// This ID uses 32 raw bytes and 64 lowercase hexadecimal characters on the wire.
 pub const LoginId = HexId(32);
 /// This ID uses 64 raw bytes and 128 lowercase hexadecimal characters on the wire.

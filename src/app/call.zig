@@ -49,8 +49,7 @@ pub fn call(
             return Failure{ .code = .not_implemented, .message = "not implemented" };
         }
     }
-    // A method name can exist without a table entry, and a peer can send it. So this returns.
-    return Failure{ .code = .not_implemented, .message = "not implemented" };
+    unreachable; // The protocol validates one table entry for every method name.
 }
 
 /// Run the one command this method names. A comptime condition drops every other branch.

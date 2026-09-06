@@ -17,9 +17,9 @@ events.on("engine.drained", (ev) => {
 });
 
 // The native task answers JSON after the command and its hooks settle.
-/** @param {string} method @param {Wire.RequestParams} params @returns {Promise<any>} */
-async function request(method, params) {
-  const text = await native.request(method, JSON.stringify(params));
+/** @template {keyof Wire.Methods} M @param {M} method @param {Wire.Methods[M]["paramsType"]} args @returns {Promise<Wire.Methods[M]["returnType"]>} */
+async function request(method, ...args) {
+  const text = await native.request(method, JSON.stringify(args[0] ?? {}));
   try {
     return JSON.parse(text);
   } catch {
@@ -31,11 +31,11 @@ async function request(method, params) {
 
 /** @param {Wire.SessionListParams} [params] @returns {Promise<Wire.SessionListResult>} */
 function sessionList(params = {}) {
-  return request("session.list", /** @type {Wire.SessionListParams} */ ({
+  return request("session.list", {
     population: { type: "top_level" },
     view: "active_recent",
     ...params,
-  }));
+  });
 }
 
 // Open a view onto a session. The pin holds the engine runtime while a pane shows it.
@@ -72,13 +72,13 @@ function sessionActivity(sessionId) {
 // One session with the activity the engine holds now, open or not.
 /** @param {string} sessionId @returns {Promise<Wire.SessionListItem>} */
 function sessionGet(sessionId) {
-  return request("session.get", /** @type {Wire.SessionGetParams} */ ({ session_id: sessionId }));
+  return request("session.get", { session_id: sessionId });
 }
 
 // The queued inputs of a session, oldest first.
 /** @param {string} sessionId @returns {Promise<Wire.SessionQueueResult>} */
 function sessionQueue(sessionId) {
-  return request("session.queue", /** @type {Wire.SessionQueueParams} */ ({ session_id: sessionId }));
+  return request("session.queue", { session_id: sessionId });
 }
 
 // One page of a message's whole text. `next` is the offset to ask for, or null at the end.
@@ -164,16 +164,16 @@ function sessionSendInput(id, text) {
 // Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
 /** @param {string} id @param {boolean} [clearQueue] @returns {Promise<Wire.SessionCancelRunResult>} */
 function sessionCancelRun(id, clearQueue = false) {
-  return request("session.cancel_run", /** @type {Wire.SessionCancelRunParams} */ ({
+  return request("session.cancel_run", {
     session_id: id,
     ...(clearQueue ? { clear_queue: true } : {}),
-  }));
+  });
 }
 
 // Drop one queued input. A started input belongs to the run, so the engine refuses it.
 /** @param {string} id @param {number} inputId @returns {Promise<Wire.SessionCancelInputResult>} */
 function sessionCancelInput(id, inputId) {
-  return request("session.cancel_input", /** @type {Wire.SessionCancelInputParams} */ ({ session_id: id, input_id: inputId }));
+  return request("session.cancel_input", { session_id: id, input_id: inputId });
 }
 
 // Create a session. An unset model or reasoning lets the engine use its profile default.
@@ -185,7 +185,7 @@ function sessionCreate(params) {
 // The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
 /** @param {Wire.CatalogRev | null | undefined} sinceRev @returns {Promise<Wire.CatalogListResult>} */
 function catalogList(sinceRev) {
-  return request("catalog.list", /** @type {Wire.CatalogListParams} */ (sinceRev ? { since_rev: sinceRev } : {}));
+  return request("catalog.list", sinceRev ? { since_rev: sinceRev } : {});
 }
 
 // Read providers.json again. `changed` reports whether the catalog revision moved.
@@ -202,23 +202,23 @@ function authList() {
 // Start a device-code login. The engine polls in its own task and reports through `auth.login_finished`.
 /** @param {string} providerId @returns {Promise<Wire.AuthLoginResult>} */
 function authLogin(providerId) {
-  return request("auth.login", /** @type {Wire.AuthLoginParams} */ ({ provider_id: providerId }));
+  return request("auth.login", { provider_id: providerId });
 }
 
 /** @param {string} loginId @returns {Promise<Wire.Empty>} */
 function authCancelLogin(loginId) {
-  return request("auth.cancel_login", /** @type {Wire.AuthCancelLoginParams} */ ({ login_id: loginId }));
+  return request("auth.cancel_login", { login_id: loginId });
 }
 
 // Store one API key. The wire never returns it.
 /** @param {string} providerId @param {string} apiKey @returns {Promise<Wire.Empty>} */
 function authSetApiKey(providerId, apiKey) {
-  return request("auth.set_api_key", /** @type {Wire.AuthSetApiKeyParams} */ ({ provider_id: providerId, api_key: apiKey }));
+  return request("auth.set_api_key", { provider_id: providerId, api_key: apiKey });
 }
 
 /** @param {string} providerId @returns {Promise<Wire.Empty>} */
 function authRemove(providerId) {
-  return request("auth.remove", /** @type {Wire.AuthRemoveParams} */ ({ provider_id: providerId }));
+  return request("auth.remove", { provider_id: providerId });
 }
 
 // One object carries the whole surface, so a test or a plugin can replace a single method.

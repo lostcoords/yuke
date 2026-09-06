@@ -1,7 +1,7 @@
 #!/bin/sh
-# Keep schema/proto.json and the generated wire.d.ts in sync with the Zig wire types.
-# Only run when the wire sources or the generated files are staged.
-if git diff --cached --quiet -- lib/proto schema/proto.json src/js/app/generated/proto.d.ts; then
+# Keep the generated protocol files in sync with the Zig types and generators.
+# Run when the protocol, generators, build, or generated files are staged.
+if git diff --cached --quiet -- lib/proto tools/protogen build.zig schema/proto.json src/js/app/generated/proto.d.ts; then
     exit 0
 fi
 

@@ -26,8 +26,6 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "SessionActivityChangedData", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionRemovedData", .field = "revision", .alias = "SessionRevision" },
     .{ .owner = "SessionRemovedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "WorkspaceRemovedData", .field = "workspace_id", .alias = "WorkspaceId" },
-    .{ .owner = "PermissionRulesChangedData", .field = "workspace_id", .alias = "WorkspaceId" },
     .{ .owner = "CatalogChangedData", .field = "catalog_rev", .alias = "CatalogRev" },
     .{ .owner = "MessageCommittedData", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "MessageCommittedData", .field = "seq", .alias = "Seq" },
@@ -62,13 +60,11 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "InputCanceledData", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "InputCanceledData", .field = "seq", .alias = "Seq" },
     .{ .owner = "InputCanceledData", .field = "input_id", .alias = "InputId" },
-    .{ .owner = "SessionDeltasShedData", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "ModelInfo", .field = "id", .alias = "ModelId" },
     .{ .owner = "CatalogListParams", .field = "since_rev", .alias = "CatalogRev" },
     .{ .owner = "CatalogListResultUnchanged", .field = "catalog_rev", .alias = "CatalogRev" },
     .{ .owner = "CatalogReloadResult", .field = "catalog_rev", .alias = "CatalogRev" },
     .{ .owner = "CatalogListResultFull", .field = "catalog_rev", .alias = "CatalogRev" },
-    .{ .owner = "CatalogRefreshResult", .field = "catalog_rev", .alias = "CatalogRev" },
     .{ .owner = "Request", .field = "id", .alias = "RequestId" },
     .{ .owner = "ResponseOk", .field = "id", .alias = "RequestId" },
     .{ .owner = "ResponseError", .field = "id", .alias = "RequestId" },
@@ -94,11 +90,6 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "PartDelta", .field = "part_id", .alias = "PartId" },
     .{ .owner = "SessionPatchParams", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionRemoveParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "PermissionRule", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "PermissionDecideParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "PermissionDecideParams", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "PermissionDecideParams", .field = "part_id", .alias = "PartId" },
-    .{ .owner = "PermissionForgetParams", .field = "workspace_id", .alias = "WorkspaceId" },
     .{ .owner = "RunOutcomeCompacted", .field = "message_id", .alias = "MessageId" },
     .{ .owner = "SessionForkParams", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionForkParams", .field = "before_message_id", .alias = "MessageId" },
@@ -111,11 +102,9 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "SessionOriginChild", .field = "parent_part_id", .alias = "PartId" },
     .{ .owner = "SessionOriginFork", .field = "source_id", .alias = "SessionId" },
     .{ .owner = "Session", .field = "id", .alias = "SessionId" },
-    .{ .owner = "Session", .field = "workspace_id", .alias = "WorkspaceId" },
     .{ .owner = "Session", .field = "config_rev", .alias = "ConfigRev" },
     .{ .owner = "RunConfig", .field = "config_rev", .alias = "ConfigRev" },
     .{ .owner = "SessionActivity", .field = "pending_compaction", .alias = "RunId" },
-    .{ .owner = "SessionScopeWorkspace", .field = "workspace_id", .alias = "WorkspaceId" },
     .{ .owner = "SessionPopulationChildren", .field = "parent_id", .alias = "SessionId" },
     .{ .owner = "SessionListResult", .field = "revision", .alias = "SessionRevision" },
     .{ .owner = "ActivityStateBuilding", .field = "run_id", .alias = "RunId" },
@@ -123,23 +112,16 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "ActivityStateReasoning", .field = "run_id", .alias = "RunId" },
     .{ .owner = "ActivityStateReasoning", .field = "message_id", .alias = "MessageId" },
     .{ .owner = "ActivityStateReasoning", .field = "part_id", .alias = "PartId" },
-    .{ .owner = "ActivityStateWaitingPermission", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "ActivityStateWaitingPermission", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "ActivityStateWaitingPermission", .field = "part_id", .alias = "PartId" },
     .{ .owner = "ActivityStateRunningTool", .field = "run_id", .alias = "RunId" },
     .{ .owner = "ActivityStateRunningTool", .field = "message_id", .alias = "MessageId" },
     .{ .owner = "ActivityStateRunningTool", .field = "part_id", .alias = "PartId" },
     .{ .owner = "ActivityStateRetrying", .field = "run_id", .alias = "RunId" },
     .{ .owner = "ActivityStateCompacting", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "SessionResyncParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionResyncResult", .field = "base_seq", .alias = "Seq" },
-    .{ .owner = "SessionResyncResult", .field = "highest_finalized_message_id", .alias = "MessageId" },
     .{ .owner = "SessionHistoryParams", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionHistoryParams", .field = "before_message_id", .alias = "MessageId" },
     .{ .owner = "SessionHistoryResult", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionConfigParams", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionConfigParams", .field = "config_rev", .alias = "ConfigRev" },
-    .{ .owner = "SubscriptionSetParams", .field = "sessions", .alias = "SessionId" },
     .{ .owner = "TextPart", .field = "id", .alias = "PartId" },
     .{ .owner = "ReasoningPart", .field = "id", .alias = "PartId" },
     .{ .owner = "RedactedReasoningPart", .field = "id", .alias = "PartId" },
@@ -152,16 +134,34 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "CompactionMessage", .field = "id", .alias = "MessageId" },
     .{ .owner = "CompactionMessage", .field = "run_id", .alias = "RunId" },
     .{ .owner = "CompactionMessage", .field = "first_kept_id", .alias = "MessageId" },
-    .{ .owner = "Workspace", .field = "id", .alias = "WorkspaceId" },
-    .{ .owner = "WorkspaceRef", .field = "workspace_id", .alias = "WorkspaceId" },
 };
 
-pub fn shortName(comptime name: []const u8) []const u8 {
+comptime {
+    @setEvalBranchQuota(100000);
+    for (alias_uses, 0..) |use, index| {
+        var has_field = false;
+        for (registry.structs) |entry| {
+            if (std.mem.eql(u8, entry.name, use.owner)) has_field = @hasField(entry.ty, use.field);
+        }
+        if (!has_field) @compileError("unknown alias field: " ++ use.owner ++ "." ++ use.field);
+        var has_alias = false;
+        for (registry.aliases) |entry| {
+            if (std.mem.eql(u8, entry.name, use.alias)) has_alias = true;
+        }
+        if (!has_alias) @compileError("unknown alias: " ++ use.alias);
+        for (alias_uses[0..index]) |previous| {
+            if (std.mem.eql(u8, previous.owner, use.owner) and std.mem.eql(u8, previous.field, use.field))
+                @compileError("duplicate alias field: " ++ use.owner ++ "." ++ use.field);
+        }
+    }
+}
+
+fn shortName(comptime name: []const u8) []const u8 {
     const index = comptime std.mem.lastIndexOfScalar(u8, name, '.');
     return if (index) |i| name[i + 1 ..] else name;
 }
 
-pub fn aliasFor(comptime owner: []const u8, comptime field: []const u8) ?[]const u8 {
+fn aliasFor(comptime owner: []const u8, comptime field: []const u8) ?[]const u8 {
     inline for (alias_uses) |use| {
         if (std.mem.eql(u8, owner, use.owner) and std.mem.eql(u8, field, use.field)) return use.alias;
     }
@@ -332,7 +332,7 @@ fn writeMethods(jw: *std.json.Stringify, docs: *const std.StringHashMap([]const 
     try jw.endArray();
 }
 
-pub fn broadcastType(
+fn broadcastType(
     comptime name: []const u8,
     comptime union_name: []const u8,
     comptime field_name: []const u8,
@@ -406,6 +406,10 @@ pub fn emit(a: std.mem.Allocator, io: std.Io, w: *std.Io.Writer) !void {
         try jw.write(entry.name);
         try jw.objectField("base");
         try jw.write(entry.base);
+        if (docs.get(entry.name)) |doc| {
+            try jw.objectField("doc");
+            try jw.write(doc);
+        }
         try jw.endObject();
     }
     try jw.endArray();
@@ -417,4 +421,21 @@ pub fn main(init: std.process.Init) !void {
     var stdout = std.Io.File.stdout().writer(init.io, &stdout_buffer);
     try emit(init.arena.allocator(), init.io, &stdout.interface);
     try stdout.interface.flush();
+}
+
+test "field and broadcast aliases survive type erasure" {
+    const testing = std.testing;
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    try writeTypeText(&out.writer, "SessionCancelRunParams", "run_id", ?proto.ids.RunId);
+    try testing.expectEqualStrings("RunId", out.written());
+    out.clearRetainingCapacity();
+    try writeTypeText(&out.writer, "SessionCancelRunResult", "cleared_inputs", []const proto.ids.InputId);
+    try testing.expectEqualStrings("[]InputId", out.written());
+    try testing.expectEqualStrings("MessagePartDeltaData", broadcastType("message.part_delta", "", "", proto.message.PartDelta));
+    try testing.expectEqualStrings("ToolOutputDeltaData", broadcastType("tool.output_delta", "", "", proto.message.PartDelta));
+}
+
+test {
+    _ = doc_extractor;
 }

@@ -115,7 +115,7 @@ pub const methods = [_]MethodSpec{
     .{ .name = .initialize, .params = misc.Empty, .result = misc.InitializeResult, .params_optional = true },
     .{ .name = .@"session.list", .params = session.SessionListParams, .result = session.SessionListResult, .params_optional = true },
     .{ .name = .@"session.get", .params = session.SessionGetParams, .result = session.SessionListItem, .params_optional = false },
-    .{ .name = .@"session.create", .params = misc.CreateSession, .result = session.SessionResult, .params_optional = true },
+    .{ .name = .@"session.create", .params = misc.CreateSession, .result = session.SessionResult, .params_optional = false },
     .{ .name = .@"session.patch", .params = session.SessionPatchParams, .result = session.SessionResult, .params_optional = false },
     .{ .name = .@"session.remove", .params = session.SessionRemoveParams, .result = misc.Empty, .params_optional = false },
     .{ .name = .@"session.fork", .params = session.SessionForkParams, .result = session.SessionResult, .params_optional = false },
@@ -168,6 +168,30 @@ pub const broadcasts = [_]BroadcastSpec{
     .{ .name = .@"input.canceled", .data = input.InputCanceledData },
     .{ .name = .@"interaction.requested", .data = interaction.InteractionRequestedData },
 };
+
+fn validateTable(comptime Name: type, comptime table: anytype) void {
+    for (@typeInfo(Name).@"enum".fields) |field| {
+        var count: usize = 0;
+        for (table) |spec| {
+            if (std.mem.eql(u8, @tagName(spec.name), field.name)) count += 1;
+        }
+        if (count != 1) @compileError("expected one protocol entry for " ++ field.name);
+    }
+}
+
+comptime {
+    @setEvalBranchQuota(10000);
+    validateTable(enums.MethodName, methods);
+    validateTable(enums.BroadcastName, broadcasts);
+    for (methods) |spec| {
+        if (spec.params_optional) {
+            for (@typeInfo(spec.params).@"struct".fields) |field| {
+                if (field.defaultValue() == null)
+                    @compileError("optional parameters require field defaults: " ++ @tagName(spec.name));
+            }
+        }
+    }
+}
 
 fn decodeFromTable(
     a: std.mem.Allocator,
@@ -321,6 +345,29 @@ pub fn resultFromValue(a: std.mem.Allocator, method: enums.MethodName, v: std.js
 
 const testing = std.testing;
 const parse_opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+
+test "optional method parameters decode from an empty object" {
+    inline for (methods) |spec| {
+        if (spec.params_optional) {
+            const parsed = try std.json.parseFromSlice(spec.params, testing.allocator, "{}", parse_opts);
+            defer parsed.deinit();
+        }
+    }
+}
+
+test "create requires its workspace and the method set excludes skill list" {
+    try testing.expectError(error.MissingField, std.json.parseFromSlice(Request, testing.allocator,
+        \\{"id":"create","method":"session.create"}
+    , parse_opts));
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(Request, testing.allocator,
+        \\{"id":"skills","method":"skill.list"}
+    , parse_opts));
+    const parsed = try std.json.parseFromSlice(Request, testing.allocator,
+        \\{"id":"create","method":"session.create","params":{"workspace_path":"/tmp"}}
+    , parse_opts);
+    defer parsed.deinit();
+    try testing.expectEqualStrings("/tmp", parsed.value.params.create_session.workspace_path);
+}
 
 test "request envelope round-trips" {
     const json =

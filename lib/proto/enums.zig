@@ -115,9 +115,6 @@ pub const MethodName = enum {
     @"auth.remove",
     /// Answer one pending extension interaction.
     @"interaction.respond",
-    /// Describe one filesystem path.
-    /// List the skills this session can invoke.
-    @"skill.list",
 };
 
 /// Notice severity level.

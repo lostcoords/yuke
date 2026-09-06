@@ -3,5 +3,5 @@ zig = "0.16.0"
 "npm:typescript" = "7.0.2"
 
 [tasks.check-ts]
-description = "Type-check the TUI JavaScript (checkJs, no emit)"
-run = "tsc -p src/js/app/tsconfig.json --noEmit"
+description = "Type-check the TUI JavaScript and generated protocol contract"
+run = ["tsc -p src/js/app/tsconfig.json --noEmit", "tsc -p tools/protogen/tsconfig.json --noEmit"]
