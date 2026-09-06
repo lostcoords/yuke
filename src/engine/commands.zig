@@ -12,6 +12,7 @@ const run = @import("run.zig");
 const run_task = @import("turn.zig");
 const session_events = @import("events.zig");
 const paths = @import("../paths.zig");
+const provider_registry = @import("../provider/registry.zig");
 
 const session_store = database.session;
 const message_store = database.message;
@@ -93,6 +94,13 @@ pub fn sessionList(engine: *Engine, arena: std.mem.Allocator, params: proto.sess
         .next_cursor = next_cursor,
         .total = try session_store.count(engine.deps.db, arena, sel),
     };
+}
+
+/// Return the catalog default level of a model, or an empty level for an unknown model.
+fn defaultLevelOf(engine: *Engine, arena: std.mem.Allocator, model: []const u8) ![]const u8 {
+    const match = engine.deps.providers.merged.resolveModel(model) orelse return "";
+    // The level borrows the merged registry, and a reload can free it before the commit, so the arena keeps a copy.
+    return arena.dupe(u8, try provider_registry.defaultLevel(arena, match.model.*));
 }
 
 /// Handle session.get. The result is one `session.list` item with the activity the engine holds now.
@@ -346,7 +354,8 @@ pub fn sessionCreate(engine: *Engine, arena: std.mem.Allocator, params: proto.mi
     const title = if (base.len == 0) root else base;
     const profile = params.profile orelse "default";
     const model = params.model orelse "";
-    const reasoning = params.reasoning orelse "";
+    // An unset level takes the catalog default. A stated empty level stays empty and omits the control.
+    const reasoning = params.reasoning orelse try defaultLevelOf(engine, arena, model);
     const now = engine.nowMillis();
 
     const id = engine.newId();
@@ -395,6 +404,7 @@ pub fn sessionCreate(engine: *Engine, arena: std.mem.Allocator, params: proto.mi
 
 const zio = @import("zio");
 const ai = @import("ai");
+const provider = @import("../provider/provider.zig");
 const provider_store = @import("../provider/provider_store.zig");
 
 /// These test dependencies use an empty environment. The map has no allocation to free.
@@ -479,4 +489,41 @@ test "session.get and session.queue read the durable queue, resident or not" {
 
     try std.testing.expectError(error.UnknownSession, sessionGet(&engine, arena, .{ .session_id = .bytes([_]u8{9} ** 16) }));
     try std.testing.expectError(error.UnknownSession, sessionQueue(&engine, arena, .{ .session_id = .bytes([_]u8{9} ** 16) }));
+}
+
+test "a new session takes the catalog default level, and a stated level stays" {
+    var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer runtime.deinit();
+    var db = try database.Database.openTest();
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var store: provider_store = .init(std.testing.allocator, runtime.io(), &test_env);
+    defer store.deinit();
+    var loaded = try provider.config.loadBytes(std.testing.allocator,
+        \\{"version":1,"providers":[{"id":"minimax","api_key":"k"}]}
+    );
+    _ = try store.installLocal(&loaded);
+    var engine = Engine.init(.{
+        .gpa = std.testing.allocator,
+        .io = runtime.io(),
+        .db = &db,
+        .providers = &store,
+        .route_transport = test_transport.transport(),
+        .env = &test_env,
+        .tools = .{},
+    });
+    defer engine.close();
+    defer db.deinit();
+
+    const by_default = try sessionCreate(&engine, arena, .{ .workspace_path = "/tmp", .model = "minimax/MiniMax-M3" });
+    try std.testing.expectEqualStrings("high", by_default.session.reasoning);
+    const stated = try sessionCreate(&engine, arena, .{ .workspace_path = "/tmp", .model = "minimax/MiniMax-M3", .reasoning = "off" });
+    try std.testing.expectEqualStrings("off", stated.session.reasoning);
+    const unknown = try sessionCreate(&engine, arena, .{ .workspace_path = "/tmp", .model = "nope/nope" });
+    try std.testing.expectEqualStrings("", unknown.session.reasoning);
+    // A stated empty level is a choice, not an absence, so the default does not replace it.
+    const empty = try sessionCreate(&engine, arena, .{ .workspace_path = "/tmp", .model = "minimax/MiniMax-M3", .reasoning = "" });
+    try std.testing.expectEqualStrings("", empty.session.reasoning);
 }

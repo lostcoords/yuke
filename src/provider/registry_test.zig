@@ -342,6 +342,29 @@ test "load composes the file over the real baked table" {
     try testing.expectEqualStrings("codex", registry.find(snapshot.rows, "openai-codex").?.login_flow.?);
 }
 
+test "a model that can stop its reasoning offers off after its efforts, and the default skips it" {
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"version":1,"providers":[{"id":"minimax","api_key":"k"},
+        \\ {"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat",
+        \\  "models":[{"id":"qwen3","upstream_id":"qwen3:8b","reasoning_levels":[null,"high"],"flags":{"thinking_format":"qwen"}}]}]}
+    );
+    defer loaded.deinit();
+
+    var snapshot = try registry.Registry.load(testing.allocator, .{ .local = &loaded });
+    defer snapshot.deinit();
+
+    // The baked capability flag and the local null level both mean the same choice.
+    for ([_][]const u8{ "minimax/MiniMax-M3", "ollama/qwen3" }) |selector| {
+        const info = for (snapshot.models) |m| {
+            if (std.mem.eql(u8, m.selector, selector)) break m;
+        } else return error.TestUnexpectedResult;
+        try testing.expectEqual(@as(usize, 2), info.reasoning_levels.len);
+        try testing.expectEqualStrings("high", info.reasoning_levels[0]);
+        try testing.expectEqualStrings("off", info.reasoning_levels[1]);
+        try testing.expectEqualStrings("high", info.default_reasoning);
+    }
+}
+
 test "the registry emits a bare selector and resolves it back" {
     var loaded = try provider.config.loadBytes(testing.allocator,
         \\{"version":1,"providers":[{"id":"openrouter","api_key":"sk-x"}]}

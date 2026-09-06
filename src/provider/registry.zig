@@ -419,13 +419,32 @@ fn defaultReasoning(names: []const []const u8) []const u8 {
     unreachable; // The scan above counted this many efforts, so the midpoint is always reached.
 }
 
-/// Project one model onto the public wire shape. An unknown value becomes an absent field.
-fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, spec: ModelSpec) !proto.catalog.ModelInfo {
+/// Report whether a session can name `off`. A stated capability wins, and a null source level stands in for an absent one.
+pub fn canDisableReasoning(spec: ModelSpec) bool {
+    if (spec.caps.disable_reasoning) |stated| return stated;
+    for (spec.reasoning_levels) |level| if (level == .none) return true;
+    return false;
+}
+
+/// The levels a user can pick: each named effort, then `off` when the model can run with no reasoning.
+pub fn levelNames(arena: std.mem.Allocator, spec: ModelSpec) ![]const []const u8 {
     var names: std.ArrayList([]const u8) = .empty;
     for (spec.reasoning_levels) |level| switch (level) {
         .none => {},
         .named => |value| try names.append(arena, value),
     };
+    if (canDisableReasoning(spec)) try names.append(arena, "off");
+    return names.items;
+}
+
+/// The level a new session takes when the caller names none. Empty when the model has no effort to prefer.
+pub fn defaultLevel(arena: std.mem.Allocator, spec: ModelSpec) ![]const u8 {
+    return defaultReasoning(try levelNames(arena, spec));
+}
+
+/// Project one model onto the public wire shape. An unknown value becomes an absent field.
+fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, spec: ModelSpec) !proto.catalog.ModelInfo {
+    const names = try levelNames(arena, spec);
 
     return .{
         .id = spec.id,
@@ -434,8 +453,8 @@ fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, spec: ModelSpec)
         .name = spec.name,
         .context_window = spec.limits.context_window,
         .max_output_tokens = spec.limits.max_output_tokens,
-        .reasoning_levels = names.items,
-        .default_reasoning = defaultReasoning(names.items),
+        .reasoning_levels = names,
+        .default_reasoning = defaultReasoning(names),
         .supports_vision = spec.caps.vision,
         .supports_tools = spec.caps.tools,
         .cost = .{
@@ -468,6 +487,28 @@ test {
 }
 
 // The catalog lists `off` as a level, but it disables thinking rather than naming an effort.
+test "off is offered after the efforts only while the model can stop, and the default stays an effort" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const high = [_]ai.model.ReasoningLevel{.{ .named = "high" }};
+    const null_high = [_]ai.model.ReasoningLevel{ .none, .{ .named = "high" } };
+
+    // A stated capability adds the sentinel behind the efforts.
+    const stated: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .caps = .{ .disable_reasoning = true }, .reasoning_levels = &high };
+    try std.testing.expectEqualDeep(&[_][]const u8{ "high", "off" }, try levelNames(a, stated));
+    try std.testing.expectEqualStrings("high", try defaultLevel(a, stated));
+    // A null source level means the same, and a stated refusal beats it.
+    const by_null: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &null_high };
+    try std.testing.expectEqualDeep(&[_][]const u8{ "high", "off" }, try levelNames(a, by_null));
+    const refused: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .caps = .{ .disable_reasoning = false }, .reasoning_levels = &null_high };
+    try std.testing.expectEqualDeep(&[_][]const u8{"high"}, try levelNames(a, refused));
+    // A model with no effort keeps the vendor default, so `off` alone names no default.
+    const only_off: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .caps = .{ .disable_reasoning = true } };
+    try std.testing.expectEqualDeep(&[_][]const u8{"off"}, try levelNames(a, only_off));
+    try std.testing.expectEqualStrings("", try defaultLevel(a, only_off));
+}
+
 test "the default effort never lands on the disable sentinel" {
     const testing = std.testing;
     // The midpoint here is `high`, so only the preference rule can answer `medium`.
