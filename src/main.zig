@@ -7,6 +7,7 @@ const rpc = @import("app/rpc.zig");
 const app = @import("app/app.zig");
 const tui_app = @import("js/driver.zig");
 const extensions_mod = @import("js/extensions.zig");
+const auth_cli = @import("app/auth_cli.zig");
 const paths = @import("paths.zig");
 const zio = @import("zio");
 
@@ -103,15 +104,25 @@ test "appendLog keeps every line and a line over the buffer" {
 }
 
 pub fn main(init: std.process.Init) !void {
+    // The exit happens after every defer in `run` released the reactor, so no task holds a lock at that point.
+    const status = try run(init);
+    if (status != 0) std.process.exit(status);
+}
+
+/// Run the command and answer the exit status.
+fn run(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     std.debug.assert(args.len >= 1);
 
     const command = switch (cli.parse(args[1..])) {
         .command => |command| command,
-        .help => |scope| return printUsage(init.io, scope),
+        .help => |scope| {
+            try printUsage(init.io, scope);
+            return 0;
+        },
         .diagnostic => |diagnostic| {
             report(diagnostic);
-            std.process.exit(2);
+            return 2;
         },
     };
 
@@ -137,6 +148,9 @@ pub fn main(init: std.process.Init) !void {
     };
     defer application.close();
 
+    // The auth commands need the engine and the store, but no JavaScript host and no terminal view.
+    if (try authStatus(init.gpa, io, application, command)) |status| return status;
+
     var extensions: extensions_mod.Extensions = undefined;
     try extensions.init(init.gpa, io, application, .{
         .host = .{
@@ -152,7 +166,18 @@ pub fn main(init: std.process.Init) !void {
     switch (command) {
         .rpc => try rpc.runIo(&extensions),
         .tui => try tui_app.runIo(init.environ_map, &extensions),
+        .login, .logout => unreachable, // handled above, before the host
     }
+    return 0;
+}
+
+/// Run an auth command and answer its exit status, or null for a command that runs the host.
+fn authStatus(gpa: std.mem.Allocator, io: std.Io, application: *app.App, command: cli.Command) !?u8 {
+    return switch (command) {
+        .login => |provider| try auth_cli.login(gpa, io, application, provider),
+        .logout => |provider| try auth_cli.logout(gpa, io, application, provider),
+        .rpc, .tui => null,
+    };
 }
 
 fn printUsage(io: std.Io, scope: cli.Scope) !void {
@@ -165,6 +190,8 @@ fn printUsage(io: std.Io, scope: cli.Scope) !void {
 fn usageFor(scope: cli.Scope) []const u8 {
     return switch (scope) {
         .root => cli.usage,
+        .login => cli.login_usage,
+        .logout => cli.logout_usage,
     };
 }
 
@@ -172,6 +199,8 @@ fn usageFor(scope: cli.Scope) []const u8 {
 fn report(diagnostic: cli.Diagnostic) void {
     const who = switch (diagnostic.scope) {
         .root => "yuke",
+        .login => "yuke login",
+        .logout => "yuke logout",
     };
     switch (diagnostic.failure) {
         .unknown_command => std.log.err("{s}: unknown command '{s}'", .{ who, diagnostic.arg }),
@@ -179,6 +208,8 @@ fn report(diagnostic: cli.Diagnostic) void {
         .missing_value => std.log.err("{s}: {s} needs a value", .{ who, diagnostic.arg }),
         .invalid_value => std.log.err("{s}: {s} does not accept '{s}'", .{ who, diagnostic.arg, diagnostic.value.? }),
         .duplicate_flag => std.log.err("{s}: {s} appears more than once", .{ who, diagnostic.arg }),
+        .missing_argument => std.log.err("{s}: a provider name is needed", .{who}),
+        .extra_argument => std.log.err("{s}: unexpected argument '{s}'", .{ who, diagnostic.arg }),
     }
     std.log.err("{s}", .{usageFor(diagnostic.scope)});
 }

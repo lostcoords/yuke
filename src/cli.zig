@@ -5,6 +5,14 @@ const std = @import("std");
 
 pub const usage =
     \\usage: yuke [--rpc]
+    \\       yuke login [provider]
+    \\       yuke logout <provider>
+;
+pub const login_usage =
+    \\usage: yuke login [provider]
+;
+pub const logout_usage =
+    \\usage: yuke logout <provider>
 ;
 
 /// One process runs one thing. `--rpc` selects the JSONL transport.
@@ -12,10 +20,14 @@ pub const Command = union(enum) {
     tui,
     /// Speak JSONL on stdin and stdout. The terminal stays free, so no view paints.
     rpc,
+    /// Sign in to one provider, or list every provider when the name is absent.
+    login: ?[]const u8,
+    /// Drop the credential of one provider.
+    logout: []const u8,
 };
 
 /// Name the grammar that rejected the argument. It selects the usage text.
-pub const Scope = enum { root };
+pub const Scope = enum { root, login, logout };
 
 pub const Failure = enum {
     unknown_command,
@@ -23,6 +35,8 @@ pub const Failure = enum {
     missing_value,
     invalid_value,
     duplicate_flag,
+    missing_argument,
+    extra_argument,
 };
 
 /// `arg` and `value` borrow argv. They stay valid while the process arguments live.
@@ -43,7 +57,29 @@ pub const Result = union(enum) {
 pub fn parse(args: []const []const u8) Result {
     if (args.len == 0) return .{ .command = .tui };
     if (isFlag(args[0])) return parseRoot(args);
-    return .{ .diagnostic = .{ .scope = .root, .failure = .unknown_command, .arg = args[0] } };
+    const sub = std.meta.stringToEnum(Subcommand, args[0]) orelse return fail(.root, .unknown_command, args[0]);
+    return switch (sub) {
+        .login => parseName(.login, args[1..]),
+        .logout => parseName(.logout, args[1..]),
+    };
+}
+
+const Subcommand = enum { login, logout };
+
+/// Parse `[provider]` for login, `<provider>` for logout. Neither takes a flag.
+fn parseName(scope: Scope, args: []const []const u8) Result {
+    var name: ?[]const u8 = null;
+    for (args) |arg| {
+        if (isHelp(arg)) return .{ .help = scope };
+        if (isFlag(arg)) return fail(scope, .unknown_flag, arg);
+        if (name != null) return fail(scope, .extra_argument, arg);
+        name = arg;
+    }
+    return switch (scope) {
+        .login => .{ .command = .{ .login = name } },
+        .logout => .{ .command = .{ .logout = name orelse return fail(.logout, .missing_argument, "logout") } },
+        .root => unreachable,
+    };
 }
 
 /// Each tag names one flag without the `--` prefix.
@@ -118,4 +154,15 @@ test "parse rejects a duplicate flag, an unknown flag, and an unknown command" {
 test "parse reports help for the root scope" {
     try testing.expectEqual(Scope.root, parse(&.{"--help"}).help);
     try testing.expectEqual(Scope.root, parse(&.{"-h"}).help);
+}
+
+test "parse reads login with an optional name and logout with a required one" {
+    try testing.expect(parse(&.{"login"}).command.login == null);
+    try testing.expectEqualStrings("codex", parse(&.{ "login", "codex" }).command.login.?);
+    try testing.expectEqualStrings("codex", parse(&.{ "logout", "codex" }).command.logout);
+    try testing.expectEqual(Failure.missing_argument, parse(&.{"logout"}).diagnostic.failure);
+    try testing.expectEqual(Failure.extra_argument, parse(&.{ "login", "a", "b" }).diagnostic.failure);
+    try testing.expectEqual(Failure.unknown_flag, parse(&.{ "login", "--key" }).diagnostic.failure);
+    try testing.expectEqual(Scope.login, parse(&.{ "login", "--help" }).help);
+    try testing.expectEqual(Scope.logout, parse(&.{ "logout", "-h" }).help);
 }
