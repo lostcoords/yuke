@@ -11,6 +11,9 @@ import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { client } from "yuke:client";
 import { rowKey, rowLabel, activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
 import { activityOf, activityPlugin } from "yuke:activity";
+import { indicatorPlugin } from "yuke:indicator";
+import { queuePlugin } from "yuke:queue";
+import { contextPlugin } from "yuke:context";
 
 // The first chat pane. A split adds another, and each pane drives its own session.
 const chat = new Chat();
@@ -156,6 +159,9 @@ plugins.use(authPlugin);
 plugins.use(chatPlugin);
 plugins.use(sessionsPlugin);
 plugins.use(activityPlugin);
+plugins.use(indicatorPlugin);
+plugins.use(queuePlugin);
+plugins.use(contextPlugin);
 
 root.setRoot(workspace);
 root.focusView(chat.view);

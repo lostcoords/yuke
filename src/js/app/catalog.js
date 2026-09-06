@@ -106,7 +106,7 @@ export function tokenLabel(n) {
   return (n / 1000).toFixed(n < 10000 ? 1 : 0) + "k";
 }
 
-// The two right-hand readings that describe the model and how much context it has used.
+// The model reading on the right of the status bar. `yuke:context` shows the usage beside it.
 export const catalogPlugin = {
   name: "catalog",
   /** @param {import("yuke:ext").Context} ctx @param {unknown} config @returns {void} */
@@ -134,19 +134,6 @@ export const catalogPlugin = {
           const e = entry();
           if (e && e.session && e.session.model) return e.session.model;
           return defaultModel().model || "";
-        },
-      });
-
-      ctx.tui.status({
-        side: "right",
-        order: 20,
-        render: () => {
-          const e = entry();
-          if (!e) return "";
-          const u = e.activity ? e.activity.context_usage : null;
-          if (!u || !u.input) return "";
-          const win = contextWindowOf(e.session.model);
-          return win ? Math.round((u.input / win) * 100) + "% ctx" : tokenLabel(u.input) + " ctx";
         },
       });
       });

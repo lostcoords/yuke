@@ -18,6 +18,7 @@ import { Composer } from "yuke:ui";
 /** @typedef {{ id: number, lang: string, text: string }} CodeBlock */
 /** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, onSelect?: ((text: string) => void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} TranscriptOptions */
 /** @typedef {"composer" | "transcript"} ChatRegion */
+/** @typedef {{ text: string, group?: string }} StripRow */
 /** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} ChatViewOptions */
 /** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
 /** @typedef {string | number} ItemKey */
@@ -1546,10 +1547,28 @@ export class ChatView {
     const rows = Math.min(this.composer.height(w), Math.max(1, Math.floor(h / 2)));
     this.composer.rect = { x, y: y + h - rows, w, h: rows };
     const rule = y + h - rows - 1;
-    if (rule > y) this.transcript.draw({ x, y, w, h: rule - y });
+    // A plugin puts rows between the transcript and the rule, such as the queued inputs. The transcript keeps one row.
+    const strip = /** @type {StripRow[]} */ (slot.get(this, "strip") || []);
+    const shown = Math.min(strip.length, Math.max(0, rule - y - 1));
+    const top = rule - shown;
+    if (top > y) this.transcript.draw({ x, y, w, h: top - y });
     else this.transcript.hide();
-    if (rule >= y) text(x, rule, "─".repeat(w), "YukeRule");
+    for (let i = 0; i < shown; i++) {
+      const row = /** @type {StripRow} */ (strip[i]);
+      text(x, top + i, clip(row.text, w), row.group || "UIDim");
+    }
+    if (rule >= y) this._drawRule(x, rule, w);
     this.composer.draw(focused);
+  }
+
+  // The rule row. A plugin puts a line on it, such as the working indicator, and the rule fills the rest.
+  /** @param {number} x @param {number} y @param {number} w @returns {void} */
+  _drawRule(x, y, w) {
+    const line = /** @type {StripRow | null} */ (slot.get(this, "rule"));
+    const label = line ? clip(line.text, w) : "";
+    const used = label ? term.measure(label) : 0;
+    if (label) text(x, y, label, (line && line.group) || "YukeRule");
+    if (w > used) text(x + used, y, "─".repeat(w - used), "YukeRule");
   }
 
   // The caret belongs to the focused region, so a transcript with no cursor provider shows none.
