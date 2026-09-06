@@ -1,5 +1,5 @@
 // yuke:defaults — the bundled UI shell, built from plugins so a user's index.js layers on top.
-import { keymap, copy, Node, root } from "yuke:core";
+import { keymap, Node, root } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, NAV_KEYS } from "yuke:ui";
 import { notice, noticePlugin } from "yuke:notice";
@@ -9,8 +9,6 @@ import { catalogPlugin } from "yuke:catalog";
 import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { client } from "yuke:client";
 import { rowKey, rowLabel, activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
-import { composerVim } from "yuke:composer-vim";
-import { transcriptVim } from "yuke:transcript-vim";
 
 // The first chat pane. A split adds another, and each pane drives its own session.
 const chat = new Chat();
@@ -91,9 +89,6 @@ plugins.use({
         "window:split-right": () => splitChat("row"),
         "window:split-down": () => splitChat("col"),
         "window:close": () => root.close(),
-        "copy:reply": () => withChat(c => copy(c.transcript.textFor(c.transcript.last("assistant")), "reply")),
-        "copy:selection": () => withChat(c => copy(c.transcript.selectedText(), "selection")),
-        "copy:source": () => withChat(c => copy(c.transcript.selectedSource(), "source")),
         "chat:new": () => withChat(c => c.newChat()),
         "debug:memory": () => {
           const m = client.memoryUsage();
@@ -107,16 +102,9 @@ plugins.use({
           c.view.focusRegion(c.view.focus === "transcript" ? "composer" : "transcript");
           root.invalidate();
         }),
-        "composer-vim:toggle": () => (plugins.get("composer-vim") ? plugins.dispose("composer-vim") : plugins.use(composerVim)),
-        "transcript-vim:toggle": () => (plugins.get("transcript-vim") ? plugins.dispose("transcript-vim") : plugins.use(transcriptVim)),
       }, {
         "ui:sessions": { title: "Sessions", description: "open a session", slash: "sessions" },
         "chat:new": { title: "New chat", description: "leave the session and start empty", slash: "new" },
-        "copy:reply": { title: "Copy reply", description: "copy the last assistant message", slash: "copy-reply" },
-        "copy:selection": { title: "Copy selection", description: "copy the selected text", slash: "copy-selection" },
-        "copy:source": { title: "Copy source", description: "copy the selected markdown", slash: "copy-source" },
-        "composer-vim:toggle": { title: "Composer vim", description: "toggle vim keys in the composer", slash: "vim" },
-        "transcript-vim:toggle": { title: "Transcript vim", description: "toggle vim keys in the transcript", slash: "transcript-vim" },
       });
 
       // Global commands live on ctrl strokes and window nav behind ctrl+k, which leaves ctrl+w for the composer word-erase.

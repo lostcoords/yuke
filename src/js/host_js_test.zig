@@ -2722,10 +2722,6 @@ test "yuke:defaults boots the shell, seeds the session feed, and wires commands"
         \\command.perform("ui:palette");
         \\if (root.overlays.length !== 1) fail.push("palette");
         \\root.popOverlay();
-        \\const before = !!plugins.get("composer-vim");
-        \\command.perform("composer-vim:toggle");
-        \\if (!!plugins.get("composer-vim") === before) fail.push("vim-toggle");
-        \\command.perform("composer-vim:toggle");
         \\// PageUp scrolls the history while the composer types, through the nav binding.
         \\{
         \\  root.focusView(chat.view);
@@ -4209,9 +4205,9 @@ test "the chat slice owns its listeners and its transcript commands" {
         \\root.setRoot(new Node(chat.view));
         \\root.focusView(chat.view);
         \\
-        \\check("commands-absent-before", !command.available("copy:message") && !command.available("model:pick"));
+        \\check("commands-absent-before", !command.available("model:pick"));
         \\plugins.use(chatPlugin);
-        \\check("commands-registered", command.available("copy:message") && command.available("copy:code") && command.available("model:pick"));
+        \\check("commands-registered", command.available("model:pick"));
         \\
         \\// A "gone" event for the open pair closes the session; one for another pair does not.
         \\chat.sessionId = "s1";
@@ -4248,7 +4244,7 @@ test "the chat slice owns its listeners and its transcript commands" {
         \\
         \\// An unload takes the commands and the listeners with it.
         \\plugins.dispose("chat");
-        \\check("unload-drops-commands", !command.available("copy:message") && !command.available("model:pick"));
+        \\check("unload-drops-commands", !command.available("model:pick"));
         \\chat.sessionId = "s2";
         \\events.emit("session.changed", { type: "session", session: "s2", kind: "gone" });
         \\check("unload-stops-listening", chat.sessionId === "s2");
@@ -4534,39 +4530,6 @@ test "the context owns every overlay its plugin pushes" {
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "ctxoverlay.js");
-    try expectJs(host, "ok");
-}
-
-test "a plugin unload takes every picker it opened off the stack" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
-    defer host.destroy();
-    // A modal left on the stack consumes every key, so an unload must remove it with the plugin.
-    try host.evalModule(
-        \\import { command, root, Node } from "yuke:core";
-        \\import { plugins } from "yuke:ext";
-        \\import { Chat, chatPlugin } from "yuke:chat";
-        \\import { tuiPlugin } from "yuke:tui";
-        \\plugins.use(tuiPlugin);
-        \\const fail = [];
-        \\const check = (name, cond) => { if (!cond) fail.push(name); };
-        \\
-        \\const chat = new Chat();
-        \\root.setRoot(new Node(chat.view));
-        \\root.focusView(chat.view);
-        \\chat.transcript.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }], null);
-        \\const before = root.overlays.length;
-        \\
-        \\plugins.use(chatPlugin);
-        \\command.perform("copy:message");
-        \\check("opened", root.overlays.length === before + 1);
-        \\plugins.dispose("chat");
-        \\check("unload-pops-the-chat-picker", root.overlays.length === before);
-        \\
-        \\globalThis.result = fail.length ? fail.join(",") : "ok";
-    , "chatoverlay.js");
     try expectJs(host, "ok");
 }
 

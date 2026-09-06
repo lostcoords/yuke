@@ -224,33 +224,6 @@ export function chatEntry() {
   return feedItem(c.sessionId);
 }
 
-// Pick any message in the transcript and copy its source text.
-/** @param {import("yuke:ext").InjectContext} ctx */
-function openMessagePicker(ctx) {
-  const c = focusedChat();
-  if (!c) return null;
-  const t = c.transcript;
-  const items = t.messages().map((m, i) => ({ m, i, text: t.textFor(m) }));
-  if (items.length === 0) {
-    notice.show("nothing to copy");
-    return null;
-  }
-  const picked = ui.pick({
-    title: "copy a message",
-    footer: "type to filter · ↵ copy · esc close",
-    border: "rounded",
-    width: 0.6,
-    height: 0.5,
-    items: items.reverse(),
-    key: r => r.m.id,
-    filterText: r => r.text,
-    format: r => ({ text: firstLine(r.text) || "(empty)", right: r.m.type }),
-    onAccept: r => copy(r.text, r.m.type + " message"),
-  });
-  ctx.tui.overlay(picked.win);
-  return picked;
-}
-
 // Load the catalog, then pick a model and its effort. A `query` names the model and skips the picker.
 /** @param {import("yuke:ext").InjectContext} ctx @param {string} [query] */
 function openModelPicker(ctx, query) {
@@ -319,39 +292,7 @@ function pickReasoning(ctx, model) {
   step.content.selectKey(model.default_reasoning || levels[0]);
 }
 
-/** @param {import("yuke:ext").InjectContext} ctx */
-function openCodePicker(ctx) {
-  const c = focusedChat();
-  if (!c) return null;
-  const blocks = c.transcript.codeBlocks();
-  if (blocks.length === 0) {
-    notice.show("no code block");
-    return null;
-  }
-  const picked = ui.pick({
-    title: "copy a code block",
-    footer: "type to filter · ↵ copy · esc close",
-    border: "rounded",
-    width: 0.6,
-    height: 0.5,
-    items: blocks.map((b, i) => ({ ...b, i })),
-    key: b => b.i,
-    filterText: b => b.lang + " " + b.text,
-    format: b => ({ text: firstLine(b.text) || "(empty)", right: b.lang }),
-    onAccept: b => copy(b.text, b.lang ? b.lang + " block" : "code block"),
-  });
-  ctx.tui.overlay(picked.win);
-  return picked;
-}
-
-// The first line of `s`, for a one-row picker label.
-/** @param {string} s @returns {string} */
-function firstLine(s) {
-  const i = s.indexOf("\n");
-  return (i < 0 ? s : s.slice(0, i)).trim();
-}
-
-// The chat's own listeners and the commands that read its transcript.
+// The chat's own listeners and the model command.
 export const chatPlugin = {
   name: "chat",
   /** @param {import("yuke:ext").InjectContext} ctx @returns {void} */
@@ -377,12 +318,8 @@ export const chatPlugin = {
       });
 
       ctx.tui.command(null, {
-        "copy:message": () => openMessagePicker(ctx),
-        "copy:code": () => openCodePicker(ctx),
         "model:pick": (/** @type {string | undefined} */ query) => openModelPicker(ctx, query),
       }, {
-        "copy:message": { title: "Copy message", description: "copy one message", slash: "copy-message" },
-        "copy:code": { title: "Copy code", description: "copy one code block", slash: "copy-code" },
         "model:pick": { title: "Model", description: "choose the model for the next chat", slash: "model", args: true },
       });
       });
