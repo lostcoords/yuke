@@ -5804,31 +5804,34 @@ test "a capability binds onto the block that declared it" {
     try expectJs(host, "ok");
 }
 
-test "a headless host refuses every view module" {
+test "a host with no renderer loads the view tier and leaves a view plugin inert" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = host_mod.Host.createWith(gpa.allocator(), std.testing.io, .{ .headless = true });
+    const host = host_mod.Host.createWith(gpa.allocator(), std.testing.io, .{});
     defer host.destroy();
 
-    // The loader owns the boundary, so a refusal covers user code as well as the baked graph.
-    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import \"yuke:core\";", "static.js"));
-    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import \"yuke:defaults\";", "shell.js"));
-    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import \"yuke:tui\";", "surface.js"));
-    // `yuke:fzy` imports nothing, so its refusal proves the baked set alone closes the door.
-    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import \"yuke:fzy\";", "leaf.js"));
-    // A native module is not baked, so the host installs no terminal binding at all.
-    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import \"yuke:term\";", "native.js"));
-    // A re-export and a dynamic import take the same loader path, so both fail too.
-    try std.testing.expectError(error.JavaScriptFault, host.evalModule("export { root } from \"yuke:core\";", "reexport.js"));
-
-    // The headless tier still loads.
+    // `index.js` is one file for both frontends, so a view import must load with no terminal bound.
     try host.evalModule(
-        \\import { events } from "yuke:kernel";
-        \\import { plugins } from "yuke:ext";
-        \\import { tools } from "yuke";
-        \\globalThis.result = events && plugins && tools ? "ok" : "bad";
-    , "headless.js");
+        \\import { plugins, services } from "yuke:ext";
+        \\import { composerVim } from "yuke:composer-vim";
+        \\import { transcriptVim } from "yuke:transcript-vim";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\// A view plugin holds its work behind `inject(["tui"])`, and no frontend provides that service here.
+        \\let built = 0;
+        \\plugins.use({ name: "probe", apply: (ctx) => ctx.inject(["tui"], () => { built += 1; }) });
+        \\check("no-tui-service", services.get("tui") === undefined);
+        \\check("block-never-built", built === 0);
+        \\
+        \\plugins.use(composerVim);
+        \\plugins.use(transcriptVim);
+        \\check("composer-vim-live", plugins.get("composer-vim") !== undefined);
+        \\check("transcript-vim-live", plugins.get("transcript-vim") !== undefined);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "view-inert.js");
     try expectJs(host, "ok");
 }
 
@@ -5906,7 +5909,7 @@ test "a headless bus refuses a name only the view tier emits" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    const host = host_mod.Host.createWith(gpa.allocator(), std.testing.io, .{ .headless = true });
+    const host = host_mod.Host.createWith(gpa.allocator(), std.testing.io, .{});
     defer host.destroy();
 
     // Without the view tier nothing emits these names, so a listener would wait for ever.

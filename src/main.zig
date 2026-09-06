@@ -154,7 +154,6 @@ fn run(init: std.process.Init) !u8 {
     var extensions: extensions_mod.Extensions = undefined;
     try extensions.init(init.gpa, io, application, .{
         .host = .{
-            .headless = !tui,
             .cwd = cwd_buf[0..cwd_len],
             .env = init.environ_map,
         },

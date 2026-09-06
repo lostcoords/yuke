@@ -92,7 +92,7 @@ pub const Fixture = struct {
         self.canned = .{ .bytes = ai.transport.canned_reply };
         try self.app.initTest(self.gpa.allocator(), self.reactor.io(), try database.Database.openTest(), &self.env, self.canned.transport());
         try self.extensions.init(self.gpa.allocator(), self.reactor.io(), &self.app, .{
-            .host = .{ .headless = true, .cwd = root, .env = &self.env },
+            .host = .{ .cwd = root, .env = &self.env },
             .boot = boot,
             .config_dir = root,
         });

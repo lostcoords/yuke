@@ -34,18 +34,14 @@ pub const unknown_fault = "script fault with no message";
 
 pub const Error = error{JavaScriptFault};
 
-/// The modules every frontend loads. A headless frontend loads these and nothing else.
-const shared_baked = [_]loader_mod.BakedModule{
+/// Every frontend bakes every module, because `index.js` is one file that both frontends load.
+pub const default_baked = [_]loader_mod.BakedModule{
     // The public facade. `index.js` imports this name; every other name here is internal.
     .{ .name = "yuke", .source = @embedFile("app/facade.js") },
     .{ .name = "yuke:kernel", .source = @embedFile("app/kernel.js") },
     .{ .name = "yuke:builtins", .source = @embedFile("app/builtins.js") },
     .{ .name = "yuke:ext", .source = @embedFile("app/ext.js") },
     .{ .name = "yuke:interaction", .source = @embedFile("app/interaction.js") },
-};
-
-/// The view tier loads on top of the shared set, so the two lists cannot drift apart.
-pub const default_baked = shared_baked ++ [_]loader_mod.BakedModule{
     .{ .name = "yuke:tui", .source = @embedFile("app/tui.js") },
     .{ .name = "yuke:core", .source = @embedFile("app/core.js") },
     .{ .name = "yuke:md", .source = @embedFile("app/md.js") },
@@ -68,8 +64,6 @@ pub const default_baked = shared_baked ++ [_]loader_mod.BakedModule{
 };
 
 pub const Options = struct {
-    /// A headless frontend owns no terminal, so it bakes no view module and installs no `yuke:term`.
-    headless: bool = false,
     max_file_bytes: usize = loader_mod.default_max_file_bytes,
     /// The directory the process runs in. A new session takes it as the workspace root.
     cwd: []const u8 = "",
@@ -131,11 +125,10 @@ pub const Host = struct {
         const ctx = quickjs.Context.init(runtime);
         std.debug.assert(ctx.ptr != null);
 
-        const baked: []const loader_mod.BakedModule = if (opts.headless) &shared_baked else &default_baked;
         const ld: loader_mod.Loader = .{
             .gpa = gpa,
             .io = io,
-            .baked = baked,
+            .baked = &default_baked,
             .max_file_bytes = opts.max_file_bytes,
         };
         const eng = engine_module.Engine.create(gpa, ctx, &self.wake) catch unreachable;
@@ -166,8 +159,8 @@ pub const Host = struct {
         ctx.setContextOpaque(self);
         runtime.setInterruptHandler(self);
         runtime.setModuleLoader(&self.loader);
-        // A headless host never binds a renderer, so it must not offer the terminal module either.
-        if (!opts.headless) term_module.install(self);
+        // A host with no renderer still installs the module, because every draw call refuses a null render.
+        term_module.install(self);
         engine_module.install(self);
         fs_module.install(self);
         exec_module.install(self);
