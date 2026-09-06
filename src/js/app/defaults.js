@@ -77,7 +77,7 @@ plugins.use({
       ctx.tui.command(() => { const c = focusedChat(); return c != null && c.sessionId != null; }, {
         "session:interrupt": () => withChat(c => c.interrupt()),
       }, {
-        "session:interrupt": { title: "Interrupt", description: "stop the run" },
+        "session:interrupt": { title: "Interrupt", description: "stop the run", slash: "interrupt" },
       });
 
       ctx.tui.command(null, {
@@ -110,13 +110,13 @@ plugins.use({
         "composer-vim:toggle": () => (plugins.get("composer-vim") ? plugins.dispose("composer-vim") : plugins.use(composerVim)),
         "transcript-vim:toggle": () => (plugins.get("transcript-vim") ? plugins.dispose("transcript-vim") : plugins.use(transcriptVim)),
       }, {
-        "ui:sessions": { title: "Sessions", description: "open a session" },
-        "chat:new": { title: "New chat", description: "leave the session and start empty" },
-        "copy:reply": { title: "Copy reply", description: "copy the last assistant message" },
-        "copy:selection": { title: "Copy selection", description: "copy the selected text" },
-        "copy:source": { title: "Copy source", description: "copy the selected markdown" },
-        "composer-vim:toggle": { title: "Composer vim", description: "toggle vim keys in the composer" },
-        "transcript-vim:toggle": { title: "Transcript vim", description: "toggle vim keys in the transcript" },
+        "ui:sessions": { title: "Sessions", description: "open a session", slash: "sessions" },
+        "chat:new": { title: "New chat", description: "leave the session and start empty", slash: "new" },
+        "copy:reply": { title: "Copy reply", description: "copy the last assistant message", slash: "copy-reply" },
+        "copy:selection": { title: "Copy selection", description: "copy the selected text", slash: "copy-selection" },
+        "copy:source": { title: "Copy source", description: "copy the selected markdown", slash: "copy-source" },
+        "composer-vim:toggle": { title: "Composer vim", description: "toggle vim keys in the composer", slash: "vim" },
+        "transcript-vim:toggle": { title: "Transcript vim", description: "toggle vim keys in the transcript", slash: "transcript-vim" },
       });
 
       // Global commands live on ctrl strokes and window nav behind ctrl+k, which leaves ctrl+w for the composer word-erase.

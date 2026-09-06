@@ -89,7 +89,7 @@ export const explorerPlugin = {
           return picker;
         },
       }, {
-        "app:explorer": { title: "Files", description: "browse the workspace" },
+        "app:explorer": { title: "Files", description: "browse the workspace", slash: "files" },
       });
       });
 },

@@ -1,6 +1,6 @@
 // yuke:ui — the widget kit over yuke:core: List and Window to subclass, plus the pickers on `ui`.
 import { term } from "yuke:term";
-import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, slot, isWheel } from "yuke:core";
+import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, slot, isWheel, events } from "yuke:core";
 import { fuzzyRank } from "yuke:fzy";
 
 /** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
@@ -8,7 +8,7 @@ import { fuzzyRank } from "yuke:fzy";
 /** @typedef {string | number} ItemKey */
 /** @typedef {"accept" | "cancel" | "close" | "next" | "prev" | "top" | "bottom"} PickerAction */
 /** @typedef {string | number | object} ListKey */
-/** @typedef {{ text?: string, group?: string, lines?: ListItem[], right?: string, rightGroup?: string, rightSelGroup?: string, marker?: string | null, markerGroup?: string, markerSelGroup?: string, indent?: number, selGroup?: string }} ListItem */
+/** @typedef {{ text?: string, group?: string, lines?: ListItem[], detail?: string, detailGroup?: string, detailSelGroup?: string, right?: string, rightGroup?: string, rightSelGroup?: string, marker?: string | null, markerGroup?: string, markerSelGroup?: string, indent?: number, selGroup?: string }} ListItem */
 /** @typedef {{ type: "mouse", col: number, row: number, button: string, event: string, mods: number, count: number }} MouseEvent */
 /** @typedef {{ start: number, end: number, label: string }} PasteSpan */
 /** @typedef {{ span: PasteSpan, start: number, end: number, delta: number }} ProjectionPart */
@@ -19,7 +19,7 @@ import { fuzzyRank } from "yuke:fzy";
 /** @typedef {"none" | "single" | "rounded" | "double" | BorderSet} Border */
 /** @typedef {number | ((max: number) => number)} Dimension */
 /** @typedef {{ draw?: (win: Window) => void, cursor?: (win: Window) => { x: number, y: number, visible: boolean } | null, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: MouseEvent) => boolean, needsTick?: () => { periodMs: number } | null, tick?: () => void }} WindowContent */
-/** @typedef {{ name?: string, modal?: boolean, border?: Border, content?: WindowContent | null, width?: Dimension, height?: Dimension, panelGroup?: string, borderGroup?: string, title?: string | (() => string), title_pos?: "left" | "center" | "right", titleGroup?: string, footer?: string | (() => string), footer_pos?: "left" | "center" | "right", footerGroup?: string }} WindowOptions */
+/** @typedef {{ name?: string, modal?: boolean, border?: Border, content?: WindowContent | null, width?: Dimension, height?: Dimension, anchor?: (() => Rect) | null, panelGroup?: string, borderGroup?: string, title?: string | (() => string), title_pos?: "left" | "center" | "right", titleGroup?: string, footer?: string | (() => string), footer_pos?: "left" | "center" | "right", footerGroup?: string }} WindowOptions */
 /** @template T @typedef {{ items?: T[] | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemHeight?: number | undefined, group?: string | undefined, selGroup?: string | undefined, dimGroup?: string | undefined, dimSelGroup?: string | undefined, drawCursor?: boolean | undefined }} ListOptions */
 /** @template T @typedef {{ items?: T[] | undefined, suggest?: (query: string) => T[] | undefined, filterText?: ((item: T) => string) | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onAccept?: ((item: T, index: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: Picker<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined, filter?: boolean | undefined } & WindowOptions} PickOptions */
 
@@ -27,6 +27,8 @@ import { fuzzyRank } from "yuke:fzy";
 const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
   // A panel fills with spaces over the terminal background, so it is opaque behind its border.
   UIPanel: { fg: "fg", bg: "bg" },
+  // A float is a non-modal window over a pane, so a theme can tone it apart from a dialog.
+  UIFloat: { fg: "fg", bg: "bg" },
   UIBorder: { fg: "fg", dim: true },
   UITitle: { fg: "fg", bold: true },
   UIItem: { fg: "fg" },
@@ -315,7 +317,16 @@ export class List {
     }
     const ind = spec.indent || 0;
     const g = isSel ? spec.selGroup || this.selGroup : spec.group || this.group;
-    text(x + ind, sy, clip(/** @type {string} */ (spec.text), Math.max(0, avail - ind)), g);
+    const body = clip(/** @type {string} */ (spec.text), Math.max(0, avail - ind));
+    text(x + ind, sy, body, g);
+    // `detail` follows the text one cell later, dim, so a row reads as a name and its note.
+    if (spec.detail) {
+      const at = ind + term.measure(body) + 1;
+      if (at < avail) {
+        const dg = isSel ? spec.detailSelGroup || this.dimSelGroup : spec.detailGroup || this.dimGroup;
+        text(x + at, sy, clip(spec.detail, avail - at), dg);
+      }
+    }
   }
 }
 
@@ -327,7 +338,11 @@ export class Composer {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
     this.input = new TextInput({
-      onChange: () => this._invalidate(),
+      // A plugin follows the text through the bus, so the slash menu needs no hook on each pane.
+      onChange: () => {
+        this._invalidate();
+        events.emit("composer.changed", this);
+      },
       onEdit: (from, to, ins) => this._shiftSpans(from, to, ins),
     });
     this.prompt = opts.prompt != null ? opts.prompt : "› ";
@@ -683,8 +698,16 @@ export class Window {
     w = Math.min(W, Math.max(pad + 1, w));
     h = Math.min(H, Math.max(pad + 1, h));
 
-    const x = Math.max(0, Math.floor((W - w) / 2));
-    const y = Math.max(0, Math.floor((H - h) / 2));
+    let x = Math.max(0, Math.floor((W - w) / 2));
+    let y = Math.max(0, Math.floor((H - h) / 2));
+    // An anchored window sits on the rows above its rect and takes its columns; the rows above bound its height.
+    const anchor = this.opts.anchor ? this.opts.anchor() : null;
+    if (anchor) {
+      w = Math.min(W, Math.max(pad + 1, this._dim(this.opts.width, anchor.w, anchor.w)));
+      h = Math.max(0, Math.min(anchor.y, this._dim(this.opts.height, anchor.y, anchor.y)));
+      x = Math.max(0, Math.min(anchor.x, W - w));
+      y = anchor.y - h;
+    }
     this.rect = { x, y, w, h };
     // The inner rect never goes negative, so a window smaller than its border has an empty interior.
     this.inner = pad ? { x: x + 1, y: y + 1, w: Math.max(0, w - 2), h: Math.max(0, h - 2) } : { x, y, w, h };
@@ -971,6 +994,8 @@ export class Picker {
       this.cancel();
       return true;
     }
+    // A float leaves every other key to the view under it, so the composer keeps typing.
+    if (this.win && this.win.modal === false) return false;
     // A menu navigates with the shared table. A finder gives every other key to the query.
     if (!this.filter) {
       const nav = NAV_KEYS[s];

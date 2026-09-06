@@ -22,9 +22,9 @@ export { config, defineConfig, Emitter, events };
 /** @typedef {{ type: "leaf" | "split", parent: Node | null, rect: Rect, view: ViewLike | null, kind: "row" | "col" | null, a: Node | null, b: Node | null, ratio: number }} NodeShape */
 /** @typedef {(...args: any[]) => unknown} CommandAction */
 /** @typedef {(...args: any[]) => boolean | [boolean, ...any[]]} CommandPredicate */
-/** @typedef {{ title: string, description: string }} CommandMeta */
+/** @typedef {{ title: string, description: string, slash?: string | null, args?: boolean }} CommandMeta */
 /** @typedef {{ predicate: CommandPredicate | null, perform: CommandAction, meta: CommandMeta | null }} CommandEntry */
-/** @typedef {{ name: string, title: string, description: string }} CommandListing */
+/** @typedef {{ name: string, title: string, description: string, slash: string | null, args: boolean }} CommandListing */
 /** @typedef {{ [name: string]: CommandEntry[] }} CommandMap */
 /** @typedef {{ map: CommandMap, add: (predicate: string | CommandPredicate | null, map: Record<string, CommandAction>, meta?: Record<string, CommandMeta>) => () => void, perform: (name: string, ...args: any[]) => boolean, available: (name: string) => boolean, list: () => CommandListing[] }} CommandRegistry */
 /** @typedef {string | ((ev: HostEvent) => boolean | void)} KeyBinding */
@@ -316,7 +316,7 @@ export const command = {
     for (const name in this.map) {
       const list = /** @type {CommandEntry[]} */ (this.map[name]);
       const meta = metaOf(list);
-      if (meta && isAvailable(list)) out.push({ name, title: meta.title, description: meta.description });
+      if (meta && isAvailable(list)) out.push({ name, title: meta.title, description: meta.description, slash: meta.slash || null, args: !!meta.args });
     }
     // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
     return out.sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
@@ -409,13 +409,13 @@ export const context = {
     }
   },
 
-  // The atom stack, root first. The index of an atom is its depth.
+  // The atom stack, root first. The index of an atom is its depth. A float adds no atom, because it holds no focus.
   /** @returns {string[]} */
   stack() {
     const out = ["root"];
     pushAtoms(out, root.active);
-    const top = root.overlays.length ? root.overlays[root.overlays.length - 1] : null;
-    if (top) {
+    const top = root.focused;
+    if (top && top !== root.active) {
       out.push("overlay");
       pushAtoms(out, top);
     }
@@ -1150,6 +1150,7 @@ events.declare([
   "pane.closed",
   "region.focused",
   "clipboard.copied",
+  "composer.changed",
   "session.changed",
   "index.changed",
 ]);
@@ -1582,8 +1583,13 @@ export class RootView {
     return /** @type {NavTarget | null} */ (callHook(this.focused, "navTarget") || null);
   }
 
+  // The layer that owns the cursor and the nav target: the top modal overlay, else the active view. A float never takes focus.
   get focused() {
-    return this.overlays.length ? this.overlays[this.overlays.length - 1] : this.active;
+    for (let i = this.overlays.length - 1; i >= 0; i--) {
+      const layer = /** @type {Overlay} */ (this.overlays[i]);
+      if (layer.modal !== false) return layer;
+    }
+    return this.active;
   }
 
   /** @param {Overlay} layer @returns {Overlay} */
@@ -1734,7 +1740,7 @@ export function quit() {
 }
 
 // A bare key never quits. A stray key in a modal layer must not end the session.
-command.add(null, { quit }, { quit: { title: "Quit", description: "leave yuke" } });
+command.add(null, { quit }, { quit: { title: "Quit", description: "leave yuke", slash: "quit" } });
 
 root.addTickable(keymap);
 

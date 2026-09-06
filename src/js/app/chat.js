@@ -251,9 +251,9 @@ function openMessagePicker(ctx) {
   return picked;
 }
 
-// Load the catalog, then pick a model and its effort. The pick happens after the load returns.
-/** @param {import("yuke:ext").InjectContext} ctx */
-function openModelPicker(ctx) {
+// Load the catalog, then pick a model and its effort. A `query` names the model and skips the picker.
+/** @param {import("yuke:ext").InjectContext} ctx @param {string} [query] */
+function openModelPicker(ctx, query) {
   const chat = focusedChat();
   if (!chat) return null;
   const current = chatEntry();
@@ -263,6 +263,12 @@ function openModelPicker(ctx) {
     const models = catalogOf().models.slice().sort((a, b) => (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     if (models.length === 0) {
       notice.show("no model in the catalog");
+      return null;
+    }
+    if (query) {
+      const m = models.find((x) => x.selector === query || x.id === query || x.name === query);
+      if (m) chooseModel(m, m.default_reasoning || m.reasoning_levels[0] || "");
+      else notice.show("no model named " + query);
       return null;
     }
     // The catalog owns the selector format. The picker keys on it and never builds one.
@@ -373,11 +379,11 @@ export const chatPlugin = {
       ctx.tui.command(null, {
         "copy:message": () => openMessagePicker(ctx),
         "copy:code": () => openCodePicker(ctx),
-        "model:pick": () => openModelPicker(ctx),
+        "model:pick": (/** @type {string | undefined} */ query) => openModelPicker(ctx, query),
       }, {
-        "copy:message": { title: "Copy message", description: "copy one message" },
-        "copy:code": { title: "Copy code", description: "copy one code block" },
-        "model:pick": { title: "Model", description: "choose the model for the next chat" },
+        "copy:message": { title: "Copy message", description: "copy one message", slash: "copy-message" },
+        "copy:code": { title: "Copy code", description: "copy one code block", slash: "copy-code" },
+        "model:pick": { title: "Model", description: "choose the model for the next chat", slash: "model", args: true },
       });
       });
 },

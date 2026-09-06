@@ -3808,6 +3808,109 @@ test "the palette lists only the commands that carry metadata" {
     try expectJs(host, "ok");
 }
 
+test "the slash menu follows the composer, completes, runs, and leaves a message alone" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = Host.create(gpa.allocator());
+    defer host.destroy();
+    host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\import { tuiPlugin } from "yuke:tui";
+        \\import "yuke:defaults";
+        \\plugins.use(tuiPlugin);
+    , "boot.js");
+    // The float never takes the focus, and the rules for Tab, Enter, Escape, and a plain message all hold.
+    try host.evalModule(
+        \\import { command, root } from "yuke:core";
+        \\import { chat } from "yuke:defaults";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const key = (code) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0 });
+        \\root.focusView(chat.view);
+        \\chat.view.focus = "composer";
+        \\const sent = [];
+        \\chat.startChat = (text) => { sent.push(text); return true; };
+        \\let ran = null;
+        \\const off = command.add(null, { "test:echo": (arg) => { ran = arg === undefined ? "" : arg; } },
+        \\  { "test:echo": { title: "Echo", description: "d", slash: "echo", args: true } });
+        \\const rowsOf = () => root.overlays[0].content.list.items;
+        \\
+        \\chat.composer.text = "/";
+        \\check("opens", root.overlays.length === 1 && root.overlays[0].modal === false);
+        \\check("composer-keeps-focus", root.focused === chat.view);
+        \\check("lists-slash-entries", rowsOf().length > 3 && rowsOf().every((e) => e.slash));
+        \\chat.composer.text = "/ech";
+        \\check("filters", rowsOf().length >= 1 && rowsOf()[0].slash === "echo");
+        \\root.onEvent(key("tab"));
+        \\check("tab-completes-with-space", chat.composer.text === "/echo ");
+        \\check("space-closes", root.overlays.length === 0);
+        \\chat.composer.text = "/ech";
+        \\root.onEvent(key("enter"));
+        \\check("enter-runs", ran === "" && chat.composer.text === "");
+        \\check("enter-closes", root.overlays.length === 0);
+        \\ran = null;
+        \\chat.composer.text = "/ech";
+        \\root.onEvent(key("esc"));
+        \\check("esc-closes", root.overlays.length === 0 && chat.composer.text === "/ech");
+        \\chat.composer.text = "/echo";
+        \\check("edit-reopens", root.overlays.length === 1);
+        \\root.onEvent(key("esc"));
+        \\check("send-runs-known", chat.send("/echo hello world") === true && ran === "hello world");
+        \\check("send-unknown-is-message", chat.send("/foo bar") === true && sent[sent.length - 1] === "/foo bar");
+        \\check("double-slash-is-message", chat.send("//x") === true && sent[sent.length - 1] === "//x");
+        \\check("path-is-message", chat.send("/tmp/x") === true && sent[sent.length - 1] === "/tmp/x");
+        \\chat.composer.text = "/tmp/x";
+        \\check("path-opens-nothing", root.overlays.length === 0);
+        \\chat.composer.text = "/zzzz";
+        \\check("no-match-opens-nothing", root.overlays.length === 0);
+        \\chat.composer.text = "/ech";
+        \\chat.view.focus = "transcript";
+        \\chat.view.focusRegion("composer");
+        \\chat.view.focusRegion("transcript");
+        \\check("transcript-focus-closes", root.overlays.length === 0);
+        \\chat.composer.text = "";
+        \\off();
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "slash.js");
+    try expectJs(host, "ok");
+}
+
+test "commands.define registers a user command with a slash word and removes it" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { command } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { tuiPlugin } from "yuke:tui";
+        \\import { commands } from "yuke";
+        \\plugins.use(tuiPlugin);
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\let got = null;
+        \\commands.define({ name: "review", title: "Review", description: "ask for a review", args: true, run: (arg) => { got = arg; } });
+        \\const listed = command.list().find((c) => c.name === "user:review");
+        \\check("listed", !!listed && listed.slash === "review" && listed.args === true && listed.title === "Review");
+        \\command.perform("user:review", "src");
+        \\check("runs", got === "src");
+        \\commands.define({ name: "review", title: "Review 2", description: "d", run: () => {} });
+        \\check("redefine-replaces", command.list().filter((c) => c.name === "user:review").length === 1);
+        \\commands.define({ name: "hidden", title: "H", description: "d", slash: null, run: () => {} });
+        \\check("slash-opt-out", command.list().find((c) => c.name === "user:hidden").slash === null);
+        \\plugins.dispose("command:review");
+        \\check("dispose-removes", !command.available("user:review"));
+        \\let threw = false;
+        \\try { commands.define({ name: "x", title: "t", description: "d" }); } catch (_e) { threw = true; }
+        \\check("refuses-no-run", threw);
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "define.js");
+    try expectJs(host, "ok");
+}
+
 test "the palette hints only the strokes that run the command here" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
