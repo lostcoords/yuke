@@ -3819,11 +3819,13 @@ test "the slash menu follows the composer, completes, runs, and leaves a message
     , "boot.js");
     // The float never takes the focus, and the rules for Tab, Enter, Escape, and a plain message all hold.
     try host.evalModule(
-        \\import { command, root } from "yuke:core";
+        \\import { command, root, keymap } from "yuke:core";
+        \\import { ui } from "yuke:ui";
+        \\import { Chat } from "yuke:chat";
         \\import { chat } from "yuke:defaults";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
-        \\const key = (code) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0 });
+        \\const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0, ...o });
         \\root.focusView(chat.view);
         \\chat.view.focus = "composer";
         \\const sent = [];
@@ -3866,6 +3868,43 @@ test "the slash menu follows the composer, completes, runs, and leaves a message
         \\chat.view.focusRegion("composer");
         \\chat.view.focusRegion("transcript");
         \\check("transcript-focus-closes", root.overlays.length === 0);
+        \\chat.view.focusRegion("composer");
+        \\chat.composer.text = "";
+        \\// A dialog on top keeps the float shut, so a restored draft never opens a menu under it.
+        \\const modal = ui.pick({ items: [] });
+        \\chat.composer.text = "/ech";
+        \\check("no-float-under-modal", root.overlays.length === 1 && root.overlays[0] === modal.win);
+        \\root.popOverlay(modal.win);
+        \\chat.composer.text = "";
+        \\// Escape dismisses in one pane only, so the same text in another pane still opens its menu.
+        \\chat.composer.text = "/ech";
+        \\root.onEvent(key("esc"));
+        \\const other = new Chat();
+        \\root.split("row", other.view);
+        \\root.focusView(other.view);
+        \\other.view.focusRegion("composer");
+        \\other.composer.text = "/ech";
+        \\check("dismissal-is-per-pane", root.overlays.length === 1);
+        \\other.composer.text = "";
+        \\root.close();
+        \\root.focusView(chat.view);
+        \\chat.view.focusRegion("composer");
+        \\chat.composer.text = "";
+        \\// A pending chord takes the next key before the float, so Tab completes nothing here.
+        \\chat.composer.text = "/ech";
+        \\root.onEvent(key("char", { char: "k", mods: 4 }));
+        \\check("chord-armed", keymap.pendingLabel() === "ctrl+k");
+        \\root.onEvent(key("tab"));
+        \\check("chord-beats-float", chat.composer.text === "/ech" && keymap.pendingLabel() === "");
+        \\chat.view.focusRegion("composer");
+        \\chat.composer.text = "";
+        \\// A command that left the registry while its row showed runs nothing and keeps the draft.
+        \\const gone = command.add(null, { "test:gone": () => {} }, { "test:gone": { title: "Gone", description: "d", slash: "gone" } });
+        \\chat.composer.text = "/gone";
+        \\check("gone-listed", root.overlays.length === 1);
+        \\gone();
+        \\root.onEvent(key("enter"));
+        \\check("gone-keeps-draft", chat.composer.text === "/gone" && root.overlays.length === 0);
         \\chat.composer.text = "";
         \\off();
         \\globalThis.result = fail.length ? fail.join(",") : "ok";

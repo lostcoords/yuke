@@ -309,7 +309,7 @@ export const command = {
     return isAvailable(this.map[name]);
   },
 
-  // The available commands that carry metadata, in title order. A keymap target has none, so a palette never lists it.
+  // List the available commands with metadata in title order. A keymap target has none, so no palette lists it.
   list() {
     /** @type {CommandListing[]} */
     const out = [];
@@ -323,7 +323,7 @@ export const command = {
   },
 };
 
-// The metadata of the newest entry that carries one, so a plain shadow keeps the listing under it.
+// The newest metadata in the list, so a plain shadow keeps the listing under it.
 /** @param {CommandEntry[]} list @returns {CommandMeta | null} */
 function metaOf(list) {
   for (const entry of list) if (entry.meta) return entry.meta;
@@ -409,7 +409,7 @@ export const context = {
     }
   },
 
-  // The atom stack, root first. The index of an atom is its depth. A float adds no atom, because it holds no focus.
+  // The atom stack, root first; the index is the depth. A float adds no atom, because it holds no focus.
   /** @returns {string[]} */
   stack() {
     const out = ["root"];
@@ -1583,7 +1583,7 @@ export class RootView {
     return /** @type {NavTarget | null} */ (callHook(this.focused, "navTarget") || null);
   }
 
-  // The layer that owns the cursor and the nav target: the top modal overlay, else the active view. A float never takes focus.
+  // The layer that owns the cursor and the nav target: the top modal overlay, else the active view.
   get focused() {
     for (let i = this.overlays.length - 1; i >= 0; i--) {
       const layer = /** @type {Overlay} */ (this.overlays[i]);
@@ -1713,6 +1713,8 @@ export class RootView {
     // A modal overlay consumes the event even when the overlay has no requested hook.
     const consumedByOverlay = /** @type {(method: string) => boolean} */ ((method) => {
       if (!top) return false;
+      // A float yields to a pending chord, so its own Tab never cuts a sequence short.
+      if (top.modal === false && method === "onKey" && keymap.owns()) return false;
       const handled = callHook(top, method, ev);
       return top.modal !== false || !!handled;
     });

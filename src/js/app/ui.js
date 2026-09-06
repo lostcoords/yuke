@@ -700,7 +700,7 @@ export class Window {
 
     let x = Math.max(0, Math.floor((W - w) / 2));
     let y = Math.max(0, Math.floor((H - h) / 2));
-    // An anchored window sits on the rows above its rect and takes its columns; the rows above bound its height.
+    // Place an anchored window above its rect with the rect's columns; the rows above bound its height.
     const anchor = this.opts.anchor ? this.opts.anchor() : null;
     if (anchor) {
       w = Math.min(W, Math.max(pad + 1, this._dim(this.opts.width, anchor.w, anchor.w)));
@@ -741,6 +741,8 @@ export class Window {
   /** @returns {void} */
   draw() {
     const { x, y, w, h } = this.rect;
+    // A window with no room draws nothing, so a border never lands on the row above it.
+    if (w <= 0 || h <= 0) return;
     fill(x, y, w, h, this.opts.panelGroup || "UIPanel");
     const bs = this._borderSet();
     if (bs) this._drawBorder(bs);
@@ -911,8 +913,14 @@ export class Picker {
     else this.list.clearRect();
   }
 
+  // A float takes only the mouse over its own rows, so a wheel over the pane still scrolls the pane.
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
+    const win = this.win;
+    if (win && win.modal === false) {
+      const { x, y, w, h } = win.rect;
+      if (ev.col < x || ev.col >= x + w || ev.row < y || ev.row >= y + h) return false;
+    }
     return this.list.onMouse(ev);
   }
 

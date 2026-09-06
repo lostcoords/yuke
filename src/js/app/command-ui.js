@@ -46,7 +46,7 @@ function formatRow(e, col) {
   return { text: wordOf(e).padEnd(col), detail: e.description + (e.hint ? " · " + e.hint : "") };
 }
 
-// The slash word and the rest of a composer text, or null when the text is a message. A token with a second `/` is a path.
+// Parse the slash word and the rest of a composer text; null for a message or a path such as `/tmp/x`.
 /** @param {string} text @returns {SlashLine | null} */
 export function parseSlash(text) {
   const line = text.trimStart();
@@ -57,11 +57,23 @@ export function parseSlash(text) {
   return { word, rest: end < 0 ? "" : line.slice(end).trim(), complete: end >= 0 };
 }
 
-// Run one command with the rest of the line as its argument. A bare call keeps the arity the action declares.
-/** @param {Entry} e @param {string} rest @returns {void} */
+// The slash entries by word, in word order. A user command shadows a stock word, so one word runs one command.
+/** @param {Entry[]} all @returns {Entry[]} */
+function slashEntries(all) {
+  /** @type {Map<string, Entry>} */
+  const byWord = new Map();
+  for (const e of all) {
+    if (!e.slash) continue;
+    const held = byWord.get(e.slash);
+    if (!held || (e.name.startsWith("user:") && !held.name.startsWith("user:"))) byWord.set(e.slash, e);
+  }
+  return Array.from(byWord.values()).sort((a, b) => (wordOf(a) < wordOf(b) ? -1 : wordOf(a) > wordOf(b) ? 1 : 0));
+}
+
+// Run one command with the rest of the line as its argument. False when the registry no longer holds it.
+/** @param {Entry} e @param {string} rest @returns {boolean} */
 function run(e, rest) {
-  if (rest) command.perform(e.name, rest);
-  else command.perform(e.name);
+  return command.perform(e.name, ...(rest ? [rest] : []));
 }
 
 export const commandUiPlugin = {
@@ -74,11 +86,12 @@ export const commandUiPlugin = {
     const format = cfg.format || formatRow;
 
     ctx.inject(["tui"], (ctx) => {
-      // The open float, with the chat it follows. One float at a time, because one composer has the focus.
+      // One float, for the composer that has the focus.
       /** @type {{ chat: Chat, picker: import("yuke:ui").Picker<Entry>, win: import("yuke:ui").Window } | null} */
       let float = null;
-      // The text Escape dismissed. The menu stays closed until the text changes.
-      let dismissed = "";
+      // The text Escape dismissed in one chat. That menu stays closed until its text changes.
+      /** @type {{ chat: Chat, text: string } | null} */
+      let dismissed = null;
 
       const close = () => {
         if (!float) return;
@@ -116,12 +129,14 @@ export const commandUiPlugin = {
           // The picker closes its own window on accept and cancel, so the handle drops here.
           onAccept: (e) => {
             float = null;
+            const draft = chat.composer.text;
             chat.composer.text = "";
-            run(e, "");
+            // A command that left the registry runs nothing, so the draft comes back.
+            if (!run(e, "")) chat.composer.text = draft;
           },
           onCancel: () => {
             float = null;
-            dismissed = chat.composer.text;
+            dismissed = { chat, text: chat.composer.text };
           },
         });
         content = p.content;
@@ -132,15 +147,15 @@ export const commandUiPlugin = {
       // Follow the focused composer: open, refilter, or close the menu to match its text.
       const sync = () => {
         const chat = focusedChat();
-        const typing = chat && root.active === chat.view && chat.view.focus === "composer";
+        // `root.focused` is the composer's view only with no modal above it, so a float never opens under a dialog.
+        const typing = chat && root.focused === chat.view && chat.view.focus === "composer";
         const line = typing ? parseSlash(chat.composer.text) : null;
-        if (!chat || !line || line.complete || chat.composer.text === dismissed) return close();
-        dismissed = "";
+        const held = chat && dismissed && dismissed.chat === chat && dismissed.text === chat.composer.text;
+        if (!chat || !line || line.complete || held) return close();
+        dismissed = null;
         if (float && float.chat !== chat) close();
-        // Word order for an empty query, because the rows show words. Code-unit order, never localeCompare.
-        const slashOf = (/** @type {Entry} */ e) => /** @type {string} */ (e.slash);
-        const all = entries().filter((e) => e.slash).sort((a, b) => (slashOf(a) < slashOf(b) ? -1 : slashOf(a) > slashOf(b) ? 1 : 0));
-        const ranked = fuzzyRank(all, line.word, slashOf);
+        const all = slashEntries(entries());
+        const ranked = fuzzyRank(all, line.word, (e) => /** @type {string} */ (e.slash));
         if (ranked.length === 0) return close();
         if (float) float.picker.setSource(ranked);
         else open(chat, ranked, columnOf(all));
@@ -153,11 +168,10 @@ export const commandUiPlugin = {
       // A submitted slash line runs its command with the rest as the argument; any other text is a message.
       ctx.advise(Chat.prototype, "send", "around", /** @param {(text: string) => boolean} next @param {string} text */ (next, text) => {
         const line = parseSlash(text);
-        const e = line ? entries().find((c) => c.slash === line.word) : null;
-        if (!e) return next(text);
-        run(e, line ? line.rest : "");
+        const e = line ? slashEntries(entries()).find((c) => c.slash === line.word) : null;
+        if (!e || !run(e, /** @type {SlashLine} */ (line).rest)) return next(text);
         return true;
-      });
+      }, { name: "slash" });
 
       // ctrl+p opens the same list as a modal picker with its own query, so a draft and a transcript focus both keep.
       const openPalette = () => {
