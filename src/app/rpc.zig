@@ -302,7 +302,8 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
     const in_buf = try gpa.alloc(u8, in_buffer_bytes);
     defer gpa.free(in_buf);
 
-    var out_file = std.Io.File.stdout().writer(io, out_buf);
+    // A positional write answers NXIO on a terminal, and only a pipe falls back to streaming.
+    var out_file = std.Io.File.stdout().writerStreaming(io, out_buf);
     var requests_buf: [queue_slots]Request = undefined;
     var requests = zio.Channel(Request).init(&requests_buf);
     var notifications = NotificationQueue{};
@@ -327,7 +328,7 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
     }
 
     var readers: zio.Group = .init;
-    var in_file = std.Io.File.stdin().reader(io, in_buf);
+    var in_file = std.Io.File.stdin().readerStreaming(io, in_buf);
     try readers.spawn(readerTask, .{ &in_file.interface, &requests, &extensions.host.wake, gpa });
     defer {
         readers.cancel();
