@@ -256,7 +256,7 @@ function openModelPicker(ctx, query) {
       items: models,
       key: qualified,
       filterText: m => m.provider + " " + m.name + " " + m.id,
-      // A model whose provider cannot serve a turn shows dim with the reason, so a run never fails on it blind.
+      // A model with a provider that cannot serve shows the reason before the user starts a run.
       format: m => {
         const label = providerStateLabel(providerState(m.provider));
         return label ? { text: m.name, right: m.provider + " · " + label, group: "UIDim" } : { text: m.name, right: m.provider };
@@ -264,6 +264,7 @@ function openModelPicker(ctx, query) {
       onAccept: m => {
         const state = providerState(m.provider);
         if (state === "needs_credential" || state === "expired") command.perform("auth:login", m.provider);
+        else if (state === "needs_route") notice.show(m.provider + " needs a route in providers.json");
         else pickReasoning(ctx, m);
       },
     });
@@ -271,7 +272,7 @@ function openModelPicker(ctx, query) {
     p.content.selectKey(currentId);
     return p;
   };
-  // A login in another process lands in the file, so the picker reads it again before it lists.
+  // Reload the file before the picker lists, so a login from another process shows.
   reloadCatalog().then(show);
   return null;
 }
@@ -308,7 +309,7 @@ export const chatPlugin = {
     ctx.inject(["tui"], (ctx) => {
       // Two panes can show one session, so the event reaches every pane that names it.
       ctx.on("session.changed", /** @param {NativeSessionEvent} ev */ (ev => {
-        // A quiet digest moved the activity, the queue or the run, none of which the transcript draws.
+        // A quiet digest changes only state outside the transcript.
         if (!ev || ev.kind === "quiet") return;
         for (const c of chats) {
           if (c.sessionId !== ev.session) continue;

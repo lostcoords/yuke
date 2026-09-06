@@ -6,7 +6,7 @@ declare module "yuke:engine-native" {
     active: { id: number; type: "assistant" } | null;
   };
 
-  /** One auth event, whole. The digest keeps these because a login outcome carries a message a fact name cannot. */
+  /** The digest keeps each auth event whole, because a login outcome carries a message a fact name cannot. */
   export type AuthNote =
     | { method: "auth.login_finished"; params: Wire.AuthLoginFinishedData }
     | { method: "auth.changed"; params: Wire.AuthChangedData };

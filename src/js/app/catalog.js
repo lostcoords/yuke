@@ -4,25 +4,28 @@ import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { newestLocalModelSession } from "yuke:sessions";
 
-/** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[], loading: boolean }} CatalogState */
+/** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[], loading: boolean, again: boolean }} CatalogState */
 /** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
 /** @typedef {{ session: Wire.Session, activity: { context_usage?: Wire.TokenUsage } | null }} StatusEntry */
 /** @typedef {{ entry?: () => StatusEntry | null }} CatalogConfig */
 
-// One engine, one catalog. `catalog.list` answers "unchanged" while the revision holds, so a
-// reopen costs no work.
+// One engine, one catalog. `catalog.list` answers "unchanged" while the revision holds, so a reopen costs no work.
 /** @type {CatalogState} */
-const catalog = { rev: null, providers: [], models: [], loading: false };
+const catalog = { rev: null, providers: [], models: [], loading: false, again: false };
 
 /** @returns {CatalogState} */
 export function catalogOf() {
   return catalog;
 }
 
+// A load during a load runs one more after it, so a change that lands mid-flight still reaches the catalog.
 /** @returns {Promise<CatalogState>} */
 export function loadCatalog() {
   const c = catalog;
-  if (c.loading) return Promise.resolve(c);
+  if (c.loading) {
+    c.again = true;
+    return Promise.resolve(c);
+  }
   c.loading = true;
   return client
     .catalogList(c.rev)
@@ -37,7 +40,9 @@ export function loadCatalog() {
     .then(() => {
       c.loading = false;
       root.invalidate();
-      return c;
+      if (!c.again) return c;
+      c.again = false;
+      return loadCatalog();
     });
 }
 
@@ -55,10 +60,10 @@ export function providerState(providerId) {
 }
 
 // The words a row shows for a provider state. A ready provider shows nothing, so only a problem draws.
-/** @param {Wire.ProviderState | null} state @returns {string} */
-export function providerStateLabel(state) {
+/** @param {Wire.ProviderState | null} state @param {boolean} [canLogin] @returns {string} */
+export function providerStateLabel(state, canLogin = true) {
   switch (state) {
-    case "needs_credential": return "needs login";
+    case "needs_credential": return canLogin ? "needs login" : "needs key";
     case "needs_route": return "needs route";
     case "expired": return "expired";
     default: return "";

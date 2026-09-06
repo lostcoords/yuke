@@ -9,16 +9,32 @@ import { loadCatalog, providerState, providerStateLabel, reloadCatalog } from "y
 /** @typedef {import("yuke:ext").InjectContext} Ctx */
 /** @typedef {Wire.AuthProvider & { state: Wire.ProviderState | null }} ProviderRow */
 
-// The state a login row shows. A key provider needs a key where a grant provider needs a login.
 /** @param {ProviderRow} p @returns {string} */
 function stateLabel(p) {
-  if (p.state === "needs_credential" && !p.can_login) return "needs key";
-  return p.state === "ready" ? "ready" : providerStateLabel(p.state);
+  return p.state === "ready" ? "ready" : providerStateLabel(p.state, p.can_login);
 }
 
 /** @param {Wire.AuthProvider} p @returns {string} */
 function kindLabel(p) {
   return p.can_login ? "account" : "api key";
+}
+
+// One picker over provider rows. Login and logout differ only in the rows, the footer verb, and the action.
+/** @template {Wire.AuthProvider} T @param {Ctx} ctx @param {string} title @param {string} verb @param {T[]} rows @param {(p: T) => string} right @param {(p: T) => void} onAccept @returns {void} */
+function pickProvider(ctx, title, verb, rows, right, onAccept) {
+  const picked = ui.pick({
+    title,
+    footer: "type to filter · ↵ " + verb + " · esc close",
+    border: "rounded",
+    width: 0.6,
+    height: 0.5,
+    items: rows,
+    key: (p) => p.provider_id,
+    filterText: (p) => p.provider_id,
+    format: (p) => ({ text: p.provider_id, detail: kindLabel(p), right: right(p) }),
+    onAccept,
+  });
+  ctx.tui.overlay(picked.win);
 }
 
 // Read the providers after a reload, so a login from another process shows.
@@ -78,6 +94,15 @@ function finishLogin(p, outcome) {
 /** @param {Ctx} ctx @param {ProviderRow} p @returns {void} */
 function deviceLogin(ctx, p) {
   client.authLogin(p.provider_id).then((start) => {
+    /** @param {string} id */
+    const cancel = (id) => client.authCancelLogin(id).catch(() => {});
+    // The plugin left while the engine got the code, so nobody can show it and the poll must stop.
+    if (!ctx.scope.alive) return cancel(start.login_id);
+    let settled = false;
+    // An unload with the dialog open stops the poll too, so the provider never completes a login nobody reads.
+    ctx.effect(() => () => {
+      if (!settled) cancel(start.login_id);
+    });
     const dialog = new DeviceDialog(start);
     const win = new Window({
       title: "login · " + p.provider_id,
@@ -94,14 +119,16 @@ function deviceLogin(ctx, p) {
       const notes = ev.type === "index" && ev.auth ? ev.auth : [];
       const note = notes.find((n) => n.method === "auth.login_finished" && n.params.login_id === start.login_id);
       if (!note) return;
+      settled = true;
       off();
       release();
       finishLogin(p, /** @type {Wire.AuthLoginFinishedData} */ (note.params).outcome);
     });
     dialog.onCancel = () => {
+      settled = true;
       off();
       release();
-      client.authCancelLogin(start.login_id).catch(() => {});
+      cancel(start.login_id);
       notice.show("login canceled");
     };
   }, (e) => notice.show("login failed · " + e.message));
@@ -110,6 +137,8 @@ function deviceLogin(ctx, p) {
 // Ask for a key behind a mask, then store it. The engine announces the catalog change on its own.
 /** @param {Ctx} ctx @param {ProviderRow} p @returns {void} */
 function keyLogin(ctx, p) {
+  /** @type {() => void} */
+  let release = () => {};
   const prompt = new Prompt({
     placeholder: "paste the API key",
     mask: true,
@@ -127,7 +156,7 @@ function keyLogin(ctx, p) {
   });
   const win = new Window({ title: "api key · " + p.provider_id, footer: "↵ save · esc cancel", border: "rounded", width: 0.6, height: 3, content: prompt });
   root.pushOverlay(win);
-  const release = ctx.tui.overlay(win);
+  release = ctx.tui.overlay(win);
 }
 
 /** @param {Ctx} ctx @param {ProviderRow} p @returns {void} */
@@ -146,19 +175,7 @@ function openLogin(ctx, query) {
       else notice.show("no provider named " + query);
       return;
     }
-    const picked = ui.pick({
-      title: "login",
-      footer: "type to filter · ↵ select · esc close",
-      border: "rounded",
-      width: 0.6,
-      height: 0.5,
-      items: rows,
-      key: (p) => p.provider_id,
-      filterText: (p) => p.provider_id,
-      format: (p) => ({ text: p.provider_id, detail: kindLabel(p), right: stateLabel(p) }),
-      onAccept: (p) => startLogin(ctx, p),
-    });
-    ctx.tui.overlay(picked.win);
+    pickProvider(ctx, "login", "select", rows, stateLabel, (p) => startLogin(ctx, p));
   }, (e) => notice.show("login failed · " + e.message));
 }
 
@@ -167,13 +184,14 @@ function openLogin(ctx, query) {
 function openLogout(ctx, query) {
   client.authList().then((r) => {
     const rows = r.providers.filter((p) => p.credential_kind != null);
+    // A key the environment supplies is not in the file, so the engine cannot remove it and says so.
     /** @param {Wire.AuthProvider} p */
     const remove = (p) => client.authRemove(p.provider_id).then(
       () => {
         notice.show("logged out · " + p.provider_id);
         return loadCatalog();
       },
-      (e) => notice.show("logout failed · " + e.message),
+      (e) => notice.show(e.code === "unknown_provider" ? p.provider_id + " has its key in the environment · unset the variable" : "logout failed · " + e.message),
     );
     if (query) {
       const p = rows.find((x) => x.provider_id === query);
@@ -185,19 +203,7 @@ function openLogout(ctx, query) {
       notice.show("no credential to remove");
       return;
     }
-    const picked = ui.pick({
-      title: "logout",
-      footer: "type to filter · ↵ remove · esc close",
-      border: "rounded",
-      width: 0.6,
-      height: 0.5,
-      items: rows,
-      key: (p) => p.provider_id,
-      filterText: (p) => p.provider_id,
-      format: (p) => ({ text: p.provider_id, detail: p.credential_kind === "oauth" ? "account" : "api key" }),
-      onAccept: remove,
-    });
-    ctx.tui.overlay(picked.win);
+    pickProvider(ctx, "logout", "remove", rows, () => "", remove);
   }, (e) => notice.show("logout failed · " + e.message));
 }
 

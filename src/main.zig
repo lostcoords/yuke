@@ -104,7 +104,7 @@ test "appendLog keeps every line and a line over the buffer" {
 }
 
 pub fn main(init: std.process.Init) !void {
-    // The exit happens after every defer in `run` released the reactor, so no task holds a lock at that point.
+    // The status exit runs after `run` released the reactor, so no task holds a lock at that point.
     const status = try run(init);
     if (status != 0) std.process.exit(status);
 }
@@ -144,7 +144,7 @@ fn run(init: std.process.Init) !u8 {
     // Multiple processes may open one store, but their projections are undefined.
     const application = app.App.open(init.gpa, io, init.environ_map) catch |err| {
         std.log.err("yuke: the app did not start: {t}", .{err});
-        std.process.exit(1);
+        return 1;
     };
     defer application.close();
 

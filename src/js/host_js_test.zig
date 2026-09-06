@@ -3966,6 +3966,11 @@ test "the auth plugin logs in with a device code or a key, logs out, and guards 
         \\finished("L1", { type: "failed", message: "denied" });
         \\check("failure-closes", root.overlays.length === 0 && notice.text === "login failed · denied");
         \\
+        \\// An unknown name is a notice, not a list.
+        \\command.perform("auth:login", "nope");
+        \\await settle();
+        \\check("unknown-name", root.overlays.length === 0 && notice.text === "no provider named nope");
+        \\
         \\// A direct `/login codex` skips the list, and Escape cancels through the engine.
         \\command.perform("auth:login", "codex");
         \\await settle();
@@ -3992,6 +3997,11 @@ test "the auth plugin logs in with a device code or a key, logs out, and guards 
         \\root.onEvent(key("enter"));
         \\await settle();
         \\check("logout-removes", root.overlays.length === 0 && calls.includes("remove:minimax"));
+        \\// A key from the environment is not in the file, so the engine refuses and the notice says where it lives.
+        \\client.authRemove = () => { const e = new Error("unknown provider"); e.code = "unknown_provider"; return Promise.reject(e); };
+        \\command.perform("auth:logout", "minimax");
+        \\await settle();
+        \\check("env-key-notice", notice.text.indexOf("in the environment") > 0);
         \\
         \\// The model picker dims a model whose provider needs a credential, and accepting it starts the login.
         \\client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r2", providers: [{ id: "codex", name: "Codex", state: "needs_credential" }],
@@ -4006,6 +4016,14 @@ test "the auth plugin logs in with a device code or a key, logs out, and guards 
         \\check("model-accept-logs-in", root.overlays.length === 1 && calls[calls.length - 1] === "login:codex");
         \\root.onEvent(key("esc"));
         \\check("dialog-closed", root.overlays.length === 0);
+        \\// A provider without a route cannot log in, so the picker stops with the reason.
+        \\client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r3", providers: [{ id: "codex", name: "Codex", state: "needs_route" }],
+        \\  models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: ["low", "high"], default_reasoning: "low", cost: {} }] });
+        \\command.perform("model:pick");
+        \\await settle();
+        \\root.onEvent(key("enter"));
+        \\await settle();
+        \\check("route-stops", root.overlays.length === 0 && notice.text.indexOf("needs a route") > 0);
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "auth.js");
     try expectJs(host, "ok");

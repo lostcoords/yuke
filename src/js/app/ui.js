@@ -1,6 +1,6 @@
 // yuke:ui — the widget kit over yuke:core: List and Window to subclass, plus the pickers on `ui`.
 import { term } from "yuke:term";
-import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, slot, isWheel, events } from "yuke:core";
+import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, slot, isWheel, events, nextGrapheme } from "yuke:core";
 import { fuzzyRank } from "yuke:fzy";
 
 /** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
@@ -1023,7 +1023,7 @@ export class Picker {
   }
 }
 
-// A one-line prompt as window content. `settle` gets the text on Enter and undefined on Escape.
+// A one-line prompt as window content. The prompt answers its text on Enter and no value on Escape.
 /** @typedef {{ placeholder?: string, mask?: boolean, settle: (value: string | undefined) => void }} PromptOptions */
 export class Prompt {
   /** @param {PromptOptions} opts */
@@ -1034,10 +1034,13 @@ export class Prompt {
     this.input = new TextInput({ onChange: () => root.invalidate() });
   }
 
-  // The text as the screen shows it. A masked prompt paints one dot per character, so a key never shows.
+  // The text as the screen shows it. A masked prompt paints one dot for each grapheme, so a key never shows.
   /** @param {string} s @returns {string} */
   shown(s) {
-    return this.mask ? "•".repeat(Array.from(s).length) : s;
+    if (!this.mask) return s;
+    let n = 0;
+    for (let at = 0; at < s.length; at = nextGrapheme(s, at)) n++;
+    return "•".repeat(n);
   }
 
   /** @param {Window} win @returns {void} */
@@ -1055,8 +1058,9 @@ export class Prompt {
 
   /** @param {HostEvent} event @returns {boolean} */
   onKey(event) {
+    // One line holds the value, so a pasted line ending never becomes part of it.
     if (event.type === "paste") {
-      this.input.insert(event.text || "");
+      this.input.insert((event.text || "").replace(/[\r\n]+/g, ""));
       return true;
     }
     if (event.type !== "key") return false;

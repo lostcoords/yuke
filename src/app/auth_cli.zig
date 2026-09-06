@@ -9,22 +9,29 @@ const commands = @import("commands.zig");
 
 /// A key line longer than this is not a key.
 const max_key_bytes: usize = 4096;
+/// The status of a command the user stopped, as a shell reports a SIGINT.
+const status_interrupted: u8 = 130;
 
 /// Sign in to `provider`, or list every provider with its state when the name is absent. Return the exit status.
 pub fn login(gpa: std.mem.Allocator, io: std.Io, runtime: *App, provider: ?[]const u8) !u8 {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    // A terminal has no file position, so both streams stream; a positional call answers NXIO on a tty.
+    // Use a streaming writer, because a terminal does not support positional writes.
     var out_buf: [4096]u8 = undefined;
     var out = std.Io.File.stdout().writerStreaming(io, &out_buf);
     const w = &out.interface;
-    defer w.flush() catch {};
 
+    const status = try loginWith(io, runtime, arena, w, provider);
+    try w.flush();
+    return status;
+}
+
+fn loginWith(io: std.Io, runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writer, provider: ?[]const u8) !u8 {
     const id = provider orelse return listProviders(runtime, arena, w);
     const list = try commands.authList(runtime, arena, .{});
     const row = find(list.providers, id) orelse {
-        try w.print("yuke login: unknown provider '{s}'\n", .{id});
+        std.log.err("yuke login: unknown provider '{s}'", .{id});
         return 1;
     };
     return if (row.can_login) deviceLogin(runtime, arena, w, id) else keyLogin(io, runtime, arena, w, id);
@@ -38,20 +45,21 @@ pub fn logout(gpa: std.mem.Allocator, io: std.Io, runtime: *App, provider: []con
     var out_buf: [512]u8 = undefined;
     var out = std.Io.File.stdout().writerStreaming(io, &out_buf);
     const w = &out.interface;
-    defer w.flush() catch {};
 
     _ = commands.authRemove(runtime, arena, .{ .provider_id = provider }) catch |err| switch (err) {
+        // The environment supplies a key the file does not hold, so nothing here can remove it.
         error.UnknownProvider => {
-            try w.print("yuke logout: no credential for '{s}'\n", .{provider});
+            std.log.err("yuke logout: no credential of '{s}' is in providers.json; unset its environment variable", .{provider});
             return 1;
         },
         error.BadProviderId => {
-            try w.print("yuke logout: bad provider name '{s}'\n", .{provider});
+            std.log.err("yuke logout: bad provider name '{s}'", .{provider});
             return 1;
         },
         else => return err,
     };
     try w.print("logged out · {s}\n", .{provider});
+    try w.flush();
     return 0;
 }
 
@@ -122,7 +130,7 @@ const Waiter = struct {
 /// Start the device flow, print the URL and the code, then wait for the one outcome the engine publishes.
 fn deviceLogin(runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writer, id: []const u8) !u8 {
     const start = commands.authLogin(runtime, arena, .{ .provider_id = id }) catch |err| {
-        try w.print("yuke login: {s}\n", .{loginError(err)});
+        std.log.err("yuke login: {s}", .{loginError(err)});
         return 1;
     };
     try w.print("open  {s}\ncode  {s}\nwaiting for the provider...\n", .{ start.verification_url, start.user_code });
@@ -131,7 +139,13 @@ fn deviceLogin(runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writer, id: [
     var waiter: Waiter = .{ .login_id = start.login_id };
     runtime.engine.sinks.add(.{ .ctx = @ptrCast(&waiter), .on_event = Waiter.onEvent });
     defer runtime.engine.sinks.remove(@ptrCast(&waiter));
-    try waiter.done.wait();
+    // A canceled wait stops the poll too, so the provider never completes a login nobody reads.
+    waiter.done.wait() catch |err| switch (err) {
+        error.Canceled => {
+            _ = commands.authCancelLogin(runtime, arena, .{ .login_id = start.login_id }) catch {};
+            return status_interrupted;
+        },
+    };
 
     switch (waiter.outcome) {
         .succeeded => {
@@ -139,11 +153,11 @@ fn deviceLogin(runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writer, id: [
             return 0;
         },
         .canceled => {
-            try w.print("yuke login: the login was canceled\n", .{});
+            std.log.err("yuke login: the login was canceled", .{});
             return 1;
         },
         .failed => {
-            try w.print("yuke login: {s}\n", .{waiter.message[0..waiter.message_len]});
+            std.log.err("yuke login: {s}", .{waiter.message[0..waiter.message_len]});
             return 1;
         },
     }
@@ -166,39 +180,69 @@ fn keyLogin(io: std.Io, runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writ
         try w.print("api key for {s}: ", .{id});
         try w.flush();
     }
-    const key = try readSecret(io, arena, stdin, tty);
+    const key = readSecret(io, arena, stdin, tty) catch |err| switch (err) {
+        error.KeyTooLong => {
+            std.log.err("yuke login: the key is longer than {d} bytes", .{max_key_bytes});
+            return 1;
+        },
+        else => return err,
+    };
     if (tty) try w.writeByte('\n');
     if (key.len == 0) {
-        try w.print("yuke login: no key was given\n", .{});
+        std.log.err("yuke login: no key was given", .{});
         return 1;
     }
     _ = commands.authSetApiKey(runtime, arena, .{ .provider_id = id, .api_key = key }) catch |err| {
-        try w.print("yuke login: the key was not stored: {t}\n", .{err});
+        std.log.err("yuke login: the key was not stored: {t}", .{err});
         return 1;
     };
     try w.print("key saved · {s}\n", .{id});
     return 0;
 }
 
+/// The terminal mode to put back. Windows keeps its echo, so it has nothing to restore.
+const SavedMode = if (builtin.os.tag == .windows) void else std.posix.termios;
+
+/// Turn the echo off and answer the mode to restore, or null where the echo stays.
+fn echoOff(stdin: std.Io.File) !?SavedMode {
+    if (builtin.os.tag == .windows) return null;
+    return try std.posix.tcgetattr(stdin.handle);
+}
+
+fn echoRestore(stdin: std.Io.File, saved: SavedMode) void {
+    if (builtin.os.tag == .windows) return;
+    std.posix.tcsetattr(stdin.handle, .NOW, saved) catch |err| std.log.warn("cannot restore the terminal echo: {t}", .{err});
+}
+
 /// Read one line. On a terminal the echo stays off while the key comes in, and the old mode returns after.
 fn readSecret(io: std.Io, arena: std.mem.Allocator, stdin: std.Io.File, tty: bool) ![]u8 {
-    const quiet = tty and builtin.os.tag != .windows;
-    const saved: ?std.posix.termios = if (quiet) try std.posix.tcgetattr(stdin.handle) else null;
+    const saved: ?SavedMode = if (tty) try echoOff(stdin) else null;
+    // The restore is in place before the mode changes, so a failed change still puts the old mode back.
+    defer if (saved) |mode| echoRestore(stdin, mode);
     if (saved) |mode| {
-        var silent = mode;
-        silent.lflag.ECHO = false;
-        silent.lflag.ECHONL = false;
-        try std.posix.tcsetattr(stdin.handle, .NOW, silent);
+        if (builtin.os.tag != .windows) {
+            var silent = mode;
+            silent.lflag.ECHO = false;
+            silent.lflag.ECHONL = false;
+            try std.posix.tcsetattr(stdin.handle, .NOW, silent);
+        }
     }
-    defer if (saved) |mode| std.posix.tcsetattr(stdin.handle, .NOW, mode) catch {};
 
-    var buf: [max_key_bytes]u8 = undefined;
+    // One byte over the bound tells a long line apart from a line that fills the buffer exactly.
+    var buf: [max_key_bytes + 1]u8 = undefined;
     var reader = stdin.readerStreaming(io, &buf);
     const line = reader.interface.takeDelimiter('\n') catch |err| switch (err) {
         error.StreamTooLong => return error.KeyTooLong,
         error.ReadFailed => return error.ReadFailed,
     };
-    return arena.dupe(u8, std.mem.trim(u8, line orelse "", " \t\r\n"));
+    return arena.dupe(u8, try keyOf(line orelse ""));
+}
+
+/// The key inside one line: only the line ending goes, because a key keeps its own characters.
+fn keyOf(line: []const u8) error{KeyTooLong}![]const u8 {
+    const key = std.mem.trimEnd(u8, line, "\r\n");
+    if (key.len > max_key_bytes) return error.KeyTooLong;
+    return key;
 }
 
 const testing = std.testing;
@@ -232,4 +276,13 @@ test "the state label names what a provider needs" {
     try testing.expectEqualStrings("needs key", stateLabel(.needs_credential, key));
     try testing.expectEqualStrings("ready", stateLabel(.ready, key));
     try testing.expectEqualStrings("", stateLabel(null, key));
+}
+
+test "a key keeps its spaces, loses its line ending, and has a bound" {
+    try testing.expectEqualStrings(" sk 1 ", try keyOf(" sk 1 \r\n"));
+    try testing.expectEqualStrings("sk", try keyOf("sk"));
+    try testing.expectEqualStrings("", try keyOf("\n"));
+    const long = "k" ** (max_key_bytes + 1);
+    try testing.expectError(error.KeyTooLong, keyOf(long));
+    try testing.expectEqual(max_key_bytes, (try keyOf(long[0..max_key_bytes])).len);
 }

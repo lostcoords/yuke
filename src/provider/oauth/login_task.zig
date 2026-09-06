@@ -147,7 +147,7 @@ pub fn refreshOnce(runtime: *App, margin_ms: u64) !bool {
     // call, and the write. A lock only around the write would still send the same token twice.
     const path = runtime.store.path orelse return false;
     const lock = CredentialLock.acquire(runtime.gpa, runtime.io, path) catch |err| {
-        // A swallowed cancel would send the scheduler into a wait that no cancel reaches again.
+        // Keep the cancel, so the scheduler leaves its wait loop.
         if (err == error.Canceled) return error.Canceled;
         std.log.warn("cannot lock the credential file: {t}", .{err});
         return false; // the holder refreshes it; the next pass reads the result
