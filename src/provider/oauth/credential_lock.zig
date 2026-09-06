@@ -22,6 +22,12 @@ file: std.Io.File,
 /// Take the lock beside `providers_path`. Return null when the file system gives no lock, and
 /// `error.Busy` when another process holds it for the whole wait.
 pub fn acquire(gpa: std.mem.Allocator, io: std.Io, providers_path: []const u8) !?CredentialLock {
+    return acquireFor(gpa, io, providers_path, wait_ms);
+}
+
+/// Take the lock with the given wait bound. A test waits a short bound where a refresh waits the full one.
+fn acquireFor(gpa: std.mem.Allocator, io: std.Io, providers_path: []const u8, wait: u64) !?CredentialLock {
+    std.debug.assert(wait >= retry_ms);
     const path = try std.mem.concat(gpa, u8, &.{ providers_path, ".lock" });
     defer gpa.free(path);
 
@@ -32,7 +38,7 @@ pub fn acquire(gpa: std.mem.Allocator, io: std.Io, providers_path: []const u8) !
     errdefer file.close(io);
 
     var waited: u64 = 0;
-    while (waited < wait_ms) : (waited += retry_ms) {
+    while (waited < wait) : (waited += retry_ms) {
         const held = file.tryLock(io, .exclusive) catch |err| switch (err) {
             error.FileLocksUnsupported => return null,
             else => |e| return e,
@@ -62,9 +68,8 @@ test "one holder blocks a second acquire and a release lets it through" {
     const path = try std.fmt.bufPrint(&path_buf, "{s}/providers.json", .{buf[0..len]});
 
     const first = (try acquire(std.testing.allocator, io, path)) orelse return; // no locks here
-    // A second acquire on the same path in this process reports the same lock, so it must not
-    // report a free lock. The wait is bounded, so the test never hangs.
-    const second = acquire(std.testing.allocator, io, path);
+    // A second acquire in this process must stay busy for the short bound, not report a free lock.
+    const second = acquireFor(std.testing.allocator, io, path, 100);
     try std.testing.expectError(error.Busy, second);
 
     first.release(io);

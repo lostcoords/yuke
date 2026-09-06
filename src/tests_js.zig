@@ -5,4 +5,5 @@ test {
     _ = @import("js/extensions.zig");
     _ = @import("app/rpc.zig");
     _ = @import("app/rpc_js_test.zig");
+    _ = @import("app/print_cli.zig");
 }

@@ -112,3 +112,41 @@ export const rpcInteractionPlugin = {
     ctx.effect(() => interaction.install(rpcAnswerer));
   },
 };
+
+// A print run has nobody to ask, so every question is denied and the denial is a notice.
+const printAnswerer = {
+  /** @param {import("yuke:ext").Context} ctx */
+  surfaceFor(ctx) {
+    /** @param {string} title @returns {void} */
+    const deny = (title) => native.notify(ctx.id, "denied: " + title, "warn");
+    return {
+      /** @param {string} title @param {string} [message] @returns {Promise<boolean | undefined>} */
+      confirm(title, message = "") {
+        deny(confirmRequest(title, message).title);
+        return Promise.resolve(false);
+      },
+      /** @param {string} title @param {string[]} options @returns {Promise<string | undefined>} */
+      select(title, options) {
+        deny(selectRequest(title, options).title);
+        return Promise.resolve(undefined);
+      },
+      /** @param {string} title @param {string} [placeholder] @returns {Promise<string | undefined>} */
+      input(title, placeholder) {
+        deny(inputRequest(title, placeholder).title);
+        return Promise.resolve(undefined);
+      },
+      /** @param {string} message @param {"info" | "warn" | "error"} [level] @returns {void} */
+      notify(message, level = "info") {
+        native.notify(ctx.id, text(message, "notify message"), noticeLevel(level));
+      },
+    };
+  },
+};
+
+export const printInteractionPlugin = {
+  name: "print-interaction",
+  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  apply(ctx) {
+    ctx.effect(() => interaction.install(printAnswerer));
+  },
+};

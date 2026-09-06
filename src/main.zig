@@ -8,6 +8,7 @@ const app = @import("app/app.zig");
 const tui_app = @import("js/driver.zig");
 const extensions_mod = @import("js/extensions.zig");
 const auth_cli = @import("app/auth_cli.zig");
+const print_cli = @import("app/print_cli.zig");
 const paths = @import("paths.zig");
 const zio = @import("zio");
 
@@ -157,7 +158,12 @@ fn run(init: std.process.Init) !u8 {
             .cwd = cwd_buf[0..cwd_len],
             .env = init.environ_map,
         },
-        .boot = if (tui) tui_app.boot else rpc.boot,
+        .boot = switch (command) {
+            .tui => tui_app.boot,
+            .print => print_cli.boot,
+            .rpc => rpc.boot,
+            .login, .logout => unreachable,
+        },
         .config_dir = config_dir,
     });
     defer extensions.deinit();
@@ -165,7 +171,8 @@ fn run(init: std.process.Init) !u8 {
     switch (command) {
         .rpc => try rpc.runIo(&extensions),
         .tui => try tui_app.runIo(init.environ_map, &extensions),
-        .login, .logout => unreachable, // handled above, before the host
+        .print => |opts| return print_cli.run(init.gpa, io, &extensions, cwd_buf[0..cwd_len], opts),
+        .login, .logout => unreachable, // The auth commands return before the host starts.
     }
     return 0;
 }
@@ -175,7 +182,7 @@ fn authStatus(gpa: std.mem.Allocator, io: std.Io, application: *app.App, command
     return switch (command) {
         .login => |provider| try auth_cli.login(gpa, io, application, provider),
         .logout => |provider| try auth_cli.logout(gpa, io, application, provider),
-        .rpc, .tui => null,
+        .rpc, .tui, .print => null,
     };
 }
 
@@ -209,6 +216,8 @@ fn report(diagnostic: cli.Diagnostic) void {
         .duplicate_flag => std.log.err("{s}: {s} appears more than once", .{ who, diagnostic.arg }),
         .missing_argument => std.log.err("{s}: a provider name is needed", .{who}),
         .extra_argument => std.log.err("{s}: unexpected argument '{s}'", .{ who, diagnostic.arg }),
+        .needs_print => std.log.err("{s}: {s} needs -p", .{ who, diagnostic.arg }),
+        .conflict => std.log.err("{s}: {s} cannot be used with {s}", .{ who, diagnostic.arg, diagnostic.value.? }),
     }
     std.log.err("{s}", .{usageFor(diagnostic.scope)});
 }
