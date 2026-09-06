@@ -22,6 +22,7 @@ fn stringifyPayload(self: anytype, jw: *std.json.Stringify) !void {
 /// This union carries client request parameters.
 pub const RequestParams = union(enum) {
     session_list_params: session.SessionListParams,
+    session_get_params: session.SessionGetParams,
     create_session: misc.CreateSession,
     session_patch_params: session.SessionPatchParams,
     session_remove_params: session.SessionRemoveParams,
@@ -30,6 +31,7 @@ pub const RequestParams = union(enum) {
     session_rewind_params: session.SessionRewindParams,
     session_send_input_params: session.SessionSendInputParams,
     session_cancel_input_params: session.SessionCancelInputParams,
+    session_queue_params: session.SessionQueueParams,
     session_cancel_run_params: session.SessionCancelRunParams,
     session_history_params: session.SessionHistoryParams,
     session_config_params: session.SessionConfigParams,
@@ -50,11 +52,13 @@ pub const RequestParams = union(enum) {
 pub const ResponseResult = union(enum) {
     initialize_result: misc.InitializeResult,
     session_list_result: session.SessionListResult,
+    session_list_item: session.SessionListItem,
     session_result: session.SessionResult,
     empty: misc.Empty,
     session_compact_result: session.SessionCompactResult,
     session_send_input_result: session.SessionSendInputResult,
     session_cancel_input_result: session.SessionCancelInputResult,
+    session_queue_result: session.SessionQueueResult,
     session_cancel_run_result: session.SessionCancelRunResult,
     session_history_result: session.SessionHistoryResult,
     session_config_result: session.SessionConfigResult,
@@ -110,6 +114,7 @@ pub const MethodSpec = struct {
 pub const methods = [_]MethodSpec{
     .{ .name = .initialize, .params = misc.Empty, .result = misc.InitializeResult, .params_optional = true },
     .{ .name = .@"session.list", .params = session.SessionListParams, .result = session.SessionListResult, .params_optional = true },
+    .{ .name = .@"session.get", .params = session.SessionGetParams, .result = session.SessionListItem, .params_optional = false },
     .{ .name = .@"session.create", .params = misc.CreateSession, .result = session.SessionResult, .params_optional = true },
     .{ .name = .@"session.patch", .params = session.SessionPatchParams, .result = session.SessionResult, .params_optional = false },
     .{ .name = .@"session.remove", .params = session.SessionRemoveParams, .result = misc.Empty, .params_optional = false },
@@ -118,6 +123,7 @@ pub const methods = [_]MethodSpec{
     .{ .name = .@"session.rewind", .params = session.SessionRewindParams, .result = misc.Empty, .params_optional = false },
     .{ .name = .@"session.send_input", .params = session.SessionSendInputParams, .result = session.SessionSendInputResult, .params_optional = false },
     .{ .name = .@"session.cancel_input", .params = session.SessionCancelInputParams, .result = session.SessionCancelInputResult, .params_optional = false },
+    .{ .name = .@"session.queue", .params = session.SessionQueueParams, .result = session.SessionQueueResult, .params_optional = false },
     .{ .name = .@"session.cancel_run", .params = session.SessionCancelRunParams, .result = session.SessionCancelRunResult, .params_optional = false },
     .{ .name = .@"session.history", .params = session.SessionHistoryParams, .result = session.SessionHistoryResult, .params_optional = false },
     .{ .name = .@"session.config", .params = session.SessionConfigParams, .result = session.SessionConfigResult, .params_optional = false },

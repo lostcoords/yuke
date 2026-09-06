@@ -51,6 +51,8 @@ declare module "yuke:engine-native" {
     sessionClose(sessionId: string): void;
     /** The outline as JSON, or "null" when the session is not open. */
     sessionOutline(sessionId: string): string;
+    /** The live `SessionActivity` as JSON, or "null" when the session is not open. */
+    sessionActivity(sessionId: string): string;
     /** The assistant parts as JSON. Each part carries bounded text plus its real `bytes`. */
     sessionParts(sessionId: string, messageId: number): string;
     /** One part as a one-element JSON array, or `[]` when it is gone. */

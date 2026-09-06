@@ -48,6 +48,14 @@
       "paramsOptional": true
     },
     {
+      "name": "session.get",
+      "doc": "Read one session with its resident activity, or its durable idle activity.",
+      "params": "SessionGetParams",
+      "result": "SessionListItem",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
       "name": "session.create",
       "doc": "Create a session.",
       "params": "CreateSession",
@@ -108,6 +116,14 @@
       "doc": "Cancel a queued input.",
       "params": "SessionCancelInputParams",
       "result": "SessionCancelInputResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.queue",
+      "doc": "List the durable queued inputs of a session, oldest first.",
+      "params": "SessionQueueParams",
+      "result": "SessionQueueResult",
       "direction": "clientToServer",
       "paramsOptional": false
     },
@@ -2326,6 +2342,17 @@
       ]
     },
     {
+      "name": "SessionGetParams",
+      "doc": "These are the parameters for `session.get`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
       "name": "SessionHistoryParams",
       "doc": "These are the parameters for `session.history`.",
       "fields": [
@@ -2374,7 +2401,7 @@
     },
     {
       "name": "SessionListItem",
-      "doc": "This row summarizes a session for `session.list` and session broadcasts. Its fields borrow their data.",
+      "doc": "This row summarizes a session for `session.list`, `session.get`, and session broadcasts. Its fields borrow their data.",
       "fields": [
         {
           "name": "session",
@@ -2534,6 +2561,28 @@
       "name": "SessionPopulationTopLevel",
       "doc": "This option selects root sessions and forks for user-facing conversations.",
       "fields": []
+    },
+    {
+      "name": "SessionQueueParams",
+      "doc": "These are the parameters for `session.queue`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionQueueResult",
+      "doc": "This result lists the queued inputs of one session, oldest first.",
+      "fields": [
+        {
+          "name": "items",
+          "type": "[]QueuedInput",
+          "presence": "required"
+        }
+      ]
     },
     {
       "name": "SessionRemoveParams",
@@ -3232,6 +3281,9 @@
           "type": "SessionListParams"
         },
         {
+          "type": "SessionGetParams"
+        },
+        {
           "type": "CreateSession"
         },
         {
@@ -3254,6 +3306,9 @@
         },
         {
           "type": "SessionCancelInputParams"
+        },
+        {
+          "type": "SessionQueueParams"
         },
         {
           "type": "SessionCancelRunParams"
@@ -3299,6 +3354,9 @@
           "type": "SessionListResult"
         },
         {
+          "type": "SessionListItem"
+        },
+        {
           "type": "SessionResult"
         },
         {
@@ -3312,6 +3370,9 @@
         },
         {
           "type": "SessionCancelInputResult"
+        },
+        {
+          "type": "SessionQueueResult"
         },
         {
           "type": "SessionCancelRunResult"
@@ -3731,6 +3792,11 @@
           "doc": "List the sessions."
         },
         {
+          "name": "session.get",
+          "wire": "session.get",
+          "doc": "Read one session with its resident activity, or its durable idle activity."
+        },
+        {
           "name": "session.create",
           "wire": "session.create",
           "doc": "Create a session."
@@ -3769,6 +3835,11 @@
           "name": "session.cancel_input",
           "wire": "session.cancel_input",
           "doc": "Cancel a queued input."
+        },
+        {
+          "name": "session.queue",
+          "wire": "session.queue",
+          "doc": "List the durable queued inputs of a session, oldest first."
         },
         {
           "name": "session.cancel_run",

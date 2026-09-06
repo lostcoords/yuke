@@ -68,7 +68,7 @@ fn sessionSelector(params: proto.session.SessionListParams) session_store.Select
     return sel;
 }
 
-/// Handle session.list from durable state. Each item reports idle activity.
+/// Handle session.list from durable state. A resident session reports its live activity.
 pub fn sessionList(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionListParams) !proto.session.SessionListResult {
     const sel = sessionSelector(params);
     const requested_limit = params.limit orelse proto.meta.limits.default_session_list_page_size;
@@ -82,7 +82,10 @@ pub fn sessionList(engine: *Engine, arena: std.mem.Allocator, params: proto.sess
         .id = kept[kept.len - 1].id,
     }) else null;
     const items = try arena.alloc(proto.session.SessionListItem, kept.len);
-    for (kept, 0..) |row, i| items[i] = try session_events.sessionItem(arena, row);
+    for (kept, 0..) |row, i| {
+        items[i] = try session_events.sessionItem(arena, row);
+        items[i].activity = try liveActivity(engine, arena, items[i].session.id, items[i].activity);
+    }
 
     return .{
         .revision = engine.session_revision,
@@ -90,6 +93,33 @@ pub fn sessionList(engine: *Engine, arena: std.mem.Allocator, params: proto.sess
         .next_cursor = next_cursor,
         .total = try session_store.count(engine.deps.db, arena, sel),
     };
+}
+
+/// Handle session.get. The result is one `session.list` item with the activity the engine holds now.
+pub fn sessionGet(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionGetParams) !proto.session.SessionListItem {
+    const snapshot = (try session_store.snapshot(engine.deps.db, arena, params.session_id.raw)) orelse return error.UnknownSession;
+    var item = try session_events.sessionItem(arena, snapshot);
+    item.activity = try liveActivity(engine, arena, params.session_id, item.activity);
+    return item;
+}
+
+/// Return the live activity of a resident session, or the idle activity with the queue depth for the rest.
+fn liveActivity(engine: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId, durable: proto.session.SessionActivity) !proto.session.SessionActivity {
+    if (engine.sessions.get(id)) |rt| return session_events.residentActivity(engine, arena, rt);
+    std.debug.assert(durable.state == .idle);
+    var activity = durable;
+    activity.queued = try input_store.count(engine.deps.db, arena, id.raw);
+    return activity;
+}
+
+/// Handle session.queue from durable state. The runtime queue mirrors it, so no residency is needed.
+pub fn sessionQueue(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionQueueParams) !proto.session.SessionQueueResult {
+    const sid = params.session_id.raw;
+    if (!try session_store.exists(engine.deps.db, arena, sid)) return error.UnknownSession;
+    const entries = try input_store.list(engine.deps.db, arena, sid);
+    const items = try arena.alloc(proto.misc.QueuedInput, entries.len);
+    for (entries, 0..) |entry, i| items[i] = entry.input;
+    return .{ .items = items };
 }
 
 test "session list cursor round-trips and binds to its selector" {
@@ -361,4 +391,92 @@ pub fn sessionCreate(engine: *Engine, arena: std.mem.Allocator, params: proto.mi
         .origin = .{ .root = .{} },
         .agent = null,
     } };
+}
+
+const zio = @import("zio");
+const ai = @import("ai");
+const provider_store = @import("../provider/provider_store.zig");
+
+/// These test dependencies use an empty environment. The map has no allocation to free.
+var test_env: std.process.Environ.Map = .init(std.testing.allocator);
+var test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+
+test "session.get and session.queue read the durable queue, resident or not" {
+    var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer runtime.deinit();
+    var db = try database.Database.openTest();
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const session_id = [_]u8{2} ** 16;
+    try session_store.create(&db, .{
+        .id = session_id,
+        .root = "/boot",
+        .origin = "root",
+        .profile = "default",
+        .model = "mock",
+        .reasoning = "",
+        .config_rev = 0,
+        .title = "boot",
+        .created_at_ms = 1,
+        .updated_at_ms = 1,
+    });
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    const queued = try input_store.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, &.{.{ .text = .{ .text = "recover" } }}, 2);
+    try db.conn.execNoArgs("COMMIT");
+
+    var store: provider_store = .init(std.testing.allocator, runtime.io(), &test_env);
+    defer store.deinit();
+    var engine = Engine.init(.{
+        .gpa = std.testing.allocator,
+        .io = runtime.io(),
+        .db = &db,
+        .providers = &store,
+        .route_transport = test_transport.transport(),
+        .env = &test_env,
+        .tools = .{},
+    });
+    defer engine.close();
+    defer db.deinit();
+
+    const id: proto.ids.SessionId = .bytes(session_id);
+    // Not resident: the durable row is idle, and the queue depth comes from the pending table.
+    const durable = try sessionGet(&engine, arena, .{ .session_id = id });
+    try std.testing.expect(durable.activity.state == .idle);
+    try std.testing.expectEqual(@as(u64, 1), durable.activity.queued);
+    try std.testing.expectEqualStrings("boot", durable.session.title);
+
+    const queue = try sessionQueue(&engine, arena, .{ .session_id = id });
+    try std.testing.expectEqual(@as(usize, 1), queue.items.len);
+    try std.testing.expectEqual(queued.input.input_id, queue.items[0].input_id);
+    try std.testing.expectEqualStrings("recover", queue.items[0].content[0].text.text);
+
+    // Resident: the runtime answers, and its restored queue reports the same depth.
+    const rt = try engine.activate(id);
+    const resident = try sessionGet(&engine, arena, .{ .session_id = id });
+    try std.testing.expectEqual(@as(u64, 1), resident.activity.queued);
+
+    // A bound run slot makes the read report the live run, where the durable row says idle.
+    const slot = try run.RunSlot.prepare(std.testing.allocator, "mock", "", "", null);
+    slot.bind(
+        .{ .input_id = 1, .started = .{ .session_id = id, .seq = 1, .run_id = 7, .kind = .turn, .config_rev = 0, .started_at_ms = 5 } },
+        .{ .number = 1, .message_id = 1 },
+    );
+    rt.active_run = slot;
+    defer {
+        rt.active_run = null;
+        slot.destroy();
+    }
+    const working = try sessionGet(&engine, arena, .{ .session_id = id });
+    try std.testing.expect(working.activity.state == .building);
+    try std.testing.expectEqual(@as(u64, 7), working.activity.state.building.run_id);
+    try std.testing.expectEqual(@as(u64, 5), working.activity.state.building.started_at_ms);
+
+    const listed = try sessionList(&engine, arena, .{});
+    try std.testing.expectEqual(@as(usize, 1), listed.items.len);
+    try std.testing.expect(listed.items[0].activity.state == .building);
+    try std.testing.expectEqual(@as(u64, 1), listed.items[0].activity.queued);
+
+    try std.testing.expectError(error.UnknownSession, sessionGet(&engine, arena, .{ .session_id = .bytes([_]u8{9} ** 16) }));
+    try std.testing.expectError(error.UnknownSession, sessionQueue(&engine, arena, .{ .session_id = .bytes([_]u8{9} ** 16) }));
 }

@@ -94,7 +94,12 @@ pub const SessionHistoryResult = struct {
     has_more: bool,
 };
 
-/// This row summarizes a session for `session.list` and session broadcasts. Its fields borrow their data.
+/// These are the parameters for `session.get`.
+pub const SessionGetParams = struct {
+    session_id: ids.SessionId,
+};
+
+/// This row summarizes a session for `session.list`, `session.get`, and session broadcasts. Its fields borrow their data.
 pub const SessionListItem = struct {
     session: misc.Session,
     activity: SessionActivity,
@@ -191,6 +196,16 @@ pub const SessionPopulationChildren = struct {
 
 /// This option selects root sessions and forks for user-facing conversations.
 pub const SessionPopulationTopLevel = struct {};
+
+/// These are the parameters for `session.queue`.
+pub const SessionQueueParams = struct {
+    session_id: ids.SessionId,
+};
+
+/// This result lists the queued inputs of one session, oldest first.
+pub const SessionQueueResult = struct {
+    items: []const misc.QueuedInput,
+};
 
 /// These are the parameters for `session.remove`.
 pub const SessionRemoveParams = struct {

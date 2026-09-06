@@ -63,6 +63,24 @@ function sessionOutline(sessionId) {
   return JSON.parse(native.sessionOutline(sessionId));
 }
 
+// The live activity of an open session, or null when no pane holds it.
+/** @param {string} sessionId @returns {Wire.SessionActivity | null} */
+function sessionActivity(sessionId) {
+  return JSON.parse(native.sessionActivity(sessionId));
+}
+
+// One session with the activity the engine holds now, open or not.
+/** @param {string} sessionId @returns {Promise<Wire.SessionListItem>} */
+function sessionGet(sessionId) {
+  return request("session.get", /** @type {Wire.SessionGetParams} */ ({ session_id: sessionId }));
+}
+
+// The queued inputs of a session, oldest first.
+/** @param {string} sessionId @returns {Promise<Wire.SessionQueueResult>} */
+function sessionQueue(sessionId) {
+  return request("session.queue", /** @type {Wire.SessionQueueParams} */ ({ session_id: sessionId }));
+}
+
 // One page of a message's whole text. `next` is the offset to ask for, or null at the end.
 /**
  * @param {string} sessionId @param {number} messageId
@@ -143,12 +161,19 @@ function sessionSendInput(id, text) {
   return sendInput({ session_id: id, input: { type: "content", content: [{ type: "text", text }] } });
 }
 
+// Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
 /** @param {string} id @param {boolean} [clearQueue] @returns {Promise<Wire.SessionCancelRunResult>} */
 function sessionCancelRun(id, clearQueue = false) {
   return request("session.cancel_run", /** @type {Wire.SessionCancelRunParams} */ ({
     session_id: id,
     ...(clearQueue ? { clear_queue: true } : {}),
   }));
+}
+
+// Drop one queued input. A started input belongs to the run, so the engine refuses it.
+/** @param {string} id @param {number} inputId @returns {Promise<Wire.SessionCancelInputResult>} */
+function sessionCancelInput(id, inputId) {
+  return request("session.cancel_input", /** @type {Wire.SessionCancelInputParams} */ ({ session_id: id, input_id: inputId }));
 }
 
 // Create a session. An unset model or reasoning lets the engine use its profile default.
@@ -204,6 +229,9 @@ export const client = {
   sessionClose,
   memoryUsage,
   sessionOutline,
+  sessionActivity,
+  sessionGet,
+  sessionQueue,
   sessionText,
   sessionTextPage,
   sessionParts,
@@ -211,6 +239,7 @@ export const client = {
   partTextPage,
   sessionSendInput,
   sessionCancelRun,
+  sessionCancelInput,
   sessionCreate,
   catalogList,
   catalogReload,

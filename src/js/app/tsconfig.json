@@ -27,6 +27,7 @@
       "yuke:vim": ["./vim.js"],
       "yuke:notice": ["./notice.js"],
       "yuke:sessions": ["./sessions.js"],
+      "yuke:activity": ["./activity.js"],
       "yuke:command-ui": ["./command-ui.js"],
       "yuke:catalog": ["./catalog.js"],
       "yuke:auth": ["./auth.js"],

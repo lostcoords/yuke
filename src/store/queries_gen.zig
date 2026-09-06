@@ -183,6 +183,19 @@ pub const PendingInputs = sql.ManyQuery(
     },
 );
 
+pub const PendingInputCount = sql.OneQuery(
+    \\SELECT count(*) AS depth
+    \\FROM pending_inputs
+    \\WHERE session_id = :session_id;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        depth: i64,
+    },
+);
+
 pub const DeletePendingInput = sql.OneQuery(
     \\DELETE FROM pending_inputs
     \\WHERE session_id = :session_id AND input_id = :input_id
@@ -640,6 +653,7 @@ pub const Queries = struct {
     insert_pending_input: InsertPendingInput,
     pending_input_by_id: PendingInputById,
     pending_inputs: PendingInputs,
+    pending_input_count: PendingInputCount,
     delete_pending_input: DeletePendingInput,
     insert_message: InsertMessage,
     advance_message: AdvanceMessage,

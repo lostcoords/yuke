@@ -1153,6 +1153,7 @@ events.declare([
   "composer.changed",
   "session.changed",
   "index.changed",
+  "activity.changed",
 ]);
 
 // This table maps a host event type to its core event name.

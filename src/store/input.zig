@@ -64,6 +64,12 @@ pub fn list(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) ![]Entr
     return out.items;
 }
 
+/// Read the queue depth of one session from the pending table, for a session no runtime holds.
+pub fn count(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
+    const row = try db.queries.pending_input_count.one(arena, .{ .session_id = session_id });
+    return @intCast(row.value.depth);
+}
+
 /// Consume one exact queued input without a new input.canceled event.
 pub fn consume(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, input_id: u64) !void {
     std.debug.assert(sql.inTransaction(db.conn));

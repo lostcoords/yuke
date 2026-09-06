@@ -50,6 +50,7 @@ pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:vim", .source = @embedFile("app/vim.js") },
     .{ .name = "yuke:notice", .source = @embedFile("app/notice.js") },
     .{ .name = "yuke:sessions", .source = @embedFile("app/sessions.js") },
+    .{ .name = "yuke:activity", .source = @embedFile("app/activity.js") },
     .{ .name = "yuke:command-ui", .source = @embedFile("app/command-ui.js") },
     .{ .name = "yuke:catalog", .source = @embedFile("app/catalog.js") },
     .{ .name = "yuke:auth", .source = @embedFile("app/auth.js") },

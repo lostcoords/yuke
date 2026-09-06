@@ -59,6 +59,8 @@ fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, param
     const engine = &runtime.engine;
     if (n == .initialize) return commands.initialize(engine, arena);
     if (n == .@"session.list") return commands.sessionList(engine, arena, params);
+    if (n == .@"session.get") return commands.sessionGet(engine, arena, params);
+    if (n == .@"session.queue") return commands.sessionQueue(engine, arena, params);
     if (n == .@"session.create") return commands.sessionCreate(engine, arena, params);
     if (n == .@"session.config") return commands.sessionConfig(engine, arena, params);
     if (n == .@"session.history") return commands.sessionHistory(engine, arena, params);
@@ -82,6 +84,8 @@ fn bound(comptime name: proto.enums.MethodName) bool {
     return switch (name) {
         .initialize,
         .@"session.list",
+        .@"session.get",
+        .@"session.queue",
         .@"session.create",
         .@"session.config",
         .@"session.history",

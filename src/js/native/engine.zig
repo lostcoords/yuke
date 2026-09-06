@@ -18,6 +18,7 @@ const app = @import("../../app/app.zig");
 const pending = @import("../pending.zig");
 const engine_call = @import("../../app/call.zig");
 const turn = @import("../../engine/turn.zig");
+const session_events = @import("../../engine/events.zig");
 const domain_session = @import("../../session/session.zig");
 const Session = domain_session.Session;
 
@@ -44,6 +45,7 @@ pub fn install(host: *Host) void {
         .{ .name = "sessionOpen", .arity = 1, .call = jsSessionOpen },
         .{ .name = "sessionClose", .arity = 1, .call = jsSessionClose },
         .{ .name = "sessionOutline", .arity = 1, .call = jsSessionOutline },
+        .{ .name = "sessionActivity", .arity = 1, .call = jsSessionActivity },
         .{ .name = "sessionParts", .arity = 2, .call = jsSessionParts },
         .{ .name = "sessionPart", .arity = 3, .call = jsSessionPart },
         .{ .name = "sessionText", .arity = 4, .call = jsSessionText },
@@ -152,6 +154,19 @@ fn jsSessionOutline(ctx: Context, _: Value, args: []const Value) Value {
     defer aw.deinit();
     project.writeOutline(&aw.writer, rt) catch return ctx.newString("null");
     return ctx.newString(aw.written());
+}
+
+/// The live activity of one open session as JSON, or "null" for a session no pane opened.
+fn jsSessionActivity(ctx: Context, _: Value, args: []const Value) Value {
+    const engine = Host.fromContext(ctx).engine;
+    const runtime = engine.runtime orelse return ctx.newString("null");
+    const rt = runtimeArg(ctx, args) orelse return ctx.newString("null");
+    var arena_state: std.heap.ArenaAllocator = .init(engine.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const activity = session_events.residentActivity(&runtime.engine, arena, rt) catch return ctx.newString("null");
+    const text = std.json.Stringify.valueAlloc(arena, activity, .{ .emit_null_optional_fields = false }) catch return ctx.newString("null");
+    return ctx.newString(text);
 }
 
 fn jsSessionParts(ctx: Context, _: Value, args: []const Value) Value {

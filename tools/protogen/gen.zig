@@ -80,6 +80,8 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "SessionSendInputResultStarted", .field = "run_id", .alias = "RunId" },
     .{ .owner = "SessionSendInputResultQueued", .field = "input_id", .alias = "InputId" },
     .{ .owner = "SessionCancelInputParams", .field = "session_id", .alias = "SessionId" },
+    .{ .owner = "SessionGetParams", .field = "session_id", .alias = "SessionId" },
+    .{ .owner = "SessionQueueParams", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionCancelInputParams", .field = "input_id", .alias = "InputId" },
     .{ .owner = "SessionCancelInputResult", .field = "canceled_input", .alias = "InputId" },
     .{ .owner = "SessionCancelRunParams", .field = "session_id", .alias = "SessionId" },

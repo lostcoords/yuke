@@ -6,6 +6,7 @@ import { ChatView } from "yuke:transcript";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { feedItem } from "yuke:sessions";
+import { activityOf, refreshActivity } from "yuke:activity";
 import { catalogOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:catalog";
 
 
@@ -61,6 +62,7 @@ export class Chat {
     this.creating = false;
     this.sessionId = id;
     client.sessionOpen(id);
+    refreshActivity(id);
     // Message ids repeat across sessions, so the old render must go before the new outline lands.
     this.transcript.setOutline([], null);
     this.reload();
@@ -78,9 +80,10 @@ export class Chat {
     return true;
   }
 
+  // Stop the run and keep the queue, so an interrupt never drops a message the user already typed.
   interrupt() {
     if (!this.sessionId) return;
-    client.sessionCancelRun(this.sessionId, true).catch(() => {});
+    client.sessionCancelRun(this.sessionId).catch(() => {});
   }
 
   // Re-pull the outline on a structural change; a closed session must not empty the pane.
@@ -160,7 +163,10 @@ export class Chat {
   // Drop this pane's pin. The engine counts pins, so a second pane on the same session keeps it.
   release() {
     if (!this.sessionId) return;
-    client.sessionClose(this.sessionId);
+    const id = this.sessionId;
+    client.sessionClose(id);
+    // The read keeps the activity while the runtime works and drops it after an eviction.
+    refreshActivity(id);
   }
 
   // The pane left the tree, so the session goes and the chat leaves the registry.
@@ -216,12 +222,15 @@ export function focusedChat() {
   return chatOf(focusedLeaf(v => CHAT_OF.has(v)));
 }
 
-// The focused chat's live entry, or null with no open session.
+// The focused chat's entry with the live activity, or null with no open session.
 /** @returns {FeedItem | null} */
 export function chatEntry() {
   const c = focusedChat();
   if (!c || !c.sessionId) return null;
-  return feedItem(c.sessionId);
+  const item = feedItem(c.sessionId);
+  if (!item) return null;
+  const activity = activityOf(c.sessionId);
+  return activity ? { session: item.session, activity } : item;
 }
 
 // Load the catalog, then pick a model and its effort. A `query` names the model and skips the picker.

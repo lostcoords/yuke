@@ -10,6 +10,7 @@ import { authPlugin } from "yuke:auth";
 import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { client } from "yuke:client";
 import { rowKey, rowLabel, activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
+import { activityOf, activityPlugin } from "yuke:activity";
 
 // The first chat pane. A split adds another, and each pane drives its own session.
 const chat = new Chat();
@@ -50,7 +51,8 @@ function openSessionFinder(ctx) {
       items: rows,
       key: rowKey,
       filterText: r => rowLabel(r),
-      format: r => ({ text: rowLabel(r), right: activityMark(r.activity) }),
+      // An open session reads its live activity; the rest shows what the list reported.
+      format: r => ({ text: rowLabel(r), right: activityMark(activityOf(r.id) || r.activity) }),
       onAccept: r => {
         const c = focusedChat();
         if (c) c.open(r.id);
@@ -153,6 +155,7 @@ plugins.use(catalogPlugin, { entry: chatEntry });
 plugins.use(authPlugin);
 plugins.use(chatPlugin);
 plugins.use(sessionsPlugin);
+plugins.use(activityPlugin);
 
 root.setRoot(workspace);
 root.focusView(chat.view);

@@ -73,6 +73,8 @@ pub const MethodName = enum {
     initialize,
     /// List the sessions.
     @"session.list",
+    /// Read one session with its resident activity, or its durable idle activity.
+    @"session.get",
     /// Create a session.
     @"session.create",
     /// Update a session's mutable fields.
@@ -89,6 +91,8 @@ pub const MethodName = enum {
     @"session.send_input",
     /// Cancel a queued input.
     @"session.cancel_input",
+    /// List the durable queued inputs of a session, oldest first.
+    @"session.queue",
     /// Cancel the active run.
     @"session.cancel_run",
     /// Fetch a page from a session transcript.

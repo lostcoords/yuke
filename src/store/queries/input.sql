@@ -44,6 +44,14 @@ JOIN events e ON e.session_id = p.session_id AND e.seq = p.seq
 WHERE p.session_id = :session_id
 ORDER BY p.seq ASC;
 
+-- name: PendingInputCount :one
+-- Return the queue depth without a read of the queued payload.
+-- session_id: [16]u8!
+-- depth: i64!
+SELECT count(*) AS depth
+FROM pending_inputs
+WHERE session_id = :session_id;
+
 -- name: DeletePendingInput :one
 -- Delete one exact projection row. An absent row returns NoRow.
 -- session_id: [16]u8!
