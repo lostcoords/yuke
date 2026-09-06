@@ -182,7 +182,7 @@ fn authStatus(gpa: std.mem.Allocator, io: std.Io, application: *app.App, command
 
 fn printUsage(io: std.Io, scope: cli.Scope) !void {
     var buf: [512]u8 = undefined;
-    var out = std.Io.File.stdout().writer(io, &buf);
+    var out = std.Io.File.stdout().writerStreaming(io, &buf);
     try out.interface.print("{s}\n", .{usageFor(scope)});
     try out.interface.flush();
 }

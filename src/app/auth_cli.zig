@@ -15,8 +15,9 @@ pub fn login(gpa: std.mem.Allocator, io: std.Io, runtime: *App, provider: ?[]con
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    // A terminal has no file position, so both streams stream; a positional call answers NXIO on a tty.
     var out_buf: [4096]u8 = undefined;
-    var out = std.Io.File.stdout().writer(io, &out_buf);
+    var out = std.Io.File.stdout().writerStreaming(io, &out_buf);
     const w = &out.interface;
     defer w.flush() catch {};
 
@@ -35,7 +36,7 @@ pub fn logout(gpa: std.mem.Allocator, io: std.Io, runtime: *App, provider: []con
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     var out_buf: [512]u8 = undefined;
-    var out = std.Io.File.stdout().writer(io, &out_buf);
+    var out = std.Io.File.stdout().writerStreaming(io, &out_buf);
     const w = &out.interface;
     defer w.flush() catch {};
 
@@ -192,7 +193,7 @@ fn readSecret(io: std.Io, arena: std.mem.Allocator, stdin: std.Io.File, tty: boo
     defer if (saved) |mode| std.posix.tcsetattr(stdin.handle, .NOW, mode) catch {};
 
     var buf: [max_key_bytes]u8 = undefined;
-    var reader = stdin.reader(io, &buf);
+    var reader = stdin.readerStreaming(io, &buf);
     const line = reader.interface.takeDelimiter('\n') catch |err| switch (err) {
         error.StreamTooLong => return error.KeyTooLong,
         error.ReadFailed => return error.ReadFailed,
