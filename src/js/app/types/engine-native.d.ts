@@ -6,9 +6,14 @@ declare module "yuke:engine-native" {
     active: { id: number; type: "assistant" } | null;
   };
 
+  /** One auth event, whole. The digest keeps these because a login outcome carries a message a fact name cannot. */
+  export type AuthNote =
+    | { method: "auth.login_finished"; params: Wire.AuthLoginFinishedData }
+    | { method: "auth.changed"; params: Wire.AuthChangedData };
+
   /** One drain: `kind` names the work the transcript owes, and `facts` names every broadcast it coalesced. */
   export type EngineEvent =
-    | { type: "index"; facts: Wire.BroadcastName[] }
+    | { type: "index"; facts: Wire.BroadcastName[]; auth?: AuthNote[] }
     | { type: "session"; session: string; kind: "quiet" | "active" | "reload" | "gone"; id?: number; part?: number; facts: Wire.BroadcastName[] };
 
   /** One page of text. `next` is the offset to ask for, or null at the end. */
