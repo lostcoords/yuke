@@ -38,6 +38,8 @@ pub const Extensions = struct {
         // Load built-ins last so a user tool with the same name wins.
         try host.evalModule("import \"yuke:builtins\";", "builtins.js");
 
+        try host.evalModule("import { plugins } from \"yuke:ext\"; import { agentToolsPlugin } from \"yuke:agent-tools\"; plugins.use(agentToolsPlugin);", "agent-tools.js");
+
         app.engine.installTools(port.toolSet(host));
         app.engine.installHooks(port.hookSet(host));
     }
@@ -118,7 +120,7 @@ fn pumpUntilSettled(host: *Host, call: *tools_table.Call) !void {
     var rounds: u32 = 0;
     while (call.state != .settled) : (rounds += 1) {
         if (rounds == 64) return error.CallNeverSettled;
-        host.wake.timedWait(.fromMilliseconds(1000)) catch {};
+        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
         host.wake.reset();
         try host.pump();
     }
@@ -143,8 +145,10 @@ test "headless extensions pump an async JavaScript tool" {
     const app_runtime = &f.app;
     // The engine asks the host, so the user tool and every built-in reach the provider together.
     const installed = app_runtime.engine.deps.tools;
-    const advertised = installed.getDecls(installed.ctx);
-    try std.testing.expectEqual(extensions.host.tools.decls.items.len, advertised.len);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const advertised = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = true });
+    try std.testing.expectEqual(extensions.host.tools.entries.items.len, advertised.len);
     const found = for (advertised) |d| {
         if (std.mem.eql(u8, d.name, "read_note")) break true;
     } else false;
@@ -170,6 +174,56 @@ test "headless extensions pump an async JavaScript tool" {
     try std.testing.expectEqualStrings("{\"text\":\"from rpc\"}", call.text.?);
     call.finish();
     try extensions.host.pump();
+}
+
+test "tool declarations and dispatch enforce per-session spawn visibility" {
+    var f: Fixture = undefined;
+    try f.init(
+        \\import { defineTool } from "yuke:tools";
+        \\const parameters = { type: "object", properties: {} };
+        \\defineTool("normal_tool", { description: "normal", parameters, execute: async () => "normal" });
+        \\defineTool("spawn_alias", { description: "spawn", parameters, spawnsAgents: true, execute: async () => "spawn" });
+        \\let malformedRejected = false;
+        \\try { defineTool("bad_metadata", { description: "bad", parameters, spawnsAgents: 1, execute: async () => "bad" }); } catch { malformedRejected = true; }
+        \\globalThis.malformedRejected = malformedRejected ? 1 : 0;
+    , kernel_boot);
+    defer f.deinit();
+
+    const host = f.extensions.host;
+    const installed = f.app.engine.deps.tools;
+    const spawn_index = host.tools.find("spawn_agent") orelse unreachable;
+    try std.testing.expect(host.tools.entries.items[spawn_index].spawns_agents);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.malformedRejected"));
+    try std.testing.expect(host.tools.find("bad_metadata") == null);
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const hidden = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = false });
+    const visible = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = true });
+    try std.testing.expect(findDecl(hidden, "normal_tool"));
+    try std.testing.expect(!findDecl(hidden, "spawn_agent"));
+    try std.testing.expect(!findDecl(hidden, "spawn_alias"));
+    try std.testing.expect(findDecl(visible, "spawn_agent"));
+    try std.testing.expect(findDecl(visible, "spawn_alias"));
+    try std.testing.expect(!installed.isAllowed(installed.ctx, "spawn_alias", .{ .can_spawn = false }));
+    try std.testing.expect(installed.isAllowed(installed.ctx, "normal_tool", .{ .can_spawn = false }));
+    try std.testing.expect(installed.isAllowed(installed.ctx, "spawn_alias", .{ .can_spawn = true }));
+
+    const before = host.tools.find("spawn_alias") orelse unreachable;
+    try std.testing.expect(host.tools.entries.items[before].spawns_agents);
+    try host.evalModule(
+        \\import { removeTool } from "yuke:tools";
+        \\globalThis.removedSpawnAlias = removeTool("spawn_alias") ? 1 : 0;
+    , "remove-spawn-alias.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.removedSpawnAlias"));
+    try std.testing.expect(host.tools.find("spawn_alias") == null);
+    const normal_index = host.tools.find("normal_tool") orelse unreachable;
+    try std.testing.expect(!host.tools.entries.items[normal_index].spawns_agents);
+}
+
+fn findDecl(decls: []const @import("ai").ir.Tool, name: []const u8) bool {
+    for (decls) |decl| if (std.mem.eql(u8, decl.name, name)) return true;
+    return false;
 }
 
 test "a plugin notice reaches every attached frontend" {
@@ -348,7 +402,7 @@ fn pumpUntil(host: *Host, expression: [:0]const u8) !void {
         try host.pump();
         if (try host.evalInt(expression) != 0) return;
         host.wake.reset();
-        if (!host.hasPending()) host.wake.timedWait(.fromMilliseconds(100)) catch {};
+        if (!host.hasPending()) host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } }) catch {};
     }
     return error.RequestNeverSettled;
 }
@@ -435,4 +489,79 @@ test "a blocked input answers its code and reaches no store" {
     , "input-after-block.js");
     try pumpUntil(host, "globalThis.empty > 0");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.empty"));
+}
+
+test "create with input shares the hook gate and a refusal leaves no session" {
+    var f: Fixture = undefined;
+    try f.init(
+        \\import { plugins } from "yuke:ext";
+        \\globalThis.mode = "block";
+        \\plugins.use({ name: "initial", apply(ctx) {
+        \\  ctx.hook("input.before", async (value) => {
+        \\    globalThis.proposed = value.session_id === null && value.create.workspace_path === "/work";
+        \\    if (globalThis.mode === "block") return { block: "denied" };
+        \\    if (globalThis.mode === "bad") return { replace: {} };
+        \\    return { replace: { content: [{ type: "text", text: "replaced" }] } };
+        \\  });
+        \\} });
+    , kernel_boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+    var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer scratch.deinit();
+    const a = scratch.allocator();
+    const proto = @import("proto");
+    const params =
+        \\{"workspace_path":"/work","model":"test/model","initial_input":{"type":"content","content":[{"type":"text","text":"original"}]}}
+    ;
+    for ([_][]const u8{ "globalThis.mode='block'", "globalThis.mode='bad'" }) |script| {
+        const text = try a.dupeZ(u8, script);
+        try host.eval(text, "mode.js");
+        const call = host.calls.submitInputMethod("session.create", params);
+        defer call.finish();
+        try pumpUntilSettled(host, call);
+        try std.testing.expect(std.mem.indexOf(u8, call.text.?, "failure") != null);
+        try std.testing.expectEqual(@as(u64, 0), try database.session.count(&f.app.db, a, .{}));
+    }
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.proposed"));
+    try host.eval("globalThis.mode='replace'", "mode.js");
+    const call = host.calls.submitInputMethod("session.create", params);
+    defer call.finish();
+    try pumpUntilSettled(host, call);
+    const answer = try std.json.parseFromSliceLeaky(struct { result: proto.session.SessionResult }, a, call.text.?, .{});
+    const id = answer.result.session.id;
+    const page = try database.message.historyPage(&f.app.db, a, id.raw, 0, 10);
+    try std.testing.expectEqualStrings("replaced", page.messages[0].user.content[0].text.text);
+    try std.testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.app.db, a, id.raw)).?.input_id_high);
+}
+
+test "agent config validates before it changes the native limits" {
+    var f: Fixture = undefined;
+    try f.init("", kernel_boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+    try host.evalModule(
+        \\import { config, defineConfig } from "yuke:kernel";
+        \\globalThis.defaultDepth = config.agents.maxDepth;
+        \\defineConfig({ agents: { maxConcurrent: 2, maxDepth: 3 } });
+        \\globalThis.changed = config.agents.maxConcurrent === 2 && config.agents.maxDepth === 3 ? 1 : 0;
+        \\defineConfig({ agents: { maxDepth: 4 } });
+        \\globalThis.preserved = config.agents.maxConcurrent === 2 && config.agents.maxDepth === 4 ? 1 : 0;
+        \\globalThis.refusedLimits = 0;
+        \\for (const maxConcurrent of [0, -1, 1.5, null, "2", 4294967296, NaN]) {
+        \\  try { defineConfig({ agents: { maxConcurrent } }); } catch { globalThis.refusedLimits++; }
+        \\}
+        \\for (const maxDepth of [0, -1, 1.5, null, "2", 4294967296, NaN]) {
+        \\  try { defineConfig({ agents: { maxDepth } }); } catch { globalThis.refusedLimits++; }
+        \\}
+        \\try { defineConfig({ agents: { unknown: 1 } }); } catch { globalThis.refusedLimits++; }
+        \\globalThis.unchanged = config.agents.maxConcurrent === 2 && config.agents.maxDepth === 4 ? 1 : 0;
+    , "limits.js");
+    try std.testing.expectEqual(@as(i32, 15), try host.evalInt("globalThis.refusedLimits"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.defaultDepth"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.changed"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.preserved"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.unchanged"));
+    try std.testing.expectEqual(@as(u32, 2), f.app.engine.max_concurrent_children);
+    try std.testing.expectEqual(@as(u32, 4), f.app.engine.max_agent_depth);
 }

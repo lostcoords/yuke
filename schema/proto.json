@@ -32,6 +32,34 @@
   },
   "methods": [
     {
+      "name": "agents.set_model",
+      "params": "AgentsSetModelParams",
+      "result": "SessionConfigResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "agents.get",
+      "params": "Empty",
+      "result": "AgentsGetResult",
+      "direction": "clientToServer",
+      "paramsOptional": true
+    },
+    {
+      "name": "agents.update",
+      "params": "AgentsUpdateParams",
+      "result": "AgentsGetResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "agents.resolve",
+      "params": "AgentsResolveParams",
+      "result": "AgentsResolveResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
       "name": "initialize",
       "doc": "Establish the connection and negotiate the protocol version.",
       "params": "Empty",
@@ -351,6 +379,131 @@
     }
   ],
   "structures": [
+    {
+      "name": "AgentsSetModelParams",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "model",
+          "type": "AgentModel",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AgentModel",
+      "fields": [
+        {
+          "name": "model",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "reasoning",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "AgentModels",
+      "fields": [
+        {
+          "name": "small",
+          "type": "AgentModel",
+          "presence": "optional"
+        },
+        {
+          "name": "medium",
+          "type": "AgentModel",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "AgentsConfig",
+      "fields": [
+        {
+          "name": "models",
+          "type": "AgentModels",
+          "presence": "defaulted"
+        }
+      ]
+    },
+    {
+      "name": "AgentsGetResult",
+      "fields": [
+        {
+          "name": "path",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "revision",
+          "type": "AgentConfigRev",
+          "presence": "required"
+        },
+        {
+          "name": "config",
+          "type": "AgentsConfig",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AgentsUpdateParams",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "AgentConfigRev",
+          "presence": "required"
+        },
+        {
+          "name": "config",
+          "type": "AgentsConfig",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AgentsResolveParams",
+      "fields": [
+        {
+          "name": "model",
+          "type": "AgentModelSlot",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "AgentsResolveResult",
+      "fields": [
+        {
+          "name": "slot",
+          "type": "AgentModelSlot",
+          "presence": "required"
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "reasoning",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "revision",
+          "type": "AgentConfigRev",
+          "presence": "required"
+        }
+      ]
+    },
     {
       "name": "Client",
       "doc": "This type identifies the client connection.",
@@ -1065,6 +1218,11 @@
           "name": "request",
           "type": "InteractionRequest",
           "presence": "required"
+        },
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "optional"
         }
       ]
     },
@@ -1101,6 +1259,11 @@
     {
       "name": "InteractionInput",
       "fields": [
+        {
+          "name": "secret",
+          "type": "bool",
+          "presence": "optional"
+        },
         {
           "name": "title",
           "type": "string",
@@ -1679,6 +1842,11 @@
       "doc": "This payload describes a user transcript message. Its fields borrow their data.",
       "fields": [
         {
+          "name": "source",
+          "type": "InputSource",
+          "presence": "optional"
+        },
+        {
           "name": "id",
           "type": "MessageId",
           "presence": "required"
@@ -1759,6 +1927,16 @@
         {
           "name": "max_rounds",
           "type": "u64",
+          "presence": "optional"
+        },
+        {
+          "name": "initial_input",
+          "type": "Input",
+          "presence": "optional"
+        },
+        {
+          "name": "child",
+          "type": "ChildSession",
           "presence": "optional"
         }
       ]
@@ -1854,9 +2032,105 @@
       ]
     },
     {
+      "name": "ToolSite",
+      "doc": "One tool call: the session, the message, and the part that hold it.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "PartId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ChildReport",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "outcome",
+          "type": "RunOutcome",
+          "presence": "required"
+        },
+        {
+          "name": "partial",
+          "type": "bool",
+          "presence": "required"
+        },
+        {
+          "name": "truncated",
+          "type": "bool",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ChildInputCanceled",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "input_ids",
+          "type": "[]InputId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "EngineInterruption",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "RunId",
+          "presence": "required"
+        },
+        {
+          "name": "kind",
+          "type": "RunKind",
+          "presence": "required"
+        }
+      ]
+    },
+    {
       "name": "QueuedInput",
       "doc": "This input waits behind an active turn.",
       "fields": [
+        {
+          "name": "source",
+          "type": "InputSource",
+          "presence": "optional"
+        },
         {
           "name": "input_id",
           "type": "InputId",
@@ -1951,6 +2225,11 @@
         },
         {
           "name": "agent",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "name",
           "type": "string",
           "presence": "optional"
         }
@@ -2349,6 +2628,12 @@
           "name": "session_id",
           "type": "SessionId",
           "presence": "required"
+        },
+        {
+          "name": "child_name",
+          "doc": "Select a direct child of session_id by name.",
+          "type": "string",
+          "presence": "optional"
         }
       ]
     },
@@ -2412,6 +2697,12 @@
           "name": "activity",
           "type": "SessionActivity",
           "presence": "required"
+        },
+        {
+          "name": "last_run",
+          "doc": "The outcome of the latest terminal turn; the engine reports it for a child.",
+          "type": "RunOutcome",
+          "presence": "optional"
         }
       ]
     },
@@ -2472,18 +2763,8 @@
       "doc": "This origin links a session to its parent session and message part.",
       "fields": [
         {
-          "name": "parent_id",
-          "type": "SessionId",
-          "presence": "required"
-        },
-        {
-          "name": "parent_message_id",
-          "type": "MessageId",
-          "presence": "required"
-        },
-        {
-          "name": "parent_part_id",
-          "type": "PartId",
+          "name": "site",
+          "type": "ToolSite",
           "presence": "required"
         }
       ]
@@ -2624,6 +2905,47 @@
           "name": "session",
           "type": "Session",
           "presence": "required"
+        },
+        {
+          "name": "input",
+          "type": "SessionSendInputResult",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "ChildSession",
+      "doc": "The live parent tool site and the stable name of a new child.",
+      "fields": [
+        {
+          "name": "slot",
+          "type": "AgentModelSlot",
+          "presence": "required"
+        },
+        {
+          "name": "site",
+          "type": "ToolSite",
+          "presence": "required"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ChildCapacity",
+      "fields": [
+        {
+          "name": "active",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "limit",
+          "type": "u64",
+          "presence": "required"
         }
       ]
     },
@@ -2648,6 +2970,11 @@
       "doc": "These are the parameters for `session.send_input`.",
       "fields": [
         {
+          "name": "parent_tool",
+          "type": "ToolSite",
+          "presence": "optional"
+        },
+        {
           "name": "session_id",
           "type": "SessionId",
           "presence": "required"
@@ -2667,6 +2994,16 @@
           "name": "input_id",
           "type": "InputId",
           "presence": "required"
+        },
+        {
+          "name": "reason",
+          "type": "InputQueueReason",
+          "presence": "required"
+        },
+        {
+          "name": "capacity",
+          "type": "ChildCapacity",
+          "presence": "optional"
         }
       ]
     },
@@ -2683,6 +3020,11 @@
           "name": "run_id",
           "type": "RunId",
           "presence": "required"
+        },
+        {
+          "name": "capacity",
+          "type": "ChildCapacity",
+          "presence": "optional"
         }
       ]
     },
@@ -3040,6 +3382,29 @@
       ]
     },
     {
+      "name": "InputSource",
+      "doc": "Native code assigns this source; public input has no source field.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "parent_instruction",
+          "type": "ToolSite"
+        },
+        {
+          "tag": "child_report",
+          "type": "ChildReport"
+        },
+        {
+          "tag": "child_input_canceled",
+          "type": "ChildInputCanceled"
+        },
+        {
+          "tag": "engine_interruption",
+          "type": "EngineInterruption"
+        }
+      ]
+    },
+    {
       "name": "InteractionRequest",
       "doc": "This union carries one frontend-neutral question.",
       "discriminator": "type",
@@ -3278,6 +3643,15 @@
       "discriminator": "",
       "arms": [
         {
+          "type": "AgentsSetModelParams"
+        },
+        {
+          "type": "AgentsUpdateParams"
+        },
+        {
+          "type": "AgentsResolveParams"
+        },
+        {
           "type": "SessionListParams"
         },
         {
@@ -3347,6 +3721,12 @@
       "doc": "This union carries server response results.",
       "discriminator": "",
       "arms": [
+        {
+          "type": "AgentsGetResult"
+        },
+        {
+          "type": "AgentsResolveResult"
+        },
         {
           "type": "InitializeResult"
         },
@@ -3486,6 +3866,153 @@
   ],
   "enumerations": [
     {
+      "name": "AgentModelSlot",
+      "numeric": false,
+      "values": [
+        {
+          "name": "small",
+          "wire": "small"
+        },
+        {
+          "name": "medium",
+          "wire": "medium"
+        }
+      ]
+    },
+    {
+      "name": "InputQueueReason",
+      "numeric": false,
+      "values": [
+        {
+          "name": "session_busy",
+          "wire": "session_busy"
+        },
+        {
+          "name": "concurrency_limit",
+          "wire": "concurrency_limit"
+        }
+      ]
+    },
+    {
+      "name": "ErrorCode",
+      "doc": "Workspace execution environment. Advertised engine capability. Numeric JSON-RPC and yuke error codes.",
+      "numeric": true,
+      "values": [
+        {
+          "name": "bad_request",
+          "wire": "-32602"
+        },
+        {
+          "name": "bad_protocol",
+          "wire": "-32600"
+        },
+        {
+          "name": "unknown_method",
+          "wire": "-32601"
+        },
+        {
+          "name": "unknown_session",
+          "wire": "-31000"
+        },
+        {
+          "name": "stale_cursor",
+          "wire": "-31002"
+        },
+        {
+          "name": "unknown_message",
+          "wire": "-31003"
+        },
+        {
+          "name": "unknown_part",
+          "wire": "-31004"
+        },
+        {
+          "name": "unknown_input",
+          "wire": "-31005"
+        },
+        {
+          "name": "unknown_config_rev",
+          "wire": "-31006"
+        },
+        {
+          "name": "unknown_skill",
+          "wire": "-31009"
+        },
+        {
+          "name": "input_already_started",
+          "wire": "-31010"
+        },
+        {
+          "name": "queue_full",
+          "wire": "-31011"
+        },
+        {
+          "name": "run_mismatch",
+          "wire": "-31012"
+        },
+        {
+          "name": "session_busy",
+          "wire": "-31015"
+        },
+        {
+          "name": "session_has_children",
+          "wire": "-31016"
+        },
+        {
+          "name": "runtime_failed",
+          "wire": "-31017"
+        },
+        {
+          "name": "invalid_patch",
+          "wire": "-31018"
+        },
+        {
+          "name": "unsupported_model",
+          "wire": "-31019"
+        },
+        {
+          "name": "unsupported_reasoning",
+          "wire": "-31020"
+        },
+        {
+          "name": "not_implemented",
+          "wire": "-31022"
+        },
+        {
+          "name": "unknown_provider",
+          "wire": "-31023"
+        },
+        {
+          "name": "unknown_interaction",
+          "wire": "-31024"
+        },
+        {
+          "name": "config_conflict",
+          "wire": "-31025"
+        },
+        {
+          "name": "setup_required",
+          "wire": "-31026"
+        },
+        {
+          "name": "setup_canceled",
+          "wire": "-31027"
+        },
+        {
+          "name": "auth_required",
+          "wire": "-31028"
+        },
+        {
+          "name": "internal",
+          "wire": "-32603"
+        },
+        {
+          "name": "overloaded",
+          "wire": "-31021"
+        }
+      ]
+    },
+    {
       "name": "AuthCredentialKind",
       "numeric": false,
       "values": [
@@ -3616,113 +4143,14 @@
       ]
     },
     {
-      "name": "ErrorCode",
-      "doc": "Workspace execution environment. Advertised engine capability. Numeric JSON-RPC and yuke error codes.",
-      "numeric": true,
-      "values": [
-        {
-          "name": "bad_request",
-          "wire": "-32602"
-        },
-        {
-          "name": "bad_protocol",
-          "wire": "-32600"
-        },
-        {
-          "name": "unknown_method",
-          "wire": "-32601"
-        },
-        {
-          "name": "unknown_session",
-          "wire": "-31000"
-        },
-        {
-          "name": "stale_cursor",
-          "wire": "-31002"
-        },
-        {
-          "name": "unknown_message",
-          "wire": "-31003"
-        },
-        {
-          "name": "unknown_part",
-          "wire": "-31004"
-        },
-        {
-          "name": "unknown_input",
-          "wire": "-31005"
-        },
-        {
-          "name": "unknown_config_rev",
-          "wire": "-31006"
-        },
-        {
-          "name": "unknown_skill",
-          "wire": "-31009"
-        },
-        {
-          "name": "input_already_started",
-          "wire": "-31010"
-        },
-        {
-          "name": "queue_full",
-          "wire": "-31011"
-        },
-        {
-          "name": "run_mismatch",
-          "wire": "-31012"
-        },
-        {
-          "name": "session_busy",
-          "wire": "-31015"
-        },
-        {
-          "name": "session_has_children",
-          "wire": "-31016"
-        },
-        {
-          "name": "runtime_failed",
-          "wire": "-31017"
-        },
-        {
-          "name": "invalid_patch",
-          "wire": "-31018"
-        },
-        {
-          "name": "unsupported_model",
-          "wire": "-31019"
-        },
-        {
-          "name": "unsupported_reasoning",
-          "wire": "-31020"
-        },
-        {
-          "name": "not_implemented",
-          "wire": "-31022"
-        },
-        {
-          "name": "unknown_provider",
-          "wire": "-31023"
-        },
-        {
-          "name": "unknown_interaction",
-          "wire": "-31024"
-        },
-        {
-          "name": "internal",
-          "wire": "-32603"
-        },
-        {
-          "name": "overloaded",
-          "wire": "-31021"
-        }
-      ]
-    },
-    {
       "name": "RunErrorCode",
       "doc": "Run failure category.",
       "numeric": false,
       "values": [
+        {
+          "name": "interrupted",
+          "wire": "interrupted"
+        },
         {
           "name": "provider",
           "wire": "provider"
@@ -3781,6 +4209,22 @@
       "name": "MethodName",
       "numeric": false,
       "values": [
+        {
+          "name": "agents.get",
+          "wire": "agents.get"
+        },
+        {
+          "name": "agents.update",
+          "wire": "agents.update"
+        },
+        {
+          "name": "agents.resolve",
+          "wire": "agents.resolve"
+        },
+        {
+          "name": "agents.set_model",
+          "wire": "agents.set_model"
+        },
         {
           "name": "initialize",
           "wire": "initialize",
@@ -4106,6 +4550,11 @@
       "name": "ToolOutputDeltaData",
       "base": "PartDelta",
       "doc": "The broadcast uses this shared tool-output delta payload."
+    },
+    {
+      "name": "AgentConfigRev",
+      "base": "[32]u8",
+      "doc": "This revision is the SHA-256 of the file: 32 raw bytes, 64 hexadecimal characters."
     },
     {
       "name": "CatalogRev",

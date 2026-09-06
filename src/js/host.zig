@@ -56,6 +56,9 @@ pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:context", .source = @embedFile("app/context.js") },
     .{ .name = "yuke:command-ui", .source = @embedFile("app/command-ui.js") },
     .{ .name = "yuke:catalog", .source = @embedFile("app/catalog.js") },
+    .{ .name = "yuke:agents-ui", .source = @embedFile("app/agents-ui.js") },
+    .{ .name = "yuke:agent-tools", .source = @embedFile("app/agent-tools.js") },
+    .{ .name = "yuke:agents", .source = @embedFile("app/agents.js") },
     .{ .name = "yuke:auth", .source = @embedFile("app/auth.js") },
     .{ .name = "yuke:chat", .source = @embedFile("app/chat.js") },
     .{ .name = "yuke:fzy", .source = @embedFile("app/fzy.js") },
@@ -108,7 +111,7 @@ pub const Host = struct {
     /// Every headless interaction that waits for a correlated frontend answer.
     interactions: interactions_table.Table,
     /// The owner sleeps on this. A task sets it after work reaches the owner queue.
-    wake: zio.ResetEvent = .init,
+    wake: std.Io.Event = .unset,
     /// The tasks running those calls. `close` cancels them before the context dies.
     tasks: std.Io.Group = .init,
 
@@ -135,7 +138,7 @@ pub const Host = struct {
             .baked = &default_baked,
             .max_file_bytes = opts.max_file_bytes,
         };
-        const eng = engine_module.Engine.create(gpa, ctx, &self.wake) catch unreachable;
+        const eng = engine_module.Engine.create(gpa, ctx, io, &self.wake) catch unreachable;
 
         self.* = .{
             .gpa = gpa,
@@ -153,7 +156,7 @@ pub const Host = struct {
             .cwd = opts.cwd,
             .io = io,
             .env = opts.env,
-            .ops = .{ .gpa = gpa, .wake = &self.wake },
+            .ops = .{ .gpa = gpa, .io = io, .wake = &self.wake },
             .tools = .{ .gpa = gpa },
             .hooks = .{},
             .calls = .{ .gpa = gpa },
@@ -177,10 +180,21 @@ pub const Host = struct {
 
     /// Start one primitive on its own task and answer its promise. The task reads only what `payload` owns, a refusal rejects, and only a full QuickJS heap throws.
     pub fn startTask(self: *Host, comptime Payload: type, comptime task: fn (*Host, *pending.Op, Payload) void, payload: Payload) quickjs.Value {
+        return self.startTaskWithSignal(Payload, task, payload, quickjs.UNDEFINED);
+    }
+
+    /// Bind a primitive to a validated tool signal before its task can start.
+    pub fn startTaskWithSignal(self: *Host, comptime Payload: type, comptime task: fn (*Host, *pending.Op, Payload) void, payload: Payload, signal: quickjs.Value) quickjs.Value {
         std.debug.assert(self.phase == .open);
+        std.debug.assert(self.ctx.isUndefined(signal) or self.calls.acceptsSignal(self.ctx, signal));
         const started = self.ops.start(self.ctx) orelse {
             payload.free(self.gpa);
             return self.ctx.throw(self.ctx.getException());
+        };
+        started.op.signal = self.ctx.dupValue(signal);
+        if (self.calls.callForSignal(self.ctx, signal)) |call| if (call.work) |work| {
+            work.retain(&started.op.operation);
+            started.op.work = work;
         };
         self.tasks.concurrent(self.io, task, .{ self, started.op, payload }) catch {
             payload.free(self.gpa);
@@ -195,12 +209,14 @@ pub const Host = struct {
         self.enterSlice();
         // Engine events reach JavaScript here, on the owner, never from an engine task.
         if (engine_module.drain(self.engine, self.ctx)) return error.JavaScriptFault;
-        const faulted = self.ops.settle(self.ctx);
+        call_run.abortLeft(self); // A continuation below must read a left call's signal as aborted.
+        var faulted = self.ops.settle(self.ctx);
         try self.drainJobs();
         // The first drain settles a promise a handler awaited, the poll reads it, and the second drain runs what the handler queued.
         call_run.pump(self);
+        if (self.ops.settle(self.ctx)) faulted = true;
         try self.drainJobs();
-        std.debug.assert(!self.ops.anyDone()); // no task ran, so nothing new finished
+        // A callback can cancel a native interaction; hasPending schedules its completion for the next pass.
         if (faulted) {
             self.dropPendingException();
             return error.JavaScriptFault;

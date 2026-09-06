@@ -51,6 +51,10 @@ pub const RunSlot = struct {
     retry_state: ?proto.activity.ActivityStateRetrying = null,
     wake_event: std.Io.Event = .unset,
     body: ?transport.ResponseBody = null,
+    parent_id: ?ids.SessionId = null,
+    tree_root: ?ids.SessionId = null,
+    depth: u32 = 0,
+    work: @import("work.zig") = .{},
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
 
@@ -84,6 +88,7 @@ pub const RunSlot = struct {
 
     pub fn destroy(self: *RunSlot) void {
         std.debug.assert(self.body == null);
+        std.debug.assert(self.work.pending == 0);
         self.gpa.free(self.config.model);
         self.gpa.free(self.config.reasoning);
         self.gpa.free(self.config.system_prompt);
@@ -140,6 +145,15 @@ pub const Session = struct {
 
     pub fn queueEntries(self: *const Session) []const QueueItem {
         return self.pending.items;
+    }
+
+    /// Engine reports and notices wait outside the user queue limit.
+    pub fn userQueueDepth(self: *const Session) usize {
+        var depth: usize = 0;
+        for (self.pending.items) |item| if (item.source == null or !item.source.?.protected()) {
+            depth += 1;
+        };
+        return depth;
     }
 
     pub fn queueOnQueued(self: *Session, d: input.InputQueuedData) Error!void {
@@ -307,12 +321,14 @@ pub const QueueItem = struct {
     input_id: ids.InputId,
     content: []const content.ContentPart,
     queued_at_ms: u64,
+    source: ?proto.input.InputSource = null,
 
     fn clone(gpa: std.mem.Allocator, qi: misc.QueuedInput) Error!QueueItem {
         var arena = std.heap.ArenaAllocator.init(gpa);
         errdefer arena.deinit();
         const owned = try proto.dupe(arena.allocator(), qi.content);
-        return .{ .arena = arena, .input_id = qi.input_id, .content = owned, .queued_at_ms = qi.queued_at_ms };
+        const source = try proto.dupe(arena.allocator(), qi.source);
+        return .{ .arena = arena, .input_id = qi.input_id, .content = owned, .queued_at_ms = qi.queued_at_ms, .source = source };
     }
 
     fn deinit(self: *QueueItem) void {

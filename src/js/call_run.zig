@@ -11,6 +11,16 @@ const pending = @import("pending.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
+/// Abort the signal of every left call before any continuation can read it.
+pub fn abortLeft(host: *Host) void {
+    for (host.calls.live.items) |call| {
+        if (!call.submitter_done or !host.ctx.isObject(call.signal)) continue;
+        host.ops.abortSignal(host.ctx, call.signal);
+        host.ctx.setPropertyStr(call.signal, "aborted", quickjs.TRUE) catch {};
+        host.interactions.cancelSignal(host.ctx, call.signal);
+    }
+}
+
 /// Start queued calls and poll running calls after the owner drains jobs.
 pub fn pump(host: *Host) void {
     // A start can queue nothing new, so one pass over the list visits every call exactly once.
@@ -19,14 +29,19 @@ pub fn pump(host: *Host) void {
         .running => if (!call.submitter_done) poll(host, call),
         .settled => {},
     };
+    abortLeft(host);
     host.calls.sweep(host.ctx);
 }
 
 /// Answer every waiting call, so a turn task never sleeps past the host. `Host.close` calls this.
 pub fn abortAll(host: *Host) void {
     for (host.calls.live.items) |call| {
+        if (host.ctx.isObject(call.signal)) {
+            host.ops.abortSignal(host.ctx, call.signal);
+            host.ctx.setPropertyStr(call.signal, "aborted", quickjs.TRUE) catch {};
+        }
         if (call.state == .settled or call.submitter_done) continue;
-        call.settle(null, true);
+        call.settle(host.io, null, true);
     }
 }
 
@@ -79,7 +94,9 @@ fn startInput(host: *Host, call: *table.Call) void {
     defer ctx.freeValue(parsed);
 
     host.enterSlice();
-    var argv = [_]Value{parsed};
+    const method = ctx.newString(call.name);
+    defer ctx.freeValue(method);
+    var argv = [_]Value{ parsed, method };
     const answer = ctx.call(gate, quickjs.UNDEFINED, &argv);
     acceptPromise(host, call, answer);
 }
@@ -97,6 +114,12 @@ fn startTool(host: *Host, call: *table.Call) void {
     if (!ctx.hasException()) {
         ctx.setPropertyStr(call.signal, "aborted", quickjs.FALSE) catch {};
         ctx.setPropertyStr(context, "workspaceRoot", ctx.newString(call.workspace_root)) catch {};
+        if (call.site) |site| {
+            const id = std.fmt.bytesToHex(site.session_id.raw, .lower);
+            ctx.setPropertyStr(context, "sessionId", ctx.newString(&id)) catch {};
+            ctx.setPropertyStr(context, "messageId", ctx.newInt64(@intCast(site.message_id))) catch {};
+            ctx.setPropertyStr(context, "partId", ctx.newInt64(@intCast(site.part_id))) catch {};
+        }
     }
     // A full QuickJS heap fails the call, not the host, so the two roots go and the call settles.
     if (ctx.hasException()) {
@@ -109,7 +132,7 @@ fn startTool(host: *Host, call: *table.Call) void {
     defer ctx.freeValue(context);
     host.enterSlice();
     var argv = [_]Value{ parsed, call.signal, context };
-    const answer = ctx.call(host.tools.handlers.items[at], quickjs.UNDEFINED, &argv);
+    const answer = ctx.call(host.tools.entries.items[at].handler, quickjs.UNDEFINED, &argv);
     acceptPromise(host, call, answer);
 }
 
@@ -240,9 +263,9 @@ fn errorText(ctx: Context, value: Value) ?[:0]const u8 {
 
 /// Sanitize the answer as UTF-8 and wake the submitter.
 fn settleText(host: *Host, call: *table.Call, text: []const u8, is_error: bool) void {
-    call.settle(utf8.sanitize(host.gpa, text) catch unreachable, is_error);
+    call.settle(host.io, utf8.sanitize(host.gpa, text) catch unreachable, is_error);
 }
 
 fn settleTextAndView(host: *Host, call: *table.Call, text: []const u8, view_json: []const u8) void {
-    call.settleView(utf8.sanitize(host.gpa, text) catch unreachable, utf8.sanitize(host.gpa, view_json) catch unreachable);
+    call.settleView(host.io, utf8.sanitize(host.gpa, text) catch unreachable, utf8.sanitize(host.gpa, view_json) catch unreachable);
 }

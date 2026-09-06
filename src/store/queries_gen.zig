@@ -124,6 +124,18 @@ pub const AllocInputId = sql.OneQuery(
     },
 );
 
+pub const LatestTurnDone = sql.OptionalQuery(
+    \\SELECT payload FROM events WHERE session_id = :session_id AND name = 'run.done'
+    \\    AND json_extract(payload, '$.kind') = 'turn' ORDER BY seq DESC LIMIT 1;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        payload: []const u8,
+    },
+);
+
 pub const InsertPendingInput = sql.ExecQuery(
     \\INSERT INTO pending_inputs(session_id, input_id, seq, queued_at_ms, payload)
     \\    VALUES (:session_id, :input_id, :seq, :queued_at_ms, :payload);
@@ -207,6 +219,37 @@ pub const DeletePendingInput = sql.OneQuery(
     },
     struct {
         deleted: i64,
+    },
+);
+
+pub const ChildReportCredits = sql.OneQuery(
+    \\WITH RECURSIVE tree(id) AS (
+    \\    SELECT id FROM sessions WHERE parent_id = :parent_id
+    \\    UNION
+    \\    SELECT s.id FROM sessions s JOIN tree t ON s.parent_id = t.id
+    \\)
+    \\SELECT
+    \\    (SELECT count(*) FROM pending_inputs p JOIN tree t ON t.id = p.session_id) +
+    \\    (SELECT count(*) FROM sessions s JOIN tree t ON t.id = s.id WHERE s.open_run_kind = 'turn') +
+    \\    (SELECT count(*) FROM pending_inputs WHERE session_id = :parent_id AND json_extract(payload, '$.source.type') IN ('child_report', 'child_input_canceled')) AS used;
+,
+    struct {
+        parent_id: [16]u8,
+    },
+    struct {
+        used: i64,
+    },
+);
+
+pub const ProtectedInputCount = sql.OneQuery(
+    \\SELECT count(*) AS depth FROM pending_inputs
+    \\WHERE session_id = :session_id AND coalesce(json_extract(payload, '$.source.type'), 'parent_instruction') <> 'parent_instruction';
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        depth: i64,
     },
 );
 
@@ -325,14 +368,28 @@ pub const LastAssistantUsage = sql.OptionalQuery(
     },
 );
 
+pub const RunReportMessages = sql.ManyQuery(
+    \\SELECT e.payload FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+    \\WHERE m.session_id = :session_id AND m.run_id = :run_id AND m.role = 'assistant'
+    \\ORDER BY m.message_id DESC;
+,
+    struct {
+        session_id: [16]u8,
+        run_id: u64,
+    },
+    struct {
+        payload: []const u8,
+    },
+);
+
 pub const InsertSession = sql.ExecQuery(
     \\INSERT INTO sessions(
     \\    id, root, origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, agent,
+    \\    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
     \\    created_by_name, created_by_version, created_at_ms, updated_at_ms
     \\) VALUES (
     \\    :id, :root, :origin, :parent_id, :parent_message_id, :parent_part_id, :source_id,
-    \\    :profile, :model, :reasoning, :config_rev, :max_rounds, :title, :agent,
+    \\    :profile, :model, :reasoning, :config_rev, :max_rounds, :title, :agent, :name,
     \\    :created_by_name, :created_by_version, :created_at_ms, :updated_at_ms
     \\);
 ,
@@ -351,6 +408,7 @@ pub const InsertSession = sql.ExecQuery(
         max_rounds: ?u64,
         title: []const u8,
         agent: ?[]const u8,
+        name: ?[]const u8,
         created_by_name: ?[]const u8,
         created_by_version: ?[]const u8,
         created_at_ms: u64,
@@ -373,7 +431,7 @@ pub const SessionSnapshot = sql.OptionalQuery(
     \\SELECT
     \\    id, root,
     \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, agent,
+    \\    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -401,6 +459,7 @@ pub const SessionSnapshot = sql.OptionalQuery(
         max_rounds: ?u64,
         title: []const u8,
         agent: ?[]const u8,
+        name: ?[]const u8,
         created_by_name: ?[]const u8,
         created_by_version: ?[]const u8,
         message_count: u64,
@@ -467,7 +526,7 @@ pub const SessionPageRecent = sql.ManyQuery(
     \\SELECT
     \\    id, root,
     \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, agent,
+    \\    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -500,6 +559,7 @@ pub const SessionPageRecent = sql.ManyQuery(
         max_rounds: ?u64,
         title: []const u8,
         agent: ?[]const u8,
+        name: ?[]const u8,
         created_by_name: ?[]const u8,
         created_by_version: ?[]const u8,
         message_count: u64,
@@ -522,7 +582,7 @@ pub const SessionPageParent = sql.ManyQuery(
     \\SELECT
     \\    id, root,
     \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, agent,
+    \\    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -557,6 +617,7 @@ pub const SessionPageParent = sql.ManyQuery(
         max_rounds: ?u64,
         title: []const u8,
         agent: ?[]const u8,
+        name: ?[]const u8,
         created_by_name: ?[]const u8,
         created_by_version: ?[]const u8,
         message_count: u64,
@@ -640,6 +701,52 @@ pub const SessionChildIds = sql.ManyQuery(
     },
 );
 
+pub const SessionRecoveryCandidates = sql.ManyQuery(
+    \\SELECT id FROM sessions
+    \\WHERE root = :root
+    \\  AND (open_run_id IS NOT NULL OR EXISTS (SELECT 1 FROM pending_inputs WHERE session_id = sessions.id))
+    \\ORDER BY created_at_ms, id;
+,
+    struct {
+        root: []const u8,
+    },
+    struct {
+        id: [16]u8,
+    },
+);
+
+pub const ChildAdmissionCandidates = sql.ManyQuery(
+    \\WITH RECURSIVE tree(id) AS (
+    \\    SELECT id FROM sessions WHERE parent_id = :parent_id
+    \\    UNION
+    \\    SELECT s.id FROM sessions s JOIN tree t ON s.parent_id = t.id
+    \\)
+    \\SELECT s.id FROM sessions s
+    \\    JOIN tree t ON t.id = s.id
+    \\    JOIN pending_inputs p ON p.session_id = s.id
+    \\    JOIN events e ON e.session_id = p.session_id AND e.seq = p.seq
+    \\GROUP BY s.id ORDER BY min(e.rowid);
+,
+    struct {
+        parent_id: [16]u8,
+    },
+    struct {
+        id: [16]u8,
+    },
+);
+
+pub const ChildByName = sql.OptionalQuery(
+    \\SELECT id FROM sessions WHERE parent_id = :parent_id AND name = :name;
+,
+    struct {
+        parent_id: [16]u8,
+        name: []const u8,
+    },
+    struct {
+        id: [16]u8,
+    },
+);
+
 pub const Queries = struct {
     insert_config: InsertConfig,
     advance_config: AdvanceConfig,
@@ -650,16 +757,20 @@ pub const Queries = struct {
     alloc_run_id: AllocRunId,
     alloc_message_id: AllocMessageId,
     alloc_input_id: AllocInputId,
+    latest_turn_done: LatestTurnDone,
     insert_pending_input: InsertPendingInput,
     pending_input_by_id: PendingInputById,
     pending_inputs: PendingInputs,
     pending_input_count: PendingInputCount,
     delete_pending_input: DeletePendingInput,
+    child_report_credits: ChildReportCredits,
+    protected_input_count: ProtectedInputCount,
     insert_message: InsertMessage,
     advance_message: AdvanceMessage,
     message_page: MessagePage,
     message_tail: MessageTail,
     last_assistant_usage: LastAssistantUsage,
+    run_report_messages: RunReportMessages,
     insert_session: InsertSession,
     session_exists: SessionExists,
     session_snapshot: SessionSnapshot,
@@ -673,6 +784,9 @@ pub const Queries = struct {
     select_prompt: SelectPrompt,
     delete_session: DeleteSession,
     session_child_ids: SessionChildIds,
+    session_recovery_candidates: SessionRecoveryCandidates,
+    child_admission_candidates: ChildAdmissionCandidates,
+    child_by_name: ChildByName,
 
     pub fn prepareAll(conn: sql.Connection) !@This() {
         return sql.prepareAll(@This(), conn);

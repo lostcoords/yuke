@@ -56,11 +56,15 @@ pub fn call(
 fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, params: spec.params, launch: *?turn.Launch) !spec.result {
     const n = spec.name;
     const engine = &runtime.engine;
+    if (n == .@"agents.set_model") return @import("../engine/agent_config.zig").setModel(engine, arena, params);
+    if (n == .@"agents.get") return @import("../engine/agent_config.zig").get(engine, arena);
+    if (n == .@"agents.update") return @import("../engine/agent_config.zig").update(engine, arena, params);
+    if (n == .@"agents.resolve") return @import("../engine/agent_config.zig").resolve(engine, arena, params);
     if (n == .initialize) return commands.initialize(engine, arena);
     if (n == .@"session.list") return commands.sessionList(engine, arena, params);
     if (n == .@"session.get") return commands.sessionGet(engine, arena, params);
     if (n == .@"session.queue") return commands.sessionQueue(engine, arena, params);
-    if (n == .@"session.create") return commands.sessionCreate(engine, arena, params);
+    if (n == .@"session.create") return commands.sessionCreateForRpc(engine, arena, params, launch);
     if (n == .@"session.config") return commands.sessionConfig(engine, arena, params);
     if (n == .@"session.history") return commands.sessionHistory(engine, arena, params);
     if (n == .@"session.send_input") return commands.sessionSendInputForRpc(engine, arena, params, launch);
@@ -81,6 +85,10 @@ fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, param
 /// Adding a method to `proto` therefore cannot silently reach a missing command.
 fn bound(comptime name: proto.enums.MethodName) bool {
     return switch (name) {
+        .@"agents.set_model",
+        .@"agents.get",
+        .@"agents.update",
+        .@"agents.resolve",
         .initialize,
         .@"session.list",
         .@"session.get",
@@ -107,13 +115,33 @@ fn bound(comptime name: proto.enums.MethodName) bool {
 /// Map a refusal to its wire code. An error absent from this table is a bug and propagates.
 fn failureFor(err: anyerror) ?Failure {
     return switch (err) {
+        error.AgentConfigDirectoryMissing => .{ .code = .setup_required, .message = "no profile config directory is available for agents.json" },
+        error.BadAgentConfig => .{ .code = .bad_request, .message = "agents.json is invalid; repair the file before setup" },
+        error.AgentConfigConflict => .{ .code = .config_conflict, .message = "agents.json changed; resolve the slot or read the current revision before retry" },
+        error.AgentConfigReadFailed => .{ .code = .runtime_failed, .message = "cannot read agents.json" },
+        error.AgentConfigSaveFailed => .{ .code = .runtime_failed, .message = "cannot save agents.json; the previous live config remains active" },
+        error.AgentSetupRequired => .{ .code = .setup_required, .message = "the requested subagent model slot needs setup" },
+        error.AgentUnknownModel => .{ .code = .unsupported_model, .message = "the subagent slot names an unknown model selector" },
+        error.AgentProviderUnavailable => .{ .code = .auth_required, .message = "the subagent provider needs setup or credential repair" },
+        error.AgentRouteUnavailable => .{ .code = .unsupported_model, .message = "the subagent provider needs a valid route in providers.json" },
+        error.AgentToolsUnsupported => .{ .code = .unsupported_model, .message = "the subagent model must have known tool support" },
+        error.AgentReasoningUnsupported => .{ .code = .unsupported_reasoning, .message = "the subagent model does not support the selected reasoning level" },
+        error.BadChild => .{ .code = .bad_request, .message = "a child needs initial input, a model, and a parent in the same workspace" },
+        error.AgentDepthLimit => .{ .code = .bad_request, .message = "the parent has reached the agent depth limit" },
+        error.BadChildName => .{ .code = .bad_request, .message = "the child name is invalid" },
+        error.DuplicateChildName => .{ .code = .bad_request, .message = "the parent already has a child with this name" },
+        error.BadToolSite => .{ .code = .bad_request, .message = "the parent tool site is not active" },
         error.UnknownSession => .{ .code = .unknown_session, .message = "unknown session" },
+        error.ProtectedInput => .{ .code = .bad_request, .message = "engine reports and notices cannot be canceled" },
         error.UnknownInput => .{ .code = .unknown_input, .message = "unknown queued input" },
         error.UnknownConfigRev => .{ .code = .unknown_config_rev, .message = "unknown config revision" },
         error.UnknownProvider => .{ .code = .unknown_provider, .message = "unknown provider" },
         error.RunMismatch => .{ .code = .run_mismatch, .message = "the active run does not match" },
         error.RuntimeFailed => .{ .code = .runtime_failed, .message = "the session runtime failed" },
+        error.ReportCapacityFull => .{ .code = .queue_full, .message = "the child result budget is full; let child runs finish and let the parent consume reports before retry" },
         error.QueueFull => .{ .code = .queue_full, .message = "the input queue is full" },
+        error.SessionOwned => .{ .code = .session_busy, .message = "another engine owns this session tree" },
+        error.EngineClosing => .{ .code = .runtime_failed, .message = "the engine is closed" },
         error.SessionBusy => .{ .code = .session_busy, .message = "the session is open or has an active run" },
         error.SessionHasChildren => .{ .code = .session_has_children, .message = "the session has children" },
         error.SkillUnsupported => .{ .code = .unknown_skill, .message = "skills are not supported" },
@@ -143,4 +171,10 @@ test "a name outside the protocol refuses with the unknown method code" {
     try std.testing.expectEqual(proto.enums.ErrorCode.unknown_method, failure.code);
     try std.testing.expectEqualStrings("unknown method", failure.message);
     try std.testing.expectEqual(@as(usize, 0), sink.written().len);
+}
+
+test "tree contention uses the existing session busy error" {
+    const refusal = failureFor(error.SessionOwned).?;
+    try std.testing.expectEqual(proto.enums.ErrorCode.session_busy, refusal.code);
+    try std.testing.expectEqualStrings("another engine owns this session tree", refusal.message);
 }

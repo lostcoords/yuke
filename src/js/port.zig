@@ -10,29 +10,36 @@ const hookset = @import("../engine/hookset.zig");
 /// Build the port the process installs. The set answers from the live host table.
 pub fn toolSet(host: *Host) toolset.ToolSet {
     std.debug.assert(host.phase == .open);
-    return .{ .ctx = host, .getDecls = declsFor, .run = runFor };
+    return .{ .ctx = host, .getDecls = declsFor, .isAllowed = isAllowed, .run = runFor };
 }
 
 /// Answer the live declarations. The engine holds them only until it writes one request body.
-fn declsFor(ctx: *anyopaque) []const ir.Tool {
+fn declsFor(ctx: *anyopaque, arena: std.mem.Allocator, selection: toolset.Selection) error{OutOfMemory}![]const ir.Tool {
     const host: *Host = @ptrCast(@alignCast(ctx));
-    return host.tools.decls.items;
+    const decls = try arena.alloc(ir.Tool, host.tools.entries.items.len);
+    var at: usize = 0;
+    for (host.tools.entries.items) |entry| {
+        if (!selection.can_spawn and entry.spawns_agents) continue;
+        decls[at] = try proto.dupe(arena, entry.decl);
+        at += 1;
+    }
+    return decls[0..at];
+}
+
+fn isAllowed(ctx: *anyopaque, name: []const u8, selection: toolset.Selection) bool {
+    const host: *Host = @ptrCast(@alignCast(ctx));
+    const index = host.tools.find(name) orelse return true;
+    return selection.can_spawn or !host.tools.entries.items[index].spawns_agents;
 }
 
 /// Submit one call and wait at the turn cancellation point for the owner to answer it.
-fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: []const u8, workspace_root: []const u8) toolset.Outcome {
+fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: []const u8, context: toolset.Context) toolset.Outcome {
     const host: *Host = @ptrCast(@alignCast(ctx));
-    const call = host.calls.submit(name, arguments, workspace_root);
-    // The owner sweeps the record, so leaving is the last thing this task does with it.
-    defer {
-        call.finish();
-        host.wake.set();
-    }
-    // The owner sleeps between frames, so a queued call must wake it.
-    host.wake.set();
-
-    call.done.wait() catch return fault(out, "cancellation stopped the tool call");
-    std.debug.assert(call.state == .settled); // the owner sets the event once, and only on a settle
+    const call = host.calls.submit(name, arguments, context.workspace_root);
+    call.site = context.site;
+    call.work = context.work;
+    defer finishCall(host, call);
+    awaitCall(host, call) catch return fault(out, "cancellation stopped the tool call");
     const text = call.text orelse "the tool call did not finish";
     const view = if (call.view_json) |json|
         std.json.parseFromSliceLeaky([]proto.view.View, out, json, .{}) catch
@@ -44,6 +51,17 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
         .view = view,
         .is_error = call.is_error,
     };
+}
+
+fn awaitCall(host: *Host, call: *@import("tools.zig").Call) error{Canceled}!void {
+    host.wake.set(host.io);
+    try call.done.wait(host.io);
+    std.debug.assert(call.state == .settled);
+}
+
+fn finishCall(host: *Host, call: *@import("tools.zig").Call) void {
+    call.finish();
+    host.wake.set(host.io);
 }
 
 /// Build the hook port the process installs. The set answers from the live host table.
@@ -62,17 +80,9 @@ fn holdsFor(ctx: *anyopaque, point: proto.hook.Point) bool {
 fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
     const host: *Host = @ptrCast(@alignCast(ctx));
     const call = host.calls.submitHook(point.wireName(), payload);
-    // The owner sweeps the record, so leaving is the last thing this task does with it.
-    defer {
-        call.finish();
-        host.wake.set();
-    }
-    // The owner sleeps between frames, so a queued call must wake it.
-    host.wake.set();
-
-    call.done.wait() catch return .canceled;
+    defer finishCall(host, call);
+    awaitCall(host, call) catch return .canceled;
     if (host.phase != .open) return .canceled;
-    std.debug.assert(call.state == .settled); // the owner sets the event once, and only on a settle
     const text = call.text orelse return .proceed;
     if (call.is_error) {
         std.log.warn("hook {s} faulted: {s}", .{ point.wireName(), text });

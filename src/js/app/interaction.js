@@ -48,10 +48,11 @@ export function selectRequest(title, options) {
   return { type: "select", title, options: values };
 }
 
-/** @param {string} title @param {string | undefined} placeholder @returns {{ type: "input", title: string, placeholder?: string }} */
-export function inputRequest(title, placeholder) {
+/** @param {string} title @param {string | undefined} placeholder @param {boolean} [secret] @returns {{ type: "input", title: string, placeholder?: string, secret?: boolean }} */
+export function inputRequest(title, placeholder, secret = false) {
   const request = { type: /** @type {const} */ ("input"), title: text(title, "input title") };
   if (placeholder !== undefined) Object.assign(request, { placeholder: text(placeholder, "input placeholder", true) });
+  if (secret) Object.assign(request, { secret: true });
   return request;
 }
 
@@ -68,6 +69,16 @@ function allocateId() {
   return id;
 }
 
+/** @param {{ aborted: boolean } | undefined} signal @param {() => void} canceled @param {(error: unknown) => void} [failed] @returns {() => void} */
+export function watchCancellation(signal, canceled, failed = () => canceled()) {
+  if (!signal) return () => {};
+  if (signal.aborted) { canceled(); return () => {}; }
+  const id = allocateId();
+  let alive = true;
+  native.watchCancellation(id, signal).then(() => { if (alive) canceled(); }, (error) => { if (alive) failed(error); });
+  return () => { alive = false; native.cancel(id); };
+}
+
 const rpcAnswerer = {
   /** @param {import("yuke:ext").Context} ctx */
   surfaceFor(ctx) {
@@ -77,25 +88,26 @@ const rpcAnswerer = {
       live.clear();
     });
 
-    /** @param {object} request @returns {Promise<any>} */
-    const ask = (request) => {
+    /** @param {object} request @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<any>} */
+    const ask = (request, options) => {
       const id = allocateId();
       live.add(id);
-      return native.request(id, JSON.stringify(request)).finally(() => live.delete(id));
+      return native.request(id, JSON.stringify(request), options?.signal).finally(() => live.delete(id));
     };
 
     return {
-      /** @param {string} title @param {string} [message] @returns {Promise<boolean | undefined>} */
-      confirm(title, message = "") {
-        return ask(confirmRequest(title, message));
+      interactive: true,
+      /** @param {string} title @param {string} [message] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
+      confirm(title, message = "", options) {
+        return ask(confirmRequest(title, message), options);
       },
-      /** @param {string} title @param {string[]} options @returns {Promise<string | undefined>} */
-      select(title, options) {
-        return ask(selectRequest(title, options));
+      /** @param {string} title @param {string[]} choices @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+      select(title, choices, options) {
+        return ask(selectRequest(title, choices), options);
       },
-      /** @param {string} title @param {string} [placeholder] @returns {Promise<string | undefined>} */
-      input(title, placeholder) {
-        return ask(inputRequest(title, placeholder));
+      /** @param {string} title @param {string} [placeholder] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+      input(title, placeholder, options) {
+        return ask(inputRequest(title, placeholder, options?.secret), options);
       },
       /** @param {string} message @param {"info" | "warn" | "error"} [level] @returns {void} */
       notify(message, level = "info") {
@@ -120,18 +132,19 @@ const printAnswerer = {
     /** @param {string} title @returns {void} */
     const deny = (title) => native.notify(ctx.id, "denied: " + title, "warn");
     return {
-      /** @param {string} title @param {string} [message] @returns {Promise<boolean | undefined>} */
-      confirm(title, message = "") {
+      interactive: false,
+      /** @param {string} title @param {string} [message] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
+      confirm(title, message = "", options) {
         deny(confirmRequest(title, message).title);
         return Promise.resolve(false);
       },
-      /** @param {string} title @param {string[]} options @returns {Promise<string | undefined>} */
-      select(title, options) {
-        deny(selectRequest(title, options).title);
+      /** @param {string} title @param {string[]} choices @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+      select(title, choices, options) {
+        deny(selectRequest(title, choices).title);
         return Promise.resolve(undefined);
       },
-      /** @param {string} title @param {string} [placeholder] @returns {Promise<string | undefined>} */
-      input(title, placeholder) {
+      /** @param {string} title @param {string} [placeholder] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+      input(title, placeholder, options) {
         deny(inputRequest(title, placeholder).title);
         return Promise.resolve(undefined);
       },

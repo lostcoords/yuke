@@ -4,8 +4,8 @@ import { native } from "yuke:engine-native";
 
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
 /** @typedef {{ chordMs: number }} KeymapConfig */
-/** @typedef {{ systemPrompt?: string | null, mouse: MouseConfig, keymap: KeymapConfig }} Config */
-/** @typedef {{ systemPrompt?: string | null, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig> }} ConfigPatch */
+/** @typedef {{ systemPrompt?: string | null, mouse: MouseConfig, keymap: KeymapConfig, agents: { maxConcurrent: number, maxDepth: number } }} Config */
+/** @typedef {{ systemPrompt?: string | null, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig>, agents?: { maxConcurrent?: number, maxDepth?: number } }} ConfigPatch */
 /** @typedef {(value: unknown) => true | string} ConfigValidator */
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -16,6 +16,7 @@ import { native } from "yuke:engine-native";
 export const config = {
   // The default prompt applies to sessions that do not provide one, and `null` matches the engine.
   systemPrompt: null,
+  agents: { maxConcurrent: 8, maxDepth: 1 },
   // Mouse reporting is always on; `scrollLines` counts screen lines, so a wheel step moves the same in every widget.
   mouse: {
     scrollLines: 3,
@@ -35,7 +36,7 @@ export function defineConfig(partial) {
     throw new TypeError("defineConfig expects a config object");
   }
   for (const key of Object.keys(partial)) {
-    if (key !== "systemPrompt" && key !== "mouse" && key !== "keymap") {
+    if (key !== "systemPrompt" && key !== "mouse" && key !== "keymap" && key !== "agents") {
       throw new TypeError("defineConfig: unknown key " + key);
     }
   }
@@ -49,14 +50,26 @@ export function defineConfig(partial) {
   const km = partial.keymap;
   const nextKeymap = { ...config.keymap };
   if (km !== undefined) applyConfigPatch(nextKeymap, KEYMAP_FIELDS, /** @type {Record<string, unknown>} */ (km), "keymap");
+  const agents = { ...config.agents };
+  if (partial.agents !== undefined) applyConfigPatch(agents, AGENT_FIELDS, partial.agents, "agents");
   if (systemPrompt !== undefined) {
     native.setDefaultSystemPrompt(systemPrompt);
     config.systemPrompt = systemPrompt;
   }
+  if (agents.maxConcurrent !== config.agents.maxConcurrent || agents.maxDepth !== config.agents.maxDepth) {
+    native.setAgentLimits(agents.maxConcurrent, agents.maxDepth);
+  }
+  Object.assign(config.agents, agents);
   Object.assign(config.mouse, nextMouse);
   Object.assign(config.keymap, nextKeymap);
   return partial;
 }
+
+/** @type {ConfigValidators} */
+const AGENT_FIELDS = {
+  maxConcurrent: (v) => (typeof v === "number" && Number.isInteger(v) && v > 0 && v <= 4294967295) || "agents.maxConcurrent must be a positive 32-bit integer",
+  maxDepth: (v) => (typeof v === "number" && Number.isInteger(v) && v > 0 && v <= 4294967295) || "agents.maxDepth must be a positive 32-bit integer",
+};
 
 /** @type {ConfigValidators} */
 const MOUSE_FIELDS = {

@@ -60,3 +60,24 @@ WHERE session_id = :session_id;
 DELETE FROM pending_inputs
 WHERE session_id = :session_id AND input_id = :input_id
 RETURNING 1 AS deleted;
+
+-- name: ChildReportCredits :one
+-- A reservation follows each descendant input or turn up to the root report.
+-- parent_id: [16]u8!
+-- used: i64!
+WITH RECURSIVE tree(id) AS (
+    SELECT id FROM sessions WHERE parent_id = :parent_id
+    UNION
+    SELECT s.id FROM sessions s JOIN tree t ON s.parent_id = t.id
+)
+SELECT
+    (SELECT count(*) FROM pending_inputs p JOIN tree t ON t.id = p.session_id) +
+    (SELECT count(*) FROM sessions s JOIN tree t ON t.id = s.id WHERE s.open_run_kind = 'turn') +
+    (SELECT count(*) FROM pending_inputs WHERE session_id = :parent_id AND json_extract(payload, '$.source.type') IN ('child_report', 'child_input_canceled')) AS used;
+
+-- name: ProtectedInputCount :one
+-- A protected entry is an engine report or notice, never a work request.
+-- session_id: [16]u8!
+-- depth: i64!
+SELECT count(*) AS depth FROM pending_inputs
+WHERE session_id = :session_id AND coalesce(json_extract(payload, '$.source.type'), 'parent_instruction') <> 'parent_instruction';

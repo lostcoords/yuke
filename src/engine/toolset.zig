@@ -7,6 +7,18 @@ const std = @import("std");
 const proto = @import("proto");
 const ir = @import("ai").ir;
 
+pub const Site = proto.input.ToolSite;
+
+pub const Selection = struct {
+    can_spawn: bool = false,
+};
+
+pub const Context = struct {
+    workspace_root: []const u8,
+    site: Site,
+    work: *@import("../session/work.zig"),
+};
+
 /// One tool run, mapped for a tool part. `is_error` selects the completed or the error state.
 pub const Outcome = struct {
     output: []const u8,
@@ -16,25 +28,31 @@ pub const Outcome = struct {
 
 pub const ToolSet = struct {
     ctx: *anyopaque = undefined,
-    /// Answer what the provider may call. The slice is valid until the caller returns.
-    getDecls: *const fn (ctx: *anyopaque) []const ir.Tool = noDecls,
+    /// Answer what the provider may call. The result belongs to `arena`.
+    getDecls: *const fn (ctx: *anyopaque, arena: std.mem.Allocator, selection: Selection) error{OutOfMemory}![]const ir.Tool = noDecls,
+    /// Answer whether a provider tool call is allowed for this selection.
+    isAllowed: *const fn (ctx: *anyopaque, name: []const u8, selection: Selection) bool = allow,
     /// Run one tool by the name the provider chose.
     run: *const fn (
         ctx: *anyopaque,
         out: std.mem.Allocator,
         name: []const u8,
         arguments: []const u8,
-        workspace_root: []const u8,
+        context: Context,
     ) Outcome = unknownTool,
 };
 
 /// A process without extensions advertises no tool.
-fn noDecls(_: *anyopaque) []const ir.Tool {
+fn noDecls(_: *anyopaque, _: std.mem.Allocator, _: Selection) error{OutOfMemory}![]const ir.Tool {
     return &.{};
 }
 
+fn allow(_: *anyopaque, _: []const u8, _: Selection) bool {
+    return true;
+}
+
 /// A name the process does not serve answers the model, so a turn continues.
-fn unknownTool(_: *anyopaque, out: std.mem.Allocator, name: []const u8, _: []const u8, _: []const u8) Outcome {
+fn unknownTool(_: *anyopaque, out: std.mem.Allocator, name: []const u8, _: []const u8, _: Context) Outcome {
     return .{
         .output = std.fmt.allocPrint(out, "The tool \"{s}\" is unknown.", .{name}) catch "The requested tool is unknown.",
         .is_error = true,

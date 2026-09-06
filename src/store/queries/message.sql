@@ -93,3 +93,12 @@ FROM messages
 WHERE session_id = :session_id AND role = 'assistant' AND tokens_input IS NOT NULL
 ORDER BY message_id DESC
 LIMIT 1;
+
+-- name: RunReportMessages :many
+-- Read only this run's committed assistant output, newest first.
+-- session_id: [16]u8!
+-- run_id: u64!
+-- payload: []const u8!
+SELECT e.payload FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+WHERE m.session_id = :session_id AND m.run_id = :run_id AND m.role = 'assistant'
+ORDER BY m.message_id DESC;

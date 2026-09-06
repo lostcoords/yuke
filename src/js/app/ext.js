@@ -1,5 +1,5 @@
 // yuke:ext — the plugin runtime: a Scope owns revertible effects, a Context registers, and `advice` wraps methods.
-import { events } from "yuke:kernel";
+import { config, events } from "yuke:kernel";
 import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installInputGate, setPoints } from "yuke:hooks";
 import { native } from "yuke:engine-native";
@@ -15,8 +15,8 @@ import { native } from "yuke:engine-native";
 /** @typedef {Parameters<typeof events.on>[1]} EventHandler */
 /** @typedef {Parameters<typeof events.on>[2]} EventOptions */
 /** @typedef {(ctx: Context, config: unknown) => unknown} PluginApply */
-/** @typedef {(args: any, signal: { aborted: boolean }, context: { workspaceRoot: string }) => Promise<unknown>} ToolExecute */
-/** @typedef {{ name: string, description: string, parameters: Record<string, unknown>, execute: ToolExecute }} ToolDefinition */
+/** @typedef {(args: any, signal: { aborted: boolean }, context: { workspaceRoot: string, sessionId?: string, messageId?: number, partId?: number }) => Promise<unknown>} ToolExecute */
+/** @typedef {{ name: string, description: string, parameters: Record<string, unknown>, execute: ToolExecute, spawnsAgents?: boolean }} ToolDefinition */
 /** @typedef {Context & Record<string, any>} InjectContext */
 /** @typedef {(ctx: InjectContext) => unknown} InjectApply */
 /** @typedef {{ name: string, apply: PluginApply }} Plugin */
@@ -520,31 +520,49 @@ async function dispatch(point, payload) {
 
 installDispatcher(dispatch);
 
-// Fold `input.before` over one input and then issue it. Every frontend enters here, so the engine never waits on a hook.
-/** @param {Wire.SessionSendInputParams} params @returns {Promise<Wire.SessionSendInputResult>} */
-export async function sendInput(params) {
-  if (params.input.type === "content") {
-    const decision = await dispatch("input.before", { session_id: params.session_id, content: params.input.content });
-    if (decision?.type === "block") {
-      const error = new Error("an extension stopped the input");
-      error.name = "EngineError";
-      /** @type {any} */ (error).code = "bad_request";
-      throw error;
-    }
-    if (decision?.type === "replace") params = { ...params, input: { type: "content", content: decision.value.content } };
+// Fold the input hook before native admission; a proposed session has no id yet.
+/** @param {string | null} sessionId @param {Wire.Input} input @param {Wire.CreateSession | null} [create] @returns {Promise<Wire.Input>} */
+async function prepareInput(sessionId, input, create = null) {
+  if (input.type !== "content") return input;
+  const decision = await dispatch("input.before", { session_id: sessionId, content: input.content, ...(create ? { create } : {}) });
+  if (decision?.type === "block") {
+    const error = new Error("an extension stopped the input");
+    error.name = "EngineError";
+    /** @type {any} */ (error).code = "bad_request";
+    throw error;
   }
-  return JSON.parse(await native.request("session.send_input", JSON.stringify(params)));
+  return decision?.type === "replace" ? { type: "content", content: decision.value.content } : input;
 }
 
-// The RPC frontend reads one object for both outcomes, because a call record carries text and no code.
-installInputGate((params) => sendInput(params).then(
+/** @param {Wire.SessionSendInputParams} params @returns {Promise<Wire.SessionSendInputResult>} */
+export async function sendInput(params) {
+  const input = await prepareInput(params.session_id, params.input);
+  return JSON.parse(await native.request("session.send_input", JSON.stringify({ ...params, input })));
+}
+
+/** @param {Wire.CreateSession} params @returns {Promise<Wire.SessionResult>} */
+export async function createSession(params) {
+  if (params.child && params.system_prompt == null) {
+    const childPrompt = "You are a child agent for one assignment. Use your own fresh context. Delegate only when a spawn tool is available. Child work has one shared tree limit. If a child is queued and you have no independent work, return your current result so its run can start. Child reports resume this session. Report your result, evidence, and unresolved issues to the parent. Never repeat completed side effects after an interruption unless new input requires it.";
+    params = { ...params, system_prompt: (config.systemPrompt ?? "") + (config.systemPrompt ? "\n\n" : "") + childPrompt };
+  }
+  if (params.initial_input != null) {
+    const { initial_input, ...create } = params;
+    params = { ...create, initial_input: await prepareInput(null, initial_input, create) };
+  }
+  return JSON.parse(await native.request("session.create", JSON.stringify(params)));
+}
+
+// The owner bridge carries both input methods through the same hook policy.
+installInputGate((params, method = "session.send_input") => (method === "session.create" ? createSession(params) : sendInput(params)).then(
   (result) => ({ result }),
   (e) => ({ failure: { code: e.code || "internal", message: e.message || String(e) } }),
 ));
 
 // --- interaction: the service a frontend installs ---
 // A frontend answers a question and shows a message. It is always present, so it gates no block.
-/** @typedef {{ confirm(title: string, message?: string): Promise<boolean | undefined>, select(title: string, options: string[]): Promise<string | undefined>, input(title: string, placeholder?: string): Promise<string | undefined>, notify(message: string, level?: "info" | "warn" | "error"): void }} InteractionSurface */
+/** @typedef {{ signal?: { aborted: boolean } | undefined, secret?: boolean }} InteractionOptions */
+/** @typedef {{ interactive?: boolean, deviceLogin?: (start: Wire.AuthLoginResult, outcome: Promise<Wire.AuthLoginOutcome>, options?: InteractionOptions) => Promise<Wire.AuthLoginOutcome | undefined>, confirm(title: string, message?: string, options?: InteractionOptions): Promise<boolean | undefined>, select(title: string, choices: string[], options?: InteractionOptions): Promise<string | undefined>, input(title: string, placeholder?: string, options?: InteractionOptions): Promise<string | undefined>, notify(message: string, level?: "info" | "warn" | "error"): void }} InteractionSurface */
 /** @typedef {{ surfaceFor: (ctx: Context) => InteractionSurface }} Answerer */
 
 /** @param {string} name @returns {Error} */
@@ -558,6 +576,7 @@ function noAnswerer(name) {
 /** @type {Answerer} */
 const unanswered = {
   surfaceFor: () => ({
+    interactive: false,
     confirm: () => Promise.reject(noAnswerer("confirm")),
     select: () => Promise.reject(noAnswerer("select")),
     input: () => Promise.reject(noAnswerer("input")),

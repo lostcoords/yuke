@@ -112,7 +112,8 @@ pub const Rpc = struct {
     out: *std.Io.Writer,
     gpa: std.mem.Allocator,
     notifications: *NotificationQueue,
-    wake: *zio.ResetEvent,
+    wake: *std.Io.Event,
+    io: std.Io,
     interactions: ?InteractionPort = null,
     /// The host whose gate reads a hooked input. A test stream without a host serves every line inline.
     host: ?*Host = null,
@@ -138,7 +139,7 @@ pub const Rpc = struct {
         }
         const params = self.gpa.dupe(u8, request.params) catch unreachable;
         const id = if (request.id) |value| self.gpa.dupe(u8, value) catch unreachable else null;
-        self.inputs.append(self.gpa, .{ .id = id, .params = params, .call = host.calls.submitInput(params) }) catch unreachable;
+        self.inputs.append(self.gpa, .{ .id = id, .params = params, .call = host.calls.submitInputMethod(request.method, params) }) catch unreachable;
     }
 
     /// Write every gated input the owner settled. The owner is the only writer.
@@ -197,7 +198,7 @@ pub const Rpc = struct {
     fn fail(self: *Rpc, message: []const u8) void {
         if (!self.fatal) std.log.err("rpc: {s}", .{message});
         self.fatal = true;
-        self.wake.set();
+        self.wake.set(self.io);
     }
 
     fn failWrite(self: *Rpc, err: anyerror) void {
@@ -317,6 +318,7 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         .gpa = gpa,
         .notifications = &notifications,
         .wake = &extensions.host.wake,
+        .io = extensions.host.io,
         .interactions = interactionPort(&extensions.host.interactions),
         .host = extensions.host,
     };
@@ -327,9 +329,13 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         rpc.deinit();
     }
 
+    application.engine.resumeWorkspace(extensions.host.cwd) catch |err| {
+        std.log.warn("cannot resume the workspace: {t}", .{err});
+    };
+
     var readers: zio.Group = .init;
     var in_file = std.Io.File.stdin().readerStreaming(io, in_buf);
-    try readers.spawn(readerTask, .{ &in_file.interface, &requests, &extensions.host.wake, gpa });
+    try readers.spawn(readerTask, .{ &in_file.interface, &requests, &extensions.host.wake, gpa, extensions.host.io });
     defer {
         readers.cancel();
         drainRequests(gpa, &requests);
@@ -374,43 +380,43 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         extensions.host.wake.reset();
         if (requests.tryReceive()) |request| {
             requests.trySend(request) catch unreachable;
-            extensions.host.wake.set();
+            extensions.host.wake.set(extensions.host.io);
             continue;
         } else |_| {}
         if (extensions.host.hasPending()) continue;
-        extensions.host.wake.wait() catch return;
+        extensions.host.wake.wait(extensions.host.io) catch return;
     }
 }
 
 /// Copy one bounded stdin line into the owner queue. This task never enters QuickJS.
-fn readerTask(reader: *std.Io.Reader, requests: *zio.Channel(Request), wake: *zio.ResetEvent, gpa: std.mem.Allocator) !void {
+fn readerTask(reader: *std.Io.Reader, requests: *zio.Channel(Request), wake: *std.Io.Event, gpa: std.mem.Allocator, io: std.Io) !void {
     while (true) {
         const borrowed = reader.takeDelimiter('\n') catch |err| switch (err) {
             error.StreamTooLong => {
                 requests.send(.too_long) catch return;
-                wake.set();
+                wake.set(io);
                 return;
             },
             error.ReadFailed => {
                 requests.send(.read_failed) catch return;
-                wake.set();
+                wake.set(io);
                 return;
             },
         } orelse {
             requests.send(.eof) catch return;
-            wake.set();
+            wake.set(io);
             return;
         };
         const line = gpa.dupe(u8, borrowed) catch {
             requests.send(.read_failed) catch return;
-            wake.set();
+            wake.set(io);
             return;
         };
         requests.send(.{ .line = line }) catch {
             gpa.free(line);
             return;
         };
-        wake.set();
+        wake.set(io);
     }
 }
 
@@ -457,7 +463,11 @@ fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
         return;
     }
     // A hooked input waits on JavaScript, so it leaves the owner and answers later.
-    if (rpc.host) |host| if (std.mem.eql(u8, request.method, "session.send_input") and host.hooks.holds(.@"input.before")) {
+    const needs_gate = if (std.mem.eql(u8, request.method, "session.send_input")) true else if (std.mem.eql(u8, request.method, "session.create")) blk: {
+        const params = std.json.parseFromSliceLeaky(proto.misc.CreateSession, arena, request.params, .{ .ignore_unknown_fields = true }) catch break :blk false;
+        break :blk params.initial_input != null;
+    } else false;
+    if (rpc.host) |host| if (needs_gate and host.hooks.holds(.@"input.before")) {
         return rpc.gateInput(host, request);
     };
 
@@ -590,8 +600,8 @@ test "a notification does not receive a refusal response" {
     defer buf.deinit();
     var notifications = NotificationQueue{};
     defer drainNotifications(testing.allocator, &notifications);
-    var wake = zio.ResetEvent.init;
-    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake };
+    var wake: std.Io.Event = .unset;
+    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake, .io = testing.io };
 
     serve(testing.allocator, &rpc, "{\"method\":\"missing\"}");
     try testing.expectEqual(@as(usize, 0), buf.written().len);
@@ -646,8 +656,8 @@ test "the transport writes one line for each value" {
     defer buf.deinit();
     var notifications = NotificationQueue{};
     defer drainNotifications(testing.allocator, &notifications);
-    var wake = zio.ResetEvent.init;
-    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake };
+    var wake: std.Io.Event = .unset;
+    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake, .io = testing.io };
 
     try rpc.writeResult("r1", "{\"ok\":true}");
     try rpc.writeFailure("r2", .unknown_method, "unknown method");
@@ -674,8 +684,8 @@ test "owner writes queued notifications before the response" {
     defer buf.deinit();
     var notifications = NotificationQueue{};
     defer drainNotifications(testing.allocator, &notifications);
-    var wake = zio.ResetEvent.init;
-    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake };
+    var wake: std.Io.Event = .unset;
+    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake, .io = testing.io };
     const note: proto.rpc.Notification = .{ .method = .notice, .params = .{ .notice = .{
         .level = .info,
         .source = "test",
@@ -697,8 +707,8 @@ test "the sink callback queues an owned notification without writing" {
     defer buf.deinit();
     var notifications = NotificationQueue{};
     defer drainNotifications(testing.allocator, &notifications);
-    var wake = zio.ResetEvent.init;
-    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake };
+    var wake: std.Io.Event = .unset;
+    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake, .io = testing.io };
     var message = [_]u8{ 'q', 'u', 'e', 'u', 'e', 'd' };
     const note: proto.rpc.Notification = .{ .method = .notice, .params = .{ .notice = .{
         .level = .info,

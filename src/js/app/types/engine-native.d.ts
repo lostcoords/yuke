@@ -2,7 +2,7 @@
 declare module "yuke:engine-native" {
   /** One session's outline: the committed message ids and roles, plus the live draft. */
   export type SessionOutline = {
-    messages: { id: number; type: "user" | "assistant" | "compaction"; error?: { type: string; message: string } }[];
+    messages: { id: number; type: "user" | "assistant" | "compaction"; source?: Wire.InputSource; error?: { type: string; message: string } }[];
     active: { id: number; type: "assistant" } | null;
   };
 
@@ -39,6 +39,8 @@ declare module "yuke:engine-native" {
     factNames(): Wire.BroadcastName[];
     /** What the JavaScript runtime holds right now, separate from the process footprint. */
     memoryUsage(): MemoryUsage;
+    /** Set the child run concurrency and nesting depth limits. */
+    setAgentLimits(maxConcurrent: number, maxDepth: number): void;
     /** Set or clear the default prompt for new sessions. Null clears it. */
     setDefaultSystemPrompt(prompt: string | null): void;
     /** Install the one sink. `drain` calls it on the owner, never from an engine task. */

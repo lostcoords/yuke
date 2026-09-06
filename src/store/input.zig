@@ -22,6 +22,19 @@ pub fn enqueue(
     content: []const proto.content.ContentPart,
     queued_at_ms: u64,
 ) !Entry {
+    return enqueueSource(db, arena, session_id, event_id, committed_at_ms, content, queued_at_ms, null);
+}
+
+pub fn enqueueSource(
+    db: *Database,
+    arena: std.mem.Allocator,
+    session_id: [16]u8,
+    event_id: [16]u8,
+    committed_at_ms: u64,
+    content: []const proto.content.ContentPart,
+    queued_at_ms: u64,
+    source: ?proto.input.InputSource,
+) !Entry {
     std.debug.assert(sql.inTransaction(db.conn));
 
     const input_id = try event.allocInputId(db, arena, session_id);
@@ -29,6 +42,7 @@ pub fn enqueue(
     const stored_content = try proto.dupe(arena, content);
     const queued: proto.misc.QueuedInput = .{
         .input_id = input_id,
+        .source = try proto.dupe(arena, source),
         .content = stored_content,
         .queued_at_ms = queued_at_ms,
     };
@@ -87,7 +101,8 @@ pub fn cancel(
     input_id: u64,
 ) !u64 {
     std.debug.assert(sql.inTransaction(db.conn));
-    _ = try checkedPending(db, arena, session_id, input_id);
+    const entry = try checkedPending(db, arena, session_id, input_id);
+    if (entry.input.source) |source| if (source.protected()) return error.ProtectedInput;
 
     const seq = try event.allocSeq(db, arena, session_id);
     const data: proto.input.InputCanceledData = .{

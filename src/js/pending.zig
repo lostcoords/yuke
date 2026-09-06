@@ -11,7 +11,6 @@
 
 const std = @import("std");
 const quickjs = @import("quickjs");
-const zio = @import("zio");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -71,29 +70,51 @@ pub const Op = struct {
     resolve: Value,
     reject: Value,
     /// The owner sleeps on this. The op captures it so a task needs nothing but its own pointer.
-    wake: *zio.ResetEvent,
+    wake: *std.Io.Event,
     /// Null while the task runs. The task writes it once, and the owner reads it once.
     result: ?Result = null,
+    /// The exact tool signal remains rooted until this op leaves the table.
+    signal: Value = quickjs.UNDEFINED,
+    /// Exec waits for either its worker result or a call abort on this event.
+    task_wake: std.Io.Event = .unset,
+    cancel_requested: bool = false,
+    work: ?*@import("../session/work.zig") = null,
+    io: std.Io,
+    operation: @import("../session/work.zig").Operation = .{ .cancel = cancelOperation },
+
+    fn cancelOperation(operation: *@import("../session/work.zig").Operation) void {
+        const self: *Op = @fieldParentPtr("operation", operation);
+        std.debug.assert(self.result == null);
+        self.cancel_requested = true;
+        self.task_wake.set(self.io);
+    }
 
     /// Record the outcome and wake the owner. This runs on a task, so it enters no JavaScript and touches nothing after the wake.
     pub fn finish(self: *Op, result: Result) void {
         std.debug.assert(self.result == null); // a task finishes its op once
+        if (self.work) |work| {
+            work.release(self.io, &self.operation);
+            self.work = null;
+        }
         self.result = result;
-        self.wake.set();
+        self.wake.set(self.io);
     }
 };
 
 /// Every op this host has started and not yet settled. The owner drains it between frames.
 pub const Ops = struct {
     gpa: std.mem.Allocator,
-    wake: *zio.ResetEvent,
+    io: std.Io,
+    wake: *std.Io.Event,
     live: std.ArrayList(*Op) = .empty,
 
     pub fn deinit(self: *Ops, ctx: Context) void {
         // A host that dies with work in flight frees the roots itself; nothing settles after this.
         for (self.live.items) |op| {
+            std.debug.assert(op.work == null);
             ctx.freeValue(op.resolve);
             ctx.freeValue(op.reject);
+            ctx.freeValue(op.signal);
             if (op.result) |r| self.freeResult(r);
             self.gpa.destroy(op);
         }
@@ -107,9 +128,19 @@ pub const Ops = struct {
         const promise = ctx.newPromiseCapability(&funcs);
         if (ctx.isException(promise)) return null;
         const op = self.gpa.create(Op) catch unreachable;
-        op.* = .{ .resolve = funcs[0], .reject = funcs[1], .wake = self.wake };
+        op.* = .{ .resolve = funcs[0], .reject = funcs[1], .wake = self.wake, .io = self.io };
         self.live.append(self.gpa, op) catch unreachable;
         return .{ .op = op, .promise = promise };
+    }
+
+    /// Request cleanup without a join on the QuickJS owner.
+    pub fn abortSignal(self: *Ops, ctx: Context, signal: Value) void {
+        std.debug.assert(ctx.isObject(signal));
+        for (self.live.items) |op| {
+            if (op.result != null or !ctx.isStrictEqual(op.signal, signal)) continue;
+            op.cancel_requested = true;
+            op.task_wake.set(self.io);
+        }
     }
 
     /// Report whether any op finished. The owner asks before it sleeps.
@@ -133,6 +164,7 @@ pub const Ops = struct {
             self.freeResult(result);
             ctx.freeValue(op.resolve);
             ctx.freeValue(op.reject);
+            ctx.freeValue(op.signal);
             self.gpa.destroy(op);
         }
         return faulted;

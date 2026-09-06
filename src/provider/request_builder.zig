@@ -113,7 +113,7 @@ fn terminalToolResult(state: proto.tool.ToolState) Error!ToolOutcome {
     return switch (state) {
         .completed => |c| .{ .content = c.output, .is_error = false },
         .@"error" => |e| .{ .content = e.@"error", .is_error = true },
-        .canceled => .{ .content = "", .is_error = true },
+        .canceled => .{ .content = "The tool call was canceled. It may have produced side effects before it stopped.", .is_error = true },
         // A committed transcript holds only terminal tools.
         .pending, .running => error.InvalidTranscript,
     };
@@ -228,4 +228,23 @@ test "the media type selects the omitted-attachment note" {
         const folded = try build(arena.allocator(), &messages, reads_images);
         try testing.expectEqualStrings(case[1], folded.blocks[0].value.text);
     }
+}
+
+test "canceled tools state possible side effects and assistant diagnostics stay outside the request" {
+    const messages = [_]proto.message.Message{.{ .assistant = .{
+        .id = 1,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = "test",
+        .time = .{ .created_at_ms = 1 },
+        .@"error" = .{ .type = "runtime_failed", .message = "private diagnostic" },
+        .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "exec", .arguments = "{}", .state = .{ .canceled = .{} } } }},
+    } }};
+    const request = try build(testing.allocator, &messages, .{});
+    defer testing.allocator.free(request.blocks);
+    try testing.expectEqual(@as(usize, 2), request.blocks.len);
+    const result = request.blocks[1].value.tool_result;
+    try testing.expect(result.is_error);
+    try testing.expect(std.mem.indexOf(u8, result.content, "side effects") != null);
+    try testing.expect(std.mem.indexOf(u8, result.content, "private diagnostic") == null);
 }

@@ -14,6 +14,8 @@ const Value = quickjs.Value;
 /// Register `yuke:interaction-native` and its one `native` object, which also states the host limits.
 pub fn install(host: *Host) void {
     module.installObject(host, "yuke:interaction-native", "native", &.{
+        .{ .name = "watchCancellation", .arity = 2, .call = jsWatchCancellation },
+        .{ .name = "sessionId", .arity = 1, .call = jsSessionId },
         .{ .name = "request", .arity = 2, .call = jsRequest },
         .{ .name = "notify", .arity = 3, .call = jsNotify },
         .{ .name = "cancel", .arity = 1, .call = jsCancel },
@@ -26,16 +28,37 @@ fn addLimits(_: *Host, ctx: Context, native: Value) void {
     module.set(ctx, native, "maxOptions", ctx.newInt64(interactions.max_options));
 }
 
+fn jsWatchCancellation(ctx: Context, _: Value, args: []const Value) Value {
+    const host = Host.fromContext(ctx);
+    if (args.len < 2 or !host.calls.acceptsSignal(ctx, args[1])) return pending.rejected(ctx, "the cancellation signal has no live call");
+    const id = module.integer(ctx, args[0], 1, interactions.max_safe_id) orelse return pending.rejected(ctx, "the cancellation watch needs a safe positive id");
+    return host.interactions.watchCancellation(&host.ops, ctx, id, args[1]) catch |err| return switch (err) {
+        error.Exception => module.throwPending(ctx),
+        else => pending.rejected(ctx, errorMessage(err)),
+    };
+}
+
+fn jsSessionId(ctx: Context, _: Value, args: []const Value) Value {
+    if (args.len != 1) return quickjs.NULL;
+    const call = Host.fromContext(ctx).calls.callForSignal(ctx, args[0]) orelse return quickjs.NULL;
+    const site = call.site orelse return quickjs.NULL;
+    const id = std.fmt.bytesToHex(site.session_id.raw, .lower);
+    return ctx.newString(&id);
+}
+
 fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 2) return pending.rejected(ctx, "interaction.request needs an id and a JSON string");
     const id = module.integer(ctx, args[0], 1, interactions.max_safe_id) orelse return pending.rejected(ctx, "interaction.request needs a safe positive integer id");
     const json = module.string(ctx, args[1]) orelse return pending.rejected(ctx, "interaction.request needs a JSON string");
     defer ctx.freeCString(json.ptr);
-    return host.interactions.start(&host.ops, ctx, id, json) catch |err| switch (err) {
+    const owner = if (args.len > 2 and !ctx.isUndefined(args[2])) host.calls.callForSignal(ctx, args[2]) orelse return pending.rejected(ctx, "the interaction signal has no live call") else null;
+    const promise = host.interactions.start(&host.ops, ctx, id, json) catch |err| return switch (err) {
         error.Exception => module.throwPending(ctx),
         else => pending.rejected(ctx, errorMessage(err)),
     };
+    if (owner) |call| host.interactions.attribute(ctx, id, if (call.site) |site| site.session_id else null, args[2]);
+    return promise;
 }
 
 /// Broadcast one message to every attached frontend. Nothing answers it.

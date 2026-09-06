@@ -101,3 +101,14 @@ test "run outcome failed round-trips" {
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(json, buf.written());
 }
+
+test "interrupted is a closed run failure category" {
+    const json = "{\"type\":\"failed\",\"code\":\"interrupted\",\"message\":\"the engine stopped\"}";
+    const parsed = try std.json.parseFromSlice(RunOutcome, testing.allocator, json, .{});
+    defer parsed.deinit();
+    try testing.expectEqual(enums.RunErrorCode.interrupted, parsed.value.failed.code);
+    const encoded = try std.json.Stringify.valueAlloc(testing.allocator, parsed.value, .{});
+    defer testing.allocator.free(encoded);
+    try testing.expectEqualStrings(json, encoded);
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(RunOutcome, testing.allocator, "{\"type\":\"failed\",\"code\":\"unknown_failure\",\"message\":\"x\"}", .{}));
+}

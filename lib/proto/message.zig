@@ -231,6 +231,7 @@ pub const TurnProvenance = struct {
 
 /// This payload describes a user transcript message. Its fields borrow their data.
 pub const UserMessage = struct {
+    source: ?@import("input.zig").InputSource = null,
     id: ids.MessageId,
     content: []const content.ContentPart,
     input_id: ids.InputId,

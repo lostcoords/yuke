@@ -6,7 +6,6 @@ const Host = @import("../js/host.zig").Host;
 const extensions_mod = @import("../js/extensions.zig");
 const App = @import("app.zig").App;
 const ai = @import("ai");
-const zio = @import("zio");
 
 const testing = std.testing;
 
@@ -23,13 +22,14 @@ test "an interaction question and its answer share the RPC stream" {
     defer buf.deinit();
     var notifications = rpc.NotificationQueue{};
     defer rpc.drainNotifications(testing.allocator, &notifications);
-    var wake = zio.ResetEvent.init;
+    var wake: std.Io.Event = .unset;
     var stream: rpc.Rpc = .{
         .app = undefined,
         .out = &buf.writer,
         .gpa = testing.allocator,
         .notifications = &notifications,
         .wake = &wake,
+        .io = host.io,
         .interactions = rpc.interactionPort(&host.interactions),
     };
 
@@ -81,6 +81,7 @@ test "a pending input hook still accepts an interaction response" {
         .gpa = testing.allocator,
         .notifications = &notifications,
         .wake = &extensions.host.wake,
+        .io = extensions.host.io,
         .interactions = rpc.interactionPort(&extensions.host.interactions),
         .host = extensions.host,
     };

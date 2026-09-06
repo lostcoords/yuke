@@ -113,7 +113,7 @@ pub fn runIo(env: *std.process.Environ.Map, extensions: *extensions_mod.Extensio
     defer {
         // Stop all producers, then drain the queued messages, then close the channel.
         tty.shutdownInput();
-        extensions.host.wake.set();
+        extensions.host.wake.set(extensions.host.io);
         group.cancel();
         drainChannel(gpa, &ch);
         ch.close(.immediate);
@@ -132,6 +132,9 @@ pub fn runIo(env: *std.process.Environ.Map, extensions: *extensions_mod.Extensio
 pub fn serve(host: *Host, ch: *Channel) !void {
     std.debug.assert(host.phase == .open);
     try absorbScriptFault(host, tui_loop.start(host));
+    if (host.engine.runtime) |application| application.engine.resumeWorkspace(host.cwd) catch |err| {
+        std.log.warn("cannot resume the workspace: {t}", .{err});
+    };
     while (!host.paint.quit_requested) {
         var msg = ch.receive() catch |err| switch (err) {
             error.ChannelClosed, error.Canceled => break,
@@ -196,14 +199,14 @@ fn tickTask(host: *Host, ch: *Channel) !void {
     var last: zio.Timestamp = .zero;
     while (!host.paint.quit_requested) {
         const due = tickDue(host, last) orelse {
-            wake.wait() catch return;
+            wake.wait(host.io) catch return;
             wake.reset();
             continue;
         };
         const now = zio.now();
         if (due.value > now.value) {
             // A wake before the deadline re-reads it, because a pending engine event may owe an earlier tick.
-            wake.timedWait(.{ .deadline = due }) catch |err| switch (err) {
+            wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromNanoseconds(due.value - now.value), .clock = .awake } }) catch |err| switch (err) {
                 error.Timeout => {},
                 error.Canceled => return,
             };
@@ -392,7 +395,7 @@ test "tickTask enqueues a tick while armed" {
 
     host.paint.needs_tick = false;
     host.paint.quit_requested = true;
-    host.wake.set();
+    host.wake.set(host.io);
 }
 
 test "tickTask paces engine wakes to the frame gap" {
@@ -424,7 +427,7 @@ test "tickTask paces engine wakes to the frame gap" {
     try std.testing.expect(ticks >= 1 and ticks < 12);
 
     host.paint.quit_requested = true;
-    host.wake.set();
+    host.wake.set(host.io);
 }
 
 fn sendQuit(ch: *Channel) !void {

@@ -97,12 +97,16 @@ pub const SessionHistoryResult = struct {
 /// These are the parameters for `session.get`.
 pub const SessionGetParams = struct {
     session_id: ids.SessionId,
+    /// Select a direct child of session_id by name.
+    child_name: ?[]const u8 = null,
 };
 
 /// This row summarizes a session for `session.list`, `session.get`, and session broadcasts. Its fields borrow their data.
 pub const SessionListItem = struct {
     session: misc.Session,
     activity: SessionActivity,
+    /// The outcome of the latest terminal turn; the engine reports it for a child.
+    last_run: ?run.RunOutcome = null,
 };
 
 /// These are the `session.list` input fields. They borrow their data.
@@ -141,9 +145,7 @@ pub const SessionOrigin = union(enum) {
 
 /// This origin links a session to its parent session and message part.
 pub const SessionOriginChild = struct {
-    parent_id: ids.SessionId,
-    parent_message_id: ids.MessageId,
-    parent_part_id: ids.PartId,
+    site: input.ToolSite,
 };
 
 /// This origin links a session to its source session.
@@ -222,7 +224,22 @@ pub const SessionRemovedData = struct {
 /// This result contains the session after creation, a fork, or a patch.
 pub const SessionResult = struct {
     session: misc.Session,
+    input: ?SessionSendInputResult = null,
 };
+
+/// The live parent tool site and the stable name of a new child.
+pub const ChildSession = struct {
+    slot: @import("agents.zig").AgentModelSlot,
+    site: input.ToolSite,
+    name: []const u8,
+};
+
+pub const ChildCapacity = struct {
+    active: u64,
+    limit: u64,
+};
+
+pub const InputQueueReason = enum { session_busy, concurrency_limit };
 
 /// These are the parameters for `session.rewind`.
 pub const SessionRewindParams = struct {
@@ -232,6 +249,7 @@ pub const SessionRewindParams = struct {
 
 /// These are the parameters for `session.send_input`.
 pub const SessionSendInputParams = struct {
+    parent_tool: ?input.ToolSite = null,
     session_id: ids.SessionId,
     input: input.Input,
 };
@@ -256,12 +274,15 @@ pub const SessionSendInputResult = union(enum) {
 /// The engine queued the input behind an active turn.
 pub const SessionSendInputResultQueued = struct {
     input_id: ids.InputId,
+    reason: InputQueueReason,
+    capacity: ?ChildCapacity = null,
 };
 
 /// The engine started the input immediately.
 pub const SessionSendInputResultStarted = struct {
     input_id: ids.InputId,
     run_id: ids.RunId,
+    capacity: ?ChildCapacity = null,
 };
 
 /// This payload describes `session.summary_changed`.
@@ -286,4 +307,28 @@ test "session population round-trips" {
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(json, buf.written());
+}
+
+test "queued admission requires a closed reason and preserves capacity" {
+    const json = "{\"type\":\"queued\",\"input_id\":1,\"reason\":\"concurrency_limit\",\"capacity\":{\"active\":2,\"limit\":2}}";
+    const parsed = try std.json.parseFromSlice(SessionSendInputResult, std.testing.allocator, json, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(InputQueueReason.concurrency_limit, parsed.value.queued.reason);
+    const written = try std.json.Stringify.valueAlloc(std.testing.allocator, parsed.value, .{});
+    defer std.testing.allocator.free(written);
+    try std.testing.expectEqualStrings(json, written);
+    try std.testing.expectError(error.MissingField, std.json.parseFromSlice(SessionSendInputResult, std.testing.allocator, "{\"type\":\"queued\",\"input_id\":1}", .{}));
+    try std.testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(SessionSendInputResult, std.testing.allocator, "{\"type\":\"queued\",\"input_id\":1,\"reason\":\"unknown\"}", .{}));
+}
+
+test "a child requires a closed explicit slot on the wire" {
+    const a = std.testing.allocator;
+    for ([_][]const u8{ "", ",\"slot\":null", ",\"slot\":\"large\"", ",\"slot\":\"provider/model\"" }) |suffix| {
+        const json = try std.fmt.allocPrint(a, "{{\"parent_id\":\"01010101010101010101010101010101\",\"parent_message_id\":2,\"parent_part_id\":0,\"name\":\"one\"{s}}}", .{suffix});
+        defer a.free(json);
+        if (std.json.parseFromSlice(ChildSession, a, json, .{})) |parsed| {
+            parsed.deinit();
+            return error.AcceptedInvalidChildSlot;
+        } else |_| {}
+    }
 }

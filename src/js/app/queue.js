@@ -3,7 +3,7 @@ import { root, clip } from "yuke:core";
 import { ui } from "yuke:ui";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
-import { ChatView } from "yuke:transcript";
+import { ChatView, inputSourceLabel } from "yuke:transcript";
 import { chatOf, focusedChat } from "yuke:chat";
 
 /** @typedef {import("yuke:ext").InjectContext} Ctx */
@@ -26,6 +26,7 @@ export function queueOf(sessionId) {
 // The first line of a queued input, with a mark for each part that is not text.
 /** @param {Wire.QueuedInput} input @returns {string} */
 export function queuedText(input) {
+  if (protectedInput(input)) return "[protected] " + inputSourceLabel(input.source);
   const words = [];
   for (const part of input.content) {
     if (part.type === "text") words.push(part.text);
@@ -34,6 +35,18 @@ export function queuedText(input) {
   const joined = words.join(" ").trim();
   const nl = joined.indexOf("\n");
   return nl < 0 ? joined : joined.slice(0, nl) + "…";
+}
+
+/** @param {Wire.QueuedInput} input @returns {boolean} */
+export function protectedInput(input) { return input.source != null && input.source.type !== "parent_instruction"; }
+
+/** @param {string} sessionId */
+export async function clearWorkQueue(sessionId) {
+  const items = (await client.sessionQueue(sessionId)).items;
+  const work = items.filter((item) => !protectedInput(item));
+  const results = await Promise.allSettled(work.map((item) => client.sessionCancelInput(sessionId, item.input_id)));
+  const removed = results.filter((result) => result.status === "fulfilled").length;
+  return { removed, failed: work.length - removed, protected: items.length - work.length };
 }
 
 // Read the queue again. Each call is a new generation, so the newest read is the one that lands.
@@ -71,6 +84,7 @@ export function stripRows(items) {
 // Drop one input. The engine announces the shorter queue, so the strip follows on its own.
 /** @param {string} sessionId @param {Wire.QueuedInput} input @returns {Promise<void>} */
 function cancelOne(sessionId, input) {
+  if (protectedInput(input)) { notice.show("engine reports and notices stay queued"); return Promise.resolve(); }
   return client.sessionCancelInput(sessionId, input.input_id).then(
     () => notice.show("dropped · " + clip(queuedText(input), 40)),
     (e) => notice.show("cannot drop · " + ((e && e.message) || "unknown")),
@@ -91,6 +105,7 @@ function openQueuePicker(ctx, sessionId) {
     width: 0.6,
     height: 0.4,
     items: items.slice(),
+    isSelectable: (q) => !protectedInput(q),
     key: (q) => String(q.input_id),
     filterText: queuedText,
     format: (q) => ({ text: queuedText(q) }),
@@ -130,16 +145,13 @@ export const queuePlugin = {
           const c = focusedChat();
           if (!c || !c.sessionId) return;
           const id = c.sessionId;
-          const items = queueOf(id);
-          // An input that started belongs to the run, so the engine refuses it and the count says so.
-          Promise.allSettled(items.map((q) => client.sessionCancelInput(id, q.input_id))).then((results) => {
-            const dropped = results.filter((r) => r.status === "fulfilled").length;
-            notice.show(dropped === items.length ? "queue cleared · " + dropped : "dropped " + dropped + " of " + items.length);
-          });
+          clearWorkQueue(id).then((result) => {
+            notice.show("queue · removed " + result.removed + " · failed " + result.failed + " · protected " + result.protected);
+          }, (error) => notice.show("cannot clear queue · " + error.message));
         },
       }, {
         "queue:drop": { title: "Queue", description: "drop one queued message", slash: "queue" },
-        "queue:clear": { title: "Clear queue", description: "drop every queued message", slash: "clear-queue" },
+        "queue:clear": { title: "Clear queue", description: "drop queued work; preserve engine reports", slash: "clear-queue" },
       });
 
       ctx.effect(() => () => {

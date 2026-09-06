@@ -6,6 +6,7 @@ import { notice, noticePlugin } from "yuke:notice";
 import { commandUiPlugin } from "yuke:command-ui";
 import { explorerPlugin } from "yuke:explorer";
 import { catalogPlugin } from "yuke:catalog";
+import { agentsUiPlugin } from "yuke:agents-ui";
 import { authPlugin } from "yuke:auth";
 import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { client } from "yuke:client";
@@ -40,7 +41,7 @@ const workspace = new Node(chat.view);
 function openSessionFinder(ctx) {
   const feed = feedOf();
   const show = () => {
-    const rows = feed.rows().sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
+    const rows = feed.rows().filter((row) => row.session.origin?.type !== "child").sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
     if (rows.length === 0) {
       notice.show("no sessions yet");
       return null;
@@ -156,6 +157,7 @@ plugins.use(commandUiPlugin);
 plugins.use(explorerPlugin);
 plugins.use(catalogPlugin, { entry: chatEntry });
 plugins.use(authPlugin);
+plugins.use(agentsUiPlugin);
 plugins.use(chatPlugin);
 plugins.use(sessionsPlugin);
 plugins.use(activityPlugin);

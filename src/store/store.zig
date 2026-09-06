@@ -25,6 +25,8 @@ const Migration = struct { version: i64, sql: [:0]const u8 };
 const migrations = [_]Migration{
     .{ .version = 1, .sql = @embedFile("migrations/0001_initial.sql") },
     .{ .version = 2, .sql = @embedFile("migrations/0002_pending_inputs.sql") },
+    .{ .version = 3, .sql = @embedFile("migrations/0003_child_admission.sql") },
+    .{ .version = 4, .sql = @embedFile("migrations/0004_child_report_name.sql") },
 };
 
 comptime {
@@ -47,6 +49,8 @@ const migration_hash_ddl =
 pub const Database = struct {
     conn: sql.Connection,
     queries: queries_gen.Queries,
+    /// Private databases still exclude a second engine on the same connection.
+    private_owners: std.AutoHashMapUnmanaged([16]u8, void) = .empty,
 
     /// Take ownership of `conn`, migrate to the latest version, and prepare the queries.
     /// Close the connection if any step fails.
@@ -68,6 +72,7 @@ pub const Database = struct {
     }
 
     pub fn deinit(self: *Database) void {
+        std.debug.assert(self.private_owners.count() == 0);
         self.queries.deinit();
         self.conn.close();
         self.* = undefined;
@@ -233,9 +238,9 @@ test "migrate applies the baseline and claims the database" {
     var db = try Database.open(conn);
     defer db.deinit();
 
-    try std.testing.expectEqual(@as(i64, 2), try scalarInt(db.conn, "PRAGMA user_version"));
+    try std.testing.expectEqual(@as(i64, 4), try scalarInt(db.conn, "PRAGMA user_version"));
     try std.testing.expectEqual(APPLICATION_ID, try scalarInt(db.conn, "PRAGMA application_id"));
-    try std.testing.expectEqual(@as(i64, 2), try scalarInt(db.conn, "SELECT count(*) FROM migration_hash"));
+    try std.testing.expectEqual(@as(i64, 4), try scalarInt(db.conn, "SELECT count(*) FROM migration_hash"));
 }
 
 test "migrate is idempotent on reopen" {
@@ -243,7 +248,38 @@ test "migrate is idempotent on reopen" {
     defer conn.close();
     try migrate(conn);
     try migrate(conn); // The database is current, so apply no step and recheck hashes.
-    try std.testing.expectEqual(@as(i64, 2), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
+    try std.testing.expectEqual(@as(i64, 4), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
+}
+
+test "migrate renames persisted child report paths" {
+    const conn = try zqlite.open(":memory:", test_flags);
+    defer conn.close();
+    try conn.execNoArgs(@embedFile("migrations/0001_initial.sql"));
+    try conn.execNoArgs(@embedFile("migrations/0002_pending_inputs.sql"));
+    try conn.execNoArgs(@embedFile("migrations/0003_child_admission.sql"));
+    try conn.execNoArgs("INSERT INTO sessions(id, root, origin, profile, model, reasoning, config_rev, title, created_at_ms, updated_at_ms) VALUES (x'01010101010101010101010101010101', '/work', 'root', 'default', 'mock', '', 0, 'root', 1, 1)");
+    try conn.execNoArgs("INSERT INTO events(session_id, seq, event_id, committed_at_ms, name, payload) VALUES (x'01010101010101010101010101010101', 1, x'02020202020202020202020202020202', 1, 'message.committed', '{\"type\":\"user\",\"source\":{\"type\":\"child_report\",\"path\":\"/root/a/b\"}}')");
+    try conn.execNoArgs("INSERT INTO events(session_id, seq, event_id, committed_at_ms, name, payload) VALUES (x'01010101010101010101010101010101', 2, x'03030303030303030303030303030303', 1, 'input.queued', '{\"session_id\":\"01010101010101010101010101010101\",\"seq\":2,\"input\":{\"content\":[],\"source\":{\"type\":\"child_report\",\"path\":\"/root/a/b\"}}}')");
+    try conn.execNoArgs("INSERT INTO pending_inputs(session_id, input_id, seq, queued_at_ms, payload) VALUES (x'01010101010101010101010101010101', 1, 2, 1, '{\"content\":[],\"source\":{\"type\":\"child_report\",\"path\":\"/root/a/b\"}}')");
+    try conn.execNoArgs("PRAGMA application_id = 0x79756B65");
+    try conn.execNoArgs("PRAGMA user_version = 3");
+    try conn.execNoArgs(migration_hash_ddl);
+    for (migrations[0..3]) |migration| {
+        const hash = migrationHash(migration.sql);
+        try conn.exec("INSERT INTO migration_hash(version, hash) VALUES (?1, ?2)", .{ migration.version, &hash });
+    }
+    try migrate(conn);
+    try std.testing.expectEqual(@as(i64, 4), try scalarInt(conn, "PRAGMA user_version"));
+    for ([_][]const u8{
+        "SELECT json_extract(payload, '$.source.name'), json_type(payload, '$.source.path') IS NULL FROM events WHERE seq = 1",
+        "SELECT json_extract(payload, '$.input.source.name'), json_type(payload, '$.input.source.path') IS NULL FROM events WHERE seq = 2",
+        "SELECT json_extract(payload, '$.source.name'), json_type(payload, '$.source.path') IS NULL FROM pending_inputs",
+    }) |query| {
+        const row = (try conn.row(query, .{})).?;
+        defer row.deinit();
+        try std.testing.expectEqualStrings("b", row.text(0));
+        try std.testing.expectEqual(@as(i64, 1), row.int(1));
+    }
 }
 
 test "migrate rejects a version from the future" {

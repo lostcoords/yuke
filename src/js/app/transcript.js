@@ -5,7 +5,7 @@ import { Document, isLinear } from "yuke:md";
 import { Composer } from "yuke:ui";
 
 /** @typedef {{ rowCount: (width: number) => number, rows: (width: number, top: number, height: number) => TranscriptRow[] }} RowSource */
-/** @typedef {{ id: number, type: "user" | "assistant" | "compaction", error?: { type: string, message: string } }} MessageDescriptor */
+/** @typedef {{ id: number, type: "user" | "assistant" | "compaction", source?: Wire.InputSource, error?: { type: string, message: string } }} MessageDescriptor */
 /** @typedef {{ anchor: Position, cursor: Position }} Selection */
 /** @typedef {{ id: number, partId: number, kind: string }} PartHit */
 /** @typedef {{ a: { id: number, off: number, was: string }, b: { id: number, off: number, was: string } }} SelectionAnchors */
@@ -32,6 +32,16 @@ const TX_GUTTER = 2;
 
 // Keep a long tool body inside the pager. The replica still holds the full output.
 const TOOL_BODY_CAP = 40;
+const REPORT_PREVIEW_LINES = 8;
+
+/** @param {Wire.InputSource | undefined | null} source @returns {string} */
+export function inputSourceLabel(source) {
+  if (!source || source.type === "parent_instruction") return "";
+  if (source.type === "child_report") return "Message from " + source.name + " · " + (source.outcome.type === "turn" ? "completed" : source.outcome.type) + (source.partial ? " · partial" : "") + (source.truncated ? " · model report truncated" : "");
+  if (source.type === "child_input_canceled") return "Message from " + source.name + " · queued work canceled";
+  return "Engine notice · run " + source.run_id + " interrupted";
+}
+
 
 // Rendered messages beyond this count leave the cache oldest first; the viewport and live anchors never leave.
 const CACHE_MESSAGES = 16;
@@ -1015,7 +1025,14 @@ export class Transcript {
     let blocks = null;
     if (m.type === "user") {
       source = this.textOf(m.id) || "";
-      rows = userRows(m.id, source, width);
+      if (m.source && m.source.type !== "parent_instruction") {
+        const expanded = this._expand.get(this._expandKey(m.id, -1)) === true;
+        const body = wrapBody(source, Math.max(1, width - TX_GUTTER), "TxToolBody");
+        const shown = expanded ? body : body.slice(0, REPORT_PREVIEW_LINES);
+        rows = [{ text: inputSourceLabel(m.source), group: "TxToolMeta", marker: expanded ? "▾" : "▸", markerGroup: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1 },
+          ...shown.map((row) => ({ ...row, kind: "report-body", partId: -1 })),
+          ...(!expanded && body.length > shown.length ? [{ text: "… click the header to expand", group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1 }] : []), { text: "" }];
+      } else rows = userRows(m.id, source, width);
     } else if (m.type === "compaction") {
       source = this.textOf(m.id) || "";
       rows = wrapPlain(m.id, source, width);
@@ -1090,10 +1107,10 @@ export class Transcript {
     if (id == null || partId == null) return;
     const k = this._expandKey(id, partId);
     let part = null;
-    if (this.partsOf) {
+    if (partId !== -1 && this.partsOf) {
       for (const p of this._partState(id).list || []) if (sameId(p.id, partId)) part = p;
     }
-    this._expand.set(k, !this._isExpanded(id, partId, part));
+    this._expand.set(k, !(partId === -1 ? this._expand.get(k) === true : this._isExpanded(id, partId, part)));
     this._markStale(id);
     root.invalidate();
   }
@@ -1457,7 +1474,7 @@ export class Transcript {
       this._didDrag = false;
       if (!dragged && press) {
         const hit = this.partAt(press);
-        if (hit && (hit.kind === "tool-header" || hit.kind === "reasoning-header")) {
+        if (hit && (hit.kind === "tool-header" || hit.kind === "reasoning-header" || hit.kind === "report-header")) {
           this.togglePart(hit.id, hit.partId);
           const header = this.partHeader(hit.id, hit.partId);
           if (header) this.ensureVisible(header);

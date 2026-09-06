@@ -33,6 +33,9 @@ pub const Request = struct {
     value: proto.interaction.InteractionRequest,
     op: *pending.Op,
     sent: bool = false,
+    /// A cancellation watch: never shown, never answered by a peer.
+    hidden: bool = false,
+    session_id: ?proto.ids.SessionId = null,
 };
 
 /// The questions this host waits on, oldest first.
@@ -53,7 +56,7 @@ pub const Table = struct {
         self.accepting = false;
         // A shutdown answers like a cancel, so a gate that waits denies instead of throwing.
         for (self.live.items) |request| {
-            request.op.finish(.undefined);
+            request.op.finish(if (request.hidden) .{ .failed = .{ .message = "the host closed" } } else .undefined);
             self.destroy(request);
         }
         self.live.clearRetainingCapacity();
@@ -89,21 +92,50 @@ pub const Table = struct {
         return started.promise;
     }
 
+    /// A hidden request observes the exact tool signal through the same cancellation table.
+    pub fn watchCancellation(self: *Table, ops: *pending.Ops, ctx: Context, id: proto.ids.InteractionId, signal: Value) Error!Value {
+        const promise = try self.start(ops, ctx, id, "{\"type\":\"confirm\",\"title\":\"cancel\",\"message\":\"\"}");
+        const request = self.live.items[self.indexOf(id).?];
+        request.sent = true;
+        request.hidden = true;
+        self.attribute(ctx, id, null, signal);
+        return promise;
+    }
+
     /// Answer the oldest question the frontend has not seen and mark it sent.
     pub fn takeNext(self: *Table) ?proto.interaction.InteractionRequestedData {
         for (self.live.items) |request| {
             if (request.sent) continue;
             request.sent = true;
-            return .{ .interaction_id = request.id, .request = request.value };
+            return .{ .interaction_id = request.id, .request = request.value, .session_id = request.session_id };
         }
         return null;
+    }
+
+    pub fn attribute(self: *Table, ctx: Context, id: proto.ids.InteractionId, session_id: ?proto.ids.SessionId, signal: Value) void {
+        const request = self.live.items[self.indexOf(id).?];
+        std.debug.assert(request.session_id == null);
+        request.session_id = session_id;
+        request.op.signal = ctx.dupValue(signal);
+    }
+
+    pub fn cancelSignal(self: *Table, ctx: Context, signal: Value) void {
+        var i: usize = 0;
+        while (i < self.live.items.len) {
+            const request = self.live.items[i];
+            if (!ctx.isStrictEqual(request.op.signal, signal)) {
+                i += 1;
+                continue;
+            }
+            std.debug.assert(self.cancel(request.id));
+        }
     }
 
     /// Settle one question. Bad peer input leaves the original question pending.
     pub fn respond(self: *Table, params: proto.interaction.InteractionRespondParams) Error!void {
         const index = self.indexOf(params.interaction_id) orelse return error.Unknown;
         const request = self.live.items[index];
-        if (!request.sent) return error.Unknown;
+        if (!request.sent or request.hidden) return error.Unknown;
         const result = try self.resultFor(request, params.response);
         _ = self.live.orderedRemove(index);
         request.op.finish(result);

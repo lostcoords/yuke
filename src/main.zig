@@ -142,7 +142,7 @@ fn run(init: std.process.Init) !u8 {
     var cwd_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const cwd_len = try std.Io.Dir.cwd().realPath(io, &cwd_buf);
 
-    // Multiple processes may open one store, but their projections are undefined.
+    // Independent session trees can share this store; each tree has one engine owner.
     const application = app.App.open(init.gpa, io, init.environ_map) catch |err| {
         std.log.err("yuke: the app did not start: {t}", .{err});
         return 1;

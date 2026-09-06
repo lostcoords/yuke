@@ -98,14 +98,15 @@ fn awaitDrains(io: std.Io, group: *std.Io.Group, pid: std.posix.pid_t, timeout_m
     var waiter = io.concurrent(joinGroup, .{ io, group, &done }) catch return error.HostFailure;
     const deadline: std.Io.Clock.Duration = .{ .raw = .fromMilliseconds(timeout_ms), .clock = .awake };
     done.waitTimeout(io, .{ .duration = deadline }) catch |wait_err| {
+        if (wait_err == error.Canceled) {
+            _ = waiter.cancel(io);
+            return error.Canceled;
+        }
         escalate(io, pid);
         done.wait(io) catch {}; // The drains end when the group dies.
         // `Future.await` is uncancelable, so the waiter always joins before the group is cleaned up.
         _ = waiter.await(io);
-        return switch (wait_err) {
-            error.Timeout => true,
-            error.Canceled => error.Canceled,
-        };
+        return true;
     };
     _ = waiter.await(io);
     return false;

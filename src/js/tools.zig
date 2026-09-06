@@ -11,8 +11,8 @@
 
 const std = @import("std");
 const quickjs = @import("quickjs");
-const zio = @import("zio");
 const ir = @import("ai").ir;
+const pending = @import("pending.zig");
 const utf8 = @import("../utf8.zig");
 
 const Context = quickjs.Context;
@@ -27,19 +27,23 @@ pub const RegisterError = error{
     InvalidName,
 };
 
-/// The registered tools, sorted by name. `decls[i]` is what the provider sees and `handlers[i]` is its GC root.
+/// The registered tools, sorted by name.
 pub const Tools = struct {
     gpa: std.mem.Allocator,
-    decls: std.ArrayList(ir.Tool) = .empty,
-    handlers: std.ArrayList(Value) = .empty,
+    entries: std.ArrayList(Entry) = .empty,
+
+    pub const Entry = struct {
+        decl: ir.Tool,
+        handler: Value,
+        spawns_agents: bool = false,
+    };
 
     pub fn deinit(self: *Tools, ctx: Context) void {
-        for (self.decls.items, self.handlers.items) |decl, handler| {
-            ctx.freeValue(handler);
-            self.freeDecl(decl);
+        for (self.entries.items) |entry| {
+            ctx.freeValue(entry.handler);
+            self.freeDecl(entry.decl);
         }
-        self.decls.deinit(self.gpa);
-        self.handlers.deinit(self.gpa);
+        self.entries.deinit(self.gpa);
         self.* = undefined;
     }
 
@@ -52,18 +56,21 @@ pub const Tools = struct {
     /// Add one tool. The table copies the text and takes the handler reference on success only.
     ///
     /// `JS_ToCStringLen` writes WTF-8 for a lone surrogate, so the copies become valid UTF-8 here, because a provider request accepts text only.
-    pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, handler: Value) RegisterError!void {
+    pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, handler: Value, spawns_agents: bool) RegisterError!void {
         if (!validName(name)) return error.InvalidName;
         const slot = self.lookup(name);
         if (slot.found) return error.DuplicateName;
 
         // The provider caches on the request prefix, so the advertised order must not follow load order.
-        self.decls.insert(self.gpa, slot.at, .{
-            .name = self.gpa.dupe(u8, name) catch unreachable,
-            .description = utf8.sanitize(self.gpa, description) catch unreachable,
-            .input_schema = utf8.sanitize(self.gpa, input_schema) catch unreachable,
+        self.entries.insert(self.gpa, slot.at, .{
+            .decl = .{
+                .name = self.gpa.dupe(u8, name) catch unreachable,
+                .description = utf8.sanitize(self.gpa, description) catch unreachable,
+                .input_schema = utf8.sanitize(self.gpa, input_schema) catch unreachable,
+            },
+            .handler = handler,
+            .spawns_agents = spawns_agents,
         }) catch unreachable;
-        self.handlers.insert(self.gpa, slot.at, handler) catch unreachable;
     }
 
     /// Where `name` sits in the sorted table, and whether a tool already holds it.
@@ -71,15 +78,15 @@ pub const Tools = struct {
 
     /// One ordered scan answers the insert position and the duplicate question together.
     fn lookup(self: *const Tools, name: []const u8) Lookup {
-        std.debug.assert(self.decls.items.len == self.handlers.items.len);
-        for (self.decls.items, 0..) |decl, i| {
+        for (self.entries.items, 0..) |entry, i| {
+            const decl = entry.decl;
             switch (std.mem.order(u8, name, decl.name)) {
                 .lt => return .{ .at = i, .found = false },
                 .eq => return .{ .at = i, .found = true },
                 .gt => {},
             }
         }
-        return .{ .at = self.decls.items.len, .found = false };
+        return .{ .at = self.entries.items.len, .found = false };
     }
 
     /// Return the index of the tool with `name`, or null.
@@ -94,8 +101,9 @@ pub const Tools = struct {
         if (!slot.found) return false;
 
         // Ordered, so the sorted advertisement holds.
-        self.freeDecl(self.decls.orderedRemove(slot.at));
-        ctx.freeValue(self.handlers.orderedRemove(slot.at));
+        const entry = self.entries.orderedRemove(slot.at);
+        self.freeDecl(entry.decl);
+        ctx.freeValue(entry.handler);
         return true;
     }
 };
@@ -114,8 +122,10 @@ pub const Call = struct {
     arguments: []const u8,
     /// The workspace a tool runs against. A hook call leaves it empty.
     workspace_root: []u8,
+    site: ?@import("../engine/toolset.zig").Site = null,
+    work: ?*@import("../session/work.zig") = null,
     /// The submitter sleeps on this. The owner sets it once, when the call settles.
-    done: zio.ResetEvent = .init,
+    done: std.Io.Event = .unset,
     /// The answer text, from the host allocator. The submitter copies it before it leaves.
     text: ?[]u8 = null,
     /// A structured view encoded as JSON. The submitter decodes it in its turn arena.
@@ -132,21 +142,21 @@ pub const Call = struct {
     pub const State = enum { queued, running, settled };
 
     /// Record the answer and wake the submitter. Only the owner calls this.
-    pub fn settle(self: *Call, text: ?[]u8, is_error: bool) void {
+    pub fn settle(self: *Call, io: std.Io, text: ?[]u8, is_error: bool) void {
         std.debug.assert(self.state != .settled); // one call settles one time
         self.text = text;
         self.is_error = is_error;
         self.state = .settled;
-        self.done.set();
+        self.done.set(io);
     }
 
-    pub fn settleView(self: *Call, text: ?[]u8, view_json: []u8) void {
+    pub fn settleView(self: *Call, io: std.Io, text: ?[]u8, view_json: []u8) void {
         std.debug.assert(self.state != .settled); // one call settles one time
         self.text = text;
         self.view_json = view_json;
         self.is_error = false;
         self.state = .settled;
-        self.done.set();
+        self.done.set(io);
     }
 
     /// Leave one call. The submitter calls this, so it frees nothing and enters no JavaScript.
@@ -178,9 +188,10 @@ pub const Calls = struct {
         return self.submitCall(.hook, point, payload, "");
     }
 
-    /// Queue one `session.send_input` for the gate, which folds `input.before` before it issues the command.
-    pub fn submitInput(self: *Calls, params: []const u8) *Call {
-        return self.submitCall(.input, "session.send_input", params, "");
+    /// Queue one input command for the gate, which folds `input.before` before it issues the command.
+    pub fn submitInputMethod(self: *Calls, method: []const u8, params: []const u8) *Call {
+        const name: []const u8 = if (std.mem.eql(u8, method, "session.create")) "session.create" else "session.send_input";
+        return self.submitCall(.input, name, params, "");
     }
 
     fn submitCall(self: *Calls, kind: Kind, name: []const u8, arguments: []const u8, workspace_root: []const u8) *Call {
@@ -200,14 +211,24 @@ pub const Calls = struct {
                 i += 1;
                 continue;
             }
-            // The handler keeps its own reference to the signal, so it reads this after the sweep.
-            if (!ctx.isUndefined(call.signal)) {
-                ctx.setPropertyStr(call.signal, "aborted", quickjs.TRUE) catch {};
-            }
             // `orderedRemove` shifts the tail left, so `i` must NOT advance here.
             _ = self.live.orderedRemove(i);
             self.free(ctx, call);
         }
+    }
+
+    /// Only a live call can authorize a native operation with its signal.
+    pub fn acceptsSignal(self: *const Calls, ctx: Context, signal: Value) bool {
+        return self.callForSignal(ctx, signal) != null;
+    }
+
+    pub fn callForSignal(self: *const Calls, ctx: Context, signal: Value) ?*Call {
+        if (!ctx.isObject(signal)) return null;
+        for (self.live.items) |call| {
+            if (!ctx.isStrictEqual(call.signal, signal)) continue;
+            return if (!call.submitter_done and call.state != .settled) call else null;
+        }
+        return null;
     }
 
     /// Report whether the owner has work: a queued call needs a start, a running one a poll while jobs remain, a left one a sweep.
@@ -280,12 +301,12 @@ test "the table refuses a duplicate name, a bad name, and a late registration" {
     var tools: Tools = .{ .gpa = testing.allocator };
     defer tools.deinit(bare.ctx);
 
-    try tools.register("probe", "a test tool", "{\"type\":\"object\"}", quickjs.UNDEFINED);
-    try testing.expectError(error.DuplicateName, tools.register("probe", "d", "{}", quickjs.UNDEFINED));
-    try testing.expectError(error.InvalidName, tools.register("bad name", "d", "{}", quickjs.UNDEFINED));
+    try tools.register("probe", "a test tool", "{\"type\":\"object\"}", quickjs.UNDEFINED, false);
+    try testing.expectError(error.DuplicateName, tools.register("probe", "d", "{}", quickjs.UNDEFINED, false));
+    try testing.expectError(error.InvalidName, tools.register("bad name", "d", "{}", quickjs.UNDEFINED, false));
 
     // A tool registers at any time, so a plugin can add one after boot.
-    try tools.register("late", "d", "{}", quickjs.UNDEFINED);
+    try tools.register("late", "d", "{}", quickjs.UNDEFINED, false);
 }
 
 test "the declarations follow the registered tools" {
@@ -295,16 +316,18 @@ test "the declarations follow the registered tools" {
     defer tools.deinit(bare.ctx);
 
     // Register out of order, because the load order of a plugin must not move the sorted prefix.
-    try tools.register("beta", "the second", "{\"type\":\"object\",\"properties\":{}}", quickjs.UNDEFINED);
-    try tools.register("alpha", "the first", "{\"type\":\"object\"}", quickjs.UNDEFINED);
-    try tools.register("gamma", "the third", "{\"type\":\"object\"}", quickjs.UNDEFINED);
+    try tools.register("beta", "the second", "{\"type\":\"object\",\"properties\":{}}", quickjs.UNDEFINED, true);
+    try tools.register("alpha", "the first", "{\"type\":\"object\"}", quickjs.UNDEFINED, false);
+    try tools.register("gamma", "the third", "{\"type\":\"object\"}", quickjs.UNDEFINED, false);
 
-    try testing.expectEqual(@as(usize, 3), tools.decls.items.len);
-    try testing.expectEqualStrings("alpha", tools.decls.items[0].name);
-    try testing.expectEqualStrings("beta", tools.decls.items[1].name);
-    try testing.expectEqualStrings("gamma", tools.decls.items[2].name);
-    try testing.expectEqualStrings("the second", tools.decls.items[1].description);
-    try testing.expectEqualStrings("{\"type\":\"object\",\"properties\":{}}", tools.decls.items[1].input_schema);
+    try testing.expectEqual(@as(usize, 3), tools.entries.items.len);
+    try testing.expectEqualStrings("alpha", tools.entries.items[0].decl.name);
+    try testing.expectEqualStrings("beta", tools.entries.items[1].decl.name);
+    try testing.expectEqualStrings("gamma", tools.entries.items[2].decl.name);
+    try testing.expectEqualStrings("the second", tools.entries.items[1].decl.description);
+    try testing.expectEqualStrings("{\"type\":\"object\",\"properties\":{}}", tools.entries.items[1].decl.input_schema);
+    try testing.expect(!tools.entries.items[0].spawns_agents);
+    try testing.expect(tools.entries.items[1].spawns_agents);
     try testing.expectEqual(@as(?usize, 1), tools.find("beta"));
     try testing.expect(tools.find("delta") == null);
 }

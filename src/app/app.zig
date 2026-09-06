@@ -86,7 +86,7 @@ pub const App = struct {
             std.log.warn("the scheduler did not start: {t}", .{err});
         };
 
-        // A queued run restarts when a view opens its session, not during process startup.
+        // The frontend resumes workspace queues after tools and interaction handlers exist.
         std.log.info("engine store at {s}", .{db_path});
         return self;
     }

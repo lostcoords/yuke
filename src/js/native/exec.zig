@@ -48,7 +48,15 @@ const Request = struct {
 /// Run one shell command. A refused argument rejects, so a caller reads one failure shape.
 fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
+    if (host.phase != .open) return rejected(ctx, "the host is closed");
     if (args.len == 0) return rejected(ctx, "exec needs a command");
+
+    const options: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;
+    const signal = if (ctx.isObject(options)) ctx.getPropertyStr(options, "signal") else quickjs.UNDEFINED;
+    defer ctx.freeValue(signal);
+    if (ctx.isException(signal)) return rejected(ctx, "the exec signal could not be read");
+    if (!ctx.isUndefined(signal) and !host.calls.acceptsSignal(ctx, signal))
+        return rejected(ctx, "the exec signal does not belong to an active tool call");
 
     // The task cannot touch JavaScript, so every argument is copied before it starts.
     const command = module.owned(ctx, host.gpa, args[0]) orelse return rejected(ctx, "the command must be a string");
@@ -58,7 +66,6 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
         return rejected(ctx, "the command must not be blank");
     }
 
-    const options: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;
     const root_arg: Value = if (args.len > 2) args[2] else quickjs.UNDEFINED;
     const root = if (ctx.isUndefined(root_arg) or ctx.isNull(root_arg))
         host.gpa.dupe(u8, host.cwd) catch unreachable
@@ -79,14 +86,30 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
         return rejected(ctx, "timeoutMs must be a whole number of milliseconds up to 600000");
     };
 
-    return host.startTask(Request, execTask, .{ .command = command, .root = root, .cwd = cwd, .timeout_ms = timeout_ms });
+    return host.startTaskWithSignal(Request, execTask, .{ .command = command, .root = root, .cwd = cwd, .timeout_ms = timeout_ms }, signal);
 }
 
-/// Run one command on a task. It writes JSON text into the op and never enters JavaScript.
-///
-/// `Host.close` cancels this group and waits for it: a cancel kills the process group, so the task returns; a descendant that calls `setsid` leaves that group.
+/// Join the command worker before the owner can free its op.
 fn execTask(host: *Host, op: *pending.Op, req: Request) void {
     defer req.free(host.gpa);
+    std.debug.assert(op.result == null);
+    if (op.cancel_requested) return op.finish(.{ .failed = .{ .message = "the command was canceled" } });
+    var worker = host.io.concurrent(execWorker, .{ host, op, req }) catch
+        return op.finish(.{ .failed = .{ .message = "the host cannot start another operation" } });
+    op.task_wake.wait(host.io) catch {
+        const result = worker.cancel(host.io);
+        op.finish(result);
+        return;
+    };
+    const result = if (op.cancel_requested) worker.cancel(host.io) else worker.await(host.io);
+    op.finish(result);
+}
+
+/// The worker touches no QuickJS values and signals its supervisor before return.
+fn execWorker(host: *Host, op: *pending.Op, req: Request) pending.Result {
+    defer op.task_wake.set(host.io);
+    if (op.cancel_requested) return .{ .failed = .{ .message = "the command was canceled" } };
+    host.io.checkCancel() catch return .{ .failed = .{ .message = "the command was canceled" } };
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
     var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.env };
@@ -96,9 +119,9 @@ fn execTask(host: *Host, op: *pending.Op, req: Request) void {
         .cwd = req.cwd,
         .timeout_ms = req.timeout_ms,
         .max_stream_bytes = max_stream_bytes,
-    }) catch |err| return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
+    }) catch |err| return .{ .failed = .{ .message = errorMessage(err) } };
 
-    op.finish(.{ .json = encode(host.gpa, arena.allocator(), result) });
+    return .{ .json = encode(host.gpa, arena.allocator(), result) };
 }
 
 /// Build the result text. A command prints any bytes, so each stream becomes valid UTF-8 first.

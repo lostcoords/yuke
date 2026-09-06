@@ -1,7 +1,7 @@
 // yuke:client — the in-process JavaScript seam over `yuke:engine-native`.
 import { native } from "yuke:engine-native";
 import { events } from "yuke:core";
-import { sendInput } from "yuke:ext";
+import { sendInput, createSession } from "yuke:ext";
 
 /** @typedef {import("yuke:engine-native").ViewPart} ViewPart */
 /** @typedef {import("yuke:engine-native").ViewCut} ViewCut */
@@ -70,10 +70,13 @@ function sessionActivity(sessionId) {
 }
 
 // One session with the activity the engine holds now, open or not.
-/** @param {string} sessionId @returns {Promise<Wire.SessionListItem>} */
-function sessionGet(sessionId) {
-  return request("session.get", { session_id: sessionId });
+/** @param {string} sessionId @param {string} [childName] @returns {Promise<Wire.SessionListItem>} */
+function sessionGet(sessionId, childName) {
+  return request("session.get", { session_id: sessionId, ...(childName ? { child_name: childName } : {}) });
 }
+
+/** @param {Wire.SessionHistoryParams} params @returns {Promise<Wire.SessionHistoryResult>} */
+function sessionHistory(params) { return request("session.history", params); }
 
 // The queued inputs of a session, oldest first.
 /** @param {string} sessionId @returns {Promise<Wire.SessionQueueResult>} */
@@ -95,6 +98,19 @@ function sessionTextPage(sessionId, messageId, offset = 0, limit = 0) {
 /** @param {string} sessionId @param {number} messageId @param {number} [max] @returns {string} */
 function sessionText(sessionId, messageId, max = 0) {
   return sessionTextPage(sessionId, messageId, 0, max).text;
+}
+
+/** @param {string} sessionId @param {number} messageId @returns {string} */
+function sessionWholeText(sessionId, messageId) {
+  let text = "";
+  let offset = 0;
+  while (true) {
+    const page = sessionTextPage(sessionId, messageId, offset);
+    text += page.text;
+    if (page.next == null) return text;
+    if (page.next <= offset) throw new Error("The text page did not advance.");
+    offset = page.next;
+  }
 }
 
 // The assistant parts of one message. A cut field every row reads is completed here, and a large body stays paged.
@@ -156,9 +172,9 @@ function partTextPage(sessionId, messageId, partId, field, offset = 0, limit = 0
 }
 
 // Input goes through the gate in `yuke:ext`, so a plugin reads it before the engine does.
-/** @param {string} id @param {string} text @returns {Promise<Wire.SessionSendInputResult>} */
-function sessionSendInput(id, text) {
-  return sendInput({ session_id: id, input: { type: "content", content: [{ type: "text", text }] } });
+/** @param {string} id @param {string} text @param {Wire.ToolSite} [parentTool] @returns {Promise<Wire.SessionSendInputResult>} */
+function sessionSendInput(id, text, parentTool) {
+  return sendInput({ ...(parentTool ? { parent_tool: parentTool } : {}), session_id: id, input: { type: "content", content: [{ type: "text", text }] } });
 }
 
 // Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
@@ -179,7 +195,7 @@ function sessionCancelInput(id, inputId) {
 // Create a session. An unset model or reasoning lets the engine use its profile default.
 /** @param {Wire.CreateSession} params @returns {Promise<Wire.SessionResult>} */
 function sessionCreate(params) {
-  return request("session.create", params);
+  return createSession(params);
 }
 
 // The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
@@ -222,7 +238,21 @@ function authRemove(providerId) {
 }
 
 // One object carries the whole surface, so a test or a plugin can replace a single method.
+/** @returns {Promise<Wire.AgentsGetResult>} */
+function agentsGet() { return request("agents.get", {}); }
+/** @param {Wire.AgentsUpdateParams} params @returns {Promise<Wire.AgentsGetResult>} */
+function agentsUpdate(params) { return request("agents.update", params); }
+/** @param {Wire.AgentModelSlot} model @returns {Promise<Wire.AgentsResolveResult>} */
+function agentsResolve(model) { return request("agents.resolve", { model }); }
+
+/** @param {string} sessionId @param {Wire.AgentModel} model @returns {Promise<Wire.SessionConfigResult>} */
+function agentsSetModel(sessionId, model) { return request("agents.set_model", { session_id: sessionId, model }); }
+
 export const client = {
+  agentsSetModel,
+  agentsGet,
+  agentsUpdate,
+  agentsResolve,
   request,
   sessionList,
   sessionOpen,
@@ -231,8 +261,10 @@ export const client = {
   sessionOutline,
   sessionActivity,
   sessionGet,
+  sessionHistory,
   sessionQueue,
   sessionText,
+  sessionWholeText,
   sessionTextPage,
   sessionParts,
   sessionPart,

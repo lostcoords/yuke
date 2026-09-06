@@ -45,8 +45,7 @@ function notification(event: Wire.Notification) {
   }
   if (event.method === "interaction.requested") {
     const id: number = event.params.interaction_id;
-    // @ts-expect-error Global interactions have no session id.
-    event.params.session_id;
+    const session: string | null | undefined = event.params.session_id;
   }
 }
 

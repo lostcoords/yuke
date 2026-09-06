@@ -160,7 +160,7 @@ function endLine(text) {
   return text.length === 0 || text.endsWith("\n") ? text : `${text}\n`;
 }
 
-async function exec(args, _signal, context) {
+async function exec(args, signal, context) {
   const name = "exec";
   args = objectArgs(name, args);
   only(name, args, ["command", "cwd", "timeout_ms"]);
@@ -169,7 +169,7 @@ async function exec(args, _signal, context) {
   const cwd = args.cwd == null ? undefined : stringArg(name, args, "cwd");
   const timeout = args.timeout_ms == null ? 120000 : args.timeout_ms;
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid(name, "the argument timeout_ms has the wrong type or range");
-  const r = await hostCall(name, runCommand(command, { cwd, timeoutMs: timeout }, context?.workspaceRoot));
+  const r = await hostCall(name, runCommand(command, { cwd, timeoutMs: timeout, signal }, context?.workspaceRoot));
   let text = r.stdout;
   if (r.stderr.length !== 0) text = `${endLine(text)}[stderr]\n${r.stderr}`;
   const empty = text.length === 0;

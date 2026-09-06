@@ -17,7 +17,6 @@ const project = @import("engine/project.zig");
 const app = @import("../../app/app.zig");
 const pending = @import("../pending.zig");
 const engine_call = @import("../../app/call.zig");
-const turn = @import("../../engine/turn.zig");
 const session_events = @import("../../engine/events.zig");
 const domain_session = @import("../../session/session.zig");
 const Session = domain_session.Session;
@@ -37,6 +36,7 @@ pub const max_system_prompt_bytes: usize = @intCast(proto.meta.limits.max_messag
 /// Register `yuke:engine-native` and its one `native` object.
 pub fn install(host: *Host) void {
     module.installObject(host, "yuke:engine-native", "native", &.{
+        .{ .name = "setAgentLimits", .arity = 2, .call = jsSetAgentLimits },
         .{ .name = "setDefaultSystemPrompt", .arity = 1, .call = jsSetDefaultSystemPrompt },
         .{ .name = "setEventSink", .arity = 1, .call = jsSetEventSink },
         .{ .name = "factNames", .arity = 0, .call = jsFactNames },
@@ -130,10 +130,6 @@ fn jsSessionOpen(ctx: Context, _: Value, args: []const Value) Value {
     const sid = sidArg(ctx, args, 0) orelse return ctx.newBool(false);
     const rt = runtime.engine.activate(sid) catch return ctx.newBool(false);
     rt.pin();
-    // The durable queue of this session restarts here, in the one process that looks at it.
-    turn.resumeSession(&runtime.engine, rt) catch |err| {
-        std.log.warn("cannot resume session: {t}", .{err});
-    };
     return ctx.newBool(true);
 }
 
@@ -381,7 +377,18 @@ fn pumpRequests(host: *Host) !void {
         try host.pump();
         if (host.ops.live.items.len == 0) return;
         host.wake.reset();
-        if (!host.hasPending()) host.wake.timedWait(.fromMilliseconds(1000)) catch {};
+        if (!host.hasPending()) host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
     }
     return error.RequestNeverSettled;
+}
+
+fn jsSetAgentLimits(ctx: Context, _: Value, args: []const Value) Value {
+    const runtime = Host.fromContext(ctx).engine.runtime orelse return quickjs.UNDEFINED;
+    const max_concurrent = if (args.len > 0) module.integer(ctx, args[0], 1, std.math.maxInt(u32)) else null;
+    const max_depth = if (args.len > 1) module.integer(ctx, args[1], 1, std.math.maxInt(u32)) else null;
+    runtime.engine.setAgentLimits(
+        @intCast(max_concurrent orelse return ctx.throwTypeError("the maximum concurrent agents must be a positive 32-bit integer")),
+        @intCast(max_depth orelse return ctx.throwTypeError("the maximum agent depth must be a positive 32-bit integer")),
+    ) catch return ctx.throwPlainError("the agent scheduler could not start");
+    return quickjs.UNDEFINED;
 }

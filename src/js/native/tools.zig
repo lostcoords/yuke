@@ -20,7 +20,7 @@ pub fn install(host: *Host) void {
     });
 }
 
-/// `defineTool(name, {description, parameters, execute})`.
+/// `defineTool(name, {description, parameters, execute, spawnsAgents})`.
 ///
 /// `parameters` is a JSON Schema object, so a tool can state an enum, an array, or a nested object; a shape the provider refuses fails here at boot.
 fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
@@ -42,6 +42,12 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     defer ctx.freeValue(parameters);
     if (schemaFault(ctx, parameters)) |message| return ctx.throwTypeError(message);
 
+    const spawns_agents = ctx.getPropertyStr(args[1], "spawnsAgents");
+    defer ctx.freeValue(spawns_agents);
+    if (!ctx.isUndefined(spawns_agents) and !ctx.isBool(spawns_agents))
+        return ctx.throwTypeError("the tool spawnsAgents option must be a boolean");
+    const spawns_agents_value = if (ctx.isUndefined(spawns_agents)) false else ctx.toBool(spawns_agents) catch return module.throwPending(ctx);
+
     const execute = ctx.getPropertyStr(args[1], "execute");
     // The table takes this reference on success, so only a failure frees it here.
     if (!ctx.isFunction(execute)) {
@@ -62,7 +68,7 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     };
     defer ctx.freeCString(schema_text.ptr);
 
-    host.tools.register(name, description_text, schema_text, execute) catch |err| {
+    host.tools.register(name, description_text, schema_text, execute, spawns_agents_value) catch |err| {
         ctx.freeValue(execute);
         return ctx.throwTypeError(registerMessage(err));
     };

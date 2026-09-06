@@ -82,18 +82,19 @@ fn readPrompt(io: std.Io, arena: std.mem.Allocator, err: *std.Io.Writer, given: 
 }
 
 /// The chosen session and the model it runs. `model` borrows the arena.
-const Pick = struct { id: proto.ids.SessionId, model: []const u8 };
+const Pick = struct { id: proto.ids.SessionId, model: []const u8, input: ?proto.session.SessionSendInputResult = null };
 
 fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer, err: *std.Io.Writer, cwd: []const u8, prompt: []const u8, opts: cli.Print) !u8 {
     std.debug.assert(prompt.len != 0 and prompt.len <= max_prompt_bytes);
     const engine = &extensions.app.engine;
-    const pick = (try pickSession(engine, arena, err, cwd, opts)) orelse return 1;
-
-    var waiter: Waiter = .{ .arena = arena, .session_id = pick.id, .wake = &extensions.host.wake, .err = if (opts.json) null else err };
+    var waiter: Waiter = .{ .arena = arena, .session_id = null, .wake = &extensions.host.wake, .io = extensions.host.io, .err = if (opts.json) null else err };
     engine.sinks.add(.{ .ctx = @ptrCast(&waiter), .on_event = Waiter.onEvent });
     defer engine.sinks.remove(@ptrCast(&waiter));
 
-    const started = switch (try send(extensions, arena, pick.id, prompt)) {
+    const pick = (try pickSession(extensions, arena, err, cwd, prompt, opts)) orelse return 1;
+    waiter.bind(pick.id);
+    const sent: Sent = if (pick.input) |input| .{ .result = input } else try send(extensions, arena, err, pick.id, prompt);
+    const started = switch (sent) {
         .refused => |f| {
             try fail(err, "{s}: {s}", .{ f.code, f.message });
             return 1;
@@ -134,15 +135,23 @@ fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer,
 }
 
 /// Resolve the target: a fresh session on `cwd`, the newest one there, or the one named by id.
-fn pickSession(engine: *Engine, arena: std.mem.Allocator, err: *std.Io.Writer, cwd: []const u8, opts: cli.Print) !?Pick {
+fn pickSession(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, cwd: []const u8, prompt: []const u8, opts: cli.Print) !?Pick {
+    const engine = &extensions.app.engine;
     switch (opts.target) {
         .new => {
             const model = opts.model orelse (try newestModel(engine, arena)) orelse {
                 try fail(err, "no model; pass --model <provider/model>", .{});
                 return null;
             };
-            const created = try commands.sessionCreate(engine, arena, .{ .workspace_path = cwd, .model = model, .reasoning = opts.reasoning });
-            return .{ .id = created.session.id, .model = created.session.model };
+            const params: proto.misc.CreateSession = .{ .workspace_path = cwd, .model = model, .reasoning = opts.reasoning, .initial_input = .{ .content = .{ .content = &.{.{ .text = .{ .text = prompt } }} } } };
+            const json = try std.json.Stringify.valueAlloc(arena, params, .{ .emit_null_optional_fields = false });
+            const answer = try gatedCommand(extensions, arena, err, "session.create", json);
+            if (answer.failure) |f| {
+                try fail(err, "{s}: {s}", .{ f.code, f.message });
+                return null;
+            }
+            const created = try std.json.parseFromValueLeaky(proto.session.SessionResult, arena, answer.result, .{});
+            return .{ .id = created.session.id, .model = created.session.model, .input = created.input };
         },
         .@"continue" => {
             const id = (try newestIn(engine, arena, cwd)) orelse {
@@ -206,7 +215,7 @@ const GateAnswer = struct {
 };
 
 /// Send the prompt. A hooked input goes through the JavaScript gate, as every frontend's does.
-fn send(extensions: *Extensions, arena: std.mem.Allocator, session_id: proto.ids.SessionId, prompt: []const u8) !Sent {
+fn send(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, session_id: proto.ids.SessionId, prompt: []const u8) !Sent {
     const params: proto.session.SessionSendInputParams = .{
         .session_id = session_id,
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = prompt } }} } },
@@ -214,16 +223,20 @@ fn send(extensions: *Extensions, arena: std.mem.Allocator, session_id: proto.ids
     var params_json: std.Io.Writer.Allocating = .init(arena);
     try std.json.Stringify.value(params, .{ .emit_null_optional_fields = false }, &params_json.writer);
 
+    const answer = try gatedCommand(extensions, arena, err, "session.send_input", params_json.written());
+    if (answer.failure) |f| return .{ .refused = .{ .code = f.code, .message = f.message } };
+    return .{ .result = try std.json.parseFromValueLeaky(proto.session.SessionSendInputResult, arena, answer.result, .{}) };
+}
+
+/// Both input methods use the same owner bridge and retain the response launch gate.
+fn gatedCommand(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, method: []const u8, params: []const u8) !GateAnswer {
     const host = extensions.host;
     if (!host.hooks.holds(.@"input.before")) {
         var body: std.Io.Writer.Allocating = .init(arena);
-        if (try call.call(extensions.app, arena, "session.send_input", params_json.written(), &body.writer)) |f| {
-            return .{ .refused = .{ .code = @tagName(f.code), .message = f.message } };
-        }
-        return .{ .result = try std.json.parseFromSliceLeaky(proto.session.SessionSendInputResult, arena, body.written(), .{ .ignore_unknown_fields = true }) };
+        if (try call.call(extensions.app, arena, method, params, &body.writer)) |f| return .{ .failure = .{ .code = @tagName(f.code), .message = f.message } };
+        return .{ .result = try std.json.parseFromSliceLeaky(std.json.Value, arena, body.written(), .{}) };
     }
-
-    const record = host.calls.submitInput(params_json.written());
+    const record = host.calls.submitInputMethod(method, params);
     defer record.finish();
     while (record.state != .settled) {
         host.wake.reset();
@@ -231,14 +244,11 @@ fn send(extensions: *Extensions, arena: std.mem.Allocator, session_id: proto.ids
         if (record.state == .settled) break;
         try sleep(extensions);
     }
-    const text = record.text orelse "";
     if (record.is_error) {
-        std.log.err("yuke -p: the input gate failed: {s}", .{text});
+        try fail(err, "the input gate failed: {s}", .{record.text orelse ""});
         return error.InputGateFailed;
     }
-    const answer = try std.json.parseFromSliceLeaky(GateAnswer, arena, text, .{ .ignore_unknown_fields = true });
-    if (answer.failure) |f| return .{ .refused = .{ .code = f.code, .message = f.message } };
-    return .{ .result = try std.json.parseFromValueLeaky(proto.session.SessionSendInputResult, arena, answer.result, .{ .ignore_unknown_fields = true }) };
+    return std.json.parseFromSliceLeaky(GateAnswer, arena, record.text orelse "", .{});
 }
 
 /// Block until the run reports its outcome. Tools and hooks run on the owner, so the owner pumps meanwhile.
@@ -265,14 +275,16 @@ fn pump(extensions: *Extensions) void {
 fn sleep(extensions: *Extensions) !void {
     const host = extensions.host;
     if (host.hasPending()) return;
-    host.wake.wait() catch return error.Canceled;
+    host.wake.wait(host.io) catch return error.Canceled;
 }
 
 /// The events of one session, copied out of the emitter's arena, and the wake of the owner loop.
 const Waiter = struct {
     arena: std.mem.Allocator,
-    session_id: proto.ids.SessionId,
-    wake: *zio.ResetEvent,
+    session_id: ?proto.ids.SessionId,
+    buffered: std.ArrayList(proto.rpc.Notification) = .empty,
+    wake: *std.Io.Event,
+    io: std.Io,
     /// Where a notice goes as it comes. Null keeps the notices for the JSON report.
     err: ?*std.Io.Writer,
     messages: std.ArrayList(proto.message.AssistantMessage) = .empty,
@@ -281,6 +293,10 @@ const Waiter = struct {
 
     fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
         const self: *Waiter = @ptrCast(@alignCast(ctx));
+        if (self.session_id == null and note.method != .notice) {
+            if (note.method == .@"message.committed" or note.method == .@"run.done") self.buffered.append(self.arena, proto.clone.dupe(self.arena, note) catch unreachable) catch unreachable;
+            return;
+        }
         switch (note.params) {
             .message_committed_data => |d| {
                 if (!self.mine(d.session_id)) return;
@@ -297,7 +313,7 @@ const Waiter = struct {
             .notice => |n| self.noteNotice(n),
             else => return,
         }
-        self.wake.set();
+        self.wake.set(self.io);
     }
 
     /// A JSON report carries the notices. A plain run shows them on stderr as they come.
@@ -311,8 +327,15 @@ const Waiter = struct {
         err.flush() catch {};
     }
 
+    fn bind(self: *Waiter, id: proto.ids.SessionId) void {
+        std.debug.assert(self.session_id == null);
+        self.session_id = id;
+        for (self.buffered.items) |note| onEvent(self, note);
+        self.buffered.clearRetainingCapacity();
+    }
+
     fn mine(self: *const Waiter, id: proto.ids.SessionId) bool {
-        return std.mem.eql(u8, &id.raw, &self.session_id.raw);
+        return std.mem.eql(u8, &id.raw, &self.session_id.?.raw);
     }
 
     fn doneOf(self: *const Waiter, run_id: proto.ids.RunId) ?*const proto.run.RunDoneData {

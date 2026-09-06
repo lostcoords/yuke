@@ -1,5 +1,7 @@
 //! This module exports the yuke wire protocol types.
 
+pub const agents = @import("agents.zig");
+
 pub const ids = @import("ids.zig");
 pub const tagged = @import("tagged.zig");
 pub const initialize = @import("initialize.zig");

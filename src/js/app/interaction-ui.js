@@ -1,9 +1,11 @@
 // yuke:interaction-ui — the terminal answerer for the shared interaction capability.
+import { native } from "yuke:interaction-native";
+import { DeviceDialog } from "yuke:auth";
 import { root } from "yuke:core";
 import { Prompt, Window, ui } from "yuke:ui";
 import { interaction } from "yuke:ext";
 import { notice } from "yuke:notice";
-import { confirmRequest, inputRequest, noticeLevel, selectRequest } from "yuke:interaction";
+import { confirmRequest, inputRequest, noticeLevel, selectRequest, watchCancellation } from "yuke:interaction";
 
 /** @typedef {() => void} Cancel */
 
@@ -24,8 +26,10 @@ function createAnswerer(frontend) {
         for (const cancel of Array.from(owned)) cancel();
       });
 
-      /** @template T @param {(settle: (value: T | undefined) => void) => Cancel} open @returns {Promise<T | undefined>} */
-      const dialog = (open) => new Promise((resolve) => {
+      /** @template T @param {(settle: (value: T | undefined) => void) => Cancel} open @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<T | undefined>} */
+      const dialog = (open, options) => new Promise((resolve, reject) => {
+        if (options?.signal?.aborted) { resolve(undefined); return; }
+        let unwatch = () => {};
         let done = false;
         /** @type {Cancel} */
         let cancel = () => {};
@@ -33,6 +37,7 @@ function createAnswerer(frontend) {
         const settle = (value) => {
           if (done) return;
           done = true;
+          unwatch();
           pending.delete(cancel);
           owned.delete(cancel);
           cancel();
@@ -45,11 +50,29 @@ function createAnswerer(frontend) {
         };
         pending.add(cancel);
         owned.add(cancel);
+        unwatch = watchCancellation(options?.signal, cancel, (error) => { reject(error); cancel(); });
       });
 
+      /** @param {string} title @param {import("yuke:ext").InteractionOptions | undefined} options */
+      const attributedTitle = (title, options) => {
+        const id = options?.signal ? native.sessionId(options.signal) : null;
+        return id ? "session " + id.slice(0, 8) + " · " + title : title;
+      };
       return {
-        /** @param {string} title @param {string} [message] @returns {Promise<boolean | undefined>} */
-        confirm(title, message = "") {
+        interactive: true,
+        /** @param {Wire.AuthLoginResult} start @param {Promise<Wire.AuthLoginOutcome>} outcome @param {import("yuke:ext").InteractionOptions} [options] */
+        deviceLogin(start, outcome, options) {
+          return dialog((settle) => {
+            const device = new DeviceDialog(start);
+            device.onCancel = () => settle(undefined);
+            const win = new Window({ title: attributedTitle("Provider login", options), footer: "c copy code · o open browser · esc cancel", border: "rounded", width: 0.7, height: 5, content: device });
+            root.pushOverlay(win);
+            outcome.then(settle);
+            return frontend.tui.overlay(win);
+          }, options);
+        },
+        /** @param {string} title @param {string} [message] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
+        confirm(title, message = "", options) {
           const request = confirmRequest(title, message);
           return dialog((settle) => {
             const items = [
@@ -58,7 +81,7 @@ function createAnswerer(frontend) {
               { id: "no", text: "no", answer: false },
             ];
             const picked = ui.select(items, {
-              title: request.title,
+              title: attributedTitle(request.title, options),
               footer: "↵ answer · esc cancel",
               border: "rounded",
               width: 0.6,
@@ -70,15 +93,16 @@ function createAnswerer(frontend) {
               onCancel: () => settle(undefined),
             });
             return frontend.tui.overlay(picked.win);
-          });
+          }, options);
         },
 
-        /** @param {string} title @param {string[]} options @returns {Promise<string | undefined>} */
-        select(title, options) {
-          const request = selectRequest(title, options);
+        /** @param {string} title @param {string[]} choices @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+        select(title, choices, options) {
+          const request = selectRequest(title, choices);
           return dialog((settle) => {
-            const picked = ui.select(request.options, {
-              title: request.title,
+            const picked = ui.pick({
+              items: request.options,
+              title: attributedTitle(request.title, options),
               footer: "↵ select · esc cancel",
               border: "rounded",
               width: 0.6,
@@ -87,16 +111,16 @@ function createAnswerer(frontend) {
               onCancel: () => settle(undefined),
             });
             return frontend.tui.overlay(picked.win);
-          });
+          }, options);
         },
 
-        /** @param {string} title @param {string} [placeholder] @returns {Promise<string | undefined>} */
-        input(title, placeholder) {
-          const request = inputRequest(title, placeholder);
+        /** @param {string} title @param {string} [placeholder] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+        input(title, placeholder, options) {
+          const request = inputRequest(title, placeholder, options?.secret);
           return dialog((settle) => {
-            const prompt = new Prompt({ placeholder: request.placeholder || "", settle });
+            const prompt = new Prompt({ placeholder: request.placeholder || "", mask: request.secret || false, settle });
             const win = new Window({
-              title: request.title,
+              title: attributedTitle(request.title, options),
               footer: "↵ submit · esc cancel",
               border: "rounded",
               width: 0.6,
@@ -105,7 +129,7 @@ function createAnswerer(frontend) {
             });
             root.pushOverlay(win);
             return frontend.tui.overlay(win);
-          });
+          }, options);
         },
 
         /** @param {string} message @param {"info" | "warn" | "error"} [level] @returns {void} */

@@ -4,6 +4,8 @@ declare module "yuke:exec" {
     cwd?: string;
     /** The default is 120000 and the maximum is 600000. */
     timeoutMs?: number;
+    /** The tool signal cancels this command when its call ends. */
+    signal?: { aborted: boolean };
   }
 
   interface ExecResult {

@@ -19,7 +19,7 @@ const ids = proto.ids;
 const message = proto.message;
 const RunSlot = run.RunSlot;
 const message_store = database.message;
-const run_store = database.run;
+const reports = @import("reports.zig");
 const session_store = database.session;
 const event_store = database.event;
 const event = ai.event;
@@ -28,16 +28,22 @@ const agent_name = "claude";
 const max_output_tokens: u32 = 8192;
 
 /// The response gate must launch a prepared run exactly once through an optional token.
-pub const Launch = struct {
+pub const Launch = union(enum) {
     slot: *RunSlot,
+    wake: ids.SessionId,
 
     /// Launch the prepared slot. Return when another path consumed the token.
     pub fn release(self: *?Launch, engine: *Engine) void {
         const launch = self.* orelse return;
         self.* = null;
-        launchSlot(engine, launch.slot) catch |err| {
-            std.log.err("cannot release the run launch gate: {t}", .{err});
-        };
+        switch (launch) {
+            .slot => |slot| launchSlot(engine, slot) catch |err| {
+                std.log.err("cannot release the run launch gate: {t}", .{err});
+            },
+            .wake => |parent| @import("admission.zig").drain(engine, parent) catch |err| {
+                std.log.err("cannot admit a queued child: {t}", .{err});
+            },
+        }
     }
 };
 
@@ -438,7 +444,7 @@ fn resolvedRequest(
     var build: RequestBuild = .{
         .model = model.upstream_id,
         .system = slot.config.system_prompt,
-        .tools = try proto.dupe(arena, engine.deps.tools.getDecls(engine.deps.tools.ctx)),
+        .tools = try engine.deps.tools.getDecls(engine.deps.tools.ctx, arena, .{ .can_spawn = slot.depth < engine.max_agent_depth }),
         .max_output_tokens = output_limit,
     };
     switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", build)) {
@@ -587,7 +593,7 @@ fn commitRound(
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
     const seq = try message_store.appendCommittedMessage(engine.deps.db, arena, session_id.raw, engine.newId(), ended_at, owned);
-    const done: ?proto.run.RunDoneData = if (completion == .final) try run_store.appendOpenDone(engine.deps.db, arena, engine.newId(), ended_at, .{
+    const done: ?reports.Terminal = if (completion == .final) try reports.append(engine, arena, .{
         .session_id = session_id,
         .seq = 0,
         .run_id = slot.runId(),
@@ -603,7 +609,11 @@ fn commitRound(
         .message_committed_data = .{ .session_id = session_id, .seq = seq, .message = owned },
     } });
     session_events.announceSummary(engine, session_id); // The commit moved the count, the lifetime usage, and the order.
-    if (done) |run_done| session_events.emitDurable(engine, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = run_done } });
+    if (done) |terminal_result| {
+        session_events.emitDurable(engine, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = terminal_result.done } });
+        if (terminal_result.notice) |notice| session_events.emitDurable(engine, rt, .{ .method = .@"message.committed", .params = .{ .message_committed_data = notice } });
+        if (terminal_result.report) |report| reports.publishReport(engine, report, true);
+    }
     return owned;
 }
 
@@ -617,7 +627,7 @@ fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, outc
     const ended_at = @max(engine.nowMillis(), slot.handle.started.started_at_ms);
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
-    const done = try run_store.appendOpenDone(engine.deps.db, arena, engine.newId(), ended_at, .{
+    const done = try reports.append(engine, arena, .{
         .session_id = session_id,
         .seq = 0,
         .run_id = slot.runId(),
@@ -629,7 +639,9 @@ fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, outc
     slot.phase = .terminalized;
 
     const rt = engine.sessions.get(session_id) orelse unreachable;
-    session_events.emitDurable(engine, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = done } });
+    session_events.emitDurable(engine, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = done.done } });
+    if (done.notice) |notice| session_events.emitDurable(engine, rt, .{ .method = .@"message.committed", .params = .{ .message_committed_data = notice } });
+    if (done.report) |report| reports.publishReport(engine, report, true);
 }
 
 /// Allocate the next round: allocate a message id, then advance the progress state.
@@ -652,15 +664,21 @@ fn faultSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot, err: an
 }
 
 fn finishSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot) void {
+    slot.work.drain(engine.deps.io);
     std.debug.assert(slot.body == null);
     std.debug.assert(slot.phase == .terminalized or slot.phase == .faulted);
     const rt = engine.sessions.get(session_id) orelse unreachable;
     std.debug.assert(rt.active_run == slot);
     const can_drain = slot.phase == .terminalized and !engine.closing and !rt.faulted;
+    const parent = slot.parent_id;
     rt.active_run = null;
     slot.destroy();
 
-    if (can_drain and rt.queueDepth() > 0) {
+    if (parent != null and !engine.closing) {
+        @import("admission.zig").drain(engine, parent.?) catch |err| {
+            std.log.err("cannot admit a queued child: {t}", .{err});
+        };
+    } else if (can_drain and rt.queueDepth() > 0) {
         startQueued(engine, rt) catch |err| {
             if (engine.sessions.get(session_id)) |current| current.faulted = true;
             std.log.err("cannot start a queued run: {t}", .{err});
@@ -678,6 +696,7 @@ fn startQueued(engine: *Engine, rt: *Session) !void {
 
 /// Commit one run for all queued inputs.
 pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
+    try engine.own(rt.id);
     std.debug.assert(rt.active_run == null);
     std.debug.assert(rt.queueDepth() > 0);
 
@@ -688,11 +707,15 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
     const arena = arena_state.allocator();
     const session_id = rt.id;
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, session_id.raw)) orelse return error.UnknownSession;
+    const tree = try @import("admission.zig").location(engine, arena, session_id);
     const prompt = try session_store.prompt(engine.deps.db, arena, session_id.raw);
     const slot = try RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, prompt orelse "", snapshot.max_rounds);
     errdefer slot.destroy();
     const started = try run.beginQueuedTurn(engine.deps.db, engine.deps.io, arena, session_id.raw, snapshot.config_rev);
     slot.bind(started.handle, started.first_round);
+    slot.parent_id = if (snapshot.parent_id) |id| .bytes(id) else null;
+    slot.tree_root = tree.root;
+    slot.depth = tree.depth;
     // Fold each durable event in sequence order: the drained user messages, then run.started.
     // The commit fold retires each drained input from the queue.
     session_events.publishUserCommits(engine, rt, started.user_commits);
@@ -702,10 +725,15 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
     return slot;
 }
 
-/// Restart durable queued work when a view opens its session.
+/// Restart durable queued work after frontend setup.
 pub fn resumeSession(engine: *Engine, rt: *Session) !void {
+    if (engine.closing) return error.EngineClosing;
     if (rt.active_run != null) return;
     if (rt.queueDepth() == 0) return;
+    var scratch: std.heap.ArenaAllocator = .init(engine.deps.gpa);
+    defer scratch.deinit();
+    const row = (try session_store.snapshot(engine.deps.db, scratch.allocator(), rt.id.raw)) orelse return error.UnknownSession;
+    if (row.parent_id) |parent| return @import("admission.zig").drain(engine, .bytes(parent));
     try startQueued(engine, rt);
 }
 
@@ -946,7 +974,7 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_roo
     // The session folds the state before this arena releases the tool result.
     var scratch_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer scratch_state.deinit();
-    const res = runHooked(engine, scratch_state.allocator(), pt, workspace_root) catch {
+    const res = runHooked(engine, scratch_state.allocator(), slot, pt, workspace_root) catch {
         const cancel_old = engine.deps.io.swapCancelProtection(.blocked);
         defer _ = engine.deps.io.swapCancelProtection(cancel_old);
         try streamer.emitToolState(pt.part_id, .{ .canceled = .{} });
@@ -977,8 +1005,52 @@ const ToolResult = struct {
     view: ?[]const proto.view.View = null,
 };
 
+test "tool rewrites obey the current depth limit before dispatch" {
+    const State = struct {
+        calls: usize = 0,
+
+        fn allowed(_: *anyopaque, name: []const u8, selection: toolset.Selection) bool {
+            return !std.mem.eql(u8, name, "delegate") or selection.can_spawn;
+        }
+
+        fn execute(raw: *anyopaque, _: std.mem.Allocator, name: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            std.debug.assert(std.mem.eql(u8, name, "delegate"));
+            self.calls += 1;
+            return .{ .output = "done", .is_error = false };
+        }
+
+        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+            return point == .@"tool.before";
+        }
+
+        fn ask(_: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, _: []const u8) @import("hookset.zig").Decision {
+            std.debug.assert(point == .@"tool.before");
+            const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"name\":\"delegate\",\"arguments\":\"{}\"}", .{}) catch unreachable;
+            return .{ .replace = value };
+        }
+    };
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var state: State = .{};
+    f.engine.installTools(.{ .ctx = &state, .isAllowed = State.allowed, .run = State.execute });
+    f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
+    f.slot.depth = 1;
+    var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer scratch.deinit();
+    const pending: PendingTool = .{ .part_id = 0, .name = "read", .arguments = "{}" };
+    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, "/w");
+    try std.testing.expect(refused.is_error);
+    try std.testing.expectEqual(@as(usize, 0), state.calls);
+    try f.engine.setAgentLimits(8, 2);
+    const accepted = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, "/w");
+    try std.testing.expect(!accepted.is_error);
+    try std.testing.expectEqual(@as(usize, 1), state.calls);
+}
+
 /// Run one tool through its hooks. A block answers the model, and the process runs nothing.
-fn runHooked(engine: *Engine, arena: std.mem.Allocator, pt: PendingTool, workspace_root: []const u8) !toolset.Outcome {
+fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: PendingTool, workspace_root: []const u8) !toolset.Outcome {
     const hooks = engine.deps.hooks;
     var call: ToolCall = .{ .name = pt.name, .arguments = pt.arguments };
     switch (hooks.askIfHeld(arena, .@"tool.before", call)) {
@@ -990,7 +1062,14 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, pt: PendingTool, workspa
     }
 
     const tools = engine.deps.tools;
-    const res = tools.run(tools.ctx, arena, call.name, call.arguments, workspace_root); // The cancel point.
+    if (!tools.isAllowed(tools.ctx, call.name, .{ .can_spawn = slot.depth < engine.max_agent_depth })) {
+        return .{ .output = "The tool is unavailable at this agent depth.", .is_error = true };
+    }
+    const res = tools.run(tools.ctx, arena, call.name, call.arguments, .{
+        .workspace_root = workspace_root,
+        .site = .{ .session_id = slot.sessionId(), .message_id = slot.progress.current.?.message_id, .part_id = pt.part_id },
+        .work = &slot.work,
+    });
 
     const after = hooks.askIfHeld(arena, .@"tool.after", .{
         .name = call.name,
@@ -1284,9 +1363,9 @@ test "a build hook can discard the live registry and tools before the request se
         tools: []const ai.ir.Tool,
         discarded: bool = false,
 
-        fn decls(ctx: *anyopaque) []const ai.ir.Tool {
+        fn decls(ctx: *anyopaque, arena: std.mem.Allocator, _: toolset.Selection) error{OutOfMemory}![]const ai.ir.Tool {
             const self: *@This() = @ptrCast(@alignCast(ctx));
-            return self.tools;
+            return proto.dupe(arena, self.tools);
         }
 
         fn holds(_: *anyopaque, point: proto.hook.Point) bool {

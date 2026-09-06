@@ -213,3 +213,11 @@ test "an open-run terminal rejects absent or backwards start timing" {
     try testing.expectEqual(@as(u64, 1), (try event.highWater(&db, a, sid)).?.seq_high);
     try testing.expectEqual(@as(?u64, 1), (try session.snapshot(&db, a, sid)).?.open_run_id);
 }
+
+/// Read the outcome of the latest terminal turn from the event log.
+pub fn latestOutcome(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !?proto.run.RunOutcome {
+    var row = (try db.queries.latest_turn_done.maybeOne(arena, .{ .session_id = session_id })) orelse return null;
+    defer row.deinit();
+    const done = try std.json.parseFromSliceLeaky(proto.run.RunDoneData, arena, row.value.payload, .{ .allocate = .alloc_always });
+    return done.outcome;
+}

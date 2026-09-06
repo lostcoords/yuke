@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const quickjs = @import("quickjs");
-const zio = @import("zio");
 const proto = @import("proto");
 const host_mod = @import("../../host.zig");
 const module = @import("../module.zig");
@@ -36,13 +35,14 @@ pub const Engine = struct {
     /// Set when the dirty set overflowed; `drain` then reports an index change, so no lost event leaves a stale view.
     dirty_overflow: bool = false,
     /// The owner sleeps until this fires. An engine task sets it so a change reaches the next frame.
-    wake: *zio.ResetEvent,
+    wake: *std.Io.Event,
+    io: std.Io,
     /// An event sink threw. `drain` reports it so the owner can note the fault, as a key press does.
     faulted: bool = false,
 
-    pub fn create(gpa: std.mem.Allocator, ctx: Context, wake: *zio.ResetEvent) !*Engine {
+    pub fn create(gpa: std.mem.Allocator, ctx: Context, io: std.Io, wake: *std.Io.Event) !*Engine {
         const self = try gpa.create(Engine);
-        self.* = .{ .gpa = gpa, .ctx = ctx, .sink = quickjs.UNDEFINED, .wake = wake };
+        self.* = .{ .gpa = gpa, .ctx = ctx, .sink = quickjs.UNDEFINED, .wake = wake, .io = io };
         return self;
     }
 
@@ -89,7 +89,7 @@ pub const Engine = struct {
 
     /// Wake the owner so it drains this event on the next frame, not on the next keystroke.
     fn wakeOwner(self: *Engine) void {
-        self.wake.set();
+        self.wake.set(self.io);
     }
 
     /// Keep the whole event for a login, because the overlay reads the outcome and the failure text.

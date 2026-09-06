@@ -29,6 +29,10 @@ pub fn writeOutline(w: *std.Io.Writer, s: *domain_session.Session) !void {
             else => "assistant",
         };
         try w.print("{{\"id\":{d},\"type\":\"{s}\"", .{ entry.message.id(), role });
+        if (entry.message == .user) if (entry.message.user.source) |source| {
+            try w.writeAll(",\"source\":");
+            try std.json.Stringify.value(source, .{ .emit_null_optional_fields = false }, w);
+        };
         if (messageError(entry.message)) |e| {
             try w.writeAll(",\"error\":{\"type\":");
             try std.json.Stringify.encodeJsonString(e.type, .{}, w);
@@ -589,4 +593,42 @@ test "a text part over the inline bound reports more and pages back whole" {
     const rebuilt = try paging.rebuildFieldPages(gpa, whole, pageLimit(1000));
     defer gpa.free(rebuilt);
     try testing.expectEqualStrings(whole, rebuilt);
+}
+
+test "the outline carries report identity without the report body" {
+    const a = std.testing.allocator;
+    var session = domain_session.Session.init(a, .bytes([_]u8{1} ** 16));
+    defer session.deinit();
+    const body = "report line\n" ** 200;
+    try session.apply(.{ .message_committed_data = .{
+        .session_id = session.id,
+        .seq = 1,
+        .message = .{ .user = .{
+            .id = 1,
+            .input_id = 1,
+            .time = .{ .created_at_ms = 1 },
+            .content = &.{.{ .text = .{ .text = body } }},
+            .source = .{ .child_report = .{
+                .session_id = .bytes([_]u8{2} ** 16),
+                .run_id = 7,
+                .name = "research",
+                .outcome = .{ .turn = .{ .finish = .stop, .rounds = 1 } },
+                .partial = false,
+                .truncated = false,
+            } },
+        } },
+    } });
+    var buffer: std.Io.Writer.Allocating = .init(a);
+    defer buffer.deinit();
+    try writeOutline(&buffer.writer, &session);
+    const parsed = try std.json.parseFromSlice(std.json.Value, a, buffer.written(), .{});
+    defer parsed.deinit();
+    const source = parsed.value.object.get("messages").?.array.items[0].object.get("source").?.object;
+    try std.testing.expectEqualStrings("research", source.get("name").?.string);
+    try std.testing.expectEqual(@as(i64, 7), source.get("run_id").?.integer);
+    try std.testing.expect(std.mem.indexOf(u8, buffer.written(), body) == null);
+    const stored = session.transcript.list.items[0].message;
+    const request = try @import("../../../provider/request_builder.zig").build(a, &.{stored}, .{});
+    defer a.free(request.blocks);
+    try std.testing.expectEqualStrings(body, request.blocks[0].value.text);
 }

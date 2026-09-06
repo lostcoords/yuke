@@ -11,7 +11,7 @@ import { catalogOf, reloadCatalog, chooseModel, defaultModel, providerState, pro
 
 
 /** @typedef {Extract<import("yuke:engine-native").EngineEvent, { type: "session" }>} NativeSessionEvent */
-/** @typedef {{ workspace_path: string, profile?: string, model?: string, reasoning?: string, system_prompt?: string, max_rounds?: number }} CreateSessionDraft */
+/** @typedef {Wire.CreateSession} CreateSessionDraft */
 /** @typedef {import("yuke:sessions").FeedItem} FeedItem */
 
 const newChatLines = () => {
@@ -31,7 +31,7 @@ export class Chat {
     this.creating = false;
     this.gen = 0;
     this.view = new ChatView({
-      textOf: id => (this.sessionId ? client.sessionText(this.sessionId, id) : ""),
+      textOf: id => (this.sessionId ? client.sessionWholeText(this.sessionId, id) : ""),
       partsOf: id => (this.sessionId ? client.sessionParts(this.sessionId, id) : []),
       partOf: (id, partId) => (this.sessionId ? client.sessionPart(this.sessionId, id, partId) : null),
       onSubmit: text => this.send(text),
@@ -102,7 +102,7 @@ export class Chat {
     root.invalidate();
   }
 
-  // Create the session, open it, then send the first message; the engine makes a session on demand.
+  // Accept the session and first input together, then open the accepted session.
   /** @param {string} text @returns {boolean} */
   startChat(text) {
     if (this.creating) return false;
@@ -111,22 +111,15 @@ export class Chat {
       return false;
     }
     const d = defaultModel();
-    const params = /** @type {CreateSessionDraft} */ ({ workspace_path: term.cwd });
-    if (d.model) params.model = d.model;
-    if (d.reasoning) params.reasoning = d.reasoning;
+    const params = /** @type {CreateSessionDraft} */ ({ workspace_path: term.cwd, ...(d.model ? { model: d.model } : {}), ...(d.reasoning ? { reasoning: d.reasoning } : {}), initial_input: { type: "content", content: [{ type: "text", text }] } });
     const token = ++this.gen;
     this.creating = true;
     client
       .sessionCreate(params)
       .then((r) => {
-        // A cancelled create drops its pin, but the protocol has no delete, so the empty session stays.
-        if (token !== this.gen) {
-          client.sessionClose(r.session.id);
-          return null;
-        }
-        // `open` moves the token, so the first message takes the plain send path and its own failure notice.
+        // Navigation changes the pane; accepted work still belongs to the new session.
+        if (token !== this.gen) return null;
         this.open(r.session.id);
-        this.send(text);
         return null;
       })
       .catch((e) => {

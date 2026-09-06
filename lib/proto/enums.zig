@@ -53,6 +53,7 @@ pub const BroadcastName = enum {
 
 /// Run failure category.
 pub const RunErrorCode = enum {
+    interrupted,
     provider,
     protocol,
     network,
@@ -69,6 +70,10 @@ pub const RunErrorCode = enum {
 };
 
 pub const MethodName = enum {
+    @"agents.get",
+    @"agents.update",
+    @"agents.resolve",
+    @"agents.set_model",
     /// Establish the connection and negotiate the protocol version.
     initialize,
     /// List the sessions.
@@ -176,6 +181,10 @@ pub const ErrorCode = enum(i32) {
     not_implemented = -31022,
     unknown_provider = -31023,
     unknown_interaction = -31024,
+    config_conflict = -31025,
+    setup_required = -31026,
+    setup_canceled = -31027,
+    auth_required = -31028,
     internal = -32603,
     overloaded = -31021,
 

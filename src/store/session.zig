@@ -38,6 +38,7 @@ pub const CreateParams = struct {
     max_rounds: ?u64 = null,
     title: []const u8,
     agent: ?[]const u8 = null,
+    name: ?[]const u8 = null,
     created_by_name: ?[]const u8 = null,
     created_by_version: ?[]const u8 = null,
     created_at_ms: u64,
@@ -230,6 +231,7 @@ test "a child session needs all three parent marks" {
     ok.parent_id = [_]u8{4} ** 16;
     ok.parent_message_id = 1;
     ok.parent_part_id = 0;
+    ok.name = "kid";
     try create(&db, ok);
 
     // Each absent mark fails the check.
@@ -244,6 +246,7 @@ test "a child session needs all three parent marks" {
         bad.parent_id = [_]u8{4} ** 16;
         bad.parent_message_id = case.m;
         bad.parent_part_id = case.p;
+        bad.name = "kid";
         try testing.expectError(error.ConstraintCheck, create(&db, bad));
     }
 }
@@ -385,6 +388,7 @@ test "top_level excludes a child session" {
     child.parent_id = [_]u8{1} ** 16;
     child.parent_message_id = 1;
     child.parent_part_id = 0;
+    child.name = "kid";
     try create(&db, child);
 
     try testing.expectEqual(@as(u64, 2), try count(&db, a, .{}));
@@ -411,6 +415,7 @@ test "the workspace and parent selectors filter and page" {
     child.parent_id = root_a;
     child.parent_message_id = 1;
     child.parent_part_id = 0;
+    child.name = "kid";
     try create(&db, child);
 
     // The parent selector keeps only the children of root a.

@@ -44,3 +44,9 @@ UPDATE sessions SET message_id_high = message_id_high + 1 WHERE id = :id RETURNI
 -- id: [16]u8!
 -- input_id_high: u64!
 UPDATE sessions SET input_id_high = input_id_high + 1 WHERE id = :id RETURNING input_id_high;
+
+-- name: LatestTurnDone :optional
+-- session_id: [16]u8!
+-- payload: []const u8!
+SELECT payload FROM events WHERE session_id = :session_id AND name = 'run.done'
+    AND json_extract(payload, '$.kind') = 'turn' ORDER BY seq DESC LIMIT 1;

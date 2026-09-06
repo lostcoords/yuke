@@ -12,6 +12,8 @@ const run = @import("run.zig");
 const run_task = @import("turn.zig");
 const session_events = @import("events.zig");
 const paths = @import("../paths.zig");
+const reports = @import("reports.zig");
+const admission = @import("admission.zig");
 const provider_registry = @import("../provider/registry.zig");
 
 const session_store = database.session;
@@ -85,6 +87,7 @@ pub fn sessionList(engine: *Engine, arena: std.mem.Allocator, params: proto.sess
     const items = try arena.alloc(proto.session.SessionListItem, kept.len);
     for (kept, 0..) |row, i| {
         items[i] = try session_events.sessionItem(arena, row);
+        if (row.parent_id != null) items[i].last_run = try database.run.latestOutcome(engine.deps.db, arena, row.id);
         items[i].activity = try liveActivity(engine, arena, items[i].session.id, items[i].activity);
     }
 
@@ -105,9 +108,15 @@ fn defaultLevelOf(engine: *Engine, arena: std.mem.Allocator, model: []const u8) 
 
 /// Handle session.get. The result is one `session.list` item with the activity the engine holds now.
 pub fn sessionGet(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionGetParams) !proto.session.SessionListItem {
-    const snapshot = (try session_store.snapshot(engine.deps.db, arena, params.session_id.raw)) orelse return error.UnknownSession;
+    const session_id = if (params.child_name) |name| blk: {
+        if (!admission.validName(name)) return error.BadChildName;
+        const child = (try engine.deps.db.queries.child_by_name.maybeOne(arena, .{ .parent_id = params.session_id.raw, .name = name })) orelse return error.UnknownSession;
+        break :blk proto.ids.SessionId.bytes(child.value.id);
+    } else params.session_id;
+    const snapshot = (try session_store.snapshot(engine.deps.db, arena, session_id.raw)) orelse return error.UnknownSession;
     var item = try session_events.sessionItem(arena, snapshot);
-    item.activity = try liveActivity(engine, arena, params.session_id, item.activity);
+    if (snapshot.parent_id != null) item.last_run = try database.run.latestOutcome(engine.deps.db, arena, snapshot.id);
+    item.activity = try liveActivity(engine, arena, session_id, item.activity);
     return item;
 }
 
@@ -190,6 +199,7 @@ pub fn sessionHistory(engine: *Engine, arena: std.mem.Allocator, params: proto.s
 
 /// Accept input for an RPC and return its prepared run to the response gate.
 pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionSendInputParams, launch: *?run_task.Launch) !proto.session.SessionSendInputResult {
+    try engine.own(params.session_id);
     std.debug.assert(launch.* == null);
     const content = switch (params.input) {
         .content => |c| c.content,
@@ -199,38 +209,54 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
     const rt = try engine.activate(params.session_id);
     if (rt.faulted) return error.RuntimeFailed;
-    if (rt.active_run == null and rt.queueDepth() > 0) launch.* = .{ .slot = try run_task.prepareQueued(engine, rt) };
+    const parent: ?proto.ids.SessionId = if (snapshot.parent_id) |id| .bytes(id) else null;
+    const tree = try admission.location(engine, arena, params.session_id);
+    const source: ?proto.input.InputSource = if (params.parent_tool) |site| blk: {
+        if (parent == null or !std.mem.eql(u8, &parent.?.raw, &site.session_id.raw)) return error.BadToolSite;
+        try validateParentSite(engine, site);
+        break :blk .{ .parent_instruction = site };
+    } else null;
+    if (parent != null) try reports.reserve(engine, arena, tree.root);
+    const available = parent == null or try admission.available(engine, arena, tree.root, params.session_id);
+    if (available and rt.active_run == null and rt.queueDepth() > 0) launch.* = .{ .slot = try run_task.prepareQueued(engine, rt) };
 
-    if (rt.active_run == null) {
+    if (available and rt.active_run == null) {
         const stored_prompt = try session_store.prompt(engine.deps.db, arena, sid);
         const slot = try run.RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, stored_prompt orelse "", snapshot.max_rounds);
         errdefer slot.destroy();
-        const started = try run.beginTurn(engine.deps.db, engine.deps.io, arena, sid, content, snapshot.config_rev);
+        const started = try run.beginTurnSource(engine.deps.db, engine.deps.io, arena, sid, content, snapshot.config_rev, source);
         slot.bind(started.handle, started.first_round);
+        slot.parent_id = parent;
+        slot.tree_root = tree.root;
+        slot.depth = tree.depth;
         rt.active_run = slot;
         launch.* = .{ .slot = slot };
         // Fold each durable event in sequence order: the user message, then run.started.
         session_events.publishUserCommits(engine, rt, started.user_commits);
         session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
-        return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.started.run_id } };
+        return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.started.run_id, .capacity = if (parent != null) admission.capacity(engine, tree.root) else null } };
     }
 
     // A run is active. Persist and fold the queued input before the response.
-    if (rt.queueDepth() >= proto.meta.limits.max_queued_inputs) return error.QueueFull;
+    if (rt.userQueueDepth() >= proto.meta.limits.max_queued_inputs) return error.QueueFull;
     const now = engine.nowMillis();
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
-    const queued = try input_store.enqueue(engine.deps.db, arena, sid, engine.newId(), now, content, now);
+    const queued = try input_store.enqueueSource(engine.deps.db, arena, sid, engine.newId(), now, content, now, source);
     try tx.commit();
     session_events.emitDurable(engine, rt, .{ .method = .@"input.queued", .params = .{
         .input_queued_data = .{ .session_id = params.session_id, .seq = queued.seq, .input = queued.input },
     } });
     session_events.announceActivity(engine, rt);
-    return .{ .queued = .{ .input_id = queued.input.input_id } };
+    if (parent) |id| if (launch.* == null) {
+        launch.* = .{ .wake = id };
+    };
+    return .{ .queued = .{ .input_id = queued.input.input_id, .reason = if (rt.active_run != null) .session_busy else .concurrency_limit, .capacity = if (parent != null) admission.capacity(engine, tree.root) else null } };
 }
 
 /// Cancel one exact queued input. A started input belongs to the active run.
 pub fn sessionCancelInput(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionCancelInputParams) !proto.session.SessionCancelInputResult {
+    try engine.own(params.session_id);
     const sid = params.session_id.raw;
     if (!try session_store.exists(engine.deps.db, arena, sid)) return error.UnknownSession;
     const rt = try engine.activate(params.session_id);
@@ -242,17 +268,20 @@ pub fn sessionCancelInput(engine: *Engine, arena: std.mem.Allocator, params: pro
         error.NoRow => return error.UnknownInput,
         else => return err,
     };
+    const report = try reports.canceledInputs(engine, arena, params.session_id, &.{params.input_id});
     try tx.commit();
     session_events.emitDurable(engine, rt, .{ .method = .@"input.canceled", .params = .{
         .input_canceled_data = .{ .session_id = params.session_id, .seq = canceled, .input_id = params.input_id },
     } });
     session_events.announceActivity(engine, rt); // The queue is shorter. Announce before an evict frees `rt`.
     engine.sessions.evictIfIdle(params.session_id);
+    if (report) |note| reports.publishReport(engine, note, true);
     return .{ .canceled_input = params.input_id };
 }
 
 /// Request cancellation of the active run. Clear the durable queue only when requested.
 pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionCancelRunParams) !proto.session.SessionCancelRunResult {
+    try engine.own(params.session_id);
     const sid = params.session_id.raw;
     if (!try session_store.exists(engine.deps.db, arena, sid)) return error.UnknownSession;
     const rt = try engine.activate(params.session_id);
@@ -270,18 +299,25 @@ pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto
         const now = engine.nowMillis();
         var tx = try engine.deps.db.*.begin();
         defer tx.deinit();
-        for (pending, 0..) |entry, i| {
+        var count: usize = 0;
+        for (pending) |entry| {
+            if (entry.input.source) |source| if (source.protected()) continue;
+            const i = count;
+            count += 1;
             cleared_inputs[i] = entry.input.input_id;
             const canceled = try input_store.cancel(engine.deps.db, arena, sid, engine.newId(), now, entry.input.input_id);
             cleared_seqs[i] = canceled;
         }
+        cleared_inputs = cleared_inputs[0..count];
+        const report = try reports.canceledInputs(engine, arena, params.session_id, cleared_inputs);
         try tx.commit();
-        for (cleared_inputs, cleared_seqs) |input_id, seq| {
+        for (cleared_inputs, cleared_seqs[0..count]) |input_id, seq| {
             session_events.emitDurable(engine, rt, .{ .method = .@"input.canceled", .params = .{
                 .input_canceled_data = .{ .session_id = params.session_id, .seq = seq, .input_id = input_id },
             } });
         }
         if (cleared_inputs.len > 0) session_events.announceActivity(engine, rt);
+        if (report) |note| reports.publishReport(engine, note, true);
     }
 
     const canceled_run = if (active) |slot| slot.handle.started.run_id else null;
@@ -315,6 +351,7 @@ fn removalSet(engine: *Engine, arena: std.mem.Allocator, root: [16]u8, cascade: 
 
 /// Handle session.remove: delete the session and, with `cascade_children`, its children.
 pub fn sessionRemove(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionRemoveParams) !proto.misc.Empty {
+    try engine.own(params.session_id);
     const sid = params.session_id.raw;
     if (!try session_store.exists(engine.deps.db, arena, sid)) return error.UnknownSession;
 
@@ -343,63 +380,139 @@ pub fn sessionRemove(engine: *Engine, arena: std.mem.Allocator, params: proto.se
         engine.sessions.remove(id);
         session_events.announceRemoved(engine, id);
     }
+    if (engine.owners.contains(sid)) engine.releaseRoot(params.session_id);
     return .{};
+}
+
+/// The parent instruction must name a live tool in the owning parent run.
+fn validateParentSite(engine: *Engine, site: proto.input.ToolSite) !void {
+    const resident = engine.sessions.get(site.session_id) orelse return error.BadToolSite;
+    const active = resident.active_run orelse return error.BadToolSite;
+    if (active.cancel_requested or active.phase != .running) return error.BadToolSite;
+    const current = active.progress.current orelse return error.BadToolSite;
+    if (current.message_id != site.message_id) return error.BadToolSite;
+    const draft = resident.draft orelse return error.BadToolSite;
+    if (site.part_id >= draft.parts.items.len) return error.BadToolSite;
+    const part = draft.parts.items[@intCast(site.part_id)];
+    if (part != .tool or part.tool.state != .running) return error.BadToolSite;
 }
 
 /// Handle session.create: resolve the workspace, mint ids, insert the session, and return it.
 pub fn sessionCreate(engine: *Engine, arena: std.mem.Allocator, params: proto.misc.CreateSession) !proto.session.SessionResult {
-    // Normalize the path so one directory maps to one workspace.
+    var launch: ?run_task.Launch = null;
+    defer run_task.Launch.release(&launch, engine);
+    return sessionCreateForRpc(engine, arena, params, &launch);
+}
+
+/// Save the session and its first input under one transaction and one response gate.
+pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.misc.CreateSession, launch: *?run_task.Launch) !proto.session.SessionResult {
+    std.debug.assert(launch.* == null);
+    if (engine.closing) return error.EngineClosing;
+    const content: ?[]const proto.content.ContentPart = if (params.initial_input) |input| switch (input) {
+        .content => |c| c.content,
+        .skill => return error.SkillUnsupported,
+    } else null;
     const root = try paths.canonicalizeWorkspace(arena, engine.deps.env, params.workspace_path);
+    const parent: ?proto.ids.SessionId = if (params.child) |child| child.site.session_id else null;
+    var parent_tree: ?admission.Location = null;
+    var selected: ?proto.agents.AgentsResolveResult = null;
+    if (params.child) |child| {
+        if (content == null) return error.BadChild;
+        if (!admission.validName(child.name)) return error.BadChildName;
+        try engine.own(child.site.session_id);
+        const row = (try session_store.snapshot(engine.deps.db, arena, child.site.session_id.raw)) orelse return error.UnknownSession;
+        if (!std.mem.eql(u8, row.root, root)) return error.BadChild;
+        parent_tree = try admission.location(engine, arena, child.site.session_id);
+        if ((try engine.deps.db.queries.child_by_name.maybeOne(arena, .{ .parent_id = child.site.session_id.raw, .name = child.name })) != null) return error.DuplicateChildName;
+        selected = try @import("agent_config.zig").resolve(engine, arena, .{ .model = child.slot });
+        if (parent_tree.?.depth >= engine.max_agent_depth) return error.AgentDepthLimit;
+        if (params.model) |model| if (!std.mem.eql(u8, model, selected.?.model)) return error.AgentConfigConflict;
+        if (params.reasoning) |reasoning| if (!std.mem.eql(u8, reasoning, selected.?.reasoning)) return error.AgentConfigConflict;
+        try validateParentSite(engine, child.site);
+    }
+    const id: proto.ids.SessionId = .bytes(engine.newId());
+    if (content != null and parent == null) try engine.ownNewRoot(id);
+    errdefer if (content != null and parent == null) engine.releaseRoot(id);
     const base = std.fs.path.basename(root);
-    const title = if (base.len == 0) root else base;
+    const title = if (params.child) |child| child.name else if (base.len == 0) root else base;
     const profile = params.profile orelse "default";
-    const model = params.model orelse "";
-    // An unset level takes the catalog default. A stated empty level stays empty and omits the control.
-    const reasoning = params.reasoning orelse try defaultLevelOf(engine, arena, model);
+    const model = if (selected) |value| value.model else params.model orelse "";
+    const reasoning = if (selected) |value| value.reasoning else params.reasoning orelse try defaultLevelOf(engine, arena, model);
+    const system_prompt = params.system_prompt orelse engine.default_system_prompt;
     const now = engine.nowMillis();
-
-    const id = engine.newId();
-
-    var tx = try engine.deps.db.*.begin();
-    defer tx.deinit();
-    try session_store.create(engine.deps.db, .{
+    if (parent_tree) |tree| try reports.reserve(engine, arena, tree.root);
+    const available = content != null and (parent_tree == null or try admission.available(engine, arena, parent_tree.?.root, id));
+    const slot = if (available) try run.RunSlot.prepare(engine.deps.gpa, model, reasoning, system_prompt orelse "", params.max_rounds) else null;
+    errdefer if (slot) |held| held.destroy();
+    const resident = if (content != null) try engine.sessions.getOrCreate(id) else null;
+    errdefer if (resident != null) engine.sessions.remove(id);
+    var queued: ?database.input.Entry = null;
+    var started: ?run.Started = null;
+    {
+        var tx = try engine.deps.db.begin();
+        defer tx.deinit();
+        try session_store.create(engine.deps.db, .{
+            .id = id.raw,
+            .root = root,
+            .origin = if (parent != null) "child" else "root",
+            .parent_id = if (params.child) |child| child.site.session_id.raw else null,
+            .parent_message_id = if (params.child) |child| child.site.message_id else null,
+            .parent_part_id = if (params.child) |child| child.site.part_id else null,
+            .name = if (params.child) |child| child.name else null,
+            .profile = profile,
+            .model = model,
+            .reasoning = reasoning,
+            .config_rev = 0,
+            .max_rounds = params.max_rounds,
+            .title = title,
+            .created_at_ms = now,
+            .updated_at_ms = now,
+        });
+        if (system_prompt) |sys| try session_store.setPrompt(engine.deps.db, id.raw, sys);
+        try config_store.recordInitial(engine.deps.db, id.raw, model, reasoning);
+        if (content) |parts| queued = try input_store.enqueueSource(engine.deps.db, arena, id.raw, engine.newId(), now, parts, now, if (params.child) |child| .{ .parent_instruction = child.site } else null);
+        if (slot != null) started = try run.beginQueuedTurnInTransaction(engine.deps.db, engine.deps.io, arena, id.raw, 0);
+        try tx.commit();
+    }
+    if (resident) |rt| {
+        rt.hydrated = true;
+        session_events.emitDurable(engine, rt, .{ .method = .@"input.queued", .params = .{ .input_queued_data = .{ .session_id = id, .seq = queued.?.seq, .input = queued.?.input } } });
+        if (started) |run_start| {
+            slot.?.bind(run_start.handle, run_start.first_round);
+            slot.?.parent_id = parent;
+            slot.?.tree_root = if (parent_tree) |tree| tree.root else id;
+            slot.?.depth = if (parent_tree) |tree| tree.depth + 1 else 0;
+            rt.active_run = slot;
+            launch.* = .{ .slot = slot.? };
+            session_events.publishUserCommits(engine, rt, run_start.user_commits);
+            session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = run_start.handle.started } });
+        } else if (parent) |pid| launch.* = .{ .wake = pid };
+    }
+    session_events.announceSummary(engine, id);
+    return .{ .session = .{
         .id = id,
         .root = root,
-        .origin = "root",
         .profile = profile,
         .model = model,
         .reasoning = reasoning,
         .config_rev = 0,
         .max_rounds = params.max_rounds,
         .title = title,
-        .created_at_ms = now,
-        .updated_at_ms = now,
-    });
-    const system_prompt = params.system_prompt orelse engine.default_system_prompt;
-    if (system_prompt) |sys| try session_store.setPrompt(engine.deps.db, id, sys);
-    try config_store.recordInitial(engine.deps.db, id, model, reasoning);
-    try tx.commit();
-
-    // Announce the session after the commit, never before it.
-    session_events.announceSummary(engine, .bytes(id));
-
-    return .{ .session = .{
-        .id = .bytes(id),
-        .root = root,
-        .profile = profile,
-        .model = model,
-        .reasoning = reasoning,
-        .config_rev = 0,
-        .max_rounds = params.max_rounds,
-        .title = title,
-        .message_count = 0,
+        .message_count = if (started != null) 1 else 0,
         .usage_total = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
         .created_at_ms = now,
         .updated_at_ms = now,
-        .created_by = null,
-        .origin = .{ .root = .{} },
-        .agent = null,
-    } };
+        .origin = if (params.child) |child| .{ .child = .{ .site = child.site } } else .{ .root = .{} },
+        .name = if (params.child) |child| child.name else null,
+    }, .input = if (started) |run_start| .{ .started = .{
+        .input_id = run_start.handle.input_id,
+        .run_id = run_start.handle.started.run_id,
+        .capacity = if (parent_tree) |tree| admission.capacity(engine, tree.root) else null,
+    } } else if (queued) |entry| .{ .queued = .{
+        .input_id = entry.input.input_id,
+        .reason = .concurrency_limit,
+        .capacity = if (parent_tree) |tree| admission.capacity(engine, tree.root) else null,
+    } } else null };
 }
 
 const zio = @import("zio");
@@ -486,6 +599,34 @@ test "session.get and session.queue read the durable queue, resident or not" {
     try std.testing.expectEqual(@as(usize, 1), listed.items.len);
     try std.testing.expect(listed.items[0].activity.state == .building);
     try std.testing.expectEqual(@as(u64, 1), listed.items[0].activity.queued);
+
+    const child_id = [_]u8{5} ** 16;
+    const other_root = [_]u8{6} ** 16;
+    const other_child = [_]u8{7} ** 16;
+    for ([_]struct { id: [16]u8, root: []const u8, parent_id: ?[16]u8, name: ?[]const u8 }{
+        .{ .id = child_id, .root = "/boot", .parent_id = session_id, .name = "research" },
+        .{ .id = other_root, .root = "/other", .parent_id = null, .name = null },
+        .{ .id = other_child, .root = "/other", .parent_id = other_root, .name = "research" },
+    }) |entry| try session_store.create(&db, .{
+        .id = entry.id,
+        .root = entry.root,
+        .origin = if (entry.parent_id == null) "root" else "child",
+        .parent_id = entry.parent_id,
+        .parent_message_id = if (entry.parent_id != null) 1 else null,
+        .parent_part_id = if (entry.parent_id != null) 0 else null,
+        .name = entry.name,
+        .profile = "default",
+        .model = "mock",
+        .reasoning = "",
+        .config_rev = 0,
+        .title = entry.name orelse "other",
+        .created_at_ms = 1,
+        .updated_at_ms = 1,
+    });
+    try std.testing.expectEqual(child_id, (try sessionGet(&engine, arena, .{ .session_id = id, .child_name = "research" })).session.id.raw);
+    try std.testing.expectEqual(other_child, (try sessionGet(&engine, arena, .{ .session_id = .bytes(other_root), .child_name = "research" })).session.id.raw);
+    try std.testing.expectError(error.UnknownSession, sessionGet(&engine, arena, .{ .session_id = id, .child_name = "missing" }));
+    try std.testing.expectError(error.BadChildName, sessionGet(&engine, arena, .{ .session_id = id, .child_name = "../research" }));
 
     try std.testing.expectError(error.UnknownSession, sessionGet(&engine, arena, .{ .session_id = .bytes([_]u8{9} ** 16) }));
     try std.testing.expectError(error.UnknownSession, sessionQueue(&engine, arena, .{ .session_id = .bytes([_]u8{9} ** 16) }));

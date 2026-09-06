@@ -1,5 +1,6 @@
 //! The protocol type registry for the oracle and generator.
 
+const agents = @import("agents.zig");
 const activity = @import("activity.zig");
 const auth = @import("auth.zig");
 const catalog = @import("catalog.zig");
@@ -22,6 +23,15 @@ pub const EnumEntry = struct { name: []const u8, ty: type };
 pub const AliasEntry = struct { name: []const u8, base: []const u8 };
 
 pub const structs = [_]TypeEntry{
+    .{ .name = "AgentsSetModelParams", .ty = agents.AgentsSetModelParams },
+    .{ .name = "AgentModel", .ty = agents.AgentModel },
+    .{ .name = "AgentModels", .ty = agents.AgentModels },
+    .{ .name = "AgentsConfig", .ty = agents.AgentsConfig },
+    .{ .name = "AgentsGetResult", .ty = agents.AgentsGetResult },
+    .{ .name = "AgentsUpdateParams", .ty = agents.AgentsUpdateParams },
+    .{ .name = "AgentsResolveParams", .ty = agents.AgentsResolveParams },
+    .{ .name = "AgentsResolveResult", .ty = agents.AgentsResolveResult },
+
     .{ .name = "Client", .ty = initialize.Client },
     .{ .name = "ContentText", .ty = content.ContentText },
     .{ .name = "ContentImage", .ty = content.ContentImage },
@@ -101,6 +111,10 @@ pub const structs = [_]TypeEntry{
     .{ .name = "ErrorObject", .ty = misc.ErrorObject },
     .{ .name = "InitializeResult", .ty = misc.InitializeResult },
     .{ .name = "Notice", .ty = misc.Notice },
+    .{ .name = "ToolSite", .ty = input.ToolSite },
+    .{ .name = "ChildReport", .ty = input.ChildReport },
+    .{ .name = "ChildInputCanceled", .ty = input.ChildInputCanceled },
+    .{ .name = "EngineInterruption", .ty = input.EngineInterruption },
     .{ .name = "QueuedInput", .ty = misc.QueuedInput },
     .{ .name = "Session", .ty = misc.Session },
     .{ .name = "TranscriptTruncatedData", .ty = misc.TranscriptTruncatedData },
@@ -143,6 +157,8 @@ pub const structs = [_]TypeEntry{
     .{ .name = "SessionRemoveParams", .ty = session.SessionRemoveParams },
     .{ .name = "SessionRemovedData", .ty = session.SessionRemovedData },
     .{ .name = "SessionResult", .ty = session.SessionResult },
+    .{ .name = "ChildSession", .ty = session.ChildSession },
+    .{ .name = "ChildCapacity", .ty = session.ChildCapacity },
     .{ .name = "SessionRewindParams", .ty = session.SessionRewindParams },
     .{ .name = "SessionSendInputParams", .ty = session.SessionSendInputParams },
     .{ .name = "SessionSendInputResultQueued", .ty = session.SessionSendInputResultQueued },
@@ -170,6 +186,7 @@ pub const tagged_unions = [_]TypeEntry{
     .{ .name = "CatalogListResult", .ty = catalog.CatalogListResult },
     .{ .name = "ActivityState", .ty = activity.ActivityState },
     .{ .name = "Input", .ty = input.Input },
+    .{ .name = "InputSource", .ty = input.InputSource },
     .{ .name = "InteractionRequest", .ty = interaction.InteractionRequest },
     .{ .name = "InteractionResponse", .ty = interaction.InteractionResponse },
     .{ .name = "AssistantPart", .ty = message.AssistantPart },
@@ -191,6 +208,8 @@ pub const envelope_unions = [_]TypeEntry{
 };
 
 pub const string_enums = [_]EnumEntry{
+    .{ .name = "AgentModelSlot", .ty = agents.AgentModelSlot },
+    .{ .name = "InputQueueReason", .ty = session.InputQueueReason },
     .{ .name = "AuthCredentialKind", .ty = enums.AuthCredentialKind },
     .{ .name = "BroadcastName", .ty = enums.BroadcastName },
     .{ .name = "RunErrorCode", .ty = enums.RunErrorCode },
@@ -233,6 +252,7 @@ pub const aliases = [_]AliasEntry{
     .{ .name = "ProviderId", .base = "string" },
     .{ .name = "MessagePartDeltaData", .base = "PartDelta" },
     .{ .name = "ToolOutputDeltaData", .base = "PartDelta" },
+    .{ .name = "AgentConfigRev", .base = "[32]u8" },
     .{ .name = "CatalogRev", .base = "[64]u8" },
     .{ .name = "ModelId", .base = "string" },
     .{ .name = "SessionId", .base = "[16]u8" },

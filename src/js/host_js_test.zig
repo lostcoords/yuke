@@ -4949,7 +4949,7 @@ fn pumpUntilIdle(host: *Host) !void {
     var rounds: u32 = 0;
     while (host.ops.live.items.len != 0) : (rounds += 1) {
         if (rounds == 64) return error.PrimitiveNeverSettled;
-        host.wake.timedWait(.fromMilliseconds(1000)) catch {};
+        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
         host.wake.reset();
         try host.pump();
     }
@@ -4957,12 +4957,12 @@ fn pumpUntilIdle(host: *Host) !void {
 }
 
 /// Drive the owner until one call settles, the way `serve` does between frames.
-fn pumpUntilSettled(host: *Host, call: *tools_table.Call, wake: ?*zio.ResetEvent) !void {
+fn pumpUntilSettled(host: *Host, call: *tools_table.Call, wake: ?*std.Io.Event) !void {
     var rounds: u32 = 0;
     while (call.state != .settled) : (rounds += 1) {
         if (rounds == 64) return error.CallNeverSettled;
         if (wake) |w| {
-            w.timedWait(.fromMilliseconds(1000)) catch {};
+            w.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
             w.reset();
         }
         try host.pump();
@@ -4975,7 +4975,7 @@ fn pumpOwnerUntilSettled(host: *Host, call: *tools_table.Call) !void {
     var rounds: u32 = 0;
     while (call.state != .settled) : (rounds += 1) {
         if (rounds == 64) return error.CallNeverSettled;
-        wake.timedWait(.fromMilliseconds(1000)) catch {};
+        wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
         wake.reset();
         try host.pump();
     }
@@ -5166,6 +5166,9 @@ test "a handler reads the signal after the turn leaves" {
         \\  execute: async (args, signal) => {
         \\    globalThis.check = () => { globalThis.seen = signal.aborted ? "aborted" : "live"; };
         \\    globalThis.check();
+        \\    // A job queued before the pass reads the flag in that pass's first drain.
+        \\    await new Promise((resolve) => { globalThis.release = resolve; });
+        \\    globalThis.check();
         \\    return new Promise(() => {});
         \\  },
         \\});
@@ -5177,10 +5180,12 @@ test "a handler reads the signal after the turn leaves" {
     _ = try host.evalInt("globalThis.check(), 0");
     try expectSeen(host, "live");
 
-    // The turn leaves, so the next pass marks the signal and sweeps the record.
+    // The turn leaves, so the next pass marks the signal before any job runs, then sweeps the record.
+    host.ctx.freeValue(try host.ctx.eval("globalThis.release()", "release.js", .{})); // the job stays queued
     call.finish();
     try host.pump();
     try std.testing.expectEqual(@as(usize, 0), host.calls.live.items.len);
+    try expectSeen(host, "aborted");
     _ = try host.evalInt("globalThis.check(), 0");
     try expectSeen(host, "aborted");
 }
@@ -5238,8 +5243,8 @@ test "defineTool registers a tool and states its raw schema" {
     , "tool.js");
     try expectJs(host, "ok");
 
-    try std.testing.expectEqual(@as(usize, 1), host.tools.decls.items.len);
-    const tool = host.tools.decls.items[host.tools.find("get_weather").?];
+    try std.testing.expectEqual(@as(usize, 1), host.tools.entries.items.len);
+    const tool = host.tools.entries.items[host.tools.find("get_weather").?].decl;
     try std.testing.expectEqualStrings("Report the weather of one city.", tool.description);
     // The schema reaches the provider unchanged, so an enum and a shorter `required` survive.
     try std.testing.expectEqualStrings(
@@ -5248,7 +5253,7 @@ test "defineTool registers a tool and states its raw schema" {
             "\"required\":[\"city\"]}",
         tool.input_schema,
     );
-    try std.testing.expectEqualStrings("get_weather", host.tools.decls.items[0].name);
+    try std.testing.expectEqualStrings("get_weather", host.tools.entries.items[0].decl.name);
 }
 
 test "defineTool refuses every definition a provider would reject" {
@@ -5285,7 +5290,7 @@ test "defineTool refuses every definition a provider would reject" {
     try expectJs(host, "ok");
 
     // Only the one valid registration reached the table.
-    try std.testing.expectEqual(@as(usize, 1), host.tools.decls.items.len);
+    try std.testing.expectEqual(@as(usize, 1), host.tools.entries.items.len);
 }
 
 test "a tool registers after boot and keeps the advertised order stable" {
@@ -5317,7 +5322,8 @@ test "a tool registers after boot and keeps the advertised order stable" {
 
     var names: std.ArrayList(u8) = .empty;
     defer names.deinit(gpa.allocator());
-    for (host.tools.decls.items) |d| {
+    for (host.tools.entries.items) |entry| {
+        const d = entry.decl;
         if (names.items.len != 0) try names.append(gpa.allocator(), ',');
         try names.appendSlice(gpa.allocator(), d.name);
     }
@@ -5453,6 +5459,238 @@ test "a user edit tool overrides the baked edit tool" {
     try std.testing.expectEqualStrings("user edit", call.text.?);
     call.finish();
     try host.pump();
+}
+
+test "exec call abort ends its process group and preserves unrelated work" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
+    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    defer host.destroy();
+    try host.evalModule("import \"yuke:builtins\";", "builtins.js");
+
+    const canceled = host.calls.submit("exec",
+        \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
+    , root);
+    const survivor = host.calls.submit("exec", "{\"command\":\"sleep 1; echo survived\"}", root);
+    try host.pump();
+    const pids = try waitExecPids(host, tmp.dir);
+    try std.testing.expect(processExists(pids[0]));
+    try std.testing.expect(processExists(pids[1]));
+
+    const started: std.Io.Timestamp = .now(host.io, .awake);
+    canceled.finish();
+    try host.pump();
+    try std.testing.expect(started.durationTo(.now(host.io, .awake)).toMilliseconds() < 500);
+    while (host.ops.live.items.len != 0) {
+        if (started.durationTo(.now(host.io, .awake)).toMilliseconds() > 8000) return error.ExecAbortDidNotStop;
+        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(20), .clock = .awake } }) catch {};
+        host.wake.reset();
+        try host.pump();
+    }
+    try std.testing.expect(!processExists(pids[0]));
+    try std.testing.expect(!processExists(pids[1]));
+    try std.testing.expect(survivor.state == .settled);
+    try std.testing.expect(!survivor.is_error);
+    try std.testing.expect(std.mem.indexOf(u8, survivor.text.?, "survived") != null);
+    try dropCall(host, survivor);
+}
+
+test "exec rejects forged and retained signals and aborts before process creation" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
+    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    defer host.destroy();
+    try host.evalModule(
+        \\import { defineTool } from "yuke:tools";
+        \\import { exec } from "yuke:exec";
+        \\globalThis.refusals = 0;
+        \\globalThis.prelaunch = 0;
+        \\globalThis.late = 0;
+        \\for (const signal of [null, false, {}, { aborted: false }]) {
+        \\  exec("echo forbidden > forbidden", { signal }).catch(() => { globalThis.refusals++; });
+        \\}
+        \\defineTool("probe", {
+        \\  description: "Probe exec cancellation.", parameters: { type: "object", properties: {} },
+        \\  execute: async (args, signal) => {
+        \\    globalThis.retained = signal;
+        \\    globalThis.resume = () => exec("echo forbidden > forbidden", { signal }).catch(() => { globalThis.late++; });
+        \\    return Promise.all([1, 2].map(() => exec("echo forbidden > forbidden", { signal }).catch(() => { globalThis.prelaunch++; })));
+        \\  },
+        \\});
+    , "exec-signal.js");
+    try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.refusals"));
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    const call = host.calls.submit("probe", "{}", root);
+    try host.pump();
+    try std.testing.expectEqual(@as(usize, 2), host.ops.live.items.len);
+    call.finish();
+    try host.pump();
+    try pumpUntilIdle(host);
+    try std.testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.prelaunch"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.retained.aborted"));
+    try host.evalModule("globalThis.retained.aborted = false; globalThis.resume();", "late-exec.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.late"));
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(std.testing.io, "forbidden", .{}));
+}
+
+test "exec completion detaches before call abort and host close rejects late exec" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
+    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    defer host.destroy();
+    try host.evalModule(
+        \\import { defineTool } from "yuke:tools";
+        \\import { exec } from "yuke:exec";
+        \\globalThis.finished = 0;
+        \\defineTool("probe", {
+        \\  description: "Probe completed exec.", parameters: { type: "object", properties: {} },
+        \\  execute: async (args, signal) => {
+        \\    await exec("echo done", { signal });
+        \\    globalThis.finished++;
+        \\    return new Promise(() => {});
+        \\  },
+        \\});
+    , "exec-complete.js");
+    const call = host.calls.submit("probe", "{}", "/tmp");
+    try host.pump();
+    try pumpUntilIdle(host);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.finished"));
+    try std.testing.expect(call.state == .running);
+    try dropCall(host, call);
+    const race = host.calls.submit("probe", "{}", root);
+    try host.pump();
+    const ready: std.Io.Timestamp = .now(host.io, .awake);
+    while (!host.ops.anyDone()) {
+        if (ready.durationTo(.now(host.io, .awake)).toMilliseconds() > 5000) return error.ExecDidNotFinish;
+        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(10), .clock = .awake } }) catch {};
+        host.wake.reset();
+    }
+    try dropCall(host, race);
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    try host.evalModule(
+        \\import { exec } from "yuke:exec";
+        \\globalThis.closed = 0;
+        \\exec("sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\"").catch(() => exec("echo late").catch(() => { globalThis.closed = 1; }));
+    , "exec-close.js");
+    const pids = try waitExecPids(host, tmp.dir);
+    const started: std.Io.Timestamp = .now(host.io, .awake);
+    try host.close();
+    try std.testing.expect(started.durationTo(.now(host.io, .awake)).toMilliseconds() < 8000);
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    try std.testing.expect(!processExists(pids[0]));
+    try std.testing.expect(!processExists(pids[1]));
+    const closed = try host.ctx.eval("globalThis.closed", "closed.js", .{});
+    defer host.ctx.freeValue(closed);
+    try std.testing.expectEqual(@as(i32, 1), try host.ctx.toInt32(closed));
+}
+
+test "session cancel reaches the builtin exec process group" {
+    const commands = @import("../engine/commands.zig");
+    const turn = @import("../engine/turn.zig");
+    const provider = @import("../provider/provider.zig");
+    var f: @import("extensions.zig").Fixture = undefined;
+    try f.init("", "import \"yuke:kernel\"; import \"yuke:ext\";");
+    defer f.deinit();
+    const host = f.extensions.host;
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var models = try provider.config.loadBytes(f.gpa.allocator(),
+        \\{"version":1,"providers":[{"id":"test-exec","base_url":"https://test.invalid",
+        \\"protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"literal":"test-key"}}},"models":[{"id":"model","upstream_id":"model"}]}]}
+    );
+    _ = try f.app.store.installLocal(&models);
+    const model = f.app.store.merged.resolveModel("test-exec/model").?;
+    try std.testing.expect(model.provider.availability == .ready);
+    const args = try std.json.Stringify.valueAlloc(a, .{
+        .command = "sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\"",
+    }, .{});
+    const delta = try std.json.Stringify.valueAlloc(a, .{
+        .type = "content_block_delta",
+        .index = 0,
+        .delta = .{ .type = "input_json_delta", .partial_json = args },
+    }, .{});
+    f.canned.bytes = try std.mem.concat(a, u8, &.{
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call-exec\",\"name\":\"exec\",\"input\":{}}}\n\n",
+        "data: ",
+        delta,
+        "\n\n",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":8}}\n\n",
+        "data: {\"type\":\"message_stop\"}\n\n",
+    });
+    const created = try commands.sessionCreate(&f.app.engine, a, .{ .workspace_path = host.cwd, .model = "test-exec/model" });
+    var launch: ?turn.Launch = null;
+    _ = try commands.sessionSendInputForRpc(&f.app.engine, a, .{
+        .session_id = created.session.id,
+        .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "Run the command." } }} } },
+    }, &launch);
+    turn.Launch.release(&launch, &f.app.engine);
+    const pids = try waitExecPids(host, f.tmp.dir);
+    const canceled = try commands.sessionCancelRun(&f.app.engine, a, .{ .session_id = created.session.id });
+    try std.testing.expect(canceled.canceled_run != null);
+    const started: std.Io.Timestamp = .now(host.io, .awake);
+    while (host.calls.live.items.len != 0 or host.ops.live.items.len != 0) {
+        if (started.durationTo(.now(host.io, .awake)).toMilliseconds() > 8000) return error.ExecAbortDidNotStop;
+        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(20), .clock = .awake } }) catch {};
+        host.wake.reset();
+        try host.pump();
+    }
+    try std.testing.expect(!processExists(pids[0]));
+    try std.testing.expect(!processExists(pids[1]));
+}
+
+fn waitExecPids(host: *Host, dir: std.Io.Dir) ![2]std.posix.pid_t {
+    const started: std.Io.Timestamp = .now(host.io, .awake);
+    while (started.durationTo(.now(host.io, .awake)).toMilliseconds() < 5000) {
+        const text = dir.readFileAlloc(std.testing.io, "started", std.testing.allocator, .limited(128)) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        if (text) |bytes| {
+            defer std.testing.allocator.free(bytes);
+            if (std.mem.endsWith(u8, bytes, "\n")) {
+                var words = std.mem.tokenizeAny(u8, bytes, " \n");
+                return .{
+                    try std.fmt.parseInt(std.posix.pid_t, words.next().?, 10),
+                    try std.fmt.parseInt(std.posix.pid_t, words.next().?, 10),
+                };
+            }
+        }
+        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(10), .clock = .awake } }) catch {};
+        host.wake.reset();
+        try host.pump();
+    }
+    return error.ExecDidNotStart;
+}
+
+fn processExists(pid: std.posix.pid_t) bool {
+    std.debug.assert(pid > 0);
+    std.posix.kill(pid, @enumFromInt(0)) catch |err| switch (err) {
+        error.ProcessNotFound => return false,
+        else => return true,
+    };
+    return true;
 }
 
 test "yuke:exec runs commands on tasks and reports each outcome" {
@@ -5624,7 +5862,7 @@ test "a throwing await handler faults once and leaves no pending exception" {
     var rounds: u32 = 0;
     while (host.ops.live.items.len != 0) : (rounds += 1) {
         if (rounds == 64) return error.PrimitiveNeverSettled;
-        host.wake.timedWait(.fromMilliseconds(1000)) catch {};
+        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
         host.wake.reset();
         // The throw happens in a job, so `pump` reports it through the job drain, not the settle.
         host.pump() catch |err| try std.testing.expectEqual(host_mod.Error.JavaScriptFault, err);
@@ -5658,8 +5896,8 @@ test "the yuke facade exports config, plugins, and the tool registry" {
     , "facade-entry.js");
 
     // The facade reaches the same native table the engine borrows.
-    try std.testing.expectEqual(@as(usize, 1), host.tools.decls.items.len);
-    try std.testing.expectEqualStrings("facade_tool", host.tools.decls.items[0].name);
+    try std.testing.expectEqual(@as(usize, 1), host.tools.entries.items.len);
+    try std.testing.expectEqualStrings("facade_tool", host.tools.entries.items[0].decl.name);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.named === 'from-facade' ? 1 : 0"));
     // `defineConfig` through the facade reaches the same live config object.
     try std.testing.expectEqual(@as(i32, 500), try host.evalInt("globalThis.chord"));
@@ -5697,7 +5935,7 @@ test "tools.define refuses a definition that is not an object" {
         \\globalThis.refused = refused;
     , "bad-tool.js");
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.refused"));
-    try std.testing.expectEqual(@as(usize, 0), host.tools.decls.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.tools.entries.items.len);
 }
 
 test "inject holds a block until every capability exists" {
@@ -6165,9 +6403,9 @@ test "a plugin owns the tools it defines and withdraws them on unload" {
     try expectJs(host, "ok");
 
     // The plugin registered both, and the table keeps them sorted.
-    try std.testing.expectEqual(@as(usize, 2), host.tools.decls.items.len);
-    try std.testing.expectEqualStrings("alpha", host.tools.decls.items[0].name);
-    try std.testing.expectEqualStrings("zeta", host.tools.decls.items[1].name);
+    try std.testing.expectEqual(@as(usize, 2), host.tools.entries.items.len);
+    try std.testing.expectEqualStrings("alpha", host.tools.entries.items[0].decl.name);
+    try std.testing.expectEqualStrings("zeta", host.tools.entries.items[1].decl.name);
 
     // An unload withdraws every tool the plugin owned.
     try host.evalModule(
@@ -6176,8 +6414,8 @@ test "a plugin owns the tools it defines and withdraws them on unload" {
         \\globalThis.result = "ok";
     , "drop.js");
     try expectJs(host, "ok");
-    try std.testing.expectEqual(@as(usize, 0), host.tools.decls.items.len);
-    try std.testing.expectEqual(@as(usize, 0), host.tools.decls.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.tools.entries.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.tools.entries.items.len);
 
     // The name is free again, so a reload can register it.
     try host.evalModule(
@@ -6189,7 +6427,7 @@ test "a plugin owns the tools it defines and withdraws them on unload" {
         \\globalThis.result = "ok";
     , "reload.js");
     try expectJs(host, "ok");
-    try std.testing.expectEqual(@as(usize, 1), host.tools.decls.items.len);
+    try std.testing.expectEqual(@as(usize, 1), host.tools.entries.items.len);
 }
 
 test "one tool leaves without moving the others" {
@@ -6214,15 +6452,15 @@ test "one tool leaves without moving the others" {
         \\globalThis.result = "ok";
     , "three.js");
     try expectJs(host, "ok");
-    try std.testing.expectEqual(@as(usize, 4), host.tools.decls.items.len);
+    try std.testing.expectEqual(@as(usize, 4), host.tools.entries.items.len);
 
     // Drop the middle tool. The rest must keep their order, so the advertised prefix is unchanged.
     try host.evalModule("globalThis.drop(); globalThis.result = \"ok\";", "drop-one.js");
     try expectJs(host, "ok");
-    try std.testing.expectEqual(@as(usize, 3), host.tools.decls.items.len);
-    try std.testing.expectEqualStrings("alpha", host.tools.decls.items[0].name);
-    try std.testing.expectEqualStrings("mike", host.tools.decls.items[1].name);
-    try std.testing.expectEqualStrings("zulu", host.tools.decls.items[2].name);
+    try std.testing.expectEqual(@as(usize, 3), host.tools.entries.items.len);
+    try std.testing.expectEqualStrings("alpha", host.tools.entries.items[0].decl.name);
+    try std.testing.expectEqualStrings("mike", host.tools.entries.items[1].decl.name);
+    try std.testing.expectEqualStrings("zulu", host.tools.entries.items[2].decl.name);
 }
 
 test "a listener fault reaches the shared error bus" {
@@ -6561,4 +6799,99 @@ test "yuke:ui transcript keeps committed renders across a reload" {
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "transcript-reload-reuse.js");
     try expectJs(host, "ok");
+}
+
+test "run cleanup stops signaled exec without another owner pump" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
+    const runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer runtime.deinit();
+    const host = Host.createWith(std.testing.allocator, runtime.io(), .{ .cwd = root });
+    defer host.destroy();
+    try host.evalModule("import \"yuke:builtins\";", "builtins.js");
+    var work: @import("../session/work.zig") = .{};
+    const call = host.calls.submit("exec",
+        \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
+    , root);
+    call.work = &work;
+    try host.pump();
+    const pids = try waitExecPids(host, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 1), work.pending);
+    call.finish();
+    work.drain(runtime.io());
+    try std.testing.expectEqual(@as(usize, 0), work.pending);
+    try std.testing.expect(!processExists(pids[0]));
+    try std.testing.expect(!processExists(pids[1]));
+    try host.pump();
+}
+
+test "tool site attributes a question and call completion cancels it" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try host.evalModule(
+        \\import { defineTool } from "yuke:tools";
+        \\import { native } from "yuke:interaction-native";
+        \\defineTool("ask", { description: "Ask", parameters: { type: "object", properties: {} }, execute: async (args, signal, context) => {
+        \\  globalThis.site = context.sessionId === "01".repeat(16) && context.messageId === 4 && context.partId === 2;
+        \\  return native.request(99, JSON.stringify({ type: "confirm", title: "Allow", message: "Task" }), signal);
+        \\} });
+    , "ask.js");
+    const call = host.calls.submit("ask", "{}", "/work");
+    call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 4, .part_id = 2 };
+    try host.pump();
+    const question = host.interactions.takeNext().?;
+    try std.testing.expectEqualSlices(u8, &([_]u8{1} ** 16), &question.session_id.?.raw);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.site"));
+    call.finish();
+    try host.pump();
+    try std.testing.expectEqual(@as(usize, 0), host.interactions.live.items.len);
+}
+
+test "a hidden cancellation watch is never listed and no peer can answer it" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try host.evalModule(
+        \\import { defineTool } from "yuke:tools";
+        \\import { native } from "yuke:interaction-native";
+        \\globalThis.seen = "pending";
+        \\defineTool("wait", { description: "Wait", parameters: { type: "object", properties: {} }, execute: async (args, signal) => {
+        \\  native.watchCancellation(7, signal).then(() => { globalThis.seen = "canceled"; }, (e) => { globalThis.seen = "failed: " + e.message; });
+        \\  return new Promise(() => {});
+        \\} });
+    , "wait.js");
+    const call = host.calls.submit("wait", "{}", "/work");
+    try host.pump();
+    try std.testing.expect(host.interactions.takeNext() == null);
+    try std.testing.expectError(error.Unknown, host.interactions.respond(.{ .interaction_id = 7, .response = .{ .confirm = .{ .value = true } } }));
+    try host.pump();
+    try expectSeen(host, "pending");
+    call.finish();
+    try host.pump();
+    try expectSeen(host, "canceled");
+}
+
+test "navigation after initial admission neither sends twice nor closes an unowned pin" {
+    const host = Host.createWith(std.testing.allocator, std.testing.io, .{ .cwd = "/work" });
+    defer host.destroy();
+    try host.evalModule(
+        \\import { Chat } from "yuke:chat";
+        \\import { client } from "yuke:client";
+        \\globalThis.closes = 0;
+        \\globalThis.sends = 0;
+        \\client.sessionCreate = (params) => {
+        \\  globalThis.firstInput = params.initial_input.content[0].text;
+        \\  return new Promise(resolve => { globalThis.accept = resolve; });
+        \\};
+        \\client.sessionClose = () => { globalThis.closes++; };
+        \\client.sessionSendInput = async () => { globalThis.sends++; };
+        \\globalThis.chat = new Chat();
+        \\globalThis.submitted = globalThis.chat.startChat("first task");
+        \\globalThis.chat.newChat();
+        \\globalThis.accept({ session: { id: "01".repeat(16) }, input: { type: "started", input_id: 1, run_id: 1 } });
+    , "navigation.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.submitted && globalThis.firstInput === 'first task' && globalThis.chat.sessionId === null"));
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.closes + globalThis.sends"));
+    try host.eval("globalThis.chat.dispose()", "dispose.js");
 }

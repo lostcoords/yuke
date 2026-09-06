@@ -24,6 +24,55 @@ pub const Input = union(enum) {
     }
 };
 
+/// Native code assigns this source; public input has no source field.
+pub const InputSource = union(enum) {
+    parent_instruction: ToolSite,
+    child_report: ChildReport,
+    child_input_canceled: ChildInputCanceled,
+    engine_interruption: EngineInterruption,
+
+    pub fn protected(self: @This()) bool {
+        return self != .parent_instruction;
+    }
+
+    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
+        return tagged.jsonParse(@This(), a, s, o);
+    }
+    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
+        return tagged.fromValue(@This(), a, v, o);
+    }
+    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
+        return tagged.stringify(@This(), self, jw);
+    }
+};
+
+/// One tool call: the session, the message, and the part that hold it.
+pub const ToolSite = struct {
+    session_id: ids.SessionId,
+    message_id: ids.MessageId,
+    part_id: ids.PartId,
+};
+
+pub const ChildReport = struct {
+    session_id: ids.SessionId,
+    run_id: ids.RunId,
+    name: []const u8,
+    outcome: @import("run.zig").RunOutcome,
+    partial: bool,
+    truncated: bool,
+};
+
+pub const ChildInputCanceled = struct {
+    session_id: ids.SessionId,
+    name: []const u8,
+    input_ids: []const ids.InputId,
+};
+
+pub const EngineInterruption = struct {
+    run_id: ids.RunId,
+    kind: @import("enums.zig").RunKind,
+};
+
 /// This payload describes `input.canceled`.
 pub const InputCanceledData = struct {
     session_id: ids.SessionId,
@@ -65,4 +114,28 @@ test "input content union round-trips" {
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(json, buf.written());
+}
+
+test "input sources form a closed union outside public input" {
+    const values = [_][]const u8{
+        "{\"type\":\"parent_instruction\",\"session_id\":\"01010101010101010101010101010101\",\"message_id\":1,\"part_id\":0}",
+        "{\"type\":\"child_report\",\"session_id\":\"01010101010101010101010101010101\",\"run_id\":2,\"name\":\"research\",\"outcome\":{\"type\":\"canceled\"},\"partial\":true,\"truncated\":false}",
+        "{\"type\":\"child_input_canceled\",\"session_id\":\"01010101010101010101010101010101\",\"name\":\"research\",\"input_ids\":[3,4]}",
+        "{\"type\":\"engine_interruption\",\"run_id\":5,\"kind\":\"turn\"}",
+    };
+    for (values, 0..) |text, i| {
+        const parsed = try std.json.parseFromSlice(InputSource, testing.allocator, text, .{});
+        defer parsed.deinit();
+        try testing.expectEqual(i != 0, parsed.value.protected());
+        const encoded = try std.json.Stringify.valueAlloc(testing.allocator, parsed.value, .{});
+        defer testing.allocator.free(encoded);
+        try testing.expectEqualStrings(text, encoded);
+    }
+    const public = try std.json.parseFromSlice(Input, testing.allocator, "{\"type\":\"content\",\"content\":[],\"source\":{\"type\":\"engine_interruption\",\"run_id\":1,\"kind\":\"turn\"}}", .{});
+    defer public.deinit();
+    const encoded = try std.json.Stringify.valueAlloc(testing.allocator, public.value, .{});
+    defer testing.allocator.free(encoded);
+    try testing.expectEqualStrings("{\"type\":\"content\",\"content\":[]}", encoded);
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(InputSource, testing.allocator, "{\"type\":\"other\"}", .{}));
+    try testing.expectError(error.MissingField, std.json.parseFromSlice(InputSource, testing.allocator, "{\"type\":\"engine_interruption\",\"run_id\":1}", .{}));
 }

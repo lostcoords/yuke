@@ -7,6 +7,7 @@ const initialize = @import("initialize.zig");
 const message = @import("message.zig");
 const run = @import("run.zig");
 const session = @import("session.zig");
+const input = @import("input.zig");
 
 /// This payload describes `config.changed`.
 pub const ConfigChangedData = struct {
@@ -24,6 +25,8 @@ pub const CreateSession = struct {
     reasoning: ?[]const u8 = null,
     system_prompt: ?[]const u8 = null,
     max_rounds: ?u64 = null,
+    initial_input: ?input.Input = null,
+    child: ?session.ChildSession = null,
 };
 
 /// This type records the creation time for a user or compaction message.
@@ -62,6 +65,7 @@ pub const Notice = struct {
 
 /// This input waits behind an active turn.
 pub const QueuedInput = struct {
+    source: ?@import("input.zig").InputSource = null,
     input_id: ids.InputId,
     content: []const content.ContentPart,
     queued_at_ms: u64,
@@ -85,6 +89,7 @@ pub const Session = struct {
     created_by: ?initialize.Client = null,
     origin: session.SessionOrigin,
     agent: ?[]const u8 = null,
+    name: ?[]const u8 = null,
 };
 
 /// This payload describes `transcript.truncated`.

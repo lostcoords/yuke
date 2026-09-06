@@ -50,6 +50,11 @@ pub fn beginTurn(
     input: []const proto.content.ContentPart,
     config_rev: proto.ids.ConfigRev,
 ) !Started {
+    return beginTurnSource(db, io, arena, session_id, input, config_rev, null);
+}
+
+/// A validated parent tool site follows its instruction into durable history.
+pub fn beginTurnSource(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, input: []const proto.content.ContentPart, config_rev: proto.ids.ConfigRev, source: ?proto.input.InputSource) !Started {
     var tx = try db.begin();
     defer tx.deinit();
     const input_id = try event_store.allocInputId(db, arena, session_id);
@@ -61,6 +66,7 @@ pub fn beginTurn(
         .id = user_message_id,
         .content = input,
         .input_id = input_id,
+        .source = source,
         .time = .{ .created_at_ms = user_now },
     } };
     const user_seq = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), user_now, user_message);
@@ -87,7 +93,14 @@ pub fn beginQueuedTurn(
 ) !Started {
     var tx = try db.begin();
     defer tx.deinit();
+    const result = try beginQueuedTurnInTransaction(db, io, arena, session_id, config_rev);
+    try tx.commit();
+    return result;
+}
 
+/// Create admission can share this transaction without a nested commit.
+pub fn beginQueuedTurnInTransaction(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, config_rev: proto.ids.ConfigRev) !Started {
+    std.debug.assert(@import("sql").inTransaction(db.conn));
     const queued = try input_store.list(db, arena, session_id);
     if (queued.len == 0) return error.NoRow;
 
@@ -101,6 +114,7 @@ pub fn beginQueuedTurn(
         const user_message: proto.message.Message = .{ .user = .{
             .id = user_message_id,
             .content = entry.input.content,
+            .source = entry.input.source,
             .input_id = entry.input.input_id,
             .time = .{ .created_at_ms = entry.input.queued_at_ms },
         } };
@@ -118,7 +132,6 @@ pub fn beginQueuedTurn(
 
     const assistant_message_id = try event_store.allocMessageId(db, arena, session_id);
     const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, started_at_ms);
-    try tx.commit();
     return .{
         .handle = .{ .input_id = first_input_id, .started = started },
         .first_round = .{ .number = 1, .message_id = assistant_message_id },

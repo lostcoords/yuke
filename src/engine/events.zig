@@ -19,11 +19,11 @@ fn sessionOrigin(row: anytype) !proto.session.SessionOrigin {
     if (std.mem.eql(u8, row.origin, "child")) {
         if (row.parent_id == null or row.parent_message_id == null or row.parent_part_id == null or row.source_id != null)
             return error.CorruptDatabase;
-        return .{ .child = .{
-            .parent_id = .bytes(row.parent_id.?),
-            .parent_message_id = row.parent_message_id.?,
-            .parent_part_id = row.parent_part_id.?,
-        } };
+        return .{ .child = .{ .site = .{
+            .session_id = .bytes(row.parent_id.?),
+            .message_id = row.parent_message_id.?,
+            .part_id = row.parent_part_id.?,
+        } } };
     }
     if (std.mem.eql(u8, row.origin, "fork")) {
         if (row.parent_id != null or row.parent_message_id != null or row.parent_part_id != null or row.source_id == null)
@@ -80,6 +80,7 @@ pub fn sessionItem(arena: std.mem.Allocator, row: anytype) !proto.session.Sessio
             .created_by = created_by,
             .origin = try sessionOrigin(row),
             .agent = if (row.agent) |text| try arena.dupe(u8, text) else null,
+            .name = if (row.name) |text| try arena.dupe(u8, text) else null,
         },
         .activity = .{
             .state = .{ .idle = .{} },

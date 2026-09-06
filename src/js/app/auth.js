@@ -53,7 +53,7 @@ function openUrl(url) {
 }
 
 // The device-code step: the URL to open and the code to enter. The engine polls; this window only waits.
-class DeviceDialog {
+export class DeviceDialog {
   /** @param {Wire.AuthLoginResult} start */
   constructor(start) {
     this.start = start;

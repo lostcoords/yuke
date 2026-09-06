@@ -6,10 +6,11 @@ declare module "yuke:tools" {
     definition: {
       description: string;
       parameters: Schema;
+      spawnsAgents?: boolean;
       execute: (
         args: any,
         signal: { aborted: boolean },
-        context: { workspaceRoot: string },
+        context: { workspaceRoot: string, sessionId?: string, messageId?: number, partId?: number },
       ) => Promise<unknown>;
     },
   ): void;

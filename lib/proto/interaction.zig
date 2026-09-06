@@ -9,6 +9,7 @@ const tagged = @import("tagged.zig");
 pub const InteractionRequestedData = struct {
     interaction_id: ids.InteractionId,
     request: InteractionRequest,
+    session_id: ?ids.SessionId = null,
 };
 
 /// This union carries one frontend-neutral question.
@@ -39,6 +40,7 @@ pub const InteractionSelect = struct {
 };
 
 pub const InteractionInput = struct {
+    secret: ?bool = null,
     title: []const u8,
     placeholder: ?[]const u8 = null,
 };
