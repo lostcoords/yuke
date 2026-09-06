@@ -21,7 +21,7 @@ import { fuzzyRank } from "yuke:fzy";
 /** @typedef {{ draw?: (win: Window) => void, cursor?: (win: Window) => { x: number, y: number, visible: boolean } | null, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: MouseEvent) => boolean, needsTick?: () => { periodMs: number } | null, tick?: () => void }} WindowContent */
 /** @typedef {{ name?: string, modal?: boolean, border?: Border, content?: WindowContent | null, width?: Dimension, height?: Dimension, anchor?: (() => Rect) | null, panelGroup?: string, borderGroup?: string, title?: string | (() => string), title_pos?: "left" | "center" | "right", titleGroup?: string, footer?: string | (() => string), footer_pos?: "left" | "center" | "right", footerGroup?: string }} WindowOptions */
 /** @template T @typedef {{ items?: T[] | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemHeight?: number | undefined, group?: string | undefined, selGroup?: string | undefined, dimGroup?: string | undefined, dimSelGroup?: string | undefined, drawCursor?: boolean | undefined }} ListOptions */
-/** @template T @typedef {{ items?: T[] | undefined, suggest?: (query: string) => T[] | undefined, filterText?: ((item: T) => string) | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onAccept?: ((item: T, index: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: Picker<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined, filter?: boolean | undefined } & WindowOptions} PickOptions */
+/** @template T @typedef {{ items?: T[] | undefined, suggest?: (query: string) => T[] | undefined, filterText?: ((item: T) => string) | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, onAccept?: ((item: T, index: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: Picker<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined, filter?: boolean | undefined, body?: string | undefined } & WindowOptions} PickOptions */
 
 // The kit adds only an absent highlight group, so a theme that set one first keeps it and a re-import does not re-seed.
 const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
@@ -35,6 +35,7 @@ const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
   UIItemSel: { reverse: true },
   UIPrompt: { fg: "fg", bold: true },
   UIQuery: { fg: "fg" },
+  UIBody: { fg: "fg" },
   UIComposer: { fg: "fg" },
   UIDim: { fg: "fg", dim: true },
   UIDimSel: { reverse: true },
@@ -812,6 +813,8 @@ export class Window {
 
 // A picker window's content: a List with accept/cancel/validate, an optional keymap over the default actions, and an optional query line.
 const PICKER_PROMPT = "\u203a ";
+const PICKER_PAD_X = 2;
+const PICKER_PAD_Y = 1;
 
 /** @template T */
 export class Picker {
@@ -844,7 +847,49 @@ export class Picker {
     this.validate = opts.validate || null;
     this.keymap = opts.keymap || null;
     this.closeOnAccept = opts.closeOnAccept !== false;
+    this.body = opts.body || "";
+    /** @type {WrapRow[]} */
+    this._bodyRows = [];
+    this._bodyWidth = -1;
+    this._bodyText = "";
+    this._bodyScroll = 0;
     this.refilter();
+  }
+
+  /** @param {Window} win @returns {Rect} */
+  _contentRect(win) {
+    const r = win.inner;
+    const px = win._borderSet() ? PICKER_PAD_X : 0;
+    const py = win._borderSet() ? PICKER_PAD_Y : 0;
+    return { x: r.x + px, y: r.y + py, w: Math.max(0, r.w - px * 2), h: Math.max(0, r.h - py * 2) };
+  }
+
+  /** @param {number} width @returns {number} */
+  _bodyHeight(width) {
+    width = Math.max(1, width);
+    if (this._bodyWidth !== width || this._bodyText !== this.body) {
+      this._bodyWidth = width;
+      this._bodyText = this.body;
+      this._bodyRows = this.body ? wrapOffsets(this.body, width) : [];
+    }
+    return this._bodyRows.length;
+  }
+
+  /** @param {Rect} r @returns {{ height: number, gap: number }} */
+  _bodyLayout(r) {
+    const rows = this._bodyHeight(r.w);
+    const gap = rows > 0 && r.h >= 4 ? 1 : 0;
+    return { height: Math.min(rows, Math.max(0, r.h - 2 - gap)), gap };
+  }
+
+  /** @param {number} width @returns {number} */
+  preferredHeight(width) {
+    const bordered = !!this.win?._borderSet();
+    const contentWidth = Math.max(1, width - (bordered ? 2 + PICKER_PAD_X * 2 : 0));
+    const bodyRows = this._bodyHeight(contentWidth);
+    const gap = bodyRows > 0 ? 1 : 0;
+    const rows = bodyRows + gap + (this.filter ? 1 : 0) + this.list.items.length * this.list.itemHeight;
+    return rows + (bordered ? 2 + PICKER_PAD_Y * 2 : 0);
   }
 
   /** @returns {string} */
@@ -897,19 +942,30 @@ export class Picker {
 
   /** @param {Window} win @returns {void} */
   draw(win) {
-    const { x, y, w, h } = win.inner;
+    const { x, y, w, h } = this._contentRect(win);
     if (w <= 0 || h <= 0) {
       this.list.clearRect();
       return;
     }
+    const layout = this._bodyLayout({ x, y, w, h });
+    const { height: bodyHeight, gap } = layout;
+    this._bodyScroll = Math.min(this._bodyScroll, Math.max(0, this._bodyRows.length - bodyHeight));
+    for (let i = 0; i < bodyHeight; i++) {
+      const row = this._bodyRows[this._bodyScroll + i];
+      if (!row) break;
+      text(x, y + i, this.body.slice(row.start, row.end), "UIBody");
+    }
+    const listY = y + bodyHeight + gap;
+    const listH = Math.max(0, h - bodyHeight - gap);
     if (!this.filter) {
-      this.list.draw(win.inner);
+      this.list.draw({ x, y: listY, w, h: listH });
       return;
     }
-    text(x, y, clip(PICKER_PROMPT, w), "UIPrompt");
+    if (listH <= 0) return this.list.clearRect();
+    text(x, listY, clip(PICKER_PROMPT, w), "UIPrompt");
     const pw = term.measure(PICKER_PROMPT);
-    if (pw < w) text(x + pw, y, clip(this.query, w - pw), "UIQuery");
-    if (h > 1) this.list.draw({ x, y: y + 1, w, h: h - 1 });
+    if (pw < w) text(x + pw, listY, clip(this.query, w - pw), "UIQuery");
+    if (listH > 1) this.list.draw({ x, y: listY + 1, w, h: listH - 1 });
     else this.list.clearRect();
   }
 
@@ -921,16 +977,29 @@ export class Picker {
       const { x, y, w, h } = win.rect;
       if (ev.col < x || ev.col >= x + w || ev.row < y || ev.row >= y + h) return false;
     }
+    if (this.body && ev.event === "press" && isWheel(ev.button) && win) {
+      const r = this._contentRect(win);
+      const { height: bodyHeight } = this._bodyLayout(r);
+      if (ev.row >= r.y && ev.row < r.y + bodyHeight) {
+        const step = Math.max(1, ev.count || 1);
+        const max = Math.max(0, this._bodyRows.length - bodyHeight);
+        this._bodyScroll = Math.min(max, Math.max(0, this._bodyScroll + (ev.button === "wheel_down" ? step : -step)));
+        root.invalidate();
+        return true;
+      }
+    }
     return this.list.onMouse(ev);
   }
 
   /** @param {Window} win @returns {{ x: number, y: number, visible: boolean } | null} */
   cursor(win) {
     if (!this.input) return null; // a menu edits no query, so it places no cursor
-    const { x, y, w, h } = win.inner;
+    const { x, y, w, h } = this._contentRect(win);
     if (w <= 0 || h <= 0) return null; // an empty interior places no cursor
+    const { height: bodyHeight, gap } = this._bodyLayout({ x, y, w, h });
+    const rowY = y + bodyHeight + gap;
     const col = caretCol(w, PICKER_PROMPT, this.input.beforeCaret());
-    return { x: x + Math.max(0, col), y, visible: true };
+    return { x: Math.min(x + Math.max(0, col), x + Math.max(0, w - 1)), y: Math.min(rowY, y + Math.max(0, h - 1)), visible: true };
   }
 
   // Accept the selection, gated by `validate`. The close removes this window by identity, so a picker that `onAccept` opens survives it.
@@ -1004,6 +1073,15 @@ export class Picker {
     }
     // A float leaves every other key to the view under it, so the composer keeps typing.
     if (this.win && this.win.modal === false) return false;
+    if (this.body && this.win && (s === "page_up" || s === "page_down")) {
+      const { height } = this._bodyLayout(this._contentRect(this.win));
+      const max = Math.max(0, this._bodyRows.length - height);
+      if (height > 0 && max > 0) {
+        this._bodyScroll = Math.min(max, Math.max(0, this._bodyScroll + (s === "page_down" ? height : -height)));
+        root.invalidate();
+        return true;
+      }
+    }
     // A menu navigates with the shared table. A finder gives every other key to the query.
     if (!this.filter) {
       const nav = NAV_KEYS[s];

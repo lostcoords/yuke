@@ -221,6 +221,37 @@ test "tool declarations and dispatch enforce per-session spawn visibility" {
     try std.testing.expect(!host.tools.entries.items[normal_index].spawns_agents);
 }
 
+test "tool rejection codes cross the native bridge as cancellation reasons" {
+    const proto = @import("proto");
+    var f: Fixture = undefined;
+    try f.init(
+        \\import { defineTool } from "yuke:tools";
+        \\const parameters = { type: "object", properties: {} };
+        \\defineTool("declined", { description: "declined", parameters, execute: async () => { throw Object.assign(new Error("declined"), { code: "setup_declined" }); } });
+        \\defineTool("dismissed", { description: "dismissed", parameters, execute: async () => { throw Object.assign(new Error("dismissed"), { code: "setup_canceled" }); } });
+        \\defineTool("ordinary", { description: "ordinary", parameters, execute: async () => { throw new Error("ordinary"); } });
+        \\defineTool("getter", { description: "getter", parameters, execute: async () => { const error = new Error("getter"); Object.defineProperty(error, "code", { get: () => { throw new Error("code getter"); } }); throw error; } });
+    , kernel_boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+    const cases = [_]struct { name: []const u8, reason: ?proto.tool.ToolCancellationReason }{
+        .{ .name = "declined", .reason = .setup_declined },
+        .{ .name = "dismissed", .reason = .setup_dismissed },
+        .{ .name = "ordinary", .reason = null },
+        .{ .name = "getter", .reason = null },
+    };
+    for (cases) |case| {
+        const call = host.calls.submit(case.name, "{}", "");
+        defer call.finish();
+        try pumpUntilSettled(host, call);
+        try std.testing.expectEqual(case.reason, call.cancellation_reason);
+        try std.testing.expect(call.is_error);
+        try std.testing.expectEqualStrings(case.name, call.text.?);
+        try std.testing.expect(!host.ctx.hasException());
+    }
+    try host.pump();
+}
+
 fn findDecl(decls: []const @import("ai").ir.Tool, name: []const u8) bool {
     for (decls) |decl| if (std.mem.eql(u8, decl.name, name)) return true;
     return false;

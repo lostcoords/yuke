@@ -415,6 +415,8 @@ function toolStateKind(state) {
 function toolStateLabel(state) {
   const t = toolStateKind(state);
   if (t === "completed") return "done";
+  if (state?.type === "canceled" && state.reason === "setup_declined") return "setup declined";
+  if (state?.type === "canceled" && state.reason === "setup_dismissed") return "setup incomplete";
   return t;
 }
 
@@ -468,6 +470,8 @@ function toolHeaderRow(part, expanded, width, summary) {
 function toolBodyText(part) {
   const s = part.state || {};
   if (s.type === "error") return s.error || "";
+  if (s.type === "canceled" && s.reason === "setup_declined") return "Setup declined · No agent created";
+  if (s.type === "canceled" && s.reason === "setup_dismissed") return "Setup incomplete · No agent created";
   const output = /** @type {{ output?: string }} */ (s);
   if (output.output) return output.output;
   return "";

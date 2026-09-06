@@ -25,9 +25,24 @@ pub const ToolState = union(enum) {
     }
 };
 
+const no_agent_retry_suffix = " No agent was created, and the delegated task did not start. Do not retry setup or spawn another agent unless the user requests it. Continue without delegation if possible.";
+
+pub const ToolCancellationReason = enum {
+    setup_declined,
+    setup_dismissed,
+
+    pub fn modelText(self: @This()) []const u8 {
+        return switch (self) {
+            .setup_declined => "The user declined agent model setup." ++ no_agent_retry_suffix,
+            .setup_dismissed => "Agent model setup was dismissed before completion." ++ no_agent_retry_suffix,
+        };
+    }
+};
+
 /// The user or engine canceled the call.
 pub const ToolStateCanceled = struct {
     duration_ms: ?u64 = null,
+    reason: ?ToolCancellationReason = null,
 };
 
 /// This payload describes `tool.state_changed`.
@@ -77,4 +92,17 @@ test "tool state running preserves an optional output" {
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(json, buf.written());
+}
+
+test "tool cancellation reasons are closed and optional" {
+    const parsed = try std.json.parseFromSlice(ToolState, testing.allocator, "{\"type\":\"canceled\",\"reason\":\"setup_declined\"}", .{});
+    defer parsed.deinit();
+    try testing.expectEqual(ToolCancellationReason.setup_declined, parsed.value.canceled.reason.?);
+    const dismissed = try std.json.parseFromSlice(ToolState, testing.allocator, "{\"type\":\"canceled\",\"reason\":\"setup_dismissed\"}", .{});
+    defer dismissed.deinit();
+    try testing.expectEqual(ToolCancellationReason.setup_dismissed, dismissed.value.canceled.reason.?);
+    const legacy = try std.json.parseFromSlice(ToolState, testing.allocator, "{\"type\":\"canceled\"}", .{});
+    defer legacy.deinit();
+    try testing.expectEqual(null, legacy.value.canceled.reason);
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(ToolState, testing.allocator, "{\"type\":\"canceled\",\"reason\":\"other\"}", .{}));
 }

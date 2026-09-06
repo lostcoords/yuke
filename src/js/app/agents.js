@@ -33,7 +33,7 @@ function shared(map, key, make) {
   return pending;
 }
 /** @param {Context} ctx */
-function interactive(ctx) { if (ctx.interaction.interactive !== true) throw failure("setup_required", "Subagent model setup needs an interactive frontend."); }
+function interactive(ctx) { if (ctx.interaction.interactive !== true) throw failure("setup_required", "Agent model setup requires an interactive frontend. No agent was created. Do not retry agent setup in this frontend. Continue without delegation, or ask the user to configure agent models."); }
 /** @template T @param {Promise<T>} promise @param {Signal | undefined} signal @returns {Promise<T>} */
 async function cancellable(promise, signal) {
   check(signal);
@@ -138,7 +138,7 @@ async function pickModel(ctx, slot, signal) {
     const ready = new Set(current.providers.filter((provider) => provider.state === "ready").map((provider) => provider.id));
     const models = current.models.filter((model) => ready.has(model.provider) && model.supports_tools === true);
     if (!models.length) {
-      if (!answer(await ctx.interaction.confirm("Connect a provider", "No ready model with known tool support is available. Connect a provider?", { signal }), signal)) throw failure("setup_canceled", "Provider setup was canceled.");
+      if (!answer(await ctx.interaction.confirm("Connect a provider", "No ready model with known tool support is available. Connect a provider?", { signal }), signal)) throw failure("setup_declined", "The user declined provider setup for agents.");
       await setupProvider(ctx, signal);
       continue;
     }
@@ -159,13 +159,16 @@ async function pickModel(ctx, slot, signal) {
 async function setup(ctx, slot, current, signal, editing = false) {
   interactive(ctx);
   if (!current.path) throw failure("setup_required", "No profile config directory is available.");
-  const replace = current.config.models?.[slot] != null;
-  const message = editing ? "Choose a saved model for the " + slot + " slot?" : replace ? "The " + slot + " slot needs a different model. Choose it now?" : "Subagent model slot " + slot + " is not configured. Set it up?";
-  if (!answer(await ctx.interaction.confirm("Subagent models", message, { signal }), signal)) throw failure("setup_canceled", "Subagent setup was canceled.");
+  if (!editing) {
+    const replace = current.config.models?.[slot] != null;
+    const introduction = "Agents handle separate tasks and return their results here.\n\nSmall: narrow research and simple edits.\nMedium: broader work and review.\n\nChoose models from your providers. One model can serve both slots. No download is required. Provider charges may apply. Change these choices with /agent-models.\n\n";
+    const message = introduction + (replace ? "The " + slot + " slot needs a different model. Choose it now?" : "Subagent model slot " + slot + " is not configured. Set it up?");
+    if (!answer(await ctx.interaction.confirm("Agent models", message, { signal, labels: { accept: "Configure models", cancel: "Later" } }), signal)) throw failure("setup_declined", "The user declined agent model setup.");
+  }
   /** @type {Partial<Record<Wire.AgentModelSlot, Wire.AgentModel>>} */
   const choices = { [slot]: await pickModel(ctx, slot, signal) };
   const other = slot === "small" ? "medium" : "small";
-  if (!current.config.models?.[other]) {
+  if (!editing && !current.config.models?.[other]) {
     const same = answer(await ctx.interaction.confirm("Both model slots", "Use this model for both small and medium?", { signal }), signal);
     choices[other] = same ? /** @type {Wire.AgentModel} */ (choices[slot]) : await pickModel(ctx, other, signal);
   }
@@ -249,5 +252,6 @@ export async function recoverAgent(ctx, childId, slot, signal) {
 export async function editSlot(ctx, slot) {
   if (slot !== "small" && slot !== "medium") throw failure("bad_request", "The slot is invalid.");
   const current = await client.agentsGet();
-  await shared(setups, current.path || "", () => setup(ctx, slot, current, undefined, true));
+  try { await shared(setups, current.path || "", () => setup(ctx, slot, current, undefined, true)); }
+  catch (error) { if (codeOf(error) !== "setup_canceled" && codeOf(error) !== "setup_declined") throw error; }
 }

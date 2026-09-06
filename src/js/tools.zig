@@ -131,6 +131,7 @@ pub const Call = struct {
     /// A structured view encoded as JSON. The submitter decodes it in its turn arena.
     view_json: ?[]u8 = null,
     is_error: bool = false,
+    cancellation_reason: ?@import("proto").tool.ToolCancellationReason = null,
     /// The handler's Promise while it runs. Only the owner touches it.
     promise: Value = quickjs.UNDEFINED,
     /// The signal the handler reads. The owner sets `aborted` on it when the submitter leaves.

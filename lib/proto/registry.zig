@@ -224,6 +224,7 @@ pub const string_enums = [_]EnumEntry{
     .{ .name = "ProviderProtocol", .ty = enums.ProviderProtocol },
     .{ .name = "ProviderState", .ty = enums.ProviderState },
     .{ .name = "SkillScope", .ty = enums.SkillScope },
+    .{ .name = "ToolCancellationReason", .ty = tool.ToolCancellationReason },
 };
 
 pub const numeric_enums = [_]EnumEntry{

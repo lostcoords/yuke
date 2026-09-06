@@ -83,6 +83,9 @@ test "required slots headless setup and user cancellation have no child side eff
         \\  ctx.interaction.interactive = true;
         \\  ctx.interaction.confirm = async () => false;
         \\  try { await spawnAgent(ctx, { name: "one", message: "task", model: "small" }, undefined, site); throw new Error("canceled accepted"); }
+        \\  catch (e) { if (e.code !== "setup_declined") throw e; }
+        \\  ctx.interaction.confirm = async () => undefined;
+        \\  try { await spawnAgent(ctx, { name: "dismissed", message: "task", model: "small" }, undefined, site); throw new Error("dismissed accepted"); }
         \\  catch (e) { if (e.code !== "setup_canceled") throw e; }
         \\  if (stats.saves || stats.creates) throw new Error("side effect");
         \\  result = "ok";
@@ -335,8 +338,8 @@ const tool_fixture =
     \\plugins.use(agentToolsPlugin);
     \\map.config.models = { small: { model: "p/family/model" }, medium: { model: "p/family/model" } };
     \\globalThis.child = { session: { id: "02".repeat(16), name: "one", root: "/work", model: "p/family/model", origin: { type: "child", site: { session_id: "01".repeat(16), message_id: 1, part_id: 0 } } }, activity: { state: { type: "idle" }, queued: 0 }, last_run: { type: "turn" } };
-    \\client.sessionList = async (params) => { if (params.population.parent_id !== "01".repeat(16)) throw new Error("parent"); return { items: [child], next_cursor: null, total: 1 }; };
-    \\client.sessionGet = async (id, name) => name === child.session.name || id === child.session.id ? child : { session: { id, root: "/work", origin: { type: "root" } } };
+    \\client.sessionList = async (params) => { return { items: params.population.parent_id === "01".repeat(16) ? [child] : [], next_cursor: null, total: 1 }; };
+    \\client.sessionGet = async (id, name) => name === child.session.name || id === child.session.id ? child : { session: { id, title: "Main conversation", root: "/work", model: "parent/large", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } };
     \\client.sessionSendInput = async (id, text, site) => { if (id !== child.session.id || text !== "more" || site.message_id !== 2) throw new Error("instruction"); return { type: "queued", reason: "session_busy", input_id: 2, capacity: { active: 1, limit: 8 } }; };
     \\client.sessionCancelRun = async (id, clear) => { if (id !== child.session.id || !clear) throw new Error("stop scope"); return { canceled_run: null, cleared_inputs: [2] }; };
     \\client.sessionHistory = async (params) => { if (params.session_id !== child.session.id || params.before_message_id !== 0) throw new Error("history scope"); return { messages: [{ id: 3, type: "assistant", content: [{ type: "text", text: "x".repeat(70 * 1024) + "full child tail" }] }], has_more: true, configs: [] }; };
@@ -442,7 +445,7 @@ test "agent picker opens children stops one or all and retains focused interrupt
     try host.evalModule(fixture, "fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
     try host.evalModule(
-        \\import { root, Node } from "yuke:core";
+        \\import { root, Node, events } from "yuke:core";
         \\import { plugins } from "yuke:ext";
         \\import { tuiPlugin } from "yuke:tui";
         \\import { Chat } from "yuke:chat";
@@ -459,7 +462,15 @@ test "agent picker opens children stops one or all and retains focused interrupt
         \\    client.sessionOutline = () => ({ messages: [], active: null });
         \\    chat.sessionId = "01".repeat(16);
         \\    const picker = await openAgents(ctx, chat.sessionId);
-        \\    if (!childState(child).includes("last completed") || picker.content.source.length !== 1) throw new Error("child row");
+        \\    if (!childState(child).includes("completed") || picker.content.source.length !== 2) throw new Error("child row");
+        \\    if (!picker.win.opts.title.includes("0 active")) throw new Error("initial summary");
+        \\    picker.content.onKey({ type: "key", code: "char", char: "x", mods: 0 });
+        \\    if (stopped.length) throw new Error("main stopped");
+        \\    child.activity.state = { type: "running_tool", tool_name: "search" };
+        \\    events.emit("session.changed", { type: "session", session: child.session.id, facts: ["session.activity_changed"] });
+        \\    for (let i = 0; i < 12; i++) await Promise.resolve();
+        \\    if (!picker.win.opts.title.includes("1 active") || !childState(child).includes("search")) throw new Error("live summary");
+        \\    picker.content.list.move(1);
         \\    picker.content.onKey({ type: "key", code: "char", char: "x", mods: 0 });
         \\    await Promise.resolve(); await Promise.resolve();
         \\    picker.content.onKey({ type: "key", code: "char", char: "X", mods: 0 });
@@ -469,6 +480,13 @@ test "agent picker opens children stops one or all and retains focused interrupt
         \\    if (chat.sessionId !== child.session.id || root.overlays.length) throw new Error("open child");
         \\    chat.interrupt();
         \\    if (stopped.length !== 3 || stopped[2][0] !== child.session.id || stopped[2][1] !== undefined) throw new Error("interrupt changed scope");
+        \\    const back = await openAgents(ctx, chat.sessionId);
+        \\    back.content.list.move(-1);
+        \\    back.content.accept();
+        \\    if (chat.sessionId !== "01".repeat(16)) throw new Error("open main");
+        \\    const stale = openAgents(ctx, chat.sessionId);
+        \\    chat.sessionId = child.session.id;
+        \\    if (await stale || root.overlays.length) throw new Error("stale picker opened");
         \\    chat.dispose();
         \\    result = "ok";
         \\  })().catch((e) => result = e.stack || e.message); });
@@ -489,7 +507,7 @@ test "TUI tool questions show their owner and device login closes on completion"
         \\globalThis.result = "pending";
         \\plugins.use({ name: "question", apply(ctx) {
         \\  ctx.tools.define({ name: "question", description: "test", parameters: { type: "object", properties: {} }, execute: async (_args, signal) => {
-        \\    await ctx.interaction.confirm("Proceed?", "test", { signal });
+        \\    await ctx.interaction.confirm("Proceed?", "Small is for narrow research and simple edits. Medium is for broader work and review. You can use one model for both slots. Change these choices later with /agent-models.", { signal, labels: { accept: "Configure models", cancel: "Later" } });
         \\    const completion = new Promise((resolve) => globalThis.finishLogin = resolve);
         \\    const outcome = await ctx.interaction.deviceLogin({ verification_url: "https://example.com", user_code: "abc" }, completion, { signal });
         \\    result = outcome?.type || "canceled";
@@ -503,6 +521,9 @@ test "TUI tool questions show their owner and device login closes on completion"
     call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
     try host.pump();
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("root.overlays[0].opts.title.includes('01010101') ? 1 : 0"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("root.overlays[0].content.source.length === 2 ? 1 : 0"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("root.overlays[0].content.source.map(answer => root.overlays[0].content.list.format(answer)).join('|') === 'Configure models|Later' ? 1 : 0"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("root.overlays[0].content.body.includes('/agent-models.') ? 1 : 0"));
     try host.evalModule("root.overlays[0].content.accept();", "answer.js");
     try host.pump();
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("root.overlays.length"));
@@ -595,4 +616,81 @@ test "JavaScript supplies the default child prompt before input hooks" {
         \\})().catch((error) => globalThis.result = error.message);
     , "child-prompt.js");
     try expect(host, "ok");
+}
+
+test "setup cancellation rows are neutral and errors remain visible" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try host.evalModule(
+        \\import { Transcript, rowText } from "yuke:transcript";
+        \\for (const [reason, label] of [["setup_declined", "Setup declined"], ["setup_dismissed", "Setup incomplete"]]) {
+        \\  const t = new Transcript({ textOf: () => "", partsOf: () => [{ type: "tool", id: 0, name: "spawn_agent", arguments: "{}", state: { type: "canceled", reason, duration_ms: 2 } }] });
+        \\  t.setOutline([{ id: "one", type: "assistant" }], null);
+        \\  const rows = t.rows(100, 0, 10);
+        \\  if (!rows.map(rowText).join(" ").includes(label + " · No agent created")) throw new Error("missing outcome");
+        \\  if (rows.some(row => row.group === "TxToolError" || row.segments?.some(s => s.group === "TxToolError"))) throw new Error("red cancellation");
+        \\}
+        \\const t = new Transcript({ textOf: () => "", partsOf: () => [{ type: "tool", id: 0, name: "spawn_agent", arguments: "{}", state: { type: "error", error: "disk full" } }] });
+        \\t.setOutline([{ id: "one", type: "assistant" }], null);
+        \\if (!t.rows(100, 0, 10).map(rowText).join(" ").includes("disk full")) throw new Error("hidden error");
+        \\globalThis.result = "ok";
+    , "cancellation-rows.js");
+    try expect(host, "ok");
+}
+
+test "explicit model edits skip onboarding and change only the selected slot" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try host.evalModule(fixture, "fixture.js");
+    try host.evalModule(
+        \\import { editSlot } from "yuke:agents";
+        \\(async () => {
+        \\  ctx.interaction.confirm = async () => { throw new Error("unexpected onboarding"); };
+        \\  await editSlot(ctx, "small");
+        \\  if (map.config.models.small.model !== "p/family/model" || map.config.models.medium || stats.creates) throw new Error("wrong edit scope");
+        \\  await editSlot(ctx, "medium");
+        \\  if (stats.saves !== 2 || map.config.models.small.model !== "p/family/model" || map.config.models.medium.model !== "p/family/model") throw new Error("lost slot");
+        \\  ctx.interaction.select = async () => undefined;
+        \\  await editSlot(ctx, "small");
+        \\  if (stats.saves !== 2) throw new Error("canceled edit saved");
+        \\  result = "ok";
+        \\})().catch((e) => result = e.stack || e.message);
+    , "edit-slot.js");
+    try expect(host, "ok");
+}
+
+const tree_fixture =
+    \\import { client } from "yuke:client";
+    \\globalThis.nodes = {
+    \\  root: { session: { id: "root", name: "main", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } },
+    \\  a: { session: { id: "a", name: "a", origin: { type: "child", site: { session_id: "root" } } }, activity: { state: { type: "idle" }, queued: 0 } },
+    \\  b: { session: { id: "b", name: "b", origin: { type: "child", site: { session_id: "a" } } }, activity: { state: { type: "idle" }, queued: 0 } },
+    \\  sibling: { session: { id: "sibling", name: "sibling", origin: { type: "child", site: { session_id: "root" } } }, activity: { state: { type: "idle" }, queued: 0 } },
+    \\};
+    \\client.sessionGet = async (id) => nodes[id];
+    \\client.sessionList = async ({ population }) => ({ items: Object.values(nodes).filter((x) => x.session.origin.type === "child" && x.session.origin.site.session_id === population.parent_id), total: 0 });
+    \\globalThis.result = "pending";
+;
+
+test "agent rows resolve the real root and include siblings and descendants" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try host.evalModule(tree_fixture, "tree-fixture.js");
+    try host.evalModule(
+        \\import { agentRows } from "yuke:agents-ui";
+        \\agentRows("b").then((rows) => result = rows.map((row) => row.item.session.id + ":" + row.depth).join(","), (e) => result = e.message);
+    , "tree.js");
+    try expect(host, "root:0,a:1,b:2,sibling:1");
+}
+
+test "agent rows reject cyclic ancestry" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try host.evalModule(tree_fixture, "tree-fixture.js");
+    try host.evalModule(
+        \\import { agentRows } from "yuke:agents-ui";
+        \\nodes.a.session.origin.site.session_id = "b";
+        \\agentRows("b").then(() => result = "accepted", (e) => result = e.message);
+    , "cycle.js");
+    try expect(host, "The session ancestry contains a cycle.");
 }

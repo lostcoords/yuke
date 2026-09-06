@@ -24,6 +24,7 @@ pub const Outcome = struct {
     output: []const u8,
     view: ?[]const proto.view.View = null,
     is_error: bool,
+    cancellation_reason: ?proto.tool.ToolCancellationReason = null,
 };
 
 pub const ToolSet = struct {

@@ -977,14 +977,16 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_roo
     const res = runHooked(engine, scratch_state.allocator(), slot, pt, workspace_root) catch {
         const cancel_old = engine.deps.io.swapCancelProtection(.blocked);
         defer _ = engine.deps.io.swapCancelProtection(cancel_old);
-        try streamer.emitToolState(pt.part_id, .{ .canceled = .{} });
+        try streamer.emitToolState(pt.part_id, .{ .canceled = .{ .duration_ms = engine.nowMillis() -| started } });
         return;
     };
     const duration = engine.nowMillis() -| started; // Saturate; the wall clock can move backward.
     const old = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old);
     const settled: proto.tool.ToolState = if (slot.cancel_requested)
-        .{ .canceled = .{} }
+        .{ .canceled = .{ .duration_ms = duration } }
+    else if (res.cancellation_reason) |reason|
+        .{ .canceled = .{ .duration_ms = duration, .reason = reason } }
     else if (res.is_error)
         .{ .@"error" = .{ .@"error" = res.output, .view = res.view, .duration_ms = duration } }
     else
@@ -1082,7 +1084,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
         .proceed => res,
         .replace => |value| blk: {
             const changed = std.json.parseFromValueLeaky(ToolResult, arena, value, .{ .ignore_unknown_fields = true }) catch break :blk res;
-            break :blk .{ .output = changed.output, .view = changed.view, .is_error = changed.is_error };
+            break :blk .{ .output = changed.output, .view = changed.view, .is_error = changed.is_error, .cancellation_reason = res.cancellation_reason };
         },
         .block => |reason| .{ .output = reason, .is_error = true },
         .canceled => return error.Canceled,

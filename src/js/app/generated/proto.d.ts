@@ -916,6 +916,7 @@ export interface SessionSummaryChangedData {
 /** The user or engine canceled the call. */
 export interface ToolStateCanceled {
   readonly duration_ms?: number;
+  readonly reason?: ToolCancellationReason;
 }
 
 /** This payload describes `tool.state_changed`. */
@@ -1252,6 +1253,11 @@ export type ProviderState =
 export type SkillScope =
   | "project"
   | "personal"
+;
+
+export type ToolCancellationReason =
+  | "setup_declined"
+  | "setup_dismissed"
 ;
 
 /** This type describes one part of a message's content. */

@@ -2851,6 +2851,54 @@ test "an overlay without a hook is consumed, not a fault" {
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen"));
 }
 
+test "bordered picker preserves actions padding and mouse targets after resize" {
+    var paint: Paint = undefined;
+    try paint.setup(std.testing.allocator, 24, 80);
+    defer paint.deinit();
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    paint.bind(host);
+    try host.evalModule(
+        \\import { Picker, Window } from "yuke:ui";
+        \\import { term } from "yuke:term";
+        \\const check = (ok, message) => { if (!ok) throw new Error(message); };
+        \\const p = new Picker({ body: "one two three four five six seven eight nine ten eleven twelve", filter: false, items: ["Yes", "No"] });
+        \\const w = new Window({ border: "rounded", width: 16, height: 6, content: p });
+        \\p.win = w;
+        \\const draw = () => { w.update(); term.beginFrame(); w.draw(); term.endFrame(); };
+        \\draw();
+        \\let r = p.list._rect;
+        \\check(r.x === w.rect.x + 3 && r.w === 10 && r.h === 2 && p.cursor(w) === null, "small padding/actions");
+        \\check(!p.onMouse({ event: "press", button: "left", col: r.x - 1, row: r.y }), "padding accepted click");
+        \\check(p.onMouse({ event: "press", button: "left", col: r.x, row: r.y + 1 }) && p.selected() === "No", "action mouse target");
+        \\w.opts.height = 10;
+        \\draw();
+        \\r = p.list._rect;
+        \\const body = p._bodyRows;
+        \\draw();
+        \\check(p._bodyRows === body, "wrap cache");
+        \\check(p.onMouse({ event: "press", button: "wheel_down", col: r.x, row: w.rect.y + 2, count: 1 }) && p._bodyScroll === 1, "body scroll");
+        \\check(p.selected() === "No", "body wheel moved action");
+        \\p.onKey({ type: "key", code: "page_down", mods: 0 });
+        \\check(p._bodyScroll > 1 && p.selected() === "No", "body keyboard scroll");
+        \\w.opts.width = 60; w.opts.height = p.preferredHeight(60);
+        \\draw();
+        \\check(p._bodyRows !== body && p._bodyScroll === 0, "resize wrap/scroll");
+        \\check(p._bodyLayout(p._contentRect(w)).height === p._bodyRows.length, "body clipped at normal size");
+        \\check(p.list._rect.h === 2, "preferred height action rows");
+        \\w.border = "none"; w.opts.height = p.preferredHeight(60);
+        \\draw();
+        \\check(p.list._rect.x === w.rect.x && p.list._rect.w === w.rect.w && p.list._rect.h === 2, "borderless preferred height");
+        \\const finder = new Picker({ body: "help text", items: ["one"] });
+        \\const fw = new Window({ border: "rounded", width: 16, height: 6, content: finder });
+        \\finder.win = fw; fw.update();
+        \\const cursor = finder.cursor(fw), inner = finder._contentRect(fw);
+        \\check(cursor.x >= inner.x && cursor.x < inner.x + inner.w && cursor.y >= inner.y && cursor.y < inner.y + inner.h, "cursor outside content");
+        \\globalThis.result = "ok";
+    , "picker-geometry.js");
+    try expectJs(host, "ok");
+}
+
 test "an unusable view or layer is rejected at the call" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -3841,6 +3889,16 @@ test "the slash menu follows the composer, completes, runs, and leaves a message
         \\check("opens", root.overlays.length === 1 && root.overlays[0].modal === false);
         \\check("composer-keeps-focus", root.focused === chat.view);
         \\check("lists-slash-entries", rowsOf().length > 3 && rowsOf().every((e) => e.slash));
+        \\const offAgents = command.add(null, { "test:agents": () => {}, "test:models": () => {} }, {
+        \\  "test:agents": { title: "Agents", slash: "agents" }, "test:models": { title: "Agent models", slash: "agent-models" },
+        \\});
+        \\chat.composer.text = "/a";
+        \\root.overlays[0].content.selectKey("test:models");
+        \\chat.composer.text = "/agent";
+        \\check("new-query-selects-best", root.overlays[0].content.selected().slash === "agents");
+        \\root.onEvent(key("tab"));
+        \\check("agent-completes", chat.composer.text === "/agents");
+        \\offAgents();
         \\chat.composer.text = "/ech";
         \\check("filters", rowsOf().length >= 1 && rowsOf()[0].slash === "echo");
         \\root.onEvent(key("tab"));

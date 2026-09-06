@@ -113,7 +113,7 @@ fn terminalToolResult(state: proto.tool.ToolState) Error!ToolOutcome {
     return switch (state) {
         .completed => |c| .{ .content = c.output, .is_error = false },
         .@"error" => |e| .{ .content = e.@"error", .is_error = true },
-        .canceled => .{ .content = "The tool call was canceled. It may have produced side effects before it stopped.", .is_error = true },
+        .canceled => |c| .{ .content = if (c.reason) |reason| reason.modelText() else "The tool call was canceled. It may have produced side effects before it stopped.", .is_error = c.reason == null },
         // A committed transcript holds only terminal tools.
         .pending, .running => error.InvalidTranscript,
     };
@@ -247,4 +247,19 @@ test "canceled tools state possible side effects and assistant diagnostics stay 
     try testing.expect(result.is_error);
     try testing.expect(std.mem.indexOf(u8, result.content, "side effects") != null);
     try testing.expect(std.mem.indexOf(u8, result.content, "private diagnostic") == null);
+}
+
+test "setup cancellation becomes a non-error provider result" {
+    const messages = [_]proto.message.Message{.{ .assistant = .{
+        .id = 1,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = "test",
+        .time = .{ .created_at_ms = 1 },
+        .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "spawn", .arguments = "{}", .state = .{ .canceled = .{ .reason = .setup_declined } } } }},
+    } }};
+    const request = try build(testing.allocator, &messages, .{});
+    defer testing.allocator.free(request.blocks);
+    try testing.expect(!request.blocks[1].value.tool_result.is_error);
+    try testing.expectEqualStrings(proto.tool.ToolCancellationReason.setup_declined.modelText(), request.blocks[1].value.tool_result.content);
 }

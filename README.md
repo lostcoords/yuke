@@ -23,6 +23,10 @@ zig build sqlgen -- --migrations <dir> --queries <dir> --queries-out <file>
 
 ## Agent configuration
 
+Use `/agents` to see the main conversation and all descendant agents, switch sessions, or stop agent work.
+Use `/agent-models` to choose the small and medium models from your providers.
+Small handles narrow research and simple edits. Medium handles broader work and review.
+
 Set agent limits in the profile's `index.js`:
 
 ```js
@@ -43,8 +47,8 @@ Custom tools can set `spawnsAgents: true` to use the same tool policy.
 
 `maxConcurrent` applies to active descendants across the whole tree. It excludes the root.
 A child keeps its slot until native cleanup ends. Excess work enters the durable queue.
-If a parent has no independent work, it can return its result to free a slot.
-A child report starts a parent follow-up after the parent becomes idle and capacity is available.
+If an agent has no independent work, it can return its result to free a slot.
+An agent report starts a follow-up after its owner becomes idle and capacity is available.
 
 A lower depth limit prevents new spawns. Existing sessions, queued work, and reports remain valid.
 Names are local to each parent. Use a child name or session ID to address a child.

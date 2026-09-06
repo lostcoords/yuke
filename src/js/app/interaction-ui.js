@@ -2,6 +2,7 @@
 import { native } from "yuke:interaction-native";
 import { DeviceDialog } from "yuke:auth";
 import { root } from "yuke:core";
+import { term } from "yuke:term";
 import { Prompt, Window, ui } from "yuke:ui";
 import { interaction } from "yuke:ext";
 import { notice } from "yuke:notice";
@@ -75,23 +76,20 @@ function createAnswerer(frontend) {
         confirm(title, message = "", options) {
           const request = confirmRequest(title, message);
           return dialog((settle) => {
-            const items = [
-              { id: "message", text: request.message, answer: undefined },
-              { id: "yes", text: "yes", answer: true },
-              { id: "no", text: "no", answer: false },
-            ];
-            const picked = ui.select(items, {
+            const labels = options?.labels || {};
+            const width = () => Math.min(term.width, Math.max(8, Math.min(72, Math.round(term.width * 0.8))));
+            const picked = ui.select([true, false], {
               title: attributedTitle(request.title, options),
-              footer: "↵ answer · esc cancel",
+              footer: "↵ answer · pgup/pgdn scroll · esc cancel",
               border: "rounded",
-              width: 0.6,
-              height: 7,
-              key: (item) => item.id,
-              isSelectable: (item) => item.answer !== undefined,
-              format: (item) => ({ text: item.text, group: item.answer === undefined ? "UIDim" : "UIItem" }),
-              onAccept: (item) => settle(item.answer),
+              width,
+              body: request.message,
+              key: Number,
+              format: (answer) => answer ? labels.accept || "Yes" : labels.cancel || "No",
+              onAccept: settle,
               onCancel: () => settle(undefined),
             });
+            picked.win.opts.height = () => Math.min(term.height, picked.content.preferredHeight(width()));
             return frontend.tui.overlay(picked.win);
           }, options);
         },

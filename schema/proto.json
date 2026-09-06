@@ -3052,6 +3052,11 @@
           "name": "duration_ms",
           "type": "u64",
           "presence": "optional"
+        },
+        {
+          "name": "reason",
+          "type": "ToolCancellationReason",
+          "presence": "optional"
         }
       ]
     },
@@ -4531,6 +4536,20 @@
         {
           "name": "personal",
           "wire": "personal"
+        }
+      ]
+    },
+    {
+      "name": "ToolCancellationReason",
+      "numeric": false,
+      "values": [
+        {
+          "name": "setup_declined",
+          "wire": "setup_declined"
+        },
+        {
+          "name": "setup_dismissed",
+          "wire": "setup_dismissed"
         }
       ]
     }

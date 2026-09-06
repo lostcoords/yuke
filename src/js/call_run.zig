@@ -171,6 +171,7 @@ fn poll(host: *Host, call: *table.Call) void {
 fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) void {
     const ctx = host.ctx;
     if (is_error) {
+        if (call.kind == .tool) call.cancellation_reason = cancellationReason(ctx, value);
         const message = errorText(ctx, value);
         defer if (message) |text| ctx.freeCString(text.ptr);
         const fallback: []const u8 = switch (call.kind) {
@@ -225,6 +226,22 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
     }
 
     return stringifyValue(host, call, value);
+}
+
+fn cancellationReason(ctx: Context, value: Value) ?proto.tool.ToolCancellationReason {
+    if (!ctx.isObject(value)) return null;
+    const code = ctx.getPropertyStr(value, "code");
+    defer ctx.freeValue(code);
+    if (ctx.hasException()) {
+        pending.dropException(ctx);
+        return null;
+    }
+    if (!ctx.isString(code)) return null;
+    const text = ctx.toCStringLen(code) catch return null;
+    defer ctx.freeCString(text.ptr);
+    if (std.mem.eql(u8, text, "setup_declined")) return .setup_declined;
+    if (std.mem.eql(u8, text, "setup_canceled")) return .setup_dismissed;
+    return null;
 }
 
 fn stringifyValue(host: *Host, call: *table.Call, value: Value) void {

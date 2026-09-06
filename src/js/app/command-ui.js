@@ -87,7 +87,7 @@ export const commandUiPlugin = {
 
     ctx.inject(["tui"], (ctx) => {
       // One float, for the composer that has the focus.
-      /** @type {{ chat: Chat, picker: import("yuke:ui").Picker<Entry>, win: import("yuke:ui").Window } | null} */
+      /** @type {{ chat: Chat, picker: import("yuke:ui").Picker<Entry>, win: import("yuke:ui").Window, query: string } | null} */
       let float = null;
       // The text Escape dismissed in one chat. That menu stays closed until its text changes.
       /** @type {{ chat: Chat, text: string } | null} */
@@ -105,8 +105,8 @@ export const commandUiPlugin = {
         if (e) chat.composer.text = "/" + e.slash + (e.args ? " " : "");
       };
 
-      /** @param {Chat} chat @param {Entry[]} ranked @param {number} col @returns {void} */
-      const open = (chat, ranked, col) => {
+      /** @param {Chat} chat @param {Entry[]} ranked @param {number} col @param {string} query @returns {void} */
+      const open = (chat, ranked, col, query) => {
         /** @type {import("yuke:ui").Picker<Entry> | null} */
         let content = null;
         const p = ui.select(ranked, {
@@ -141,7 +141,7 @@ export const commandUiPlugin = {
         });
         content = p.content;
         ctx.tui.overlay(p.win);
-        float = { chat, picker: p.content, win: p.win };
+        float = { chat, picker: p.content, win: p.win, query };
       };
 
       // Follow the focused composer: open, refilter, or close the menu to match its text.
@@ -157,8 +157,12 @@ export const commandUiPlugin = {
         const all = slashEntries(entries());
         const ranked = fuzzyRank(all, line.word, (e) => /** @type {string} */ (e.slash));
         if (ranked.length === 0) return close();
-        if (float) float.picker.setSource(ranked);
-        else open(chat, ranked, columnOf(all));
+        if (float) {
+          float.picker.setSource(ranked);
+          if (float.query !== line.word) float.picker.selectKey(ranked[0]?.name);
+          float.query = line.word;
+        }
+        else open(chat, ranked, columnOf(all), line.word);
       };
       ctx.on("composer.changed", sync);
       ctx.on("pane.focused", sync);

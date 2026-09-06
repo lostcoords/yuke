@@ -50,6 +50,7 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
         .output = out.dupe(u8, text) catch return fault(out, "out of memory"),
         .view = view,
         .is_error = call.is_error,
+        .cancellation_reason = call.cancellation_reason,
     };
 }
 

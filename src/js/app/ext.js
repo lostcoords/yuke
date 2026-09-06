@@ -561,7 +561,7 @@ installInputGate((params, method = "session.send_input") => (method === "session
 
 // --- interaction: the service a frontend installs ---
 // A frontend answers a question and shows a message. It is always present, so it gates no block.
-/** @typedef {{ signal?: { aborted: boolean } | undefined, secret?: boolean }} InteractionOptions */
+/** @typedef {{ signal?: { aborted: boolean } | undefined, secret?: boolean, labels?: { accept?: string, cancel?: string } }} InteractionOptions */
 /** @typedef {{ interactive?: boolean, deviceLogin?: (start: Wire.AuthLoginResult, outcome: Promise<Wire.AuthLoginOutcome>, options?: InteractionOptions) => Promise<Wire.AuthLoginOutcome | undefined>, confirm(title: string, message?: string, options?: InteractionOptions): Promise<boolean | undefined>, select(title: string, choices: string[], options?: InteractionOptions): Promise<string | undefined>, input(title: string, placeholder?: string, options?: InteractionOptions): Promise<string | undefined>, notify(message: string, level?: "info" | "warn" | "error"): void }} InteractionSurface */
 /** @typedef {{ surfaceFor: (ctx: Context) => InteractionSurface }} Answerer */
 
