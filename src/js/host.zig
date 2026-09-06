@@ -56,6 +56,7 @@ pub const default_baked = shared_baked ++ [_]loader_mod.BakedModule{
     .{ .name = "yuke:sessions", .source = @embedFile("app/sessions.js") },
     .{ .name = "yuke:command-ui", .source = @embedFile("app/command-ui.js") },
     .{ .name = "yuke:catalog", .source = @embedFile("app/catalog.js") },
+    .{ .name = "yuke:auth", .source = @embedFile("app/auth.js") },
     .{ .name = "yuke:chat", .source = @embedFile("app/chat.js") },
     .{ .name = "yuke:fzy", .source = @embedFile("app/fzy.js") },
     .{ .name = "yuke:transcript", .source = @embedFile("app/transcript.js") },

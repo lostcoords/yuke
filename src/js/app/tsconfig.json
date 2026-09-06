@@ -29,6 +29,7 @@
       "yuke:sessions": ["./sessions.js"],
       "yuke:command-ui": ["./command-ui.js"],
       "yuke:catalog": ["./catalog.js"],
+      "yuke:auth": ["./auth.js"],
       "yuke:chat": ["./chat.js"],
       "yuke:fzy": ["./fzy.js"],
       "yuke:transcript": ["./transcript.js"],

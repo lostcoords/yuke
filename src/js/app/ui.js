@@ -1023,6 +1023,52 @@ export class Picker {
   }
 }
 
+// A one-line prompt as window content. `settle` gets the text on Enter and undefined on Escape.
+/** @typedef {{ placeholder?: string, mask?: boolean, settle: (value: string | undefined) => void }} PromptOptions */
+export class Prompt {
+  /** @param {PromptOptions} opts */
+  constructor(opts) {
+    this.placeholder = opts.placeholder || "";
+    this.mask = !!opts.mask;
+    this.settle = opts.settle;
+    this.input = new TextInput({ onChange: () => root.invalidate() });
+  }
+
+  // The text as the screen shows it. A masked prompt paints one dot per character, so a key never shows.
+  /** @param {string} s @returns {string} */
+  shown(s) {
+    return this.mask ? "•".repeat(Array.from(s).length) : s;
+  }
+
+  /** @param {Window} win @returns {void} */
+  draw(win) {
+    const empty = this.input.text === "";
+    win.winText(0, 0, PICKER_PROMPT, "UIPrompt");
+    win.winText(2, 0, empty ? this.placeholder : this.shown(this.input.text), empty ? "UIDim" : "UIQuery");
+  }
+
+  /** @param {Window} win @returns {{ x: number, y: number, visible: boolean }} */
+  cursor(win) {
+    const col = caretCol(win.inner.w, PICKER_PROMPT, this.shown(this.input.beforeCaret()));
+    return { x: win.inner.x + col, y: win.inner.y, visible: true };
+  }
+
+  /** @param {HostEvent} event @returns {boolean} */
+  onKey(event) {
+    if (event.type === "paste") {
+      this.input.insert(event.text || "");
+      return true;
+    }
+    if (event.type !== "key") return false;
+    const stroke = strokeOf(event);
+    if (stroke === "enter") this.settle(this.input.text);
+    else if (stroke === "esc") this.settle(undefined);
+    else this.input.onKey(event);
+    root.invalidate();
+    return true;
+  }
+}
+
 // The kit's public surface. `select` navigates a set, `pick` adds the query line, and both return { win, content, close }.
 export const ui = {
   /** @template T @param {T[]} items @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T>, close: () => void }} */

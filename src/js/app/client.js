@@ -169,6 +169,33 @@ function catalogReload() {
   return request("catalog.reload", {});
 }
 
+/** @returns {Promise<Wire.AuthListResult>} */
+function authList() {
+  return request("auth.list", {});
+}
+
+// Start a device-code login. The engine polls in its own task and reports through `auth.login_finished`.
+/** @param {string} providerId @returns {Promise<Wire.AuthLoginResult>} */
+function authLogin(providerId) {
+  return request("auth.login", /** @type {Wire.AuthLoginParams} */ ({ provider_id: providerId }));
+}
+
+/** @param {string} loginId @returns {Promise<Wire.Empty>} */
+function authCancelLogin(loginId) {
+  return request("auth.cancel_login", /** @type {Wire.AuthCancelLoginParams} */ ({ login_id: loginId }));
+}
+
+// Store one API key. The wire never returns it.
+/** @param {string} providerId @param {string} apiKey @returns {Promise<Wire.Empty>} */
+function authSetApiKey(providerId, apiKey) {
+  return request("auth.set_api_key", /** @type {Wire.AuthSetApiKeyParams} */ ({ provider_id: providerId, api_key: apiKey }));
+}
+
+/** @param {string} providerId @returns {Promise<Wire.Empty>} */
+function authRemove(providerId) {
+  return request("auth.remove", /** @type {Wire.AuthRemoveParams} */ ({ provider_id: providerId }));
+}
+
 // One object carries the whole surface, so a test or a plugin can replace a single method.
 export const client = {
   request,
@@ -187,4 +214,9 @@ export const client = {
   sessionCreate,
   catalogList,
   catalogReload,
+  authList,
+  authLogin,
+  authCancelLogin,
+  authSetApiKey,
+  authRemove,
 };

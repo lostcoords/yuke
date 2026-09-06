@@ -4,7 +4,7 @@ import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { newestLocalModelSession } from "yuke:sessions";
 
-/** @typedef {{ rev: Wire.CatalogRev | null, models: readonly Wire.ModelInfo[], loading: boolean }} CatalogState */
+/** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[], loading: boolean }} CatalogState */
 /** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
 /** @typedef {{ session: Wire.Session, activity: { context_usage?: Wire.TokenUsage } | null }} StatusEntry */
 /** @typedef {{ entry?: () => StatusEntry | null }} CatalogConfig */
@@ -12,7 +12,7 @@ import { newestLocalModelSession } from "yuke:sessions";
 // One engine, one catalog. `catalog.list` answers "unchanged" while the revision holds, so a
 // reopen costs no work.
 /** @type {CatalogState} */
-const catalog = { rev: null, models: [], loading: false };
+const catalog = { rev: null, providers: [], models: [], loading: false };
 
 /** @returns {CatalogState} */
 export function catalogOf() {
@@ -29,6 +29,7 @@ export function loadCatalog() {
     .then((r) => {
       if (r && r.type === "full") {
         c.rev = r.catalog_rev;
+        c.providers = r.providers || [];
         c.models = r.models || [];
       }
     })
@@ -44,6 +45,24 @@ export function loadCatalog() {
 /** @returns {Promise<CatalogState>} */
 export function reloadCatalog() {
   return client.catalogReload().catch(() => {}).then(loadCatalog);
+}
+
+// The state of one provider, or null when the catalog does not name it.
+/** @param {string} providerId @returns {Wire.ProviderState | null} */
+export function providerState(providerId) {
+  const p = catalog.providers.find((x) => x.id === providerId);
+  return p ? p.state : null;
+}
+
+// The words a row shows for a provider state. A ready provider shows nothing, so only a problem draws.
+/** @param {Wire.ProviderState | null} state @returns {string} */
+export function providerStateLabel(state) {
+  switch (state) {
+    case "needs_credential": return "needs login";
+    case "needs_route": return "needs route";
+    case "expired": return "expired";
+    default: return "";
+  }
 }
 
 // The context window of one model, or 0 when the catalog does not name it.

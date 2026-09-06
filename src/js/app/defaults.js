@@ -6,6 +6,7 @@ import { notice, noticePlugin } from "yuke:notice";
 import { commandUiPlugin } from "yuke:command-ui";
 import { explorerPlugin } from "yuke:explorer";
 import { catalogPlugin } from "yuke:catalog";
+import { authPlugin } from "yuke:auth";
 import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { client } from "yuke:client";
 import { rowKey, rowLabel, activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
@@ -149,6 +150,7 @@ plugins.use(noticePlugin);
 plugins.use(commandUiPlugin);
 plugins.use(explorerPlugin);
 plugins.use(catalogPlugin, { entry: chatEntry });
+plugins.use(authPlugin);
 plugins.use(chatPlugin);
 plugins.use(sessionsPlugin);
 

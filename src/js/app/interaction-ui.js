@@ -1,53 +1,11 @@
 // yuke:interaction-ui — the terminal answerer for the shared interaction capability.
-import { TextInput, caretCol, root, strokeOf } from "yuke:core";
-import { Window, ui } from "yuke:ui";
+import { root } from "yuke:core";
+import { Prompt, Window, ui } from "yuke:ui";
 import { interaction } from "yuke:ext";
 import { notice } from "yuke:notice";
 import { confirmRequest, inputRequest, noticeLevel, selectRequest } from "yuke:interaction";
 
 /** @typedef {() => void} Cancel */
-
-class Prompt {
-  /** @param {string} placeholder @param {(value: string | undefined) => void} settle */
-  constructor(placeholder, settle) {
-    this.placeholder = placeholder;
-    this.settle = settle;
-    this.input = new TextInput({ onChange: () => root.invalidate() });
-  }
-
-  /** @param {Window} win @returns {void} */
-  draw(win) {
-    const value = this.input.text === "" ? this.placeholder : this.input.text;
-    win.winText(0, 0, "› ", "UIPrompt");
-    win.winText(2, 0, value, this.input.text === "" ? "UIDim" : "UIQuery");
-  }
-
-  /** @param {Window} win @returns {{ x: number, y: number, visible: boolean }} */
-  cursor(win) {
-    return {
-      x: win.inner.x + caretCol(win.inner.w, "› ", this.input.beforeCaret()),
-      y: win.inner.y,
-      visible: true,
-    };
-  }
-
-  /** @param {HostEvent} event @returns {boolean} */
-  onKey(event) {
-    if (event.type !== "key") return false;
-    const stroke = strokeOf(event);
-    if (stroke === "enter") {
-      this.settle(this.input.text);
-      return true;
-    }
-    if (stroke === "esc") {
-      this.settle(undefined);
-      return true;
-    }
-    this.input.onKey(event);
-    root.invalidate();
-    return true;
-  }
-}
 
 /** @param {import("yuke:ext").InjectContext} frontend */
 function createAnswerer(frontend) {
@@ -136,7 +94,7 @@ function createAnswerer(frontend) {
         input(title, placeholder) {
           const request = inputRequest(title, placeholder);
           return dialog((settle) => {
-            const prompt = new Prompt(request.placeholder || "", settle);
+            const prompt = new Prompt({ placeholder: request.placeholder || "", settle });
             const win = new Window({
               title: request.title,
               footer: "↵ submit · esc cancel",

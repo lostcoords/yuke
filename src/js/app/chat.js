@@ -1,12 +1,12 @@
 // yuke:chat — the chat pane, the session it drives, and the pickers that read its transcript.
-import { root, config, copy } from "yuke:core";
+import { root, config, copy, command } from "yuke:core";
 import { term } from "yuke:term";
 import { ui } from "yuke:ui";
 import { ChatView } from "yuke:transcript";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { feedItem } from "yuke:sessions";
-import { catalogOf, reloadCatalog, chooseModel, defaultModel } from "yuke:catalog";
+import { catalogOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:catalog";
 
 
 /** @typedef {Extract<import("yuke:engine-native").EngineEvent, { type: "session" }>} NativeSessionEvent */
@@ -256,8 +256,16 @@ function openModelPicker(ctx, query) {
       items: models,
       key: qualified,
       filterText: m => m.provider + " " + m.name + " " + m.id,
-      format: m => ({ text: m.name, right: m.provider }),
-      onAccept: m => pickReasoning(ctx, m),
+      // A model whose provider cannot serve a turn shows dim with the reason, so a run never fails on it blind.
+      format: m => {
+        const label = providerStateLabel(providerState(m.provider));
+        return label ? { text: m.name, right: m.provider + " · " + label, group: "UIDim" } : { text: m.name, right: m.provider };
+      },
+      onAccept: m => {
+        const state = providerState(m.provider);
+        if (state === "needs_credential" || state === "expired") command.perform("auth:login", m.provider);
+        else pickReasoning(ctx, m);
+      },
     });
     ctx.tui.overlay(p.win);
     p.content.selectKey(currentId);
