@@ -238,9 +238,9 @@ test "migrate applies the baseline and claims the database" {
     var db = try Database.open(conn);
     defer db.deinit();
 
-    try std.testing.expectEqual(@as(i64, 4), try scalarInt(db.conn, "PRAGMA user_version"));
+    try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(db.conn, "PRAGMA user_version"));
     try std.testing.expectEqual(APPLICATION_ID, try scalarInt(db.conn, "PRAGMA application_id"));
-    try std.testing.expectEqual(@as(i64, 4), try scalarInt(db.conn, "SELECT count(*) FROM migration_hash"));
+    try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(db.conn, "SELECT count(*) FROM migration_hash"));
 }
 
 test "migrate is idempotent on reopen" {
@@ -248,7 +248,7 @@ test "migrate is idempotent on reopen" {
     defer conn.close();
     try migrate(conn);
     try migrate(conn); // The database is current, so apply no step and recheck hashes.
-    try std.testing.expectEqual(@as(i64, 4), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
+    try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
 }
 
 test "migrate renames persisted child report paths" {
@@ -269,7 +269,7 @@ test "migrate renames persisted child report paths" {
         try conn.exec("INSERT INTO migration_hash(version, hash) VALUES (?1, ?2)", .{ migration.version, &hash });
     }
     try migrate(conn);
-    try std.testing.expectEqual(@as(i64, 4), try scalarInt(conn, "PRAGMA user_version"));
+    try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(conn, "PRAGMA user_version"));
     for ([_][]const u8{
         "SELECT json_extract(payload, '$.source.name'), json_type(payload, '$.source.path') IS NULL FROM events WHERE seq = 1",
         "SELECT json_extract(payload, '$.input.source.name'), json_type(payload, '$.input.source.path') IS NULL FROM events WHERE seq = 2",

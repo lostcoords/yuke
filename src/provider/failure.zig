@@ -19,6 +19,7 @@ pub fn classify(err: anyerror) Detail {
         // The library never raises these, because they are decisions the engine makes.
         error.TurnTooLarge => .{ .class = .permanent, .code = .context_overflow, .message = "the turn is larger than the model context window" },
         error.UnsupportedReasoning => .{ .class = .permanent, .code = .unsupported_reasoning, .message = "the model does not support this reasoning level" },
+        error.PromptTooLarge => .{ .class = .permanent, .code = .runtime, .message = "the system prompt exceeds the protocol string limit" },
         error.HookBlocked => .{ .class = .permanent, .code = .runtime, .message = "an extension stopped the request" },
         else => {
             const got = ai.failure.classify(err);
@@ -83,4 +84,11 @@ test "an extension that stops a request reports a runtime failure" {
     const detail = classify(error.HookBlocked);
     try testing.expectEqual(Class.permanent, detail.class);
     try testing.expectEqual(proto.enums.RunErrorCode.runtime, detail.code);
+}
+
+test "an oversized prompt reports a permanent runtime failure" {
+    const detail = classify(error.PromptTooLarge);
+    try testing.expectEqual(Class.permanent, detail.class);
+    try testing.expectEqual(proto.enums.RunErrorCode.runtime, detail.code);
+    try testing.expectEqualStrings("the system prompt exceeds the protocol string limit", detail.message);
 }

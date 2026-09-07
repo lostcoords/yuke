@@ -493,7 +493,7 @@ test "native child admission enforces the slot and preserves parent instruction 
     const child = try commands.sessionCreateForRpc(&f.engine, a, params, &gate);
     try testing.expectEqualStrings("test/model", child.session.model);
     const prompt = (try database.session.prompt(&f.db, a, child.session.id.raw)).?;
-    try testing.expectEqualStrings("custom child prompt", prompt);
+    try testing.expectEqualStrings("custom child prompt\n\n" ++ @import("prompt.zig").default_child_instructions, prompt);
     var next: ?turn.Launch = null;
     var followup: proto.session.SessionSendInputParams = .{ .session_id = child.session.id, .input = input(), .parent_tool = .{ .session_id = f.parent, .message_id = 999, .part_id = 0 } };
     try testing.expectError(error.BadToolSite, commands.sessionSendInputForRpc(&f.engine, a, followup, &next));
@@ -502,4 +502,53 @@ test "native child admission enforces the slot and preserves parent instruction 
     const queue = try commands.sessionQueue(&f.engine, a, .{ .session_id = child.session.id });
     try testing.expectEqual(f.parent, queue.items[0].source.?.parent_instruction.session_id);
     try testing.expectEqual(@as(u64, 2), queue.items[0].source.?.parent_instruction.message_id);
+}
+
+test "child prompts inherit the saved base and snapshot their own policy" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    try database.session.setPrompt(&f.db, f.parent.raw, "parent base", "parent base");
+    try f.engine.setPromptConfig("new process default", f.engine.child_instructions);
+    try f.engine.setPromptConfig(f.engine.default_system_prompt, "policy for ${agent_name} in ${workspace}");
+    f.engine.max_agent_depth = 2;
+    var launch: ?turn.Launch = null;
+    const child = try f.child("worker", &launch);
+    const saved = try commands.sessionConfig(&f.engine, a, .{ .session_id = child.session.id });
+    try testing.expectEqualStrings("parent base\n\npolicy for worker in /work", saved.system_prompt.?);
+    try testing.expectEqualStrings(saved.system_prompt.?, launch.?.slot.config.system_prompt);
+    try testing.expectEqualStrings("parent base", (try database.session.basePrompt(&f.db, a, child.session.id.raw)).?);
+    try f.engine.setPromptConfig(f.engine.default_system_prompt, "next policy ${agent_name}");
+    const site = try f.toolSite(child.session.id);
+    var grand_params = f.params("grandchild");
+    grand_params.child.?.site = site;
+    var grand_launch: ?turn.Launch = null;
+    const grandchild = try commands.sessionCreateForRpc(&f.engine, a, grand_params, &grand_launch);
+    try testing.expectEqualStrings("parent base\n\nnext policy grandchild", (try database.session.prompt(&f.db, a, grandchild.session.id.raw)).?);
+    try testing.expectEqualStrings(saved.system_prompt.?, (try database.session.prompt(&f.db, a, child.session.id.raw)).?);
+    try f.engine.setPromptConfig(f.engine.default_system_prompt, "");
+    var explicit = f.params("explicit");
+    explicit.system_prompt = "${agent_name}";
+    var explicit_launch: ?turn.Launch = null;
+    const custom = try commands.sessionCreateForRpc(&f.engine, a, explicit, &explicit_launch);
+    try testing.expectEqualStrings("explicit", (try database.session.prompt(&f.db, a, custom.session.id.raw)).?);
+}
+
+test "root templates resolve once and invalid templates create no session" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    try f.engine.setPromptConfig("${agent_name} ${workspace} ${session_id}", f.engine.child_instructions);
+    const root = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model" });
+    const hex = std.fmt.bytesToHex(root.session.id.raw, .lower);
+    const expected = try std.fmt.allocPrint(a, "root /work {s}", .{hex});
+    try testing.expectEqualStrings(expected, (try database.session.prompt(&f.db, a, root.session.id.raw)).?);
+    try f.engine.setPromptConfig("changed", f.engine.child_instructions);
+    var launch: ?turn.Launch = null;
+    _ = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = root.session.id, .input = input() }, &launch);
+    try testing.expectEqualStrings(expected, launch.?.slot.config.system_prompt);
+    try testing.expectError(error.InvalidPromptPlaceholder, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .system_prompt = "${missing}" }));
+    try testing.expectEqual(@as(u64, 2), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
 }

@@ -593,7 +593,7 @@ test "stop all distinguishes changed idle and failed children" {
     try expect(host, "ok");
 }
 
-test "JavaScript supplies the default child prompt before input hooks" {
+test "JavaScript leaves child prompt composition to native admission" {
     const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
@@ -610,7 +610,7 @@ test "JavaScript supplies the default child prompt before input hooks" {
         \\    try { await createSession(value); throw new Error("input was not blocked"); }
         \\    catch (error) { if (error.code !== "bad_request") throw error; }
         \\  }
-        \\  if (!prompts[0].startsWith("base prompt\n\n") || !prompts[0].includes("Delegate only when a spawn tool is available")) throw new Error("missing policy");
+        \\  if (prompts[0] !== undefined) throw new Error("unexpected JS prompt");
         \\  if (prompts[1] !== "custom") throw new Error("lost custom prompt");
         \\  globalThis.result = "ok";
         \\})().catch((error) => globalThis.result = error.message);

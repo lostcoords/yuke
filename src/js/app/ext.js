@@ -1,5 +1,5 @@
 // yuke:ext — the plugin runtime: a Scope owns revertible effects, a Context registers, and `advice` wraps methods.
-import { config, events } from "yuke:kernel";
+import { events } from "yuke:kernel";
 import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installInputGate, setPoints } from "yuke:hooks";
 import { native } from "yuke:engine-native";
@@ -542,10 +542,6 @@ export async function sendInput(params) {
 
 /** @param {Wire.CreateSession} params @returns {Promise<Wire.SessionResult>} */
 export async function createSession(params) {
-  if (params.child && params.system_prompt == null) {
-    const childPrompt = "You are a child agent for one assignment. Use your own fresh context. Delegate only when a spawn tool is available. Child work has one shared tree limit. If a child is queued and you have no independent work, return your current result so its run can start. Child reports resume this session. Report your result, evidence, and unresolved issues to the parent. Never repeat completed side effects after an interruption unless new input requires it.";
-    params = { ...params, system_prompt: (config.systemPrompt ?? "") + (config.systemPrompt ? "\n\n" : "") + childPrompt };
-  }
   if (params.initial_input != null) {
     const { initial_input, ...create } = params;
     params = { ...create, initial_input: await prepareInput(null, initial_input, create) };

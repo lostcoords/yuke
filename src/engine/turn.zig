@@ -445,17 +445,34 @@ fn resolvedRequest(
         .tools = try engine.deps.tools.getDecls(engine.deps.tools.ctx, arena, .{ .can_spawn = slot.depth < engine.max_agent_depth }),
         .max_output_tokens = output_limit,
     };
-    switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", build)) {
-        .proceed => {},
-        // A handler that answers an unreadable request keeps the one this round already holds.
-        .replace => |value| build = std.json.parseFromValueLeaky(RequestBuild, arena, value, .{ .ignore_unknown_fields = true }) catch build,
-        .block => |reason| {
-            // The wire message names a class, so record the reason before the error loses it.
-            std.log.warn("run {d} stopped at request.build: {s}", .{ slot.runId(), reason });
-            return error.HookBlocked;
-        },
-        .canceled => return error.Canceled,
+    if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"request.build")) {
+        const snapshot = (try database.session.snapshot(engine.deps.db, arena, slot.sessionId().raw)) orelse return error.UnknownSession;
+        const hook_payload = .{
+            .model = build.model,
+            .system = build.system,
+            .tools = build.tools,
+            .max_output_tokens = build.max_output_tokens,
+            .context = .{
+                .session_id = slot.sessionId(),
+                .parent_id = slot.parent_id,
+                .workspace = snapshot.root,
+                .agent_name = snapshot.name orelse "root",
+            },
+        };
+        switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", hook_payload)) {
+            .proceed => {},
+            // A handler that answers an unreadable request keeps the one this round already holds.
+            .replace => |value| build = std.json.parseFromValueLeaky(RequestBuild, arena, value, .{ .ignore_unknown_fields = true }) catch build,
+            .block => |reason| {
+                // The wire message names a class, so record the reason before the error loses it.
+                std.log.warn("run {d} stopped at request.build: {s}", .{ slot.runId(), reason });
+                return error.HookBlocked;
+            },
+            .canceled => return error.Canceled,
+        }
     }
+
+    if (build.system.len > proto.meta.limits.max_message_string_bytes) return error.PromptTooLarge;
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
     const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
@@ -1468,6 +1485,7 @@ test "a build hook can discard the live registry and tools before the request se
     const State = struct {
         source: std.heap.ArenaAllocator,
         tools: []const ai.ir.Tool,
+        session_id: ids.SessionId,
         discarded: bool = false,
 
         fn decls(ctx: *anyopaque, arena: std.mem.Allocator, _: toolset.Selection) error{OutOfMemory}![]const ai.ir.Tool {
@@ -1479,10 +1497,17 @@ test "a build hook can discard the live registry and tools before the request se
             return point == .@"request.build";
         }
 
-        fn ask(ctx: *anyopaque, _: std.mem.Allocator, point: proto.hook.Point, _: []const u8) hookset.Decision {
+        fn ask(ctx: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
             const self: *@This() = @ptrCast(@alignCast(ctx));
             std.debug.assert(point == .@"request.build");
             std.debug.assert(!self.discarded);
+            const value = std.json.parseFromSliceLeaky(std.json.Value, arena, payload, .{}) catch unreachable;
+            const context = value.object.get("context").?.object;
+            const hex = std.fmt.bytesToHex(self.session_id.raw, .lower);
+            std.debug.assert(std.mem.eql(u8, &hex, context.get("session_id").?.string));
+            std.debug.assert(context.get("parent_id").? == .null);
+            std.debug.assert(context.get("workspace").?.string.len > 0);
+            std.debug.assert(std.mem.eql(u8, "root", context.get("agent_name").?.string));
             self.source.deinit();
             self.tools = &.{};
             self.discarded = true;
@@ -1492,7 +1517,7 @@ test "a build hook can discard the live registry and tools before the request se
     var f: StreamerFixture = undefined;
     try f.init();
     defer f.deinit();
-    var state: State = .{ .source = .init(std.testing.allocator), .tools = &.{} };
+    var state: State = .{ .source = .init(std.testing.allocator), .tools = &.{}, .session_id = f.slot.sessionId() };
     defer if (!state.discarded) state.source.deinit();
     const source = state.source.allocator();
     const model = try source.create(registry.ModelSpec);
@@ -1613,4 +1638,40 @@ test "a run cancel interrupts either request hook before it settles" {
         try std.testing.expect(streamRound(&f.engine, f.slot, &streamer) == .canceled);
         try std.testing.expect(state.asked and !state.timed_out);
     }
+}
+
+test "a build hook cannot send an oversized system prompt" {
+    const hookset = @import("hookset.zig");
+    const State = struct {
+        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+            return point == .@"request.build";
+        }
+
+        fn ask(_: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
+            std.debug.assert(point == .@"request.build");
+            var value = std.json.parseFromSliceLeaky(std.json.Value, arena, payload, .{}) catch unreachable;
+            const text = arena.alloc(u8, proto.meta.limits.max_message_string_bytes + 1) catch unreachable;
+            @memset(text, 'x');
+            value.object.put(arena, "system", .{ .string = text }) catch unreachable;
+            return .{ .replace = value };
+        }
+    };
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var state: State = .{};
+    f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
+    const row: registry.Provider = .{
+        .id = "mock",
+        .name = "Mock",
+        .models = &.{},
+        .availability = .{ .ready = .{
+            .route = .{ .base_url = "https://example.test", .protocol = .openai_chat, .auth = .none },
+            .credential = .none,
+        } },
+    };
+    const model: registry.ModelSpec = .{ .id = "model", .upstream_id = "model", .name = "Model" };
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectError(error.PromptTooLarge, resolvedRequest(arena.allocator(), &f.engine, f.slot, &.{StreamerFixture.hello}, .{ .provider = &row, .model = &model }));
 }

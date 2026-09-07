@@ -53,6 +53,7 @@ turn_tasks: std.Io.Group = .init,
 sinks: Sinks = .{},
 /// The default prompt for a session that does not provide one.
 default_system_prompt: ?[]const u8 = null,
+child_instructions: ?[]const u8 = null,
 /// The in-memory session index revision. A restart clears it.
 session_revision: u64 = 0,
 /// Set while the engine closes, so a finished turn starts no successor.
@@ -92,13 +93,22 @@ pub fn init(deps: Deps) Engine {
     return .{ .deps = deps, .sessions = session.Registry.init(deps.gpa) };
 }
 
-/// Set the default system prompt and copy it into engine-owned storage.
-pub fn setDefaultSystemPrompt(self: *Engine, prompt: ?[]const u8) !void {
+/// Copy both validated prompts before the engine releases the old pair.
+pub fn setPromptConfig(self: *Engine, base: ?[]const u8, child: ?[]const u8) !void {
     std.debug.assert(!self.closing);
-    if (prompt) |text| std.debug.assert(text.len <= proto.meta.limits.max_message_string_bytes);
-    const copy = if (prompt) |text| try self.deps.gpa.dupe(u8, text) else null;
+    for ([_]?[]const u8{ base, child }) |prompt| {
+        if (prompt) |text| {
+            std.debug.assert(text.len <= proto.meta.limits.max_message_string_bytes);
+            std.debug.assert(std.unicode.utf8ValidateSlice(text));
+        }
+    }
+    const base_copy = if (base) |text| try self.deps.gpa.dupe(u8, text) else null;
+    errdefer if (base_copy) |text| self.deps.gpa.free(text);
+    const child_copy = if (child) |text| try self.deps.gpa.dupe(u8, text) else null;
     if (self.default_system_prompt) |old| self.deps.gpa.free(old);
-    self.default_system_prompt = copy;
+    if (self.child_instructions) |old| self.deps.gpa.free(old);
+    self.default_system_prompt = base_copy;
+    self.child_instructions = child_copy;
 }
 
 /// Give the engine its tools. The set answers live, so a plugin can add or drop one at any time.
@@ -132,6 +142,7 @@ pub fn close(self: *Engine) void {
     while (guards.next()) |guard| guard.release(self.deps.io);
     self.owners.deinit(self.deps.gpa);
     if (self.default_system_prompt) |prompt| self.deps.gpa.free(prompt);
+    if (self.child_instructions) |prompt| self.deps.gpa.free(prompt);
     self.* = undefined;
 }
 

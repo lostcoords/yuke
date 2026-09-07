@@ -526,6 +526,7 @@ export interface CreateSession {
   readonly profile?: string;
   readonly model?: string;
   readonly reasoning?: string;
+  /** Replace the base prompt; child policy remains separate. Resolve placeholders at creation. */
   readonly system_prompt?: string;
   readonly max_rounds?: number;
   readonly initial_input?: Input;

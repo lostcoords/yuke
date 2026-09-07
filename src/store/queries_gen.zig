@@ -663,11 +663,12 @@ pub const SessionCountParent = sql.OneQuery(
 );
 
 pub const InsertPrompt = sql.ExecQuery(
-    \\INSERT INTO session_prompts(session_id, prompt) VALUES (:session_id, :prompt);
+    \\INSERT INTO session_prompts(session_id, prompt, base_prompt) VALUES (:session_id, :prompt, :base_prompt);
 ,
     struct {
         session_id: [16]u8,
         prompt: []const u8,
+        base_prompt: ?[]const u8,
     },
 );
 
@@ -679,6 +680,17 @@ pub const SelectPrompt = sql.OptionalQuery(
     },
     struct {
         prompt: []const u8,
+    },
+);
+
+pub const SelectBasePrompt = sql.OptionalQuery(
+    \\SELECT base_prompt FROM session_prompts WHERE session_id = :session_id;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        base_prompt: ?[]const u8,
     },
 );
 
@@ -782,6 +794,7 @@ pub const Queries = struct {
     session_count_parent: SessionCountParent,
     insert_prompt: InsertPrompt,
     select_prompt: SelectPrompt,
+    select_base_prompt: SelectBasePrompt,
     delete_session: DeleteSession,
     session_child_ids: SessionChildIds,
     session_recovery_candidates: SessionRecoveryCandidates,

@@ -435,7 +435,18 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     const profile = params.profile orelse "default";
     const model = if (selected) |value| value.model else params.model orelse "";
     const reasoning = if (selected) |value| value.reasoning else params.reasoning orelse try defaultLevelOf(engine, arena, model);
-    const system_prompt = params.system_prompt orelse engine.default_system_prompt;
+    const prompts = @import("prompt.zig");
+    const prompt_context: prompts.Context = .{ .workspace = root, .session_id = id, .agent_name = if (params.child) |child| child.name else "root" };
+    const base_prompt = if (params.system_prompt) |text|
+        try prompts.expand(arena, text, prompt_context)
+    else if (parent) |pid|
+        try session_store.basePrompt(engine.deps.db, arena, pid.raw)
+    else if (engine.default_system_prompt) |text|
+        try prompts.expand(arena, text, prompt_context)
+    else
+        null;
+    const child_prompt = if (parent != null) try prompts.expand(arena, engine.child_instructions orelse prompts.default_child_instructions, prompt_context) else null;
+    const system_prompt = try prompts.compose(arena, base_prompt, child_prompt);
     const now = engine.nowMillis();
     if (parent_tree) |tree| try reports.reserve(engine, arena, tree.root);
     const available = content != null and (parent_tree == null or try admission.available(engine, arena, parent_tree.?.root, id));
@@ -465,7 +476,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
             .created_at_ms = now,
             .updated_at_ms = now,
         });
-        if (system_prompt) |sys| try session_store.setPrompt(engine.deps.db, id.raw, sys);
+        if (system_prompt) |sys| try session_store.setPrompt(engine.deps.db, id.raw, sys, base_prompt);
         try config_store.recordInitial(engine.deps.db, id.raw, model, reasoning);
         if (content) |parts| queued = try input_store.enqueueSource(engine.deps.db, arena, id.raw, engine.newId(), now, parts, now, if (params.child) |child| .{ .parent_instruction = child.site } else null);
         if (prepared != null) started = try run.beginQueuedTurnInTransaction(engine.deps.db, engine.deps.io, arena, id.raw, 0);

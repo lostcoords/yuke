@@ -23,6 +23,7 @@ pub const CreateSession = struct {
     profile: ?[]const u8 = null,
     model: ?[]const u8 = null,
     reasoning: ?[]const u8 = null,
+    /// Replace the base prompt; child policy remains separate. Resolve placeholders at creation.
     system_prompt: ?[]const u8 = null,
     max_rounds: ?u64 = null,
     initial_input: ?input.Input = null,

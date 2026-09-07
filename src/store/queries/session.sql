@@ -244,13 +244,19 @@ WHERE parent_id = :filter_parent_id
 -- Create snapshots the system prompt. An absent row reads back as null.
 -- session_id: [16]u8!
 -- prompt: []const u8!
-INSERT INTO session_prompts(session_id, prompt) VALUES (:session_id, :prompt);
+-- base_prompt: []const u8
+INSERT INTO session_prompts(session_id, prompt, base_prompt) VALUES (:session_id, :prompt, :base_prompt);
 
 -- name: SelectPrompt :optional
 -- Read the session's system prompt. An absent row reads back as null.
 -- session_id: [16]u8!
 -- prompt: []const u8!
 SELECT prompt FROM session_prompts WHERE session_id = :session_id;
+
+-- name: SelectBasePrompt :optional
+-- session_id: [16]u8!
+-- base_prompt: []const u8
+SELECT base_prompt FROM session_prompts WHERE session_id = :session_id;
 
 -- name: DeleteSession :exec
 -- Remove one session row. Each child table cascades. parent_id and source_id hold no key.

@@ -4,8 +4,8 @@ import { native } from "yuke:engine-native";
 
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
 /** @typedef {{ chordMs: number }} KeymapConfig */
-/** @typedef {{ systemPrompt?: string | null, mouse: MouseConfig, keymap: KeymapConfig, agents: { maxConcurrent: number, maxDepth: number } }} Config */
-/** @typedef {{ systemPrompt?: string | null, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig>, agents?: { maxConcurrent?: number, maxDepth?: number } }} ConfigPatch */
+/** @typedef {{ systemPrompt?: string | null, childInstructions?: string | null, mouse: MouseConfig, keymap: KeymapConfig, agents: { maxConcurrent: number, maxDepth: number } }} Config */
+/** @typedef {{ systemPrompt?: string | null, childInstructions?: string | null, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig>, agents?: { maxConcurrent?: number, maxDepth?: number } }} ConfigPatch */
 /** @typedef {(value: unknown) => true | string} ConfigValidator */
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -16,6 +16,7 @@ import { native } from "yuke:engine-native";
 export const config = {
   // The default prompt applies to sessions that do not provide one, and `null` matches the engine.
   systemPrompt: null,
+  childInstructions: null,
   agents: { maxConcurrent: 8, maxDepth: 1 },
   // Mouse reporting is always on; `scrollLines` counts screen lines, so a wheel step moves the same in every widget.
   mouse: {
@@ -36,13 +37,17 @@ export function defineConfig(partial) {
     throw new TypeError("defineConfig expects a config object");
   }
   for (const key of Object.keys(partial)) {
-    if (key !== "systemPrompt" && key !== "mouse" && key !== "keymap" && key !== "agents") {
+    if (key !== "systemPrompt" && key !== "childInstructions" && key !== "mouse" && key !== "keymap" && key !== "agents") {
       throw new TypeError("defineConfig: unknown key " + key);
     }
   }
   const systemPrompt = partial.systemPrompt;
   if (systemPrompt !== undefined && systemPrompt !== null && typeof systemPrompt !== "string") {
     throw new TypeError("defineConfig.systemPrompt must be a string or null");
+  }
+  const childInstructions = partial.childInstructions;
+  if (childInstructions !== undefined && childInstructions !== null && typeof childInstructions !== "string") {
+    throw new TypeError("defineConfig.childInstructions must be a string or null");
   }
   const mouse = partial.mouse;
   const nextMouse = { ...config.mouse };
@@ -52,9 +57,12 @@ export function defineConfig(partial) {
   if (km !== undefined) applyConfigPatch(nextKeymap, KEYMAP_FIELDS, /** @type {Record<string, unknown>} */ (km), "keymap");
   const agents = { ...config.agents };
   if (partial.agents !== undefined) applyConfigPatch(agents, AGENT_FIELDS, partial.agents, "agents");
+  if (systemPrompt !== undefined || childInstructions !== undefined) native.setPromptConfig(systemPrompt, childInstructions);
   if (systemPrompt !== undefined) {
-    native.setDefaultSystemPrompt(systemPrompt);
     config.systemPrompt = systemPrompt;
+  }
+  if (childInstructions !== undefined) {
+    config.childInstructions = childInstructions;
   }
   if (agents.maxConcurrent !== config.agents.maxConcurrent || agents.maxDepth !== config.agents.maxDepth) {
     native.setAgentLimits(agents.maxConcurrent, agents.maxDepth);

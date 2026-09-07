@@ -1921,6 +1921,7 @@
         },
         {
           "name": "system_prompt",
+          "doc": "Replace the base prompt; child policy remains separate. Resolve placeholders at creation.",
           "type": "string",
           "presence": "optional"
         },

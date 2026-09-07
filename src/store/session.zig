@@ -72,14 +72,19 @@ pub fn childIds(db: *Database, arena: std.mem.Allocator, parent_id: [16]u8) ![]c
 }
 
 /// Store the session's system prompt. Create sets it once; all methods preserve it.
-pub fn setPrompt(db: *Database, id: [16]u8, text: []const u8) !void {
-    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text });
+pub fn setPrompt(db: *Database, id: [16]u8, text: []const u8, base: ?[]const u8) !void {
+    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text, .base_prompt = base });
 }
 
 /// Read the session's system prompt into `arena`, or return null when no prompt exists.
 pub fn prompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?[]const u8 {
     const row = (try db.queries.select_prompt.maybeOne(arena, .{ .session_id = id })) orelse return null;
     return row.value.prompt;
+}
+
+pub fn basePrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?[]const u8 {
+    const row = (try db.queries.select_base_prompt.maybeOne(arena, .{ .session_id = id })) orelse return null;
+    return row.value.base_prompt;
 }
 
 /// Report whether a session with `id` exists.
@@ -300,7 +305,7 @@ test "prompt reads a set prompt and null when absent" {
     try create(&db, rootParams(id, "/w"));
 
     try testing.expect((try prompt(&db, a, id)) == null); // No prompt row exists yet.
-    try setPrompt(&db, id, "be helpful");
+    try setPrompt(&db, id, "be helpful", "be helpful");
     try testing.expectEqualStrings("be helpful", (try prompt(&db, a, id)).?);
 }
 

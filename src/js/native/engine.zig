@@ -37,7 +37,7 @@ pub const max_system_prompt_bytes: usize = @intCast(proto.meta.limits.max_messag
 pub fn install(host: *Host) void {
     module.installObject(host, "yuke:engine-native", "native", &.{
         .{ .name = "setAgentLimits", .arity = 2, .call = jsSetAgentLimits },
-        .{ .name = "setDefaultSystemPrompt", .arity = 1, .call = jsSetDefaultSystemPrompt },
+        .{ .name = "setPromptConfig", .arity = 2, .call = jsSetPromptConfig },
         .{ .name = "setEventSink", .arity = 1, .call = jsSetEventSink },
         .{ .name = "factNames", .arity = 0, .call = jsFactNames },
         .{ .name = "memoryUsage", .arity = 0, .call = jsMemoryUsage },
@@ -258,21 +258,29 @@ fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
     return pending.resolved(ctx, ctx.newString(out.written()));
 }
 
-/// Set the default prompt for sessions created without an explicit prompt.
-fn jsSetDefaultSystemPrompt(ctx: Context, _: Value, args: []const Value) Value {
-    const engine = Host.fromContext(ctx).engine;
-    const runtime = engine.runtime orelse return ctx.throwPlainError("the engine is not ready");
-    if (args.len < 1 or (!ctx.isString(args[0]) and !ctx.isNull(args[0])))
-        return ctx.throwTypeError("the default system prompt must be a string or null");
-    if (ctx.isNull(args[0])) {
-        runtime.engine.setDefaultSystemPrompt(null) catch unreachable;
-        return quickjs.UNDEFINED;
+/// Undefined preserves a field; null clears its configured value.
+fn jsSetPromptConfig(ctx: Context, _: Value, args: []const Value) Value {
+    const runtime = Host.fromContext(ctx).engine.runtime orelse return ctx.throwPlainError("the engine is not ready");
+    if (args.len != 2) return ctx.throwTypeError("prompt config expects two fields");
+    var prompts = [_]?[]const u8{ runtime.engine.default_system_prompt, runtime.engine.child_instructions };
+    var strings: [2]?[:0]const u8 = .{ null, null };
+    defer for (strings) |text| {
+        if (text) |value| ctx.freeCString(value.ptr);
+    };
+    for (args, 0..) |arg, index| {
+        if (ctx.isUndefined(arg)) continue;
+        if (ctx.isNull(arg)) {
+            prompts[index] = null;
+            continue;
+        }
+        if (!ctx.isString(arg)) return ctx.throwTypeError("prompt fields must be strings, null, or undefined");
+        const text = ctx.toCStringLen(arg) catch return module.throwPending(ctx);
+        strings[index] = text;
+        if (text.len > max_system_prompt_bytes) return ctx.throwTypeError("prompt exceeds the protocol string limit");
+        if (!std.unicode.utf8ValidateSlice(text)) return ctx.throwTypeError("prompt must contain valid Unicode");
+        prompts[index] = text;
     }
-    const prompt = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
-    defer ctx.freeCString(prompt.ptr);
-    if (prompt.len > max_system_prompt_bytes)
-        return ctx.throwTypeError("the default system prompt exceeds the protocol string limit");
-    runtime.engine.setDefaultSystemPrompt(prompt) catch unreachable;
+    runtime.engine.setPromptConfig(prompts[0], prompts[1]) catch unreachable;
     return quickjs.UNDEFINED;
 }
 

@@ -148,6 +148,8 @@ fn failureFor(err: anyerror) ?Failure {
         error.BadCursor => .{ .code = .stale_cursor, .message = "stale cursor" },
         error.RootNotAbsolute => .{ .code = .bad_request, .message = "the workspace path must be absolute" },
         error.BadPath => .{ .code = .bad_request, .message = "the engine cannot read the path" },
+        error.InvalidPromptPlaceholder => .{ .code = .bad_request, .message = "the prompt contains an unknown or incomplete placeholder" },
+        error.PromptTooLarge => .{ .code = .bad_request, .message = "the resolved prompt exceeds the protocol string limit" },
         error.BadRequest => .{ .code = .bad_request, .message = "a limit is out of range" },
         error.BadApiKey => .{ .code = .bad_request, .message = "the api key is empty" },
         error.BadProviderId => .{ .code = .bad_request, .message = "the provider id is not a selector part" },
