@@ -33,10 +33,39 @@ pub fn install(host: *Host) void {
 
 /// One command, copied so the task can read it after the call returns.
 const Request = struct {
+    const ParseError = error{ CommandType, CommandBlank, RootType, CwdType, Timeout };
+
     command: []u8,
     root: []u8,
     cwd: ?[]u8,
     timeout_ms: u32,
+
+    fn parse(
+        ctx: Context,
+        gpa: std.mem.Allocator,
+        args: []const Value,
+        options: Value,
+        default_root: []const u8,
+    ) ParseError!Request {
+        std.debug.assert(args.len > 0);
+
+        const command = module.owned(ctx, gpa, args[0]) orelse return error.CommandType;
+        errdefer gpa.free(command);
+        if (std.mem.trim(u8, command, " \t\r\n").len == 0) return error.CommandBlank;
+
+        const root_arg: Value = if (args.len > 2) args[2] else quickjs.UNDEFINED;
+        const root = if (ctx.isUndefined(root_arg) or ctx.isNull(root_arg))
+            gpa.dupe(u8, default_root) catch unreachable
+        else
+            module.owned(ctx, gpa, root_arg) orelse return error.RootType;
+        errdefer gpa.free(root);
+
+        const cwd = optionalString(ctx, gpa, options, "cwd") catch return error.CwdType;
+        errdefer if (cwd) |dir| gpa.free(dir);
+        const timeout_ms = timeoutOf(ctx, options) catch return error.Timeout;
+
+        return .{ .command = command, .root = root, .cwd = cwd, .timeout_ms = timeout_ms };
+    }
 
     pub fn free(self: Request, gpa: std.mem.Allocator) void {
         gpa.free(self.command);
@@ -59,34 +88,15 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
         return rejected(ctx, "the exec signal does not belong to an active tool call");
 
     // The task cannot touch JavaScript, so every argument is copied before it starts.
-    const command = module.owned(ctx, host.gpa, args[0]) orelse return rejected(ctx, "the command must be a string");
-    // A blank command exits 0 and would tell a caller that it finished work.
-    if (std.mem.trim(u8, command, " \t\r\n").len == 0) {
-        host.gpa.free(command);
-        return rejected(ctx, "the command must not be blank");
-    }
-
-    const root_arg: Value = if (args.len > 2) args[2] else quickjs.UNDEFINED;
-    const root = if (ctx.isUndefined(root_arg) or ctx.isNull(root_arg))
-        host.gpa.dupe(u8, host.cwd) catch unreachable
-    else
-        module.owned(ctx, host.gpa, root_arg) orelse {
-            host.gpa.free(command);
-            return rejected(ctx, "the workspace root must be a string");
-        };
-    const cwd = optionalString(ctx, host.gpa, options, "cwd") catch {
-        host.gpa.free(command);
-        host.gpa.free(root);
-        return rejected(ctx, "cwd must be a string");
-    };
-    const timeout_ms = timeoutOf(ctx, options) catch {
-        host.gpa.free(command);
-        if (cwd) |dir| host.gpa.free(dir);
-        host.gpa.free(root);
-        return rejected(ctx, "timeoutMs must be a whole number of milliseconds up to 600000");
-    };
-
-    return host.startTaskWithSignal(Request, execTask, .{ .command = command, .root = root, .cwd = cwd, .timeout_ms = timeout_ms }, signal);
+    const request = Request.parse(ctx, host.gpa, args, options, host.cwd) catch |err|
+        return rejected(ctx, switch (err) {
+            error.CommandType => "the command must be a string",
+            error.CommandBlank => "the command must not be blank",
+            error.RootType => "the workspace root must be a string",
+            error.CwdType => "cwd must be a string",
+            error.Timeout => "timeoutMs must be a whole number of milliseconds up to 600000",
+        });
+    return host.startTaskWithSignal(Request, execTask, request, signal);
 }
 
 /// Join the command worker before the owner can free its op.

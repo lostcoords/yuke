@@ -9,6 +9,12 @@ const queries_gen = @import("queries_gen.zig");
 /// SessionSnapshot returns the summary for the client and the open-run marker.
 pub const Snapshot = queries_gen.SessionSnapshot.Row;
 
+pub const OpenRun = struct {
+    id: u64,
+    kind: []const u8,
+    started_at_ms: u64,
+};
+
 /// Store one row of a session.list page. Every page variant selects the same columns.
 pub const PageRow = queries_gen.SessionPageRecent.Row;
 
@@ -87,6 +93,13 @@ pub fn exists(db: *Database, arena: std.mem.Allocator, id: [16]u8) !bool {
 pub fn snapshot(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?Snapshot {
     const row = (try db.queries.session_snapshot.maybeOne(arena, .{ .id = id })) orelse return null;
     return row.value;
+}
+
+/// Return the complete open-run marker, or null when the session has no open run.
+pub fn openRun(row: Snapshot) !?OpenRun {
+    if (row.open_run_id == null and row.open_run_kind == null and row.open_run_started_at_ms == null) return null;
+    if (row.open_run_id == null or row.open_run_kind == null or row.open_run_started_at_ms == null) return error.CorruptDatabase;
+    return .{ .id = row.open_run_id.?, .kind = row.open_run_kind.?, .started_at_ms = row.open_run_started_at_ms.? };
 }
 
 /// Record the one open run for a session. Run inside the start transaction.

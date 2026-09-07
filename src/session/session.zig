@@ -52,22 +52,58 @@ pub const RunSlot = struct {
     wake_event: std.Io.Event = .unset,
     body: ?transport.ResponseBody = null,
     parent_id: ?ids.SessionId = null,
-    tree_root: ?ids.SessionId = null,
+    tree_root: ids.SessionId,
     depth: u32 = 0,
     work: @import("work.zig") = .{},
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
 
-    pub fn prepare(gpa: std.mem.Allocator, model: []const u8, reasoning: []const u8, system_prompt: []const u8, max_rounds: ?u64) !*RunSlot {
+    pub const Prepared = struct {
+        gpa: std.mem.Allocator,
+        slot: ?*RunSlot,
+        config: Config,
+
+        pub fn bind(self: *Prepared, handle: RunHandle, first_round: RoundState, parent_id: ?ids.SessionId, location: Location) *RunSlot {
+            const slot = self.slot orelse unreachable;
+            std.debug.assert(first_round.number == 1);
+            if (parent_id == null) std.debug.assert(location.depth == 0) else std.debug.assert(location.depth > 0);
+            self.slot = null;
+            slot.* = .{
+                .gpa = self.gpa,
+                .handle = handle,
+                .progress = .{ .rounds_started = 1, .current = first_round },
+                .config = self.config,
+                .parent_id = parent_id,
+                .tree_root = location.root,
+                .depth = location.depth,
+            };
+            return slot;
+        }
+
+        pub fn deinit(self: *Prepared) void {
+            const slot = self.slot orelse return;
+            self.gpa.free(self.config.model);
+            self.gpa.free(self.config.reasoning);
+            self.gpa.free(self.config.system_prompt);
+            self.gpa.destroy(slot);
+            self.slot = null;
+        }
+    };
+
+    pub const Location = struct {
+        root: ids.SessionId,
+        depth: u32,
+    };
+
+    pub fn prepare(gpa: std.mem.Allocator, model: []const u8, reasoning: []const u8, system_prompt: []const u8, max_rounds: ?u64) !Prepared {
         const model_copy = try gpa.dupe(u8, model);
         errdefer gpa.free(model_copy);
         const reasoning_copy = try gpa.dupe(u8, reasoning);
         errdefer gpa.free(reasoning_copy);
         const prompt_copy = try gpa.dupe(u8, system_prompt);
         errdefer gpa.free(prompt_copy);
-        const self = try gpa.create(RunSlot);
-        self.* = .{ .gpa = gpa, .handle = undefined, .config = .{ .model = model_copy, .reasoning = reasoning_copy, .system_prompt = prompt_copy, .max_rounds = max_rounds } };
-        return self;
+        const slot = try gpa.create(RunSlot);
+        return .{ .gpa = gpa, .slot = slot, .config = .{ .model = model_copy, .reasoning = reasoning_copy, .system_prompt = prompt_copy, .max_rounds = max_rounds } };
     }
 
     pub fn sessionId(self: *const RunSlot) ids.SessionId {
@@ -76,14 +112,6 @@ pub const RunSlot = struct {
 
     pub fn runId(self: *const RunSlot) proto.ids.RunId {
         return self.handle.started.run_id;
-    }
-
-    pub fn bind(self: *RunSlot, handle: RunHandle, first_round: RoundState) void {
-        std.debug.assert(self.phase == .pending_start);
-        std.debug.assert(self.progress.current == null);
-        std.debug.assert(first_round.number == 1);
-        self.handle = handle;
-        self.progress = .{ .rounds_started = 1, .current = first_round };
     }
 
     pub fn destroy(self: *RunSlot) void {
@@ -393,31 +421,4 @@ fn sessionOf(bc: BroadcastData) ?ids.SessionId {
     return switch (bc) {
         inline else => |d| if (@hasField(@TypeOf(d), "session_id")) d.session_id else null,
     };
-}
-
-const sid: ids.SessionId = .bytes(@splat(1));
-
-fn started(message_id: ids.MessageId) BroadcastData {
-    return .{ .message_started_data = .{ .session_id = sid, .message_id = message_id, .run_id = 1, .config_rev = 0, .agent = "claude", .created_at_ms = 1 } };
-}
-fn textPartAdded(message_id: ids.MessageId, part_id: ids.PartId) BroadcastData {
-    return .{ .message_part_added_data = .{ .session_id = sid, .message_id = message_id, .part = .{ .text = .{ .id = part_id, .text = "" } } } };
-}
-fn reasoningPartAdded(message_id: ids.MessageId, part_id: ids.PartId) BroadcastData {
-    return .{ .message_part_added_data = .{ .session_id = sid, .message_id = message_id, .part = .{ .reasoning = .{ .id = part_id, .text = "", .signature = "" } } } };
-}
-fn reasoningFinalized(message_id: ids.MessageId, part_id: ids.PartId, signature: []const u8) BroadcastData {
-    return .{ .message_part_finalized_data = .{ .session_id = sid, .message_id = message_id, .part_id = part_id, .final = .{ .reasoning = .{ .signature = signature } } } };
-}
-fn textDelta(message_id: ids.MessageId, part_id: ids.PartId, offset: u64, delta: []const u8) BroadcastData {
-    return .{ .message_part_delta_data = .{ .session_id = sid, .message_id = message_id, .part_id = part_id, .delta = delta, .offset = offset } };
-}
-fn userCommitted(seq: ids.Seq, message_id: ids.MessageId, input_id: ids.InputId) BroadcastData {
-    return .{ .message_committed_data = .{ .session_id = sid, .seq = seq, .message = .{ .user = .{ .id = message_id, .content = &.{}, .input_id = input_id, .time = .{ .created_at_ms = 1 } } } } };
-}
-fn queuedInput(seq: ids.Seq, input_id: ids.InputId) BroadcastData {
-    return .{ .input_queued_data = .{ .session_id = sid, .seq = seq, .input = .{ .input_id = input_id, .content = &.{}, .queued_at_ms = 1 } } };
-}
-fn configChanged(seq: ids.Seq, rev: ids.ConfigRev) BroadcastData {
-    return .{ .config_changed_data = .{ .session_id = sid, .seq = seq, .config = .{ .config_rev = rev, .model = "opus", .reasoning = "high" } } };
 }

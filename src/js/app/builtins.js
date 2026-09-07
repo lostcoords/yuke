@@ -1,50 +1,75 @@
 // The built-in tools. They use only the asynchronous host primitives.
-// @ts-nocheck
 
 import { fs } from "yuke:fs";
 import { exec as runCommand } from "yuke:exec";
 import { diff } from "yuke:diff";
 import { defineTool } from "yuke:tools";
 
+/** @typedef {Record<string, unknown>} ToolArgs */
+/** @typedef {{ aborted: boolean }} ToolSignal */
+/** @typedef {{ workspaceRoot: string, sessionId?: string, messageId?: number, partId?: number }} ToolContext */
+/** @typedef {{ old_start: number, old_lines: number, new_start: number, new_lines: number, lines: string[] }} DiffHunk */
+/** @typedef {{ path: string, hunks: DiffHunk[] }} DiffFile */
+/** @typedef {{ type: "diff", files: DiffFile[] }} DiffView */
+/** @typedef {{ __yuke_result: true, text: string, view: DiffView[] | null }} BuiltinResult */
+/** @typedef {{ description: string, parameters: Record<string, unknown>, execute: (args: any, signal: ToolSignal, context: ToolContext) => Promise<unknown> }} ToolDefinition */
+
+/** @param {string} text @param {DiffView[] | null} view @returns {BuiltinResult} */
 const result = (text, view) => ({ __yuke_result: true, text, view });
 
+/** @param {string} name @param {ToolDefinition} definition @returns {void} */
 function builtin(name, definition) {
   try { defineTool(name, definition); }
-  catch (e) { if (e.message !== "another tool already has this name") throw e; }
+  catch (e) { if (messageOf(e) !== "another tool already has this name") throw e; }
 }
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_LINE = 0xffffffff;
 
+/** @param {string} name @param {string} message @returns {never} */
 function invalid(name, message) {
   throw new Error(`${name}: ${message}`);
 }
 
+/** @param {unknown} error @returns {string} */
+function messageOf(error) {
+  if (error instanceof Error) return error.message;
+  if (error !== null && typeof error === "object" && "message" in error) return String(error.message);
+  return String(error);
+}
+
+/** @template T @param {string} name @param {Promise<T>} promise @returns {Promise<T>} */
 async function hostCall(name, promise) {
   try { return await promise; }
-  catch (e) { throw new Error(`${name}: ${e.message}`); }
+  catch (e) { throw new Error(`${name}: ${messageOf(e)}`); }
 }
 
+/** @param {string} name @param {unknown} args @returns {ToolArgs} */
 function objectArgs(name, args) {
   if (args == null || typeof args !== "object" || Array.isArray(args)) invalid(name, "the arguments must be an object");
-  return args;
+  return /** @type {ToolArgs} */ (args);
 }
 
+/** @param {string} name @param {ToolArgs} args @param {readonly string[]} fields @returns {void} */
 function only(name, args, fields) {
   for (const key of Object.keys(args)) if (!fields.includes(key)) invalid(name, "the schema lacks the argument");
 }
 
+/** @param {string} name @param {ToolArgs} args @param {string} key @returns {string} */
 function stringArg(name, args, key) {
   if (typeof args[key] !== "string") invalid(name, `the argument ${key} must be a string`);
-  return args[key];
+  return /** @type {string} */ (args[key]);
 }
 
+/** @param {string} name @param {ToolArgs} args @param {string} key @returns {number | null} */
 function lineArg(name, args, key) {
-  if (args[key] == null) return null;
-  if (!Number.isInteger(args[key]) || args[key] < 1 || args[key] > MAX_LINE) invalid(name, `the argument ${key} has the wrong type or range`);
-  return args[key];
+  const value = args[key];
+  if (value == null) return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_LINE) invalid(name, `the argument ${key} has the wrong type or range`);
+  return value;
 }
 
+/** @param {string} text @returns {number} */
 function utf8Length(text) {
   let bytes = 0;
   for (let i = 0; i < text.length; i++) {
@@ -59,6 +84,7 @@ function utf8Length(text) {
   return bytes;
 }
 
+/** @param {import("yuke:diff").DiffFile} file @returns {DiffView[] | null} */
 function viewOf(file) {
   if (file.hunks.length === 0) return null;
   return [{
@@ -76,6 +102,7 @@ function viewOf(file) {
   }];
 }
 
+/** @param {import("yuke:fs").RangeRead} got @param {number} first @returns {string} */
 function renderRead(got, first) {
   const lines = got.text.length === 0 ? [] : got.text.slice(0, -1).split("\n");
   const out = lines.map((line, i) => `${first + i}: ${line}`).join("\n");
@@ -85,6 +112,7 @@ function renderRead(got, first) {
   return text;
 }
 
+/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
 async function read(args, _signal, context) {
   const name = "read";
   args = objectArgs(name, args);
@@ -96,6 +124,7 @@ async function read(args, _signal, context) {
   return renderRead(got, start ?? 1);
 }
 
+/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<BuiltinResult>} */
 async function write(args, _signal, context) {
   const name = "write";
   args = objectArgs(name, args);
@@ -105,7 +134,7 @@ async function write(args, _signal, context) {
   let old = "";
   let canDiff = true;
   try { old = await fs.readFile(path, context?.workspaceRoot); }
-  catch (e) { if (e.message !== "the path does not exist") canDiff = false; }
+  catch (e) { if (messageOf(e) !== "the path does not exist") canDiff = false; }
   const mapped = canDiff ? await diff(path, old, content) : null;
   const bytes = await hostCall(name, fs.writeFile(path, content, context?.workspaceRoot));
   const view = mapped == null ? null : viewOf(mapped);
@@ -113,12 +142,14 @@ async function write(args, _signal, context) {
   return result(text, view);
 }
 
+/** @param {DiffView[]} view @returns {number} */
 function changedLines(view) {
   let count = 0;
-  for (const file of view[0].files) for (const hunk of file.hunks) for (const line of hunk.lines) if (line[0] !== " ") count++;
+  for (const file of view[0]?.files || []) for (const hunk of file.hunks) for (const line of hunk.lines) if (line[0] !== " ") count++;
   return count;
 }
 
+/** @param {string} text @param {string} old @param {string} replacement @param {boolean} all @returns {{ count: number, text: string }} */
 function replaceAt(text, old, replacement, all) {
   let count = 0;
   let out = "";
@@ -133,6 +164,7 @@ function replaceAt(text, old, replacement, all) {
   return { count, text: count === 0 ? text : out + text.slice(at) };
 }
 
+/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<BuiltinResult>} */
 async function edit(args, _signal, context) {
   const name = "edit";
   args = objectArgs(name, args);
@@ -156,10 +188,12 @@ async function edit(args, _signal, context) {
   return result(text, view);
 }
 
+/** @param {string} text @returns {string} */
 function endLine(text) {
   return text.length === 0 || text.endsWith("\n") ? text : `${text}\n`;
 }
 
+/** @param {ToolArgs} args @param {ToolSignal} signal @param {ToolContext} context @returns {Promise<string>} */
 async function exec(args, signal, context) {
   const name = "exec";
   args = objectArgs(name, args);
@@ -167,9 +201,10 @@ async function exec(args, signal, context) {
   const command = stringArg(name, args, "command");
   if (command.trim().length === 0) invalid(name, "the argument command has the wrong type or range");
   const cwd = args.cwd == null ? undefined : stringArg(name, args, "cwd");
-  const timeout = args.timeout_ms == null ? 120000 : args.timeout_ms;
-  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid(name, "the argument timeout_ms has the wrong type or range");
-  const r = await hostCall(name, runCommand(command, { cwd, timeoutMs: timeout, signal }, context?.workspaceRoot));
+  const timeoutValue = args.timeout_ms;
+  const timeout = timeoutValue == null ? 120000 : timeoutValue;
+  if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid(name, "the argument timeout_ms has the wrong type or range");
+  const r = await hostCall(name, runCommand(command, { ...(cwd === undefined ? {} : { cwd }), timeoutMs: timeout, signal }, context?.workspaceRoot));
   let text = r.stdout;
   if (r.stderr.length !== 0) text = `${endLine(text)}[stderr]\n${r.stderr}`;
   const empty = text.length === 0;

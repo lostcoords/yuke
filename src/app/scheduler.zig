@@ -17,7 +17,7 @@ const backoff_cap_ms = 30 * 60 * 1000;
 /// The clock counts suspended time, because the control plane times its documents by its own clock.
 const clock: std.Io.Clock = .boot;
 
-/// One periodic job. The failure count selects the backoff, and a success clears it.
+/// One periodic job. The failure count selects the backoff.
 pub const Job = struct {
     due: Timestamp,
     failures: u6 = 0,
@@ -28,13 +28,6 @@ pub const Job = struct {
 
     pub fn isDue(self: Job, io: std.Io) bool {
         return self.due.durationFromNow(io).raw.nanoseconds <= 0;
-    }
-
-    /// Advance from the prior deadline and skip the periods that a long run missed.
-    fn succeed(self: *Job, io: std.Io, interval_ms: i64) void {
-        self.failures = 0;
-        const next = self.due.addDuration(millis(interval_ms));
-        self.due = if (next.durationFromNow(io).raw.nanoseconds <= 0) .fromNow(io, millis(interval_ms)) else next;
     }
 
     /// Back off after a failure. The job stays alive, because a control plane outage always ends.
@@ -122,28 +115,7 @@ test "the backoff doubles and then holds at the ceiling" {
     try testing.expectEqual(@as(i64, backoff_cap_ms), backoffMillis(std.math.maxInt(u6)));
 }
 
-test "a job holds its cadence and skips the periods that a long run missed" {
-    const zio = @import("zio");
-    var rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const io = rt.io();
-
-    var job: Job = .init(io);
-    try testing.expect(job.isDue(io));
-
-    // A run that finishes inside its interval keeps the original phase.
-    const started = job.due;
-    job.succeed(io, 60_000);
-    try testing.expect(!job.isDue(io));
-    try testing.expectEqual(started.addDuration(millis(60_000)).raw.nanoseconds, job.due.raw.nanoseconds);
-
-    // A run that overran by more than one interval starts a fresh interval instead of firing at once.
-    job.due = .fromNow(io, millis(-180_000));
-    job.succeed(io, 60_000);
-    try testing.expect(!job.isDue(io));
-}
-
-test "a failure backs the job off and a success clears it" {
+test "a failure backs the job off" {
     const zio = @import("zio");
     var rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
@@ -156,9 +128,6 @@ test "a failure backs the job off and a success clears it" {
 
     job.fail(io);
     try testing.expectEqual(@as(u6, 2), job.failures);
-
-    job.succeed(io, 60_000);
-    try testing.expectEqual(@as(u6, 0), job.failures);
 }
 
 test "the expiry never asks for an immediate refetch" {

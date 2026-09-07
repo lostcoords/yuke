@@ -78,14 +78,6 @@ pub const Transcript = struct {
         }
     }
 
-    /// Return the messages oldest-first. The slice borrows `scratch`. The entries own their content.
-    /// A later append, trim, or deinit invalidates the returned view.
-    pub fn messages(self: *const Transcript, scratch: std.mem.Allocator) Error![]const message.Message {
-        const out = try scratch.alloc(message.Message, self.list.items.len);
-        for (self.list.items, 0..) |*e, i| out[i] = e.message;
-        return out;
-    }
-
     /// Return the messages with the size each one measured on append. A reader that budgets by
     /// size reads it here, because a second measurement would serialize every message again.
     pub fn sized(self: *const Transcript, scratch: std.mem.Allocator) Error![]const Sized {
@@ -129,10 +121,10 @@ test "the transcript keeps committed messages oldest-first" {
 
     var scratch = std.heap.ArenaAllocator.init(testing.allocator);
     defer scratch.deinit();
-    const out = try w.messages(scratch.allocator());
+    const out = try w.sized(scratch.allocator());
     try testing.expectEqual(@as(usize, 2), out.len);
-    try testing.expectEqual(@as(ids.MessageId, 1), out[0].user.id);
-    try testing.expectEqualStrings("b", out[1].user.content[0].text.text);
+    try testing.expectEqual(@as(ids.MessageId, 1), out[0].message.user.id);
+    try testing.expectEqualStrings("b", out[1].message.user.content[0].text.text);
 }
 
 test "the count bound drops the oldest and marks has_more" {

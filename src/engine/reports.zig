@@ -122,6 +122,13 @@ pub fn publishReport(engine: *Engine, report: proto.input.InputQueuedData, reque
     if (request_wake) requestWake(engine, report.session_id);
 }
 
+/// Tell subscribers that a run needs recovery after its terminal write failed.
+pub fn faultNotice(engine: *Engine, session_id: proto.ids.SessionId, run_id: proto.ids.RunId, err: anyerror) void {
+    var buffer: [512]u8 = undefined;
+    const text = std.fmt.bufPrint(&buffer, "Run save failed. Restart yuke to recover this run. Run {d}, session {x}: {t}.", .{ run_id, &session_id.raw, err }) catch unreachable;
+    engine.sinks.emit(.{ .method = .notice, .params = .{ .notice = .{ .level = .@"error", .source = "engine", .message = text } } });
+}
+
 /// A failed wake leaves the durable report for the next input or workspace resume.
 pub fn requestWake(engine: *Engine, parent: proto.ids.SessionId) void {
     if (engine.closing) return;

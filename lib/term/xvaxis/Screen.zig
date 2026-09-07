@@ -68,10 +68,6 @@ pub fn clear(self: *Screen) void {
     @memset(self.buf, .{});
 }
 
-test "refAllDecls" {
-    std.testing.refAllDecls(@This());
-}
-
 test {
     std.testing.refAllDecls(@This());
 }

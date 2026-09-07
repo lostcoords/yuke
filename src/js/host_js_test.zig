@@ -56,9 +56,7 @@ const Paint = struct {
 };
 
 test "yuke:core clip and style.resolve" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { clip, style } from "yuke:core";
@@ -85,9 +83,7 @@ test "yuke:core clip and style.resolve" {
 }
 
 test "yuke:core wrapOffsets keeps every byte and caretRowCol places the caret" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { wrapOffsets, caretRowCol } from "yuke:core";
@@ -128,13 +124,10 @@ test "yuke:core wrapOffsets keeps every byte and caretRowCol places the caret" {
 }
 
 test "yuke:core RootView paints and only ctrl+q quits" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 2, 8);
+    try paint.setup(std.testing.allocator, 2, 8);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -161,10 +154,7 @@ test "yuke:core RootView paints and only ctrl+q quits" {
 }
 
 test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { command, keymap, events, status, style, root, context, parseContext, config, defineConfig, Emitter, View, Node } from "yuke:core";
@@ -904,10 +894,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
 }
 
 test "yuke:core config validates and TextInput inserts committed text" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { config, defineConfig, TextInput, strokeOf, keymap, command } from "yuke:core";
@@ -978,13 +965,10 @@ test "yuke:core config validates and TextInput inserts committed text" {
 }
 
 test "yuke:ui mouse config, wheel scroll, and pane routing under the pointer" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 10, 21);
+    try paint.setup(std.testing.allocator, 10, 21);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -1074,13 +1058,10 @@ test "yuke:ui mouse config, wheel scroll, and pane routing under the pointer" {
 }
 
 test "yuke:ui copy targets: last reply, message list, and code blocks" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 10, 40);
+    try paint.setup(std.testing.allocator, 10, 40);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -1151,13 +1132,10 @@ test "yuke:ui copy targets: last reply, message list, and code blocks" {
 }
 
 test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 12, 40);
+    try paint.setup(std.testing.allocator, 12, 40);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -1284,13 +1262,10 @@ test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
 }
 
 test "yuke:ui the transcript seam maps a position to source, screen, and scroll" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 8, 20);
+    try paint.setup(std.testing.allocator, 8, 20);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -1364,10 +1339,7 @@ test "yuke:ui the transcript seam maps a position to source, screen, and scroll"
 }
 
 test "yuke:composer-vim moves, edits, and puts in normal mode" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { root, Node, View, keymap } from "yuke:core";
@@ -1523,13 +1495,10 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
 }
 
 test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 20, 24);
+    try paint.setup(std.testing.allocator, 20, 24);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -1726,13 +1695,10 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
 }
 
 test "yuke:ui a transcript with no message shows its placeholder" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 8, 30);
+    try paint.setup(std.testing.allocator, 8, 30);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -1751,13 +1717,10 @@ test "yuke:ui a transcript with no message shows its placeholder" {
 }
 
 test "yuke:ui tool parts render, collapse, copy, and toggle" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 12, 40);
+    try paint.setup(std.testing.allocator, 12, 40);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -1893,10 +1856,7 @@ test "yuke:ui tool parts render, collapse, copy, and toggle" {
 }
 
 test "yuke:ui action groups cross reasoning and full tool fields stay available" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { root } from "yuke:core";
@@ -1973,9 +1933,7 @@ test "yuke:ui action groups cross reasoning and full tool fields stay available"
 }
 
 test "yuke:ui hidden tool deltas keep rows stable and details fresh" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { root } from "yuke:core";
@@ -2026,9 +1984,7 @@ test "yuke:ui hidden tool deltas keep rows stable and details fresh" {
 }
 
 test "yuke:ui action plans stay aligned after eviction and outline changes" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { Transcript } from "yuke:transcript";
@@ -2051,13 +2007,10 @@ test "yuke:ui action plans stay aligned after eviction and outline changes" {
 }
 
 test "yuke:ui reasoning auto-collapses and J/K walks parts" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 12, 40);
+    try paint.setup(std.testing.allocator, 12, 40);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -2168,10 +2121,7 @@ test "yuke:ui reasoning auto-collapses and J/K walks parts" {
 }
 
 test "yuke:md renders the GFM subset and caches finalized blocks" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { renderRows, Document } from "yuke:md";
@@ -2218,6 +2168,8 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
         \\check("table-aligned", aligned[0] === "a   │ bb" && aligned[2] === "ccc │ d" && aligned[1] === "────┼───");
         \\const cellWrap = renderRows("| k | value |\n|---|---|\n| x | one two three four five six |", 20).map((r) => r.segments.map((s) => s.text).join(""));
         \\check("table-wraps", cellWrap.length > 3 && cellWrap.every((line) => line.length <= 20) && cellWrap[2].startsWith("x │ one"));
+        \\const tied = renderRows("| abcdefghij | klmnopqrst |\n|---|---|", 22);
+        \\check("table-tie-order", has(tied, "MdTableBorder", "──────────┼───────────"));
         \\
         \\// A long paragraph wraps to width and keeps every word.
         \\const wrapped = renderRows("alpha bravo charlie delta", 11);
@@ -2249,9 +2201,7 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
 }
 
 test "yuke:md an appended stream parses like a fresh document" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { Document } from "yuke:md";
@@ -2281,10 +2231,7 @@ test "yuke:md an appended stream parses like a fresh document" {
 }
 
 test "yuke:md maps a rendered row back to its markdown source" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { renderRows, Document } from "yuke:md";
@@ -2453,13 +2400,10 @@ test "yuke:md maps a rendered row back to its markdown source" {
 }
 
 test "yuke:ui a selection maps back to the markdown source" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 12, 40);
+    try paint.setup(std.testing.allocator, 12, 40);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -2512,10 +2456,7 @@ test "yuke:ui a selection maps back to the markdown source" {
 }
 
 test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { List } from "yuke:ui";
@@ -2563,10 +2504,7 @@ test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
 }
 
 test "yuke:ui Composer grows, pastes in one edit, and owns the vertical keys" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { Composer } from "yuke:ui";
@@ -2643,13 +2581,10 @@ test "yuke:ui Composer grows, pastes in one edit, and owns the vertical keys" {
 }
 
 test "yuke:ui Transcript draws markdown segments through the pager" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 6, 24);
+    try paint.setup(std.testing.allocator, 6, 24);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -2675,10 +2610,7 @@ test "yuke:ui Transcript draws markdown segments through the pager" {
 }
 
 test "yuke:ui Composer collapses a large paste and still submits the whole text" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { Composer } from "yuke:ui";
@@ -2782,13 +2714,10 @@ test "yuke:ui Composer collapses a large paste and still submits the whole text"
 }
 
 test "yuke:ui Composer draws a wrapped row whole and puts the caret on it" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 4, 7);
+    try paint.setup(std.testing.allocator, 4, 7);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -2815,9 +2744,7 @@ test "yuke:ui Composer draws a wrapped row whole and puts the caret on it" {
 }
 
 test "yuke:client exposes the engine surface and answers a closed session" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { client } from "yuke:client";
@@ -2834,13 +2761,10 @@ test "yuke:client exposes the engine surface and answers a closed session" {
 }
 
 test "yuke:defaults boots the shell, seeds the session feed, and wires commands" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 24, 80);
+    try paint.setup(std.testing.allocator, 24, 80);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
     paint.bind(host);
@@ -2973,10 +2897,7 @@ test "yuke:defaults boots the shell, seeds the session feed, and wires commands"
 }
 
 test "a style link cycle falls back instead of spinning" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { style } from "yuke:core";
@@ -2998,13 +2919,10 @@ test "a style link cycle falls back instead of spinning" {
 }
 
 test "an overlay without a hook is consumed, not a fault" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 2, 8);
+    try paint.setup(std.testing.allocator, 2, 8);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -3082,10 +3000,7 @@ test "bordered picker preserves actions padding and mouse targets after resize" 
 }
 
 test "an unusable view or layer is rejected at the call" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { View, root } from "yuke:core";
@@ -3110,13 +3025,10 @@ test "an unusable view or layer is rejected at the call" {
 }
 
 test "a route sends an event to the keymap before the view" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 2, 8);
+    try paint.setup(std.testing.allocator, 2, 8);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
     const loop = @import("loop.zig");
@@ -3188,10 +3100,7 @@ test "a route sends an event to the keymap before the view" {
 }
 
 test "route.add rejects a destination it cannot serve" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { route } from "yuke:core";
@@ -3207,10 +3116,7 @@ test "route.add rejects a destination it cannot serve" {
 }
 
 test "the composer route stays off while another pane has focus" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // `composer_vim` reads the mode from any chat, so only the `chat` atom can gate the route.
     try host.evalModule(
@@ -3270,13 +3176,10 @@ test "the composer route stays off while another pane has focus" {
 }
 
 test "a pane focus and a terminal focus are separate events" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 4, 16);
+    try paint.setup(std.testing.allocator, 4, 16);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
     const loop = @import("loop.zig");
@@ -3318,10 +3221,7 @@ test "a pane focus and a terminal focus are separate events" {
 }
 
 test "the chat pane names the region that reads the keyboard" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { root, Node, context } from "yuke:core";
@@ -3385,13 +3285,10 @@ test "the chat pane names the region that reads the keyboard" {
 }
 
 test "a focused transcript takes the keys even while the composer sits in normal mode" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 20, 24);
+    try paint.setup(std.testing.allocator, 20, 24);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -3471,10 +3368,7 @@ test "a focused transcript takes the keys even while the composer sits in normal
 }
 
 test "a slot lets a plugin answer for a widget it does not own" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { slot, events } from "yuke:core";
@@ -3549,10 +3443,7 @@ test "a slot lets a plugin answer for a widget it does not own" {
 }
 
 test "composer-vim supplies the prompt glyph through the slot" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { root, Node } from "yuke:core";
@@ -3586,10 +3477,7 @@ test "composer-vim supplies the prompt glyph through the slot" {
 }
 
 test "a modal picker reads the shared nav keys and seals the keymap" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // The keys travel through the real dispatch, so the modal boundary is part of the test.
     try host.evalModule(
@@ -3660,6 +3548,29 @@ test "a modal picker reads the shared nav keys and seals the keymap" {
         \\const off = keymap.add({ f9: () => { leaked++; } });
         \\press("f9");
         \\check("modal-seals-keymap", leaked === 0);
+        \\const float = root.pushOverlay({ modal: false, draw() {}, onKey() { return false; } });
+        \\press("home");
+        \\press("j");
+        \\check("float-reaches-modal", sel() === "y");
+        \\press("f9");
+        \\check("float-keeps-modal-boundary", leaked === 0);
+        \\const routeMouse = root.routeMouse;
+        \\root.routeMouse = () => { leaked++; };
+        \\root.onEvent({ type: "mouse", col: -1, row: -1, button: "left", event: "press", mods: 0, count: 1 });
+        \\check("float-keeps-mouse-boundary", leaked === 0);
+        \\root.routeMouse = routeMouse;
+        \\root.popOverlay(float);
+        \\const lower = root.pushOverlay({ modal: false, draw() {} });
+        \\let calls = 0;
+        \\const moving = root.pushOverlay({ modal: false, draw() {}, onKey() { calls++; root.popOverlay(lower); return false; } });
+        \\press("f9");
+        \\check("removed-lower-layer-runs-once", calls === 1 && leaked === 0);
+        \\root.popOverlay(moving);
+        \\const a = root.pushOverlay({ modal: false, draw() {} });
+        \\const b = root.pushOverlay({ modal: false, draw() {} });
+        \\const self = root.pushOverlay({ modal: false, draw() {}, onKey() { root.popOverlay(a); root.popOverlay(b); root.popOverlay(self); return false; } });
+        \\press("f9");
+        \\check("removed-stack-keeps-modal-boundary", leaked === 0);
         \\off();
         \\
         \\close();
@@ -3669,10 +3580,7 @@ test "a modal picker reads the shared nav keys and seals the keymap" {
 }
 
 test "a finder answers the whole picker contract" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { root } from "yuke:core";
@@ -3729,10 +3637,7 @@ test "a finder answers the whole picker contract" {
 }
 
 test "a tickable registered through a plugin leaves when the plugin unloads" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { root } from "yuke:core";
@@ -3805,10 +3710,7 @@ test "a tickable registered through a plugin leaves when the plugin unloads" {
 }
 
 test "a tickable removed during startup never starts" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // One `onStart` can remove a service the pass has not reached, so that service never starts.
     try host.evalModule(
@@ -3825,10 +3727,7 @@ test "a tickable removed during startup never starts" {
 }
 
 test "the nav vocabulary cannot drift after the shell binds it" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // The shell copies the table once and a modal reads it per key, so it must not be writable.
     try host.evalModule(
@@ -3843,11 +3742,9 @@ test "the nav vocabulary cannot drift after the shell binds it" {
 }
 
 test "the notice plugin draws and listens only while it is loaded" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
+    const native_engine = @import("native/engine.zig");
     // The message object outlives the plugin; only the registrations come and go.
     try host.evalModule(
         \\import { root, status, copy } from "yuke:core";
@@ -3908,16 +3805,25 @@ test "the notice plugin draws and listens only while it is loaded" {
         \\notice.clear();
         \\check("clear-repaints", root._needsDraw === true);
         \\
+        \\globalThis.checkEngineNotice = () => {
+        \\  check("reports-engine-notice", notice.text === "terminal write failed");
+        \\  globalThis.result = fail.length ? fail.join(",") : "ok";
+        \\};
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "notice.js");
+    const event_sink = host.engine.eventSink();
+    event_sink.on_event(event_sink.ctx, .{ .method = .notice, .params = .{ .notice = .{
+        .level = .@"error",
+        .source = "agents",
+        .message = "terminal write failed",
+    } } });
+    try std.testing.expect(!native_engine.drain(host.engine, host.ctx));
+    try host.eval("globalThis.checkEngineNotice();", "notice-native.js");
     try expectJs(host, "ok");
 }
 
 test "the session feed caches its derived reads until a change" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { events } from "yuke:core";
@@ -3955,11 +3861,43 @@ test "the session feed caches its derived reads until a change" {
     try expectJs(host, "ok");
 }
 
-test "the command ui registers its palette as one plugin" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
+test "the session feed shares callers and follows mid-flight changes" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try host.evalModule(
+        \\import { client } from "yuke:client";
+        \\import { feedOf } from "yuke:sessions";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const feed = feedOf();
+        \\feed.clear();
+        \\let calls = 0;
+        \\let firstResolve = null;
+        \\let secondResolve = null;
+        \\client.sessionList = () => {
+        \\  calls++;
+        \\  return new Promise((resolve) => { if (calls === 1) firstResolve = resolve; else secondResolve = resolve; });
+        \\};
+        \\const first = feed.refresh();
+        \\const second = feed.refresh();
+        \\check("shares-flight", first === second && calls === 1 && feed.loading === true);
+        \\firstResolve({ items: [{ session: { id: "old" }, activity: null }] });
+        \\for (let i = 0; i < 8; i++) await Promise.resolve();
+        \\check("starts-follow-up", calls === 2 && feed.loading === true && feed.items.has("old"));
+        \\let done = false;
+        \\first.then(() => { done = true; });
+        \\for (let i = 0; i < 8; i++) await Promise.resolve();
+        \\check("no-early-resolution", done === false);
+        \\secondResolve({ items: [{ session: { id: "new" }, activity: null }] });
+        \\await first;
+        \\check("follow-up-settles-callers", feed.loading === false && feed.items.has("new") && !feed.items.has("old"));
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "feed-refresh.js");
+    try expectJs(host, "ok");
+}
 
-    const host = Host.create(gpa.allocator());
+test "the command ui registers its palette as one plugin" {
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // The slice owns the palette, so an unload takes the command, the key, and an open overlay.
     try host.evalModule(
@@ -4000,10 +3938,7 @@ test "the command ui registers its palette as one plugin" {
 }
 
 test "the palette lists only the commands that carry metadata" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // A keymap target is not a user action, so the palette must skip it and sort the rest by title.
     try host.evalModule(
@@ -4037,10 +3972,7 @@ test "the palette lists only the commands that carry metadata" {
 }
 
 test "the slash menu follows the composer, completes, runs, and leaves a message alone" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
     try host.evalModule(
@@ -4155,11 +4087,9 @@ test "the slash menu follows the composer, completes, runs, and leaves a message
 }
 
 test "the auth plugin logs in with a device code or a key, logs out, and guards the model picker" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
+    host.budget = 2048; // The test settles several dialogs in one module evaluation.
     host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
     try host.evalModule(
         \\import { plugins } from "yuke:ext";
@@ -4172,6 +4102,7 @@ test "the auth plugin logs in with a device code or a key, logs out, and guards 
         \\import { command, root, events } from "yuke:core";
         \\import { client } from "yuke:client";
         \\import { notice } from "yuke:notice";
+        \\import { defaultModel } from "yuke:catalog";
         \\import { chat } from "yuke:defaults";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -4265,16 +4196,22 @@ test "the auth plugin logs in with a device code or a key, logs out, and guards 
         \\root.onEvent(key("enter"));
         \\await settle();
         \\check("route-stops", root.overlays.length === 0 && notice.text.indexOf("needs a route") > 0);
+        \\const beforeQuery = defaultModel().model;
+        \\command.perform("model:pick", "codex/gpt");
+        \\await settle();
+        \\check("query-route-stops", defaultModel().model === beforeQuery && notice.text.indexOf("needs a route") > 0);
+        \\client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r4", providers: [{ id: "codex", name: "Codex", state: "ready" }],
+        \\  models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: ["low", "high"], default_reasoning: "high", cost: {} }] });
+        \\command.perform("model:pick", "codex/gpt");
+        \\await settle();
+        \\check("query-ready-uses-default", root.overlays.length === 0 && defaultModel().model === "codex/gpt" && defaultModel().reasoning === "high");
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "auth.js");
     try expectJs(host, "ok");
 }
 
 test "the activity module reads back on the fact, overlays the chat entry, and an interrupt keeps the queue" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
     try host.evalModule(
@@ -4297,6 +4234,7 @@ test "the activity module reads back on the fact, overlays the chat entry, and a
         \\const running = { ...idle, state: { type: "running", run_id: 1, started_at_ms: 5 }, queued: 2 };
         \\let reads = 0;
         \\let answer = running;
+        \\client.sessionOpen = () => true;
         \\client.sessionActivity = () => { reads++; return answer; };
         \\const cancels = [];
         \\client.sessionCancelRun = (id, clear) => { cancels.push([id, clear]); return Promise.resolve({ cleared_inputs: [] }); };
@@ -4333,10 +4271,7 @@ test "the activity module reads back on the fact, overlays the chat entry, and a
 }
 
 test "the indicator, the queue strip, and the context reading follow the live activity" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
     try host.evalModule(
@@ -4362,6 +4297,7 @@ test "the indicator, the queue strip, and the context reading follow the live ac
         \\const idle = { state: { type: "idle" }, queued: 0, context_usage: usage, pending_compaction: null };
         \\const tool = { ...idle, state: { type: "running_tool", run_id: 1, message_id: 1, part_id: 1, tool_name: "bash", started_at_ms: Date.now() - 65000 }, queued: 2 };
         \\let answer = idle;
+        \\client.sessionOpen = () => true;
         \\client.sessionActivity = () => answer;
         \\const items = [
         \\  { input_id: 11, queued_at_ms: 1, content: [{ type: "text", text: "first line\nsecond" }] },
@@ -4448,10 +4384,7 @@ test "the indicator, the queue strip, and the context reading follow the live ac
 }
 
 test "commands.define registers a user command with a slash word and removes it" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { command } from "yuke:core";
@@ -4482,10 +4415,7 @@ test "commands.define registers a user command with a slash word and removes it"
 }
 
 test "the palette hints only the strokes that run the command here" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // A hint the current context cannot run is worse than no hint, so the scan must rank like dispatch.
     try host.evalModule(
@@ -4533,15 +4463,12 @@ test "the palette hints only the strokes that run the command here" {
 }
 
 test "the pager follows the tail and counts the rows once per frame" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 24, 80);
+    try paint.setup(std.testing.allocator, 24, 80);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
-    host.paint.render = &paint.render;
+    paint.bind(host);
     try host.evalModule(
         \\import { term } from "yuke:term";
         \\import { Pager } from "yuke:transcript";
@@ -4585,10 +4512,7 @@ test "the pager follows the tail and counts the rows once per frame" {
 }
 
 test "the catalog stores a full reply and keeps the models on unchanged" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // `client` is one object, so a test replaces the one method the branch calls.
     try host.evalModule(
@@ -4625,10 +4549,7 @@ test "the catalog stores a full reply and keeps the models on unchanged" {
 }
 
 test "the explorer turns one directory listing into rows" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { fs } from "yuke:fs";
@@ -4672,10 +4593,7 @@ test "the explorer turns one directory listing into rows" {
 }
 
 test "the catalog slice owns the model reading" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // The readings need the open session, which the shell owns, so the slice takes it as config.
     try host.evalModule(
@@ -4720,15 +4638,13 @@ test "the catalog slice owns the model reading" {
     try expectJs(host, "ok");
 }
 
-test "loadCatalog coalesces, clears its flag, and survives a refusal" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+test "loadCatalog shares callers, follows mid-flight changes, and survives a refusal" {
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
-    // There is no connection here, so the request refuses; the state machine must still settle.
+    // Controlled requests exercise shared and follow-up reads, then a refusal.
     try host.evalModule(
         \\import { root } from "yuke:core";
+        \\import { client } from "yuke:client";
         \\import { catalogOf, loadCatalog } from "yuke:catalog";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -4736,18 +4652,34 @@ test "loadCatalog coalesces, clears its flag, and survives a refusal" {
         \\const c = catalogOf();
         \\check("starts-idle", c.loading === false && c.rev === null && c.models.length === 0);
         \\
-        \\// A second call while one is open returns the same state and starts no new request.
-        \\c.loading = true;
-        \\const coalesced = await loadCatalog();
-        \\check("coalesces", coalesced === c && c.loading === true);
-        \\c.loading = false;
+        \\let calls = 0;
+        \\let firstResolve = null;
+        \\let secondResolve = null;
+        \\client.catalogList = () => {
+        \\  calls++;
+        \\  return new Promise((resolve) => { if (calls === 1) firstResolve = resolve; else secondResolve = resolve; });
+        \\};
+        \\const first = loadCatalog();
+        \\const second = loadCatalog();
+        \\check("shares-flight", first === second && calls === 1 && c.loading === true);
+        \\firstResolve({ type: "full", catalog_rev: "r1", models: [{ selector: "old" }] });
+        \\for (let i = 0; i < 8; i++) await Promise.resolve();
+        \\check("starts-follow-up", calls === 2 && c.loading === true && c.models[0].selector === "old");
+        \\let done = false;
+        \\first.then(() => { done = true; });
+        \\for (let i = 0; i < 8; i++) await Promise.resolve();
+        \\check("no-early-resolution", done === false);
+        \\secondResolve({ type: "full", catalog_rev: "r2", models: [{ selector: "new" }] });
+        \\const settled = await first;
+        \\check("follow-up-settles-callers", settled === c && c.loading === false && c.rev === "r2" && c.models[0].selector === "new");
         \\
-        \\// A refused request still clears the flag and asks for a repaint.
+        \\// A refused list still clears the flag and asks for a repaint.
+        \\client.catalogList = () => Promise.reject(new Error("offline"));
         \\root._needsDraw = false;
-        \\const settled = await loadCatalog();
-        \\check("settles", settled === c && c.loading === false);
+        \\await loadCatalog();
+        \\check("settles", c.loading === false);
         \\check("repaints", root._needsDraw === true);
-        \\check("keeps-empty-state", c.rev === null && c.models.length === 0);
+        \\check("keeps-models", c.rev === "r2" && c.models[0].selector === "new");
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "loadcatalog.js");
@@ -4755,10 +4687,7 @@ test "loadCatalog coalesces, clears its flag, and survives a refusal" {
 }
 
 test "the chat slice owns its listeners and its transcript commands" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // The chat reacts to session events and offers the commands that read its transcript.
     try host.evalModule(
@@ -4825,13 +4754,10 @@ test "the chat slice owns its listeners and its transcript commands" {
 }
 
 test "the chat pane routes a drag that leaves the transcript and guards its press slot" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 20, 40);
+    try paint.setup(std.testing.allocator, 20, 40);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
 
@@ -4880,10 +4806,7 @@ test "the chat pane routes a drag that leaves the transcript and guards its pres
 }
 
 test "a split gives each chat pane its own session" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // Each pane starts with its own session, and an event reaches every pane that shows the pair.
     try host.evalModule(
@@ -4975,10 +4898,7 @@ test "a split gives each chat pane its own session" {
 }
 
 test "the context owns every overlay its plugin pushes" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // A modal that outlives its plugin consumes every key, so the scope must own the stack too.
     try host.evalModule(
@@ -5103,10 +5023,7 @@ test "the context owns every overlay its plugin pushes" {
 }
 
 test "the explorer registers its command and takes it back on unload" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // The picker walks the filesystem through the client, so only its command lifetime is tested here.
     try host.evalModule(
@@ -5146,9 +5063,6 @@ test "the explorer registers its command and takes it back on unload" {
 }
 
 test "yuke:fs reads, writes and stats a real directory through promises" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "hello.txt", .data = "one\ntwo\n" });
@@ -5156,9 +5070,9 @@ test "yuke:fs reads, writes and stats a real directory through promises" {
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
 
     // A real task needs a reactor, so this test runs on one instead of the testing I/O.
-    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
     defer host.destroy();
     try host.evalModule(
         \\import { fs } from "yuke:fs";
@@ -5228,10 +5142,7 @@ fn dropCall(host: *Host, call: *tools_table.Call) !void {
 }
 
 test "a hook fault in one result does not stop later handlers" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { events } from "yuke:kernel";
@@ -5260,10 +5171,7 @@ test "a hook fault in one result does not stop later handlers" {
 }
 
 test "the owner runs an async handler and answers its resolved value" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     try host.evalModule(
@@ -5309,10 +5217,7 @@ test "the owner runs an async handler and answers its resolved value" {
 }
 
 test "a failed handler answers the model with an error it can read" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     try host.evalModule(
@@ -5354,18 +5259,15 @@ test "a failed handler answers the model with an error it can read" {
 }
 
 test "a handler that awaits a primitive answers when the task finishes" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "note.txt", .data = "from disk" });
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
 
-    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
     defer host.destroy();
 
     try host.evalModule(
@@ -5390,10 +5292,7 @@ test "a handler that awaits a primitive answers when the task finishes" {
 }
 
 test "a handler reads the signal after the turn leaves" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     try host.evalModule(
@@ -5431,10 +5330,7 @@ test "a handler reads the signal after the turn leaves" {
 }
 
 test "closing the host answers a call nobody would settle" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     try host.evalModule(
@@ -5459,10 +5355,7 @@ test "closing the host answers a call nobody would settle" {
 }
 
 test "defineTool registers a tool and states its raw schema" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     try host.evalModule(
@@ -5497,10 +5390,7 @@ test "defineTool registers a tool and states its raw schema" {
 }
 
 test "defineTool refuses every definition a provider would reject" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     // Each case must throw, because `index.js` is user input that has to fail loudly at boot.
@@ -5534,10 +5424,7 @@ test "defineTool refuses every definition a provider would reject" {
 }
 
 test "a tool registers after boot and keeps the advertised order stable" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     // Registration order is not the advertised order, so a load order change cannot move the prefix.
@@ -5561,31 +5448,28 @@ test "a tool registers after boot and keeps the advertised order stable" {
     try expectJs(host, "ok");
 
     var names: std.ArrayList(u8) = .empty;
-    defer names.deinit(gpa.allocator());
+    defer names.deinit(std.testing.allocator);
     for (host.tools.entries.items) |entry| {
         const d = entry.decl;
-        if (names.items.len != 0) try names.append(gpa.allocator(), ',');
-        try names.appendSlice(gpa.allocator(), d.name);
+        if (names.items.len != 0) try names.append(std.testing.allocator, ',');
+        try names.appendSlice(std.testing.allocator, d.name);
     }
     try std.testing.expectEqualStrings("alpha,bravo,mike,zulu", names.items);
 }
 test "baked tools preserve file edits, bounded reads, views, and command output" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "one\ntwo\ntwo\n" });
-    const long_line = try gpa.allocator().alloc(u8, 8001);
-    defer gpa.allocator().free(long_line);
+    const long_line = try std.testing.allocator.alloc(u8, 8001);
+    defer std.testing.allocator.free(long_line);
     @memset(long_line, 'x');
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "long.txt", .data = long_line });
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
 
-    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = "/tmp" });
+    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = "/tmp" });
     defer host.destroy();
     try host.evalModule(
         \\import "yuke:builtins";
@@ -5676,10 +5560,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
 }
 
 test "a user edit tool overrides the baked edit tool" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { defineTool } from "yuke:tools";
@@ -5702,15 +5583,13 @@ test "a user edit tool overrides the baked edit tool" {
 }
 
 test "exec call abort ends its process group and preserves unrelated work" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
     defer host.destroy();
     try host.evalModule("import \"yuke:builtins\";", "builtins.js");
 
@@ -5742,15 +5621,13 @@ test "exec call abort ends its process group and preserves unrelated work" {
 }
 
 test "exec rejects forged and retained signals and aborts before process creation" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
     defer host.destroy();
     try host.evalModule(
         \\import { defineTool } from "yuke:tools";
@@ -5787,15 +5664,13 @@ test "exec rejects forged and retained signals and aborts before process creatio
 }
 
 test "exec completion detaches before call abort and host close rejects late exec" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
     defer host.destroy();
     try host.evalModule(
         \\import { defineTool } from "yuke:tools";
@@ -5934,9 +5809,6 @@ fn processExists(pid: std.posix.pid_t) bool {
 }
 
 test "yuke:exec runs commands on tasks and reports each outcome" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "marker.txt", .data = "found\n" });
@@ -5944,9 +5816,9 @@ test "yuke:exec runs commands on tasks and reports each outcome" {
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
 
     // A command needs a real reactor, because it runs on its own task.
-    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
     defer host.destroy();
 
     try host.evalModule(
@@ -5976,6 +5848,16 @@ test "yuke:exec runs commands on tasks and reports each outcome" {
         \\  message = "";
         \\  try { await exec("echo x", { timeoutMs: 1.5 }); } catch (e) { message = e.message; }
         \\  check("timeout-fraction-rejects", message.startsWith("timeoutMs must be"));
+        \\  for (const [args, expected] of [
+        \\    [[42], "the command must be a string"],
+        \\    [["echo x", {}, 42], "the workspace root must be a string"],
+        \\    [["echo x", { cwd: 42 }], "cwd must be a string"],
+        \\    [["echo x", { cwd: ".", timeoutMs: 0 }], "timeoutMs must be a whole number of milliseconds up to 600000"],
+        \\  ]) {
+        \\    message = "";
+        \\    try { await exec(...args); } catch (e) { message = e.message; }
+        \\    check("argument-rejects:" + expected, message === expected);
+        \\  }
         \\  globalThis.result = fail.length ? fail.join(",") : "ok";
         \\})();
     , "exec.js");
@@ -5984,12 +5866,9 @@ test "yuke:exec runs commands on tasks and reports each outcome" {
 }
 
 test "yuke:exec ends a command that passes its deadline" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = "/tmp" });
+    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = "/tmp" });
     defer host.destroy();
 
     // The deadline must stop the command and name the outcome. A failed kill would wait 30 seconds.
@@ -6011,11 +5890,8 @@ test "yuke:exec ends a command that passes its deadline" {
 }
 
 test "yuke:diff describes a change, an equal pair, and a new file" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     // The compare stays on the owner, so this needs no reactor.
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     try host.evalModule(
@@ -6048,18 +5924,15 @@ test "yuke:diff describes a change, an equal pair, and a new file" {
 }
 
 test "a primitive stays pending until the owner lets its task run" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "x" });
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
 
-    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
     defer host.destroy();
 
     try host.evalModule(
@@ -6078,18 +5951,15 @@ test "a primitive stays pending until the owner lets its task run" {
 }
 
 test "a throwing await handler faults once and leaves no pending exception" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "x" });
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
 
-    const rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(gpa.allocator(), rt.io(), .{ .cwd = root });
+    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
     defer host.destroy();
 
     // A resolver that throws must not leave an exception for the next owner turn.
@@ -6114,10 +5984,7 @@ test "a throwing await handler faults once and leaves no pending exception" {
 }
 
 test "the yuke facade exports config, plugins, and the tool registry" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     try host.evalModule(
@@ -6144,10 +6011,7 @@ test "the yuke facade exports config, plugins, and the tool registry" {
 }
 
 test "the facade and its internal module share one instance" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     // A second module name must not create a second plugin registry.
@@ -6160,10 +6024,7 @@ test "the facade and its internal module share one instance" {
 }
 
 test "tools.define refuses a definition that is not an object" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     try host.evalModule(
@@ -6179,10 +6040,7 @@ test "tools.define refuses a definition that is not an object" {
 }
 
 test "inject holds a block until every capability exists" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { plugins, services } from "yuke:ext";
@@ -6226,10 +6084,7 @@ test "inject holds a block until every capability exists" {
 }
 
 test "inject waits for every name and stops watching with its plugin" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { plugins, services } from "yuke:ext";
@@ -6276,10 +6131,7 @@ test "inject waits for every name and stops watching with its plugin" {
 }
 
 test "inject refuses a bad declaration and survives a throwing block" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { plugins, services } from "yuke:ext";
@@ -6320,10 +6172,7 @@ test "inject refuses a bad declaration and survives a throwing block" {
 }
 
 test "a disposed injection never builds from a copied watcher list" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { plugins, services, Scope } from "yuke:ext";
@@ -6366,10 +6215,7 @@ test "a disposed injection never builds from a copied watcher list" {
 }
 
 test "a service event always reports the live provider" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { events } from "yuke:core";
@@ -6400,10 +6246,7 @@ test "a service event always reports the live provider" {
 }
 
 test "a capability binds onto the block that declared it" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { plugins, services } from "yuke:ext";
@@ -6456,10 +6299,7 @@ test "a capability binds onto the block that declared it" {
 }
 
 test "a host with no renderer loads the view tier and leaves a view plugin inert" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = host_mod.Host.createWith(gpa.allocator(), std.testing.io, .{});
+    const host = host_mod.Host.createWith(std.testing.allocator, std.testing.io, .{});
     defer host.destroy();
 
     // `index.js` is one file for both frontends, so a view import must load with no terminal bound.
@@ -6504,10 +6344,7 @@ test "the kernel never imports the terminal" {
 }
 
 test "the kernel alone runs without the terminal tier" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     // A headless boot evaluates the kernel and the plugin runtime, and never builds a root view.
     try host.evalModule(
@@ -6521,10 +6358,7 @@ test "the kernel alone runs without the terminal tier" {
 }
 
 test "a change during a build rebuilds the block instead of leaving it stale" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { events } from "yuke:kernel";
@@ -6557,10 +6391,7 @@ test "a change during a build rebuilds the block instead of leaving it stale" {
 }
 
 test "a headless bus refuses a name only the view tier emits" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = host_mod.Host.createWith(gpa.allocator(), std.testing.io, .{});
+    const host = host_mod.Host.createWith(std.testing.allocator, std.testing.io, .{});
     defer host.destroy();
 
     // Without the view tier nothing emits these names, so a listener would wait for ever.
@@ -6578,10 +6409,7 @@ test "a headless bus refuses a name only the view tier emits" {
 }
 
 test "an overlay survives a rebuild of the block that claimed it" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { root } from "yuke:core";
@@ -6620,10 +6448,7 @@ test "an overlay survives a rebuild of the block that claimed it" {
 }
 
 test "a plugin owns the tools it defines and withdraws them on unload" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { plugins } from "yuke:ext";
@@ -6671,10 +6496,7 @@ test "a plugin owns the tools it defines and withdraws them on unload" {
 }
 
 test "one tool leaves without moving the others" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { plugins } from "yuke:ext";
@@ -6704,10 +6526,7 @@ test "one tool leaves without moving the others" {
 }
 
 test "a listener fault reaches the shared error bus" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { events } from "yuke:kernel";
@@ -6735,10 +6554,7 @@ test "a listener fault reaches the shared error bus" {
 }
 
 test "RPC interaction answers correlated promises out of order" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { plugins } from "yuke:ext";
@@ -6784,10 +6600,7 @@ test "RPC interaction answers correlated promises out of order" {
 }
 
 test "disposing an interaction consumer cancels only its pending dialog" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { plugins } from "yuke:ext";
@@ -6815,13 +6628,10 @@ test "disposing an interaction consumer cancels only its pending dialog" {
 }
 
 test "the TUI interaction provider answers select and input dialogs" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 12, 50);
+    try paint.setup(std.testing.allocator, 12, 50);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
     try host.evalModule(
@@ -6847,10 +6657,7 @@ test "the TUI interaction provider answers select and input dialogs" {
 }
 
 test "a composition with no answerer refuses every question" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { plugins } from "yuke:ext";
@@ -6865,10 +6672,7 @@ test "a composition with no answerer refuses every question" {
 }
 
 test "an install replaces the answerer and its disposer restores the last one" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.evalModule(
         \\import { interaction, plugins } from "yuke:ext";
@@ -6888,13 +6692,10 @@ test "an install replaces the answerer and its disposer restores the last one" {
 }
 
 test "yuke:ui transcript renders evicted history exactly" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 12, 32);
+    try paint.setup(std.testing.allocator, 12, 32);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
     try host.evalModule(
@@ -6993,13 +6794,10 @@ test "yuke:ui transcript renders evicted history exactly" {
 }
 
 test "yuke:ui transcript keeps committed renders across a reload" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var paint: Paint = undefined;
-    try paint.setup(gpa.allocator(), 12, 40);
+    try paint.setup(std.testing.allocator, 12, 40);
     defer paint.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     paint.bind(host);
     try host.evalModule(
@@ -7110,6 +6908,37 @@ test "a hidden cancellation watch is never listed and no peer can answer it" {
     call.finish();
     try host.pump();
     try expectSeen(host, "canceled");
+}
+
+test "a chat retains only successful session pins" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try host.evalModule(
+        \\import { Chat } from "yuke:chat";
+        \\import { client } from "yuke:client";
+        \\import { notice } from "yuke:notice";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const opened = [], closed = [];
+        \\client.sessionOpen = id => { opened.push(id); return id !== "missing"; };
+        \\client.sessionClose = id => { closed.push(id); };
+        \\client.sessionActivity = () => null;
+        \\client.sessionOutline = () => ({ messages: [{ id: 1, type: "user" }], active: null });
+        \\const chat = new Chat();
+        \\chat.open("missing");
+        \\check("failed-first-open", chat.sessionId === null && closed.length === 0 && notice.text.includes("open failed"));
+        \\chat.open("old");
+        \\chat.open("missing");
+        \\check("failed-replacement-keeps-pin", chat.sessionId === "old" && closed.length === 0 && chat.transcript.messages().length === 1);
+        \\chat.open("next");
+        \\check("replacement-releases-once", chat.sessionId === "next" && closed.join(",") === "old");
+        \\chat.open("next");
+        \\check("same-session-reuses-pin", opened.join(",") === "missing,old,missing,next");
+        \\chat.dispose();
+        \\check("dispose-releases-owned-pin", closed.join(",") === "old,next");
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "pins.js");
+    try expectJs(host, "ok");
 }
 
 test "navigation after initial admission neither sends twice nor closes an unowned pin" {

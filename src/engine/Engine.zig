@@ -194,14 +194,14 @@ fn repair(self: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId) !voi
         var tx = try self.deps.db.begin();
         defer tx.deinit();
         const row = (try database.session.snapshot(self.deps.db, arena, id.raw)) orelse return error.UnknownSession;
-        if (row.open_run_id) |run_id| {
-            const started = row.open_run_started_at_ms.?;
+        if (try database.session.openRun(row)) |open| {
+            const kind = std.meta.stringToEnum(proto.enums.RunKind, open.kind) orelse return error.CorruptDatabase;
+            const started = open.started_at_ms;
             const ended = @max(self.nowMillis(), started);
-            const kind = std.meta.stringToEnum(proto.enums.RunKind, row.open_run_kind.?) orelse return error.CorruptDatabase;
             done = try reports.append(self, arena, .{
                 .session_id = id,
                 .seq = 0,
-                .run_id = run_id,
+                .run_id = open.id,
                 .kind = kind,
                 .timing = .{ .started_at_ms = started, .ended_at_ms = ended },
                 .outcome = .{ .failed = .{ .code = .interrupted, .message = "the previous engine stopped before this run ended" } },

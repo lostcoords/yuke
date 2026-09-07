@@ -294,14 +294,14 @@ export class List {
 
       const lines = cell.lines || [cell];
       for (let ln = 0; ln < drawH && ln < lines.length; ln++) {
-        this._drawLine(x, sy + ln, w, /** @type {ListItem} */ (lines[ln]), isSel);
+        const line = cell.lines ? normalizeCell(lines[ln]) : cell;
+        this._drawLine(x, sy + ln, w, line, isSel);
       }
     }
   }
 
-  /** @param {number} x @param {number} sy @param {number} w @param {string | ListItem} spec @param {boolean} isSel @returns {void} */
+  /** @param {number} x @param {number} sy @param {number} w @param {ListItem} spec @param {boolean} isSel @returns {void} */
   _drawLine(x, sy, w, spec, isSel) {
-    spec = normalizeCell(spec);
     let avail = w;
     if (spec.right) {
       const r = clip(spec.right, w);

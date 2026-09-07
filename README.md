@@ -15,11 +15,17 @@ git config core.hooksPath .githooks
 
 ```sh
 zig build test          # build and run all tests
-zig build test-js       # run the QuickJS host tests
+zig build test-js       # run the process and QuickJS host tests
 zig build               # compile yuke
 zig build gen-schema    # regenerate schema/proto.json from the Zig types
 zig build sqlgen -- --migrations <dir> --queries <dir> --queries-out <file>
 ```
+
+## JSONL RPC
+
+Run `yuke --rpc` for a local JSONL client on stdin and stdout.
+`initialize` is optional version discovery. It accepts empty parameters and reports the server protocol version.
+A client can call it before other methods to check compatibility. The server has no version handshake or client-version field.
 
 ## Agent configuration
 

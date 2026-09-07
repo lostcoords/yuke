@@ -117,27 +117,13 @@ pub fn build(b: *std.Build) void {
     });
     const run_term_tests = addTestRun(b, "term", "Run term module tests", term);
 
-    const js_mod = b.createModule(.{
-        .root_source_file = b.path("src/tests_js.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "quickjs", .module = quickjs.module("quickjs") },
-            .{ .name = "zio", .module = zio.module("zio") },
-            .{ .name = "ai", .module = ai },
-            .{ .name = "term", .module = term },
-            .{ .name = "proto", .module = proto },
-            .{ .name = "sql", .module = sql },
-            .{ .name = "zqlite", .module = zqlite.module("zqlite") },
-        },
-    });
-    const run_js_tests = addTestRun(b, "js", "Run JS host tests", js_mod);
-
     const tests = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "quickjs", .module = quickjs.module("quickjs") },
+            .{ .name = "term", .module = term },
             .{ .name = "proto", .module = proto },
             .{ .name = "sql", .module = sql },
             .{ .name = "zqlite", .module = zqlite.module("zqlite") },
@@ -145,10 +131,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "ai", .module = ai },
         },
     });
-    const run_layer_tests = b.addRunArtifact(b.addTest(.{
-        .name = "src",
-        .root_module = tests,
-    }));
+    const run_layer_tests = addTestRun(b, "src", "Run process and JavaScript host tests", tests);
+    b.step("test-js", "Run process and JavaScript host tests").dependOn(&run_layer_tests.step);
 
     // Fail the build if the committed queries drift from the SQL sources.
     const database_sqlgen_check = b.addRunArtifact(sqlgen_exe);
@@ -226,7 +210,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_proto_tests.step);
     test_step.dependOn(&run_ai_tests.step);
     test_step.dependOn(&run_term_tests.step);
-    test_step.dependOn(&run_js_tests.step);
     test_step.dependOn(&run_layer_tests.step);
     test_step.dependOn(&database_sqlgen_check.step);
     test_step.dependOn(generator_tests);

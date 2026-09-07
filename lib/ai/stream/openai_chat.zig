@@ -22,7 +22,7 @@ const Block = struct {
 pub const Reducer = struct {
     gpa: std.mem.Allocator,
     blocks: std.ArrayList(Block) = .empty,
-    /// The one open block. Blocks are sequential.
+    /// The open text or reasoning block. Tool blocks may stay open in parallel.
     open_block: ?usize = null,
     usage: types.Usage = .{},
     raw_stop_reason: []const u8 = "",
@@ -133,6 +133,7 @@ pub const Reducer = struct {
             if (self.blocks.items[index].kind == kind) return index;
             try self.stopOpen(out);
         }
+        try self.stopTools(out);
         return self.startBlock(kind, null, "", "", out);
     }
 
@@ -140,32 +141,31 @@ pub const Reducer = struct {
         const index = try toolIndex(call);
         // Only `index` is required on a chunk, so an entry with no function carries nothing to add.
         const function = json.fieldGet(call, "function") orelse return;
+        const function_object = switch (function) {
+            .object => |object| object,
+            else => return error.Protocol,
+        };
+        try self.stopOpen(out);
         const block_index = self.findTool(index) orelse blk: {
-            try self.stopOpen(out);
-            break :blk try self.startBlock(
-                .tool,
-                index,
-                json.fieldStr(call, "id") orelse "",
-                json.fieldStr(function, "name") orelse "",
-                out,
-            );
+            break :blk try self.startBlock(.tool, index, (try identity(call, "id")) orelse "", (try identity(function, "name")) orelse "", out);
         };
         const block = &self.blocks.items[block_index];
         if (!block.open) return error.Protocol; // The decode boundary returns an error for closed stream state.
         std.debug.assert(block.kind == .tool); // The findTool call matched a tool block.
         std.debug.assert(block.tool_index.? == index);
 
-        if (block.call_id.len == 0) try self.capture(&block.call_id, json.fieldStr(call, "id"));
-        if (block.name.len == 0) try self.capture(&block.name, json.fieldStr(function, "name"));
+        try self.capture(&block.call_id, try identity(call, "id"));
+        try self.capture(&block.name, try identity(function, "name"));
 
-        if (json.fieldGet(function, "arguments")) |arguments| switch (arguments) {
+        if (function_object.get("arguments")) |arguments| switch (arguments) {
             .string => |fragment| {
                 std.debug.assert(block.args.items.len <= event.max_tool_arg_bytes);
                 if (fragment.len > event.max_tool_arg_bytes - block.args.items.len) return error.Protocol;
                 try block.args.appendSlice(self.gpa, fragment);
                 try out.append(self.gpa, .{ .tool_input_delta = .{ .block = @intCast(block_index), .partial_json = fragment } });
             },
-            else => {},
+            .null => {},
+            else => return error.Protocol,
         };
     }
 
@@ -195,7 +195,7 @@ pub const Reducer = struct {
         if (call_id.len != 0) block.call_id = try self.own(call_id);
         if (name.len != 0) block.name = try self.own(name);
         try out.append(self.gpa, .{ .block_started = .{ .block = @intCast(index), .kind = kind } });
-        self.open_block = index;
+        if (kind != .tool) self.open_block = index;
         return index;
     }
 
@@ -208,13 +208,33 @@ pub const Reducer = struct {
 
     fn capture(self: *Reducer, destination: *[]const u8, source: ?[]const u8) Error!void {
         const bytes = source orelse return;
-        if (destination.*.len != 0 or bytes.len == 0) return;
+        if (bytes.len == 0) return;
+        if (destination.*.len != 0) {
+            if (!std.mem.eql(u8, destination.*, bytes)) return error.Protocol;
+            return;
+        }
         destination.* = try self.own(bytes);
     }
 
     /// Stop the open block. A stopped block never reopens.
     fn stopOpen(self: *Reducer, out: *std.ArrayList(StreamEvent)) Error!void {
         const index = self.open_block orelse return;
+        try self.stopBlock(index, out);
+    }
+
+    fn stopTools(self: *Reducer, out: *std.ArrayList(StreamEvent)) Error!void {
+        for (self.blocks.items, 0..) |block, index| {
+            if (block.kind == .tool and block.open) try self.stopBlock(index, out);
+        }
+    }
+
+    fn stopAll(self: *Reducer, out: *std.ArrayList(StreamEvent)) Error!void {
+        for (self.blocks.items, 0..) |block, index| {
+            if (block.open) try self.stopBlock(index, out);
+        }
+    }
+
+    fn stopBlock(self: *Reducer, index: usize, out: *std.ArrayList(StreamEvent)) Error!void {
         const block = &self.blocks.items[index];
         std.debug.assert(block.open);
         const result: event.BlockResult = switch (block.kind) {
@@ -229,12 +249,12 @@ pub const Reducer = struct {
         };
         try out.append(self.gpa, .{ .block_stopped = .{ .block = @intCast(index), .result = result } });
         block.open = false;
-        self.open_block = null;
+        if (self.open_block == index) self.open_block = null;
     }
 
     fn onDone(self: *Reducer, out: *std.ArrayList(StreamEvent)) Error!void {
         if (self.done_emitted) return error.Protocol;
-        try self.stopOpen(out);
+        try self.stopAll(out);
 
         // A refusal outranks the finish reason, because the model declined the request.
         if (self.refused) self.stop_reason = .refusal;
@@ -268,6 +288,14 @@ fn mapStopReason(raw: []const u8) types.FinishReason {
 /// The tool index must be present, non-negative, and representable as `usize`.
 fn toolIndex(call: std.json.Value) Error!usize {
     return json.fieldIndex(call, "index") orelse error.Protocol;
+}
+
+fn identity(value: std.json.Value, key: []const u8) Error!?[]const u8 {
+    return switch (json.fieldGet(value, key) orelse return null) {
+        .string => |text| text,
+        .null => null,
+        else => error.Protocol,
+    };
 }
 
 const testing = std.testing;
@@ -361,26 +389,32 @@ test "tool turn: input deltas stream and the whole call surfaces at stop" {
     try testing.expectEqual(types.FinishReason.tool_calls, h.out.items[4].done.stop_reason);
 }
 
-test "a second tool index stops the first block before it opens" {
+test "parallel tool indexes keep stable blocks until done" {
     var h = Harness.init();
     defer h.deinit();
     try h.feed(&.{
-        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{\"a\":1}"}}]},"finish_reason":null}]}
+        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{\"a\":"}}]},"finish_reason":null}]}
         ,
-        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"two","arguments":"{\"b\":2}"}}]},"finish_reason":null}]}
+        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"two","arguments":"{\"b\":"}}]},"finish_reason":null}]}
+        ,
+        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":null}]}
+        ,
+        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}}]},"finish_reason":null}]}
         ,
         \\{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
         ,
         "[DONE]",
     });
 
-    try testing.expectEqual(@as(usize, 7), h.out.items.len);
+    try testing.expectEqual(@as(usize, 9), h.out.items.len);
     try testing.expectEqual(@as(event.BlockId, 0), h.out.items[0].block_started.block);
-    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[2].block_stopped.block);
-    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[3].block_started.block);
-    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[5].block_stopped.block);
-    try testing.expectEqualStrings("a", h.out.items[2].block_stopped.result.tool.call_id);
-    try testing.expectEqualStrings("b", h.out.items[5].block_stopped.result.tool.call_id);
+    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[2].block_started.block);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[4].tool_input_delta.block);
+    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[5].tool_input_delta.block);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[6].block_stopped.block);
+    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[7].block_stopped.block);
+    try testing.expectEqualStrings("{\"a\":1}", h.out.items[6].block_stopped.result.tool.arguments);
+    try testing.expectEqualStrings("{\"b\":2}", h.out.items[7].block_stopped.result.tool.arguments);
 }
 
 test "reasoning then text gives two sequential blocks" {
@@ -425,7 +459,7 @@ test "text after a tool call stops the tool block first" {
     try testing.expectEqual(@as(event.BlockId, 1), h.out.items[5].block_stopped.block);
 }
 
-test "every block stops before the next block starts" {
+test "non-tool blocks stay sequential while tools may overlap" {
     var h = Harness.init();
     defer h.deinit();
     try h.feed(&.{
@@ -440,19 +474,39 @@ test "every block stops before the next block starts" {
         "[DONE]",
     });
 
-    var open: usize = 0;
+    var open_tools: usize = 0;
+    var open_non_tool = false;
     for (h.out.items) |ev| switch (ev) {
-        .block_started => {
-            try testing.expectEqual(@as(usize, 0), open);
-            open += 1;
+        .block_started => |started| if (started.kind == .tool) {
+            open_tools += 1;
+        } else {
+            try testing.expect(!open_non_tool);
+            open_non_tool = true;
         },
-        .block_stopped => {
-            try testing.expectEqual(@as(usize, 1), open);
-            open -= 1;
+        .block_stopped => |stopped| if (stopped.result == .tool) {
+            try testing.expect(open_tools > 0);
+            open_tools -= 1;
+        } else {
+            try testing.expect(open_non_tool);
+            open_non_tool = false;
         },
-        .done => try testing.expectEqual(@as(usize, 0), open),
+        .done => {
+            try testing.expectEqual(@as(usize, 0), open_tools);
+            try testing.expect(!open_non_tool);
+        },
         else => {},
     };
+}
+
+test "a tool index rejects conflicting identity" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one"}}]}}]}
+    });
+    try testing.expectError(error.Protocol, h.feed(&.{
+        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"b","function":{"name":"one"}}]}}]}
+    }));
 }
 
 // This dialect reports `stop` for a refusal, so only the refusal field marks the turn.

@@ -11,8 +11,12 @@ const Value = quickjs.Value;
 
 /// State shared by the renderer and the `yuke:term` module.
 pub const Paint = struct {
-    render: ?*term_pkg.Render = null,
-    writer: ?*std.Io.Writer = null,
+    pub const Output = struct {
+        render: *term_pkg.Render,
+        writer: *std.Io.Writer,
+    };
+
+    output: ?Output = null,
     width: u16 = 80,
     height: u16 = 24,
     dirty: bool = false,
@@ -32,10 +36,9 @@ pub const Paint = struct {
         if (self.width == winsize.cols and self.height == winsize.rows) return;
         // A failed write after the grid swapped keeps the frame dirty, so the next commit flushes.
         var resize_dirty = false;
-        if (self.render) |render| {
-            // `bindRender` sets the render and the writer together, so a render implies a writer.
-            std.debug.assert(self.writer != null);
-            const writer = self.writer.?;
+        if (self.output) |output| {
+            const render = output.render;
+            const writer = output.writer;
             render.resize(writer, winsize) catch {
                 if (render.window().width != winsize.cols or render.window().height != winsize.rows)
                     return;
@@ -54,8 +57,7 @@ pub const Paint = struct {
     pub fn bindRender(self: *Paint, ctx: Context, render: *term_pkg.Render, writer: *std.Io.Writer) void {
         render.vx.caps.unicode = .unicode;
         render.vx.screen.width_method = .unicode;
-        self.render = render;
-        self.writer = writer;
+        self.output = .{ .render = render, .writer = writer };
         const win = render.window();
         self.width = win.width;
         self.height = win.height;
@@ -114,21 +116,22 @@ fn rethrow(ctx: Context) Value {
 
 fn jsBeginFrame(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.paint.render == null) return ctx.throwTypeError("term.beginFrame: no host");
+    if (host.paint.output == null) return ctx.throwTypeError("term.beginFrame: no host");
     startFrame(host);
     return quickjs.UNDEFINED;
 }
 
 fn jsEndFrame(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.paint.render == null) return ctx.throwTypeError("term.endFrame: no host");
+    if (host.paint.output == null) return ctx.throwTypeError("term.endFrame: no host");
     commitFrame(host);
     return quickjs.UNDEFINED;
 }
 
 fn jsFill(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const render = host.paint.render orelse return ctx.throwTypeError("term.fill: no host");
+    const output = host.paint.output orelse return ctx.throwTypeError("term.fill: no host");
+    const render = output.render;
     if (args.len < 4) return ctx.throwTypeError("term.fill(x, y, w, h, style?)");
 
     const x = ctx.toInt32(args[0]) catch return rethrow(ctx);
@@ -155,7 +158,8 @@ fn jsFill(ctx: Context, _: Value, args: []const Value) Value {
 
 fn jsText(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const render = host.paint.render orelse return ctx.throwTypeError("term.text: no host");
+    const output = host.paint.output orelse return ctx.throwTypeError("term.text: no host");
+    const render = output.render;
     if (args.len < 3) return ctx.throwTypeError("term.text(x, y, s, style?)");
 
     const x = ctx.toInt32(args[0]) catch return rethrow(ctx);
@@ -210,7 +214,8 @@ fn jsGraphemes(ctx: Context, _: Value, args: []const Value) Value {
 
 fn jsCursor(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const render = host.paint.render orelse return ctx.throwTypeError("term.cursor: no host");
+    const output = host.paint.output orelse return ctx.throwTypeError("term.cursor: no host");
+    const render = output.render;
     if (args.len < 3) return ctx.throwTypeError("term.cursor(x, y, visible)");
 
     const x = ctx.toInt32(args[0]) catch return rethrow(ctx);
@@ -234,13 +239,12 @@ fn jsCursor(ctx: Context, _: Value, args: []const Value) Value {
 /// Put text on the clipboard through OSC 52 and return the bytes sent, or -1 over `clipboardMax`; OSC 52 has no acknowledgement.
 fn jsCopy(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const render = host.paint.render orelse return ctx.throwTypeError("term.copy: no host");
+    const output = host.paint.output orelse return ctx.throwTypeError("term.copy: no host");
+    const render = output.render;
     if (args.len < 1 or !ctx.isString(args[0])) return ctx.throwTypeError("term.copy(text): text is a string");
     const payload = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
     defer ctx.freeCString(payload.ptr);
-    // `bindRender` sets the render and the writer together, so a render implies a writer.
-    std.debug.assert(host.paint.writer != null);
-    render.copyToClipboard(host.paint.writer.?, payload) catch |err| switch (err) {
+    render.copyToClipboard(output.writer, payload) catch |err| switch (err) {
         error.ClipboardTooLarge => return ctx.newInt32(-1),
         else => return ctx.throwInternalError("term.copy: the write failed"),
     };
@@ -281,7 +285,8 @@ fn jsSetNeedsTick(ctx: Context, _: Value, args: []const Value) Value {
 }
 
 fn startFrame(host: *Host) void {
-    const render = host.paint.render orelse return;
+    const output = host.paint.output orelse return;
+    const render = output.render;
     render.window().clear();
     render.window().hideCursor();
     _ = host.paint.glyphs.reset(.retain_capacity);
@@ -290,8 +295,9 @@ fn startFrame(host: *Host) void {
 }
 
 pub fn commitFrame(host: *Host) void {
-    const render = host.paint.render orelse return;
-    const writer = host.paint.writer orelse return;
+    const output = host.paint.output orelse return;
+    const render = output.render;
+    const writer = output.writer;
     if (!host.paint.dirty) {
         host.paint.in_frame = false;
         return;

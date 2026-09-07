@@ -15,8 +15,9 @@ const fault_style: term_pkg.Style = .{
 /// Paint the fault on the bottom row and flush; the rows above keep the failed script's partial frame.
 pub fn paintFault(host: *Host) void {
     std.debug.assert(host.phase == .open);
-    const render = host.paint.render orelse return;
-    const writer = host.paint.writer orelse return;
+    const output = host.paint.output orelse return;
+    const render = output.render;
+    const writer = output.writer;
     // The Host owns the fault text. The cells hold slices into it during the render.
     const text = host.faultText();
     if (text.len == 0) return;

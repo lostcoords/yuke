@@ -35,39 +35,46 @@ pub const unknown_fault = "script fault with no message";
 pub const Error = error{JavaScriptFault};
 
 /// Every frontend bakes every module, because `index.js` is one file that both frontends load.
-pub const default_baked = [_]loader_mod.BakedModule{
-    // The public facade. `index.js` imports this name; every other name here is internal.
-    .{ .name = "yuke", .source = @embedFile("app/facade.js") },
-    .{ .name = "yuke:kernel", .source = @embedFile("app/kernel.js") },
-    .{ .name = "yuke:builtins", .source = @embedFile("app/builtins.js") },
-    .{ .name = "yuke:ext", .source = @embedFile("app/ext.js") },
-    .{ .name = "yuke:interaction", .source = @embedFile("app/interaction.js") },
-    .{ .name = "yuke:tui", .source = @embedFile("app/tui.js") },
-    .{ .name = "yuke:core", .source = @embedFile("app/core.js") },
-    .{ .name = "yuke:md", .source = @embedFile("app/md.js") },
-    .{ .name = "yuke:ui", .source = @embedFile("app/ui.js") },
-    .{ .name = "yuke:client", .source = @embedFile("app/client.js") },
-    .{ .name = "yuke:vim", .source = @embedFile("app/vim.js") },
-    .{ .name = "yuke:notice", .source = @embedFile("app/notice.js") },
-    .{ .name = "yuke:sessions", .source = @embedFile("app/sessions.js") },
-    .{ .name = "yuke:activity", .source = @embedFile("app/activity.js") },
-    .{ .name = "yuke:indicator", .source = @embedFile("app/indicator.js") },
-    .{ .name = "yuke:queue", .source = @embedFile("app/queue.js") },
-    .{ .name = "yuke:context", .source = @embedFile("app/context.js") },
-    .{ .name = "yuke:command-ui", .source = @embedFile("app/command-ui.js") },
-    .{ .name = "yuke:catalog", .source = @embedFile("app/catalog.js") },
-    .{ .name = "yuke:agents-ui", .source = @embedFile("app/agents-ui.js") },
-    .{ .name = "yuke:agent-tools", .source = @embedFile("app/agent-tools.js") },
-    .{ .name = "yuke:agents", .source = @embedFile("app/agents.js") },
-    .{ .name = "yuke:auth", .source = @embedFile("app/auth.js") },
-    .{ .name = "yuke:chat", .source = @embedFile("app/chat.js") },
-    .{ .name = "yuke:fzy", .source = @embedFile("app/fzy.js") },
-    .{ .name = "yuke:transcript", .source = @embedFile("app/transcript.js") },
-    .{ .name = "yuke:explorer", .source = @embedFile("app/explorer.js") },
-    .{ .name = "yuke:composer-vim", .source = @embedFile("app/composer-vim.js") },
-    .{ .name = "yuke:transcript-vim", .source = @embedFile("app/transcript-vim.js") },
-    .{ .name = "yuke:defaults", .source = @embedFile("app/defaults.js") },
-    .{ .name = "yuke:interaction-ui", .source = @embedFile("app/interaction-ui.js") },
+pub const default_baked = blk: {
+    const names = .{
+        "facade",
+        "kernel",
+        "builtins",
+        "ext",
+        "interaction",
+        "tui",
+        "core",
+        "md",
+        "ui",
+        "client",
+        "vim",
+        "notice",
+        "sessions",
+        "activity",
+        "indicator",
+        "queue",
+        "context",
+        "command-ui",
+        "catalog",
+        "agents-ui",
+        "agent-tools",
+        "agents",
+        "auth",
+        "chat",
+        "fzy",
+        "transcript",
+        "explorer",
+        "composer-vim",
+        "transcript-vim",
+        "defaults",
+        "interaction-ui",
+    };
+    var modules: [names.len]loader_mod.BakedModule = undefined;
+    for (names, 0..) |name, i| modules[i] = .{
+        .name = if (std.mem.eql(u8, name, "facade")) "yuke" else "yuke:" ++ name,
+        .source = @embedFile("app/" ++ name ++ ".js"),
+    };
+    break :blk modules;
 };
 
 pub const Options = struct {
@@ -466,10 +473,7 @@ fn firstLine(text: []const u8) []const u8 {
 }
 
 test "eval returns an integer" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     try host.eval("globalThis.n = 40 + 2", "smoke.js");
@@ -477,10 +481,7 @@ test "eval returns an integer" {
 }
 
 test "an ascii name sort without localeCompare keeps order" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.eval(
         \\const names = ["minimax", "opencode", "opencode-responses"];
@@ -495,12 +496,9 @@ test "an ascii name sort without localeCompare keeps order" {
 }
 
 test "two hosts do not share globals" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const a = Host.create(gpa.allocator());
+    const a = Host.create(std.testing.allocator);
     defer a.destroy();
-    const b = Host.create(gpa.allocator());
+    const b = Host.create(std.testing.allocator);
     defer b.destroy();
 
     try a.eval("globalThis.n = 1", "a.js");
@@ -510,10 +508,7 @@ test "two hosts do not share globals" {
 }
 
 test "a syntax error is a JavaScriptFault" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try std.testing.expectError(error.JavaScriptFault, host.eval("this is not js", "bad.js"));
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "bad.js:1") != null);
@@ -522,20 +517,14 @@ test "a syntax error is a JavaScriptFault" {
 }
 
 test "drainJobs runs a then callback" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try host.eval("globalThis.hit = 0; Promise.resolve().then(() => { globalThis.hit = 7; })", "job.js");
     try std.testing.expectEqual(@as(i32, 7), try host.evalInt("globalThis.hit"));
 }
 
 test "an infinite loop hits the interrupt budget" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.interrupt_budget = 0;
     try std.testing.expectError(error.JavaScriptFault, host.eval("while (true) {}", "spin.js"));
@@ -543,10 +532,7 @@ test "an infinite loop hits the interrupt budget" {
 }
 
 test "close interrupts a leftover spinning job" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.budget = 0;
     try host.eval("Promise.resolve().then(() => { while (true) {} })", "spin.js");
@@ -560,10 +546,7 @@ test "close interrupts a leftover spinning job" {
 }
 
 test "close drains then destroy frees the runtime" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.budget = 0;
     try host.eval("Promise.resolve().then(() => {})", "close.js");
@@ -575,10 +558,7 @@ test "close drains then destroy frees the runtime" {
 }
 
 test "drainJobs yields when the budget is hit" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.budget = 1;
     try host.eval(
@@ -592,10 +572,7 @@ test "drainJobs yields when the budget is hit" {
 }
 
 test "a memory-limit hit is a catchable fault" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.runtime.setMemoryLimit(256 * 1024);
     try std.testing.expectEqual(@as(i64, 256 * 1024), host.runtime.computeMemoryUsage().malloc_limit);
@@ -608,10 +585,7 @@ test "a memory-limit hit is a catchable fault" {
 }
 
 test "a module that never settles is a fault" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -621,10 +595,7 @@ test "a module that never settles is a fault" {
 }
 
 test "a rejected module reports the reason" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -634,10 +605,7 @@ test "a rejected module reports the reason" {
 }
 
 test "fault text truncates on a UTF-8 boundary" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -652,10 +620,7 @@ test "fault text truncates on a UTF-8 boundary" {
 }
 
 test "a throwing toString still leaves the context clean" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try std.testing.expectError(error.JavaScriptFault, host.eval(
         "throw { toString() { throw new Error('nested'); } };",
@@ -668,10 +633,7 @@ test "a throwing toString still leaves the context clean" {
 }
 
 test "an unknown yuke module is a JavaScriptFault" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -680,19 +642,16 @@ test "an unknown yuke module is a JavaScriptFault" {
 }
 
 test "resize keeps unicode width after a write fail" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
-    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
-    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    var render = try term_pkg.Render.init(std.testing.io, std.testing.allocator, &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer sink.deinit();
     defer render.deinit(&sink.writer);
     try render.resize(&sink.writer, .{ .rows = 2, .cols = 4, .x_pixel = 0, .y_pixel = 0 });
 
     var fail: std.Io.Writer = .failing;
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.paint.bindRender(host.ctx, &render, &fail);
     // Only `resize` can put the method back, so the assertion cannot pass on `bindRender` alone.
@@ -704,20 +663,17 @@ test "resize keeps unicode width after a write fail" {
 }
 
 test "an event asks for a frame and the flush paints it once" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
-    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
-    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    var render = try term_pkg.Render.init(std.testing.io, std.testing.allocator, &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer sink.deinit();
     defer render.deinit(&sink.writer);
     try render.resize(&sink.writer, .{ .rows = 2, .cols = 8, .x_pixel = 0, .y_pixel = 0 });
 
-    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     host.paint.bindRender(host.ctx, &render, &out.writer);
 
@@ -751,9 +707,6 @@ test "an event asks for a frame and the flush paints it once" {
 }
 
 test "import a file beside the entry" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "util.js", .data = "export const n = 9;\n" });
@@ -761,7 +714,7 @@ test "import a file beside the entry" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, .{});
+    const host = Host.createWith(std.testing.allocator, std.testing.io, .{});
     defer host.destroy();
 
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -771,9 +724,6 @@ test "import a file beside the entry" {
 }
 
 test "a file outside the entry directory loads" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var inside = std.testing.tmpDir(.{});
     defer inside.cleanup();
     var outside = std.testing.tmpDir(.{});
@@ -787,7 +737,7 @@ test "a file outside the entry directory loads" {
     const shared_len = try outside.dir.realPathFile(std.testing.io, "shared.js", &shared_buf);
     const shared = shared_buf[0..shared_len];
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, .{});
+    const host = Host.createWith(std.testing.allocator, std.testing.io, .{});
     defer host.destroy();
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
@@ -798,9 +748,6 @@ test "a file outside the entry directory loads" {
 }
 
 test "an oversize module file does not load" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{
@@ -811,7 +758,7 @@ test "an oversize module file does not load" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, .{ .max_file_bytes = 8 });
+    const host = Host.createWith(std.testing.allocator, std.testing.io, .{ .max_file_bytes = 8 });
     defer host.destroy();
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});

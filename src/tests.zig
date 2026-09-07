@@ -1,7 +1,12 @@
-//! Test aggregate root for all src layers. proto, sql, and term self-test as lib modules.
-//! A referenced import runs a file's tests; a function call alone does not.
+//! Test root for the process and its JavaScript host.
 
 test {
+    _ = @import("js/agents_test.zig");
+    _ = @import("js/host.zig");
+    _ = @import("js/extensions.zig");
+    _ = @import("app/rpc.zig");
+    _ = @import("app/rpc_js_test.zig");
+    _ = @import("app/print_cli.zig");
     _ = @import("main.zig");
     _ = @import("cli.zig");
     _ = @import("util.zig");

@@ -222,13 +222,10 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
 
     if (available and rt.active_run == null) {
         const stored_prompt = try session_store.prompt(engine.deps.db, arena, sid);
-        const slot = try run.RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, stored_prompt orelse "", snapshot.max_rounds);
-        errdefer slot.destroy();
+        var prepared = try run.RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, stored_prompt orelse "", snapshot.max_rounds);
+        errdefer prepared.deinit();
         const started = try run.beginTurnSource(engine.deps.db, engine.deps.io, arena, sid, content, snapshot.config_rev, source);
-        slot.bind(started.handle, started.first_round);
-        slot.parent_id = parent;
-        slot.tree_root = tree.root;
-        slot.depth = tree.depth;
+        const slot = prepared.bind(started.handle, started.first_round, parent, tree);
         rt.active_run = slot;
         launch.* = .{ .slot = slot };
         // Fold each durable event in sequence order: the user message, then run.started.
@@ -442,8 +439,8 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     const now = engine.nowMillis();
     if (parent_tree) |tree| try reports.reserve(engine, arena, tree.root);
     const available = content != null and (parent_tree == null or try admission.available(engine, arena, parent_tree.?.root, id));
-    const slot = if (available) try run.RunSlot.prepare(engine.deps.gpa, model, reasoning, system_prompt orelse "", params.max_rounds) else null;
-    errdefer if (slot) |held| held.destroy();
+    var prepared: ?run.RunSlot.Prepared = if (available) try run.RunSlot.prepare(engine.deps.gpa, model, reasoning, system_prompt orelse "", params.max_rounds) else null;
+    errdefer if (prepared) |*held| held.deinit();
     const resident = if (content != null) try engine.sessions.getOrCreate(id) else null;
     errdefer if (resident != null) engine.sessions.remove(id);
     var queued: ?database.input.Entry = null;
@@ -471,19 +468,17 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         if (system_prompt) |sys| try session_store.setPrompt(engine.deps.db, id.raw, sys);
         try config_store.recordInitial(engine.deps.db, id.raw, model, reasoning);
         if (content) |parts| queued = try input_store.enqueueSource(engine.deps.db, arena, id.raw, engine.newId(), now, parts, now, if (params.child) |child| .{ .parent_instruction = child.site } else null);
-        if (slot != null) started = try run.beginQueuedTurnInTransaction(engine.deps.db, engine.deps.io, arena, id.raw, 0);
+        if (prepared != null) started = try run.beginQueuedTurnInTransaction(engine.deps.db, engine.deps.io, arena, id.raw, 0);
         try tx.commit();
     }
     if (resident) |rt| {
         rt.hydrated = true;
         session_events.emitDurable(engine, rt, .{ .method = .@"input.queued", .params = .{ .input_queued_data = .{ .session_id = id, .seq = queued.?.seq, .input = queued.?.input } } });
         if (started) |run_start| {
-            slot.?.bind(run_start.handle, run_start.first_round);
-            slot.?.parent_id = parent;
-            slot.?.tree_root = if (parent_tree) |tree| tree.root else id;
-            slot.?.depth = if (parent_tree) |tree| tree.depth + 1 else 0;
+            const location: run.RunSlot.Location = if (parent_tree) |tree| .{ .root = tree.root, .depth = tree.depth + 1 } else .{ .root = id, .depth = 0 };
+            const slot = prepared.?.bind(run_start.handle, run_start.first_round, parent, location);
             rt.active_run = slot;
-            launch.* = .{ .slot = slot.? };
+            launch.* = .{ .slot = slot };
             session_events.publishUserCommits(engine, rt, run_start.user_commits);
             session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = run_start.handle.started } });
         } else if (parent) |pid| launch.* = .{ .wake = pid };
@@ -580,10 +575,12 @@ test "session.get and session.queue read the durable queue, resident or not" {
     try std.testing.expectEqual(@as(u64, 1), resident.activity.queued);
 
     // A bound run slot makes the read report the live run, where the durable row says idle.
-    const slot = try run.RunSlot.prepare(std.testing.allocator, "mock", "", "", null);
-    slot.bind(
+    var prepared = try run.RunSlot.prepare(std.testing.allocator, "mock", "", "", null);
+    const slot = prepared.bind(
         .{ .input_id = 1, .started = .{ .session_id = id, .seq = 1, .run_id = 7, .kind = .turn, .config_rev = 0, .started_at_ms = 5 } },
         .{ .number = 1, .message_id = 1 },
+        null,
+        .{ .root = id, .depth = 0 },
     );
     rt.active_run = slot;
     defer {

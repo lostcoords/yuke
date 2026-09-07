@@ -5,3 +5,6 @@ zig-pkg/
 
 # macOS Finder metadata
 .DS_Store
+
+# Local benchmark work
+bench/

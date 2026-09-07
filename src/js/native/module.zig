@@ -74,15 +74,42 @@ pub fn owned(ctx: Context, gpa: std.mem.Allocator, value: Value) ?[]u8 {
 
 /// Read one whole number in `[min, max]`. A fraction, a NaN, or another type answers null.
 pub fn integer(ctx: Context, value: Value, min: u64, max: u64) ?u64 {
+    std.debug.assert(min <= max);
     if (!ctx.isNumber(value)) return null;
     const n = ctx.toFloat64(value) catch return null;
     if (!std.math.isFinite(n) or @floor(n) != n) return null;
-    if (n < @as(f64, @floatFromInt(min)) or n > @as(f64, @floatFromInt(max))) return null;
-    return @intFromFloat(n);
+    if (n < 0 or n >= 0x1p64) return null;
+    const result: u64 = @intFromFloat(n);
+    return if (result < min or result > max) null else result;
 }
 
 /// Set one property, or drop the value once the QuickJS heap is full; the builder reads the exception at its end.
 pub fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
     if (ctx.hasException()) return ctx.freeValue(value);
     ctx.setPropertyStr(obj, name, value) catch {};
+}
+
+test "integer checks exact bounds before and after the float conversion" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    const cases = [_]struct { n: f64, min: u64 = 0, max: u64 = std.math.maxInt(u64), want: ?u64 = null }{
+        .{ .n = 0, .want = 0 },
+        .{ .n = 42, .min = 42, .max = 42, .want = 42 },
+        .{ .n = -1 },
+        .{ .n = 1.5 },
+        .{ .n = std.math.nan(f64) },
+        .{ .n = std.math.inf(f64) },
+        .{ .n = 0x1p64 },
+        .{ .n = 0x1p64 - 2048, .want = 0xfffffffffffff800 },
+        .{ .n = 9007199254740992, .min = 9007199254740993 },
+        .{ .n = 9007199254740996, .max = 9007199254740995 },
+    };
+    for (cases) |case| {
+        const value = host.ctx.newFloat64(case.n);
+        defer host.ctx.freeValue(value);
+        try std.testing.expectEqual(case.want, integer(host.ctx, value, case.min, case.max));
+    }
+    const text = host.ctx.newString("42");
+    defer host.ctx.freeValue(text);
+    try std.testing.expectEqual(null, integer(host.ctx, text, 0, 100));
 }

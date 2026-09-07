@@ -57,7 +57,7 @@ pub fn install(host: *Host) void {
 
 fn sidArg(ctx: Context, args: []const Value, idx: usize) ?SessionId {
     if (args.len <= idx) return null;
-    const text = ctx.toCStringLen(args[idx]) catch return null;
+    const text = module.string(ctx, args[idx]) orelse return null;
     defer ctx.freeCString(text.ptr);
     if (text.len != SessionId.byte_len * 2) return null;
     var raw: [SessionId.byte_len]u8 = undefined;
@@ -67,7 +67,7 @@ fn sidArg(ctx: Context, args: []const Value, idx: usize) ?SessionId {
 
 fn u64Arg(ctx: Context, args: []const Value, idx: usize) ?u64 {
     if (args.len <= idx) return null;
-    return module.integer(ctx, args[idx], 0, std.math.maxInt(u64));
+    return module.integer(ctx, args[idx], 0, proto.meta.constants.MAX_WIRE_INTEGER);
 }
 
 /// Resolve the live runtime a view reads. A view that never opened the session gets null.
@@ -215,12 +215,12 @@ fn jsSessionText(ctx: Context, _: Value, args: []const Value) Value {
 fn jsPartText(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
     const empty = "{\"text\":\"\",\"next\":null}";
+    if (args.len <= 3) return ctx.newString(empty);
+    const field = module.string(ctx, args[3]) orelse return ctx.newString(empty);
+    defer ctx.freeCString(field.ptr);
     const rt = runtimeArg(ctx, args) orelse return ctx.newString(empty);
     const mid = u64Arg(ctx, args, 1) orelse return ctx.newString(empty);
     const part_id = u64Arg(ctx, args, 2) orelse return ctx.newString(empty);
-    if (args.len <= 3) return ctx.newString(empty);
-    const field = ctx.toCStringLen(args[3]) catch return ctx.newString(empty);
-    defer ctx.freeCString(field.ptr);
     const offset = u64Arg(ctx, args, 4) orelse 0;
     const want = paging.pageLimit(u64Arg(ctx, args, 5));
 
@@ -277,6 +277,18 @@ fn jsSetDefaultSystemPrompt(ctx: Context, _: Value, args: []const Value) Value {
 }
 
 const testing = std.testing;
+
+test "view integers stay within the protocol safe integer range" {
+    const host = Host.create(testing.allocator);
+    defer host.destroy();
+    const max = proto.meta.constants.MAX_WIRE_INTEGER;
+    const accepted = host.ctx.newFloat64(@floatFromInt(max));
+    defer host.ctx.freeValue(accepted);
+    try testing.expectEqual(max, u64Arg(host.ctx, &.{accepted}, 0).?);
+    const rejected = host.ctx.newFloat64(@floatFromInt(max + 1));
+    defer host.ctx.freeValue(rejected);
+    try testing.expectEqual(null, u64Arg(host.ctx, &.{rejected}, 0));
+}
 
 test "a request reaches a command and answers with its result" {
     const ai = @import("ai");
@@ -348,6 +360,17 @@ test "a request reaches a command and answers with its result" {
         \\globalThis.len = globalThis.text.length;
     , "text.js");
     try testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.len")); // "probe"
+
+    try host.evalModule(
+        \\import { native } from "yuke:engine-native";
+        \\let coerced = 0;
+        \\const field = { toString() { coerced++; native.sessionClose(globalThis.sid); return "text"; } };
+        \\const page = JSON.parse(native.partText(globalThis.sid, 1, 1, field));
+        \\const id = { toString() { coerced++; return globalThis.sid; } };
+        \\globalThis.safeArgs = page.text === "" && page.next === null && !native.sessionOpen(id) && coerced === 0;
+        \\globalThis.stillOpen = native.sessionOutline(globalThis.sid) !== "null";
+    , "arguments.js");
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.safeArgs && globalThis.stillOpen"));
 
     // A refusal reaches JavaScript as an error that names its wire code.
     try host.evalModule(

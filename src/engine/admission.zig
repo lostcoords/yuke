@@ -5,14 +5,13 @@ const proto = @import("proto");
 const Engine = @import("Engine.zig");
 const database = @import("../store/store.zig");
 const turn = @import("turn.zig");
+const session = @import("../session/session.zig");
 
-pub const Location = struct { root: proto.ids.SessionId, depth: u32 };
+pub const Location = session.RunSlot.Location;
 
 /// Parent links define the tree; forks start at depth zero.
 pub fn location(engine: *Engine, arena: std.mem.Allocator, session_id: proto.ids.SessionId) !Location {
-    if (engine.sessions.get(session_id)) |resident| if (resident.active_run) |slot| {
-        if (slot.tree_root) |root| return .{ .root = root, .depth = slot.depth };
-    };
+    if (engine.sessions.get(session_id)) |resident| if (resident.active_run) |slot| return .{ .root = slot.tree_root, .depth = slot.depth };
     var id = session_id.raw;
     var depth: u32 = 0;
     var seen: std.AutoHashMapUnmanaged([16]u8, void) = .empty;
@@ -30,8 +29,7 @@ pub fn capacity(engine: *Engine, root: proto.ids.SessionId) proto.session.ChildC
     var residents = engine.sessions.map.valueIterator();
     while (residents.next()) |resident| {
         const slot = resident.*.active_run orelse continue;
-        std.debug.assert(slot.parent_id == null or slot.tree_root != null);
-        if (slot.parent_id != null) if (slot.tree_root) |id| if (std.mem.eql(u8, &id.raw, &root.raw)) {
+        if (slot.parent_id != null) if (std.mem.eql(u8, &slot.tree_root.raw, &root.raw)) {
             active += 1;
         };
     }

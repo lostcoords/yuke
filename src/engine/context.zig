@@ -51,11 +51,6 @@ pub const Budget = struct {
 pub const TurnContext = struct {
     messages: []const Message = &.{},
     estimated_tokens: u64 = 0,
-
-    /// The model context, oldest first.
-    pub fn slice(self: *const TurnContext) []const Message {
-        return self.messages;
-    }
 };
 
 /// Project the messages the model reads. Hold the floor while the history fits the budget, so the
@@ -215,7 +210,7 @@ test "a generous budget holds the floor at the oldest message" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const ctx = try project(arena.allocator(), &t, .{ .max_tokens = 1 << 30, .input_ceiling = 1 << 40 });
-    try testing.expectEqual(@as(usize, 2), ctx.slice().len);
+    try testing.expectEqual(@as(usize, 2), ctx.messages.len);
     try testing.expectEqual(@as(ids.MessageId, 1), t.context_floor_id); // the floor sits at the oldest
     try testing.expect(ctx.estimated_tokens > 0);
 }
@@ -269,9 +264,9 @@ test "a trim never cuts into the current turn" {
 
     // A budget of one token forces the hardest possible trim.
     const ctx = try project(arena.allocator(), &t, .{ .max_tokens = 1, .input_ceiling = 1 << 40 });
-    try testing.expectEqual(@as(usize, 2), ctx.slice().len);
-    try testing.expectEqual(@as(u64, 6), ctx.slice()[0].user.id);
-    try testing.expectEqual(@as(u64, 7), ctx.slice()[1].assistant.id);
+    try testing.expectEqual(@as(usize, 2), ctx.messages.len);
+    try testing.expectEqual(@as(u64, 6), ctx.messages[0].user.id);
+    try testing.expectEqual(@as(u64, 7), ctx.messages[1].assistant.id);
 }
 
 test "a larger budget recovers the history a smaller one dropped" {
@@ -291,7 +286,7 @@ test "a larger budget recovers the history a smaller one dropped" {
 
     // A larger model re-reads the floor, so the dropped history returns instead of staying lost.
     const wide = try project(a, &t, .{ .max_tokens = per * 100, .input_ceiling = 1 << 40 });
-    try testing.expectEqual(@as(usize, 8), wide.slice().len);
+    try testing.expectEqual(@as(usize, 8), wide.messages.len);
     try testing.expectEqual(@as(ids.MessageId, 1), t.context_floor_id);
 }
 
@@ -313,7 +308,7 @@ test "a turn larger than the whole window is refused, not sent" {
 
     // A ceiling that fits the pin still projects.
     const ok = try project(arena.allocator(), &t, .{ .max_tokens = 1, .input_ceiling = pinned });
-    try testing.expectEqual(@as(usize, 1), ok.slice().len);
+    try testing.expectEqual(@as(usize, 1), ok.messages.len);
 }
 
 test "an empty transcript projects no message" {
@@ -322,5 +317,5 @@ test "an empty transcript projects no message" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const ctx = try project(arena.allocator(), &t, .{ .max_tokens = 1 << 30, .input_ceiling = 1 << 40 });
-    try testing.expectEqual(@as(usize, 0), ctx.slice().len);
+    try testing.expectEqual(@as(usize, 0), ctx.messages.len);
 }

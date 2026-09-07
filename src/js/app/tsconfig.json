@@ -16,34 +16,7 @@
 
     "paths": {
       "yuke": ["./facade.js"],
-      "yuke:kernel": ["./kernel.js"],
-      "yuke:tui": ["./tui.js"],
-      "yuke:core": ["./core.js"],
-      "yuke:ext": ["./ext.js"],
-      "yuke:interaction": ["./interaction.js"],
-      "yuke:md": ["./md.js"],
-      "yuke:ui": ["./ui.js"],
-      "yuke:agents": ["./agents.js"],
-      "yuke:agent-tools": ["./agent-tools.js"],
-      "yuke:agents-ui": ["./agents-ui.js"],
-      "yuke:client": ["./client.js"],
-      "yuke:vim": ["./vim.js"],
-      "yuke:notice": ["./notice.js"],
-      "yuke:sessions": ["./sessions.js"],
-      "yuke:activity": ["./activity.js"],
-      "yuke:indicator": ["./indicator.js"],
-      "yuke:queue": ["./queue.js"],
-      "yuke:context": ["./context.js"],
-      "yuke:command-ui": ["./command-ui.js"],
-      "yuke:catalog": ["./catalog.js"],
-      "yuke:auth": ["./auth.js"],
-      "yuke:chat": ["./chat.js"],
-      "yuke:fzy": ["./fzy.js"],
-      "yuke:transcript": ["./transcript.js"],
-      "yuke:explorer": ["./explorer.js"],
-      "yuke:composer-vim": ["./composer-vim.js"],
-      "yuke:transcript-vim": ["./transcript-vim.js"],
-      "yuke:defaults": ["./defaults.js"]
+      "yuke:*": ["./*.js"]
     }
   },
   "include": ["./**/*.js", "./types/**/*.d.ts", "./generated/**/*.d.ts"]

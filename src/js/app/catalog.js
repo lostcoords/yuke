@@ -4,14 +4,24 @@ import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { newestLocalModelSession } from "yuke:sessions";
 
-/** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[], loading: boolean, again: boolean }} CatalogState */
+/** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[], loading: boolean }} CatalogState */
 /** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
 /** @typedef {{ session: Wire.Session, activity: { context_usage?: Wire.TokenUsage } | null }} StatusEntry */
 /** @typedef {{ entry?: () => StatusEntry | null }} CatalogConfig */
 
 // One engine, one catalog. `catalog.list` answers "unchanged" while the revision holds, so a reopen costs no work.
+/** @type {Promise<CatalogState> | null} */
+let catalogFlight = null;
+/** @type {boolean} */
+let catalogAgain = false;
+
 /** @type {CatalogState} */
-const catalog = { rev: null, providers: [], models: [], loading: false, again: false };
+const catalog = {
+  rev: null,
+  providers: [],
+  models: [],
+  get loading() { return catalogFlight !== null; },
+};
 
 /** @returns {CatalogState} */
 export function catalogOf() {
@@ -21,29 +31,36 @@ export function catalogOf() {
 // A load during a load runs one more after it, so a change that lands mid-flight still reaches the catalog.
 /** @returns {Promise<CatalogState>} */
 export function loadCatalog() {
-  const c = catalog;
-  if (c.loading) {
-    c.again = true;
-    return Promise.resolve(c);
+  if (catalogFlight) {
+    catalogAgain = true;
+    return catalogFlight;
   }
-  c.loading = true;
-  return client
-    .catalogList(c.rev)
+  return refreshCatalog();
+}
+
+/** @returns {Promise<CatalogState>} */
+function refreshCatalog() {
+  const flight = client
+    .catalogList(catalog.rev)
     .then((r) => {
       if (r && r.type === "full") {
-        c.rev = r.catalog_rev;
-        c.providers = r.providers || [];
-        c.models = r.models || [];
+        catalog.rev = r.catalog_rev;
+        catalog.providers = r.providers || [];
+        catalog.models = r.models || [];
       }
     })
     .catch(() => {})
     .then(() => {
-      c.loading = false;
       root.invalidate();
-      if (!c.again) return c;
-      c.again = false;
-      return loadCatalog();
+      if (catalogAgain) {
+        catalogAgain = false;
+        return refreshCatalog();
+      }
+      catalogFlight = null;
+      return catalog;
     });
+  catalogFlight = flight;
+  return flight;
 }
 
 // Read providers.json again, then refresh the catalog. A failed reload still refreshes what the engine holds.

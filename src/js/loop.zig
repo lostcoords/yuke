@@ -66,7 +66,7 @@ fn stepKey(host: *Host, key: Key, kind: KeyKind) Error!void {
 pub fn stepMouseRepeat(host: *Host, m: Mouse, count: u32) Error!void {
     std.debug.assert(host.phase == .open);
     std.debug.assert(count >= 1);
-    const cell = if (host.paint.render) |r| r.vx.translateMouse(m) else m;
+    const cell = mouseCell(host, m);
     const obj = mouseObject(host.ctx, cell, count);
     _ = try dispatch(host, obj);
 }
@@ -90,7 +90,7 @@ pub fn wheelOf(ev: Event) ?Mouse.Button {
 }
 
 fn mouseCell(host: *Host, m: Mouse) Mouse {
-    return if (host.paint.render) |r| r.vx.translateMouse(m) else m;
+    return if (host.paint.output) |output| output.render.vx.translateMouse(m) else m;
 }
 
 /// Join a wheel event into `run` when it is the same button on the same cell.

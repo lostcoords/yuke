@@ -161,22 +161,20 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
             return;
         }
 
-        // A tool round: commit it and start the next round. The commit fold extends the transcript.
-        _ = commitRound(engine, run_arena, slot, live, streamer.usage, terminal, .intermediate) catch |err| {
+        // A capped tool round is terminal, so save its failure on the assistant message transaction.
+        const capped = if (slot.config.max_rounds) |cap| slot.progress.rounds_committed >= cap -| 1 else false;
+        const completion: RoundCompletion = if (capped) .final else .intermediate;
+        const round_terminal: Terminal = if (capped) .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } } else terminal;
+        // The commit fold extends the transcript and, for the capped round, closes the run.
+        _ = commitRound(engine, run_arena, slot, live, streamer.usage, round_terminal, completion) catch |err| {
             faultSlot(engine, session_id, slot, err);
             return;
         };
+        if (capped) return;
         // A cancel at the round boundary ends the run without a new empty round.
         if (slot.cancel_requested) {
             finishRunOpen(engine, run_arena, slot, .{ .canceled = .{} }) catch |err| faultSlot(engine, session_id, slot, err);
             return;
-        }
-        // A finite max_rounds ends the turn after the capped tool round. null is unlimited.
-        if (slot.config.max_rounds) |cap| {
-            if (slot.progress.rounds_committed >= cap) {
-                finishRunOpen(engine, run_arena, slot, .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } }) catch |err| faultSlot(engine, session_id, slot, err);
-                return;
-            }
         }
         beginRound(engine, slot) catch |err| {
             faultSlot(engine, session_id, slot, err);
@@ -343,7 +341,7 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, strea
     // Project the resident transcript for this round. The model window sets the history budget.
     const budget = turn_context.Budget.forModel(resolved.model.limits.context_window, resolved.model.limits.max_output_tokens);
     const ctx = try turn_context.project(arena, &streamer.session.transcript, budget);
-    return resolvedRequest(arena, engine, slot, ctx.slice(), resolved);
+    return resolvedRequest(arena, engine, slot, ctx.messages, resolved);
 }
 
 /// Open the response and stream it into the draft, in a child so a cancel can interrupt a blocked read.
@@ -660,7 +658,7 @@ fn beginRound(engine: *Engine, slot: *RunSlot) !void {
 fn faultSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot, err: anyerror) void {
     slot.phase = .faulted;
     if (engine.sessions.get(session_id)) |rt| rt.faulted = true;
-    std.log.err("run {d} could not commit its terminal engine: {t}", .{ slot.runId(), err });
+    reports.faultNotice(engine, session_id, slot.runId(), err);
 }
 
 fn finishSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot) void {
@@ -709,13 +707,10 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, session_id.raw)) orelse return error.UnknownSession;
     const tree = try @import("admission.zig").location(engine, arena, session_id);
     const prompt = try session_store.prompt(engine.deps.db, arena, session_id.raw);
-    const slot = try RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, prompt orelse "", snapshot.max_rounds);
-    errdefer slot.destroy();
+    var prepared = try RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, prompt orelse "", snapshot.max_rounds);
+    errdefer prepared.deinit();
     const started = try run.beginQueuedTurn(engine.deps.db, engine.deps.io, arena, session_id.raw, snapshot.config_rev);
-    slot.bind(started.handle, started.first_round);
-    slot.parent_id = if (snapshot.parent_id) |id| .bytes(id) else null;
-    slot.tree_root = tree.root;
-    slot.depth = tree.depth;
+    const slot = prepared.bind(started.handle, started.first_round, if (snapshot.parent_id) |id| .bytes(id) else null, tree);
     // Fold each durable event in sequence order: the drained user messages, then run.started.
     // The commit fold retires each drained input from the queue.
     session_events.publishUserCommits(engine, rt, started.user_commits);
@@ -1165,6 +1160,13 @@ const provider_store = @import("../provider/provider_store.zig");
 
 var stream_test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var stream_test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+const capped_tool_reply =
+    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"unknown\"}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" ++
+    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":1}}\n\n" ++
+    "data: {\"type\":\"message_stop\"}\n\n";
 
 /// Drive `Streamer.onEvent` over a real engine, session, and draft. The caller reads the draft parts.
 const StreamerFixture = struct {
@@ -1215,11 +1217,13 @@ const StreamerFixture = struct {
         });
         errdefer self.engine.close();
         self.session = try self.engine.activate(.bytes(session_id));
-        self.slot = try RunSlot.prepare(std.testing.allocator, "mock", "", "", null);
-        errdefer self.slot.destroy();
-        self.slot.bind(
+        var prepared = try RunSlot.prepare(std.testing.allocator, "mock", "", "", null);
+        errdefer prepared.deinit();
+        self.slot = prepared.bind(
             .{ .input_id = 1, .started = .{ .session_id = .bytes(session_id), .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 } },
             .{ .number = 1, .message_id = 1 },
+            null,
+            .{ .root = .bytes(session_id), .depth = 0 },
         );
         self.session.active_run = self.slot;
         try self.session.apply(.{ .message_started_data = .{
@@ -1233,12 +1237,26 @@ const StreamerFixture = struct {
     }
 
     fn deinit(self: *StreamerFixture) void {
-        self.session.active_run = null;
-        self.slot.destroy();
         self.engine.close();
         self.db.deinit();
         self.store.deinit();
         self.runtime.deinit();
+    }
+
+    fn persistStarted(self: *StreamerFixture, arena: std.mem.Allocator) !void {
+        var tx = try self.db.begin();
+        defer tx.deinit();
+        const started = self.slot.handle.started;
+        _ = try event_store.allocRunId(&self.db, arena, session_id);
+        _ = try database.run.appendStarted(&self.db, arena, self.engine.newId(), started.started_at_ms, .{
+            .session_id = started.session_id,
+            .seq = 0,
+            .run_id = started.run_id,
+            .kind = started.kind,
+            .config_rev = started.config_rev,
+            .started_at_ms = started.started_at_ms,
+        });
+        try tx.commit();
     }
 
     /// Close the live draft and open the next round, so a test can check the part ids restart.
@@ -1260,6 +1278,93 @@ const StreamerFixture = struct {
         return .{ .engine = &self.engine, .slot = self.slot, .session = self.session };
     }
 };
+
+const NoticeCapture = struct {
+    seen: bool = false,
+    source: []const u8 = "",
+    text: [512]u8 = undefined,
+    len: usize = 0,
+
+    fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
+        const self: *@This() = @ptrCast(@alignCast(ctx));
+        if (note.method != .notice) return;
+        self.source = note.params.notice.source;
+        const message_text = note.params.notice.message;
+        self.len = @min(message_text.len, self.text.len);
+        @memcpy(self.text[0..self.len], message_text[0..self.len]);
+        self.seen = true;
+    }
+
+    fn sink(self: *@This()) @import("sink.zig").Sink {
+        return .{ .ctx = @ptrCast(self), .on_event = onEvent };
+    }
+};
+
+test "a terminal commit fault emits recovery notice and leaves the run open" {
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try fixture.persistStarted(a);
+    var notice: NoticeCapture = .{};
+    fixture.engine.sinks.add(notice.sink());
+    fixture.slot.phase = .running;
+
+    faultSlot(&fixture.engine, .bytes(StreamerFixture.session_id), fixture.slot, error.ConstraintTrigger);
+
+    try std.testing.expect(fixture.session.faulted);
+    try std.testing.expectEqual(RunSlot.Phase.faulted, fixture.slot.phase);
+    try std.testing.expect(notice.seen);
+    try std.testing.expect(std.mem.indexOf(u8, notice.text[0..notice.len], "Restart yuke to recover") != null);
+    try std.testing.expectEqualStrings("engine", notice.source);
+    try std.testing.expectEqual(@as(?u64, 1), (try session_store.snapshot(&fixture.db, a, StreamerFixture.session_id)).?.open_run_id);
+    const row = (try fixture.db.conn.row("SELECT count(*) FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
+    defer row.deinit();
+    try std.testing.expectEqual(@as(i64, 0), row.int(0));
+}
+
+test "a capped tool round reloads with an assistant error and failed outcome" {
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try fixture.persistStarted(a);
+    fixture.store.merged.rows = &.{.{
+        .id = "mock",
+        .name = "Mock",
+        .models = &.{.{ .id = "model", .upstream_id = "model", .name = "Model", .caps = .{ .tools = true } }},
+        .availability = .{ .ready = .{
+            .route = .{ .base_url = "https://example.test", .protocol = .anthropic_messages, .auth = .none },
+            .credential = .none,
+        } },
+    }};
+    fixture.slot.gpa.free(fixture.slot.config.model);
+    fixture.slot.config.model = try fixture.slot.gpa.dupe(u8, "mock/model");
+    fixture.slot.config.max_rounds = 1;
+    try fixture.session.transcript.append(StreamerFixture.hello);
+    const old_reply = stream_test_transport.bytes;
+    defer stream_test_transport.bytes = old_reply;
+    stream_test_transport.bytes = capped_tool_reply;
+    fixture.session.draft.?.deinit();
+    fixture.session.draft = null;
+    fixture.slot.phase = .running;
+    runSession(&fixture.engine, fixture.slot);
+
+    const restored = try fixture.engine.activate(.bytes(StreamerFixture.session_id));
+    var saved_message: ?proto.message.Message = null;
+    for (restored.transcript.list.items) |item| if (item.message == .assistant) {
+        saved_message = item.message;
+        break;
+    };
+    try std.testing.expect(saved_message != null);
+    try std.testing.expectEqualStrings("max_rounds", saved_message.?.assistant.@"error".?.type);
+    const outcome = (try database.run.latestOutcome(&fixture.db, a, StreamerFixture.session_id)).?;
+    try std.testing.expectEqual(proto.enums.RunErrorCode.max_rounds, outcome.failed.code);
+}
 
 // A tool part opens at the stop, so a part id follows the emit order and never the block id.
 test "interleaved tool blocks number their parts in emit order" {

@@ -13,7 +13,7 @@ declare module "yuke:engine-native" {
 
   /** One drain: `kind` names the work the transcript owes, and `facts` names every broadcast it coalesced. */
   export type EngineEvent =
-    | { type: "index"; facts: Wire.BroadcastName[]; auth?: AuthNote[] }
+    | { type: "index"; facts: Wire.BroadcastName[]; auth?: AuthNote[]; notices?: Wire.Notice[] }
     | { type: "session"; session: string; kind: "quiet" | "active" | "reload" | "gone"; id?: number; part?: number; facts: Wire.BroadcastName[] };
 
   /** One page of text. `next` is the offset to ask for, or null at the end. */

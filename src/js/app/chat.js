@@ -57,12 +57,16 @@ export class Chat {
   /** @param {string} id */
   open(id) {
     if (this.sessionId === id) return this.reload(); // already pinned by this pane
-    if (this.sessionId) this.release();
     // A second pane on one session must not lose it, so a later open cannot reuse a stale creation.
     this.gen++;
     this.creating = false;
+    if (!client.sessionOpen(id)) {
+      notice.show("open failed · session unavailable");
+      root.invalidate();
+      return;
+    }
+    if (this.sessionId) this.release();
     this.sessionId = id;
-    client.sessionOpen(id);
     refreshActivity(id);
     // Message ids repeat across sessions, so the old render must go before the new outline lands.
     this.transcript.setOutline([], null);
@@ -243,7 +247,9 @@ function openModelPicker(ctx, query) {
     }
     if (query) {
       const m = models.find((x) => x.selector === query || x.id === query || x.name === query);
-      if (m) chooseModel(m, m.default_reasoning || m.reasoning_levels[0] || "");
+      if (m) {
+        if (modelAvailable(m)) chooseModel(m, m.default_reasoning || m.reasoning_levels[0] || "");
+      }
       else notice.show("no model named " + query);
       return null;
     }
@@ -265,10 +271,7 @@ function openModelPicker(ctx, query) {
         return label ? { text: m.name, right: m.provider + " · " + label, group: "UIDim" } : { text: m.name, right: m.provider };
       },
       onAccept: m => {
-        const state = providerState(m.provider);
-        if (state === "needs_credential" || state === "expired") command.perform("auth:login", m.provider);
-        else if (state === "needs_route") notice.show(m.provider + " needs a route in providers.json");
-        else pickReasoning(ctx, m);
+        if (modelAvailable(m)) pickReasoning(ctx, m);
       },
     });
     ctx.tui.overlay(p.win);
@@ -278,6 +281,15 @@ function openModelPicker(ctx, query) {
   // Reload the file before the picker lists, so a login from another process shows.
   reloadCatalog().then(show);
   return null;
+}
+
+/** @param {Wire.ModelInfo} model @returns {boolean} */
+function modelAvailable(model) {
+  const state = providerState(model.provider);
+  if (state === "needs_credential" || state === "expired") command.perform("auth:login", model.provider);
+  else if (state === "needs_route") notice.show(model.provider + " needs a route in providers.json");
+  else return true;
+  return false;
 }
 
 // A model with one level needs no second step, so the pick ends there.

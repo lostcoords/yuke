@@ -2,6 +2,8 @@
 import { root } from "yuke:core";
 import { term } from "yuke:term";
 
+/** @typedef {import("yuke:engine-native").EngineEvent} EngineEvent */
+
 // The message itself. A caller keeps its own reference, so this survives a plugin unload.
 export const notice = {
   text: "",
@@ -40,6 +42,13 @@ export const noticePlugin = {
         if (e.text === "") notice.show("nothing to copy");
         else if (e.bytes < 0) notice.show("too large to copy · over " + term.clipboardMax + " bytes");
         else notice.show("copied " + e.what + " · " + e.bytes + " bytes");
+      });
+
+      // The native digest carries the complete body because the fact name has no message.
+      ctx.on("notice", /** @param {Extract<EngineEvent, { type: "index" }>} ev @returns {void} */ (ev) => {
+        const notes = ev?.notices;
+        const latest = notes && notes[notes.length - 1];
+        if (latest) notice.show(latest.message);
       });
 
       ctx.tui.status({ side: "left", order: 0, render: () => notice.text });

@@ -112,7 +112,7 @@ test "depth limits admit grandchildren and keep names local to each parent" {
     try f.engine.setAgentLimits(8, 2);
     const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch);
     try testing.expectEqual(@as(u32, 2), grandchild_launch.?.slot.depth);
-    try testing.expectEqual(f.parent, grandchild_launch.?.slot.tree_root.?);
+    try testing.expectEqual(f.parent, grandchild_launch.?.slot.tree_root);
     params.child.?.site = .{ .session_id = grandchild.session.id, .message_id = 2, .part_id = 0 };
     var refused: ?turn.Launch = null;
     try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, params, &refused));

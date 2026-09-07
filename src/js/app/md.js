@@ -786,12 +786,43 @@ function columnWidths(cells, available) {
       widths[c] = Math.max(widths[c] || 0, w);
     });
   }
-  let total = widths.reduce((n, w) => n + w, 0);
-  while (total > available) {
-    const widest = widths.indexOf(Math.max(...widths));
-    if (/** @type {number} */ (widths[widest]) <= 3) break;
-    widths[widest] = /** @type {number} */ (widths[widest]) - 1;
-    total -= 1;
+  const total = widths.reduce((n, w) => n + w, 0);
+  if (total <= available || widths.length === 0) return widths;
+
+  let max = 0;
+  for (const width of widths) if (width > max) max = width;
+  let low = 3;
+  let high = Math.max(3, max);
+  const excess = total - available;
+  /** @param {number} cap @returns {number} */
+  const costAt = (cap) => {
+    let cost = 0;
+    for (const width of widths) if (width > cap) cost += width - cap;
+    return cost;
+  };
+  while (low < high) {
+    const cap = Math.floor((low + high) / 2);
+    if (costAt(cap) <= excess) high = cap;
+    else low = cap + 1;
+  }
+
+  const cap = low;
+  let cost = 0;
+  for (let c = 0; c < widths.length; c++) {
+    if (/** @type {number} */ (widths[c]) > cap) {
+      cost += /** @type {number} */ (widths[c]) - cap;
+      widths[c] = cap;
+    }
+  }
+
+  // The remaining cells go to the first columns at the common cap, matching the old first-widest tie rule.
+  if (cap > 3) {
+    let remaining = excess - cost;
+    for (let c = 0; c < widths.length && remaining > 0; c++) {
+      if (/** @type {number} */ (widths[c]) !== cap) continue;
+      widths[c] = /** @type {number} */ (widths[c]) - 1;
+      remaining--;
+    }
   }
   return widths;
 }
@@ -900,7 +931,9 @@ export class Document {
   // Return true when the source changed. An append keeps every block but the last two, because only the tail can change.
   /** @param {string} text @returns {boolean} */
   setText(text) {
-    text = String(text).replace(/\r\n?/g, "\n");
+    text = String(text);
+    if (text === this._src) return false;
+    text = text.replace(/\r\n?/g, "\n");
     if (text === this._src) return false;
     const keep = this._src != null && text.startsWith(this._src) ? Math.max(0, this._blocks.length - 2) : 0;
     const from = keep > 0 ? /** @type {Block} */ (this._blocks[keep]).at : 0;

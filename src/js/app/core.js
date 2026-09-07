@@ -1710,14 +1710,21 @@ export class RootView {
       if (ev.focused) this.invalidate();
       return;
     }
-    const top = this.overlays.length ? this.overlays[this.overlays.length - 1] : null;
     // A modal overlay consumes the event even when the overlay has no requested hook.
     const consumedByOverlay = /** @type {(method: string) => boolean} */ ((method) => {
-      if (!top) return false;
-      // A float yields to a pending chord, so its own Tab never cuts a sequence short.
-      if (top.modal === false && method === "onKey" && keymap.owns()) return false;
-      const handled = callHook(top, method, ev);
-      return top.modal !== false || !!handled;
+      let i = this.overlays.length - 1;
+      while (i >= 0) {
+        const layer = /** @type {Overlay} */ (this.overlays[i]);
+        // A float yields to a pending chord, so its own Tab never cuts a sequence short.
+        if (layer.modal === false && method === "onKey" && keymap.owns()) { i--; continue; }
+        const modal = layer.modal !== false;
+        const handled = callHook(layer, method, ev);
+        if (modal || handled) return true;
+        // A hook can remove layers, so resume below its current position.
+        const at = this.overlays.indexOf(layer);
+        i = at < 0 ? Math.min(i - 1, this.overlays.length - 1) : at - 1;
+      }
+      return false;
     });
     if (ev.type === "key" || ev.type === "paste") {
       if (ev.type === "key" && ev.event === "release") return;

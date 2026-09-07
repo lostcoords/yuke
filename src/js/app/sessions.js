@@ -19,8 +19,15 @@ export class SessionFeed {
   constructor() {
     /** @type {Map<string, FeedItem>} */
     this.items = new Map();
-    this.loading = false;
+    /** @type {Promise<void> | null} */
+    this._refreshFlight = null;
+    /** @type {boolean} */
+    this._refreshAgain = false;
     this.loaded = false;
+  }
+
+  get loading() {
+    return this._refreshFlight !== null;
   }
 
   /** @param {Wire.SessionListResult} listResult @returns {void} */
@@ -32,19 +39,32 @@ export class SessionFeed {
     this.loaded = true;
   }
 
-  // Read the list again. A second call while one is in flight is dropped, so a burst costs one read.
+  // Read the list again. A burst shares one read and one follow-up catches changes during it.
   /** @returns {Promise<void>} */
   refresh() {
-    if (this.loading) return Promise.resolve();
-    this.loading = true;
-    return client
+    if (this._refreshFlight) {
+      this._refreshAgain = true;
+      return this._refreshFlight;
+    }
+    return this._startRefresh();
+  }
+
+  /** @returns {Promise<void>} */
+  _startRefresh() {
+    const flight = client
       .sessionList()
       .then((r) => this.seed(r))
       .catch(() => {})
       .then(() => {
-        this.loading = false;
         root.invalidate();
+        if (this._refreshAgain) {
+          this._refreshAgain = false;
+          return this._startRefresh();
+        }
+        this._refreshFlight = null;
       });
+    this._refreshFlight = flight;
+    return flight;
   }
 
   /** @returns {void} */
