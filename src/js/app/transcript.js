@@ -1,8 +1,8 @@
 // yuke:transcript — the chat transcript, its row rendering, and the pane that holds it.
 import { term } from "yuke:term";
-import { text, clip, root, caretAtCol, wrapOffsets, nextGrapheme, events, slot, isWheel, fill, config } from "yuke:core";
+import { text, clip, root, caretAtCol, wrapOffsets, nextGrapheme, events, slot, isWheel, fill, config, strokeOf } from "yuke:core";
 import { Document, isLinear } from "yuke:md";
-import { Composer } from "yuke:ui";
+import { Composer, Window, NAV_KEYS } from "yuke:ui";
 
 /** @typedef {{ rowCount: (width: number) => number, rows: (width: number, top: number, height: number) => TranscriptRow[] }} RowSource */
 /** @typedef {{ id: number, type: "user" | "assistant" | "compaction", source?: Wire.InputSource, error?: { type: string, message: string } }} MessageDescriptor */
@@ -11,28 +11,47 @@ import { Composer } from "yuke:ui";
 /** @typedef {{ a: { id: number, off: number, was: string }, b: { id: number, off: number, was: string } }} SelectionAnchors */
 /** @typedef {{ start: Position, end: Position, si: number, ei: number }} SelectionRange */
 /** @typedef {{ w: number, rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[] | null }} RowCache */
-/** @typedef {{ w: number, expanded: boolean, live: boolean, base: number, rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[], doc: Document | null }} PartCache */
+/** @typedef {{ w: number, expanded: boolean, live: boolean, shape: number, base: number, rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[], doc: Document | null }} PartCache */
 /** @typedef {{ list: Wire.AssistantPart[] | null, rows: Map<string, PartCache> }} PartState */
 /** @typedef {(id: number) => readonly Wire.AssistantPart[]} PartsOf */
 /** @typedef {(id: number, partId: number) => Wire.AssistantPart | null} PartOf */
+/** @typedef {(id: number, partId: number, field: string, offset?: number, limit?: number) => { text: string, next: number | null }} PartTextPage */
 /** @typedef {{ id: number, lang: string, text: string }} CodeBlock */
-/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, onSelect?: ((text: string) => void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} TranscriptOptions */
+/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} TranscriptOptions */
 /** @typedef {"composer" | "transcript"} ChatRegion */
 /** @typedef {{ text: string, group?: string }} StripRow */
-/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} ChatViewOptions */
+/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} ChatViewOptions */
 /** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
 /** @typedef {string | number} ItemKey */
 /** @typedef {{ type: "mouse", col: number, row: number, button: string, event: string, mods: number, count: number }} MouseEvent */
 /** @typedef {{ text: string, group: string, src?: number, srcEnd?: number, mark?: boolean }} Segment */
 /** @typedef {{ segments?: Segment[] | undefined, text?: string | undefined, group?: string | undefined, bg?: string | undefined, marker?: string | null | undefined, markerGroup?: string | undefined, indent?: number | undefined, key?: ItemKey | undefined, kind?: string | undefined, partId?: number | undefined, sel?: { from: number, to: number } | undefined, selGroup?: string | undefined }} TranscriptRow */
 /** @typedef {{ id: number, row: number, col: number }} Position */
+/** @typedef {{ trees: number[] | Float64Array, starts: number[] | Float64Array, joinAfter: number[] | Uint8Array }} ActionPlan */
+/** @typedef {{ part: number, message: number }} ActionEntry */
 
 // Left gutter for a transcript row marker; the body indents past it.
 const TX_GUTTER = 2;
 
-// Keep a long tool body inside the pager. The replica still holds the full output.
-const TOOL_BODY_CAP = 40;
+// Keep the transcript preview short; the detail window reads the complete fields on demand.
+const ACTION_PREVIEW_ROWS = 3;
 const REPORT_PREVIEW_LINES = 8;
+const ACTION_INDENT = TX_GUTTER + 3;
+const ACTION_MARKER_PAD = " ".repeat(TX_GUTTER);
+// A preview body reserves one label column, so it wraps inside the space the label leaves.
+const ACTION_LABEL_W = 7;
+const ACTION_LABEL_INPUT = "input".padEnd(ACTION_LABEL_W);
+const ACTION_LABEL_OUTPUT = "output".padEnd(ACTION_LABEL_W);
+const ACTION_LABEL_NONE = " ".repeat(ACTION_LABEL_W);
+// One action packs its group size and its place in that group into a single number, so the plan retains no objects.
+// The low two bits mark the first and last action of a group; the count scales above them.
+const ACTION_FIRST = 1;
+const ACTION_LAST = 2;
+const ACTION_SCALE = 4;
+// A part joins the run of actions, closes it, or passes through it. Tools and reasoning group alike.
+const ROLE_NONE = 0;
+const ROLE_ACTION = 1;
+const ROLE_TEXT = 2;
 
 /** @param {Wire.InputSource | undefined | null} source @returns {string} */
 export function inputSourceLabel(source) {
@@ -49,6 +68,44 @@ const CACHE_MESSAGES = 16;
 /** @param {unknown} a @param {unknown} b @returns {boolean} */
 function sameId(a, b) {
   return a != null && b != null && String(a) === String(b);
+}
+
+/** @param {Wire.AssistantPart} part @returns {number} */
+function groupingRole(part) {
+  if (part.type === "tool" || part.type === "reasoning") return ROLE_ACTION;
+  if (part.type === "text" && String(part.text || "").length > 0) return ROLE_TEXT;
+  return ROLE_NONE;
+}
+
+/** @param {number} tree @returns {number} */
+function actionCount(tree) {
+  return Math.floor(tree / ACTION_SCALE);
+}
+
+/** @param {number} tree @returns {boolean} */
+function actionFirst(tree) {
+  return (tree & ACTION_FIRST) !== 0;
+}
+
+/** @param {number} tree @returns {boolean} */
+function actionLast(tree) {
+  return (tree & ACTION_LAST) !== 0;
+}
+
+/** @param {number} count @param {number} index @returns {number} */
+function actionTree(count, index) {
+  return count * ACTION_SCALE + (index === 0 ? ACTION_FIRST : 0) + (index + 1 === count ? ACTION_LAST : 0);
+}
+
+/** @param {number} tree @param {boolean} expanded @returns {{ indent: number, marker: string | null }} */
+function actionHeaderAttrs(tree, expanded) {
+  if (!tree) return { indent: TX_GUTTER, marker: expanded ? "▾" : "▸" };
+  return { indent: ACTION_INDENT, marker: ACTION_MARKER_PAD + (actionLast(tree) ? "└─" : "├─") };
+}
+
+/** @param {number} tree @returns {{ indent: number, marker: string | null }} */
+function actionBodyAttrs(tree) {
+  return { indent: tree ? ACTION_INDENT : TX_GUTTER, marker: tree && !actionLast(tree) ? ACTION_MARKER_PAD + "│" : null };
 }
 
 export class Pager {
@@ -390,7 +447,8 @@ function capRows(rows, cap) {
   if (rows.length <= cap) return rows;
   const head = Math.floor((cap - 1) / 2);
   const tail = cap - 1 - head;
-  return rows.slice(0, head).concat([{ text: "…", group: "TxToolMeta", indent: TX_GUTTER }], rows.slice(rows.length - tail));
+  const omitted = rows.length ? { ...rows[0], segments: undefined, text: "…", group: "TxToolMeta" } : { text: "…", group: "TxToolMeta", indent: TX_GUTTER };
+  return rows.slice(0, head).concat([omitted], rows.slice(rows.length - tail));
 }
 
 /** @param {string} args @returns {string} */
@@ -432,8 +490,8 @@ function toolHeaderSource(part, summary) {
   return summary ? name + " " + summary : name;
 }
 
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {boolean} expanded @param {number} width @param {string} summary @returns {TranscriptRow} */
-function toolHeaderRow(part, expanded, width, summary) {
+/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {boolean} expanded @param {number} width @param {string} summary @param {number} tree @returns {TranscriptRow} */
+function toolHeaderRow(part, expanded, width, summary, tree) {
   const name = String(part.name || "tool");
   const state = part.state || {};
   const kind = toolStateKind(state);
@@ -458,12 +516,41 @@ function toolHeaderRow(part, expanded, width, summary) {
   }
   return {
     segments: segs,
-    indent: TX_GUTTER,
-    marker: expanded ? "▾" : "▸",
+    ...actionHeaderAttrs(tree, expanded),
     markerGroup: "TxToolMeta",
     kind: "tool-header",
     partId: part.id,
   };
+}
+
+/** @param {number} count @returns {TranscriptRow} */
+function actionGroupRow(count) {
+  return { text: count + (count === 1 ? " action" : " actions"), group: "TxToolMeta", indent: TX_GUTTER, kind: "action-group-header" };
+}
+
+/** @param {string} value @returns {string} */
+function compactField(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+/** @param {TranscriptRow} row @param {string} label @param {number} tree @returns {TranscriptRow} */
+function previewRow(row, label, tree) {
+  const body = row.segments || [{ text: row.text || "", group: row.group || "TxToolBody" }];
+  return {
+    segments: [{ text: label, group: "TxToolMeta" }, ...body],
+    ...actionBodyAttrs(tree),
+    markerGroup: "TxToolMeta",
+  };
+}
+
+// A collapsed tool row shows only these fields, so a delta that leaves them alone changes nothing on screen.
+/** @param {Wire.AssistantPart} before @param {Wire.AssistantPart} fresh @returns {boolean} */
+function toolHeaderSame(before, fresh) {
+  if (before.type !== "tool" || fresh.type !== "tool") return false;
+  const was = /** @type {{ duration_ms?: number } | null} */ (before.state);
+  const now = /** @type {{ duration_ms?: number } | null} */ (fresh.state);
+  return before.name === fresh.name && before.arguments === fresh.arguments
+    && toolStateKind(before.state) === toolStateKind(fresh.state) && was?.duration_ms === now?.duration_ms;
 }
 
 /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @returns {string} */
@@ -551,13 +638,12 @@ function toolBody(part, width) {
   return { rows: wrapBody(text, width, group), source: text };
 }
 
-/** @param {Extract<Wire.AssistantPart, { type: "reasoning" }>} part @param {number} width @param {boolean} expanded @param {boolean} live @returns {{ rows: TranscriptRow[], source: string }} */
-function reasoningRows(part, width, expanded, live) {
+/** @param {Extract<Wire.AssistantPart, { type: "reasoning" }>} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @returns {{ rows: TranscriptRow[], source: string }} */
+function reasoningRows(part, width, expanded, live, tree) {
   const name = live ? "thinking" : "thought";
   const header = {
     segments: [{ text: name, group: "TxThought", src: 0, srcEnd: name.length }],
-    indent: TX_GUTTER,
-    marker: expanded ? "▾" : "▸",
+    ...actionHeaderAttrs(tree, expanded),
     markerGroup: "TxThought",
     kind: "reasoning-header",
     partId: part.id,
@@ -570,41 +656,121 @@ function reasoningRows(part, width, expanded, live) {
   const base = name.length + 1;
   const body = wrapBody(text, width, "TxThought").map((r) => ({
     ...r,
+    ...actionBodyAttrs(tree),
+    markerGroup: "TxThought",
     kind: "reasoning-body",
     partId: part.id,
     segments: shiftSrc(r.segments, base),
   }));
-  for (const r of capRows(body, TOOL_BODY_CAP)) rows.push(r);
+  for (const r of capRows(body, ACTION_PREVIEW_ROWS)) rows.push(r);
   return { rows, source };
 }
 
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {boolean} expanded @returns {{ rows: TranscriptRow[], source: string }} */
-function toolRows(part, width, expanded) {
+/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {boolean} expanded @param {number} tree @returns {{ rows: TranscriptRow[], source: string }} */
+function toolRows(part, width, expanded, tree) {
   // `toolSummary` parses the arguments, so the row and the source share one result.
   const summary = toolSummary(part.arguments);
-  const header = toolHeaderRow(part, expanded, width, summary);
+  const header = toolHeaderRow(part, expanded, width, summary, tree);
   const headerSrc = toolHeaderSource(part, summary);
   const rows = /** @type {TranscriptRow[]} */ ([header]);
   let source = headerSrc;
   if (!expanded) return { rows, source };
-  const body = toolBody(part, width);
-  const capped = capRows(body.rows, TOOL_BODY_CAP);
+  const args = String(part.arguments || "");
+  const input = compactField(part.arguments);
+  source += "\n" + args;
+  rows.push({
+    segments: [{ text: ACTION_LABEL_INPUT, group: "TxToolMeta" }, { text: input || "(empty)", group: "TxToolBody" }],
+    ...actionBodyAttrs(tree),
+    markerGroup: "TxToolMeta",
+    kind: "tool-detail",
+    partId: part.id,
+  });
+  const body = toolBody(part, Math.max(1, width - ACTION_LABEL_W));
+  const shown = body.rows.slice(0, ACTION_PREVIEW_ROWS);
   if (body.source) {
     source += "\n" + body.source;
-    const base = headerSrc.length + 1;
-    for (const r of capped) {
+    const base = headerSrc.length + 2 + args.length;
+    for (let i = 0; i < shown.length; i++) {
+      const r = /** @type {TranscriptRow} */ (shown[i]);
+      const preview = previewRow(r, i === 0 ? ACTION_LABEL_OUTPUT : ACTION_LABEL_NONE, tree);
       rows.push({
-        ...r,
+        ...preview,
         kind: "tool-body",
         partId: part.id,
-        segments: r.segments ? shiftSrc(r.segments, base) : r.segments,
+        segments: preview.segments ? shiftSrc(preview.segments, base) : preview.segments,
       });
     }
-  } else {
-    for (const r of capped) rows.push({ ...r, kind: "tool-body", partId: part.id });
+  }
+  const cut = /** @type {{ cut?: readonly { field?: string, next?: number | null }[] }} */ (part).cut || [];
+  const field = toolStateKind(part.state) === "error" ? "error" : "output";
+  if (body.rows.length > shown.length || cut.some((c) => c.field === field && c.next != null) || args.indexOf("\n") >= 0) {
+    rows.push({ text: "… Enter or click to view all", group: "TxToolMeta", ...actionBodyAttrs(tree), markerGroup: "TxToolMeta", kind: "tool-detail", partId: part.id });
   }
   return { rows, source };
 }
+
+// A scrolling overlay over labelled sections, so a tool and a reasoning part share one detail window.
+class PartDetails {
+  /** @param {readonly { label: string, text: string, empty: string }[]} sections */
+  constructor(sections) {
+    this.sections = sections;
+    this.pager = new Pager();
+    this.width = -1;
+    /** @type {Window | null} */
+    this.win = null;
+  }
+
+  /** @param {number} width @returns {TranscriptRow[]} */
+  rows(width) {
+    const bodyWidth = Math.max(1, width - TX_GUTTER);
+    const rows = /** @type {TranscriptRow[]} */ ([]);
+    for (const section of this.sections) {
+      if (rows.length) rows.push({ text: "" });
+      rows.push({ text: section.label, group: "TxToolName" });
+      for (const row of wrapBody(section.text || section.empty, bodyWidth, "TxToolBody")) rows.push(row);
+    }
+    return rows;
+  }
+
+  /** @param {Window} win @returns {void} */
+  draw(win) {
+    if (this.width !== win.inner.w) {
+      this.width = win.inner.w;
+      this.pager.setRows(this.rows(win.inner.w));
+    }
+    this.pager.draw(win.inner);
+  }
+
+  /** @param {HostEvent} event @returns {boolean} */
+  onKey(event) {
+    if (event.type !== "key") return false;
+    const stroke = strokeOf(event);
+    if (stroke === "esc" || stroke === "q") root.popOverlay(/** @type {Window} */ (this.win));
+    else {
+      const nav = NAV_KEYS[stroke];
+      if (nav) nav(this.pager);
+    }
+    root.invalidate();
+    return true;
+  }
+
+  /** @param {MouseEvent} event @returns {boolean} */
+  onMouse(event) {
+    const handled = this.pager.onMouse(event);
+    if (handled) root.invalidate();
+    return handled;
+  }
+}
+
+/** @param {string} title @param {readonly { label: string, text: string, empty: string }[]} sections @returns {void} */
+function openDetails(title, sections) {
+  const content = new PartDetails(sections);
+  const win = new Window({ title, footer: "j/k scroll · pgup/pgdn · esc close", border: "rounded", width: 0.9, height: 0.85, content });
+  content.win = win;
+  root.pushOverlay(win);
+}
+
+const FIELD_UNREAD = "\n[the remaining field could not be read]";
 
 /** @param {{ type?: string, message?: string } | null | undefined} error @returns {string} */
 function errorLabel(error) {
@@ -635,6 +801,7 @@ export class Transcript {
     this.textOf = opts.textOf || (() => "");
     this.partsOf = opts.partsOf || null;
     this.partOf = opts.partOf || null;
+    this.partTextPage = opts.partTextPage || null;
     this.pager = new Pager();
     this.pager.setSource(this);
     /** @type {MessageDescriptor[]} */
@@ -655,6 +822,8 @@ export class Transcript {
     this._docs = new Map(); // id -> md Document, for the textOf path
     /** @type {Map<string, PartState>} */
     this._parts = new Map(); // id -> the part list and one render per part, for the partsOf path
+    /** @type {ActionPlan | null} */
+    this._actionPlanCache = null;
     /** @type {Map<string, boolean>} */
     this._expand = new Map(); // id:partId -> user override
     // A selection holds two `{ id, row, col }` positions, where `row` counts rendered rows and `col` indexes the row text.
@@ -714,6 +883,8 @@ export class Transcript {
   // A committed message never changes under its id, so its render survives; the draft goes because a commit folds its reasoning.
   /** @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void} */
   setOutline(messages, active) {
+    const oldPlan = this._actionPlanCache;
+    const oldMessages = oldPlan ? this.messages() : [];
     const keep = new Set();
     for (const m of messages || []) if (!sameId(m.id, this._active?.id)) keep.add(String(m.id));
     for (const key of new Set([...this._rows.keys(), ...this._docs.keys(), ...this._parts.keys()])) if (!keep.has(key)) this._evict(key);
@@ -721,6 +892,8 @@ export class Transcript {
     this._messages = messages || [];
     this._active = active || null;
     this._resetOrder();
+    this._actionPlanCache = null;
+    this._refreshActionRows(oldPlan, oldMessages);
     this._pruneKeyed(this._expand, this._liveIds());
     this.clearSelection();
   }
@@ -788,14 +961,38 @@ export class Transcript {
   // A missing count renders its message once and lets the cache drop the rows; later reads use the counts alone.
   /** @returns {void} */
   _indexRows() {
+    if (!this._actionPlanCache && this.partsOf && this._prefix.length === 1) {
+      this._indexRowsWithActionPlan();
+      return;
+    }
     for (let i = this._prefix.length - 1; ; i++) {
       const m = this._at(i);
       if (!m) break;
       const key = String(m.id);
       let count = this._counts.get(key);
-      if (count == null) count = this._rowsOf(m, this._width).length;
+      if (count == null) count = this._rowsOf(m, this._width, i).length;
       this._prefix.push(this._offset(i) + count);
     }
+  }
+
+  // Build the first action plan and row index together, so each projected message stays live only until its group closes.
+  /** @returns {void} */
+  _indexRowsWithActionPlan() {
+    /** @param {number} last */
+    const renderThrough = (last) => {
+      while (this._prefix.length - 1 <= last) {
+        const i = this._prefix.length - 1;
+        const m = this._at(i);
+        if (!m) break;
+        const key = String(m.id);
+        const count = this._counts.get(key) ?? this._rowsOf(m, this._width, i).length;
+        this._prefix.push(this._offset(i) + count);
+      }
+    };
+    this._buildActionPlan(
+      (m) => this._partState(m.id).list || [],
+      renderThrough,
+    );
   }
 
   /** @param {number} i @returns {number} */
@@ -820,35 +1017,46 @@ export class Transcript {
   // A streaming delta on draft `id`: adopt it if new, then re-read one part `partId`, or every part without one.
   /** @param {number} id @param {number} [partId] @returns {void} */
   setActive(id, partId) {
-    // The draft rewraps as tokens arrive, but an append never moves the source before it.
-    const sel = this.selection;
-    const touches = !!sel && (sameId(sel.anchor.id, id) || sameId(sel.cursor.id, id));
-    const anchors = touches ? this._anchors() : null;
-    if (!this._active || !sameId(this._active.id, id)) {
+    const oldPlan = this._actionPlanCache;
+    const adopted = !this._active || !sameId(this._active.id, id);
+    const oldMessages = adopted && oldPlan ? this.messages() : undefined;
+    if (adopted) {
       if (this._active) this._markStale(this._active.id);
       this._active = { id, type: "assistant" };
       this._resetOrder();
     }
-    this._refreshParts(id, partId);
-    this._markStale(id);
+    const refreshed = this._refreshParts(id, partId);
+    const groupingChanged = adopted || refreshed.groupingChanged;
+    if (!groupingChanged && !refreshed.rowsChanged) return;
+    // Capture the old source only when visible rows can change.
+    const sel = this.selection;
+    const touches = !!sel && (sameId(sel.anchor.id, id) || sameId(sel.cursor.id, id));
+    const anchors = touches ? this._anchors() : null;
+    if (groupingChanged) this._actionPlanCache = null;
+    if (adopted || refreshed.rowsChanged) this._markStale(id);
+    if (groupingChanged) this._refreshActionRows(oldPlan, oldMessages);
     if (touches) this._reanchor(anchors);
   }
 
   // Replace one part in the held list, or drop the list so the next render reads every part again.
-  /** @param {number} id @param {number} [partId] @returns {void} */
+  /** @param {number} id @param {number} [partId] @returns {{ groupingChanged: boolean, rowsChanged: boolean }} */
   _refreshParts(id, partId) {
     const state = this._parts.get(String(id));
-    if (!state || !state.list) return;
-    const at = partId == null ? -1 : state.list.findIndex((p) => p && sameId(p.id, partId));
+    if (!state || !state.list) return { groupingChanged: true, rowsChanged: true };
+    const at = partId == null ? -1 : state.list.findIndex((part) => part && sameId(part.id, partId));
     const fresh = at < 0 || !this.partOf ? null : this._partOne(id, /** @type {number} */ (partId));
-    if (fresh) {
+    if (fresh && (fresh.type === "text" || fresh.type === "tool" || fresh.type === "reasoning")) {
+      const before = /** @type {Wire.AssistantPart} */ (state.list[at]);
       state.list[at] = fresh;
       const c = state.rows.get(String(partId));
-      if (c) stale(c);
-      return;
+      const groupingChanged = groupingRole(before) !== groupingRole(fresh);
+      const rowsChanged = !c || c.expanded || !toolHeaderSame(before, fresh);
+      if (c && rowsChanged) stale(c);
+      return { groupingChanged, rowsChanged };
     }
     state.list = null;
     for (const c of state.rows.values()) stale(c);
+    return { groupingChanged: true, rowsChanged: true };
   }
 
   // A width change rewraps every row but keeps every parse; the selection moves back to the same source offsets.
@@ -919,7 +1127,7 @@ export class Transcript {
     const i = this._indexOf(id);
     if (i < 0 || this._width <= 0) return [];
     const message = /** @type {MessageDescriptor} */ (this._at(i));
-    return this._rowsOf(message, this._width);
+    return this._rowsOf(message, this._width, i);
   }
 
   // The number of rendered rows in one message.
@@ -1012,8 +1220,8 @@ export class Transcript {
     this.pager.scrollIntoView(this._globalRow(pos));
   }
 
-  /** @param {MessageDescriptor} m @param {number} width @returns {TranscriptRow[]} */
-  _rowsOf(m, width) {
+  /** @param {MessageDescriptor} m @param {number} width @param {number} index @returns {TranscriptRow[]} */
+  _rowsOf(m, width, index) {
     const key = String(m.id);
     const c = this._rows.get(key);
     if (c && c.w === width) {
@@ -1041,7 +1249,7 @@ export class Transcript {
       source = this.textOf(m.id) || "";
       rows = wrapPlain(m.id, source, width);
     } else if (this.partsOf) {
-      const built = this._partRows(m, width);
+      const built = this._partRows(m, width, index);
       rows = built.rows;
       source = built.source;
       blocks = built.blocks;
@@ -1062,24 +1270,118 @@ export class Transcript {
     return rows;
   }
 
-  // The parts of one message and their renders, read once and held until a delta or an eviction drops them.
+  /** @param {number} id @returns {Wire.AssistantPart[]} */
+  _readParts(id) {
+    let list = /** @type {readonly Wire.AssistantPart[]} */ ([]);
+    try {
+      const parts = /** @type {PartsOf} */ (this.partsOf)(id);
+      if (Array.isArray(parts)) list = parts;
+    } catch (_) {}
+    return list.filter((part) => part && (part.type === "text" || part.type === "tool" || part.type === "reasoning"));
+  }
+
+  // The parts of one rendered message stay held until a delta or an eviction drops them.
   /** @param {number} id @returns {PartState} */
   _partState(id) {
     const key = String(id);
     let state = this._parts.get(key);
     if (!state) {
-      state = { list: null, rows: new Map() };
+      state = { list: this._readParts(id), rows: new Map() };
       this._parts.set(key, state);
-    }
-    if (!state.list) {
-      let list = /** @type {readonly Wire.AssistantPart[]} */ ([]);
-      try {
-        const p = /** @type {PartsOf} */ (this.partsOf)(id);
-        if (Array.isArray(p)) list = p;
-      } catch (_) {}
-      state.list = list.filter((p) => p && (p.type === "text" || p.type === "tool" || p.type === "reasoning"));
-    }
+    } else if (!state.list) state.list = this._readParts(id);
     return state;
+  }
+
+  // The plan holds one tree value per filtered part, so a lookup is the message start plus the part index.
+  /** @returns {ActionPlan} */
+  _actionPlan() {
+    if (this._actionPlanCache) return this._actionPlanCache;
+    return this._buildActionPlan((m) => {
+      const held = this._parts.get(String(m.id));
+      return held && held.list ? held.list : this._readParts(m.id);
+    });
+  }
+
+  // Walk the outline once and record every action group. `ready` reports the last message whose groups have closed, so a caller can index its rows before the walk ends.
+  /** @param {(message: MessageDescriptor) => readonly Wire.AssistantPart[]} readParts @param {((last: number) => void) | null} [ready] @returns {ActionPlan} */
+  _buildActionPlan(readParts, ready = null) {
+    // One flat part list avoids retaining a JS array object for every assistant message.
+    /** @type {number[]} */
+    const trees = [];
+    const starts = [0];
+    /** @type {number[]} */
+    const joinAfter = [];
+    /** @type {ActionEntry[]} */
+    const segment = [];
+    /** @type {ActionPlan} */
+    const plan = { trees, starts, joinAfter };
+    this._actionPlanCache = plan;
+    // A group closes here: every action learns its place, and the messages it spans render without a separator.
+    const flush = () => {
+      if (segment.length === 0) return;
+      for (let i = 0; i < segment.length; i++) trees[/** @type {ActionEntry} */ (segment[i]).part] = actionTree(segment.length, i);
+      const first = /** @type {ActionEntry} */ (segment[0]);
+      const last = /** @type {ActionEntry} */ (segment[segment.length - 1]);
+      for (let i = first.message; i < last.message; i++) joinAfter[i] = 1;
+      segment.length = 0;
+    };
+    for (let message = 0; ; message++) {
+      const m = this._at(message);
+      if (!m) break;
+      joinAfter.push(0);
+      if (m.type !== "assistant") {
+        starts.push(trees.length);
+        flush();
+        if (ready) ready(message);
+        continue;
+      }
+      const messageParts = readParts(m);
+      const start = trees.length;
+      for (let index = 0; index < messageParts.length; index++) trees.push(0);
+      starts.push(trees.length);
+      for (let index = 0; index < messageParts.length; index++) {
+        const part = /** @type {Wire.AssistantPart} */ (messageParts[index]);
+        const role = groupingRole(part);
+        if (role === ROLE_TEXT) flush();
+        if (role !== ROLE_ACTION) continue;
+        segment.push({ part: start + index, message });
+      }
+      if (m.error) flush();
+      if (ready && segment.length === 0) ready(message);
+    }
+    flush();
+    plan.trees = new Float64Array(trees);
+    plan.starts = new Float64Array(starts);
+    plan.joinAfter = new Uint8Array(joinAfter);
+    // The last group has closed, so every message is ready; the draft sits one past the committed ones.
+    if (ready) ready(this._messages.length + (this._active ? 0 : -1));
+    return plan;
+  }
+
+  // Restale every message whose group changed. The old outline is the one to walk, because a message that left it still holds rows drawn against the old plan.
+  /** @param {ActionPlan | null} oldPlan @param {MessageDescriptor[]} [oldMessages] @returns {void} */
+  _refreshActionRows(oldPlan, oldMessages = this.messages()) {
+    if (!oldPlan) return;
+    const next = this._actionPlan();
+    for (let i = 0; i < oldMessages.length; i++) {
+      const m = /** @type {MessageDescriptor} */ (oldMessages[i]);
+      const index = this._indexOf(m.id);
+      if (index < 0) continue;
+      let changed = oldPlan.joinAfter[i] !== next.joinAfter[index];
+      if (!changed && m.type === "assistant") {
+        const before = oldPlan.starts[i] || 0;
+        const after = next.starts[index] || 0;
+        const length = (oldPlan.starts[i + 1] || 0) - before;
+        changed = length !== (next.starts[index + 1] || 0) - after;
+        for (let p = 0; !changed && p < length; p++) {
+          if (oldPlan.trees[before + p] !== next.trees[after + p]) {
+            changed = true;
+            break;
+          }
+        }
+      }
+      if (changed) this._markStale(m.id);
+    }
   }
 
   /** @param {number} id @param {number} partId @returns {Wire.AssistantPart | null} */
@@ -1117,6 +1419,52 @@ export class Transcript {
     this._expand.set(k, !(partId === -1 ? this._expand.get(k) === true : this._isExpanded(id, partId, part)));
     this._markStale(id);
     root.invalidate();
+  }
+
+  // Page the rest of a cut field from the host. A page that fails or does not advance ends the read, so a stalled host cannot spin here.
+  /** @param {number} id @param {number} partId @param {Wire.AssistantPart} part @param {string} field @param {string} prefix @returns {string} */
+  _wholePartField(id, partId, part, field, prefix) {
+    const cuts = /** @type {{ cut?: readonly { field?: string, next?: number | null }[] }} */ (part).cut || [];
+    const cut = cuts.find((entry) => entry.field === field && entry.next != null);
+    if (!cut || !this.partTextPage) return prefix;
+    let text = prefix;
+    let offset = /** @type {number} */ (cut.next);
+    if (!Number.isSafeInteger(offset) || offset < 0) return text + FIELD_UNREAD;
+    while (true) {
+      let page = null;
+      try {
+        page = this.partTextPage(id, partId, field, offset, 0);
+      } catch (_) {}
+      if (!page || typeof page.text !== "string") return text + FIELD_UNREAD;
+      text += page.text;
+      if (page.next == null) return text;
+      if (!Number.isSafeInteger(page.next) || page.next <= offset) return text + FIELD_UNREAD;
+      offset = page.next;
+    }
+  }
+
+  /** @param {number} id @param {number} partId @returns {boolean} */
+  openTool(id, partId) {
+    const part = (this._partState(id).list || []).find((entry) => sameId(entry.id, partId));
+    if (!part || part.type !== "tool") return false;
+    const state = part.state || {};
+    const field = state.type === "error" ? "error" : "output";
+    const output = state.type === "error" ? state.error || "" : String(/** @type {{ output?: string }} */ (state).output || "");
+    const input = this._wholePartField(id, part.id, part, "arguments", String(part.arguments || ""));
+    const completeOutput = this._wholePartField(id, part.id, part, field, output);
+    const sections = [{ label: "input", text: input, empty: "(empty)" }, { label: "output", text: completeOutput, empty: "(no output)" }];
+    const views = /** @type {{ view?: readonly Wire.View[] }} */ (state).view;
+    if (!completeOutput && views && views.length) sections.push({ label: "view preview", text: toolBody(part, 80).source, empty: "(empty)" });
+    openDetails(String(part.name || "tool") + " · tool details", sections);
+    return true;
+  }
+
+  /** @param {number} id @param {number} partId @returns {boolean} */
+  openReasoning(id, partId) {
+    const part = (this._partState(id).list || []).find((entry) => sameId(entry.id, partId));
+    if (!part || part.type !== "reasoning") return false;
+    openDetails("thought · reasoning details", [{ label: "reasoning", text: String(part.text || ""), empty: "(empty)" }]);
+    return true;
   }
 
   // The part under a logical position, or null on a gutter/separator row.
@@ -1181,14 +1529,20 @@ export class Transcript {
   }
 
   // Each part renders once per width, fold, and live state, so a delta rebuilds one part and re-bases the rest.
-  /** @param {MessageDescriptor} m @param {number} width @returns {{ rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[] }} */
-  _partRows(m, width) {
+  /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @returns {{ rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[] }} */
+  _partRows(m, width, messageIndex) {
     const state = this._partState(m.id);
+    const plan = this._actionPlan();
+    const start = plan.starts[messageIndex] || 0;
     const seen = new Set();
     const rows = /** @type {TranscriptRow[]} */ ([]);
     const blocks = /** @type {{ kind: string, at: number, end: number }[]} */ ([]);
     let source = "";
-    for (const part of state.list || []) {
+    const list = state.list || [];
+    for (let index = 0; index < list.length; index++) {
+      const part = /** @type {Wire.AssistantPart} */ (list[index]);
+      const tree = plan.trees[start + index] || 0;
+      if (tree && actionFirst(tree)) rows.push({ ...actionGroupRow(actionCount(tree)), key: m.id });
       if (source) source += "\n";
       const base = source.length;
       const key = String(part.id);
@@ -1196,8 +1550,8 @@ export class Transcript {
       const expanded = part.type === "text" || this._isExpanded(m.id, part.id, part);
       const live = part.type === "reasoning" && sameId(this._active?.id, m.id);
       let c = state.rows.get(key);
-      if (!c || c.w !== width || c.expanded !== expanded || c.live !== live) {
-        c = this._buildPart(m.id, part, width, expanded, live, c ? c.doc : null);
+      if (!c || c.w !== width || c.expanded !== expanded || c.live !== live || c.shape !== tree) {
+        c = this._buildPart(m.id, part, width, expanded, live, tree, c ? c.doc : null);
         state.rows.set(key, c);
       }
       if (c.base !== base) rebasePart(c, base);
@@ -1206,26 +1560,26 @@ export class Transcript {
       for (const r of c.rows) rows.push(r);
     }
     for (const key of state.rows.keys()) if (!seen.has(key)) state.rows.delete(key);
-    rows.push({ text: "", key: m.id });
+    if (!plan.joinAfter[messageIndex]) rows.push({ text: "", key: m.id });
     return { rows, source, blocks };
   }
 
   // Render one part at source base 0. A text part keeps its document, so a delta re-wraps only the open block.
-  /** @param {number} id @param {Wire.AssistantPart} part @param {number} width @param {boolean} expanded @param {boolean} live @param {Document | null} doc @returns {PartCache} */
-  _buildPart(id, part, width, expanded, live, doc) {
-    const contentW = Math.max(1, width - TX_GUTTER);
-    const tag = { indent: TX_GUTTER, key: id, partId: part.id };
+  /** @param {number} id @param {Wire.AssistantPart} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @param {Document | null} doc @returns {PartCache} */
+  _buildPart(id, part, width, expanded, live, tree, doc) {
+    const contentW = Math.max(1, width - (tree ? ACTION_INDENT : TX_GUTTER));
+    const tag = { key: id, partId: part.id };
     if (part.type === "text") {
       if (!doc) doc = new Document();
       doc.setText(part.text || "");
-      const rows = doc.rows(contentW).map((r) => ({ segments: r.segments, ...tag, kind: "text" }));
-      return { w: width, expanded, live, base: 0, rows, source: doc.sourceText(), blocks: doc.blocks(), doc };
+      const rows = doc.rows(contentW).map((r) => ({ segments: r.segments, indent: TX_GUTTER, ...tag, kind: "text" }));
+      return { w: width, expanded, live, shape: tree, base: 0, rows, source: doc.sourceText(), blocks: doc.blocks(), doc };
     }
     const built = part.type === "tool"
-      ? toolRows(part, contentW, expanded)
-      : reasoningRows(/** @type {Extract<Wire.AssistantPart, { type: "reasoning" }>} */ (part), contentW, expanded, live);
+      ? toolRows(part, contentW, expanded, tree)
+      : reasoningRows(/** @type {Extract<Wire.AssistantPart, { type: "reasoning" }>} */ (part), contentW, expanded, live, tree);
     const rows = built.rows.map((r) => ({ ...r, ...tag }));
-    return { w: width, expanded, live, base: 0, rows, source: built.source, blocks: [], doc: null };
+    return { w: width, expanded, live, shape: tree, base: 0, rows, source: built.source, blocks: [], doc: null };
   }
 
   // Assistant rows come from a per-message md Document, indented past the gutter, then a separator.
@@ -1290,7 +1644,7 @@ export class Transcript {
     for (let i = range.si; i <= range.ei; i++) {
       const m = this._at(i);
       if (!m) break;
-      const rows = this._rowsOf(m, this._width);
+      const rows = this._rowsOf(m, this._width, i);
       for (let k = 0; k < rows.length; k++) {
         const row = /** @type {TranscriptRow} */ (rows[k]);
         const body = rowText(row);
@@ -1310,7 +1664,7 @@ export class Transcript {
     for (let i = range.si; i <= range.ei; i++) {
       const m = this._at(i);
       if (!m) break;
-      const rows = this._rowsOf(m, this._width);
+      const rows = this._rowsOf(m, this._width, i);
       const plain = [];
       let from = -1;
       let to = -1;
@@ -1371,7 +1725,7 @@ export class Transcript {
     const out = [];
     for (let i = first; i + 1 < this._prefix.length && this._offset(i) < top + height; i++) {
       const m = /** @type {MessageDescriptor} */ (this._at(i));
-      const rows = this._rowsOf(m, width);
+      const rows = this._rowsOf(m, width, i);
       const base = this._offset(i);
       for (let k = Math.max(0, top - base); k < rows.length && base + k < top + height; k++) {
         const row = /** @type {TranscriptRow} */ (rows[k]);
@@ -1438,7 +1792,7 @@ export class Transcript {
     const i = this._messageAtRow(g);
     const m = this._at(i);
     if (!m) return null;
-    const rows = this._rowsOf(m, this._width);
+    const rows = this._rowsOf(m, this._width, i);
     const k = g - this._offset(i);
     const line = /** @type {TranscriptRow} */ (rows[k]);
     const body = rowText(line);
@@ -1478,6 +1832,16 @@ export class Transcript {
       this._didDrag = false;
       if (!dragged && press) {
         const hit = this.partAt(press);
+        if (hit && (hit.kind === "tool-detail" || hit.kind === "tool-body")) {
+          this.openTool(hit.id, hit.partId);
+          this.clearSelection();
+          return true;
+        }
+        if (hit && hit.kind === "reasoning-body") {
+          this.openReasoning(hit.id, hit.partId);
+          this.clearSelection();
+          return true;
+        }
         if (hit && (hit.kind === "tool-header" || hit.kind === "reasoning-header" || hit.kind === "report-header")) {
           this.togglePart(hit.id, hit.partId);
           const header = this.partHeader(hit.id, hit.partId);
@@ -1500,7 +1864,7 @@ export class ChatView {
   /** @param {ChatViewOptions} [opts] */
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.transcript = new Transcript({ textOf: opts.textOf, partsOf: opts.partsOf, partOf: opts.partOf, onSelect: opts.onSelect, empty: opts.empty });
+    this.transcript = new Transcript({ textOf: opts.textOf, partsOf: opts.partsOf, partOf: opts.partOf, partTextPage: opts.partTextPage, onSelect: opts.onSelect, empty: opts.empty });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
     // This field names the region that reads the keyboard. The mouse routes by rect instead.
     /** @type {ChatRegion} */

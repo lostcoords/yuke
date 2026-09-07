@@ -1773,7 +1773,7 @@ test "yuke:ui tool parts render, collapse, copy, and toggle" {
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
         \\const rowsGroup = (rs, group) => rs.some((r) => (r.segments || []).some((sg) => sg.group === group) || r.group === group);
-        \\const markerOf = (rs) => (rs[0] && rs[0].marker) || "";
+        \\const markerOf = (rs) => ((rs.find((r) => r.kind === "tool-header") || {}).marker || "").trimStart();
         \\const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
         \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: "", event: "press", mods: 0 });
         \\
@@ -1785,34 +1785,43 @@ test "yuke:ui tool parts render, collapse, copy, and toggle" {
         \\  diff: [{ type: "tool", id: 0, name: "edit", arguments: '{"path":"d.zig"}', state: { type: "completed", output: "ok", duration_ms: 2, view: [{ type: "diff", files: [{ path: "d.zig", hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ["-old", "+new"] }] }] }] } }],
         \\};
         \\const t = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
-        \\t.setOutline([{ id: "done", type: "assistant" }, { id: "run", type: "assistant" }, { id: "err", type: "assistant" }], null);
+        \\t.setOutline([{ id: "done", type: "assistant" }, { id: "b1", type: "user" }, { id: "run", type: "assistant" }, { id: "b2", type: "user" }, { id: "err", type: "assistant" }], null);
         \\const paint = (h) => { term.beginFrame(); t.draw({ x: 0, y: 0, w: 40, h: h || 12 }); term.endFrame(); };
+        \\paint();
+        \\t.pager.toTop();
         \\paint();
         \\
         \\const done = t.rows(40, 0, 4);
         \\check("done-name", rowsHave(done, "read"));
         \\check("done-path", rowsHave(done, "a.zig"));
         \\check("done-state", rowsHave(done, "done"));
-        \\check("done-collapsed", markerOf(done) === "▸" && !rowsHave(done, "alpha"));
+        \\check("done-collapsed", markerOf(done) === "└─" && !rowsHave(done, "alpha"));
         \\
         \\const runStart = t._globalRow({ id: "run", row: 0, col: 0 });
         \\const run = t.rows(40, runStart, 6);
         \\check("run-name", rowsHave(run, "exec"));
-        \\check("run-expanded", markerOf(run) === "▾" && rowsHave(run, "compiling"));
+        \\check("run-expanded", markerOf(run) === "└─" && rowsHave(run, "compiling"));
         \\
         \\const errStart = t._globalRow({ id: "err", row: 0, col: 0 });
         \\const err = t.rows(40, errStart, 6);
         \\check("err-expanded", rowsHave(err, "no match") && rowsGroup(err, "TxToolError"));
         \\
         \\// A click on a collapsed header expands it. A drag does not.
-        \\t.onMouse(at(3, 0, "press"));
-        \\t.onMouse(at(3, 0, "release"));
+        \\t.onMouse(at(6, 1, "press"));
+        \\t.onMouse(at(6, 1, "release"));
         \\const doneOpen = t.rows(40, 0, 6);
-        \\check("click-open", markerOf(doneOpen) === "▾" && rowsHave(doneOpen, "alpha"));
-        \\t.onMouse(at(3, 0, "press"));
-        \\t.onMouse(at(5, 0, "drag"));
-        \\t.onMouse(at(5, 0, "release"));
-        \\check("drag-keeps", markerOf(t.rows(40, 0, 6)) === "▾");
+        \\check("click-open", markerOf(doneOpen) === "└─" && rowsHave(doneOpen, "alpha"));
+        \\t.onMouse(at(6, 2, "press"));
+        \\t.onMouse(at(6, 2, "release"));
+        \\check("body-opens-details", root.overlays.length === 1 && root.overlays[0].content.sections[1].text === "alpha\\nbeta");
+        \\root.popOverlay(root.overlays[0]);
+        \\t.onMouse(at(6, 1, "press"));
+        \\t.onMouse(at(8, 1, "drag"));
+        \\t.onMouse(at(8, 1, "release"));
+        \\check("drag-keeps", rowsHave(t.rows(40, 0, 6), "alpha"));
+        \\t.onMouse(at(6, 1, "press"));
+        \\t.onMouse(at(6, 1, "release"));
+        \\check("click-close", !rowsHave(t.rows(40, 0, 6), "alpha"));
         \\
         \\const mix = new Transcript({ textOf: (id) => (id === "mix" ? "**hi** there" : ""), partsOf: (id) => parts[id] || [] });
         \\mix.setOutline([{ id: "mix", type: "assistant" }], null);
@@ -1843,28 +1852,201 @@ test "yuke:ui tool parts render, collapse, copy, and toggle" {
         \\plugins.use(transcriptVim);
         \\v.focusRegion("transcript");
         \\vpaint();
-        \\check("enter-closed", markerOf(v.transcript.rows(40, 0, 4)) === "▸");
+        \\check("enter-closed", !rowsHave(v.transcript.rows(40, 0, 4), "alpha"));
         \\root.onEvent(key("enter"));
-        \\check("enter-open", markerOf(v.transcript.rows(40, 0, 6)) === "▾");
+        \\check("enter-preview", root.overlays.length === 0 && rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
+        \\root.onEvent(key("down"));
+        \\root.onEvent(key("enter"));
+        \\check("enter-details", root.overlays.length === 1 && root.overlays[0].content.sections[0].text.indexOf("a.zig") >= 0 && root.overlays[0].content.sections[1].text === "alpha\\nbeta");
+        \\root.onEvent(key("esc"));
+        \\check("details-close", root.overlays.length === 0 && rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
         \\const vr = v.transcript.pager.rect();
-        \\v.onMouse({ type: "mouse", col: vr.x + 3, row: vr.y, button: "left", event: "press", mods: 0 });
-        \\v.onMouse({ type: "mouse", col: vr.x + 3, row: vr.y, button: "left", event: "release", mods: 0 });
-        \\check("plugin-click-fold", markerOf(v.transcript.rows(40, 0, 6)) === "▸");
+        \\v.onMouse({ type: "mouse", col: vr.x + 6, row: vr.y + 1, button: "left", event: "press", mods: 0 });
+        \\v.onMouse({ type: "mouse", col: vr.x + 6, row: vr.y + 1, button: "left", event: "release", mods: 0 });
+        \\check("plugin-click-close", !rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
         \\
         \\const longOut = Array.from({ length: 80 }, (_, i) => "line" + i).join("\n");
         \\parts.long = [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"seq"}', state: { type: "completed", output: longOut, duration_ms: 1 } }];
         \\const longT = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
         \\longT.setOutline([{ id: "long", type: "assistant" }], null);
-        \\term.beginFrame(); longT.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
-        \\longT.onMouse(at(3, 0, "press"));
-        \\longT.onMouse(at(3, 0, "release"));
-        \\term.beginFrame(); longT.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
+        \\term.beginFrame(); longT.draw({ x: 0, y: 0, w: 40, h: 4 }); term.endFrame();
+        \\longT.onMouse(at(6, 1, "press"));
+        \\longT.onMouse(at(6, 1, "release"));
+        \\term.beginFrame(); longT.draw({ x: 0, y: 0, w: 40, h: 4 }); term.endFrame();
         \\const headerAt = longT.screenAt({ id: "long", row: 0, col: 0 });
-        \\check("header-on-screen", !!headerAt && headerAt.y >= 0 && headerAt.y < 8);
+        \\check("header-on-screen", !!headerAt && headerAt.y >= 0 && headerAt.y < 4);
+        \\check("preview-cap", longT.rowCountOf("long") === 8 && longT.rows(40, 0, 20).filter((r) => r.kind === "tool-body").length === 3);
         \\check("unfold-unstuck", longT.pager.stuck === false);
+        \\
+        \\parts.thought = [{ type: "reasoning", id: 0, text: "one two three four five six seven eight" }];
+        \\const thought = new Transcript({ partsOf: (id) => parts[id] || [] });
+        \\thought.setOutline([], { id: "thought", type: "assistant" });
+        \\term.beginFrame(); thought.draw({ x: 0, y: 0, w: 20, h: 8 }); term.endFrame();
+        \\thought.onMouse(at(6, 2, "press"));
+        \\thought.onMouse(at(6, 2, "release"));
+        \\check("reasoning-body-details", root.overlays.length === 1 && root.overlays[0].content.sections[0].text === parts.thought[0].text);
+        \\root.popOverlay(root.overlays[0]);
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "ui-components.js");
+    try expectJs(host, "ok");
+}
+
+test "yuke:ui action groups cross reasoning and full tool fields stay available" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { root } from "yuke:core";
+        \\import { Transcript } from "yuke:transcript";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const tool = (id, name) => ({ type: "tool", id, name, arguments: '{"value":"' + name + '"}', state: { type: "completed", output: name + " output", duration_ms: id } });
+        \\const parts = {
+        \\  a: [tool(1, "one"), tool(2, "two")],
+        \\  b: [{ type: "reasoning", id: 3, text: "continued analysis" }, tool(4, "three")],
+        \\  c: [{ type: "text", id: 5, text: "visible answer" }, tool(6, "four")],
+        \\};
+        \\const t = new Transcript({ partsOf: (id) => parts[id] || [] });
+        \\t.setOutline([{ id: "a", type: "assistant" }, { id: "b", type: "assistant" }, { id: "c", type: "assistant" }], null);
+        \\const rows = t.rows(60, 0, t.rowCount(60));
+        \\const rowText = (r) => r.text || (r.segments || []).map((s) => s.text).join("");
+        \\const tools = rows.filter((r) => r.kind === "tool-header");
+        \\const groupHeader = rows.find((r) => r.kind === "action-group-header");
+        \\check("one-group", rows.filter((r) => r.kind === "action-group-header" && rowText(r) === "4 actions").length === 1);
+        \\check("single-group", rows.filter((r) => r.kind === "action-group-header" && rowText(r) === "1 action").length === 1);
+        \\check("tree", tools.map((r) => r.marker).join(",") === "  ├─,  ├─,  └─,  └─");
+        \\check("tree-alignment", !!groupHeader && groupHeader.indent === 2 && tools.every((r) => r.marker.startsWith("  ") && r.indent === 5));
+        \\check("reasoning-action", rows.some((r) => r.kind === "reasoning-header" && r.marker === "  ├─" && rowText(r) === "thought"));
+        \\const aRows = t.rows(60, t._globalRow({ id: "a", row: 0, col: 0 }), t.rowCountOf("a"));
+        \\check("joined-messages", aRows.length > 0 && rowText(aRows[aRows.length - 1]) !== "");
+        \\check("text-breaks", tools.length === 4 && tools[3].marker === "  └─" && rows.some((r) => rowText(r).indexOf("visible answer") >= 0));
+        \\
+        \\const liveParts = { first: [tool(10, "before")], next: [{ type: "reasoning", id: 11, text: "working" }] };
+        \\const live = new Transcript({ partsOf: (id) => liveParts[id] || [], partOf: (id, partId) => (liveParts[id] || []).find((part) => part.id === partId) || null });
+        \\live.setOutline([{ id: "first", type: "assistant" }], { id: "next", type: "assistant" });
+        \\check("reasoning-counts", live.rows(60, 0, live.rowCount(60)).some((r) => r.kind === "action-group-header" && rowText(r) === "2 actions"));
+        \\liveParts.next.push(tool(12, "after"));
+        \\live.setActive("next");
+        \\let liveRows = live.rows(60, 0, live.rowCount(60));
+        \\check("stream-joins-tail", liveRows.some((r) => r.kind === "action-group-header" && rowText(r) === "3 actions") && liveRows.filter((r) => r.kind === "tool-header").map((r) => r.marker).join(",") === "  ├─,  └─");
+        \\liveParts.next[1].state.output += " more";
+        \\live.setActive("next", 12);
+        \\liveRows = live.rows(60, 0, live.rowCount(60));
+        \\check("output-keeps-tree", liveRows.some((r) => r.kind === "action-group-header" && rowText(r) === "3 actions") && liveRows.filter((r) => r.kind === "tool-header").map((r) => r.marker).join(",") === "  ├─,  └─");
+        \\
+        \\const paged = [{ type: "tool", id: 7, name: "paged", arguments: '{"a":', state: { type: "completed", output: "head", duration_ms: 1 }, cut: [{ field: "arguments", next: 5 }, { field: "output", next: 4 }] }];
+        \\const reads = [];
+        \\const detail = new Transcript({
+        \\  partsOf: () => paged,
+        \\  partTextPage: (_id, _part, field, offset) => { reads.push(field + ":" + offset); return field === "arguments" ? { text: '"b"}', next: null } : { text: " tail", next: null }; },
+        \\});
+        \\detail.setOutline([{ id: "p", type: "assistant" }], null);
+        \\check("details-open", detail.openTool("p", 7) && root.overlays.length === 1);
+        \\const content = root.overlays[0].content;
+        \\check("whole-input", content.sections[0].text === '{"a":"b"}');
+        \\check("whole-output", content.sections[1].text === "head tail");
+        \\check("paged-fields", reads.join(",") === "arguments:5,output:4");
+        \\root.popOverlay(root.overlays[0]);
+        \\const broken = new Transcript({ partsOf: () => paged, partTextPage: () => { throw new Error("read failed"); } });
+        \\broken.setOutline([{ id: "p", type: "assistant" }], null);
+        \\check("page-failure-safe", broken.openTool("p", 7) && root.overlays[0].content.sections.every((section) => section.text.indexOf("could not be read") >= 0));
+        \\root.popOverlay(root.overlays[0]);
+        \\const viewed = [{ type: "tool", id: 9, name: "viewed", arguments: "{}", state: { type: "completed", output: "", duration_ms: 1, view: [{ type: "markdown", text: "formatted view" }] } }];
+        \\const viewDetail = new Transcript({ partsOf: () => viewed });
+        \\viewDetail.setOutline([{ id: "view", type: "assistant" }], null);
+        \\check("view-details", viewDetail.openTool("view", 9) && root.overlays[0].content.sections[2].text === "formatted view");
+        \\root.popOverlay(root.overlays[0]);
+        \\parts.reason = [{ type: "reasoning", id: 8, text: "one two three four five six seven eight nine ten eleven twelve" }];
+        \\const reason = new Transcript({ partsOf: (id) => parts[id] || [] });
+        \\reason.setOutline([], { id: "reason", type: "assistant" });
+        \\const reasonRows = reason.rows(12, 0, reason.rowCount(12));
+        \\check("reasoning-preview-cap", reasonRows.filter((r) => r.kind === "reasoning-body").length === 3);
+        \\check("reasoning-label", reasonRows.some((r) => r.kind === "reasoning-header" && rowText(r) === "thinking") && !reasonRows.some((r) => rowText(r).indexOf("resumed") >= 0));
+        \\check("reasoning-details", reason.openReasoning("reason", 8) && root.overlays.length === 1 && root.overlays[0].content.sections[0].text === parts.reason[0].text);
+        \\root.popOverlay(root.overlays[0]);
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "action-groups.js");
+    try expectJs(host, "ok");
+}
+
+test "yuke:ui hidden tool deltas keep rows stable and details fresh" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { root } from "yuke:core";
+        \\import { Transcript } from "yuke:transcript";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\let part = { type: "tool", id: 7, name: "exec", arguments: "{}", state: { type: "completed", duration_ms: 1, output: "old" } };
+        \\const copy = (p) => JSON.parse(JSON.stringify(p));
+        \\const t = new Transcript({ partsOf: () => [copy(part)], partOf: () => copy(part) });
+        \\t.setOutline([], { id: 1, type: "assistant" });
+        \\const rows = () => t.rows(80, 0, t.rowCount(80));
+        \\const text = () => rows().map((r) => r.text || (r.segments || []).map((s) => s.text).join("")).join("\n");
+        \\rows();
+        \\const source = t._sourceOf(1);
+        \\t.select(t.posAtSource(1, 0), t.posAtSource(1, source.length));
+        \\const initial = JSON.stringify(rows());
+        \\part.state.output = "fresh hidden output";
+        \\t.setActive(1, 7);
+        \\check("hidden-rows", JSON.stringify(rows()) === initial);
+        \\check("hidden-selection", t.selectedSource() === source);
+        \\t.openTool(1, 7);
+        \\check("hidden-details", root.overlays[0].content.sections[1].text === part.state.output);
+        \\root.popOverlay();
+        \\t.togglePart(1, 7);
+        \\check("expand-fresh", text().includes("fresh hidden output"));
+        \\part.state.output = "visible delta";
+        \\t.setActive(1, 7);
+        \\check("visible-rows", text().includes("visible delta") && !text().includes("fresh hidden output"));
+        \\t.openTool(1, 7);
+        \\check("visible-details", root.overlays[0].content.sections[1].text === "visible delta");
+        \\root.popOverlay();
+        \\t.togglePart(1, 7);
+        \\rows();
+        \\part.name = "read";
+        \\part.arguments = '{"path":"new-path"}';
+        \\part.state.duration_ms = 23;
+        \\t.setActive(1, 7);
+        \\check("header-fields", text().includes("read new-path") && text().includes("23ms"));
+        \\part.state = { type: "error", duration_ms: 24, error: "failed" };
+        \\t.setActive(1, 7);
+        \\check("error-header", text().includes("error") && text().includes("24ms"));
+        \\part = { type: "reasoning", id: 7, text: "new thought" };
+        \\t.setActive(1, 7);
+        \\check("same-group-new-kind", text().includes("1 action") && text().includes("thinking") && !text().includes("read"));
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "hidden-deltas.js");
+    try expectJs(host, "ok");
+}
+
+test "yuke:ui action plans stay aligned after eviction and outline changes" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { Transcript } from "yuke:transcript";
+        \\const parts = id => [{ type: "ignored", id: 0 }, { type: "text", id: 1, text: "" }, { type: "tool", id: 2, name: "tool" + id, arguments: "{}", state: { type: "completed", duration_ms: 1, output: "output" } }];
+        \\let outline = Array.from({ length: 40 }, (_, i) => ({ id: i + 1, type: "assistant" }));
+        \\const t = new Transcript({ partsOf: parts });
+        \\t.setOutline(outline, null);
+        \\const render = t => JSON.stringify(t.rows(60, 0, t.rowCount(60)));
+        \\render(t);
+        \\const fail = [];
+        \\for (const next of [[{ id: 99, type: "assistant" }, ...outline], outline.slice(10), [outline[25], { id: 100, type: "user" }, ...outline.slice(0, 25)]]) {
+        \\  t.setOutline(next, null);
+        \\  const fresh = new Transcript({ partsOf: parts });
+        \\  fresh.setOutline(next, null);
+        \\  if (render(t) !== render(fresh)) fail.push("outline");
+        \\}
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "action-plan-order.js");
     try expectJs(host, "ok");
 }
 
@@ -1885,7 +2067,7 @@ test "yuke:ui reasoning auto-collapses and J/K walks parts" {
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
-        \\const markerOf = (rs) => (rs[0] && rs[0].marker) || "";
+        \\const markerOf = (rs) => ((rs.find((r) => r.kind === "reasoning-header") || {}).marker || "").trimStart();
         \\
         \\const parts = {};
         \\const t = new Transcript({ textOf: (id) => (id === "u" ? "ask" : ""), partsOf: (id) => parts[id] || [] });
@@ -1895,37 +2077,37 @@ test "yuke:ui reasoning auto-collapses and J/K walks parts" {
         \\term.beginFrame(); t.draw({ x: 0, y: 0, w: 40, h: 10 }); term.endFrame();
         \\let rs = t.rows(40, 0, 10);
         \\check("live-name", rowsHave(rs, "thinking"));
-        \\check("live-body", rowsHave(rs, "because") && markerOf(rs) === "▾");
+        \\check("live-body", rowsHave(rs, "because") && markerOf(rs) === "└─");
         \\check("thought-style", rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf("because") >= 0 && sg.group === "TxThought")));
         \\
         \\parts.r1 = [{ type: "reasoning", id: 0, text: "because why" }, { type: "text", id: 1, text: "hello" }];
         \\t.setActive("r1");
         \\rs = t.rows(40, 0, 10);
-        \\check("draft-keeps-thought", rowsHave(rs, "thinking") && rowsHave(rs, "because") && markerOf(rs) === "▾");
+        \\check("draft-keeps-thought", rowsHave(rs, "thinking") && rowsHave(rs, "because") && markerOf(rs) === "└─");
         \\
         \\t.setOutline([{ id: "r1", type: "assistant" }], null);
         \\rs = t.rows(40, 0, 10);
-        \\check("commit-hides", rowsHave(rs, "thought") && !rowsHave(rs, "thinking") && markerOf(rs) === "▸" && !rowsHave(rs, "because"));
+        \\check("commit-hides", rowsHave(rs, "thought") && !rowsHave(rs, "thinking") && markerOf(rs) === "└─" && !rowsHave(rs, "because"));
         \\
         \\t.togglePart("r1", 0);
         \\rs = t.rows(40, 0, 10);
-        \\check("override-holds", markerOf(rs) === "▾" && rowsHave(rs, "because"));
+        \\check("override-holds", markerOf(rs) === "└─" && rowsHave(rs, "because"));
         \\
         \\t.setOutline([{ id: "u", type: "user" }, { id: "r1", type: "assistant" }, { id: "u2", type: "user" }], { id: "r2", type: "assistant" });
         \\rs = t.rows(40, t._globalRow({ id: "r1", row: 0, col: 0 }), 8);
-        \\check("later-send-keeps-override", markerOf(rs) === "▾" && rowsHave(rs, "because"));
+        \\check("later-send-keeps-override", markerOf(rs) === "└─" && rowsHave(rs, "because"));
         \\
         \\const num = new Transcript({ textOf: () => "", partsOf: () => [{ type: "reasoning", id: 0, text: "because why" }] });
         \\num.setOutline([{ id: 2, type: "assistant" }], null);
         \\term.beginFrame(); num.draw({ x: 0, y: 0, w: 40, h: 10 }); term.endFrame();
         \\num.togglePart(2, 0);
         \\num.setOutline([{ id: 2, type: "assistant" }, { id: 3, type: "user" }], { id: 4, type: "assistant" });
-        \\check("num-id-later-send", markerOf(num.rows(40, num._globalRow({ id: 2, row: 0, col: 0 }), 8)) === "▾");
+        \\check("num-id-later-send", rowsHave(num.rows(40, num._globalRow({ id: 2, row: 0, col: 0 }), 8), "because"));
         \\
         \\const committed = new Transcript({ textOf: () => "", partsOf: () => [{ type: "reasoning", id: 0, text: "later" }] });
         \\committed.setOutline([{ id: "c", type: "assistant" }], null);
         \\term.beginFrame(); committed.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
-        \\check("commit-collapsed", markerOf(committed.rows(40, 0, 6)) === "▸" && rowsHave(committed.rows(40, 0, 6), "thought"));
+        \\check("commit-collapsed", markerOf(committed.rows(40, 0, 6)) === "└─" && rowsHave(committed.rows(40, 0, 6), "thought") && !rowsHave(committed.rows(40, 0, 6), "later"));
         \\
         \\parts.hid = [{ type: "redacted_reasoning", id: 0 }, { type: "text", id: 1, text: "visible" }];
         \\const hid = new Transcript({ textOf: () => "visible", partsOf: (id) => parts[id] || [] });
@@ -1959,7 +2141,7 @@ test "yuke:ui reasoning auto-collapses and J/K walks parts" {
         \\
         \\t.setOutline([{ id: "r1", type: "assistant" }], { id: "r2", type: "assistant" });
         \\rs = t.rows(40, t._globalRow({ id: "r1", row: 0, col: 0 }), 8);
-        \\check("expand-survives-outline", markerOf(rs) === "▾" && rowsHave(rs, "because"));
+        \\check("expand-survives-outline", markerOf(rs) === "└─" && rowsHave(rs, "because"));
         \\
         \\const mix = new Transcript({ textOf: () => "hello", partsOf: () => [{ type: "text", id: 0, text: "hello" }, { type: "tool", id: 1, name: "read", arguments: '{"path":"a.zig"}', state: { type: "completed", output: "ok", duration_ms: 1 } }] });
         \\mix.setOutline([{ id: "m1", type: "assistant" }], { id: "m1", type: "assistant" });
@@ -6744,7 +6926,7 @@ test "yuke:ui transcript renders evicted history exactly" {
         \\});
         \\let builds = 0;
         \\const rowsOf = t._rowsOf;
-        \\t._rowsOf = function(m, w) { const c = this._rows.get(String(m.id)); if (!c || c.w !== w) builds++; return rowsOf.call(this, m, w); };
+        \\t._rowsOf = function(m, w, i) { const c = this._rows.get(String(m.id)); if (!c || c.w !== w) builds++; return rowsOf.call(this, m, w, i); };
         \\
         \\for (const id in folds) t.togglePart(id, folds[id]);
         \\const wide = reference(32);
@@ -6779,7 +6961,7 @@ test "yuke:ui transcript renders evicted history exactly" {
         \\const before = t.rowCount(18);
         \\t.togglePart("m40", 1);
         \\check("fold-count", t.rowCount(18) > before);
-        \\check("fold-marker", t.rows(18, t._globalRow({ id: "m40", row: 0, col: 0 }), 4).some((r) => r.marker === "▾"));
+        \\check("fold-marker", t.rows(18, t._globalRow({ id: "m40", row: 0, col: 0 }), 4).some((r) => r.kind === "reasoning-body"));
         \\
         \\// The viewport stays cached whole, and a part motion reads only its neighbours.
         \\t.rows(18, 0, 8);
@@ -6797,7 +6979,7 @@ test "yuke:ui transcript renders evicted history exactly" {
         \\const codeTotal = code.rowCount(32);
         \\builds = 0;
         \\const codeRowsOf = code._rowsOf;
-        \\code._rowsOf = function(m, w) { builds++; return codeRowsOf.call(this, m, w); };
+        \\code._rowsOf = function(m, w, i) { builds++; return codeRowsOf.call(this, m, w, i); };
         \\check("code-blocks", code.codeBlocks().length === messages.length && code.rowCount(32) === codeTotal && builds === 0);
         \\
         \\// Message ids repeat across sessions, so an empty outline clears even a message whose fold moved after its eviction.
@@ -6837,10 +7019,10 @@ test "yuke:ui transcript keeps committed renders across a reload" {
         \\draw();
         \\const oldRows = JSON.stringify(t.rows(40, 0, t.rowCountOf("old")));
         \\const liveCount = t.rowCountOf("live");
-        \\check("active-expanded", t.rows(40, t._globalRow({ id: "live", row: 0, col: 0 }), 4).some((r) => r.marker === "▾"));
+        \\check("active-expanded", t.rows(40, t._globalRow({ id: "live", row: 0, col: 0 }), 5).some((r) => r.kind === "reasoning-body"));
         \\const rebuilt = [];
         \\const rowsOf = t._rowsOf;
-        \\t._rowsOf = function(m, w) { rebuilt.push(String(m.id)); return rowsOf.call(this, m, w); };
+        \\t._rowsOf = function(m, w, i) { rebuilt.push(String(m.id)); return rowsOf.call(this, m, w, i); };
         \\
         \\// A commit reloads the outline: the committed render stays, and only the former draft rebuilds, now collapsed.
         \\t.setOutline([{ id: "old", type: "assistant" }, { id: "gone", type: "assistant" }, { id: "live", type: "assistant" }], null);
@@ -6848,7 +7030,7 @@ test "yuke:ui transcript keeps committed renders across a reload" {
         \\t._rowsOf = rowsOf;
         \\check("old-render-kept", JSON.stringify(t.rows(40, 0, t.rowCountOf("old"))) === oldRows);
         \\check("only-draft-rebuilt", rebuilt.join(",") === "live");
-        \\check("draft-collapsed", t.rowCountOf("live") < liveCount && t.rows(40, t._globalRow({ id: "live", row: 0, col: 0 }), 3).some((r) => r.marker === "▸"));
+        \\check("draft-collapsed", t.rowCountOf("live") < liveCount && !t.rows(40, t._globalRow({ id: "live", row: 0, col: 0 }), 4).some((r) => r.kind === "reasoning-body"));
         \\
         \\// A truncation removes the rows of the message it cut.
         \\const goneCount = t.rowCountOf("gone");

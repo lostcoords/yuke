@@ -350,7 +350,11 @@ export const transcriptVim = {
         {
           enter: act((view, s, t) => {
             const hit = t.partAt(/** @type {Position} */ (s.cursor));
-            if (hit && (hit.kind === "report-header" || hit.kind === "report-body" || hit.kind === "tool-header" || hit.kind === "tool-body" || hit.kind === "reasoning-header" || hit.kind === "reasoning-body")) {
+            if (hit && (hit.kind === "tool-detail" || hit.kind === "tool-body")) {
+              t.openTool(hit.id, hit.partId);
+            } else if (hit && hit.kind === "reasoning-body") {
+              t.openReasoning(hit.id, hit.partId);
+            } else if (hit && (hit.kind === "tool-header" || hit.kind === "reasoning-header" || hit.kind === "report-header" || hit.kind === "report-body")) {
               t.togglePart(hit.id, hit.partId);
               const header = t.partHeader(hit.id, hit.partId);
               if (header) s.cursor = header;

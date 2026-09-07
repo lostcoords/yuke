@@ -34,6 +34,7 @@ export class Chat {
       textOf: id => (this.sessionId ? client.sessionWholeText(this.sessionId, id) : ""),
       partsOf: id => (this.sessionId ? client.sessionParts(this.sessionId, id) : []),
       partOf: (id, partId) => (this.sessionId ? client.sessionPart(this.sessionId, id, partId) : null),
+      partTextPage: (id, partId, field, offset, limit) => (this.sessionId ? client.partTextPage(this.sessionId, id, partId, field, offset, limit) : { text: "", next: null }),
       onSubmit: text => this.send(text),
       onSelect: text => {
         if (config.mouse.copyOnSelect) copy(text, "selection");
