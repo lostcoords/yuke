@@ -1,7 +1,8 @@
 const std = @import("std");
 const term = @import("term");
 
-pub const Row = struct { start: i32, end: i32, soft: bool };
+/// Rows use the native Int32Array layout; soft is zero or one.
+pub const Row = extern struct { start: i32, end: i32, soft: i32 };
 pub const Result = struct {
     rows: std.ArrayList(Row) = .empty,
     omitted: bool = false,
@@ -15,7 +16,7 @@ pub fn wrap(gpa: std.mem.Allocator, source: []const u8, width: i32, head: usize,
     errdefer result.rows.deinit(gpa);
     var tail_index: usize = 0;
     if (width <= 0) {
-        _ = try emit(gpa, &result, .{ .start = 0, .end = utf16Len(source), .soft = false }, head, tail, &tail_index);
+        _ = try emit(gpa, &result, .{ .start = 0, .end = utf16Len(source), .soft = 0 }, head, tail, &tail_index);
         return result;
     }
     var start: i32 = 0;
@@ -29,7 +30,7 @@ pub fn wrap(gpa: std.mem.Allocator, source: []const u8, width: i32, head: usize,
         const len = utf16Len(bytes);
         result.graphemes += 1;
         if (std.mem.eql(u8, bytes, "\n")) {
-            if (!try emit(gpa, &result, .{ .start = start, .end = offset, .soft = false }, head, tail, &tail_index)) return result;
+            if (!try emit(gpa, &result, .{ .start = start, .end = offset, .soft = 0 }, head, tail, &tail_index)) return result;
             start = offset + len;
             cells = 0;
             break_at = -1;
@@ -38,7 +39,7 @@ pub fn wrap(gpa: std.mem.Allocator, source: []const u8, width: i32, head: usize,
             const cell_width = term.gwidth.gwidth(bytes, .unicode);
             if (!space and cells + cell_width > width and offset > start) {
                 const end = if (break_at > start) break_at else offset;
-                if (!try emit(gpa, &result, .{ .start = start, .end = end, .soft = true }, head, tail, &tail_index)) return result;
+                if (!try emit(gpa, &result, .{ .start = start, .end = end, .soft = 1 }, head, tail, &tail_index)) return result;
                 cells = if (break_at > start) cells - break_cells else 0;
                 start = end;
                 break_at = -1;
@@ -51,7 +52,7 @@ pub fn wrap(gpa: std.mem.Allocator, source: []const u8, width: i32, head: usize,
         }
         offset += len;
     }
-    _ = try emit(gpa, &result, .{ .start = start, .end = offset, .soft = false }, head, tail, &tail_index);
+    _ = try emit(gpa, &result, .{ .start = start, .end = offset, .soft = 0 }, head, tail, &tail_index);
     if (tail_index > 0) std.mem.rotate(Row, result.rows.items[head..], tail_index);
     std.debug.assert(head == 0 or result.rows.items.len <= head + tail);
     return result;
@@ -59,6 +60,7 @@ pub fn wrap(gpa: std.mem.Allocator, source: []const u8, width: i32, head: usize,
 
 fn emit(gpa: std.mem.Allocator, result: *Result, row: Row, head: usize, tail: usize, tail_index: *usize) !bool {
     std.debug.assert(row.start >= 0 and row.end >= row.start);
+    std.debug.assert(row.soft == 0 or row.soft == 1);
     if (head == 0 or result.rows.items.len < head + tail) {
         try result.rows.append(gpa, row);
         return true;

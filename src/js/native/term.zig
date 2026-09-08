@@ -242,7 +242,7 @@ fn jsGraphemes(ctx: Context, _: Value, args: []const Value) Value {
         triples.appendSlice(host.gpa, &.{ u16_off, n, w }) catch unreachable;
         u16_off += n;
     }
-    return int32Array(ctx, triples.items);
+    return int32Array(ctx, std.mem.sliceAsBytes(triples.items));
 }
 
 fn jsWrap(ctx: Context, _: Value, args: []const Value) Value {
@@ -262,25 +262,13 @@ fn jsWrap(ctx: Context, _: Value, args: []const Value) Value {
         host.paint.counters.wrap_graphemes += wrapped.graphemes;
         host.paint.counters.wrap_rows += wrapped.rows.items.len;
     }
-    const length = std.math.cast(i32, wrapped.rows.items.len * 3) orelse return ctx.throwRangeError("term.wrap: too many rows");
+    if (wrapped.rows.items.len > std.math.maxInt(i32) / 3) return ctx.throwRangeError("term.wrap: too many rows");
     const result = ctx.newObject();
     if (ctx.isException(result)) return result;
-    const size = ctx.newInt32(length);
-    const rows = ctx.newTypedArray(&.{size}, .Int32Array);
-    ctx.freeValue(size);
+    const rows = int32Array(ctx, std.mem.sliceAsBytes(wrapped.rows.items));
     if (ctx.isException(rows)) {
         ctx.freeValue(result);
         return rows;
-    }
-    for (wrapped.rows.items, 0..) |row, i| {
-        const values = [_]i32{ row.start, row.end, @intFromBool(row.soft) };
-        for (values, 0..) |value, field| {
-            ctx.setPropertyUint32(rows, @intCast(i * 3 + field), ctx.newInt32(value)) catch {
-                ctx.freeValue(rows);
-                ctx.freeValue(result);
-                return rethrow(ctx);
-            };
-        }
     }
     ctx.setPropertyStr(result, "rows", rows) catch {
         ctx.freeValue(result);
@@ -416,19 +404,13 @@ fn isSingleCellAscii(s: []const u8) bool {
 
 const utf16Len = wrapping.utf16Len;
 
-fn int32Array(ctx: Context, items: []const i32) Value {
-    const len = ctx.newInt32(@intCast(items.len));
-    var args = [_]Value{len};
-    const ta = ctx.newTypedArray(&args, .Int32Array);
-    ctx.freeValue(len);
-    if (ctx.isException(ta)) return ta;
-    for (items, 0..) |item, i| {
-        ctx.setPropertyUint32(ta, @intCast(i), ctx.newInt32(item)) catch {
-            ctx.freeValue(ta);
-            return rethrow(ctx);
-        };
-    }
-    return ta;
+fn int32Array(ctx: Context, bytes: []const u8) Value {
+    std.debug.assert(bytes.len % @sizeOf(i32) == 0);
+    const buffer = ctx.newArrayBufferCopy(bytes);
+    if (ctx.isException(buffer)) return buffer;
+    defer ctx.freeValue(buffer);
+    // The C constructor reads all three argument slots for an ArrayBuffer.
+    return ctx.newTypedArray(&.{ buffer, quickjs.UNDEFINED, quickjs.UNDEFINED }, .Int32Array);
 }
 
 fn parseStyle(ctx: Context, maybe: ?Value) error{Exception}!term_pkg.Style {
@@ -528,6 +510,7 @@ test "native wrap preserves UTF-16 rows and bounds preview work" {
         \\import { term } from "yuke:term";
         \\const equal = (a, b) => JSON.stringify(Array.from(a)) === JSON.stringify(b);
         \\const cases = [
+        \\  ["", 1, [0, 0, 0]],
         \\  ["hello world", 5, [0, 6, 1, 6, 11, 0]],
         \\  ["  keep   spaces", 7, [0, 9, 1, 9, 15, 0]],
         \\  ["a\n\nb", 2, [0, 1, 0, 2, 2, 0, 3, 4, 0]],
@@ -535,6 +518,7 @@ test "native wrap preserves UTF-16 rows and bounds preview work" {
         \\  ["👩‍💻x", 2, [0, 5, 1, 5, 6, 0]],
         \\];
         \\let ok = cases.every(([s, w, expected]) => equal(term.wrap(s, w).rows, expected));
+        \\ok &&= term.wrap("", 1).rows instanceof Int32Array && term.graphemes("").byteLength === 0;
         \\const source = "first\n" + "middle\n".repeat(1000) + "last";
         \\const prefix = term.wrap(source, 20, 2);
         \\const ends = term.wrap(source, 20, 1, 1);
