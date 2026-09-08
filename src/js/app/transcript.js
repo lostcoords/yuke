@@ -1398,11 +1398,19 @@ export class Transcript {
     return String(id) + ":" + String(partId);
   }
 
+  /** @param {number} id @param {number} partId @returns {boolean} */
+  _reasoningLive(id, partId) {
+    if (!sameId(this._active?.id, id)) return false;
+    const parts = this._partState(id).list || [];
+    const last = parts.length ? parts[parts.length - 1] : null;
+    return !!last && last.type === "reasoning" && sameId(last.id, partId);
+  }
+
   /** @param {number} id @param {number} partId @param {Wire.AssistantPart | null | undefined} part @returns {boolean} */
   _isExpanded(id, partId, part) {
     const k = this._expandKey(id, partId);
     if (this._expand.has(k)) return /** @type {boolean} */ (this._expand.get(k));
-    if (part && part.type === "reasoning") return sameId(this._active?.id, id);
+    if (part && part.type === "reasoning") return this._reasoningLive(id, partId);
     const state = part == null ? part : part.type === "tool" ? part.state : undefined;
     return defaultExpanded(state);
   }
@@ -1548,7 +1556,7 @@ export class Transcript {
       const key = String(part.id);
       seen.add(key);
       const expanded = part.type === "text" || this._isExpanded(m.id, part.id, part);
-      const live = part.type === "reasoning" && sameId(this._active?.id, m.id);
+      const live = part.type === "reasoning" && this._reasoningLive(m.id, part.id);
       let c = state.rows.get(key);
       if (!c || c.w !== width || c.expanded !== expanded || c.live !== live || c.shape !== tree) {
         c = this._buildPart(m.id, part, width, expanded, live, tree, c ? c.doc : null);

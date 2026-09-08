@@ -2006,7 +2006,7 @@ test "yuke:ui action plans stay aligned after eviction and outline changes" {
     try expectJs(host, "ok");
 }
 
-test "yuke:ui reasoning auto-collapses and J/K walks parts" {
+test "yuke:ui reasoning auto-collapses when assistant text starts and J/K walks parts" {
     var paint: Paint = undefined;
     try paint.setup(std.testing.allocator, 12, 40);
     defer paint.deinit();
@@ -2036,7 +2036,7 @@ test "yuke:ui reasoning auto-collapses and J/K walks parts" {
         \\parts.r1 = [{ type: "reasoning", id: 0, text: "because why" }, { type: "text", id: 1, text: "hello" }];
         \\t.setActive("r1");
         \\rs = t.rows(40, 0, 10);
-        \\check("draft-keeps-thought", rowsHave(rs, "thinking") && rowsHave(rs, "because") && markerOf(rs) === "└─");
+        \\check("text-collapses-thought", rowsHave(rs, "thought") && !rowsHave(rs, "thinking") && !rowsHave(rs, "because") && rowsHave(rs, "hello") && markerOf(rs) === "└─");
         \\
         \\t.setOutline([{ id: "r1", type: "assistant" }], null);
         \\rs = t.rows(40, 0, 10);
