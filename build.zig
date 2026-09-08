@@ -4,6 +4,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const host = b.graph.host;
+    const test_filter = b.option([]const u8, "test-filter", "Run tests whose names contain this text");
+    const test_filters: []const []const u8 = if (test_filter) |filter| &.{filter} else &.{};
 
     const zqlite = b.dependency("zqlite", .{ .target = target, .optimize = optimize });
     const zqlite_host = b.dependency("zqlite", .{ .target = host, .optimize = optimize });
@@ -31,7 +33,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zqlite", .module = zqlite.module("zqlite") },
         },
     });
-    const run_sql_tests = addTestRun(b, "sql", "Run SQL module tests", sql);
+    const run_sql_tests = addTestRun(b, "sql", "Run SQL module tests", sql, test_filters);
 
     const sqlgen = b.createModule(.{
         .root_source_file = b.path("tools/sqlgen/sqlgen.zig"),
@@ -41,7 +43,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zqlite", .module = zqlite_host.module("zqlite") },
         },
     });
-    const run_sqlgen_tests = addTestRun(b, "sqlgen", "Run SQL generator tests", sqlgen);
+    const run_sqlgen_tests = addTestRun(b, "sqlgen", "Run SQL generator tests", sqlgen, test_filters);
 
     const sqlgen_exe = b.addExecutable(.{
         .name = "yuke-sqlgen",
@@ -65,7 +67,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const run_ai_tests = addTestRun(b, "ai", "Run AI module tests", ai);
+    const run_ai_tests = addTestRun(b, "ai", "Run AI module tests", ai, test_filters);
 
     // The vocabulary alone, so a missing or broken generated table cannot block a rebuild.
     const ai_vocab = b.createModule(.{
@@ -81,7 +83,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "ai_vocab", .module = ai_vocab },
         },
     });
-    const run_cataloggen_tests = addTestRun(b, "cataloggen", "Run catalog generator tests", cataloggen);
+    const run_cataloggen_tests = addTestRun(b, "cataloggen", "Run catalog generator tests", cataloggen, test_filters);
 
     const cataloggen_exe = b.addExecutable(.{
         .name = "yuke-cataloggen",
@@ -107,7 +109,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const run_proto_tests = addTestRun(b, "proto", "Run proto module tests", proto);
+    const run_proto_tests = addTestRun(b, "proto", "Run proto module tests", proto, test_filters);
 
     const term = b.addModule("term", .{
         .root_source_file = b.path("lib/term/term.zig"),
@@ -118,7 +120,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zio", .module = zio.module("zio") },
         },
     });
-    const run_term_tests = addTestRun(b, "term", "Run term module tests", term);
+    const run_term_tests = addTestRun(b, "term", "Run term module tests", term, test_filters);
 
     const app_imports: []const std.Build.Module.Import = &.{
         .{ .name = "quickjs", .module = quickjs.module("quickjs") },
@@ -138,7 +140,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = app_imports,
     });
-    const run_layer_tests = addTestRun(b, "src", "Run process and JavaScript host tests", tests);
+    const run_layer_tests = addTestRun(b, "src", "Run process and JavaScript host tests", tests, test_filters);
     b.step("test-js", "Run process and JavaScript host tests").dependOn(&run_layer_tests.step);
 
     // Fail the build if the committed queries drift from the SQL sources.
@@ -243,10 +245,12 @@ fn addTestRun(
     name: []const u8,
     description: []const u8,
     root_module: *std.Build.Module,
+    filters: []const []const u8,
 ) *std.Build.Step.Run {
     const unit_tests = b.addTest(.{
         .name = name,
         .root_module = root_module,
+        .filters = filters,
     });
     const run = b.addRunArtifact(unit_tests);
     const step = b.step(b.fmt("test-{s}", .{name}), description);
