@@ -337,18 +337,28 @@ function markSelection(segments, from, to, group) {
   return out;
 }
 
-// Draw styled segments left to right, clipping the row as one string, so a split run never repeats the ellipsis.
+// The synchronous row painter reuses numeric scratch space and retains no segment objects.
+/** @type {number[]} */
+const segmentWidths = [];
+
+// Clip the row as one string, so a split run never repeats the ellipsis.
 /** @param {number} x @param {number} sy @param {number} w @param {Segment[]} segments @returns {void} */
 function drawSegments(x, sy, w, segments) {
   if (w <= 0) return;
   let total = 0;
-  for (const seg of segments) total += term.measure(seg.text);
+  for (let i = 0; i < segments.length; i++) {
+    const seg = /** @type {Segment} */ (segments[i]);
+    const cells = seg.text ? term.measure(seg.text) : 0;
+    segmentWidths[i] = cells;
+    total += cells;
+  }
 
   let cx = x;
   if (total <= w) {
-    for (const seg of segments) {
+    for (let i = 0; i < segments.length; i++) {
+      const seg = /** @type {Segment} */ (segments[i]);
       if (seg.text) text(cx, sy, seg.text, seg.group);
-      cx += term.measure(seg.text);
+      cx += /** @type {number} */ (segmentWidths[i]);
     }
     return;
   }
@@ -939,11 +949,11 @@ export class Transcript {
   /** @returns {void} */
   _trimCaches() {
     if (this._rows.size <= CACHE_MESSAGES) return;
-    const pinned = new Set(this._viewport);
-    for (const id of [this._active?.id, this._press?.id, this.selection?.anchor.id, this.selection?.cursor.id]) if (id != null) pinned.add(String(id));
     for (const key of this._rows.keys()) {
       if (this._rows.size <= CACHE_MESSAGES) break;
-      if (!pinned.has(key)) this._evict(key);
+      if (this._viewport.has(key) || sameId(key, this._active?.id) || sameId(key, this._press?.id)
+        || sameId(key, this.selection?.anchor.id) || sameId(key, this.selection?.cursor.id)) continue;
+      this._evict(key);
     }
   }
 
@@ -1229,8 +1239,8 @@ export class Transcript {
       this._rows.set(key, c);
       return c.rows;
     }
-    // Trim before the build, so the entry this call adds cannot leave in the same call.
-    this._trimCaches();
+    // A viewport read trims once after the range; an individual read trims before its new entry exists.
+    if (!this._viewport.has(key)) this._trimCaches();
 
     let rows;
     let source = null;

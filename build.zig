@@ -19,6 +19,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const quickjs = b.dependency("quickjs", .{ .target = target, .optimize = optimize });
+    const quickjs_c = quickjs.module("quickjs").import_table.get("c").?;
+    const metrics = b.addOptions();
+    metrics.addOption(bool, "enabled", b.option(bool, "metrics", "Enable allocation and UI work counters") orelse false);
 
     const sql = b.addModule("sql", .{
         .root_source_file = b.path("lib/sql/sql.zig"),
@@ -117,19 +120,23 @@ pub fn build(b: *std.Build) void {
     });
     const run_term_tests = addTestRun(b, "term", "Run term module tests", term);
 
+    const app_imports: []const std.Build.Module.Import = &.{
+        .{ .name = "quickjs", .module = quickjs.module("quickjs") },
+        .{ .name = "quickjs_c", .module = quickjs_c },
+        .{ .name = "metrics", .module = metrics.createModule() },
+        .{ .name = "term", .module = term },
+        .{ .name = "proto", .module = proto },
+        .{ .name = "sql", .module = sql },
+        .{ .name = "zqlite", .module = zqlite.module("zqlite") },
+        .{ .name = "zio", .module = zio.module("zio") },
+        .{ .name = "ai", .module = ai },
+    };
+
     const tests = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{ .name = "quickjs", .module = quickjs.module("quickjs") },
-            .{ .name = "term", .module = term },
-            .{ .name = "proto", .module = proto },
-            .{ .name = "sql", .module = sql },
-            .{ .name = "zqlite", .module = zqlite.module("zqlite") },
-            .{ .name = "zio", .module = zio.module("zio") },
-            .{ .name = "ai", .module = ai },
-        },
+        .imports = app_imports,
     });
     const run_layer_tests = addTestRun(b, "src", "Run process and JavaScript host tests", tests);
     b.step("test-js", "Run process and JavaScript host tests").dependOn(&run_layer_tests.step);
@@ -185,15 +192,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zio", .module = zio.module("zio") },
-                .{ .name = "ai", .module = ai },
-                .{ .name = "proto", .module = proto },
-                .{ .name = "sql", .module = sql },
-                .{ .name = "zqlite", .module = zqlite.module("zqlite") },
-                .{ .name = "term", .module = term },
-                .{ .name = "quickjs", .module = quickjs.module("quickjs") },
-            },
+            .imports = app_imports,
         }),
     });
     b.installArtifact(exe);
@@ -203,6 +202,19 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run yuke (TUI by default)");
     run_step.dependOn(&run_exe.step);
 
+    const bench_exe = b.addExecutable(.{
+        .name = "yuke-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = app_imports,
+        }),
+    });
+    const run_bench = b.addRunArtifact(bench_exe);
+    if (b.args) |args| run_bench.addArgs(args);
+    const bench_step = b.step("bench", "Run the benchmark (use -Doptimize=ReleaseFast)");
+    bench_step.dependOn(&run_bench.step);
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_sql_tests.step);
     test_step.dependOn(&run_sqlgen_tests.step);

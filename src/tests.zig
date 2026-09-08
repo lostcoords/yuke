@@ -1,6 +1,8 @@
 //! Test root for the process and its JavaScript host.
 
 test {
+    _ = @import("allocations.zig");
+    _ = @import("js/bench.zig");
     _ = @import("js/agents_test.zig");
     _ = @import("js/host.zig");
     _ = @import("js/extensions.zig");

@@ -239,6 +239,7 @@ function authLoginTracked(providerId) {
     active = false;
     off();
   };
+  /** @param {Wire.AuthLoginOutcome} value */
   const finish = (value) => {
     if (!active) return;
     dispose();

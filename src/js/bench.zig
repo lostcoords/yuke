@@ -1,0 +1,168 @@
+//! The same transcript scenarios drive correctness tests and release benchmarks.
+
+const std = @import("std");
+const quickjs = @import("quickjs");
+const term = @import("term");
+const Host = @import("host.zig").Host;
+const Allocations = @import("../allocations.zig");
+const native_term = @import("native/term.zig");
+const Projection = @import("bench_projection.zig");
+pub const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
+
+pub const Phase = enum { build, reflow, scroll, stream, paint, selection, projection, gc };
+pub const phases = std.enums.values(Phase);
+
+pub const Harness = struct {
+    gpa: std.mem.Allocator,
+    allocations: Allocations,
+    host: *Host,
+    env: std.process.Environ.Map,
+    render: term.Render,
+    output: std.Io.Writer.Allocating,
+    api: quickjs.Value,
+    step_fn: quickjs.Value,
+    projection: ?*Projection = null,
+    phase: ?Phase = null,
+
+    pub fn create(gpa: std.mem.Allocator, io: std.Io, fixture: []const u8, width: u16, height: u16) !*Harness {
+        std.debug.assert(width > 1 and height > 0);
+        const self = try gpa.create(Harness);
+        errdefer gpa.destroy(self);
+        self.* = .{
+            .gpa = gpa,
+            .allocations = .{ .backing = gpa },
+            .host = undefined,
+            .env = .init(gpa),
+            .render = undefined,
+            .output = .init(gpa),
+            .api = quickjs.UNDEFINED,
+            .step_fn = quickjs.UNDEFINED,
+        };
+        errdefer self.env.deinit();
+        errdefer self.output.deinit();
+        self.render = try term.Render.init(io, gpa, &self.env, .{});
+        errdefer self.render.deinit(&self.output.writer);
+        try self.render.resize(&self.output.writer, .{ .cols = width, .rows = height, .x_pixel = 0, .y_pixel = 0 });
+        self.host = Host.createWith(if (metrics_enabled) self.allocations.allocator() else gpa, io, .{});
+        errdefer self.host.destroy();
+        self.host.runtime.setMemoryLimit(1024 * 1024 * 1024);
+        self.host.interrupt_budget = std.math.maxInt(u32);
+        self.host.paint.bindRender(self.host.ctx, &self.render, &self.output.writer);
+        const ctx = self.host.ctx;
+        const global = ctx.getGlobalObject();
+        defer ctx.freeValue(global);
+        try ctx.setPropertyStr(global, "FIXTURE", ctx.newString(fixture));
+        try self.host.evalModule(@embedFile("bench.js"), "bench.js");
+        self.api = ctx.getPropertyStr(global, "bench");
+        self.step_fn = ctx.getPropertyStr(self.api, "step");
+        std.debug.assert(ctx.isObject(self.api));
+        std.debug.assert(ctx.isFunction(self.step_fn));
+        return self;
+    }
+
+    pub fn destroy(self: *Harness) void {
+        const gpa = self.gpa;
+        self.host.engine.detach();
+        if (self.projection) |projection| projection.destroy();
+        self.host.ctx.freeValue(self.step_fn);
+        self.host.ctx.freeValue(self.api);
+        self.host.destroy();
+        std.debug.assert(self.allocations.liveBytes() == 0);
+        std.debug.assert(self.allocations.liveCount() == 0);
+        self.render.deinit(&self.output.writer);
+        self.output.deinit();
+        self.env.deinit();
+        gpa.destroy(self);
+    }
+
+    pub fn start(self: *Harness, phase: Phase, scale: u32) !void {
+        std.debug.assert(scale > 0);
+        self.phase = null;
+        self.host.engine.detach();
+        if (self.projection) |projection| projection.destroy();
+        self.projection = null;
+        if (phase == .projection) self.projection = try Projection.create(self.host, self.host.io, &self.env, scale);
+        const ctx = self.host.ctx;
+        const args = [_]quickjs.Value{
+            ctx.newString(@tagName(phase)),      ctx.newUint32(scale),
+            ctx.newInt32(self.host.paint.width), ctx.newInt32(self.host.paint.height),
+        };
+        defer for (args) |arg| ctx.freeValue(arg);
+        const function = ctx.getPropertyStr(self.api, "start");
+        defer ctx.freeValue(function);
+        _ = try self.call(function, &args);
+        self.host.runtime.runGC();
+        self.output.clearRetainingCapacity();
+        self.allocations.resetPeak();
+        if (metrics_enabled) self.host.paint.counters = .{};
+        self.phase = phase;
+    }
+
+    pub fn step(self: *Harness) !u64 {
+        const phase = self.phase orelse unreachable;
+        self.output.clearRetainingCapacity();
+        if (phase == .gc) {
+            self.host.runtime.runGC();
+        } else {
+            const rows = try self.call(self.step_fn, &.{});
+            if (rows <= 0) return error.EmptyBenchmarkOutput;
+        }
+        return self.output.written().len;
+    }
+
+    pub fn verify(self: *Harness) !i32 {
+        std.debug.assert(self.phase != null);
+        self.output.clearRetainingCapacity();
+        const ctx = self.host.ctx;
+        const function = ctx.getPropertyStr(self.api, "verify");
+        defer ctx.freeValue(function);
+        const checksum = try self.call(function, &.{});
+        if (self.output.written().len != 0) return error.FrameMismatch;
+        return checksum;
+    }
+
+    pub fn counters(self: *const Harness) native_term.Counters {
+        return if (metrics_enabled) self.host.paint.counters else .{};
+    }
+
+    fn call(self: *Harness, function: quickjs.Value, args: []const quickjs.Value) !i32 {
+        const ctx = self.host.ctx;
+        std.debug.assert(ctx.isFunction(function));
+        self.host.enterSlice();
+        const result = ctx.call(function, self.api, args);
+        defer ctx.freeValue(result);
+        if (ctx.isException(result)) {
+            self.host.noteFault();
+            std.log.err("benchmark: {s}", .{self.host.faultText()});
+            return error.JavaScriptFault;
+        }
+        return ctx.toInt32(result);
+    }
+};
+
+test "benchmark scenarios preserve the transcript across updates and cache eviction" {
+    const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12);
+    defer harness.destroy();
+    for (phases) |phase| {
+        try harness.start(phase, 12);
+        for (0..20) |_| _ = try harness.step();
+        _ = try harness.verify();
+    }
+}
+
+test "an unchanged transcript frame has stable cells and no terminal output" {
+    const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12);
+    defer harness.destroy();
+    try harness.start(.paint, 1);
+    try std.testing.expect(try harness.step() > 0);
+    const first = try harness.verify();
+    const before = harness.counters();
+    try std.testing.expectEqual(@as(u64, 0), try harness.step());
+    if (metrics_enabled) {
+        const after = harness.counters();
+        try std.testing.expectEqual(@as(u64, 1), after.frames - before.frames);
+        try std.testing.expect(after.text_calls > before.text_calls);
+        try std.testing.expect(after.measure_calls - before.measure_calls <= after.text_calls - before.text_calls);
+    }
+    try std.testing.expectEqual(first, try harness.verify());
+}

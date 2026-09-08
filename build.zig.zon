@@ -28,5 +28,6 @@
         "schema",
         "src",
         "tools",
+        "bench",
     },
 }

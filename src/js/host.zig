@@ -2,6 +2,7 @@ const std = @import("std");
 const utf8 = @import("../utf8.zig");
 const builtin = @import("builtin");
 const quickjs = @import("quickjs");
+const memory = @import("memory.zig");
 const zio = @import("zio");
 const term_pkg = @import("term");
 const loader_mod = @import("loader.zig");
@@ -133,7 +134,7 @@ pub const Host = struct {
     /// Allocate a host and install its limits, interrupt handler, and loader.
     pub fn createWith(gpa: std.mem.Allocator, io: std.Io, opts: Options) *Host {
         const self = gpa.create(Host) catch unreachable;
-        const runtime = quickjs.Runtime.init(gpa) catch unreachable;
+        const runtime = memory.createRuntime(gpa) catch unreachable;
         runtime.setMemoryLimit(memory_limit);
         runtime.setMaxStackSize(stack_limit);
         const ctx = quickjs.Context.init(runtime);

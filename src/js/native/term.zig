@@ -5,9 +5,21 @@ const quickjs = @import("quickjs");
 const term_pkg = @import("term");
 const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
+const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
+
+pub const Counters = struct {
+    frames: u64 = 0,
+    text_calls: u64 = 0,
+    text_bytes: u64 = 0,
+    measure_calls: u64 = 0,
+    measure_bytes: u64 = 0,
+    grapheme_calls: u64 = 0,
+    grapheme_bytes: u64 = 0,
+    fill_calls: u64 = 0,
+};
 
 /// State shared by the renderer and the `yuke:term` module.
 pub const Paint = struct {
@@ -16,6 +28,7 @@ pub const Paint = struct {
         writer: *std.Io.Writer,
     };
 
+    counters: if (metrics_enabled) Counters else void = if (metrics_enabled) .{} else {},
     output: ?Output = null,
     width: u16 = 80,
     height: u16 = 24,
@@ -142,6 +155,7 @@ fn jsFill(ctx: Context, _: Value, args: []const Value) Value {
     if (x > std.math.maxInt(i17) or y > std.math.maxInt(i17)) return quickjs.UNDEFINED;
 
     const style = parseStyle(ctx, if (args.len > 4) args[4] else null) catch return rethrow(ctx);
+    if (metrics_enabled) host.paint.counters.fill_calls += 1;
     ensureFrame(host);
     render.window().child(.{
         .x_off = @intCast(x),
@@ -171,6 +185,10 @@ fn jsText(ctx: Context, _: Value, args: []const Value) Value {
     defer ctx.freeCString(s.ptr);
 
     const style = parseStyle(ctx, if (args.len > 3) args[3] else null) catch return rethrow(ctx);
+    if (metrics_enabled) {
+        host.paint.counters.text_calls += 1;
+        host.paint.counters.text_bytes += s.len;
+    }
     ensureFrame(host);
     const copy = host.paint.glyphs.allocator().dupe(u8, s) catch unreachable;
     const win = render.window();
@@ -188,6 +206,11 @@ fn jsMeasure(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len < 1) return ctx.throwTypeError("term.measure(s)");
     const s = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
     defer ctx.freeCString(s.ptr);
+    if (metrics_enabled) {
+        const host = Host.fromContext(ctx);
+        host.paint.counters.measure_calls += 1;
+        host.paint.counters.measure_bytes += s.len;
+    }
     return ctx.newInt32(measureUtf8(s));
 }
 
@@ -196,6 +219,10 @@ fn jsGraphemes(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len < 1) return ctx.throwTypeError("term.graphemes(s)");
     const s = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
     defer ctx.freeCString(s.ptr);
+    if (metrics_enabled) {
+        host.paint.counters.grapheme_calls += 1;
+        host.paint.counters.grapheme_bytes += s.len;
+    }
 
     var triples: std.ArrayList(i32) = .empty;
     defer triples.deinit(host.gpa);
@@ -286,6 +313,7 @@ fn jsSetNeedsTick(ctx: Context, _: Value, args: []const Value) Value {
 
 fn startFrame(host: *Host) void {
     const output = host.paint.output orelse return;
+    if (metrics_enabled) host.paint.counters.frames += 1;
     const render = output.render;
     render.window().clear();
     render.window().hideCursor();
