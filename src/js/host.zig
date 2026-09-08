@@ -160,7 +160,7 @@ pub const Host = struct {
             .budget = job_budget,
             .fault_text = undefined,
             .fault_text_len = 0,
-            .paint = .{ .glyphs = .init(gpa) },
+            .paint = .{},
             .engine = eng,
             .cwd = opts.cwd,
             .io = io,
@@ -252,7 +252,6 @@ pub const Host = struct {
         self.hooks.deinit(self.ctx);
         self.engine.destroy();
         self.paint.freeRoots(self.ctx);
-        self.paint.glyphs.deinit();
         self.ctx.deinit();
         self.runtime.deinit();
         self.gpa.destroy(self);
@@ -662,6 +661,9 @@ test "resize keeps unicode width after a write fail" {
     try std.testing.expectEqual(term_pkg.gwidth.Method.unicode, render.vx.screen.width_method);
     try std.testing.expectEqual(@as(u16, 8), host.paint.width);
     try std.testing.expectEqual(@as(u16, 3), host.paint.height);
+    try std.testing.expectEqual(.pending, render.frame);
+    try std.testing.expect(try render.commitFrame(&sink.writer));
+    try std.testing.expectEqual(.idle, render.frame);
 }
 
 test "an event asks for a frame and the flush paints it once" {
@@ -691,11 +693,9 @@ test "an event asks for a frame and the flush paints it once" {
     , "boot.js");
 
     const loop = @import("loop.zig");
-    // A deferred run applies three keys and paints once.
-    host.paint.defer_frame = true;
+    // An event batch applies three keys and paints once.
     for (0..3) |_| try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.paints"));
-    host.paint.defer_frame = false;
     try loop.flushFrame(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.paints"));
 
@@ -703,8 +703,10 @@ test "an event asks for a frame and the flush paints it once" {
     try loop.flushFrame(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.paints"));
 
-    // Outside a deferred run, one event still paints on its own.
+    // One event also waits for the owner to flush.
     try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.paints"));
+    try loop.flushFrame(host);
     try std.testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.paints"));
 }
 

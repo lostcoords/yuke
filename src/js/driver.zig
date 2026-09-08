@@ -131,7 +131,9 @@ pub fn runIo(env: *std.process.Environ.Map, extensions: *extensions_mod.Extensio
 /// Run `start`, then process queued events with `step`. Native quit ends the loop, but a script error does not.
 pub fn serve(host: *Host, ch: *Channel) !void {
     std.debug.assert(host.phase == .open);
-    try absorbScriptFault(host, tui_loop.start(host));
+    if (tui_loop.start(host)) |_| {
+        try absorbScriptFault(host, tui_loop.flushFrame(host));
+    } else |err| try absorbScriptFault(host, err);
     if (host.engine.runtime) |application| application.engine.resumeWorkspace(host.cwd) catch |err| {
         std.log.warn("cannot resume the workspace: {t}", .{err});
     };
@@ -142,7 +144,6 @@ pub fn serve(host: *Host, ch: *Channel) !void {
         };
 
         // Apply every queued message, then paint once. A burst costs one frame, not one each.
-        host.paint.defer_frame = true;
         var wheel: ?tui_loop.WheelRun = null;
         var applied: u32 = 0;
         while (true) {
@@ -153,7 +154,6 @@ pub fn serve(host: *Host, ch: *Channel) !void {
         }
         try absorbScriptFault(host, host.pump());
         try absorbScriptFault(host, tui_loop.flushWheel(host, &wheel));
-        host.paint.defer_frame = false;
         try absorbScriptFault(host, tui_loop.flushFrame(host));
     }
 }

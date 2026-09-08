@@ -111,6 +111,7 @@ test "yuke:core RootView paints and only ctrl+q quits" {
     , "ui.js");
     const loop = @import("loop.zig");
     try loop.start(host);
+    try loop.flushFrame(host);
     try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "hi") != null);
     // A bare key never quits, so a stray key in a modal layer cannot end the session.
     try loop.step(host, .{ .key_press = .{ .codepoint = 'q' } });
@@ -2730,6 +2731,7 @@ test "yuke:defaults boots the shell, seeds the session feed, and wires commands"
     // No engine is attached here, so boot renders the empty chat and its hint.
     try loop.start(host);
     try loop.stepTick(host);
+    try loop.flushFrame(host);
     try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "new chat") != null);
 
     // the command registry and the vim toggle are wired.
@@ -2890,11 +2892,13 @@ test "an overlay without a hook is consumed, not a fault" {
 
     const loop = @import("loop.zig");
     try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });
+    try loop.flushFrame(host);
     try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.seen"));
 
     try host.eval("globalThis.root.popOverlay();", "pop.js");
     try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });
+    try loop.flushFrame(host);
     try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen"));
 }

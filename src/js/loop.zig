@@ -161,7 +161,6 @@ fn dispatch(host: *Host, obj: Value) Error!bool {
     }
     ctx.freeValue(result);
     try host.drainJobs();
-    if (!host.paint.defer_frame) try flushFrame(host);
     return true;
 }
 
@@ -326,6 +325,8 @@ test "a parser key paints and a missing endFrame still commits" {
     try input.push("a");
     const ev = (try input.next()).?;
     try step(host, ev);
+    try std.testing.expectEqual(@as(usize, 0), out.written().len);
+    try flushFrame(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.code === 'char' && globalThis.ch === 'a' ? 1 : 0"));
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "a") != null);
 }

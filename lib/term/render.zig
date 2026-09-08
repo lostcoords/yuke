@@ -9,6 +9,8 @@ pub const Winsize = xvaxis.Winsize;
 pub const Render = struct {
     vx: xvaxis.Vaxis,
     alloc: std.mem.Allocator,
+    glyphs: std.heap.ArenaAllocator,
+    frame: enum { idle, open, pending } = .idle,
     /// True inside tmux. A clipboard write then needs the passthrough sequence.
     tmux: bool,
 
@@ -18,19 +20,51 @@ pub const Render = struct {
         env_map: *std.process.Environ.Map,
         opts: Options,
     ) !Render {
+        var vx = try xvaxis.Vaxis.init(io, alloc, env_map, opts);
+        vx.caps.unicode = .unicode;
+        vx.screen.width_method = .unicode;
         return .{
-            .vx = try xvaxis.Vaxis.init(io, alloc, env_map, opts),
+            .vx = vx,
             .alloc = alloc,
+            .glyphs = .init(alloc),
             .tmux = env_map.get("TMUX") != null,
         };
     }
 
     pub fn deinit(self: *Render, writer: *std.Io.Writer) void {
         self.vx.deinit(self.alloc, writer);
+        self.glyphs.deinit();
     }
 
     pub fn window(self: *Render) Window {
         return self.vx.window();
+    }
+
+    pub fn beginFrame(self: *Render) void {
+        self.window().clear();
+        self.window().hideCursor();
+        _ = self.glyphs.reset(.retain_capacity);
+        self.frame = .open;
+    }
+
+    pub fn ensureFrame(self: *Render) bool {
+        if (self.frame == .open) return false;
+        self.beginFrame();
+        return true;
+    }
+
+    /// The grid borrows this text until the next frame or resize.
+    pub fn writeText(self: *Render, win: Window, text: []const u8, style: xvaxis.Style) !void {
+        std.debug.assert(win.screen == &self.vx.screen);
+        const copy = try self.glyphs.allocator().dupe(u8, text);
+        _ = win.printSegment(.{ .text = copy, .style = style }, .{ .wrap = .none });
+    }
+
+    /// An idle frame does no work; a failed commit retains the text for retry.
+    pub fn commitFrame(self: *Render, writer: *std.Io.Writer) !bool {
+        if (self.frame == .idle) return false;
+        try self.render(writer);
+        return true;
     }
 
     pub fn enterAltScreen(self: *Render, writer: *std.Io.Writer) !void {
@@ -41,14 +75,12 @@ pub const Render = struct {
         try self.vx.exitAltScreen(writer);
     }
 
-    /// Turn bracketed paste on or off. The terminal wraps pasted text in markers.
-    /// `deinit` tries to turn the mode off again.
+    /// Set bracketed paste; deinit resets the mode.
     pub fn setBracketedPaste(self: *Render, writer: *std.Io.Writer, enable: bool) !void {
         try self.vx.setBracketedPaste(writer, enable);
     }
 
-    /// Turn mouse reporting on or off. The mode reports clicks, drags, the wheel, and focus.
-    /// `deinit` turns the mode off again.
+    /// Set mouse and focus reports; deinit resets the mode.
     pub fn setMouseMode(self: *Render, writer: *std.Io.Writer, enable: bool) !void {
         try self.vx.setMouseMode(writer, enable);
     }
@@ -56,12 +88,10 @@ pub const Render = struct {
     /// Limit the raw OSC 52 payload. Reject larger text instead of truncation.
     pub const clipboard_max = 100 * 1000;
 
-    /// OSC 52 inside a tmux passthrough. Each inner escape is doubled, and the payload ends with
-    /// BEL, so the tail needs no second doubled escape.
+    /// The tmux passthrough doubles each inner escape and ends the OSC payload with BEL.
     const tmux_clipboard_copy = "\x1bPtmux;\x1b\x1b]52;c;{s}\x07\x1b\\";
 
-    /// Ask the terminal to set the system clipboard through OSC 52.
-    /// The sequence has no acknowledgement, so a success means only that the write left this process.
+    /// Send OSC 52; the terminal provides no acknowledgement.
     pub fn copyToClipboard(self: *Render, writer: *std.Io.Writer, text: []const u8) !void {
         if (text.len > clipboard_max) return error.ClipboardTooLarge;
         const encoder = std.base64.standard.Encoder;
@@ -70,8 +100,7 @@ pub const Render = struct {
         const b64 = encoder.encode(buf, text);
 
         try writer.print(xvaxis.ctlseqs.osc52_clipboard_copy, .{b64});
-        // tmux with `set-clipboard external` drops an application OSC 52. The passthrough carries
-        // the same sequence to the outer terminal, which owns the real clipboard.
+        // The passthrough serves the outer terminal when tmux uses `set-clipboard external`.
         if (self.tmux) try writer.print(tmux_clipboard_copy, .{b64});
         try writer.flush();
     }
@@ -83,8 +112,15 @@ pub const Render = struct {
     pub fn resize(self: *Render, writer: *std.Io.Writer, winsize: Winsize) !void {
         self.vx.resize(self.alloc, writer, winsize) catch |err| {
             self.vx.queueRefresh();
+            // A write failure occurs after Vaxis replaces both grids.
+            if (err == error.WriteFailed) {
+                _ = self.glyphs.reset(.retain_capacity);
+                self.frame = .pending;
+            }
             return err;
         };
+        _ = self.glyphs.reset(.retain_capacity);
+        self.frame = .idle;
         std.debug.assert(self.vx.screen.width == winsize.cols);
         std.debug.assert(self.vx.screen.height == winsize.rows);
     }
@@ -93,8 +129,10 @@ pub const Render = struct {
     pub fn render(self: *Render, writer: *std.Io.Writer) !void {
         self.vx.render(writer) catch |err| {
             self.vx.queueRefresh();
+            if (self.frame == .idle) self.frame = .pending;
             return err;
         };
+        self.frame = .idle;
         std.debug.assert(!self.vx.refresh);
     }
 };
@@ -244,7 +282,8 @@ test "a render write error forces a full redraw" {
     var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
 
-    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var alloc = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var r = try Render.init(io, alloc.allocator(), &env_map, .{});
     var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer deinit_writer.deinit();
     defer r.deinit(&deinit_writer.writer);
@@ -253,15 +292,23 @@ test "a render write error forces a full redraw" {
     defer setup.deinit();
     try r.resize(&setup.writer, .{ .rows = 1, .cols = 1, .x_pixel = 0, .y_pixel = 0 });
 
-    r.window().fill(.{ .char = .{ .grapheme = "A", .width = 1 } });
+    r.beginFrame();
+    var text = [_]u8{'A'};
+    try r.writeText(r.window(), &text, .{});
+    text[0] = 'Z';
+    alloc.fail_index = alloc.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, r.resize(&setup.writer, .{ .rows = 2, .cols = 2, .x_pixel = 0, .y_pixel = 0 }));
+    alloc.fail_index = std.math.maxInt(usize);
+    try std.testing.expectEqual(.open, r.frame);
     var fail: std.Io.Writer = .failing;
-    try std.testing.expectError(error.WriteFailed, r.render(&fail));
+    try std.testing.expectError(error.WriteFailed, r.commitFrame(&fail));
     try std.testing.expect(r.vx.refresh);
 
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    try r.render(&out.writer);
+    try std.testing.expect(try r.commitFrame(&out.writer));
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "A") != null);
+    try std.testing.expect(!try r.commitFrame(&out.writer));
 }
 
 test "a repeat render of the same screen with a visible cursor writes nothing" {

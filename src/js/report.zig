@@ -18,7 +18,6 @@ pub fn paintFault(host: *Host) void {
     const output = host.paint.output orelse return;
     const render = output.render;
     const writer = output.writer;
-    // The Host owns the fault text. The cells hold slices into it during the render.
     const text = host.faultText();
     if (text.len == 0) return;
 
@@ -32,11 +31,9 @@ pub fn paintFault(host: *Host) void {
     });
     std.debug.assert(row.height == 1);
     row.fill(.{ .char = .{ .grapheme = " ", .width = 1 }, .style = fault_style });
-    _ = row.printSegment(.{ .text = text, .style = fault_style }, .{ .wrap = .none });
+    render.writeText(row, text, fault_style) catch return;
 
     render.render(writer) catch return;
-    host.paint.dirty = false;
-    host.paint.in_frame = false;
 }
 
 const testing = std.testing;
@@ -77,6 +74,11 @@ test "a throwing onEvent paints the message on the bottom row" {
 
     out.clearRetainingCapacity();
     paintFault(host);
+    try testing.expect(std.mem.indexOf(u8, out.written(), "boom") != null);
+    @memset(host.fault_text[0..host.fault_text_len], 'X');
+    out.clearRetainingCapacity();
+    render.queueRefresh();
+    try render.render(&out.writer);
     try testing.expect(std.mem.indexOf(u8, out.written(), "boom") != null);
 }
 

@@ -37,44 +37,30 @@ pub const Paint = struct {
     output: ?Output = null,
     width: u16 = 80,
     height: u16 = 24,
-    dirty: bool = false,
-    in_frame: bool = false,
-    /// True while the owner drains its queue. The frame then paints once, after the last event.
-    defer_frame: bool = false,
     needs_tick: bool = false,
     tick_period_ms: u32 = 450,
     quit_requested: bool = false,
     term_obj: quickjs.Value = quickjs.UNDEFINED,
-    /// Own grapheme bytes for the open frame. Reset after the grid clears.
-    glyphs: std.heap.ArenaAllocator = undefined,
 
     /// Apply a terminal size to the renderer and cached JavaScript objects.
     pub fn resize(self: *Paint, ctx: Context, winsize: term_pkg.Winsize) void {
         if (winsize.cols == 0 or winsize.rows == 0) return;
         if (self.width == winsize.cols and self.height == winsize.rows) return;
-        // A failed write after the grid swapped keeps the frame dirty, so the next commit flushes.
-        var resize_dirty = false;
         if (self.output) |output| {
             const render = output.render;
             const writer = output.writer;
             render.resize(writer, winsize) catch {
                 if (render.window().width != winsize.cols or render.window().height != winsize.rows)
                     return;
-                resize_dirty = true;
             };
-            render.vx.screen.width_method = .unicode;
         }
         self.width = winsize.cols;
         self.height = winsize.rows;
-        self.dirty = resize_dirty;
-        self.in_frame = false;
         self.syncSizeProps(ctx);
     }
 
     /// Bind the renderer and its writer. `runIo` and the render tests call it.
     pub fn bindRender(self: *Paint, ctx: Context, render: *term_pkg.Render, writer: *std.Io.Writer) void {
-        render.vx.caps.unicode = .unicode;
-        render.vx.screen.width_method = .unicode;
         self.output = .{ .render = render, .writer = writer };
         const win = render.window();
         self.width = win.width;
@@ -135,8 +121,9 @@ fn rethrow(ctx: Context) Value {
 
 fn jsBeginFrame(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.paint.output == null) return ctx.throwTypeError("term.beginFrame: no host");
-    startFrame(host);
+    const output = host.paint.output orelse return ctx.throwTypeError("term.beginFrame: no host");
+    output.render.beginFrame();
+    if (metrics_enabled) host.paint.counters.frames += 1;
     return quickjs.UNDEFINED;
 }
 
@@ -172,7 +159,6 @@ fn jsFill(ctx: Context, _: Value, args: []const Value) Value {
         .char = .{ .grapheme = " ", .width = 1 },
         .style = style,
     });
-    host.paint.dirty = true;
     return quickjs.UNDEFINED;
 }
 
@@ -196,15 +182,13 @@ fn jsText(ctx: Context, _: Value, args: []const Value) Value {
         host.paint.counters.text_bytes += s.len;
     }
     ensureFrame(host);
-    const copy = host.paint.glyphs.allocator().dupe(u8, s) catch unreachable;
     const win = render.window();
-    _ = win.child(.{
+    render.writeText(win.child(.{
         .x_off = @intCast(x),
         .y_off = @intCast(y),
         .width = win.width -| (std.math.cast(u16, x) orelse 0),
         .height = 1,
-    }).printSegment(.{ .text = copy, .style = style }, .{ .wrap = .none });
-    host.paint.dirty = true;
+    }), s, style) catch unreachable;
     return quickjs.UNDEFINED;
 }
 
@@ -301,7 +285,6 @@ fn jsCursor(ctx: Context, _: Value, args: []const Value) Value {
     } else {
         win.hideCursor();
     }
-    host.paint.dirty = true;
     return quickjs.UNDEFINED;
 }
 
@@ -353,34 +336,15 @@ fn jsSetNeedsTick(ctx: Context, _: Value, args: []const Value) Value {
     return quickjs.UNDEFINED;
 }
 
-fn startFrame(host: *Host) void {
-    const output = host.paint.output orelse return;
-    if (metrics_enabled) host.paint.counters.frames += 1;
-    const render = output.render;
-    render.window().clear();
-    render.window().hideCursor();
-    _ = host.paint.glyphs.reset(.retain_capacity);
-    host.paint.in_frame = true;
-    host.paint.dirty = true;
-}
-
 pub fn commitFrame(host: *Host) void {
     const output = host.paint.output orelse return;
-    const render = output.render;
-    const writer = output.writer;
-    if (!host.paint.dirty) {
-        host.paint.in_frame = false;
-        return;
-    }
-    render.render(writer) catch return;
-    host.paint.dirty = false;
-    host.paint.in_frame = false;
     // A successful frame replaces the fault row, so `clearFault` clears the fault text.
-    host.clearFault();
+    if (output.render.commitFrame(output.writer) catch return) host.clearFault();
 }
 
 fn ensureFrame(host: *Host) void {
-    if (!host.paint.in_frame) startFrame(host);
+    const started = host.paint.output.?.render.ensureFrame();
+    if (metrics_enabled and started) host.paint.counters.frames += 1;
 }
 
 fn measureUtf8(s: []const u8) i32 {
@@ -709,7 +673,7 @@ test "a failed endFrame keeps the frame dirty and retries" {
         \\term.text(0, 0, "A");
         \\term.endFrame();
     , "term.js");
-    try std.testing.expect(host.paint.dirty);
+    try std.testing.expectEqual(.open, render.frame);
     try std.testing.expect(render.vx.refresh);
 
     var out: std.Io.Writer.Allocating = .init(gpa.allocator());
@@ -719,6 +683,6 @@ test "a failed endFrame keeps the frame dirty and retries" {
         \\import { term } from "yuke:term";
         \\term.endFrame();
     , "term.js");
-    try std.testing.expect(!host.paint.dirty);
+    try std.testing.expectEqual(.idle, render.frame);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "A") != null);
 }
