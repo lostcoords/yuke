@@ -139,7 +139,7 @@ test "a failed atomic save preserves both file and live map" {
     defer f.deinit();
     const initial = try f.get();
     const saved = try f.save(initial.revision, .{ .small = chosen });
-    const directory = try std.Io.Dir.openDirAbsolute(f.runtime.io(), std.fs.path.dirname(saved.path.?).?, .{});
+    const directory = try std.Io.Dir.openDirAbsolute(f.runtime.io(), std.fs.path.dirname(saved.path.?).?, .{ .iterate = true });
     defer directory.close(f.runtime.io());
     try directory.setPermissions(f.runtime.io(), .fromMode(0o500));
     defer directory.setPermissions(f.runtime.io(), .fromMode(0o700)) catch unreachable;
