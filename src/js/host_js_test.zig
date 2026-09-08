@@ -1069,10 +1069,10 @@ test "yuke:ui copy targets: last reply, message list, and code blocks" {
         \\ct.setOutline([{ id: "a1", type: "assistant" }], null);
         \\const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0));
         \\check("rows-old", rowsHave(ct.rows(40, 0, 100), "old"));
-        \\const doc0 = ct._docs.get("a1");
+        \\const doc0 = ct._rows.get("a1").doc;
         \\cb.a1 = "```zig\nnew\n```";
         \\check("blocks-new", ct.codeBlocks()[0].text === "new");
-        \\check("same-doc", ct._docs.get("a1") === doc0);
+        \\check("same-doc", ct._rows.get("a1").doc === doc0);
         \\check("rows-new", rowsHave(ct.rows(40, 0, 100), "new"));
         \\
         \\// A returned descriptor is a copy, so a caller cannot change the transcript.

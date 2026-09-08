@@ -11,7 +11,7 @@ import { column, child, fixed, fit, grow, solve } from "yuke:layout";
 /** @typedef {{ id: number, partId: number, kind: string }} PartHit */
 /** @typedef {{ a: { id: number, off: number, was: string, partId?: string }, b: { id: number, off: number, was: string, partId?: string } }} SelectionAnchors */
 /** @typedef {{ start: Position, end: Position, si: number, ei: number }} SelectionRange */
-/** @typedef {{ w: number, rows: TranscriptRow[], source: string, partBases: Map<string, number> }} RowCache */
+/** @typedef {{ w: number, rows: TranscriptRow[], source: string, partBases: Map<string, number>, doc: Document | undefined }} RowCache */
 /** @typedef {{ w: number, expanded: boolean, live: boolean, shape: number, rows: TranscriptRow[], source: string, doc: Document | null }} PartCache */
 /** @typedef {{ list: Wire.AssistantPart[] | null, rows: Map<string, PartCache> }} PartState */
 /** @typedef {(id: number) => readonly Wire.AssistantPart[]} PartsOf */
@@ -396,33 +396,23 @@ function staticRowSource(list) {
   };
 }
 
-// A compaction message is plain thought text, not markdown.
-/** @param {ItemKey} id @param {string} body @param {number} width @returns {TranscriptRow[]} */
-function wrapPlain(id, body, width) {
+// Plain message variants share the same wrap and source-offset rules.
+/** @param {ItemKey} id @param {string} body @param {number} width @param {"user" | "compaction" | "error"} kind @param {number} [base] @returns {TranscriptRow[]} */
+function messageRows(id, body, width, kind, base = 0) {
+  body = body || "";
+  const group = kind === "user" ? "TxUser" : kind === "error" ? "TxError" : "TxThought";
   /** @type {TranscriptRow[]} */
-  const rows = wrapBody(body, Math.max(1, width - TX_GUTTER), "TxThought").map((r) => ({
-    ...r,
-    key: id,
-    kind: "compaction",
-  }));
-  rows.push({ text: "", key: id });
-  return rows;
-}
-
-/** @param {ItemKey} id @param {string} body @param {number} width @returns {TranscriptRow[]} */
-function userRows(id, body, width) {
-  const src = body || "";
-  const contentW = Math.max(1, width - TX_GUTTER);
-  const lines = wrapOffsets(src, contentW);
-  /** @type {TranscriptRow[]} */
-  const rows = lines.map((r, i) => ({
-    segments: [{ text: src.slice(r.start, r.end), group: "TxUser", src: r.start, srcEnd: r.end }],
-    bg: "TxUser",
-    indent: TX_GUTTER,
-    marker: i === 0 ? "⟩" : null,
-    markerGroup: "TxUserMarker",
-    key: id,
-  }));
+  const rows = wrapOffsets(body, Math.max(1, width - TX_GUTTER)).map((row, i) => {
+    const segments = [{ text: body.slice(row.start, row.end), group, src: base + row.start, srcEnd: base + row.end }];
+    return kind === "user" ? {
+      segments,
+      bg: "TxUser",
+      indent: TX_GUTTER,
+      marker: i === 0 ? "⟩" : null,
+      markerGroup: "TxUserMarker",
+      key: id,
+    } : { segments, indent: TX_GUTTER, key: id, kind };
+  });
   rows.push({ text: "", key: id });
   return rows;
 }
@@ -802,23 +792,6 @@ function errorLabel(error) {
   return "⚠ " + ((error && error.message) || (error && error.type) || "run failed");
 }
 
-// Show a failed turn's error in the gutter with a warning marker and the danger color.
-/** @param {ItemKey} id @param {{ type?: string, message?: string } | null | undefined} error @param {number} width @param {number} srcBase @returns {{ rows: TranscriptRow[], source: string }} */
-function errorRows(id, error, width, srcBase) {
-  const label = errorLabel(error);
-  const base = srcBase || 0;
-  const contentW = Math.max(1, width - TX_GUTTER);
-  /** @type {TranscriptRow[]} */
-  const rows = wrapOffsets(label, contentW).map((r) => ({
-    segments: [{ text: label.slice(r.start, r.end), group: "TxError", src: base + r.start, srcEnd: base + r.end }],
-    indent: TX_GUTTER,
-    key: id,
-    kind: "error",
-  }));
-  rows.push({ text: "", key: id });
-  return { rows, source: label };
-}
-
 // The chat transcript: message descriptors, exact row counts, and a bounded cache of rendered rows.
 export class Transcript {
   /** @param {TranscriptOptions} [opts] */
@@ -845,9 +818,7 @@ export class Transcript {
     /** @type {Set<string>} */
     this._viewport = new Set();
     /** @type {Map<string, RowCache>} */
-    this._rows = new Map(); // id -> { w, rows, source, blocks, partBases }, oldest render first
-    /** @type {Map<string, Document>} */
-    this._docs = new Map(); // id -> md Document, for the textOf path
+    this._rows = new Map(); // Oldest render first; each text-only render owns its Markdown document.
     /** @type {Map<string, PartState>} */
     this._parts = new Map(); // id -> the part list and one render per part, for the partsOf path
     /** @type {ActionPlan | null} */
@@ -913,7 +884,7 @@ export class Transcript {
     const oldMessages = oldPlan ? this.messages() : [];
     const keep = new Set();
     for (const m of messages || []) if (!sameId(m.id, this._active?.id)) keep.add(String(m.id));
-    for (const key of new Set([...this._rows.keys(), ...this._docs.keys(), ...this._parts.keys()])) if (!keep.has(key)) this._evict(key);
+    for (const key of new Set([...this._rows.keys(), ...this._parts.keys()])) if (!keep.has(key)) this._evict(key);
     for (const key of this._counts.keys()) if (!keep.has(key)) this._counts.delete(key);
     this._messages = messages || [];
     this._active = active || null;
@@ -957,7 +928,6 @@ export class Transcript {
   /** @param {string} key @returns {void} */
   _evict(key) {
     this._rows.delete(key);
-    this._docs.delete(key);
     this._parts.delete(key);
   }
 
@@ -1174,8 +1144,7 @@ export class Transcript {
       }
       return blocks;
     }
-    const doc = this._docs.get(String(id));
-    return doc ? doc.blocks() : [];
+    return c?.doc ? c.doc.blocks() : [];
   }
 
   // The rendered rows of one message at the drawn width, owned by the render cache, so only this class holds them.
@@ -1292,8 +1261,9 @@ export class Transcript {
     if (!this._viewport.has(key)) this._trimCaches();
 
     let rows;
-    let source = null;
+    let source;
     let partBases = new Map();
+    let doc;
     if (m.type === "user") {
       source = this.textOf(m.id) || "";
       if (m.source && m.source.type !== "parent_instruction") {
@@ -1303,28 +1273,30 @@ export class Transcript {
         rows = [{ text: inputSourceLabel(m.source), group: "TxToolMeta", marker: expanded ? "▾" : "▸", markerGroup: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id },
           ...shown.map((row) => ({ ...row, kind: "report-body", partId: -1, key: m.id })),
           ...(!expanded && body.length > shown.length ? [{ text: "… click the header to expand", group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id }] : []), { text: "", key: m.id }];
-      } else rows = userRows(m.id, source, width);
+      } else rows = messageRows(m.id, source, width, "user");
     } else if (m.type === "compaction") {
       source = this.textOf(m.id) || "";
-      rows = wrapPlain(m.id, source, width);
+      rows = messageRows(m.id, source, width, "compaction");
     } else if (this.partsOf) {
       const built = this._partRows(m, width, index);
       rows = built.rows;
       source = built.source;
       partBases = built.partBases;
     } else {
-      rows = this._assistantRows(m.id, width);
-      const doc = this._docs.get(String(m.id));
-      source = doc ? doc.sourceText() : this.textOf(m.id) || "";
+      doc = c?.doc || new Document();
+      doc.setText(this.textOf(m.id));
+      rows = /** @type {TranscriptRow[]} */ (doc.rows(Math.max(1, width - TX_GUTTER)).map(r => ({ segments: r.segments, indent: TX_GUTTER, key: m.id })));
+      rows.push({ text: "", key: m.id });
+      source = doc.sourceText();
     }
     if (m.error) {
-      const base = source && source.length ? source.length + 1 : 0;
-      const err = errorRows(m.id, m.error, width, base);
-      source = source && source.length ? source + "\n" + err.source : err.source;
-      rows = rows.concat(err.rows);
+      const base = source.length ? source.length + 1 : 0;
+      const error = errorLabel(m.error);
+      source = source.length ? source + "\n" + error : error;
+      rows = rows.concat(messageRows(m.id, error, width, "error", base));
     }
     this._rows.delete(key);
-    this._rows.set(key, { w: width, rows, source: source == null ? "" : source, partBases });
+    this._rows.set(key, { w: width, rows, source, partBases, doc });
     this._counts.set(key, rows.length);
     return rows;
   }
@@ -1648,21 +1620,6 @@ export class Transcript {
     return { w: width, expanded, live, shape: tree, rows, source: built.source, doc: null };
   }
 
-  // Assistant rows come from a per-message md Document, indented past the gutter, then a separator.
-  /** @param {number} id @param {number} width @returns {TranscriptRow[]} */
-  _assistantRows(id, width) {
-    let doc = this._docs.get(String(id));
-    if (!doc) {
-      doc = new Document();
-      this._docs.set(String(id), doc);
-    }
-    doc.setText(this.textOf(id));
-    const contentW = Math.max(1, width - TX_GUTTER);
-    const rows = /** @type {TranscriptRow[]} */ (doc.rows(contentW).map((r) => ({ segments: r.segments, indent: TX_GUTTER, key: id })));
-    rows.push({ text: "", key: id });
-    return rows;
-  }
-
   /** @param {number} i @returns {MessageDescriptor | null} */
   _at(i) {
     return i < this._messages.length ? /** @type {MessageDescriptor} */ (this._messages[i]) : i === this._messages.length ? this._active : null;
@@ -1825,7 +1782,7 @@ export class Transcript {
   codeBlocks() {
     const out = [];
     for (const m of this.messages()) {
-      const held = this._docs.get(String(m.id));
+      const held = this._rows.get(String(m.id))?.doc;
       const doc = held || new Document();
       // A changed source makes the held render stale, because this call is outside a draw.
       if (doc.setText(this.textOf(m.id)) && held) this._markStale(m.id);
@@ -2072,41 +2029,40 @@ export class ChatView {
   /** @param {LayoutNode} tree @param {Rect} bounds @returns {void} */
   _placePresentation(tree, bounds) {
     const result = solve(tree, bounds);
-    /** @type {Map<string, Rect>} */
-    const regions = new Map();
-    /** @type {{ view: PresentationView, rect: Rect }[]} */
-    const views = [];
-    const seen = new Set();
+    /** @type {Map<string | PresentationView, Rect>} */
+    const placements = new Map();
     /** @param {import("yuke:layout").LayoutResult} item */
     const visit = item => {
       if (item.children.length) { for (const sub of item.children) visit(sub); return; }
-      const value = item.value;
+      const value = /** @type {string | PresentationView | null} */ (item.value);
       if (value === null) return;
-      if (seen.has(value)) throw new TypeError("presentation repeats a view or region");
-      seen.add(value);
+      if (placements.has(value)) throw new TypeError("presentation repeats a view or region");
       if (typeof value === "string") {
         if (!["transcript", "strip", "rule", "composer"].includes(value)) throw new TypeError("unknown chat region: " + value);
-        regions.set(value, item.rect);
       } else {
-        const view = /** @type {PresentationView} */ (value);
-        if (!view || typeof view.layout !== "function" || typeof view.draw !== "function") throw new TypeError("presentation child needs layout and draw");
-        if (view === this || view === this.composer) throw new TypeError("use the composer region in a presentation");
-        views.push({ view, rect: item.rect });
+        if (!value || typeof value.layout !== "function" || typeof value.draw !== "function") throw new TypeError("presentation child needs layout and draw");
+        if (value === this || value === this.composer) throw new TypeError("use the composer region in a presentation");
       }
+      placements.set(value, item.rect);
     };
     for (const item of result.children) visit(item);
-    if (!regions.has("composer")) throw new TypeError("presentation needs one composer region");
+    if (!placements.has("composer")) throw new TypeError("presentation needs one composer region");
     const empty = { x: bounds.x, y: bounds.y, w: 0, h: 0 };
-    this.transcriptRect = regions.get("transcript") || empty;
-    this.stripRect = regions.get("strip") || empty;
-    this.ruleRect = regions.get("rule") || empty;
-    this.composer.layout(/** @type {Rect} */ (regions.get("composer")));
-    const visible = views.filter(item => item.rect.w > 0 && item.rect.h > 0).map(item => item.view);
+    this.transcriptRect = placements.get("transcript") || empty;
+    this.stripRect = placements.get("strip") || empty;
+    this.ruleRect = placements.get("rule") || empty;
+    this.composer.layout(/** @type {Rect} */ (placements.get("composer")));
+    /** @param {PresentationView} view @returns {boolean} */
+    const visible = view => {
+      const rect = placements.get(view);
+      return !!rect && rect.w > 0 && rect.h > 0;
+    };
     for (const view of this.presentationViews) releaseView(view, this);
-    if (this.presentationFocus && !visible.includes(this.presentationFocus)) this.presentationFocus = null;
-    if (this.presentationCapture && !visible.includes(this.presentationCapture)) this.presentationCapture = null;
+    if (this.presentationFocus && !visible(this.presentationFocus)) this.presentationFocus = null;
+    if (this.presentationCapture && !visible(this.presentationCapture)) this.presentationCapture = null;
     this.presentationViews = [];
-    for (const { view, rect } of views) {
+    for (const [view, rect] of placements) {
+      if (typeof view === "string") continue;
       claimView(view, this);
       this.presentationViews.push(view);
       view.layout(rect);
