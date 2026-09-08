@@ -1,6 +1,5 @@
 // yuke:agents — model setup and admission over the native slot contract.
 import { client } from "yuke:client";
-import { events } from "yuke:core";
 import { watchCancellation } from "yuke:interaction";
 
 /** @typedef {import("yuke:ext").Context} Context */
@@ -81,34 +80,20 @@ async function connect(ctx, provider, signal) {
     if (!key) throw failure("setup_canceled", "No API key was supplied.");
     await client.authSetApiKey(provider.provider_id, key);
   } else {
-    /** @type {Wire.AuthLoginFinishedData[]} */
-    const seen = [];
-    /** @type {((outcome: Wire.AuthLoginOutcome) => void) | null} */
-    let settled = null;
+    const login = client.authLoginTracked(provider.provider_id);
     let loginId = "";
-    const off = events.on("auth.login_finished", (event) => {
-      for (const note of event.auth || []) if (note.method === "auth.login_finished") {
-        seen.push(note.params);
-        if (note.params.login_id === loginId && settled) settled(note.params.outcome);
-      }
-    });
     let finished = false;
     try {
       check(signal);
-      const start = await client.authLogin(provider.provider_id);
+      const start = await login.start;
       loginId = start.login_id;
       check(signal);
-      const completion = /** @type {Promise<Wire.AuthLoginOutcome>} */ (new Promise((resolve) => {
-        settled = resolve;
-        const prior = seen.find((event) => event.login_id === loginId);
-        if (prior) resolve(prior.outcome);
-      }));
       if (!ctx.interaction.deviceLogin) ctx.interaction.notify("Sign in at " + start.verification_url + " with code " + start.user_code + ". Cancel the tool to stop setup.");
-      const outcome = answer(await cancellable(ctx.interaction.deviceLogin ? ctx.interaction.deviceLogin(start, completion, { signal }) : completion, signal), signal);
+      const outcome = answer(await cancellable(ctx.interaction.deviceLogin ? ctx.interaction.deviceLogin(start, login.outcome, { signal }) : login.outcome, signal), signal);
       finished = true;
       if (outcome.type !== "succeeded") throw failure(outcome.type === "canceled" ? "setup_canceled" : "auth_required", outcome.type === "failed" ? outcome.message : "Login was canceled.");
     } finally {
-      off();
+      login.dispose();
       if (loginId && !finished) await client.authCancelLogin(loginId).catch(() => {});
     }
   }

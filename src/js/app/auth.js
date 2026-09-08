@@ -93,14 +93,19 @@ function finishLogin(p, outcome) {
 // Start the device flow, then hold the dialog until the engine reports the one terminal outcome.
 /** @param {Ctx} ctx @param {ProviderRow} p @returns {void} */
 function deviceLogin(ctx, p) {
-  client.authLogin(p.provider_id).then((start) => {
+  const login = client.authLoginTracked(p.provider_id);
+  login.start.then((start) => {
     /** @param {string} id */
     const cancel = (id) => client.authCancelLogin(id).catch(() => {});
     // The plugin left while the engine got the code, so nobody can show it and the poll must stop.
-    if (!ctx.scope.alive) return cancel(start.login_id);
+    if (!ctx.scope.alive) {
+      login.dispose();
+      return cancel(start.login_id);
+    }
     let settled = false;
     // An unload with the dialog open stops the poll too, so the provider never completes a login nobody reads.
     ctx.effect(() => () => {
+      login.dispose();
       if (!settled) cancel(start.login_id);
     });
     const dialog = new DeviceDialog(start);
@@ -114,24 +119,21 @@ function deviceLogin(ctx, p) {
     });
     root.pushOverlay(win);
     const release = ctx.tui.overlay(win);
-    // The digest carries the auth events whole, so the outcome for this login id reads here.
-    const off = ctx.on("auth.login_finished", /** @param {import("yuke:engine-native").EngineEvent} ev */ (ev) => {
-      const notes = ev.type === "index" && ev.auth ? ev.auth : [];
-      const note = notes.find((n) => n.method === "auth.login_finished" && n.params.login_id === start.login_id);
-      if (!note) return;
+    login.outcome.then((outcome) => {
       settled = true;
-      off();
       release();
-      finishLogin(p, /** @type {Wire.AuthLoginFinishedData} */ (note.params).outcome);
+      finishLogin(p, outcome);
     });
     dialog.onCancel = () => {
       settled = true;
-      off();
+      login.dispose();
       release();
       cancel(start.login_id);
       notice.show("login canceled");
     };
-  }, (e) => notice.show("login failed · " + e.message));
+  }, (e) => {
+    notice.show("login failed · " + e.message);
+  });
 }
 
 // Ask for a key behind a mask, then store it. The engine announces the catalog change on its own.

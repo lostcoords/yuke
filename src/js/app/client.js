@@ -221,6 +221,48 @@ function authLogin(providerId) {
   return request("auth.login", { provider_id: providerId });
 }
 
+// Subscribe first because the owner drains engine events before it settles request promises.
+/** @param {string} providerId @returns {{ start: Promise<Wire.AuthLoginResult>, outcome: Promise<Wire.AuthLoginOutcome>, dispose: () => void }} */
+function authLoginTracked(providerId) {
+  /** @type {Wire.AuthLoginFinishedData[]} */
+  const seen = [];
+  /** @type {string | null} */
+  let loginId = null;
+  /** @type {(outcome: Wire.AuthLoginOutcome) => void} */
+  let resolveOutcome = () => {};
+  const outcome = /** @type {Promise<Wire.AuthLoginOutcome>} */ (new Promise((resolve) => { resolveOutcome = resolve; }));
+  let active = true;
+  /** @type {() => void} */
+  let off = () => {};
+  const dispose = () => {
+    if (!active) return;
+    active = false;
+    off();
+  };
+  const finish = (value) => {
+    if (!active) return;
+    dispose();
+    resolveOutcome(value);
+  };
+  off = events.on("auth.login_finished", (event) => {
+    for (const note of event.auth || []) {
+      if (note.method !== "auth.login_finished") continue;
+      if (loginId === note.params.login_id) finish(note.params.outcome);
+      else if (loginId === null) seen.push(note.params);
+    }
+  });
+  const start = client.authLogin(providerId).then((value) => {
+    loginId = value.login_id;
+    const prior = seen.find((event) => event.login_id === loginId);
+    if (prior) finish(prior.outcome);
+    return value;
+  }, (error) => {
+    dispose();
+    throw error;
+  });
+  return { start, outcome, dispose };
+}
+
 /** @param {string} loginId @returns {Promise<Wire.Empty>} */
 function authCancelLogin(loginId) {
   return request("auth.cancel_login", { login_id: loginId });
@@ -277,6 +319,7 @@ export const client = {
   catalogReload,
   authList,
   authLogin,
+  authLoginTracked,
   authCancelLogin,
   authSetApiKey,
   authRemove,

@@ -4136,6 +4136,7 @@ test "the auth plugin logs in with a device code or a key, logs out, and guards 
         \\finished("L9", { type: "succeeded" });
         \\check("other-login-ignored", root.overlays.length === 1);
         \\finished("L1", { type: "failed", message: "denied" });
+        \\await settle();
         \\check("failure-closes", root.overlays.length === 0 && notice.text === "login failed · denied");
         \\
         \\// An unknown name is a notice, not a list.
@@ -4208,6 +4209,64 @@ test "the auth plugin logs in with a device code or a key, logs out, and guards 
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "auth.js");
     try expectJs(host, "ok");
+}
+
+test "the auth device dialog closes for native completion before or after the login response" {
+    const proto = @import("proto");
+    const native_engine = @import("native/engine.zig");
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    host.interrupt_budget = std.math.maxInt(u32);
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\import { tuiPlugin } from "yuke:tui";
+        \\import "yuke:defaults";
+        \\plugins.use(tuiPlugin);
+    , "auth-native-boot.js");
+    try host.evalModule(
+        \\import { command, root } from "yuke:core";
+        \\import { client } from "yuke:client";
+        \\const settle = async () => { for (let i = 0; i < 64; i++) await Promise.resolve(); };
+        \\const start = (login_id) => ({ login_id, verification_url: "https://x/y", user_code: "AB-CD" });
+        \\client.catalogReload = () => Promise.resolve({ changed: false });
+        \\client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r1", providers: [], models: [] });
+        \\client.authList = () => Promise.resolve({ providers: [{ provider_id: "codex", can_login: true }] });
+        \\client.authCancelLogin = () => Promise.resolve({});
+        \\client.authLogin = () => Promise.resolve(start("07".repeat(32)));
+        \\command.perform("auth:login", "codex");
+        \\await settle();
+        \\globalThis.resolveLogin = null;
+        \\globalThis.openCount = () => root.overlays.length;
+        \\globalThis.startPendingLogin = async () => {
+        \\  client.authLogin = () => new Promise((resolve) => { globalThis.resolveLogin = () => resolve(start("08".repeat(32))); });
+        \\  command.perform("auth:login", "codex");
+        \\  await settle();
+        \\};
+        \\globalThis.finishPendingLogin = async () => { globalThis.resolveLogin(); await settle(); };
+    , "auth-native.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.openCount()"));
+
+    const sink = host.engine.eventSink();
+    sink.on_event(sink.ctx, .{ .method = .@"auth.login_finished", .params = .{ .auth_login_finished_data = .{
+        .login_id = .bytes([_]u8{7} ** proto.ids.LoginId.byte_len),
+        .provider_id = "codex",
+        .outcome = .{ .succeeded = .{} },
+    } } });
+    try std.testing.expect(!native_engine.drain(host.engine, host.ctx));
+    try host.drainJobs();
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.openCount()"));
+
+    try host.eval("globalThis.startPendingLogin();", "auth-native-pending.js");
+    try host.drainJobs();
+    sink.on_event(sink.ctx, .{ .method = .@"auth.login_finished", .params = .{ .auth_login_finished_data = .{
+        .login_id = .bytes([_]u8{8} ** proto.ids.LoginId.byte_len),
+        .provider_id = "codex",
+        .outcome = .{ .succeeded = .{} },
+    } } });
+    try std.testing.expect(!native_engine.drain(host.engine, host.ctx));
+    try host.eval("globalThis.finishPendingLogin();", "auth-native-finish.js");
+    try host.drainJobs();
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.openCount()"));
 }
 
 test "the activity module reads back on the fact, overlays the chat entry, and an interrupt keeps the queue" {
