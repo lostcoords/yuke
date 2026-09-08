@@ -38,7 +38,7 @@ pub fn findModel(provider_id: []const u8, model_id: []const u8) ?*const model.Mo
 }
 
 /// The catalog revision these rows come from.
-pub const revision = "cc2965678770a523d004255cd79d6ce79686ab2bd86eb41c56f307295a9d7933cfd904a57cf52570fe01ea3d6db80ffcb5cd3935f37049ca629bd676588be584";
+pub const revision = "9c319ae864ba95b34ba5273f4f0705a49395b5d94a93b2b683c097c27b779f781c54030093cbb66ca9910e02dac8fe6f6d6b8071b475a70206ffa7eb3d1210bb";
 
 pub const providers = [_]Provider{
     .{
@@ -1116,7 +1116,7 @@ pub const providers = [_]Provider{
     },
     .{
         .id = "openai-codex",
-        .name = "openai-codex",
+        .name = "OpenAI",
         .auth = .{ .oauth = "codex" },
         .route = .{
             .base_url = "https://chatgpt.com/backend-api/codex",
@@ -1126,7 +1126,727 @@ pub const providers = [_]Provider{
             .responses_dialect = .codex,
             .headers = &.{.{ .name = "originator", .value = "codex_cli_rs" }},
         },
-        .models = &.{},
+        .models = &.{
+            .{
+                .id = "chatgpt-image-latest",
+                .upstream_id = "chatgpt-image-latest",
+                .name = "chatgpt-image-latest",
+                .limits = .{
+                    .context_window = 0,
+                    .max_output_tokens = 0,
+                },
+                .cost = .{},
+                .caps = .{ .tools = false, .vision = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{ .image, .text },
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-4.1",
+                .upstream_id = "gpt-4.1",
+                .name = "GPT-4.1",
+                .limits = .{
+                    .context_window = 1047576,
+                    .max_output_tokens = 32768,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 8,
+                    .cache_read = 0.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-4.1-mini",
+                .upstream_id = "gpt-4.1-mini",
+                .name = "GPT-4.1 mini",
+                .limits = .{
+                    .context_window = 1047576,
+                    .max_output_tokens = 32768,
+                },
+                .cost = .{
+                    .input = 0.4,
+                    .output = 1.6,
+                    .cache_read = 0.1,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-4o",
+                .upstream_id = "gpt-4o",
+                .name = "GPT-4o",
+                .limits = .{
+                    .context_window = 128000,
+                    .max_output_tokens = 16384,
+                },
+                .cost = .{
+                    .input = 2.5,
+                    .output = 10,
+                    .cache_read = 1.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-4o-2024-08-06",
+                .upstream_id = "gpt-4o-2024-08-06",
+                .name = "GPT-4o (2024-08-06)",
+                .limits = .{
+                    .context_window = 128000,
+                    .max_output_tokens = 16384,
+                },
+                .cost = .{
+                    .input = 2.5,
+                    .output = 10,
+                    .cache_read = 1.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-4o-2024-11-20",
+                .upstream_id = "gpt-4o-2024-11-20",
+                .name = "GPT-4o (2024-11-20)",
+                .limits = .{
+                    .context_window = 128000,
+                    .max_output_tokens = 16384,
+                },
+                .cost = .{
+                    .input = 2.5,
+                    .output = 10,
+                    .cache_read = 1.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-4o-mini",
+                .upstream_id = "gpt-4o-mini",
+                .name = "GPT-4o mini",
+                .limits = .{
+                    .context_window = 128000,
+                    .max_output_tokens = 16384,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.6,
+                    .cache_read = 0.075,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5",
+                .upstream_id = "gpt-5",
+                .name = "GPT-5",
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.25,
+                    .output = 10,
+                    .cache_read = 0.125,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5-mini",
+                .upstream_id = "gpt-5-mini",
+                .name = "GPT-5 Mini",
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.25,
+                    .output = 2,
+                    .cache_read = 0.025,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5-nano",
+                .upstream_id = "gpt-5-nano",
+                .name = "GPT-5 Nano",
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.05,
+                    .output = 0.4,
+                    .cache_read = 0.005,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5-pro",
+                .upstream_id = "gpt-5-pro",
+                .name = "GPT-5 Pro",
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 272000,
+                },
+                .cost = .{
+                    .input = 15,
+                    .output = 120,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.1",
+                .upstream_id = "gpt-5.1",
+                .name = "GPT-5.1",
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.25,
+                    .output = 10,
+                    .cache_read = 0.125,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.2",
+                .upstream_id = "gpt-5.2",
+                .name = "GPT-5.2",
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.75,
+                    .output = 14,
+                    .cache_read = 0.175,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.2-pro",
+                .upstream_id = "gpt-5.2-pro",
+                .name = "GPT-5.2 Pro",
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 21,
+                    .output = 168,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.3-codex",
+                .upstream_id = "gpt-5.3-codex",
+                .name = "GPT-5.3 Codex",
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.75,
+                    .output = 14,
+                    .cache_read = 0.175,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.3-codex-spark",
+                .upstream_id = "gpt-5.3-codex-spark",
+                .name = "GPT-5.3 Codex Spark",
+                .limits = .{
+                    .context_window = 128000,
+                    .max_output_tokens = 32000,
+                },
+                .cost = .{
+                    .input = 1.75,
+                    .output = 14,
+                    .cache_read = 0.175,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.4",
+                .upstream_id = "gpt-5.4",
+                .name = "GPT-5.4",
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 2.5,
+                    .output = 15,
+                    .cache_read = 0.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.4-mini",
+                .upstream_id = "gpt-5.4-mini",
+                .name = "GPT-5.4 mini",
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.75,
+                    .output = 4.5,
+                    .cache_read = 0.075,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.4-nano",
+                .upstream_id = "gpt-5.4-nano",
+                .name = "GPT-5.4 nano",
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.2,
+                    .output = 1.25,
+                    .cache_read = 0.02,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.4-pro",
+                .upstream_id = "gpt-5.4-pro",
+                .name = "GPT-5.4 Pro",
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 30,
+                    .output = 180,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.5",
+                .upstream_id = "gpt-5.5",
+                .name = "GPT-5.5",
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 5,
+                    .output = 30,
+                    .cache_read = 0.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.5-pro",
+                .upstream_id = "gpt-5.5-pro",
+                .name = "GPT-5.5 Pro",
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 30,
+                    .output = 180,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.6",
+                .upstream_id = "gpt-5.6",
+                .name = "GPT-5.6",
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 4,
+                    .output = 20,
+                    .cache_read = 0.4,
+                    .cache_write = 5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.6-luna",
+                .upstream_id = "gpt-5.6-luna",
+                .name = "GPT-5.6 Luna",
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.2,
+                    .output = 1.2,
+                    .cache_read = 0.02,
+                    .cache_write = 0.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.6-sol",
+                .upstream_id = "gpt-5.6-sol",
+                .name = "GPT-5.6 Sol",
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 4,
+                    .output = 20,
+                    .cache_read = 0.4,
+                    .cache_write = 5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.6-terra",
+                .upstream_id = "gpt-5.6-terra",
+                .name = "GPT-5.6 Terra",
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 12,
+                    .cache_read = 0.2,
+                    .cache_write = 2.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-image-1-mini",
+                .upstream_id = "gpt-image-1-mini",
+                .name = "gpt-image-1-mini",
+                .limits = .{
+                    .context_window = 0,
+                    .max_output_tokens = 0,
+                },
+                .cost = .{},
+                .caps = .{ .tools = false, .vision = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{ .image, .text },
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-image-1.5",
+                .upstream_id = "gpt-image-1.5",
+                .name = "gpt-image-1.5",
+                .limits = .{
+                    .context_window = 0,
+                    .max_output_tokens = 0,
+                },
+                .cost = .{},
+                .caps = .{ .tools = false, .vision = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{ .image, .text },
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-image-2",
+                .upstream_id = "gpt-image-2",
+                .name = "gpt-image-2",
+                .limits = .{
+                    .context_window = 0,
+                    .max_output_tokens = 0,
+                },
+                .cost = .{
+                    .input = 5,
+                    .output = 30,
+                    .cache_read = 1.25,
+                },
+                .caps = .{ .tools = false, .vision = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.image},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-realtime-2.1",
+                .upstream_id = "gpt-realtime-2.1",
+                .name = "GPT-Realtime-2.1",
+                .limits = .{
+                    .context_window = 128000,
+                    .max_output_tokens = 32000,
+                },
+                .cost = .{
+                    .input = 4,
+                    .output = 24,
+                    .cache_read = 0.4,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .audio, .image, .text },
+                    .output = &.{ .audio, .text },
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "o3",
+                .upstream_id = "o3",
+                .name = "o3",
+                .limits = .{
+                    .context_window = 200000,
+                    .max_output_tokens = 100000,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 8,
+                    .cache_read = 0.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "o3-pro",
+                .upstream_id = "o3-pro",
+                .name = "o3-pro",
+                .limits = .{
+                    .context_window = 200000,
+                    .max_output_tokens = 100000,
+                },
+                .cost = .{
+                    .input = 20,
+                    .output = 80,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "text-embedding-3-large",
+                .upstream_id = "text-embedding-3-large",
+                .name = "text-embedding-3-large",
+                .limits = .{
+                    .context_window = 8191,
+                    .max_output_tokens = 3072,
+                },
+                .cost = .{
+                    .input = 0.13,
+                    .output = 0,
+                },
+                .caps = .{ .tools = false, .vision = false },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "text-embedding-3-small",
+                .upstream_id = "text-embedding-3-small",
+                .name = "text-embedding-3-small",
+                .limits = .{
+                    .context_window = 8191,
+                    .max_output_tokens = 1536,
+                },
+                .cost = .{
+                    .input = 0.02,
+                    .output = 0,
+                },
+                .caps = .{ .tools = false, .vision = false },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "text-embedding-ada-002",
+                .upstream_id = "text-embedding-ada-002",
+                .name = "text-embedding-ada-002",
+                .limits = .{
+                    .context_window = 8192,
+                    .max_output_tokens = 1536,
+                },
+                .cost = .{
+                    .input = 0.1,
+                    .output = 0,
+                },
+                .caps = .{ .tools = false, .vision = false },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+        },
     },
     .{
         .id = "openrouter",
@@ -2273,9 +2993,9 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 384000,
                 },
                 .cost = .{
-                    .input = 0.22,
-                    .output = 0.66,
-                    .cache_read = 0.007,
+                    .input = 0.44,
+                    .output = 1.32,
+                    .cache_read = 0.014,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -11248,7 +11968,7 @@ pub const providers = [_]Provider{
                     .input = &.{.text},
                     .output = &.{.text},
                 },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
@@ -11272,7 +11992,7 @@ pub const providers = [_]Provider{
                     .input = &.{ .image, .pdf, .text, .video },
                     .output = &.{.text},
                 },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,

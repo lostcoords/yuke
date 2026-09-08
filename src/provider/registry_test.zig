@@ -375,7 +375,9 @@ test "the registry emits a bare selector and resolves it back" {
     defer snapshot.deinit();
 
     // `lib/ai` owns the grammar; what the registry owns is emitting it and resolving it back.
-    const selector = snapshot.models[0].selector;
+    const selector = for (snapshot.models) |info| {
+        if (std.mem.eql(u8, info.provider, "openrouter")) break info.selector;
+    } else return error.TestUnexpectedResult;
     try testing.expect(std.mem.indexOfScalar(u8, selector, ':') == null);
 
     const match = snapshot.resolveModel(selector).?;

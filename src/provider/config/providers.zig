@@ -126,6 +126,23 @@ const FileDoc = struct {
     providers: []const FileProvider = &.{},
 };
 
+/// The writer omits an empty model list without broadening the strict input schema.
+const WritableProvider = struct {
+    id: []const u8,
+    base_url: ?[]const u8 = null,
+    protocol: ?instance.Protocol = null,
+    auth: ?FileAuth = null,
+    cache: ?instance.CachePolicy = null,
+    responses_dialect: ?instance.ResponsesDialect = null,
+    headers: ?[]const FileHeader = null,
+    models: ?[]const FileModel = null,
+};
+
+const WritableDoc = struct {
+    version: u32,
+    providers: []const WritableProvider = &.{},
+};
+
 /// The arena owns every value, including a literal key, so one teardown frees the whole layer.
 pub const Loaded = struct {
     arena: std.heap.ArenaAllocator,
@@ -190,7 +207,7 @@ pub fn serialize(gpa: Allocator, providers: []const LocalProvider) ![]u8 {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
 
-    const doc: FileDoc = .{ .version = 1, .providers = try fileProviders(arena.allocator(), providers) };
+    const doc: WritableDoc = .{ .version = 1, .providers = try fileProviders(arena.allocator(), providers) };
     var json: std.Io.Writer.Allocating = .init(arena.allocator());
     try std.json.Stringify.value(doc, .{ .emit_null_optional_fields = false, .whitespace = .indent_2 }, &json.writer);
     return gpa.dupe(u8, json.written());
@@ -213,8 +230,8 @@ pub fn writeFileBytes(io: std.Io, path: []const u8, bytes: []const u8) !void {
 }
 
 /// Project the layer onto the file shape. The writer emits the long credential form only.
-fn fileProviders(arena: Allocator, providers: []const LocalProvider) Allocator.Error![]const FileProvider {
-    const out = try arena.alloc(FileProvider, providers.len);
+fn fileProviders(arena: Allocator, providers: []const LocalProvider) Allocator.Error![]const WritableProvider {
+    const out = try arena.alloc(WritableProvider, providers.len);
     for (providers, 0..) |p, i| out[i] = .{
         .id = p.id,
         .base_url = p.base_url,
@@ -223,7 +240,7 @@ fn fileProviders(arena: Allocator, providers: []const LocalProvider) Allocator.E
         .cache = p.cache,
         .responses_dialect = p.responses_dialect,
         .headers = p.headers,
-        .models = p.models,
+        .models = if (p.models.len == 0) null else p.models,
     };
     return out;
 }
@@ -431,6 +448,7 @@ test "a grant round-trips through the writer" {
 
     const bytes = try serialize(testing.allocator, loaded.providers);
     defer testing.allocator.free(bytes);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"models\"") == null);
     var again = try loadBytes(testing.allocator, bytes);
     defer again.deinit();
 
