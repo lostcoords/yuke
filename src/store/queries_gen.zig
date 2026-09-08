@@ -663,13 +663,14 @@ pub const SessionCountParent = sql.OneQuery(
 );
 
 pub const InsertPrompt = sql.ExecQuery(
-    \\INSERT INTO session_prompts(session_id, prompt, base_prompt, child_policy, environment)
-    \\VALUES (:session_id, :prompt, :base_prompt, :child_policy, :environment);
+    \\INSERT INTO session_prompts(session_id, prompt, base_prompt, instructions, child_policy, environment)
+    \\VALUES (:session_id, :prompt, :base_prompt, :instructions, :child_policy, :environment);
 ,
     struct {
         session_id: [16]u8,
         prompt: []const u8,
         base_prompt: []const u8,
+        instructions: []const u8,
         child_policy: ?[]const u8,
         environment: []const u8,
     },
@@ -763,15 +764,61 @@ pub const ChildByName = sql.OptionalQuery(
 );
 
 pub const SelectPromptParts = sql.OptionalQuery(
-    \\SELECT base_prompt, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
+    \\SELECT base_prompt, instructions, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
 ,
     struct {
         session_id: [16]u8,
     },
     struct {
         base_prompt: []const u8,
+        instructions: []const u8,
         child_policy: ?[]const u8,
         environment: []const u8,
+    },
+);
+
+pub const InsertInstruction = sql.ExecQuery(
+    \\INSERT INTO session_instructions(session_id, scope, path, canonical_path, content_hash, text)
+    \\VALUES (:session_id, :scope, :path, :canonical_path, :content_hash, :text);
+,
+    struct {
+        session_id: [16]u8,
+        scope: []const u8,
+        path: []const u8,
+        canonical_path: []const u8,
+        content_hash: [32]u8,
+        text: []const u8,
+    },
+);
+
+pub const SelectInstructions = sql.ManyQuery(
+    \\SELECT scope, path, canonical_path, content_hash, text FROM session_instructions
+    \\WHERE session_id = :session_id ORDER BY scope;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        scope: []const u8,
+        path: []const u8,
+        canonical_path: []const u8,
+        content_hash: [32]u8,
+        text: []const u8,
+    },
+);
+
+pub const SelectInstructionSources = sql.ManyQuery(
+    \\SELECT scope, path, canonical_path, content_hash FROM session_instructions
+    \\WHERE session_id = :session_id ORDER BY scope;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        scope: []const u8,
+        path: []const u8,
+        canonical_path: []const u8,
+        content_hash: [32]u8,
     },
 );
 
@@ -817,6 +864,9 @@ pub const Queries = struct {
     child_admission_candidates: ChildAdmissionCandidates,
     child_by_name: ChildByName,
     select_prompt_parts: SelectPromptParts,
+    insert_instruction: InsertInstruction,
+    select_instructions: SelectInstructions,
+    select_instruction_sources: SelectInstructionSources,
 
     pub fn prepareAll(conn: sql.Connection) !@This() {
         return sql.prepareAll(@This(), conn);

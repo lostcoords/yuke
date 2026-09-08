@@ -2590,6 +2590,31 @@
       ]
     },
     {
+      "name": "InstructionSource",
+      "fields": [
+        {
+          "name": "scope",
+          "type": "InstructionScope",
+          "presence": "required"
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "canonical_path",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "content_hash",
+          "type": "InstructionHash",
+          "presence": "required"
+        }
+      ]
+    },
+    {
       "name": "SessionConfigResult",
       "doc": "This result describes `session.config.get`.",
       "fields": [
@@ -2703,6 +2728,12 @@
           "name": "last_run",
           "doc": "The outcome of the latest terminal turn; the engine reports it for a child.",
           "type": "RunOutcome",
+          "presence": "optional"
+        },
+        {
+          "name": "instruction_sources",
+          "doc": "Only session.get includes the instruction sources.",
+          "type": "[]InstructionSource",
           "presence": "optional"
         }
       ]
@@ -3872,6 +3903,20 @@
   ],
   "enumerations": [
     {
+      "name": "InstructionScope",
+      "numeric": false,
+      "values": [
+        {
+          "name": "global",
+          "wire": "global"
+        },
+        {
+          "name": "workspace",
+          "wire": "workspace"
+        }
+      ]
+    },
+    {
       "name": "AgentModelSlot",
       "numeric": false,
       "values": [
@@ -3882,20 +3927,6 @@
         {
           "name": "medium",
           "wire": "medium"
-        }
-      ]
-    },
-    {
-      "name": "InputQueueReason",
-      "numeric": false,
-      "values": [
-        {
-          "name": "session_busy",
-          "wire": "session_busy"
-        },
-        {
-          "name": "concurrency_limit",
-          "wire": "concurrency_limit"
         }
       ]
     },
@@ -4015,6 +4046,20 @@
         {
           "name": "overloaded",
           "wire": "-31021"
+        }
+      ]
+    },
+    {
+      "name": "InputQueueReason",
+      "numeric": false,
+      "values": [
+        {
+          "name": "session_busy",
+          "wire": "session_busy"
+        },
+        {
+          "name": "concurrency_limit",
+          "wire": "concurrency_limit"
         }
       ]
     },
@@ -4575,6 +4620,11 @@
       "name": "AgentConfigRev",
       "base": "[32]u8",
       "doc": "This revision is the SHA-256 of the file: 32 raw bytes, 64 hexadecimal characters."
+    },
+    {
+      "name": "InstructionHash",
+      "base": "[32]u8",
+      "doc": "This hash identifies the exact instruction file bytes."
     },
     {
       "name": "CatalogRev",

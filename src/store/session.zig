@@ -4,6 +4,8 @@
 const std = @import("std");
 const sql = @import("sql");
 const Database = @import("store.zig").Database;
+const instructions = @import("../session/instructions.zig");
+const instruction_types = @import("proto").instructions;
 const queries_gen = @import("queries_gen.zig");
 
 /// SessionSnapshot returns the summary for the client and the open-run marker.
@@ -72,19 +74,51 @@ pub fn childIds(db: *Database, arena: std.mem.Allocator, parent_id: [16]u8) ![]c
 }
 
 pub const PromptParts = @import("../session/prompt.zig").Parts;
+pub const PromptInput = struct {
+    base: []const u8,
+    child_policy: ?[]const u8,
+    environment: []const u8,
+    sources: []const instructions.Snapshot = &.{},
+};
 
 pub fn promptParts(db: *Database, arena: std.mem.Allocator, id: [16]u8) !PromptParts {
     const row = (try db.queries.select_prompt_parts.maybeOne(arena, .{ .session_id = id })) orelse return error.MissingSessionPrompt;
     std.debug.assert(row.value.environment.len <= @import("proto").meta.limits.max_message_string_bytes);
-    return .{ .base = row.value.base_prompt, .child_policy = row.value.child_policy, .environment = row.value.environment };
+    return .{ .base = row.value.base_prompt, .instructions = row.value.instructions, .child_policy = row.value.child_policy, .environment = row.value.environment };
 }
 
 /// Render and store the exact parts; the caller owns the returned text.
-pub fn setPrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8, parts: PromptParts) ![]const u8 {
-    const text = try parts.render(arena);
+pub fn setPrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8, parts: PromptInput) ![]const u8 {
+    const resolved: PromptParts = .{ .base = parts.base, .instructions = try instructions.render(arena, parts.sources), .child_policy = parts.child_policy, .environment = parts.environment };
+    const text = try resolved.render(arena);
     errdefer arena.free(text);
-    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text, .base_prompt = parts.base, .child_policy = parts.child_policy, .environment = parts.environment });
+    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text, .base_prompt = parts.base, .instructions = resolved.instructions, .child_policy = parts.child_policy, .environment = parts.environment });
+    for (parts.sources) |source| try db.queries.insert_instruction.exec(.{ .session_id = id, .scope = @tagName(source.source.scope), .path = source.source.path, .canonical_path = source.source.canonical_path, .content_hash = source.source.content_hash.raw, .text = source.text });
     return text;
+}
+
+pub fn instructionSnapshots(db: *Database, arena: std.mem.Allocator, id: [16]u8) ![]const instructions.Snapshot {
+    var rows = try db.queries.select_instructions.rows(.{ .session_id = id });
+    defer rows.deinit();
+    var result: std.ArrayList(instructions.Snapshot) = .empty;
+    while (try rows.next(arena)) |row| try result.append(arena, .{ .source = instructionSource(row.value), .text = row.value.text });
+    std.debug.assert(result.items.len <= 2);
+    return result.items;
+}
+
+pub fn instructionSources(db: *Database, arena: std.mem.Allocator, id: [16]u8) ![]const instruction_types.InstructionSource {
+    var rows = try db.queries.select_instruction_sources.rows(.{ .session_id = id });
+    defer rows.deinit();
+    var result: std.ArrayList(instruction_types.InstructionSource) = .empty;
+    while (try rows.next(arena)) |row| try result.append(arena, instructionSource(row.value));
+    std.debug.assert(result.items.len <= 2);
+    return result.items;
+}
+
+fn instructionSource(row: anytype) instruction_types.InstructionSource {
+    const scope = std.meta.stringToEnum(instruction_types.InstructionScope, row.scope) orelse unreachable;
+    std.debug.assert(row.path.len > 0 and row.canonical_path.len > 0);
+    return .{ .scope = scope, .path = row.path, .canonical_path = row.canonical_path, .content_hash = .bytes(row.content_hash) };
 }
 
 /// Read the session's system prompt into `arena`, or return null when no prompt exists.
@@ -490,14 +524,17 @@ test "prompt components and the composed text survive a database restart" {
     const path = try std.fmt.allocPrintSentinel(a, "{s}/session.db", .{directory}, 0);
     const id = [_]u8{9} ** 16;
     const parts: PromptParts = .{ .base = "base\n\nwith separators", .child_policy = "policy", .environment = "<environment>\nsession_start_date_utc: 2026-09-08\n</environment>" };
-    const text = "base\n\nwith separators\n\npolicy\n\n<environment>\nsession_start_date_utc: 2026-09-08\n</environment>";
+    const sources = [_]instructions.Snapshot{.{ .source = .{ .scope = .workspace, .path = "/w/AGENTS.md", .canonical_path = "/w/AGENTS.md", .content_hash = .bytes(.{42} ** 32) }, .text = "literal ${workspace}" }};
+    var expected = parts;
+    expected.instructions = try instructions.render(a, &sources);
+    const text = try expected.render(a);
     {
         var db = try Database.open(try zqlite.open(path, zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex));
         defer db.deinit();
         var tx = try db.begin();
         defer tx.deinit();
         try create(&db, rootParams(id, "/w"));
-        try testing.expectEqualStrings(text, try setPrompt(&db, a, id, parts));
+        try testing.expectEqualStrings(text, try setPrompt(&db, a, id, .{ .base = parts.base, .child_policy = parts.child_policy, .environment = parts.environment, .sources = &sources }));
         try tx.commit();
     }
     var db = try Database.open(try zqlite.open(path, zqlite.OpenFlags.NoMutex));
@@ -507,4 +544,9 @@ test "prompt components and the composed text survive a database restart" {
     try testing.expectEqualStrings(parts.child_policy.?, saved.child_policy.?);
     try testing.expectEqualStrings(parts.environment, saved.environment);
     try testing.expectEqualStrings(text, (try prompt(&db, a, id)).?);
+    try testing.expectEqualStrings(expected.instructions, saved.instructions);
+    const restored = try instructionSnapshots(&db, a, id);
+    try testing.expectEqual(@as(usize, 1), restored.len);
+    try testing.expectEqualStrings(sources[0].text, restored[0].text);
+    try testing.expectEqual(sources[0].source.content_hash, restored[0].source.content_hash);
 }

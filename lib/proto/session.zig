@@ -107,6 +107,8 @@ pub const SessionListItem = struct {
     activity: SessionActivity,
     /// The outcome of the latest terminal turn; the engine reports it for a child.
     last_run: ?run.RunOutcome = null,
+    /// Only session.get includes the instruction sources.
+    instruction_sources: ?[]const @import("instructions.zig").InstructionSource = null,
 };
 
 /// These are the `session.list` input fields. They borrow their data.

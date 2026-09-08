@@ -40,8 +40,11 @@ pub fn call(
                     .ignore_unknown_fields = true,
                 }) catch return Failure{ .code = .bad_request, .message = "bad parameters" };
 
-                const result = invoke(spec, runtime, arena, params, &launch) catch |err|
+                var diagnostic: ?[]const u8 = null;
+                const result = invoke(spec, runtime, arena, params, &launch, &diagnostic) catch |err| {
+                    if (diagnostic) |message| return Failure{ .code = .bad_request, .message = message };
                     return failureFor(err) orelse return err;
+                };
 
                 try std.json.Stringify.value(result, .{ .emit_null_optional_fields = false }, out);
                 return null;
@@ -53,7 +56,7 @@ pub fn call(
 }
 
 /// Run the one command this method names. A comptime condition drops every other branch.
-fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, params: spec.params, launch: *?turn.Launch) !spec.result {
+fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, params: spec.params, launch: *?turn.Launch, diagnostic: *?[]const u8) !spec.result {
     const n = spec.name;
     const engine = &runtime.engine;
     if (n == .@"agents.set_model") return @import("../engine/agent_config.zig").setModel(engine, arena, params);
@@ -64,7 +67,7 @@ fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, param
     if (n == .@"session.list") return commands.sessionList(engine, arena, params);
     if (n == .@"session.get") return commands.sessionGet(engine, arena, params);
     if (n == .@"session.queue") return commands.sessionQueue(engine, arena, params);
-    if (n == .@"session.create") return commands.sessionCreateForRpc(engine, arena, params, launch);
+    if (n == .@"session.create") return commands.sessionCreateForRpc(engine, arena, params, launch, diagnostic);
     if (n == .@"session.config") return commands.sessionConfig(engine, arena, params);
     if (n == .@"session.history") return commands.sessionHistory(engine, arena, params);
     if (n == .@"session.send_input") return commands.sessionSendInputForRpc(engine, arena, params, launch);
@@ -148,6 +151,7 @@ fn failureFor(err: anyerror) ?Failure {
         error.BadCursor => .{ .code = .stale_cursor, .message = "stale cursor" },
         error.RootNotAbsolute => .{ .code = .bad_request, .message = "the workspace path must be absolute" },
         error.BadPath => .{ .code = .bad_request, .message = "the engine cannot read the path" },
+        error.InvalidInstructions => .{ .code = .bad_request, .message = "an AGENTS.md source is invalid" },
         error.InvalidPromptPlaceholder => .{ .code = .bad_request, .message = "the prompt contains an unknown or incomplete placeholder" },
         error.PromptTooLarge => .{ .code = .bad_request, .message = "the resolved prompt exceeds the protocol string limit" },
         error.BadRequest => .{ .code = .bad_request, .message = "a limit is out of range" },

@@ -245,10 +245,11 @@ WHERE parent_id = :filter_parent_id
 -- session_id: [16]u8!
 -- prompt: []const u8!
 -- base_prompt: []const u8!
+-- instructions: []const u8!
 -- child_policy: []const u8
 -- environment: []const u8!
-INSERT INTO session_prompts(session_id, prompt, base_prompt, child_policy, environment)
-VALUES (:session_id, :prompt, :base_prompt, :child_policy, :environment);
+INSERT INTO session_prompts(session_id, prompt, base_prompt, instructions, child_policy, environment)
+VALUES (:session_id, :prompt, :base_prompt, :instructions, :child_policy, :environment);
 
 -- name: SelectPrompt :optional
 -- Read the session's system prompt. An absent row reads back as null.
@@ -305,6 +306,36 @@ SELECT id FROM sessions WHERE parent_id = :parent_id AND name = :name;
 -- name: SelectPromptParts :optional
 -- session_id: [16]u8!
 -- base_prompt: []const u8!
+-- instructions: []const u8!
 -- child_policy: []const u8
 -- environment: []const u8!
-SELECT base_prompt, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
+SELECT base_prompt, instructions, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
+
+-- name: InsertInstruction :exec
+-- session_id: [16]u8!
+-- scope: []const u8!
+-- path: []const u8!
+-- canonical_path: []const u8!
+-- content_hash: [32]u8!
+-- text: []const u8!
+INSERT INTO session_instructions(session_id, scope, path, canonical_path, content_hash, text)
+VALUES (:session_id, :scope, :path, :canonical_path, :content_hash, :text);
+
+-- name: SelectInstructions :many
+-- session_id: [16]u8!
+-- scope: []const u8!
+-- path: []const u8!
+-- canonical_path: []const u8!
+-- content_hash: [32]u8!
+-- text: []const u8!
+SELECT scope, path, canonical_path, content_hash, text FROM session_instructions
+WHERE session_id = :session_id ORDER BY scope;
+
+-- name: SelectInstructionSources :many
+-- session_id: [16]u8!
+-- scope: []const u8!
+-- path: []const u8!
+-- canonical_path: []const u8!
+-- content_hash: [32]u8!
+SELECT scope, path, canonical_path, content_hash FROM session_instructions
+WHERE session_id = :session_id ORDER BY scope;

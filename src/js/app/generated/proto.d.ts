@@ -746,6 +746,13 @@ export interface SessionConfigParams {
   readonly config_rev?: ConfigRev;
 }
 
+export interface InstructionSource {
+  readonly scope: InstructionScope;
+  readonly path: string;
+  readonly canonical_path: string;
+  readonly content_hash: InstructionHash;
+}
+
 /** This result describes `session.config.get`. */
 export interface SessionConfigResult {
   readonly config: RunConfig;
@@ -786,6 +793,8 @@ export interface SessionListItem {
   readonly activity: SessionActivity;
   /** The outcome of the latest terminal turn; the engine reports it for a child. */
   readonly last_run?: RunOutcome;
+  /** Only session.get includes the instruction sources. */
+  readonly instruction_sources?: ReadonlyArray<InstructionSource>;
 }
 
 /** These are the `session.list` input fields. They borrow their data. */
@@ -994,14 +1003,14 @@ export interface ViewText {
   readonly language?: string;
 }
 
+export type InstructionScope =
+  | "global"
+  | "workspace"
+;
+
 export type AgentModelSlot =
   | "small"
   | "medium"
-;
-
-export type InputQueueReason =
-  | "session_busy"
-  | "concurrency_limit"
 ;
 
 /** Workspace execution environment. Advertised engine capability. Numeric JSON-RPC and yuke error codes. */
@@ -1062,6 +1071,11 @@ export type ErrorCode =
   | -32603
   /** overloaded */
   | -31021
+;
+
+export type InputQueueReason =
+  | "session_busy"
+  | "concurrency_limit"
 ;
 
 export type AuthCredentialKind =
@@ -1488,6 +1502,9 @@ export type ToolOutputDeltaData = PartDelta;
 
 /** This revision is the SHA-256 of the file: 32 raw bytes, 64 hexadecimal characters. */
 export type AgentConfigRev = string;
+
+/** This hash identifies the exact instruction file bytes. */
+export type InstructionHash = string;
 
 /** This ID uses 64 raw bytes and 128 lowercase hexadecimal characters on the wire. */
 export type CatalogRev = string;

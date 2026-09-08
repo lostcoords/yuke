@@ -117,6 +117,7 @@ pub fn sessionGet(engine: *Engine, arena: std.mem.Allocator, params: proto.sessi
     var item = try session_events.sessionItem(arena, snapshot);
     if (snapshot.parent_id != null) item.last_run = try database.run.latestOutcome(engine.deps.db, arena, snapshot.id);
     item.activity = try liveActivity(engine, arena, session_id, item.activity);
+    item.instruction_sources = try session_store.instructionSources(engine.deps.db, arena, session_id.raw);
     return item;
 }
 
@@ -398,11 +399,11 @@ fn validateParentSite(engine: *Engine, site: proto.input.ToolSite) !void {
 pub fn sessionCreate(engine: *Engine, arena: std.mem.Allocator, params: proto.misc.CreateSession) !proto.session.SessionResult {
     var launch: ?run_task.Launch = null;
     defer run_task.Launch.release(&launch, engine);
-    return sessionCreateForRpc(engine, arena, params, &launch);
+    return sessionCreateForRpc(engine, arena, params, &launch, null);
 }
 
 /// Save the session and its first input under one transaction and one response gate.
-pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.misc.CreateSession, launch: *?run_task.Launch) !proto.session.SessionResult {
+pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.misc.CreateSession, launch: *?run_task.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionResult {
     std.debug.assert(launch.* == null);
     if (engine.closing) return error.EngineClosing;
     const content: ?[]const proto.content.ContentPart = if (params.initial_input) |input| switch (input) {
@@ -446,6 +447,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     else
         prompts.default_system_prompt;
     const child_prompt = if (parent != null) try prompts.expand(arena, engine.child_instructions orelse prompts.default_child_instructions, prompt_context) else null;
+    const sources = if (parent) |pid| try session_store.instructionSnapshots(engine.deps.db, arena, pid.raw) else try @import("../session/instructions.zig").load(arena, engine.deps.io, engine.deps.env, root, diagnostic);
     const now = engine.nowMillis();
     const environment = try prompts.environment(arena, root, now);
     if (parent_tree) |tree| try reports.reserve(engine, arena, tree.root);
@@ -476,7 +478,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
             .created_at_ms = now,
             .updated_at_ms = now,
         });
-        const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, .{ .base = base_prompt, .child_policy = child_prompt, .environment = environment });
+        const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, .{ .base = base_prompt, .child_policy = child_prompt, .environment = environment, .sources = sources });
         if (available) prepared = try run.RunSlot.prepare(engine.deps.gpa, model, reasoning, system_prompt, params.max_rounds);
         try config_store.recordInitial(engine.deps.db, id.raw, model, reasoning);
         if (content) |parts| queued = try input_store.enqueueSource(engine.deps.db, arena, id.raw, engine.newId(), now, parts, now, if (params.child) |child| .{ .parent_instruction = child.site } else null);

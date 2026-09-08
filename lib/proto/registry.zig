@@ -1,5 +1,6 @@
 //! The protocol type registry for the oracle and generator.
 
+const instructions = @import("instructions.zig");
 const agents = @import("agents.zig");
 const activity = @import("activity.zig");
 const auth = @import("auth.zig");
@@ -136,6 +137,7 @@ pub const structs = [_]TypeEntry{
     .{ .name = "SessionCompactParams", .ty = session.SessionCompactParams },
     .{ .name = "SessionCompactResult", .ty = session.SessionCompactResult },
     .{ .name = "SessionConfigParams", .ty = session.SessionConfigParams },
+    .{ .name = "InstructionSource", .ty = instructions.InstructionSource },
     .{ .name = "SessionConfigResult", .ty = session.SessionConfigResult },
     .{ .name = "SessionForkParams", .ty = session.SessionForkParams },
     .{ .name = "SessionGetParams", .ty = session.SessionGetParams },
@@ -208,6 +210,7 @@ pub const envelope_unions = [_]TypeEntry{
 };
 
 pub const string_enums = [_]EnumEntry{
+    .{ .name = "InstructionScope", .ty = instructions.InstructionScope },
     .{ .name = "AgentModelSlot", .ty = agents.AgentModelSlot },
     .{ .name = "InputQueueReason", .ty = session.InputQueueReason },
     .{ .name = "AuthCredentialKind", .ty = enums.AuthCredentialKind },
@@ -254,6 +257,7 @@ pub const aliases = [_]AliasEntry{
     .{ .name = "MessagePartDeltaData", .base = "PartDelta" },
     .{ .name = "ToolOutputDeltaData", .base = "PartDelta" },
     .{ .name = "AgentConfigRev", .base = "[32]u8" },
+    .{ .name = "InstructionHash", .base = "[32]u8" },
     .{ .name = "CatalogRev", .base = "[64]u8" },
     .{ .name = "ModelId", .base = "string" },
     .{ .name = "SessionId", .base = "[16]u8" },

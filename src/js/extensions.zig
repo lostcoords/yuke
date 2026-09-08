@@ -626,10 +626,10 @@ test "a JavaScript build hook reconstructs exact prompt components" {
         \\import { plugins } from "yuke:ext";
         \\plugins.use({ name: "prompt-parts", apply(ctx) {
         \\  ctx.hook("request.build", (request) => {
-        \\    const { base, child_policy, environment } = request.context.prompt;
+        \\    const { base, instructions, child_policy, environment } = request.context.prompt;
         \\    const join = (parts) => parts.filter((text) => text != null && text.length > 0).join("\n\n");
-        \\    if (join([base, child_policy, environment]) !== request.system) return { block: "prompt mismatch" };
-        \\    return { replace: { ...request, system: join(["custom base", child_policy, environment]) } };
+        \\    if (join([base, instructions, child_policy, environment]) !== request.system) return { block: "prompt mismatch" };
+        \\    return { replace: { ...request, system: join(["custom base", instructions, child_policy, environment]) } };
         \\  });
         \\} });
     , kernel_boot);
@@ -640,7 +640,7 @@ test "a JavaScript build hook reconstructs exact prompt components" {
     const environment = "<environment>\nworkspace: /work\n</environment>";
     const Parts = @import("../session/prompt.zig").Parts;
     const cases = [_]struct { parts: Parts, system: []const u8, expected: []const u8 }{
-        .{ .parts = .{ .base = "base\n\nwith separators", .child_policy = "child policy", .environment = environment }, .system = "base\n\nwith separators\n\nchild policy\n\n" ++ environment, .expected = "custom base\n\nchild policy\n\n" ++ environment },
+        .{ .parts = .{ .base = "base\n\nwith separators", .instructions = "project rules", .child_policy = "child policy", .environment = environment }, .system = "base\n\nwith separators\n\nproject rules\n\nchild policy\n\n" ++ environment, .expected = "custom base\n\nproject rules\n\nchild policy\n\n" ++ environment },
         .{ .parts = .{ .base = "", .child_policy = null, .environment = environment }, .system = environment, .expected = "custom base\n\n" ++ environment },
     };
     for (cases) |case| {
@@ -657,4 +657,22 @@ test "a JavaScript build hook reconstructs exact prompt components" {
         try std.testing.expectEqualStrings("replace", parsed.object.get("type").?.string);
         try std.testing.expectEqualStrings(case.expected, parsed.object.get("value").?.object.get("system").?.string);
     }
+}
+
+test "session create returns the invalid instruction path through the call API" {
+    const proto = @import("proto");
+    var f: Fixture = undefined;
+    try f.init("", kernel_boot);
+    defer f.deinit();
+    try f.tmp.dir.writeFile(std.testing.io, .{ .sub_path = "AGENTS.md", .data = "\xff" });
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const params = try std.json.Stringify.valueAlloc(a, .{ .workspace_path = f.extensions.host.cwd }, .{});
+    var output: std.Io.Writer.Allocating = .init(a);
+    const failure = (try @import("../app/call.zig").call(&f.app, a, "session.create", params, &output.writer)).?;
+    try std.testing.expectEqual(proto.enums.ErrorCode.bad_request, failure.code);
+    try std.testing.expect(std.mem.indexOf(u8, failure.message, f.extensions.host.cwd) != null);
+    try std.testing.expect(std.mem.indexOf(u8, failure.message, "AGENTS.md") != null);
+    try std.testing.expectEqual(@as(usize, 0), output.written().len);
 }

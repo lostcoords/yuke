@@ -171,6 +171,18 @@ CREATE TABLE session_prompts (
         REFERENCES sessions(id) ON DELETE CASCADE,
     prompt TEXT NOT NULL,
     base_prompt TEXT NOT NULL,
+    instructions TEXT NOT NULL,
     child_policy TEXT,
     environment TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE session_instructions (
+    session_id BLOB NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL CHECK (scope IN ('global', 'workspace')),
+    path TEXT NOT NULL,
+    canonical_path TEXT NOT NULL,
+    content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),
+    text TEXT NOT NULL,
+    PRIMARY KEY (session_id, scope),
+    UNIQUE (session_id, canonical_path)
 ) STRICT, WITHOUT ROWID;

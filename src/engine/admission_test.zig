@@ -73,7 +73,7 @@ const Fixture = struct {
     }
 
     fn child(self: *Fixture, name: []const u8, launch: *?turn.Launch) !proto.session.SessionResult {
-        return commands.sessionCreateForRpc(&self.engine, self.arena.allocator(), self.params(name), launch);
+        return commands.sessionCreateForRpc(&self.engine, self.arena.allocator(), self.params(name), launch, null);
     }
 
     fn toolSite(self: *Fixture, id: proto.ids.SessionId) !proto.input.ToolSite {
@@ -112,14 +112,14 @@ test "depth limits admit grandchildren and keep names local to each parent" {
     var params = f.params("review");
     params.child.?.site = try f.toolSite(child.session.id);
     var grandchild_launch: ?turn.Launch = null;
-    try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch));
+    try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch, null));
     try f.engine.setAgentLimits(8, 2);
-    const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch);
+    const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch, null);
     try testing.expectEqual(@as(u32, 2), grandchild_launch.?.slot.depth);
     try testing.expectEqual(f.parent, grandchild_launch.?.slot.tree_root);
     params.child.?.site = .{ .session_id = grandchild.session.id, .message_id = 2, .part_id = 0 };
     var refused: ?turn.Launch = null;
-    try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, params, &refused));
+    try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, params, &refused, null));
 }
 
 test "one tree limit queues grandchildren and resumes their parent after reports" {
@@ -133,7 +133,7 @@ test "one tree limit queues grandchildren and resumes their parent after reports
     var params = f.params("scan");
     params.child.?.site = try f.toolSite(child.session.id);
     var grandchild_launch: ?turn.Launch = null;
-    const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch);
+    const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch, null);
     try testing.expectEqual(@as(u64, 1), grandchild.input.?.queued.capacity.?.active);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, grandchild.session.id.raw)).?.run_id_high);
     var sibling_launch: ?turn.Launch = null;
@@ -150,7 +150,7 @@ test "one tree limit queues grandchildren and resumes their parent after reports
     try f.engine.setAgentLimits(1, 1);
     var refused: ?turn.Launch = null;
     params.child.?.name = "later";
-    try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, params, &refused));
+    try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, params, &refused, null));
     f.releaseParent(&child_launch);
     for (0..1000) |_| {
         const marks = (try database.event.highWater(&f.db, a, child.session.id.raw)).?;
@@ -190,13 +190,13 @@ test "atomic creation binds its receipt and rejects invalid child sites without 
     for ([_][]const u8{ "root", "Research", "../escape", "two words", "", "9start", "a" ** 65 }) |name| try testing.expectError(error.BadChildName, f.child(name, &refused));
     var bad = f.params("invalid");
     bad.child.?.site.message_id = 999;
-    try testing.expectError(error.BadToolSite, commands.sessionCreateForRpc(&f.engine, a, bad, &refused));
+    try testing.expectError(error.BadToolSite, commands.sessionCreateForRpc(&f.engine, a, bad, &refused, null));
     bad = f.params("nested");
     bad.child.?.site.session_id = first.session.id;
-    try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, bad, &refused));
+    try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, bad, &refused, null));
     bad = f.params("empty");
     bad.initial_input = null;
-    try testing.expectError(error.BadChild, commands.sessionCreateForRpc(&f.engine, a, bad, &refused));
+    try testing.expectError(error.BadChild, commands.sessionCreateForRpc(&f.engine, a, bad, &refused, null));
     try testing.expectEqual(@as(u64, 2), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
     try testing.expect(refused == null);
 }
@@ -247,7 +247,7 @@ test "a parent site must name a running tool part in an uncanceled run" {
     var refused: ?turn.Launch = null;
     var bad = f.params("outside");
     bad.child.?.site.part_id = 7;
-    try testing.expectError(error.BadToolSite, commands.sessionCreateForRpc(&f.engine, a, bad, &refused));
+    try testing.expectError(error.BadToolSite, commands.sessionCreateForRpc(&f.engine, a, bad, &refused, null));
     const active = f.engine.sessions.get(f.parent).?.active_run.?;
     active.cancel_requested = true;
     try testing.expectError(error.BadToolSite, f.child("stopping", &refused));
@@ -423,7 +423,7 @@ test "a failed initial input transaction leaves no session or ownership claim" {
     const owner_count = f.engine.owners.count();
     const session_count = try database.session.count(&f.db, a, .{});
     var gate: ?turn.Launch = null;
-    try testing.expectError(error.ConstraintTrigger, commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .initial_input = input() }, &gate));
+    try testing.expectError(error.ConstraintTrigger, commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .initial_input = input() }, &gate, null));
     try testing.expectEqual(owner_count, f.engine.owners.count());
     try testing.expectEqual(session_count, try database.session.count(&f.db, a, .{}));
     try testing.expectEqual(@as(u32, 1), f.engine.sessions.map.count());
@@ -484,17 +484,17 @@ test "native child admission enforces the slot and preserves parent instruction 
     var gate: ?turn.Launch = null;
     var params = f.params("guarded");
     params.child.?.slot = .medium;
-    try testing.expectError(error.AgentSetupRequired, commands.sessionCreateForRpc(&f.engine, a, params, &gate));
+    try testing.expectError(error.AgentSetupRequired, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
     params = f.params("guarded");
     params.model = "parent/large";
-    try testing.expectError(error.AgentConfigConflict, commands.sessionCreateForRpc(&f.engine, a, params, &gate));
+    try testing.expectError(error.AgentConfigConflict, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
     params.model = null;
     params.reasoning = "high";
-    try testing.expectError(error.AgentConfigConflict, commands.sessionCreateForRpc(&f.engine, a, params, &gate));
+    try testing.expectError(error.AgentConfigConflict, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
     try testing.expectEqual(@as(u64, 1), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
     params.reasoning = null;
     params.system_prompt = "custom child prompt";
-    const child = try commands.sessionCreateForRpc(&f.engine, a, params, &gate);
+    const child = try commands.sessionCreateForRpc(&f.engine, a, params, &gate, null);
     try testing.expectEqualStrings("test/model", child.session.model);
     const prompt = (try database.session.prompt(&f.db, a, child.session.id.raw)).?;
     try testing.expectEqualStrings(try std.fmt.allocPrint(a, "custom child prompt\n\n{s}\n\n{s}", .{ @import("prompt.zig").default_child_instructions, (try database.session.promptParts(&f.db, a, child.session.id.raw)).environment }), prompt);
@@ -529,7 +529,7 @@ test "child prompts inherit the saved base and snapshot their own policy" {
     var grand_params = f.params("grandchild");
     grand_params.child.?.site = site;
     var grand_launch: ?turn.Launch = null;
-    const grandchild = try commands.sessionCreateForRpc(&f.engine, a, grand_params, &grand_launch);
+    const grandchild = try commands.sessionCreateForRpc(&f.engine, a, grand_params, &grand_launch, null);
     const grand_parts = try database.session.promptParts(&f.db, a, grandchild.session.id.raw);
     try testing.expectEqualStrings(try std.fmt.allocPrint(a, "parent base\n\nnext policy grandchild\n\n{s}", .{grand_parts.environment}), (try database.session.prompt(&f.db, a, grandchild.session.id.raw)).?);
     try testing.expectEqualStrings(saved.system_prompt.?, (try database.session.prompt(&f.db, a, child.session.id.raw)).?);
@@ -537,7 +537,7 @@ test "child prompts inherit the saved base and snapshot their own policy" {
     var explicit = f.params("explicit");
     explicit.system_prompt = "${agent_name}";
     var explicit_launch: ?turn.Launch = null;
-    const custom = try commands.sessionCreateForRpc(&f.engine, a, explicit, &explicit_launch);
+    const custom = try commands.sessionCreateForRpc(&f.engine, a, explicit, &explicit_launch, null);
     const custom_parts = try database.session.promptParts(&f.db, a, custom.session.id.raw);
     try testing.expectEqualStrings(try std.fmt.allocPrint(a, "explicit\n\n{s}", .{custom_parts.environment}), (try database.session.prompt(&f.db, a, custom.session.id.raw)).?);
 }
@@ -593,4 +593,58 @@ test "default and empty bases retain the environment and reject oversized compos
     @memset(oversized, 'x');
     try testing.expectError(error.PromptTooLarge, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .system_prompt = oversized }));
     try testing.expectEqual(count, (try commands.sessionList(&f.engine, a, .{})).total);
+}
+
+test "instruction snapshots survive file edits and child creation" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const workspace = path_buf[0..try tmp.dir.realPath(testing.io, &path_buf)];
+    const original = "Use the project rules literally: ${unknown}.\n";
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = original });
+    var root_launch: ?turn.Launch = null;
+    const root = try commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model", .initial_input = input(), .system_prompt = "custom" }, &root_launch, null);
+    const root_parts = try database.session.promptParts(&f.db, a, root.session.id.raw);
+    try testing.expectEqualStrings("custom", root_parts.base);
+    try testing.expect(std.mem.indexOf(u8, root_parts.instructions, original) != null);
+    const metadata = (try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id })).instruction_sources.?;
+    try testing.expectEqual(@as(usize, 1), metadata.len);
+    try testing.expectEqual(.workspace, metadata[0].scope);
+    try testing.expectEqualStrings(try std.fs.path.join(a, &.{ workspace, "AGENTS.md" }), metadata[0].path);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = "\xff" });
+    f.engine.max_agent_depth = 2;
+    var params = f.params("worker");
+    params.workspace_path = workspace;
+    params.child.?.site = try f.toolSite(root.session.id);
+    params.system_prompt = "";
+    var child_launch: ?turn.Launch = null;
+    const child = try commands.sessionCreateForRpc(&f.engine, a, params, &child_launch, null);
+    const child_parts = try database.session.promptParts(&f.db, a, child.session.id.raw);
+    try testing.expectEqualStrings("", child_parts.base);
+    try testing.expectEqualStrings(root_parts.instructions, child_parts.instructions);
+    const sources = try database.session.instructionSnapshots(&f.db, a, child.session.id.raw);
+    try testing.expectEqualStrings(original, sources[0].text);
+    params.child.?.site = try f.toolSite(child.session.id);
+    params.child.?.name = "grandchild";
+    var grand_launch: ?turn.Launch = null;
+    const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grand_launch, null);
+    const grand_parts = try database.session.promptParts(&f.db, a, grandchild.session.id.raw);
+    try testing.expectEqualStrings(root_parts.instructions, grand_parts.instructions);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, grand_launch.?.slot.config.system_prompt, original));
+    const count = (try commands.sessionList(&f.engine, a, .{})).total;
+    var refused: ?turn.Launch = null;
+    var diagnostic: ?[]const u8 = null;
+    try testing.expectError(error.InvalidInstructions, commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = workspace }, &refused, &diagnostic));
+    try testing.expect(std.mem.indexOf(u8, diagnostic.?, metadata[0].path) != null);
+    try testing.expectEqual(count, (try commands.sessionList(&f.engine, a, .{})).total);
+    try testing.expect(refused == null);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = "new rules" });
+    const fresh = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = workspace });
+    const fresh_sources = try database.session.instructionSnapshots(&f.db, a, fresh.session.id.raw);
+    try testing.expectEqualStrings("new rules", fresh_sources[0].text);
+    try testing.expectEqualStrings(root_parts.instructions, (try database.session.promptParts(&f.db, a, root.session.id.raw)).instructions);
 }

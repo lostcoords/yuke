@@ -76,6 +76,7 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "SessionSendInputResultStarted", .field = "run_id", .alias = "RunId" },
     .{ .owner = "SessionSendInputResultQueued", .field = "input_id", .alias = "InputId" },
     .{ .owner = "AgentsSetModelParams", .field = "session_id", .alias = "SessionId" },
+    .{ .owner = "InstructionSource", .field = "content_hash", .alias = "InstructionHash" },
     .{ .owner = "AgentsGetResult", .field = "revision", .alias = "AgentConfigRev" },
     .{ .owner = "AgentsUpdateParams", .field = "revision", .alias = "AgentConfigRev" },
     .{ .owner = "AgentsResolveResult", .field = "revision", .alias = "AgentConfigRev" },

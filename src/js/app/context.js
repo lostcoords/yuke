@@ -1,5 +1,6 @@
 // yuke:context — the context reading on the status bar and the `/context` breakdown window.
 import { root, strokeOf } from "yuke:core";
+import { client } from "yuke:client";
 import { Window } from "yuke:ui";
 import { chatEntry } from "yuke:chat";
 import { catalogOf, contextWindowOf, defaultModel, tokenLabel } from "yuke:catalog";
@@ -59,8 +60,8 @@ export function sessionCost(total, cost) {
 }
 
 // Build the label and value rows of the breakdown window. The cost row needs the model in the catalog.
-/** @param {Reading} r @returns {[string, string][]} */
-export function contextRows(r) {
+/** @param {Reading} r @param {ReadonlyArray<Wire.InstructionSource>} [sources] @returns {[string, string][]} */
+export function contextRows(r, sources = []) {
   const u = r.usage;
   const t = r.total;
   const model = catalogOf().models.find((m) => m.selector === r.model);
@@ -80,13 +81,14 @@ export function contextRows(r) {
     const cost = sessionCost(t, model.cost);
     rows.push(["cost", "$" + cost.toFixed(cost < 1 ? 3 : 2)]);
   }
+  for (const source of sources) rows.push([source.scope + " AGENTS", source.path]);
   return rows;
 }
 
 class ContextPanel {
-  /** @param {Reading} r @param {() => void} onClose */
-  constructor(r, onClose) {
-    this.rows = contextRows(r);
+  /** @param {Reading} r @param {ReadonlyArray<Wire.InstructionSource>} sources @param {() => void} onClose */
+  constructor(r, sources, onClose) {
+    this.rows = contextRows(r, sources);
     this.onClose = onClose;
   }
 
@@ -117,10 +119,13 @@ export const contextPlugin = {
       ctx.tui.status({ side: "right", order: 20, render: () => contextLine(reading(), glyphs) });
 
       ctx.tui.command(null, {
-        "context:show": () => {
+        "context:show": async () => {
+          const current = reading();
+          const entry = chatEntry();
+          const sources = entry ? (await client.sessionGet(entry.session.id)).instruction_sources || [] : [];
           /** @type {(() => void)} */
           let release = () => {};
-          const panel = new ContextPanel(reading(), () => release());
+          const panel = new ContextPanel(current, sources, () => release());
           const win = new Window({ title: "context", footer: "esc close", border: "rounded", width: 0.6, height: panel.rows.length + 2, content: panel });
           root.pushOverlay(win);
           release = ctx.tui.overlay(win);

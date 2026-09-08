@@ -1209,7 +1209,7 @@ const StreamerFixture = struct {
         return self.initWithPrompt(.{ .base = "", .child_policy = null, .environment = "" });
     }
 
-    fn initWithPrompt(self: *StreamerFixture, parts: session_store.PromptParts) !void {
+    fn initWithPrompt(self: *StreamerFixture, parts: session_store.PromptInput) !void {
         var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
         defer arena.deinit();
         self.runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });

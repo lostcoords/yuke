@@ -4358,6 +4358,7 @@ test "the indicator, the queue strip, and the context reading follow the live ac
         \\let answer = idle;
         \\client.sessionOpen = () => true;
         \\client.sessionActivity = () => answer;
+        \\client.sessionGet = async () => ({ instruction_sources: [{ scope: "workspace", path: "/work/AGENTS.md" }] });
         \\const items = [
         \\  { input_id: 11, queued_at_ms: 1, content: [{ type: "text", text: "first line\nsecond" }] },
         \\  { input_id: 12, queued_at_ms: 2, content: [{ type: "image", source: { type: "blob", hash: "h", mime: "image/png", bytes: 1 } }, { type: "text", text: "look" }] },
@@ -4408,7 +4409,9 @@ test "the indicator, the queue strip, and the context reading follow the live ac
         \\check("strip-folds", many.length === 3 && many[2].text === " ↳ … 2 more queued");
         \\// The breakdown window opens on the command and closes on Escape.
         \\command.perform("context:show");
+        \\await settle();
         \\check("context-open", root.overlays.length === 1);
+        \\check("context-instructions", root.overlays[0].content.rows.some((row) => row[0] === "workspace AGENTS" && row[1] === "/work/AGENTS.md"));
         \\root.onEvent(key("esc"));
         \\check("context-closed", root.overlays.length === 0);
         \\// The pure helpers.
