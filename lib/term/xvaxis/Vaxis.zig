@@ -1504,6 +1504,36 @@ test "render: no output when no changes" {
     try std.testing.expectEqual(@as(usize, 0), output.len);
 }
 
+test "render: a narrow overlay replaces a wide cell continuation" {
+    const io = std.testing.io;
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    var vx = try Vaxis.init(io, std.testing.allocator, &env_map, .{});
+    var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer deinit_writer.deinit();
+    defer vx.deinit(std.testing.allocator, &deinit_writer.writer);
+
+    var writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer writer.deinit();
+    try vx.resize(std.testing.allocator, &writer.writer, .{ .rows = 1, .cols = 4, .x_pixel = 0, .y_pixel = 0 });
+    writer.clearRetainingCapacity();
+
+    vx.window().writeCell(1, 0, .{ .char = .{ .grapheme = "界", .width = 2 } });
+    vx.window().writeCell(2, 0, .{ .char = .{ .grapheme = "│", .width = 1 } });
+    try vx.render(&writer.writer);
+    try std.testing.expect(std.mem.indexOf(u8, writer.written(), "│") != null);
+    writer.clearRetainingCapacity();
+
+    vx.window().writeCell(1, 0, .{ .char = .{ .grapheme = "界", .width = 2 } });
+    vx.window().writeCell(2, 0, .{ .char = .{ .grapheme = "│", .width = 1 } });
+    try vx.render(&writer.writer);
+    try std.testing.expectEqual(@as(usize, 0), writer.written().len);
+
+    vx.queueRefresh();
+    try vx.render(&writer.writer);
+    try std.testing.expect(std.mem.indexOf(u8, writer.written(), "│") != null);
+}
+
 fn testResizeAllocationFailures(allocator: std.mem.Allocator) !void {
     var env_map = try std.testing.environ.createMap(allocator);
     defer env_map.deinit();

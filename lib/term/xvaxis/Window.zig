@@ -210,27 +210,28 @@ pub fn gwidth(self: Window, str: []const u8) u16 {
 
 /// fills the window with the provided cell
 pub fn fill(self: Window, cell: Cell) void {
-    if (self.x_off + self.width < 0 or
-        self.y_off + self.height < 0 or
-        self.screen.width < self.x_off or
-        self.screen.height < self.y_off)
-        return;
-    const first_row: usize = @intCast(@max(self.y_off, 0));
-    if (self.x_off == 0 and self.width == self.screen.width) {
-        // we have a full width window, therefore contiguous memory.
-        const start = @min(first_row * self.width, self.screen.buf.len);
-        const end = @min(start + (@as(usize, @intCast(self.height)) * self.width), self.screen.buf.len);
+    const first_col: u16 = @intCast(std.math.clamp(@as(i32, self.x_off), 0, self.screen.width));
+    const last_col: u16 = @intCast(std.math.clamp(@as(i32, self.x_off) + self.width, 0, self.screen.width));
+    const first_row: u16 = @intCast(std.math.clamp(@as(i32, self.y_off), 0, self.screen.height));
+    const last_row: u16 = @intCast(std.math.clamp(@as(i32, self.y_off) + self.height, 0, self.screen.height));
+    if (first_col == last_col or first_row == last_row) return;
+    const width = @max(if (cell.char.width != 0) cell.char.width else self.gwidth(cell.char.grapheme), 1);
+    if (width == 1 and first_col == 0 and last_col == self.screen.width) {
+        const start = @as(usize, first_row) * self.screen.width;
+        const end = @as(usize, last_row) * self.screen.width;
         @memset(self.screen.buf[start..end], cell);
-    } else {
-        // Non-contiguous. Iterate over rows an memset
-        var row: usize = first_row;
-        const first_col: usize = @max(self.x_off, 0);
-        const last_row = @min(self.height + self.y_off, self.screen.height);
-        while (row < last_row) : (row += 1) {
-            const start = @min(first_col + (row * self.screen.width), self.screen.buf.len);
-            var end = @min(start + self.width, start + (self.screen.width - first_col));
-            end = @min(end, self.screen.buf.len);
-            @memset(self.screen.buf[start..end], cell);
+        return;
+    }
+    for (first_row..last_row) |row| {
+        const row_start = row * self.screen.width;
+        self.screen.clearOverlaps(first_col, @intCast(row), 1);
+        self.screen.clearOverlaps(last_col - 1, @intCast(row), 1);
+        if (width == 1) {
+            @memset(self.screen.buf[row_start + first_col .. row_start + last_col], cell);
+        } else {
+            var col: u16 = first_col;
+            while (last_col - col >= width) : (col += width) self.screen.writeCell(col, @intCast(row), cell);
+            @memset(self.screen.buf[row_start + col .. row_start + last_col], .{ .style = cell.style });
         }
     }
 }
@@ -540,6 +541,37 @@ test "Window size nested offsets" {
     const ch = parent.initChild(10, 10, 21, 21);
     try std.testing.expectEqual(11, ch.x_off);
     try std.testing.expectEqual(11, ch.y_off);
+}
+
+test "fill: wide glyphs at both edges leave styled spaces" {
+    var screen = try Screen.init(std.testing.allocator, .{ .rows = 2, .cols = 6, .x_pixel = 0, .y_pixel = 0 });
+    defer screen.deinit(std.testing.allocator);
+    const win: Window = .{ .x_off = 0, .y_off = 0, .parent_x_off = 0, .parent_y_off = 0, .width = 6, .height = 2, .screen = &screen };
+    const left: Cell.Style = .{ .bg = .{ .index = 2 } };
+    const right: Cell.Style = .{ .bg = .{ .index = 3 } };
+    const panel: Cell.Style = .{ .bg = .{ .index = 4 } };
+    win.writeCell(0, 0, .{ .char = .{ .grapheme = "界", .width = 2 }, .style = left });
+    win.writeCell(3, 0, .{ .char = .{ .grapheme = "界", .width = 2 }, .style = right });
+    win.writeCell(5, 0, .{ .char = .{ .grapheme = "Z" } });
+    win.writeCell(0, 1, .{ .char = .{ .grapheme = "Q" } });
+    win.child(.{ .x_off = 1, .width = 3, .height = 1 }).fill(.{ .style = panel });
+    try std.testing.expectEqualStrings(" ", screen.buf[0].char.grapheme);
+    try std.testing.expect(screen.buf[0].style.eql(left));
+    for (screen.buf[1..4]) |cell| {
+        try std.testing.expectEqualStrings(" ", cell.char.grapheme);
+        try std.testing.expect(cell.style.eql(panel));
+    }
+    try std.testing.expectEqualStrings(" ", screen.buf[4].char.grapheme);
+    try std.testing.expect(screen.buf[4].style.eql(right));
+    try std.testing.expectEqualStrings("Z", screen.buf[5].char.grapheme);
+    try std.testing.expectEqualStrings("Q", screen.buf[6].char.grapheme);
+
+    win.child(.{ .x_off = 1, .width = 3, .height = 1 }).fill(.{ .char = .{ .grapheme = "界", .width = 0 } });
+    try std.testing.expectEqualStrings("界", screen.buf[1].char.grapheme);
+    try std.testing.expectEqualStrings(" ", screen.buf[3].char.grapheme);
+    try std.testing.expectEqualStrings("Z", screen.buf[5].char.grapheme);
+    win.child(.{ .x_off = 5, .width = 0, .height = 1 }).clear();
+    try std.testing.expectEqualStrings("Z", screen.buf[5].char.grapheme);
 }
 
 test "Window offsets" {
