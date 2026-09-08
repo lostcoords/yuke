@@ -9,7 +9,7 @@ const native_term = @import("native/term.zig");
 const Projection = @import("bench_projection.zig");
 pub const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
-pub const Phase = enum { build, reflow, scroll, stream, paint, selection, projection, gc };
+pub const Phase = enum { build, reflow, scroll, stream, stream_native, paint, selection, preview, projection, gc };
 pub const phases = std.enums.values(Phase);
 
 pub const Harness = struct {
@@ -23,6 +23,7 @@ pub const Harness = struct {
     step_fn: quickjs.Value,
     projection: ?*Projection = null,
     phase: ?Phase = null,
+    native_step: usize = 0,
 
     pub fn create(gpa: std.mem.Allocator, io: std.Io, fixture: []const u8, width: u16, height: u16) !*Harness {
         std.debug.assert(width > 1 and height > 0);
@@ -78,10 +79,12 @@ pub const Harness = struct {
     pub fn start(self: *Harness, phase: Phase, scale: u32) !void {
         std.debug.assert(scale > 0);
         self.phase = null;
+        self.native_step = 0;
         self.host.engine.detach();
         if (self.projection) |projection| projection.destroy();
         self.projection = null;
-        if (phase == .projection) self.projection = try Projection.create(self.host, self.host.io, &self.env, scale);
+        if (phase == .projection or phase == .stream_native)
+            self.projection = try Projection.create(self.host, self.host.io, &self.env, scale, phase == .stream_native);
         const ctx = self.host.ctx;
         const args = [_]quickjs.Value{
             ctx.newString(@tagName(phase)),      ctx.newUint32(scale),
@@ -104,6 +107,10 @@ pub const Harness = struct {
         if (phase == .gc) {
             self.host.runtime.runGC();
         } else {
+            if (phase == .stream_native) {
+                try (self.projection orelse unreachable).appendNative(self.native_step);
+                self.native_step += 1;
+            }
             const rows = try self.call(self.step_fn, &.{});
             if (rows <= 0) return error.EmptyBenchmarkOutput;
         }
@@ -123,6 +130,10 @@ pub const Harness = struct {
 
     pub fn counters(self: *const Harness) native_term.Counters {
         return if (metrics_enabled) self.host.paint.counters else .{};
+    }
+
+    pub fn sourceBytes(self: *const Harness) ?u64 {
+        return if (self.projection) |projection| projection.sourceBytes() else null;
     }
 
     fn call(self: *Harness, function: quickjs.Value, args: []const quickjs.Value) !i32 {

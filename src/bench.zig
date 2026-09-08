@@ -79,6 +79,7 @@ pub fn main(init: std.process.Init) !void {
                 .p95_ns = samples[(samples.len - 1) * 95 / 100],
                 .max_ns = samples[samples.len - 1],
                 .checksum = checksum,
+                .source_bytes = harness.sourceBytes(),
                 .output_bytes = output_bytes,
                 .js_estimated_bytes = usage.memory_used_size,
                 .js_tracked_bytes = usage.malloc_size,
