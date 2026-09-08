@@ -170,5 +170,7 @@ CREATE TABLE session_prompts (
     session_id BLOB PRIMARY KEY CHECK (length(session_id) = 16) -- proto.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
     prompt TEXT NOT NULL,
-    base_prompt TEXT
+    base_prompt TEXT NOT NULL,
+    child_policy TEXT,
+    environment TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;

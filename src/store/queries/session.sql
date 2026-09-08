@@ -244,8 +244,11 @@ WHERE parent_id = :filter_parent_id
 -- Create snapshots the system prompt. An absent row reads back as null.
 -- session_id: [16]u8!
 -- prompt: []const u8!
--- base_prompt: []const u8
-INSERT INTO session_prompts(session_id, prompt, base_prompt) VALUES (:session_id, :prompt, :base_prompt);
+-- base_prompt: []const u8!
+-- child_policy: []const u8
+-- environment: []const u8!
+INSERT INTO session_prompts(session_id, prompt, base_prompt, child_policy, environment)
+VALUES (:session_id, :prompt, :base_prompt, :child_policy, :environment);
 
 -- name: SelectPrompt :optional
 -- Read the session's system prompt. An absent row reads back as null.
@@ -255,7 +258,7 @@ SELECT prompt FROM session_prompts WHERE session_id = :session_id;
 
 -- name: SelectBasePrompt :optional
 -- session_id: [16]u8!
--- base_prompt: []const u8
+-- base_prompt: []const u8!
 SELECT base_prompt FROM session_prompts WHERE session_id = :session_id;
 
 -- name: DeleteSession :exec
@@ -298,3 +301,10 @@ GROUP BY s.id ORDER BY min(e.rowid);
 -- name: []const u8!
 -- id: [16]u8!
 SELECT id FROM sessions WHERE parent_id = :parent_id AND name = :name;
+
+-- name: SelectPromptParts :optional
+-- session_id: [16]u8!
+-- base_prompt: []const u8!
+-- child_policy: []const u8
+-- environment: []const u8!
+SELECT base_prompt, child_policy, environment FROM session_prompts WHERE session_id = :session_id;

@@ -51,7 +51,7 @@ sessions: session.Registry,
 turn_tasks: std.Io.Group = .init,
 /// Every subscriber that reads engine events. A frontend installs itself at startup.
 sinks: Sinks = .{},
-/// The default prompt for a session that does not provide one.
+/// A null override selects the built-in base for new root sessions.
 default_system_prompt: ?[]const u8 = null,
 child_instructions: ?[]const u8 = null,
 /// The in-memory session index revision. A restart clears it.

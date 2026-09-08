@@ -14,7 +14,7 @@ import { native } from "yuke:engine-native";
 // Runtime configuration. A direct write bypasses validation; use `defineConfig`.
 /** @type {Config} */
 export const config = {
-  // The default prompt applies to sessions that do not provide one, and `null` matches the engine.
+  // A null base selects the built-in prompt for new root sessions.
   systemPrompt: null,
   childInstructions: null,
   agents: { maxConcurrent: 8, maxDepth: 1 },

@@ -663,12 +663,15 @@ pub const SessionCountParent = sql.OneQuery(
 );
 
 pub const InsertPrompt = sql.ExecQuery(
-    \\INSERT INTO session_prompts(session_id, prompt, base_prompt) VALUES (:session_id, :prompt, :base_prompt);
+    \\INSERT INTO session_prompts(session_id, prompt, base_prompt, child_policy, environment)
+    \\VALUES (:session_id, :prompt, :base_prompt, :child_policy, :environment);
 ,
     struct {
         session_id: [16]u8,
         prompt: []const u8,
-        base_prompt: ?[]const u8,
+        base_prompt: []const u8,
+        child_policy: ?[]const u8,
+        environment: []const u8,
     },
 );
 
@@ -690,7 +693,7 @@ pub const SelectBasePrompt = sql.OptionalQuery(
         session_id: [16]u8,
     },
     struct {
-        base_prompt: ?[]const u8,
+        base_prompt: []const u8,
     },
 );
 
@@ -759,6 +762,19 @@ pub const ChildByName = sql.OptionalQuery(
     },
 );
 
+pub const SelectPromptParts = sql.OptionalQuery(
+    \\SELECT base_prompt, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        base_prompt: []const u8,
+        child_policy: ?[]const u8,
+        environment: []const u8,
+    },
+);
+
 pub const Queries = struct {
     insert_config: InsertConfig,
     advance_config: AdvanceConfig,
@@ -800,6 +816,7 @@ pub const Queries = struct {
     session_recovery_candidates: SessionRecoveryCandidates,
     child_admission_candidates: ChildAdmissionCandidates,
     child_by_name: ChildByName,
+    select_prompt_parts: SelectPromptParts,
 
     pub fn prepareAll(conn: sql.Connection) !@This() {
         return sql.prepareAll(@This(), conn);

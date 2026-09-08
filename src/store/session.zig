@@ -71,9 +71,20 @@ pub fn childIds(db: *Database, arena: std.mem.Allocator, parent_id: [16]u8) ![]c
     return out.items;
 }
 
-/// Store the session's system prompt. Create sets it once; all methods preserve it.
-pub fn setPrompt(db: *Database, id: [16]u8, text: []const u8, base: ?[]const u8) !void {
-    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text, .base_prompt = base });
+pub const PromptParts = @import("../session/prompt.zig").Parts;
+
+pub fn promptParts(db: *Database, arena: std.mem.Allocator, id: [16]u8) !PromptParts {
+    const row = (try db.queries.select_prompt_parts.maybeOne(arena, .{ .session_id = id })) orelse return error.MissingSessionPrompt;
+    std.debug.assert(row.value.environment.len <= @import("proto").meta.limits.max_message_string_bytes);
+    return .{ .base = row.value.base_prompt, .child_policy = row.value.child_policy, .environment = row.value.environment };
+}
+
+/// Render and store the exact parts; the caller owns the returned text.
+pub fn setPrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8, parts: PromptParts) ![]const u8 {
+    const text = try parts.render(arena);
+    errdefer arena.free(text);
+    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text, .base_prompt = parts.base, .child_policy = parts.child_policy, .environment = parts.environment });
+    return text;
 }
 
 /// Read the session's system prompt into `arena`, or return null when no prompt exists.
@@ -82,8 +93,8 @@ pub fn prompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?[]const u8 
     return row.value.prompt;
 }
 
-pub fn basePrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?[]const u8 {
-    const row = (try db.queries.select_base_prompt.maybeOne(arena, .{ .session_id = id })) orelse return null;
+pub fn basePrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) ![]const u8 {
+    const row = (try db.queries.select_base_prompt.maybeOne(arena, .{ .session_id = id })) orelse return error.MissingSessionPrompt;
     return row.value.base_prompt;
 }
 
@@ -305,7 +316,7 @@ test "prompt reads a set prompt and null when absent" {
     try create(&db, rootParams(id, "/w"));
 
     try testing.expect((try prompt(&db, a, id)) == null); // No prompt row exists yet.
-    try setPrompt(&db, id, "be helpful", "be helpful");
+    _ = try setPrompt(&db, a, id, .{ .base = "be helpful", .child_policy = null, .environment = "" });
     try testing.expectEqualStrings("be helpful", (try prompt(&db, a, id)).?);
 }
 
@@ -465,4 +476,35 @@ fn expectPlan(db: *Database, comptime query: [:0]const u8, index: []const u8) !v
     }
     if (rows.err) |err| return err;
     try testing.expect(seeks_index);
+}
+
+test "prompt components and the composed text survive a database restart" {
+    const zqlite = @import("zqlite");
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const directory = path_buffer[0..try tmp.dir.realPath(testing.io, &path_buffer)];
+    const path = try std.fmt.allocPrintSentinel(a, "{s}/session.db", .{directory}, 0);
+    const id = [_]u8{9} ** 16;
+    const parts: PromptParts = .{ .base = "base\n\nwith separators", .child_policy = "policy", .environment = "<environment>\nsession_start_date_utc: 2026-09-08\n</environment>" };
+    const text = "base\n\nwith separators\n\npolicy\n\n<environment>\nsession_start_date_utc: 2026-09-08\n</environment>";
+    {
+        var db = try Database.open(try zqlite.open(path, zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex));
+        defer db.deinit();
+        var tx = try db.begin();
+        defer tx.deinit();
+        try create(&db, rootParams(id, "/w"));
+        try testing.expectEqualStrings(text, try setPrompt(&db, a, id, parts));
+        try tx.commit();
+    }
+    var db = try Database.open(try zqlite.open(path, zqlite.OpenFlags.NoMutex));
+    defer db.deinit();
+    const saved = try promptParts(&db, a, id);
+    try testing.expectEqualStrings(parts.base, saved.base);
+    try testing.expectEqualStrings(parts.child_policy.?, saved.child_policy.?);
+    try testing.expectEqualStrings(parts.environment, saved.environment);
+    try testing.expectEqualStrings(text, (try prompt(&db, a, id)).?);
 }

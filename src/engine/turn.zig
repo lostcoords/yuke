@@ -457,6 +457,7 @@ fn resolvedRequest(
                 .parent_id = slot.parent_id,
                 .workspace = snapshot.root,
                 .agent_name = snapshot.name orelse "root",
+                .prompt = try database.session.promptParts(engine.deps.db, arena, slot.sessionId().raw),
             },
         };
         switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", hook_payload)) {
@@ -1205,6 +1206,12 @@ const StreamerFixture = struct {
     } };
 
     fn init(self: *StreamerFixture) !void {
+        return self.initWithPrompt(.{ .base = "", .child_policy = null, .environment = "" });
+    }
+
+    fn initWithPrompt(self: *StreamerFixture, parts: session_store.PromptParts) !void {
+        var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+        defer arena.deinit();
         self.runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
         errdefer self.runtime.deinit();
         self.db = try database.Database.openTest();
@@ -1221,6 +1228,7 @@ const StreamerFixture = struct {
             .created_at_ms = 1,
             .updated_at_ms = 1,
         });
+        const system = try session_store.setPrompt(&self.db, arena.allocator(), session_id, parts);
         self.store = .init(std.testing.allocator, self.runtime.io(), &stream_test_env);
         errdefer self.store.deinit();
         self.engine = Engine.init(.{
@@ -1234,7 +1242,7 @@ const StreamerFixture = struct {
         });
         errdefer self.engine.close();
         self.session = try self.engine.activate(.bytes(session_id));
-        var prepared = try RunSlot.prepare(std.testing.allocator, "mock", "", "", null);
+        var prepared = try RunSlot.prepare(std.testing.allocator, "mock", "", system, null);
         errdefer prepared.deinit();
         self.slot = prepared.bind(
             .{ .input_id = 1, .started = .{ .session_id = .bytes(session_id), .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 } },
@@ -1508,6 +1516,9 @@ test "a build hook can discard the live registry and tools before the request se
             std.debug.assert(context.get("parent_id").? == .null);
             std.debug.assert(context.get("workspace").?.string.len > 0);
             std.debug.assert(std.mem.eql(u8, "root", context.get("agent_name").?.string));
+            const parts = std.json.parseFromValueLeaky(database.session.PromptParts, arena, context.get("prompt").?, .{}) catch unreachable;
+            const rebuilt = parts.render(arena) catch unreachable;
+            std.debug.assert(std.mem.eql(u8, value.object.get("system").?.string, rebuilt));
             self.source.deinit();
             self.tools = &.{};
             self.discarded = true;
@@ -1515,7 +1526,7 @@ test "a build hook can discard the live registry and tools before the request se
         }
     };
     var f: StreamerFixture = undefined;
-    try f.init();
+    try f.initWithPrompt(.{ .base = "base\n\nwith separators", .child_policy = "child policy", .environment = "<environment>\nworkspace: /w\n</environment>" });
     defer f.deinit();
     var state: State = .{ .source = .init(std.testing.allocator), .tools = &.{}, .session_id = f.slot.sessionId() };
     defer if (!state.discarded) state.source.deinit();
