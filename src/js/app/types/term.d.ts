@@ -39,6 +39,7 @@ declare module "yuke:term" {
     text(x: number, y: number, s: string, style?: Style): void;
     measure(s: string): number;
     graphemes(s: string): Int32Array;
+    wrap(s: string, width: number, head?: number, tail?: number): { rows: Int32Array; omitted: boolean };
     cursor(x: number, y: number, visible: boolean): void;
     setNeedsTick(enabled: boolean, periodMs?: number): void;
     copy(text: string): number;

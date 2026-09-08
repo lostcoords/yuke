@@ -5,6 +5,7 @@ const quickjs = @import("quickjs");
 const term_pkg = @import("term");
 const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
+const wrapping = @import("wrap.zig");
 const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
 const Context = quickjs.Context;
@@ -18,6 +19,10 @@ pub const Counters = struct {
     measure_bytes: u64 = 0,
     grapheme_calls: u64 = 0,
     grapheme_bytes: u64 = 0,
+    wrap_calls: u64 = 0,
+    wrap_bytes: u64 = 0,
+    wrap_graphemes: u64 = 0,
+    wrap_rows: u64 = 0,
     fill_calls: u64 = 0,
 };
 
@@ -107,6 +112,7 @@ pub fn install(host: *Host) void {
         .{ .name = "text", .arity = 3, .call = jsText },
         .{ .name = "measure", .arity = 1, .call = jsMeasure },
         .{ .name = "graphemes", .arity = 1, .call = jsGraphemes },
+        .{ .name = "wrap", .arity = 2, .call = jsWrap },
         .{ .name = "cursor", .arity = 3, .call = jsCursor },
         .{ .name = "setNeedsTick", .arity = 2, .call = jsSetNeedsTick },
         .{ .name = "copy", .arity = 1, .call = jsCopy },
@@ -239,6 +245,54 @@ fn jsGraphemes(ctx: Context, _: Value, args: []const Value) Value {
     return int32Array(ctx, triples.items);
 }
 
+fn jsWrap(ctx: Context, _: Value, args: []const Value) Value {
+    const host = Host.fromContext(ctx);
+    if (args.len < 2) return ctx.throwTypeError("term.wrap(s, width, head?, tail?)");
+    const width = ctx.toInt32(args[1]) catch return rethrow(ctx);
+    const head = if (args.len > 2) module.integer(ctx, args[2], 0, std.math.maxInt(i32)) orelse return ctx.throwTypeError("term.wrap: invalid head limit") else 0;
+    const tail = if (args.len > 3) module.integer(ctx, args[3], 0, std.math.maxInt(i32)) orelse return ctx.throwTypeError("term.wrap: invalid tail limit") else 0;
+    if (head == 0 and tail != 0) return ctx.throwTypeError("term.wrap: a tail needs a positive head");
+    const source = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
+    defer ctx.freeCString(source.ptr);
+    var wrapped = wrapping.wrap(host.gpa, source, width, @intCast(head), @intCast(tail)) catch return ctx.throwOutOfMemory();
+    defer wrapped.rows.deinit(host.gpa);
+    if (metrics_enabled) {
+        host.paint.counters.wrap_calls += 1;
+        host.paint.counters.wrap_bytes += source.len;
+        host.paint.counters.wrap_graphemes += wrapped.graphemes;
+        host.paint.counters.wrap_rows += wrapped.rows.items.len;
+    }
+    const length = std.math.cast(i32, wrapped.rows.items.len * 3) orelse return ctx.throwRangeError("term.wrap: too many rows");
+    const result = ctx.newObject();
+    if (ctx.isException(result)) return result;
+    const size = ctx.newInt32(length);
+    const rows = ctx.newTypedArray(&.{size}, .Int32Array);
+    ctx.freeValue(size);
+    if (ctx.isException(rows)) {
+        ctx.freeValue(result);
+        return rows;
+    }
+    for (wrapped.rows.items, 0..) |row, i| {
+        const values = [_]i32{ row.start, row.end, @intFromBool(row.soft) };
+        for (values, 0..) |value, field| {
+            ctx.setPropertyUint32(rows, @intCast(i * 3 + field), ctx.newInt32(value)) catch {
+                ctx.freeValue(rows);
+                ctx.freeValue(result);
+                return rethrow(ctx);
+            };
+        }
+    }
+    ctx.setPropertyStr(result, "rows", rows) catch {
+        ctx.freeValue(result);
+        return rethrow(ctx);
+    };
+    ctx.setPropertyStr(result, "omitted", ctx.newBool(wrapped.omitted)) catch {
+        ctx.freeValue(result);
+        return rethrow(ctx);
+    };
+    return result;
+}
+
 fn jsCursor(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const output = host.paint.output orelse return ctx.throwTypeError("term.cursor: no host");
@@ -360,14 +414,7 @@ fn isSingleCellAscii(s: []const u8) bool {
     return true;
 }
 
-fn utf16Len(s: []const u8) i32 {
-    var n: i32 = 0;
-    var it: std.unicode.Utf8Iterator = .{ .bytes = s, .i = 0 };
-    while (it.nextCodepoint()) |cp| {
-        n += if (cp > 0xFFFF) 2 else 1;
-    }
-    return n;
-}
+const utf16Len = wrapping.utf16Len;
 
 fn int32Array(ctx: Context, items: []const i32) Value {
     const len = ctx.newInt32(@intCast(items.len));
@@ -472,6 +519,43 @@ test "an extra yuke:term export name fails" {
         error.JavaScriptFault,
         host.evalModule("import { foo } from 'yuke:term';", "term.js"),
     );
+}
+
+test "native wrap preserves UTF-16 rows and bounds preview work" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
+        \\import { term } from "yuke:term";
+        \\const equal = (a, b) => JSON.stringify(Array.from(a)) === JSON.stringify(b);
+        \\const cases = [
+        \\  ["hello world", 5, [0, 6, 1, 6, 11, 0]],
+        \\  ["  keep   spaces", 7, [0, 9, 1, 9, 15, 0]],
+        \\  ["a\n\nb", 2, [0, 1, 0, 2, 2, 0, 3, 4, 0]],
+        \\  ["世界é", 2, [0, 1, 1, 1, 2, 1, 2, 4, 0]],
+        \\  ["👩‍💻x", 2, [0, 5, 1, 5, 6, 0]],
+        \\];
+        \\let ok = cases.every(([s, w, expected]) => equal(term.wrap(s, w).rows, expected));
+        \\const source = "first\n" + "middle\n".repeat(1000) + "last";
+        \\const prefix = term.wrap(source, 20, 2);
+        \\const ends = term.wrap(source, 20, 1, 1);
+        \\ok &&= prefix.omitted && equal(prefix.rows, [0, 5, 0, 6, 12, 0]);
+        \\ok &&= ends.omitted && equal(ends.rows, [0, 5, 0, source.length - 4, source.length, 0]);
+        \\for (const [head, tail] of [[-1, 0], [0, 1], [1, -1], [Infinity, 0], [NaN, 0], [1.5, 0], [2 ** 32, 0], ["3", 0]]) {
+        \\  let rejected = false;
+        \\  try { term.wrap(source, 20, head, tail); } catch (error) { rejected = error instanceof TypeError; }
+        \\  ok &&= rejected;
+        \\}
+        \\globalThis.result = ok ? 1 : 0;
+    ));
+    host.paint.counters = .{};
+    _ = try evalOk(host,
+        \\import { term } from "yuke:term";
+        \\term.wrap("line\n".repeat(10000), 80, 3);
+        \\globalThis.result = 1;
+    );
+    try std.testing.expectEqual(@as(u64, 3), host.paint.counters.wrap_rows);
+    try std.testing.expect(host.paint.counters.wrap_graphemes <= 20);
+    try std.testing.expectEqual(@as(u64, 50000), host.paint.counters.wrap_bytes);
 }
 
 test "measure and graphemes use cell width and UTF-16 offsets" {
