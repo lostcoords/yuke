@@ -45,6 +45,7 @@ pub const default_baked = blk: {
         "interaction",
         "tui",
         "core",
+        "layout",
         "md",
         "ui",
         "client",

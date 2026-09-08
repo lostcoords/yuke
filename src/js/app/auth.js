@@ -1,5 +1,5 @@
 // yuke:auth — /login and /logout: the provider list, the device-code dialog, and the API key prompt.
-import { root, copy, strokeOf } from "yuke:core";
+import { root, copy, strokeOf, text, clip } from "yuke:core";
 import { ui, Window, Prompt } from "yuke:ui";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
@@ -26,8 +26,8 @@ function pickProvider(ctx, title, verb, rows, right, onAccept) {
     title,
     footer: "type to filter · ↵ " + verb + " · esc close",
     border: "rounded",
-    width: 0.6,
-    height: 0.5,
+    width: max => Math.round(max * 0.6),
+    height: max => Math.round(max * 0.5),
     items: rows,
     key: (p) => p.provider_id,
     filterText: (p) => p.provider_id,
@@ -59,15 +59,26 @@ export class DeviceDialog {
     this.start = start;
     /** @type {(() => void) | null} */
     this.onCancel = null;
+    /** @type {{ x: number, y: number, w: number, h: number }} */
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
   }
 
-  /** @param {Window} win @returns {void} */
-  draw(win) {
-    win.winText(0, 0, "open  ", "UIDim");
-    win.winText(6, 0, this.start.verification_url, "UIQuery");
-    win.winText(0, 1, "code  ", "UIDim");
-    win.winText(6, 1, this.start.user_code, "UITitle");
-    win.winText(0, 2, "waiting for the provider…", "UIDim");
+  /** @param {{ x: number, y: number, w: number, h: number }} rect @returns {void} */
+  layout(rect) {
+    this.rect = rect;
+  }
+
+  /** @param {boolean} [_focused] @returns {void} */
+  draw(_focused = false) {
+    const { x, y, w, h } = this.rect;
+    if (w <= 0 || h <= 0) return;
+    text(x, y, clip("open  ", w), "UIDim");
+    if (w > 6) text(x + 6, y, clip(this.start.verification_url, w - 6), "UIQuery");
+    if (this.rect.h <= 1) return;
+    text(x, y + 1, clip("code  ", w), "UIDim");
+    if (w > 6) text(x + 6, y + 1, clip(this.start.user_code, w - 6), "UITitle");
+    if (this.rect.h <= 2) return;
+    text(x, y + 2, clip("waiting for the provider…", w), "UIDim");
   }
 
   /** @param {HostEvent} event @returns {boolean} */
@@ -113,7 +124,7 @@ function deviceLogin(ctx, p) {
       title: "login · " + p.provider_id,
       footer: "o open · c copy code · esc cancel",
       border: "rounded",
-      width: 0.6,
+      width: max => Math.round(max * 0.6),
       height: 5,
       content: dialog,
     });
@@ -156,7 +167,7 @@ function keyLogin(ctx, p) {
       );
     },
   });
-  const win = new Window({ title: "api key · " + p.provider_id, footer: "↵ save · esc cancel", border: "rounded", width: 0.6, height: 3, content: prompt });
+  const win = new Window({ title: "api key · " + p.provider_id, footer: "↵ save · esc cancel", border: "rounded", width: max => Math.round(max * 0.6), height: 3, content: prompt });
   root.pushOverlay(win);
   release = ctx.tui.overlay(win);
 }

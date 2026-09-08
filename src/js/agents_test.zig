@@ -454,7 +454,7 @@ test "agent picker opens children stops one or all and retains focused interrupt
         \\plugins.use({ name: "picker-test", apply(ctx) {
         \\  ctx.inject(["tui"], (ctx) => { (async () => {
         \\    const chat = new Chat();
-        \\    root.setRoot(new Node(chat.view)); root.focusView(chat.view);
+        \\    root.setRoot(Node.leaf(chat.view)); root.focusView(chat.view);
         \\    const stopped = [];
         \\    client.sessionCancelRun = async (id, clear) => { stopped.push([id, clear]); return {}; };
         \\    client.sessionOpen = () => true;

@@ -33,7 +33,7 @@ function withChat(fn) {
   if (c) fn(c);
 }
 
-const workspace = new Node(chat.view);
+const workspace = Node.leaf(chat.view);
 
 // A session finder: read the sessions, fuzzy-search them by title, then open one.
 // This is the only place the session list appears, so nothing keeps it on screen.
@@ -50,8 +50,8 @@ function openSessionFinder(ctx) {
       title: "sessions",
       footer: "type to filter · ↵ select · esc close",
       border: "rounded",
-      width: 0.6,
-      height: 0.5,
+      width: max => Math.round(max * 0.6),
+      height: max => Math.round(max * 0.5),
       items: rows,
       key: rowKey,
       filterText: r => rowLabel(r),

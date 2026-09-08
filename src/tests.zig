@@ -3,6 +3,12 @@
 test {
     _ = @import("allocations.zig");
     _ = @import("js/bench.zig");
+    _ = @import("js/layout_test.zig");
+    _ = @import("js/widget_test.zig");
+    _ = @import("js/presentation_test.zig");
+    _ = @import("js/md_preview_test.zig");
+    _ = @import("js/stream_test.zig");
+    _ = @import("js/preview_test.zig");
     _ = @import("js/agents_test.zig");
     _ = @import("js/host.zig");
     _ = @import("js/extensions.zig");

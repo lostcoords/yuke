@@ -1,5 +1,6 @@
 // yuke:tui — the terminal capability. A block that declares `tui` registers its view effects here.
-import { command, keymap, route, slot, context, status, style, root } from "yuke:core";
+import { command, keymap, route, slot, context, status, style, root, events } from "yuke:core";
+import { ChatView } from "yuke:transcript";
 
 /** @typedef {import("yuke:ext").Context} Context */
 /** @typedef {() => void} Disposer */
@@ -53,6 +54,43 @@ function bindTo(ctx) {
       return ctx.effect(() => slot.add(target, name, fn));
     },
 
+    // The nearest class wins, then the newest registration; each mounted pane owns one child scope.
+    /** @param {(view: ChatView, scope: import("yuke:ext").Scope) => (context: import("yuke:transcript").PresentationContext) => import("yuke:layout").LayoutNode | null} create @returns {Disposer} */
+    presentation(create) {
+      if (typeof create !== "function") throw new TypeError("presentation needs a factory");
+      return ctx.effect(() => {
+        /** @type {Set<ChatView>} */
+        const mounted = new Set();
+        /** @type {import("yuke:transcript").PresentationProvider} */
+        const provider = {
+          mount(view) {
+            const scope = ctx.scope.child("presentation");
+            try {
+              const layout = create(view, scope);
+              if (typeof layout !== "function") throw new TypeError("presentation factory must return a layout function");
+              if (!scope.alive) throw new TypeError("presentation scope closed during mount");
+              mounted.add(view);
+              return { layout, dispose() { mounted.delete(view); scope.dispose(); } };
+            } catch (error) {
+              scope.dispose();
+              throw error;
+            }
+          },
+        };
+        const offSlot = slot.add(ChatView, "presentation", () => provider);
+        const offClose = events.on("pane.closed", view => {
+          if (view instanceof ChatView) view.clearPresentation(provider);
+        });
+        root.invalidate();
+        return () => {
+          offSlot();
+          offClose();
+          for (const view of mounted) view.clearPresentation(provider);
+          root.invalidate();
+        };
+      });
+    },
+
     /** @param {ContextFlags} flags @returns {Disposer} */
     context(flags) {
       return ctx.effect(() => context.add(flags));
@@ -76,7 +114,7 @@ function bindTo(ctx) {
 
       // A dead scope reverts nothing, so the overlay closes now and never outlives its block.
       if (!ctx.scope.alive) {
-        while (root.overlays.indexOf(layer) >= 0) root.popOverlay(layer);
+        root.popOverlay(layer);
         return () => {};
       }
 
@@ -94,7 +132,7 @@ function bindTo(ctx) {
       return () => {
         if (OVERLAY_OWNER.get(layer) !== surface) return;
         OVERLAY_OWNER.delete(layer);
-        while (root.overlays.indexOf(layer) >= 0) root.popOverlay(layer);
+        root.popOverlay(layer);
       };
     },
 

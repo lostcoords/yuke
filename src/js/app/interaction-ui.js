@@ -66,7 +66,7 @@ function createAnswerer(frontend) {
           return dialog((settle) => {
             const device = new DeviceDialog(start);
             device.onCancel = () => settle(undefined);
-            const win = new Window({ title: attributedTitle("Provider login", options), footer: "c copy code · o open browser · esc cancel", border: "rounded", width: 0.7, height: 5, content: device });
+            const win = new Window({ title: attributedTitle("Provider login", options), footer: "c copy code · o open browser · esc cancel", border: "rounded", width: max => Math.round(max * 0.7), height: 5, content: device });
             root.pushOverlay(win);
             outcome.then(settle);
             return frontend.tui.overlay(win);
@@ -103,8 +103,8 @@ function createAnswerer(frontend) {
               title: attributedTitle(request.title, options),
               footer: "↵ select · esc cancel",
               border: "rounded",
-              width: 0.6,
-              height: 0.5,
+              width: max => Math.round(max * 0.6),
+              height: max => Math.round(max * 0.5),
               onAccept: settle,
               onCancel: () => settle(undefined),
             });
@@ -121,7 +121,7 @@ function createAnswerer(frontend) {
               title: attributedTitle(request.title, options),
               footer: "↵ submit · esc cancel",
               border: "rounded",
-              width: 0.6,
+              width: max => Math.round(max * 0.6),
               height: 3,
               content: prompt,
             });

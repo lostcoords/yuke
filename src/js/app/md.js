@@ -34,8 +34,8 @@ import { style } from "yuke:core";
 /** @typedef {{segments: Segment[]}} Row */
 /** @typedef {{segments: Segment[], w: number}} BreakPiece */
 /** @typedef {{pieces: Segment[], w: number, spaceGroup: string | null}} Word */
-/** @typedef {{firstPrefix?: Segment, contPrefix?: Segment, emptyGroup?: string}} WrapOptions */
-/** @typedef {{raw: string, width: number | null, rows: Row[] | null}} CacheEntry */
+/** @typedef {{firstPrefix?: Segment, contPrefix?: Segment, emptyGroup?: string, limit?: number}} WrapOptions */
+/** @typedef {{raw: string, width: number, rows: Row[]}} CacheEntry */
 
 // Register the Markdown groups once.
 style.add({
@@ -659,6 +659,8 @@ function segmentsJoin(a, b) {
 /** @param {Segment[]} segments @param {number} width @param {WrapOptions} [opts] @returns {Row[]} */
 function wrapSegments(segments, width, opts) {
   const o = opts || {};
+  const limit = o.limit == null ? Infinity : o.limit;
+  if (limit === 0) return [];
   const first = o.firstPrefix || null;
   const cont = o.contPrefix || null;
   /** @param {Segment | null} p @returns {number} */
@@ -674,24 +676,28 @@ function wrapSegments(segments, width, opts) {
   let lineW = 0;
 
   const emit = () => {
+    if (rows.length >= limit) return false;
     const prefix = rows.length === 0 ? first : cont;
     const segs = prefix ? [prefix].concat(line) : line.slice();
     rows.push({ segments: segs.length ? segs : [{ text: "", group: o.emptyGroup || "MdText" }] });
     line = [];
     lineW = 0;
+    return rows.length < limit;
   };
 
   for (const word of words) {
-    if (line.length && lineW + spaceW + word.w > available()) emit();
+    if (rows.length >= limit) break;
+    if (line.length && lineW + spaceW + word.w > available() && !emit()) break;
     if (word.w > available()) {
-      if (line.length) emit();
-      const broken = hardBreakPieces(word.pieces, available());
+      if (line.length && !emit()) break;
+      const broken = hardBreakPieces(word.pieces, available(), limit - rows.length + 1);
       for (let i = 0; i < broken.length; i++) {
         const piece = /** @type {BreakPiece} */ (broken[i]);
         line = piece.segments;
         lineW = piece.w;
-        if (i + 1 < broken.length) emit();
+        if (i + 1 < broken.length && !emit()) break;
       }
+      if (rows.length >= limit) break;
       continue;
     }
     if (line.length) {
@@ -701,7 +707,7 @@ function wrapSegments(segments, width, opts) {
     for (const p of word.pieces) line.push(p);
     lineW += word.w;
   }
-  emit();
+  if (rows.length < limit) emit();
   return rows;
 }
 
@@ -740,15 +746,17 @@ function segmentsToWords(segments) {
 // A blank run or a word, so a wrap walks a segment in runs instead of characters.
 const RUNS = /[ \t\n]+|[^ \t\n]+/g;
 
-/** @param {Segment[]} pieces @param {number} width @returns {BreakPiece[]} */
-function hardBreakPieces(pieces, width) {
+/** @param {Segment[]} pieces @param {number} width @param {number} [limit] @returns {BreakPiece[]} */
+function hardBreakPieces(pieces, width, limit = Infinity) {
   const out = /** @type {BreakPiece[]} */ ([]);
   let segments = /** @type {Segment[]} */ ([]);
   let lineW = 0;
   const emit = () => {
+    if (out.length >= limit) return false;
     if (segments.length) out.push({ segments, w: lineW });
     segments = [];
     lineW = 0;
+    return out.length < limit;
   };
   /** @param {Segment} seg @param {number} w @returns {void} */
   const append = (seg, w) => {
@@ -760,17 +768,19 @@ function hardBreakPieces(pieces, width) {
     lineW += w;
   };
   for (const piece of pieces) {
+    if (out.length >= limit) break;
     const gs = term.graphemes(piece.text);
     for (let k = 0; k < gs.length; k += 3) {
+      if (out.length >= limit) break;
       const from = /** @type {number} */ (gs[k]);
       const len = /** @type {number} */ (gs[k + 1]);
       const w = /** @type {number} */ (gs[k + 2]);
-      if (segments.length && lineW + w > width) emit();
+      if (segments.length && lineW + w > width && !emit()) break;
       append(sliceSegment(piece, from, from + len), w);
-      if (lineW >= width) emit();
+      if (lineW >= width && !emit()) break;
     }
   }
-  emit();
+  if (out.length < limit) emit();
   return out;
 }
 
@@ -841,43 +851,47 @@ function ruleText(width) {
 }
 
 // A rendered segment carries its source span: a `mark` takes the span of the markup it hides, and a separator carries none.
-/** @param {Block} block @param {number} width @returns {Row[]} */
-function renderBlock(block, width) {
+/** @param {Block} block @param {number} width @param {number} [limit] @returns {Row[]} */
+function renderBlock(block, width, limit = Infinity) {
   switch (block.kind) {
     case "heading": {
       const segs = resolveSegments(parseInline(block.text, "MdHeading"), block.runs).map((s) => ({ ...s, group: "MdHeading" }));
-      return wrapSegments(segs, width, { emptyGroup: "MdHeading" });
+      return wrapSegments(segs, width, { emptyGroup: "MdHeading", limit });
     }
     case "paragraph":
-      return wrapSegments(resolveSegments(parseInline(block.text), block.runs), width);
+      return wrapSegments(resolveSegments(parseInline(block.text), block.runs), width, { limit });
     case "code": {
       const rows = /** @type {Row[]} */ ([]);
-      for (let k = 0; k < block.lines.length; k++) {
+      for (let k = 0; k < block.lines.length && rows.length < limit; k++) {
         const at = /** @type {number} */ (block.lineAt[k]);
         const line = /** @type {Segment} */ ({ text: /** @type {string} */ (block.lines[k]), group: "MdCodeBlock", src: at, srcEnd: at + /** @type {string} */ (block.lines[k]).length });
-        const parts = hardBreakPieces([line], width);
-        if (parts.length === 0) rows.push(plainRow("", "MdCodeBlock"));
-        for (const p of parts) rows.push({ segments: p.segments });
+        const parts = hardBreakPieces([line], width, limit - rows.length);
+        if (parts.length === 0 && rows.length < limit) rows.push(plainRow("", "MdCodeBlock"));
+        for (const p of parts) {
+          if (rows.length >= limit) break;
+          rows.push({ segments: p.segments });
+        }
       }
-      if (rows.length === 0) rows.push(plainRow("", "MdCodeBlock"));
+      if (rows.length === 0 && limit > 0) rows.push(plainRow("", "MdCodeBlock"));
       return rows;
     }
     case "quote": {
       const bar = { text: "▏ ", group: "MdQuote", src: block.markAt, srcEnd: block.markEnd, mark: true };
       const cont = { text: "▏ ", group: "MdQuote" };
       const segs = resolveSegments(parseInline(block.text, "MdQuote"), block.runs);
-      return wrapSegments(segs, width, { firstPrefix: bar, contPrefix: cont, emptyGroup: "MdQuote" });
+      return wrapSegments(segs, width, { firstPrefix: bar, contPrefix: cont, emptyGroup: "MdQuote", limit });
     }
     case "hr":
-      return [{ segments: [{ text: ruleText(width), group: "MdRule", src: block.at, srcEnd: block.end, mark: true }] }];
+      return limit > 0 ? [{ segments: [{ text: ruleText(width), group: "MdRule", src: block.at, srcEnd: block.end, mark: true }] }] : [];
     case "list": {
       const rows = /** @type {Row[]} */ ([]);
       for (const item of block.items) {
+        if (rows.length >= limit) break;
         const pad = "  ".repeat(item.indent);
         const mark = { text: pad + item.marker + " ", group: "MdListMark", src: item.markAt, srcEnd: item.markEnd, mark: true };
         const cont = { text: pad + "  ", group: "MdListMark" };
         const segs = resolveSegments(parseInline(item.text), item.runs);
-        for (const r of wrapSegments(segs, width, { firstPrefix: mark, contPrefix: cont })) rows.push(r);
+        for (const r of wrapSegments(segs, width, { firstPrefix: mark, contPrefix: cont, limit: limit - rows.length })) rows.push(r);
       }
       return rows;
     }
@@ -891,10 +905,12 @@ function renderBlock(block, width) {
       const gap = term.measure(TABLE_GAP);
       const widths = columnWidths(cells, Math.max(1, width - gap * (block.columns - 1)));
       const rows = /** @type {Row[]} */ ([]);
-      cells.forEach((row, r) => {
-        const lines = row.map((segs, c) => wrapSegments(segs, /** @type {number} */ (widths[c])));
+      for (let r = 0; r < cells.length && rows.length < limit; r++) {
+        const row = /** @type {Segment[][]} */ (cells[r]);
+        const lines = row.map((segs, c) => wrapSegments(segs, /** @type {number} */ (widths[c]), { limit: limit - rows.length }));
         const height = Math.max(...lines.map((l) => l.length));
         for (let k = 0; k < height; k++) {
+          if (rows.length >= limit) break;
           const segs = /** @type {Segment[]} */ ([]);
           for (let c = 0; c < row.length; c++) {
             if (c > 0) segs.push({ text: TABLE_GAP, group: "MdTableBorder" });
@@ -909,13 +925,19 @@ function renderBlock(block, width) {
           }
           rows.push({ segments: segs });
         }
-        if (r === 0) rows.push({ segments: [{ text: widths.map((w) => "─".repeat(w)).join("─┼─"), group: "MdTableBorder", src: block.sepAt, srcEnd: block.sepEnd, mark: true }] });
-      });
+        if (r === 0 && rows.length < limit) rows.push({ segments: [{ text: widths.map((w) => "─".repeat(w)).join("─┼─"), group: "MdTableBorder", src: block.sepAt, srcEnd: block.sepEnd, mark: true }] });
+      }
       return rows;
     }
     default:
       return [plainRow("")];
   }
+}
+
+/** @param {unknown} text @returns {string} */
+export function normalizeSource(text) {
+  const source = String(text);
+  return source.includes("\r") ? source.replace(/\r\n?/g, "\n") : source;
 }
 
 export class Document {
@@ -931,18 +953,21 @@ export class Document {
   // Return true when the source changed. An append keeps every block but the last two, because only the tail can change.
   /** @param {string} text @returns {boolean} */
   setText(text) {
-    text = String(text);
+    text = normalizeSource(text);
     if (text === this._src) return false;
-    text = text.replace(/\r\n?/g, "\n");
-    if (text === this._src) return false;
-    const keep = this._src != null && text.startsWith(this._src) ? Math.max(0, this._blocks.length - 2) : 0;
+    const append = this._src != null && text.startsWith(this._src);
+    const keep = append ? Math.max(0, this._blocks.length - 2) : 0;
     const from = keep > 0 ? /** @type {Block} */ (this._blocks[keep]).at : 0;
+    const tail = segment(text, from);
+    // The retained prefix keeps its cache; only the replaced tail can lose a block.
+    if (!append) this._cache.clear();
+    else for (let i = keep; i < this._blocks.length; i++) {
+      const at = /** @type {Block} */ (this._blocks[i]).at;
+      if (!tail.some((block) => block.at === at && !block.open)) this._cache.delete(at);
+    }
     this._src = text;
-    this._blocks = this._blocks.slice(0, keep).concat(segment(text, from));
-    // Drop cache entries for blocks that the new text no longer holds.
-    const live = new Set();
-    for (const b of this._blocks) if (!b.open) live.add(b.at);
-    for (const key of this._cache.keys()) if (!live.has(key)) this._cache.delete(key);
+    this._blocks.length = keep;
+    for (const block of tail) this._blocks.push(block);
     return true;
   }
 
@@ -952,14 +977,21 @@ export class Document {
     return this._src == null ? "" : this._src;
   }
 
-  /** @param {number} width @returns {Row[]} */
-  rows(width) {
+  /** @param {number} width @param {number} [limit] @returns {Row[]} */
+  rows(width, limit = Infinity) {
+    limit = !Number.isFinite(limit) ? Infinity : Math.max(0, Math.floor(limit));
+    if (limit === 0) return [];
     const out = /** @type {Row[]} */ ([]);
     let first = true;
     for (const block of this._blocks) {
+      if (out.length >= limit) break;
       if (!first) out.push(plainRow(""));
       first = false;
-      for (const r of this._blockRows(block, width)) out.push(r);
+      if (out.length >= limit) break;
+      for (const r of this._blockRows(block, width, limit - out.length)) {
+        if (out.length >= limit) break;
+        out.push(r);
+      }
     }
     return out;
   }
@@ -981,19 +1013,17 @@ export class Document {
   }
 
   // The cache keys on the block offset, because a segment holds absolute offsets; `raw` catches a change under one offset.
-  /** @param {Block} block @param {number} width @returns {Row[]} */
-  _blockRows(block, width) {
-    if (block.open) return renderBlock(block, width);
+  /** @param {Block} block @param {number} width @param {number} [limit] @returns {Row[]} */
+  _blockRows(block, width, limit = Infinity) {
+    if (block.open) return renderBlock(block, width, limit);
     let entry = this._cache.get(block.at);
-    if (!entry || entry.raw !== block.raw) {
-      entry = { raw: block.raw, width: null, rows: null };
+    if (limit !== Infinity && entry && entry.raw === block.raw && entry.width === width) return entry.rows.slice(0, limit);
+    if (limit !== Infinity) return renderBlock(block, width, limit);
+    if (!entry || entry.raw !== block.raw || entry.width !== width) {
+      entry = { raw: block.raw, width, rows: renderBlock(block, width) };
       this._cache.set(block.at, entry);
     }
-    if (entry.width !== width) {
-      entry.width = width;
-      entry.rows = renderBlock(block, width);
-    }
-    return /** @type {Row[]} */ (entry.rows);
+    return entry.rows;
   }
 }
 

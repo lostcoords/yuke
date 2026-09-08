@@ -1,7 +1,8 @@
 // yuke:chat — the chat pane, the session it drives, and the pickers that read its transcript.
 import { root, config, copy, command } from "yuke:core";
 import { term } from "yuke:term";
-import { ui } from "yuke:ui";
+import { ui, Text } from "yuke:ui";
+import { column, child, fixed, grow } from "yuke:layout";
 import { ChatView } from "yuke:transcript";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
@@ -13,15 +14,6 @@ import { catalogOf, reloadCatalog, chooseModel, defaultModel, providerState, pro
 /** @typedef {Extract<import("yuke:engine-native").EngineEvent, { type: "session" }>} NativeSessionEvent */
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
 /** @typedef {import("yuke:sessions").FeedItem} FeedItem */
-
-const newChatLines = () => {
-  const m = defaultModel().model;
-  return [
-    { text: "new chat", group: "YukeBrand" },
-    { text: m ? "model · " + m : "no model yet", group: "YukeEmpty" },
-    { text: "type a message to start the session", group: "YukeEmpty" },
-  ];
-};
 
 // One chat pane and the session it drives. Each pane owns its own view, transcript and session.
 export class Chat {
@@ -39,7 +31,7 @@ export class Chat {
       onSelect: text => {
         if (config.mouse.copyOnSelect) copy(text, "selection");
       },
-      empty: () => (this.sessionId ? null : newChatLines()),
+      sessionId: () => this.sessionId,
     });
     CHAT_OF.set(this.view, this);
     chats.add(this);
@@ -169,6 +161,7 @@ export class Chat {
 
   // The pane left the tree, so the session goes and the chat leaves the registry.
   dispose() {
+    this.view.clearPresentation();
     this.gen++;
     this.creating = false;
     this.release();
@@ -204,7 +197,7 @@ function focusedLeaf(match) {
   if (v && match(v)) return v;
   const rn = root.root_node;
   if (!rn) return null;
-  for (const leaf of rn.leaves()) if (leaf.view && match(leaf.view)) return leaf.view;
+  for (const leaf of rn.leaves()) if (leaf.shape.type === "leaf" && match(leaf.shape.view)) return leaf.shape.view;
   return null;
 }
 
@@ -260,8 +253,8 @@ function openModelPicker(ctx, query) {
       title: "select a model",
       footer: "type to filter · ↵ select · esc close",
       border: "rounded",
-      width: 0.6,
-      height: 0.6,
+      width: max => Math.round(max * 0.6),
+      height: max => Math.round(max * 0.6),
       items: models,
       key: qualified,
       filterText: m => m.provider + " " + m.name + " " + m.id,
@@ -304,8 +297,8 @@ function pickReasoning(ctx, model) {
     title: model.name + " · effort",
     footer: "↵ select · esc close",
     border: "rounded",
-    width: 0.4,
-    height: 0.4,
+    width: max => Math.round(max * 0.4),
+    height: max => Math.round(max * 0.4),
     items: levels.map((id) => ({ id })),
     key: l => l.id,
     filterText: l => l.id,
@@ -322,6 +315,17 @@ export const chatPlugin = {
   /** @param {import("yuke:ext").InjectContext} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
+      ctx.tui.presentation(() => {
+        const title = new Text({ text: "new chat", group: "YukeBrand" });
+        const hint = new Text({ group: "YukeEmpty" });
+        return (/** @type {import("yuke:transcript").PresentationContext} */ { empty, sessionId, defaultLayout }) => {
+          if (!empty || sessionId) return defaultLayout;
+          const model = defaultModel().model;
+          hint.setText((model ? "model · " + model : "no model yet") + "\ntype a message to start the session");
+          return column(defaultLayout.children.map(item => item.value === "transcript"
+            ? child(null, grow(), { layout: column([child(title, fixed(1)), child(hint, grow())], { padding: { left: 2 } }) }) : item));
+        };
+      });
       // Two panes can show one session, so the event reaches every pane that names it.
       ctx.on("session.changed", /** @param {NativeSessionEvent} ev */ (ev => {
         // A quiet digest changes only state outside the transcript.

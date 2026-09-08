@@ -1,7 +1,7 @@
 const zio = @import("zio");
 const host_mod = @import("host.zig");
 const std = @import("std");
-const term_pkg = @import("term");
+const Paint = @import("test_paint.zig").Paint;
 const Host = @import("host.zig").Host;
 const tools_table = @import("tools.zig");
 
@@ -24,36 +24,6 @@ fn expectSeen(host: *Host, want: []const u8) !void {
 fn expectJsInt(host: *Host, want: i32) !void {
     try std.testing.expectEqual(want, try host.evalInt("globalThis.result"));
 }
-
-const Paint = struct {
-    env_map: std.process.Environ.Map,
-    render: term_pkg.Render,
-    sink: std.Io.Writer.Allocating,
-    out: std.Io.Writer.Allocating,
-
-    fn setup(self: *Paint, gpa: std.mem.Allocator, rows: u16, cols: u16) !void {
-        self.env_map = try std.testing.environ.createMap(gpa);
-        errdefer self.env_map.deinit();
-        self.sink = .init(gpa);
-        errdefer self.sink.deinit();
-        self.out = .init(gpa);
-        errdefer self.out.deinit();
-        self.render = try term_pkg.Render.init(std.testing.io, gpa, &self.env_map, .{});
-        errdefer self.render.deinit(&self.sink.writer);
-        try self.render.resize(&self.sink.writer, .{ .rows = rows, .cols = cols, .x_pixel = 0, .y_pixel = 0 });
-    }
-
-    fn deinit(self: *Paint) void {
-        self.render.deinit(&self.sink.writer);
-        self.out.deinit();
-        self.sink.deinit();
-        self.env_map.deinit();
-    }
-
-    fn bind(self: *Paint, host: *Host) void {
-        host.paint.bindRender(host.ctx, &self.render, &self.out.writer);
-    }
-};
 
 test "yuke:core clip and style.resolve" {
     const host = Host.create(std.testing.allocator);
@@ -682,11 +652,11 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  class Pane extends View { get name() { return "pane"; } draw() {} }
         \\  class Split extends View { contexts() { return ["chat", "composer"]; } draw() {} }
         \\  const pane = new Pane();
-        \\  root.setRoot(new Node(pane));
+        \\  root.setRoot(Node.leaf(pane));
         \\  root.focusView(pane);
         \\  check("ctx-stack-name", JSON.stringify(context.stack()) === JSON.stringify(["root", "pane"]));
         \\  const split = new Split();
-        \\  root.setRoot(new Node(split));
+        \\  root.setRoot(Node.leaf(split));
         \\  root.focusView(split);
         \\  check("ctx-stack-atoms", JSON.stringify(context.stack()) === JSON.stringify(["root", "chat", "composer"]));
         \\
@@ -798,7 +768,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  // The view declines, so the key reaches the keymap and the arming path runs.
         \\  class Bare extends View { get name() { return "bare"; } draw() {} onKey(ev) { seen.push(ev.code || ev.char); return false; } }
         \\  const pane = new Bare();
-        \\  root.setRoot(new Node(pane));
+        \\  root.setRoot(Node.leaf(pane));
         \\  root.focusView(pane);
         \\  const off = keymap.add({ "f6 x": () => true }, "chat");
         \\  check("prefix-context-off", keymap._armKind("f6") === null);
@@ -822,13 +792,13 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\{
         \\  class Junk extends View { contexts() { return ["root", "", "dup", "dup", null, "ok"]; } draw() {} }
         \\  const junk = new Junk();
-        \\  root.setRoot(new Node(junk));
+        \\  root.setRoot(Node.leaf(junk));
         \\  root.focusView(junk);
         \\  check("atoms-sanitized", JSON.stringify(context.stack()) === JSON.stringify(["root", "dup", "ok"]));
         \\  // A throwing hook falls back to the view name, so a broken plugin keeps the view reachable.
         \\  class Boom extends View { get name() { return "boom"; } contexts() { throw new Error("no"); } draw() {} }
         \\  const boom = new Boom();
-        \\  root.setRoot(new Node(boom));
+        \\  root.setRoot(Node.leaf(boom));
         \\  root.focusView(boom);
         \\  check("atoms-throw-safe", JSON.stringify(context.stack()) === JSON.stringify(["root", "boom"]));
         \\  root.setRoot(null);
@@ -856,7 +826,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\{
         \\  class Pane2 extends View { get name() { return "pane2"; } draw() {} }
         \\  const pane = new Pane2();
-        \\  root.setRoot(new Node(pane));
+        \\  root.setRoot(Node.leaf(pane));
         \\  root.focusView(pane);
         \\  const ran = [];
         \\  const kev7 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
@@ -865,7 +835,7 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\    keymap.add({ f8: () => { ran.push("over"); return true; } }, "overlay"),
         \\  ];
         \\  keymap.onKey(kev7({ code: "f8" }));
-        \\  const layer = { rect: { x: 0, y: 0, w: 1, h: 1 }, draw() {} };
+        \\  const layer = { rect: { x: 0, y: 0, w: 1, h: 1 }, layout() {}, draw() {} };
         \\  root.pushOverlay(layer);
         \\  keymap.onKey(kev7({ code: "f8" }));
         \\  root.popOverlay(layer);
@@ -1028,8 +998,8 @@ test "yuke:ui mouse config, wheel scroll, and pane routing under the pointer" {
         \\}
         \\const left = new Pane();
         \\const right = new Pane();
-        \\const a = new Node(left);
-        \\const b = new Node(right);
+        \\const a = Node.leaf(left);
+        \\const b = Node.leaf(right);
         \\root.setRoot(Node.branch("row", a, b, 0.5));
         \\root.root_node.layout({ x: 0, y: 0, w: 21, h: 5 });
         \\root.focusLeaf(a);
@@ -1353,7 +1323,7 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\
         \\const v = new ChatView({ textOf: () => "" });
-        \\root.setRoot(new Node(v));
+        \\root.setRoot(Node.leaf(v));
         \\root.focusView(v);
         \\const off = plugins.use(composerVim);
         \\const t = v.composer.input;
@@ -1471,11 +1441,11 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
         \\  const side = new Side();
         \\  t.setText("abc");
         \\  setComposerMode(v.composer, "normal");
-        \\  root.setRoot(Node.branch("row", new Node(side), new Node(v), 0.5));
+        \\  root.setRoot(Node.branch("row", Node.leaf(side), Node.leaf(v), 0.5));
         \\  root.focusView(side);
         \\  press("x");
         \\  check("normal-needs-chat", t.text === "abc");
-        \\  root.setRoot(new Node(v));
+        \\  root.setRoot(Node.leaf(v));
         \\  root.focusView(v);
         \\}
         \\
@@ -1521,8 +1491,8 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\term.copy = (x) => { copied = x; return x.length; };
         \\const v = new ChatView({ textOf: (id) => body[id] || "" });
         \\v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
-        \\root.setRoot(new Node(v));
-        \\v.rect = { x: 0, y: 0, w: 24, h: 18 };
+        \\root.setRoot(Node.leaf(v));
+        \\v.rect = { x: 0, y: 0, w: 24, h: 18 }; v.layout(v.rect);
         \\const paint = () => { term.beginFrame(); v.draw(true); term.endFrame(); };
         \\paint();
         \\
@@ -1650,11 +1620,11 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\root.onEvent(key("char", "j"));
         \\const srcAt = () => v.transcript.sourceAt(v.transcript.posAt(v.cursor().x, v.cursor().y, false));
         \\const srcBefore = srcAt();
-        \\v.rect = { x: 0, y: 0, w: 14, h: 18 };
+        \\v.rect = { x: 0, y: 0, w: 14, h: 18 }; v.layout(v.rect);
         \\paint();
         \\const srcAfter = srcAt();
         \\check("cursor-survives-rewrap", srcBefore >= 0 && srcAfter === srcBefore);
-        \\v.rect = { x: 0, y: 0, w: 24, h: 18 };
+        \\v.rect = { x: 0, y: 0, w: 24, h: 18 }; v.layout(v.rect);
         \\paint();
         \\
         \\// A region change clears visual mode and drops its selection.
@@ -1670,8 +1640,8 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\check("region-clears-visual", v.transcript.selection === null);
         \\
         \\// A focus jump from another pane hands the keyboard back to the composer.
-        \\const side = { name: "sessions", draw() {}, onKey() { return false; } };
-        \\root.setRoot(Node.branch("row", new Node(side), new Node(v), 0.3));
+        \\const side = { name: "sessions", layout() {}, draw() {}, onKey() { return false; } };
+        \\root.setRoot(Node.branch("row", Node.leaf(side), Node.leaf(v), 0.3));
         \\root.focusView(v);
         \\paint();
         \\v.focusRegion("transcript");
@@ -1692,28 +1662,6 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "tvim.js");
     try expectJs(host, "ok");
-}
-
-test "yuke:ui a transcript with no message shows its placeholder" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 8, 30);
-    defer paint.deinit();
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
-    paint.bind(host);
-
-    try host.evalModule(
-        \\import { term } from "yuke:term";
-        \\import { Transcript } from "yuke:transcript";
-        \\const t = new Transcript({ textOf: () => "", empty: () => [{ text: "new chat" }] });
-        \\t.setOutline([], null);
-        \\globalThis.count = t.rowCount(30);
-        \\term.beginFrame();
-        \\t.draw({ x: 0, y: 0, w: 30, h: 8 });
-        \\term.endFrame();
-    , "empty.js");
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.count"));
-    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "new chat") != null);
 }
 
 test "yuke:ui tool parts render, collapse, copy, and toggle" {
@@ -1808,8 +1756,8 @@ test "yuke:ui tool parts render, collapse, copy, and toggle" {
         \\
         \\const v = new ChatView({ textOf: () => "", partsOf: (id) => parts[id] || [] });
         \\v.transcript.setOutline([{ id: "done", type: "assistant" }], null);
-        \\root.setRoot(new Node(v));
-        \\v.rect = { x: 0, y: 0, w: 40, h: 12 };
+        \\root.setRoot(Node.leaf(v));
+        \\v.rect = { x: 0, y: 0, w: 40, h: 12 }; v.layout(v.rect);
         \\const vpaint = () => { term.beginFrame(); v.draw(true); term.endFrame(); };
         \\vpaint();
         \\plugins.use(transcriptVim);
@@ -2599,7 +2547,7 @@ test "yuke:ui Transcript draws markdown segments through the pager" {
         \\// The pane takes its status line from the caller, so the kit holds no app state.
         \\const v = new ChatView({ textOf: () => "body" });
         \\v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
-        \\v.rect = { x: 0, y: 0, w: 24, h: 6 };
+        \\v.rect = { x: 0, y: 0, w: 24, h: 6 }; v.layout(v.rect);
         \\term.beginFrame();
         \\v.draw(true);
         \\term.endFrame();
@@ -2936,7 +2884,7 @@ test "an overlay without a hook is consumed, not a fault" {
         \\  onKey(ev) { globalThis.seen++; return true; }
         \\}
         \\root.setActive(new Base());
-        \\root.pushOverlay({ draw() { text(0, 1, "o", "Normal"); } });
+        \\root.pushOverlay({ layout() {}, draw() { text(0, 1, "o", "Normal"); } });
         \\globalThis.root = root;
     , "overlay.js");
 
@@ -2965,10 +2913,10 @@ test "bordered picker preserves actions padding and mouse targets after resize" 
         \\const p = new Picker({ body: "one two three four five six seven eight nine ten eleven twelve", filter: false, items: ["Yes", "No"] });
         \\const w = new Window({ border: "rounded", width: 16, height: 6, content: p });
         \\p.win = w;
-        \\const draw = () => { w.update(); term.beginFrame(); w.draw(); term.endFrame(); };
+        \\const draw = () => { w.layout({ x: 0, y: 0, w: term.width, h: term.height }); term.beginFrame(); w.draw(); term.endFrame(); };
         \\draw();
         \\let r = p.list._rect;
-        \\check(r.x === w.rect.x + 3 && r.w === 10 && r.h === 2 && p.cursor(w) === null, "small padding/actions");
+        \\check(r.x === w.rect.x + 3 && r.w === 10 && r.h === 2 && p.cursor() === null, "small padding/actions");
         \\check(!p.onMouse({ event: "press", button: "left", col: r.x - 1, row: r.y }), "padding accepted click");
         \\check(p.onMouse({ event: "press", button: "left", col: r.x, row: r.y + 1 }) && p.selected() === "No", "action mouse target");
         \\w.opts.height = 10;
@@ -2991,8 +2939,8 @@ test "bordered picker preserves actions padding and mouse targets after resize" 
         \\check(p.list._rect.x === w.rect.x && p.list._rect.w === w.rect.w && p.list._rect.h === 2, "borderless preferred height");
         \\const finder = new Picker({ body: "help text", items: ["one"] });
         \\const fw = new Window({ border: "rounded", width: 16, height: 6, content: finder });
-        \\finder.win = fw; fw.update();
-        \\const cursor = finder.cursor(fw), inner = finder._contentRect(fw);
+        \\finder.win = fw; fw.layout({ x: 0, y: 0, w: term.width, h: term.height });
+        \\const cursor = finder.cursor(), inner = finder._contentRect();
         \\check(cursor.x >= inner.x && cursor.x < inner.x + inner.w && cursor.y >= inner.y && cursor.y < inner.y + inner.h, "cursor outside content");
         \\globalThis.result = "ok";
     , "picker-geometry.js");
@@ -3011,8 +2959,8 @@ test "an unusable view or layer is rejected at the call" {
         \\  }
         \\};
         \\globalThis.threw = 0;
-        \\const view = "a view needs a draw method";
-        \\const layer = "pushOverlay needs a layer with a draw method";
+        \\const view = "a view needs layout and draw methods";
+        \\const layer = "pushOverlay needs layout and draw methods";
         \\for (const bad of [{}, { draw: 1 }]) reject(() => root.setActive(bad), view);
         \\root.setActive(new Ok());
         \\reject(() => root.split("row", {}), view);
@@ -3137,7 +3085,7 @@ test "the composer route stays off while another pane has focus" {
         \\}
         \\const v = new ChatView({ textOf: () => "" });
         \\const side = new Side();
-        \\root.setRoot(Node.branch("row", new Node(side), new Node(v), 0.3));
+        \\root.setRoot(Node.branch("row", Node.leaf(side), Node.leaf(v), 0.3));
         \\root.focusView(v);
         \\const off = plugins.use(composerVim);
         \\const t = v.composer.input;
@@ -3191,7 +3139,7 @@ test "a pane focus and a terminal focus are separate events" {
         \\class B extends View { get name() { return "b"; } draw() {} }
         \\const a = new A();
         \\const b = new B();
-        \\root.setRoot(Node.branch("row", new Node(a), new Node(b), 0.5));
+        \\root.setRoot(Node.branch("row", Node.leaf(a), Node.leaf(b), 0.5));
         \\root.focusView(a);
         \\globalThis.log = "";
         \\events.on("pane.focused", (v) => { globalThis.log += "P" + v.name; });
@@ -3231,7 +3179,7 @@ test "the chat pane names the region that reads the keyboard" {
         \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
         \\
         \\const v = new ChatView({ textOf: () => "" });
-        \\root.setRoot(new Node(v));
+        \\root.setRoot(Node.leaf(v));
         \\root.focusView(v);
         \\// Count where each key lands, which is the routing contract itself.
         \\let toC = 0;
@@ -3276,7 +3224,7 @@ test "the chat pane names the region that reads the keyboard" {
         \\
         \\// A new tree runs `onFocus`, so a remounted pane starts in the composer.
         \\v.focusRegion("transcript");
-        \\root.setRoot(new Node(v));
+        \\root.setRoot(Node.leaf(v));
         \\check("remount-resets", v.focus === "composer");
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
@@ -3310,9 +3258,9 @@ test "a focused transcript takes the keys even while the composer sits in normal
         \\const run = (order) => {
         \\  const v = new ChatView({ textOf: (id) => body[id] || "" });
         \\  v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
-        \\  root.setRoot(new Node(v));
+        \\  root.setRoot(Node.leaf(v));
         \\  root.focusView(v);
-        \\  v.rect = { x: 0, y: 0, w: 24, h: 18 };
+        \\  v.rect = { x: 0, y: 0, w: 24, h: 18 }; v.layout(v.rect);
         \\  term.beginFrame(); v.draw(true); term.endFrame();
         \\  const offs = order === "composer-first"
         \\    ? [plugins.use(composerVim), plugins.use(transcriptVim)]
@@ -3455,7 +3403,7 @@ test "composer-vim supplies the prompt glyph through the slot" {
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const v = new ChatView({ textOf: () => "" });
-        \\root.setRoot(new Node(v));
+        \\root.setRoot(Node.leaf(v));
         \\root.focusView(v);
         \\
         \\const own = v.composer._prompt();
@@ -3548,7 +3496,7 @@ test "a modal picker reads the shared nav keys and seals the keymap" {
         \\const off = keymap.add({ f9: () => { leaked++; } });
         \\press("f9");
         \\check("modal-seals-keymap", leaked === 0);
-        \\const float = root.pushOverlay({ modal: false, draw() {}, onKey() { return false; } });
+        \\const float = root.pushOverlay({ modal: false, layout() {}, draw() {}, onKey() { return false; } });
         \\press("home");
         \\press("j");
         \\check("float-reaches-modal", sel() === "y");
@@ -3560,15 +3508,15 @@ test "a modal picker reads the shared nav keys and seals the keymap" {
         \\check("float-keeps-mouse-boundary", leaked === 0);
         \\root.routeMouse = routeMouse;
         \\root.popOverlay(float);
-        \\const lower = root.pushOverlay({ modal: false, draw() {} });
+        \\const lower = root.pushOverlay({ modal: false, layout() {}, draw() {} });
         \\let calls = 0;
-        \\const moving = root.pushOverlay({ modal: false, draw() {}, onKey() { calls++; root.popOverlay(lower); return false; } });
+        \\const moving = root.pushOverlay({ modal: false, layout() {}, draw() {}, onKey() { calls++; root.popOverlay(lower); return false; } });
         \\press("f9");
         \\check("removed-lower-layer-runs-once", calls === 1 && leaked === 0);
         \\root.popOverlay(moving);
-        \\const a = root.pushOverlay({ modal: false, draw() {} });
-        \\const b = root.pushOverlay({ modal: false, draw() {} });
-        \\const self = root.pushOverlay({ modal: false, draw() {}, onKey() { root.popOverlay(a); root.popOverlay(b); root.popOverlay(self); return false; } });
+        \\const a = root.pushOverlay({ modal: false, layout() {}, draw() {} });
+        \\const b = root.pushOverlay({ modal: false, layout() {}, draw() {} });
+        \\const self = root.pushOverlay({ modal: false, layout() {}, draw() {}, onKey() { root.popOverlay(a); root.popOverlay(b); root.popOverlay(self); return false; } });
         \\press("f9");
         \\check("removed-stack-keeps-modal-boundary", leaked === 0);
         \\off();
@@ -4762,7 +4710,7 @@ test "the chat slice owns its listeners and its transcript commands" {
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\// The pane must sit in the tree, because a session command acts on the focused chat.
         \\const chat = new Chat();
-        \\root.setRoot(new Node(chat.view));
+        \\root.setRoot(Node.leaf(chat.view));
         \\root.focusView(chat.view);
         \\
         \\check("commands-absent-before", !command.available("model:pick"));
@@ -4833,8 +4781,8 @@ test "the chat pane routes a drag that leaves the transcript and guards its pres
         \\const body = { a1: "alpha bravo charlie\nsecond line here\nthird line xx" };
         \\const v = new ChatView({ textOf: (id) => body[id] || "" });
         \\v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
-        \\root.setRoot(new Node(v));
-        \\v.rect = { x: 0, y: 0, w: 40, h: 18 };
+        \\root.setRoot(Node.leaf(v));
+        \\v.rect = { x: 0, y: 0, w: 40, h: 18 }; v.layout(v.rect);
         \\term.beginFrame(); v.draw(true); term.endFrame();
         \\const r = v.transcript.pager.rect();
         \\const mouse = (row, event, button) => v.onMouse({ type: "mouse", col: r.x + 2, row, button: button || "left", event, mods: 0 });
@@ -4882,7 +4830,7 @@ test "a split gives each chat pane its own session" {
         \\plugins.use(chatPlugin);
         \\
         \\const a = new Chat();
-        \\root.setRoot(new Node(a.view));
+        \\root.setRoot(Node.leaf(a.view));
         \\root.focusView(a.view);
         \\check("first-is-focused", focusedChat() === a);
         \\
@@ -4926,18 +4874,18 @@ test "a split gives each chat pane its own session" {
         \\const c1 = new Chat();
         \\const c2 = new Chat();
         \\c1.connKey = "local"; c1.sessionId = "s9";
-        \\root.setRoot(new Node(c1.view));
+        \\root.setRoot(Node.leaf(c1.view));
         \\check("setRoot-drops-the-pane-it-replaced", !chats.has(a));
         \\const held = chats.size;
-        \\root.setRoot(new Node(c2.view));
+        \\root.setRoot(Node.leaf(c2.view));
         \\check("setRoot-drops-the-old-pane", chats.size === held - 1 && !chats.has(c1));
         \\check("setRoot-keeps-the-new-pane", chats.has(c2));
         \\
         \\// A pane that survives the swap must not be released, so only the dropped views go.
         \\const stay = new Chat();
         \\const drop = new Chat();
-        \\root.setRoot(Node.branch("row", new Node(stay.view), new Node(drop.view), 0.5));
-        \\root.setRoot(new Node(stay.view));
+        \\root.setRoot(Node.branch("row", Node.leaf(stay.view), Node.leaf(drop.view), 0.5));
+        \\root.setRoot(Node.leaf(stay.view));
         \\check("setRoot-releases-only-the-dropped", chats.has(stay) && !chats.has(drop));
         \\
         \\// A split with no active leaf must not leave its new chat in the registry.
@@ -4948,8 +4896,8 @@ test "a split gives each chat pane its own session" {
         \\check("failed-split-keeps-no-orphan", chats.size === orphans);
         \\
         \\// A bare view is a pane for a layer, but it owns no session, so a command finds none.
-        \\const bare = { name: "chat", rect: { x: 0, y: 0, w: 1, h: 1 }, draw() {} };
-        \\root.setRoot(new Node(bare));
+        \\const bare = { name: "chat", rect: { x: 0, y: 0, w: 1, h: 1 }, layout() {}, draw() {} };
+        \\root.setRoot(Node.leaf(bare));
         \\check("bare-view-is-a-pane", focusedChatView() === bare);
         \\check("bare-view-owns-no-session", focusedChat() === null);
         \\
@@ -4969,7 +4917,7 @@ test "the context owns every overlay its plugin pushes" {
         \\import { tui } from "yuke:tui";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
-        \\const layer = (n) => ({ name: n, rect: { x: 0, y: 0, w: 1, h: 1 }, draw() {} });
+        \\const layer = (n) => ({ name: n, rect: { x: 0, y: 0, w: 1, h: 1 }, layout() {}, draw() {} });
         \\
         \\const owner = { name: "ov", apply(ctx) { const t = tui.bindTo(ctx); t.command(null, { "ov:open": () => t.overlay(root.pushOverlay(layer("own"))) }); } };
         \\const other = { name: "other", apply(ctx) { const t = tui.bindTo(ctx); t.command(null, { "other:open": () => root.pushOverlay(layer("other")) }); } };
@@ -5047,22 +4995,23 @@ test "the context owns every overlay its plugin pushes" {
         \\check("order-test-left-nothing", root.overlays.length === base);
         \\
         \\// A frozen layer must still be claimable, so the claim never writes to the layer itself.
-        \\const frozen = Object.freeze({ name: "frozen", rect: { x: 0, y: 0, w: 1, h: 1 }, draw() {} });
+        \\const frozen = Object.freeze({ name: "frozen", rect: { x: 0, y: 0, w: 1, h: 1 }, layout() {}, draw() {} });
         \\plugins.use({ name: "fz", apply(ctx) { const t = tui.bindTo(ctx); t.overlay(root.pushOverlay(frozen)); } });
         \\check("frozen-claimed", root.overlays.length === base + 1);
         \\plugins.dispose("fz");
         \\check("frozen-popped", root.overlays.length === base);
         \\
-        \\// One layer pushed twice leaves twice, because the cleanup walks every stack entry.
+        \\// A duplicate push rejects the second mount and preserves the first owner.
         \\const twice = layer("twice");
+        \\let duplicateRejected = false;
         \\plugins.use({ name: "dup", apply(ctx) {
         \\  const t = tui.bindTo(ctx);
-        \\  root.pushOverlay(twice);
         \\  t.overlay(root.pushOverlay(twice));
+        \\  try { root.pushOverlay(twice); } catch (error) { duplicateRejected = error instanceof TypeError; }
         \\} });
-        \\check("dup-pushed", root.overlays.length === base + 2);
+        \\check("duplicate-rejected", duplicateRejected && root.overlays.length === base + 1);
         \\plugins.dispose("dup");
-        \\check("dup-both-popped", root.overlays.length === base);
+        \\check("duplicate-owner-popped", root.overlays.length === base);
         \\
         \\// A late push from a disposed plugin closes at once, because a dead scope can never revert it.
         \\let late = null;
@@ -5070,14 +5019,6 @@ test "the context owns every overlay its plugin pushes" {
         \\plugins.dispose("late");
         \\late();
         \\check("dead-scope-closes-a-late-push", root.overlays.length === base);
-        \\
-        \\// A late push of a layer that the stack already holds closes every copy, not only the first.
-        \\const twiceLate = layer("twicelate");
-        \\let lateDup = null;
-        \\plugins.use({ name: "ld", apply(ctx) { const t = tui.bindTo(ctx); lateDup = () => { root.pushOverlay(twiceLate); t.overlay(root.pushOverlay(twiceLate)); }; } });
-        \\plugins.dispose("ld");
-        \\lateDup();
-        \\check("dead-scope-closes-every-copy", root.overlays.length === base);
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "ctxoverlay.js");
@@ -6482,7 +6423,7 @@ test "an overlay survives a rebuild of the block that claimed it" {
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\
         \\// One long-lived layer, claimed by a block that also waits on a second capability.
-        \\const layer = { name: "kept", rect: { x: 0, y: 0, w: 1, h: 1 }, draw() {} };
+        \\const layer = { name: "kept", rect: { x: 0, y: 0, w: 1, h: 1 }, layout() {}, draw() {} };
         \\root.pushOverlay(layer);
         \\const base = root.overlays.length;
         \\

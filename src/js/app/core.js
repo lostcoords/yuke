@@ -15,11 +15,11 @@ export { config, defineConfig, Emitter, events };
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
 /** @typedef {{ text: string, w: number }} TextPiece */
 /** @typedef {{ at: number, cls: number }} GraphemeCell */
-/** @typedef {{ rect: Rect, draw: (...args: any[]) => unknown, name?: string, update?: () => void, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: Extract<HostEvent, { type: "mouse" }>) => boolean, onFocus?: () => void, contexts?: () => string[], navTarget?: () => NavTarget | null, needsTick?: () => { periodMs: number } | null, tick?: () => void, cursor?: () => { x: number, y: number, visible: boolean } | null, modal?: boolean }} ViewLike */
+/** @typedef {{ rect: Rect, layout: (rect: Rect) => void, draw: (focused?: boolean) => unknown, name?: string, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: Extract<HostEvent, { type: "mouse" }>) => boolean, onFocus?: () => void, contexts?: () => string[], navTarget?: () => NavTarget | null, needsTick?: () => { periodMs: number } | null, tick?: () => void, cursor?: () => { x: number, y: number, visible: boolean } | null, modal?: boolean }} ViewLike */
 /** @typedef {Omit<ViewLike, "rect"> & { rect?: Rect }} Overlay */
 /** @typedef {{ onStart?: () => void, onStop?: () => void, needsTick?: () => { periodMs: number } | null, tick?: () => void }} Tickable */
 /** @typedef {{ tickable: Tickable, refs: number, started: boolean }} TickableEntry */
-/** @typedef {{ type: "leaf" | "split", parent: Node | null, rect: Rect, view: ViewLike | null, kind: "row" | "col" | null, a: Node | null, b: Node | null, ratio: number }} NodeShape */
+/** @typedef {{ type: "leaf", view: ViewLike } | { type: "split", kind: "row" | "col", a: Node, b: Node, ratio: number }} NodeShape */
 /** @typedef {(...args: any[]) => unknown} CommandAction */
 /** @typedef {(...args: any[]) => boolean | [boolean, ...any[]]} CommandPredicate */
 /** @typedef {{ title: string, description: string, slash?: string | null, args?: boolean }} CommandMeta */
@@ -184,51 +184,18 @@ export function clip(s, max, ellipsis = true) {
 // Wrap `s` and keep its UTF-16 offsets as [start, end) plus a soft flag, because a plain wrap drops the space runs.
 /** @param {string} s @param {number} width @returns {WrapRow[]} */
 export function wrapOffsets(s, width) {
-  s = String(s);
-  if (width <= 0) return [{ start: 0, end: s.length, soft: false }];
+  return wrapPreview(s, width, 0).rows;
+}
 
-  /** @type {WrapRow[]} */
-  const rows = [];
-  const gs = term.graphemes(s);
-  let start = 0; // where the row starts
-  let w = 0; // cells the row uses
-  let breakAt = -1; // after the last space of the row
-  let breakW = 0; // cells up to breakAt
-
-  for (let k = 0; k < gs.length; k += 3) {
-    const off = /** @type {number} */ (gs[k]);
-    const length = /** @type {number} */ (gs[k + 1]);
-    const ch = s.slice(off, off + length);
-    if (ch === "\n") {
-      rows.push({ start, end: off, soft: false });
-      start = off + length;
-      w = 0;
-      breakAt = -1;
-      continue;
-    }
-
-    const widthAt = /** @type {number} */ (gs[k + 2]);
-    // A space hangs past the right edge, so a wrap never starts a row with the space it broke on.
-    if (ch !== " " && w + widthAt > width && off > start) {
-      if (breakAt > start) {
-        rows.push({ start, end: breakAt, soft: true });
-        w -= breakW;
-        start = breakAt;
-      } else {
-        rows.push({ start, end: off, soft: true });
-        w = 0;
-        start = off;
-      }
-      breakAt = -1;
-    }
-    w += widthAt;
-    if (ch === " ") {
-      breakAt = off + length;
-      breakW = w;
-    }
+// A zero head returns all rows; a positive head keeps that prefix and an optional tail.
+/** @param {string} s @param {number} width @param {number} head @param {number} [tail] @returns {{ rows: WrapRow[], omitted: boolean }} */
+export function wrapPreview(s, width, head, tail = 0) {
+  const wrapped = term.wrap(String(s), width, head, tail);
+  const rows = /** @type {WrapRow[]} */ ([]);
+  for (let i = 0; i < wrapped.rows.length; i += 3) {
+    rows.push({ start: /** @type {number} */ (wrapped.rows[i]), end: /** @type {number} */ (wrapped.rows[i + 1]), soft: wrapped.rows[i + 2] !== 0 });
   }
-  rows.push({ start, end: s.length, soft: false });
-  return rows;
+  return { rows, omitted: wrapped.omitted };
 }
 
 // Place `caret` in the rows of `wrapOffsets`; a soft break takes the next row, so the caret stays on the screen.
@@ -424,7 +391,7 @@ export const context = {
 };
 
 // Add the atoms a view declares, or its name when it declares none.
-/** @param {string[]} out @param {ViewLike | Overlay | null} view @returns {void} */
+/** @param {string[]} out @param {ViewLike | Overlay | null | undefined} view @returns {void} */
 function pushAtoms(out, view) {
   if (!view) return;
   /** @type {unknown} */
@@ -932,10 +899,38 @@ function normalizeStroke(stroke) {
 }
 
 
-// `draw` runs every frame. A layer or a view without `draw` never appears.
+// A mounted layer or view must provide both layout and draw hooks.
 /** @param {object | null | undefined} obj @param {string} message @returns {void} */
 function requireDraw(obj, message) {
   if (!obj || typeof /** @type {Record<string, unknown>} */ (obj).draw !== "function") throw new TypeError(message);
+}
+
+/** @param {object | null | undefined} obj @param {string} message @returns {void} */
+function requireView(obj, message) {
+  requireDraw(obj, message);
+  if (typeof /** @type {Record<string, unknown>} */ (obj).layout !== "function") throw new TypeError(message);
+}
+
+/** @type {WeakMap<object, object>} */
+const VIEW_OWNER = new WeakMap();
+
+// Claim a mounted view without writing ownership state onto caller objects.
+/** @param {object} view @param {object} owner @returns {void} */
+export function claimView(view, owner) {
+  if ((typeof view !== "object" && typeof view !== "function") || view === null) throw new TypeError("view ownership needs an object");
+  if ((typeof owner !== "object" && typeof owner !== "function") || owner === null) throw new TypeError("view ownership needs an owner");
+  const held = VIEW_OWNER.get(view);
+  if (held && held !== owner) throw new TypeError("view already has an owner");
+  VIEW_OWNER.set(view, owner);
+}
+
+// Release only the claim held by the caller; a stale disposer cannot release a newer mount.
+/** @param {object} view @param {object} owner @returns {void} */
+export function releaseView(view, owner) {
+  const held = VIEW_OWNER.get(view);
+  if (held === undefined) return;
+  if (held !== owner) throw new TypeError("view owner does not match");
+  VIEW_OWNER.delete(view);
 }
 
 /** @param {string} s @param {number} caret @returns {number} */
@@ -1177,8 +1172,10 @@ export class View {
   get name() {
     return "view";
   }
-  /** @returns {void} */
-  update() {}
+  /** @param {Rect} rect @returns {void} */
+  layout(rect) {
+    this.rect = rect;
+  }
   /** @returns {void} */
   draw() {}
   /** @param {HostEvent} _ev @returns {boolean} */
@@ -1201,42 +1198,45 @@ export class View {
   }
 }
 
+/** @param {Node} node @returns {ViewLike} */
+function leafView(node) {
+  if (node.shape.type !== "leaf") throw new Error("a leaf view is required");
+  return node.shape.view;
+}
+
 export class Node {
-  /** @param {ViewLike | null} view */
-  constructor(view) {
-    if (view != null) requireDraw(view, "a view needs a draw method");
-    /** @type {"leaf" | "split"} */
-    this.type = "leaf";
+  /** @param {NodeShape} shape */
+  constructor(shape) {
+    if (!shape || (shape.type !== "leaf" && shape.type !== "split")) throw new TypeError("a node needs a leaf or split shape");
+    if (shape.type === "leaf") requireView(shape.view, "a view needs layout and draw methods");
+    else if (!(shape.a instanceof Node) || !(shape.b instanceof Node)) throw new TypeError("a split needs two nodes");
     /** @type {Node | null} */
     this.parent = null;
     /** @type {Rect} */
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.view = view || null;
-    /** @type {"row" | "col" | null} */
-    this.kind = null;
-    /** @type {Node | null} */
-    this.a = null;
-    /** @type {Node | null} */
-    this.b = null;
-    /** @type {number} */
-    this.ratio = 0.5;
+    /** @type {NodeShape} */
+    this.shape = shape;
+    if (shape.type === "split") {
+      shape.a.parent = this;
+      shape.b.parent = this;
+    }
+  }
+
+  /** @param {ViewLike} view @returns {Node} */
+  static leaf(view) {
+    return new Node({ type: "leaf", view });
   }
 
   /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @param {number | undefined} ratio @returns {Node} */
   static branch(kind, a, b, ratio) {
-    const n = new Node(null);
-    n.becomeSplit(kind, a, b, ratio);
+    const n = new Node({ type: "split", kind, a, b, ratio: ratio == null ? 0.5 : ratio });
     return n;
   }
 
   /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @param {number | undefined} [ratio] @returns {void} */
   becomeSplit(kind, a, b, ratio) {
-    this.type = "split";
-    this.kind = kind;
-    this.view = null;
-    this.ratio = ratio == null ? 0.5 : ratio;
-    this.a = a;
-    this.b = b;
+    if (this.shape.type !== "leaf") throw new TypeError("a split node cannot split again");
+    this.shape = { type: "split", kind, a, b, ratio: ratio == null ? 0.5 : ratio };
     a.parent = this;
     b.parent = this;
   }
@@ -1246,17 +1246,17 @@ export class Node {
   leafAt(col, row) {
     const r = this.rect;
     if (col < r.x || col >= r.x + r.w || row < r.y || row >= r.y + r.h) return null;
-    if (this.type === "leaf") return this;
-    return /** @type {Node} */ (this.a).leafAt(col, row) || /** @type {Node} */ (this.b).leafAt(col, row);
+    if (this.shape.type === "leaf") return this;
+    return this.shape.a.leafAt(col, row) || this.shape.b.leafAt(col, row);
   }
 
   /** @param {Node[] | undefined} [out] @returns {Node[]} */
   leaves(out) {
     out = out || [];
-    if (this.type === "leaf") out.push(this);
+    if (this.shape.type === "leaf") out.push(this);
     else {
-      /** @type {Node} */ (this.a).leaves(out);
-      /** @type {Node} */ (this.b).leaves(out);
+      this.shape.a.leaves(out);
+      this.shape.b.leaves(out);
     }
     return out;
   }
@@ -1264,42 +1264,37 @@ export class Node {
   /** @param {Rect} rect @returns {void} */
   layout(rect) {
     this.rect = rect;
-    if (this.type === "leaf") {
-      if (this.view) this.view.rect = rect;
+    if (this.shape.type === "leaf") {
+      this.shape.view.layout(rect);
       return;
     }
-    if (this.kind === "row") {
+    if (this.shape.kind === "row") {
       const total = Math.max(0, rect.w - 1);
-      const aw = clampChildSize(Math.round(total * this.ratio), total);
-      /** @type {Node} */ (this.a).layout({ x: rect.x, y: rect.y, w: aw, h: rect.h });
-      /** @type {Node} */ (this.b).layout({ x: rect.x + aw + 1, y: rect.y, w: total - aw, h: rect.h });
+      const aw = clampChildSize(Math.round(total * this.shape.ratio), total);
+      this.shape.a.layout({ x: rect.x, y: rect.y, w: aw, h: rect.h });
+      this.shape.b.layout({ x: rect.x + aw + 1, y: rect.y, w: total - aw, h: rect.h });
     } else {
       const total = Math.max(0, rect.h - 1);
-      const ah = clampChildSize(Math.round(total * this.ratio), total);
-      /** @type {Node} */ (this.a).layout({ x: rect.x, y: rect.y, w: rect.w, h: ah });
-      /** @type {Node} */ (this.b).layout({ x: rect.x, y: rect.y + ah + 1, w: rect.w, h: total - ah });
+      const ah = clampChildSize(Math.round(total * this.shape.ratio), total);
+      this.shape.a.layout({ x: rect.x, y: rect.y, w: rect.w, h: ah });
+      this.shape.b.layout({ x: rect.x, y: rect.y + ah + 1, w: rect.w, h: total - ah });
     }
   }
 
   /** @param {Node | null} activeLeaf @returns {void} */
   draw(activeLeaf) {
-    if (this.type === "leaf") {
-      const v = this.view;
-      if (!v) return;
-      callHook(v, "update");
-      callHook(v, "draw", this === activeLeaf);
+    if (this.shape.type === "leaf") {
+      callHook(this.shape.view, "draw", this === activeLeaf);
       return;
     }
-    const a = /** @type {Node} */ (this.a);
-    a.draw(activeLeaf);
-    const b = /** @type {Node} */ (this.b);
-    b.draw(activeLeaf);
-    if (this.kind === "row") {
-      const splitA = /** @type {Node} */ (this.a);
+    this.shape.a.draw(activeLeaf);
+    this.shape.b.draw(activeLeaf);
+    if (this.shape.kind === "row") {
+      const splitA = this.shape.a;
       const x = splitA.rect.x + splitA.rect.w;
       for (let y = this.rect.y; y < this.rect.y + this.rect.h; y++) text(x, y, "│", "YukeRule");
     } else if (this.rect.w > 0) {
-      const splitA = /** @type {Node} */ (this.a);
+      const splitA = this.shape.a;
       const y = splitA.rect.y + splitA.rect.h;
       text(this.rect.x, y, "─".repeat(this.rect.w), "YukeRule");
     }
@@ -1383,16 +1378,28 @@ export class RootView {
     /** @type {boolean} */
     this._needsDraw = false; // the host paints once after it drains the event queue
     /** @type {boolean} */
+    this._layoutDirty = true;
+    /** @type {boolean} */
     this._started = false;
   }
 
   get active() {
-    return this.activeLeaf ? this.activeLeaf.view : null;
+    return this.activeLeaf ? leafView(this.activeLeaf) : null;
   }
 
   /** @param {Node | null} node @returns {void} */
   setRoot(node) {
-    const gone = this.root_node ? this.root_node.leaves().map((l) => l.view) : [];
+    const next = node ? node.leaves().map(leafView) : [];
+    const seen = new Set();
+    for (const view of next) {
+      if (seen.has(view)) throw new TypeError("a root cannot mount a view twice");
+      seen.add(view);
+      if (this.overlays.indexOf(view) >= 0) throw new TypeError("a root cannot mount a view twice");
+      const owner = VIEW_OWNER.get(view);
+      if (owner && owner !== this) throw new TypeError("view already has an owner");
+    }
+    for (const view of next) claimView(view, this);
+    const gone = this.root_node ? this.root_node.leaves().map(leafView) : [];
     if (node) node.parent = null;
     this.root_node = node;
     this.activeLeaf = null;
@@ -1400,13 +1407,18 @@ export class RootView {
     // The first leaf takes the focus through the same path, so it runs `onFocus` like any other.
     if (node) this._setActiveLeaf(/** @type {Node} */ (node.leaves()[0]));
     // A replaced tree drops its panes, so each owner hears it the way a close tells them.
-    const kept = node ? node.leaves().map((l) => l.view) : [];
-    for (const v of gone) if (v && kept.indexOf(v) < 0) events.emit("pane.closed", v);
+    const kept = node ? node.leaves().map(leafView) : [];
+    for (const v of gone) {
+      if (kept.indexOf(v) >= 0) continue;
+      releaseView(v, this);
+      events.emit("pane.closed", v);
+    }
+    this.invalidate();
   }
 
   /** @param {ViewLike | null} view @returns {void} */
   setActive(view) {
-    this.setRoot(view == null ? null : new Node(view));
+    this.setRoot(view == null ? null : Node.leaf(view));
   }
 
   // Move the active leaf. A new leaf gets `onFocus`, so a pane can reset its caret.
@@ -1415,8 +1427,10 @@ export class RootView {
     if (!leaf || leaf === this.activeLeaf) return;
     this.activeLeaf = leaf;
     // A listener reads the pane focus before the pane itself, which is the order advice gave it.
-    events.emit("pane.focused", leaf.view);
-    callHook(leaf.view, "onFocus");
+    const view = leafView(leaf);
+    events.emit("pane.focused", view);
+    callHook(view, "onFocus");
+    this.invalidatePaint();
   }
 
   /** @param {Node | null} leaf @returns {void} */
@@ -1429,7 +1443,7 @@ export class RootView {
   focusView(view) {
     if (!view || !this.root_node) return false;
     for (const leaf of this.root_node.leaves()) {
-      if (leaf.view === view) {
+      if (leafView(leaf) === view) {
         this._setActiveLeaf(leaf);
         return true;
       }
@@ -1450,24 +1464,29 @@ export class RootView {
       const held = this._capture;
       if (ev.event === "release") this._capture = null;
       const live = this.root_node && this.root_node.leaves().indexOf(held) >= 0;
-      return live && held.view ? !!callHook(held.view, "onMouse", ev) : false;
+      return live ? !!callHook(leafView(held), "onMouse", ev) : false;
     }
     const leaf = this.leafAt(ev.col, ev.row);
-    if (!leaf || !leaf.view) return false;
+    if (!leaf) return false;
     if (ev.event === "press" && !isWheel(ev.button)) {
       this.focusLeaf(leaf);
       if (ev.button === "left") this._capture = leaf;
     }
-    return !!callHook(leaf.view, "onMouse", ev);
+    return !!callHook(leafView(leaf), "onMouse", ev);
   }
 
   /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Node | null} */
   split(kind, view) {
     const leaf = this.activeLeaf;
     if (!leaf) return null;
-    const add = new Node(view);
-    leaf.becomeSplit(kind, new Node(leaf.view), add);
+    requireView(view, "a view needs layout and draw methods");
+    for (const existing of /** @type {Node} */ (this.root_node).leaves()) if (leafView(existing) === view) throw new TypeError("a root cannot mount a view twice");
+    if (this.overlays.includes(view)) throw new TypeError("a root cannot mount a view twice");
+    claimView(view, this);
+    const add = Node.leaf(view);
+    leaf.becomeSplit(kind, Node.leaf(leafView(leaf)), add);
     this._setActiveLeaf(add);
+    this.invalidate();
     return add;
   }
 
@@ -1475,18 +1494,20 @@ export class RootView {
     const leaf = this.activeLeaf;
     const p = leaf && leaf.parent;
     if (!p) return;
-    const sib = /** @type {Node} */ (p.a === leaf ? p.b : p.a);
-    p.type = sib.type;
-    p.view = sib.view;
-    p.kind = sib.kind;
-    p.ratio = sib.ratio;
-    p.a = sib.a;
-    p.b = sib.b;
-    if (p.a) p.a.parent = p;
-    if (p.b) p.b.parent = p;
+    if (p.shape.type !== "split") throw new Error("a leaf parent must be a split");
+    const sib = p.shape.a === leaf ? p.shape.b : p.shape.a;
+    if (sib.shape.type === "leaf") p.shape = { type: "leaf", view: sib.shape.view };
+    else {
+      p.shape = { type: "split", kind: sib.shape.kind, ratio: sib.shape.ratio, a: sib.shape.a, b: sib.shape.b };
+      p.shape.a.parent = p;
+      p.shape.b.parent = p;
+    }
     this._setActiveLeaf(/** @type {Node} */ (p.leaves()[0]));
     // The tree drops the view here, so the owner learns that its pane left.
-    events.emit("pane.closed", leaf.view);
+    const removed = leafView(leaf);
+    releaseView(removed, this);
+    events.emit("pane.closed", removed);
+    this.invalidate();
   }
 
   /** @param {"h" | "j" | "k" | "l"} d @returns {void} */
@@ -1595,7 +1616,10 @@ export class RootView {
 
   /** @param {Overlay} layer @returns {Overlay} */
   pushOverlay(layer) {
-    requireDraw(layer, "pushOverlay needs a layer with a draw method");
+    requireView(layer, "pushOverlay needs layout and draw methods");
+    if (this.overlays.indexOf(layer) >= 0) throw new TypeError("an overlay cannot be pushed twice");
+    if (this.root_node && this.root_node.leaves().some((leaf) => leafView(leaf) === layer)) throw new TypeError("a root cannot mount a view twice");
+    claimView(layer, this);
     this.overlays.push(layer);
     this.invalidate();
     return layer;
@@ -1605,14 +1629,26 @@ export class RootView {
   popOverlay(layer) {
     if (layer) {
       const i = this.overlays.indexOf(layer);
-      if (i >= 0) this.overlays.splice(i, 1);
-    } else this.overlays.pop();
+      if (i >= 0) {
+        this.overlays.splice(i, 1);
+        releaseView(layer, this);
+      }
+    } else {
+      const removed = this.overlays.pop();
+      if (removed) releaseView(removed, this);
+    }
     this.invalidate();
   }
 
   // Ask for a frame. The host paints once after the queue drains, so a burst costs one paint.
   /** @returns {void} */
   invalidate() {
+    this._needsDraw = true;
+    this._layoutDirty = true;
+  }
+
+  /** @returns {void} */
+  invalidatePaint() {
     this._needsDraw = true;
   }
 
@@ -1626,7 +1662,7 @@ export class RootView {
 
   /** @param {(layer: Overlay | Tickable, isTickable: boolean) => void} fn @returns {void} */
   _forEachTickable(fn) {
-    if (this.root_node) for (const leaf of this.root_node.leaves()) if (leaf.view) fn(leaf.view, false);
+    if (this.root_node) for (const leaf of this.root_node.leaves()) fn(leafView(leaf), false);
     for (const layer of this.overlays) fn(layer, false);
     for (const e of this.tickables.slice()) fn(e.tickable, true);
   }
@@ -1637,15 +1673,24 @@ export class RootView {
     term.beginFrame();
     // The bar owns the last row, so every pane rect below derives from the shorter height.
     const barY = term.height - 1;
-    if (this.root_node) {
-      fill(0, 0, term.width, term.height, "Normal");
-      this.root_node.layout({ x: 0, y: 0, w: term.width, h: Math.max(0, barY) });
-      this.root_node.draw(this.activeLeaf);
+    fill(0, 0, term.width, term.height, "Normal");
+    const needsLayout = this._layoutDirty;
+    this._layoutDirty = false;
+    if (needsLayout) {
+      try {
+        if (this.root_node) this.root_node.layout({ x: 0, y: 0, w: term.width, h: Math.max(0, barY) });
+        const bounds = { x: 0, y: 0, w: term.width, h: term.height };
+        for (const layer of this.overlays) callHook(layer, "layout", bounds);
+      } catch (error) {
+        this._layoutDirty = true;
+        throw error;
+      }
     }
+    if (this.root_node) this.root_node.draw(this.activeLeaf);
     if (barY >= 0) status.draw({ x: 0, y: barY, w: term.width, h: 1 });
+    const focused = this.focused;
     for (const layer of this.overlays) {
-      callHook(layer, "update");
-      callHook(layer, "draw");
+      callHook(layer, "draw", layer === focused);
     }
     const c = /** @type {{ x: number, y: number, visible: boolean } | null} */ (callHook(this.focused, "cursor"));
     if (c && c.visible) term.cursor(c.x, c.y, true);

@@ -1,5 +1,5 @@
 // yuke:context — the context reading on the status bar and the `/context` breakdown window.
-import { root, strokeOf } from "yuke:core";
+import { root, strokeOf, text, clip } from "yuke:core";
 import { client } from "yuke:client";
 import { Window } from "yuke:ui";
 import { chatEntry } from "yuke:chat";
@@ -90,14 +90,24 @@ class ContextPanel {
   constructor(r, sources, onClose) {
     this.rows = contextRows(r, sources);
     this.onClose = onClose;
+    /** @type {{ x: number, y: number, w: number, h: number }} */
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
   }
 
-  /** @param {Window} win @returns {void} */
-  draw(win) {
+  /** @param {{ x: number, y: number, w: number, h: number }} rect @returns {void} */
+  layout(rect) {
+    this.rect = rect;
+  }
+
+  /** @param {boolean} [_focused] @returns {void} */
+  draw(_focused = false) {
+    const { x, y, w, h } = this.rect;
+    if (w <= 0 || h <= 0) return;
     for (let i = 0; i < this.rows.length; i++) {
+      if (i >= h) break;
       const row = /** @type {[string, string]} */ (this.rows[i]);
-      win.winText(0, i, row[0].padEnd(12), "UIDim");
-      win.winText(12, i, row[1], "UIQuery");
+      text(x, y + i, clip(row[0].padEnd(12), w), "UIDim");
+      if (w > 12) text(x + 12, y + i, clip(row[1], w - 12), "UIQuery");
     }
   }
 
@@ -126,7 +136,7 @@ export const contextPlugin = {
           /** @type {(() => void)} */
           let release = () => {};
           const panel = new ContextPanel(current, sources, () => release());
-          const win = new Window({ title: "context", footer: "esc close", border: "rounded", width: 0.6, height: panel.rows.length + 2, content: panel });
+          const win = new Window({ title: "context", footer: "esc close", border: "rounded", width: max => Math.round(max * 0.6), height: panel.rows.length + 2, content: panel });
           root.pushOverlay(win);
           release = ctx.tui.overlay(win);
         },

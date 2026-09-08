@@ -1,6 +1,6 @@
 // yuke:ui — the widget kit over yuke:core: List and Window to subclass, plus the pickers on `ui`.
 import { term } from "yuke:term";
-import { text, fill, clip, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, slot, isWheel, events, nextGrapheme } from "yuke:core";
+import { text, fill, clip, root, claimView, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, wrapPreview, style, config, slot, isWheel, events, nextGrapheme } from "yuke:core";
 import { fuzzyRank } from "yuke:fzy";
 
 /** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
@@ -18,7 +18,7 @@ import { fuzzyRank } from "yuke:fzy";
 /** @typedef {{ tl: string, t: string, tr: string, r: string, br: string, b: string, bl: string, l: string }} BorderSet */
 /** @typedef {"none" | "single" | "rounded" | "double" | BorderSet} Border */
 /** @typedef {number | ((max: number) => number)} Dimension */
-/** @typedef {{ draw?: (win: Window) => void, cursor?: (win: Window) => { x: number, y: number, visible: boolean } | null, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: MouseEvent) => boolean, needsTick?: () => { periodMs: number } | null, tick?: () => void }} WindowContent */
+/** @typedef {{ layout: (rect: Rect) => void, draw: (focused?: boolean) => void, cursor?: () => { x: number, y: number, visible: boolean } | null, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: MouseEvent) => boolean, needsTick?: () => { periodMs: number } | null, tick?: () => void }} WindowContent */
 /** @typedef {{ name?: string, modal?: boolean, border?: Border, content?: WindowContent | null, width?: Dimension, height?: Dimension, anchor?: (() => Rect) | null, panelGroup?: string, borderGroup?: string, title?: string | (() => string), title_pos?: "left" | "center" | "right", titleGroup?: string, footer?: string | (() => string), footer_pos?: "left" | "center" | "right", footerGroup?: string }} WindowOptions */
 /** @template T @typedef {{ items?: T[] | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemHeight?: number | undefined, group?: string | undefined, selGroup?: string | undefined, dimGroup?: string | undefined, dimSelGroup?: string | undefined, drawCursor?: boolean | undefined }} ListOptions */
 /** @template T @typedef {{ items?: T[] | undefined, suggest?: (query: string) => T[] | undefined, filterText?: ((item: T) => string) | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, onAccept?: ((item: T, index: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: Picker<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined, filter?: boolean | undefined, body?: string | undefined } & WindowOptions} PickOptions */
@@ -476,6 +476,11 @@ export class Composer {
     return "composer";
   }
 
+  /** @param {Rect} rect @returns {void} */
+  layout(rect) {
+    this.rect = rect;
+  }
+
   get text() {
     return this.input.text;
   }
@@ -615,6 +620,60 @@ export class Composer {
   }
 }
 
+/** @typedef {{ text?: string, group?: string }} TextOptions */
+
+// A retained text leaf wraps during layout, so paint only copies its cached visible rows.
+export class Text {
+  /** @param {TextOptions} [opts] */
+  constructor(opts = {}) {
+    this.text = opts.text || "";
+    this.group = opts.group || "Normal";
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
+    this._measurement = { text: "", width: 0, size: { w: 0, h: 0 } };
+    /** @type {{ text: string, width: number, height: number, rows: string[] }} */
+    this._layoutCache = { text: "", width: 0, height: 0, rows: [] };
+  }
+
+  /** @param {string} value @returns {void} */
+  setText(value) {
+    const textValue = String(value);
+    if (textValue === this.text) return;
+    this.text = textValue;
+    root.invalidate();
+  }
+
+  /** @param {number} width @returns {{ w: number, h: number }} */
+  measure(width) {
+    width = Math.max(0, Math.floor(width));
+    const cache = this._measurement;
+    if (cache.width === width && cache.text === this.text) return cache.size;
+    const rows = width > 0 ? wrapOffsets(this.text, width) : [];
+    let w = 0;
+    for (const row of rows) w = Math.max(w, term.measure(this.text.slice(row.start, row.end)));
+    const size = { w: Math.min(width, w), h: rows.length };
+    this._measurement = { text: this.text, width, size };
+    return size;
+  }
+
+  /** @param {Rect} rect @returns {void} */
+  layout(rect) {
+    this.rect = rect;
+    const cache = this._layoutCache;
+    if (cache.text === this.text && cache.width === rect.w && cache.height === rect.h) return;
+    const rows = rect.w > 0 && rect.h > 0 ? wrapPreview(this.text, rect.w, rect.h).rows : [];
+    this._layoutCache = { text: this.text, width: rect.w, height: rect.h,
+      rows: rows.map(row => clip(this.text.slice(row.start, row.end), rect.w, false)) };
+  }
+
+  /** @param {boolean} [_focused] @returns {void} */
+  draw(_focused = false) {
+    const { x, y, w, h } = this.rect;
+    if (w <= 0 || h <= 0) return;
+    const rows = this._layoutCache.rows;
+    for (let i = 0; i < rows.length; i++) text(x, y + i, /** @type {string} */ (rows[i]), this.group);
+  }
+}
+
 // The composer stops growing here, so the transcript keeps its room.
 const COMPOSER_ROWS_MAX = 10;
 
@@ -655,7 +714,7 @@ export const borders = {
 };
 
 
-// A floating, bordered, titled window as an overlay layer; override drawContent(win) or set a `content`.
+// A floating, bordered, titled window as an overlay layer.
 export class Window {
   /** @param {WindowOptions} [opts] */
   constructor(opts = {}) {
@@ -665,6 +724,8 @@ export class Window {
     this.content = opts.content || null;
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
     this.inner = { x: 0, y: 0, w: 0, h: 0 };
+    if (this.content && (typeof this.content.layout !== "function" || typeof this.content.draw !== "function")) throw new TypeError("window content needs layout and draw methods");
+    if (this.content) claimView(this.content, this);
   }
 
   /** @returns {string} */
@@ -679,19 +740,21 @@ export class Window {
     return typeof b === "object" ? b : borders[b] || borders.single;
   }
 
-  // Resolve a cells | ratio(0..1] | function(max)=>cells dimension against a max.
+  // Resolve a cell count or a callback against a maximum available size.
   /** @param {Dimension | null | undefined} v @param {number} max @param {number} fallback @returns {number} */
   _dim(v, max, fallback) {
     if (v == null) return fallback;
-    if (typeof v === "function") return Math.round(v(max));
-    if (v > 0 && v <= 1) return Math.round(v * max);
-    return Math.round(v);
+    const cells = typeof v === "function" ? v(max) : v;
+    if (!Number.isSafeInteger(cells) || cells < 0) throw new TypeError("window dimension must be a non-negative integer");
+    return cells;
   }
 
-  /** @returns {void} */
-  update() {
-    const W = term.width;
-    const H = term.height;
+  /** @param {Rect} bounds @returns {void} */
+  layout(bounds) {
+    const X = bounds.x;
+    const Y = bounds.y;
+    const W = bounds.w;
+    const H = bounds.h;
     const pad = this._borderSet() ? 2 : 0;
 
     let w = this._dim(this.opts.width, W, Math.round(W * 0.6));
@@ -699,64 +762,37 @@ export class Window {
     w = Math.min(W, Math.max(pad + 1, w));
     h = Math.min(H, Math.max(pad + 1, h));
 
-    let x = Math.max(0, Math.floor((W - w) / 2));
-    let y = Math.max(0, Math.floor((H - h) / 2));
+    let x = X + Math.max(0, Math.floor((W - w) / 2));
+    let y = Y + Math.max(0, Math.floor((H - h) / 2));
     // Place an anchored window above its rect with the rect's columns; the rows above bound its height.
     const anchor = this.opts.anchor ? this.opts.anchor() : null;
     if (anchor) {
       w = Math.min(W, Math.max(pad + 1, this._dim(this.opts.width, anchor.w, anchor.w)));
-      h = Math.max(0, Math.min(anchor.y, this._dim(this.opts.height, anchor.y, anchor.y)));
-      x = Math.max(0, Math.min(anchor.x, W - w));
-      y = anchor.y - h;
+      const above = Math.max(0, anchor.y - Y);
+      h = Math.max(0, Math.min(above, this._dim(this.opts.height, above, above)));
+      x = Math.max(X, Math.min(anchor.x, X + W - w));
+      y = Math.max(Y, anchor.y - h);
     }
     this.rect = { x, y, w, h };
     // The inner rect never goes negative, so a window smaller than its border has an empty interior.
     this.inner = pad ? { x: x + 1, y: y + 1, w: Math.max(0, w - 2), h: Math.max(0, h - 2) } : { x, y, w, h };
+    if (this.content) this.content.layout(this.inner);
   }
 
-  /** @param {number} lx @param {number} ly @param {string} s @param {string} group @returns {void} */
-  winText(lx, ly, s, group) {
-    const { x, y, w, h } = this.inner;
-    if (ly < 0 || ly >= h || lx >= w) return;
-    s = String(s);
-    if (lx < 0) {
-      s = s.slice(-lx);
-      lx = 0;
-    }
-    const avail = w - lx;
-    if (avail <= 0) return;
-    text(x + lx, y + ly, clip(s, avail), group);
-  }
-
-  /** @param {number} lx @param {number} ly @param {number} fw @param {number} fh @param {string} group @returns {void} */
-  winFill(lx, ly, fw, fh, group) {
-    const { x, y, w, h } = this.inner;
-    const x0 = Math.max(0, lx);
-    const y0 = Math.max(0, ly);
-    const x1 = Math.min(w, lx + fw);
-    const y1 = Math.min(h, ly + fh);
-    if (x1 <= x0 || y1 <= y0) return;
-    fill(x + x0, y + y0, x1 - x0, y1 - y0, group);
-  }
-
-  /** @returns {void} */
-  draw() {
+  /** @param {boolean} [_focused] @returns {void} */
+  draw(_focused = false) {
     const { x, y, w, h } = this.rect;
     // A window with no room draws nothing, so a border never lands on the row above it.
     if (w <= 0 || h <= 0) return;
     fill(x, y, w, h, this.opts.panelGroup || "UIPanel");
     const bs = this._borderSet();
     if (bs) this._drawBorder(bs);
-    if (this.content && this.content.draw) this.content.draw(this);
-    this.drawContent(this);
+    if (this.content) this.content.draw(_focused);
   }
-
-  /** @param {Window} _win @returns {void} */
-  drawContent(_win) {}
 
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
   cursor() {
-    return this.content && this.content.cursor ? this.content.cursor(this) : null;
+    return this.content && this.content.cursor ? this.content.cursor() : null;
   }
 
   /** @param {HostEvent} ev @returns {boolean} */
@@ -853,14 +889,16 @@ export class Picker {
     this._bodyWidth = -1;
     this._bodyText = "";
     this._bodyScroll = 0;
+    /** @type {Rect} */
+    this._layoutRect = { x: 0, y: 0, w: 0, h: 0 };
     this.refilter();
   }
 
-  /** @param {Window} win @returns {Rect} */
-  _contentRect(win) {
-    const r = win.inner;
-    const px = win._borderSet() ? PICKER_PAD_X : 0;
-    const py = win._borderSet() ? PICKER_PAD_Y : 0;
+  /** @returns {Rect} */
+  _contentRect() {
+    const r = this._layoutRect;
+    const px = this.win && this.win._borderSet() ? PICKER_PAD_X : 0;
+    const py = this.win && this.win._borderSet() ? PICKER_PAD_Y : 0;
     return { x: r.x + px, y: r.y + py, w: Math.max(0, r.w - px * 2), h: Math.max(0, r.h - py * 2) };
   }
 
@@ -940,9 +978,14 @@ export class Picker {
     root.popOverlay(/** @type {Window} */ (this.win));
   }
 
-  /** @param {Window} win @returns {void} */
-  draw(win) {
-    const { x, y, w, h } = this._contentRect(win);
+  /** @param {Rect} rect @returns {void} */
+  layout(rect) {
+    this._layoutRect = rect;
+  }
+
+  /** @param {boolean} [_focused] @returns {void} */
+  draw(_focused = false) {
+    const { x, y, w, h } = this._contentRect();
     if (w <= 0 || h <= 0) {
       this.list.clearRect();
       return;
@@ -978,7 +1021,7 @@ export class Picker {
       if (ev.col < x || ev.col >= x + w || ev.row < y || ev.row >= y + h) return false;
     }
     if (this.body && ev.event === "press" && isWheel(ev.button) && win) {
-      const r = this._contentRect(win);
+      const r = this._contentRect();
       const { height: bodyHeight } = this._bodyLayout(r);
       if (ev.row >= r.y && ev.row < r.y + bodyHeight) {
         const step = Math.max(1, ev.count || 1);
@@ -991,10 +1034,10 @@ export class Picker {
     return this.list.onMouse(ev);
   }
 
-  /** @param {Window} win @returns {{ x: number, y: number, visible: boolean } | null} */
-  cursor(win) {
+  /** @returns {{ x: number, y: number, visible: boolean } | null} */
+  cursor() {
     if (!this.input) return null; // a menu edits no query, so it places no cursor
-    const { x, y, w, h } = this._contentRect(win);
+    const { x, y, w, h } = this._contentRect();
     if (w <= 0 || h <= 0) return null; // an empty interior places no cursor
     const { height: bodyHeight, gap } = this._bodyLayout({ x, y, w, h });
     const rowY = y + bodyHeight + gap;
@@ -1074,7 +1117,7 @@ export class Picker {
     // A float leaves every other key to the view under it, so the composer keeps typing.
     if (this.win && this.win.modal === false) return false;
     if (this.body && this.win && (s === "page_up" || s === "page_down")) {
-      const { height } = this._bodyLayout(this._contentRect(this.win));
+      const { height } = this._bodyLayout(this._contentRect());
       const max = Math.max(0, this._bodyRows.length - height);
       if (height > 0 && max > 0) {
         this._bodyScroll = Math.min(max, Math.max(0, this._bodyScroll + (s === "page_down" ? height : -height)));
@@ -1110,6 +1153,8 @@ export class Prompt {
     this.mask = !!opts.mask;
     this.settle = opts.settle;
     this.input = new TextInput({ onChange: () => root.invalidate() });
+    /** @type {Rect} */
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
   }
 
   // The text as the screen shows it. A masked prompt paints one dot for each grapheme, so a key never shows.
@@ -1121,17 +1166,24 @@ export class Prompt {
     return "•".repeat(n);
   }
 
-  /** @param {Window} win @returns {void} */
-  draw(win) {
-    const empty = this.input.text === "";
-    win.winText(0, 0, PICKER_PROMPT, "UIPrompt");
-    win.winText(2, 0, empty ? this.placeholder : this.shown(this.input.text), empty ? "UIDim" : "UIQuery");
+  /** @param {Rect} rect @returns {void} */
+  layout(rect) {
+    this.rect = rect;
   }
 
-  /** @param {Window} win @returns {{ x: number, y: number, visible: boolean }} */
-  cursor(win) {
-    const col = caretCol(win.inner.w, PICKER_PROMPT, this.shown(this.input.beforeCaret()));
-    return { x: win.inner.x + col, y: win.inner.y, visible: true };
+  /** @param {boolean} [_focused] @returns {void} */
+  draw(_focused = false) {
+    const empty = this.input.text === "";
+    const { x, y, w, h } = this.rect;
+    if (w <= 0 || h <= 0) return;
+    text(x, y, clip(PICKER_PROMPT, w), "UIPrompt");
+    if (w > 2) text(x + 2, y, clip(empty ? this.placeholder : this.shown(this.input.text), w - 2), empty ? "UIDim" : "UIQuery");
+  }
+
+  /** @returns {{ x: number, y: number, visible: boolean }} */
+  cursor() {
+    const col = caretCol(this.rect.w, PICKER_PROMPT, this.shown(this.input.beforeCaret()));
+    return { x: this.rect.x + col, y: this.rect.y, visible: this.rect.w > 0 && this.rect.h > 0 };
   }
 
   /** @param {HostEvent} event @returns {boolean} */

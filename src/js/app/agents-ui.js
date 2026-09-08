@@ -93,7 +93,7 @@ export async function openAgents(ctx, sessionId) {
   if (!ctx.scope.alive || currentChat !== focusedChat() || currentChat?.sessionId !== sessionId) return;
   const picker = ui.pick({
     title: agentSummary(childItems()), footer: "↵ open · x stop · X stop all agents · r repair · m models · esc close",
-    border: "rounded", width: 0.9, height: 0.6, filter: false,
+    border: "rounded", width: max => Math.round(max * 0.9), height: max => Math.round(max * 0.6), filter: false,
     items, key: (row) => row.item.session.id,
     format: (row) => ({ marker: row.item.session.id === sessionId ? "◆" : row.item.session.origin.type !== "child" ? "·" : row.item.activity.state.type === "idle" ? "·" : "●", indent: 2 + row.depth * 2, text: (row.item.session.name ?? (row.item.session.id === mainId ? "Main conversation" : row.item.session.id)) + (row.item.session.id === sessionId ? " (current)" : ""), detail: row.item.session.model, right: row.item.session.id === mainId ? "main" : childState(row.item) }),
     onAccept: (row) => { close(); if (currentChat && currentChat === focusedChat() && currentChat.sessionId === sessionId) currentChat.open(row.item.session.id); },

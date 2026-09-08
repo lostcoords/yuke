@@ -1,27 +1,33 @@
 // yuke:transcript — the chat transcript, its row rendering, and the pane that holds it.
 import { term } from "yuke:term";
-import { text, clip, root, caretAtCol, wrapOffsets, nextGrapheme, events, slot, isWheel, fill, config, strokeOf } from "yuke:core";
-import { Document, isLinear } from "yuke:md";
+import { text, clip, root, caretAtCol, wrapOffsets, wrapPreview, nextGrapheme, events, slot, isWheel, fill, config, strokeOf, claimView, releaseView } from "yuke:core";
+import { Document, isLinear, normalizeSource } from "yuke:md";
 import { Composer, Window, NAV_KEYS } from "yuke:ui";
+import { column, child, fixed, fit, grow, solve } from "yuke:layout";
 
 /** @typedef {{ rowCount: (width: number) => number, rows: (width: number, top: number, height: number) => TranscriptRow[] }} RowSource */
 /** @typedef {{ id: number, type: "user" | "assistant" | "compaction", source?: Wire.InputSource, error?: { type: string, message: string } }} MessageDescriptor */
 /** @typedef {{ anchor: Position, cursor: Position }} Selection */
 /** @typedef {{ id: number, partId: number, kind: string }} PartHit */
-/** @typedef {{ a: { id: number, off: number, was: string }, b: { id: number, off: number, was: string } }} SelectionAnchors */
+/** @typedef {{ a: { id: number, off: number, was: string, partId?: string }, b: { id: number, off: number, was: string, partId?: string } }} SelectionAnchors */
 /** @typedef {{ start: Position, end: Position, si: number, ei: number }} SelectionRange */
-/** @typedef {{ w: number, rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[] | null }} RowCache */
-/** @typedef {{ w: number, expanded: boolean, live: boolean, shape: number, base: number, rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[], doc: Document | null }} PartCache */
+/** @typedef {{ w: number, rows: TranscriptRow[], source: string, partBases: Map<string, number> }} RowCache */
+/** @typedef {{ w: number, expanded: boolean, live: boolean, shape: number, rows: TranscriptRow[], source: string, doc: Document | null }} PartCache */
 /** @typedef {{ list: Wire.AssistantPart[] | null, rows: Map<string, PartCache> }} PartState */
 /** @typedef {(id: number) => readonly Wire.AssistantPart[]} PartsOf */
 /** @typedef {(id: number, partId: number) => Wire.AssistantPart | null} PartOf */
 /** @typedef {(id: number, partId: number, field: string, offset?: number, limit?: number) => { text: string, next: number | null }} PartTextPage */
 /** @typedef {{ id: number, lang: string, text: string }} CodeBlock */
-/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} TranscriptOptions */
+/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined }} TranscriptOptions */
 /** @typedef {"composer" | "transcript"} ChatRegion */
 /** @typedef {{ text: string, group?: string }} StripRow */
-/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} ChatViewOptions */
+/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, sessionId?: () => string | null }} ChatViewOptions */
 /** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
+/** @typedef {import("yuke:layout").LayoutNode} LayoutNode */
+/** @typedef {import("yuke:core").ViewLike} PresentationView */
+/** @typedef {{ bounds: Rect, empty: boolean, sessionId: string | null, composerRows: number, defaultLayout: LayoutNode }} PresentationContext */
+/** @typedef {{ layout: (context: PresentationContext) => LayoutNode | null, dispose: () => void }} PresentationInstance */
+/** @typedef {{ mount: (view: ChatView) => PresentationInstance }} PresentationProvider */
 /** @typedef {string | number} ItemKey */
 /** @typedef {{ type: "mouse", col: number, row: number, button: string, event: string, mods: number, count: number }} MouseEvent */
 /** @typedef {{ text: string, group: string, src?: number, srcEnd?: number, mark?: boolean }} Segment */
@@ -273,8 +279,8 @@ export function rowText(r) {
 }
 
 // The source span under the rendered range [from, to), or null when the range maps to no source at all.
-/** @param {TranscriptRow} row @param {number} from @param {number} to @returns {{ from: number, to: number } | null} */
-function rowSourceSpan(row, from, to) {
+/** @param {TranscriptRow} row @param {number} from @param {number} to @param {number} [base] @returns {{ from: number, to: number } | null} */
+function rowSourceSpan(row, from, to, base = 0) {
   const segments = row.segments;
   if (!segments) return null;
   let at = 0;
@@ -286,8 +292,8 @@ function rowSourceSpan(row, from, to) {
     const b = Math.min(to, end);
     if (seg.src != null && (b > a || (seg.text.length === 0 && from <= at && at <= to))) {
       const linear = isLinear(seg);
-      const s = linear && b > a ? seg.src + (a - at) : seg.src;
-      const e = linear && b > a ? seg.src + (b - at) : /** @type {number} */ (seg.srcEnd);
+      const s = base + (linear && b > a ? seg.src + (a - at) : seg.src);
+      const e = base + (linear && b > a ? seg.src + (b - at) : /** @type {number} */ (seg.srcEnd));
       if (lo < 0 || s < lo) lo = s;
       if (e > hi) hi = e;
     }
@@ -297,8 +303,8 @@ function rowSourceSpan(row, from, to) {
 }
 
 // The source offset at caret column `col`, where a gap takes the source end before it, or -1 when the row has none.
-/** @param {TranscriptRow} row @param {number} col @returns {number} */
-function rowSourceAt(row, col) {
+/** @param {TranscriptRow} row @param {number} col @param {number} [base] @returns {number} */
+function rowSourceAt(row, col, base = 0) {
   const segments = row.segments;
   if (!segments) return -1;
   let at = 0;
@@ -306,13 +312,13 @@ function rowSourceAt(row, col) {
   for (const seg of segments) {
     const end = at + seg.text.length;
     if (seg.src != null) {
-      if (col < at) return last < 0 ? seg.src : last;
-      if (col < end) return isLinear(seg) ? seg.src + (col - at) : seg.src;
+      if (col < at) return last < 0 ? base + seg.src : base + last;
+      if (col < end) return base + (isLinear(seg) ? seg.src + (col - at) : seg.src);
       last = /** @type {number} */ (seg.srcEnd);
     }
     at = end;
   }
-  return last;
+  return last < 0 ? last : base + last;
 }
 
 // Repaint the string range [from, to) of `segments` with `group`; `caretAtCol` puts the bounds on a grapheme edge.
@@ -433,32 +439,26 @@ function stale(c) {
   c.w = -1;
 }
 
-// Move a rendered part to a new source base. The rows are shared with the message cache, so they are replaced, never edited.
-/** @param {PartCache} c @param {number} base @returns {void} */
-function rebasePart(c, base) {
-  const delta = base - c.base;
-  c.rows = c.rows.map((r) => (r.segments ? { ...r, segments: shiftSrc(r.segments, delta) } : r));
-  c.blocks = c.blocks.map((b) => ({ kind: b.kind, at: b.at + delta, end: b.end + delta }));
-  c.base = base;
+/** @param {TranscriptRow} row @param {number} base @returns {TranscriptRow} */
+function rowAtBase(row, base) {
+  return base && row.segments ? { ...row, segments: shiftSrc(row.segments, base) } : row;
 }
 
-/** @param {string} src @param {number} width @param {string} group @returns {TranscriptRow[]} */
-function wrapBody(src, width, group) {
+/** @param {RowCache | null | undefined} cache @param {TranscriptRow} row @returns {number} */
+function rowSourceBase(cache, row) {
+  if (!cache || row.partId == null) return 0;
+  return cache.partBases.get(String(row.partId)) || 0;
+}
+
+/** @param {string} src @param {number} width @param {string} group @param {number} [limit] @param {number} [tail] @returns {TranscriptRow[]} */
+function wrapBody(src, width, group, limit = Infinity, tail = 0) {
   src = src || "";
   const contentW = Math.max(1, width);
-  return wrapOffsets(src, contentW).map((r) => ({
+  if (limit === 0) return [];
+  return wrapPreview(src, contentW, limit === Infinity ? 0 : limit, tail).rows.map((r) => ({
     segments: [{ text: src.slice(r.start, r.end), group, src: r.start, srcEnd: r.end }],
     indent: TX_GUTTER,
   }));
-}
-
-/** @param {TranscriptRow[]} rows @param {number} cap @returns {TranscriptRow[]} */
-function capRows(rows, cap) {
-  if (rows.length <= cap) return rows;
-  const head = Math.floor((cap - 1) / 2);
-  const tail = cap - 1 - head;
-  const omitted = rows.length ? { ...rows[0], segments: undefined, text: "…", group: "TxToolMeta" } : { text: "…", group: "TxToolMeta", indent: TX_GUTTER };
-  return rows.slice(0, head).concat([omitted], rows.slice(rows.length - tail));
 }
 
 /** @param {string} args @returns {string} */
@@ -574,8 +574,8 @@ function toolBodyText(part) {
   return "";
 }
 
-/** @param {Extract<Wire.View, { type: "diff" }>} view @param {number} width @returns {{ rows: TranscriptRow[], source: string }} */
-function diffRows(view, width) {
+/** @param {Extract<Wire.View, { type: "diff" }>} view @param {number} width @param {number} [limit] @returns {{ rows: TranscriptRow[], source: string }} */
+function diffRows(view, width, limit = Infinity) {
   const rows = /** @type {TranscriptRow[]} */ ([]);
   let source = "";
   for (const f of view.files || []) {
@@ -583,7 +583,7 @@ function diffRows(view, width) {
       if (source) source += "\n";
       const base = source.length;
       source += f.path;
-      rows.push({
+      if (rows.length < limit) rows.push({
         segments: [{ text: f.path, group: "TxToolName", src: base, srcEnd: base + f.path.length }],
         indent: TX_GUTTER,
       });
@@ -595,7 +595,7 @@ function diffRows(view, width) {
         source += line;
         const mark = line[0];
         const group = mark === "+" ? "TxToolAdd" : mark === "-" ? "TxToolDel" : "TxToolContext";
-        for (const r of wrapBody(line, width, group)) {
+        for (const r of wrapBody(line, width, group, limit - rows.length)) {
           rows.push({ ...r, segments: shiftSrc(r.segments, base) });
         }
       }
@@ -604,8 +604,8 @@ function diffRows(view, width) {
   return { rows, source };
 }
 
-/** @param {readonly Wire.View[]} views @param {number} width @returns {{ rows: TranscriptRow[], source: string }} */
-function viewRows(views, width) {
+/** @param {readonly Wire.View[]} views @param {number} width @param {number} [limit] @returns {{ rows: TranscriptRow[], source: string }} */
+function viewRows(views, width, limit = Infinity) {
   const rows = /** @type {TranscriptRow[]} */ ([]);
   let source = "";
   for (const v of views || []) {
@@ -613,39 +613,40 @@ function viewRows(views, width) {
     const base = source.length;
     const t = v && v.type;
     if (t === "diff") {
-      const built = diffRows(/** @type {Extract<Wire.View, { type: "diff" }>} */ (v), width);
+      const built = diffRows(/** @type {Extract<Wire.View, { type: "diff" }>} */ (v), width, limit - rows.length);
       source += built.source;
       for (const r of built.rows) rows.push({ ...r, segments: r.segments ? shiftSrc(r.segments, base) : r.segments });
     } else if (t === "markdown") {
-      const doc = new Document();
-      doc.setText(/** @type {Extract<Wire.View, { type: "markdown" }>} */ (v).text || "");
-      const chunk = doc.sourceText();
+      const chunk = normalizeSource(/** @type {Extract<Wire.View, { type: "markdown" }>} */ (v).text || "");
       source += chunk;
-      for (const r of doc.rows(Math.max(1, width))) {
+      if (rows.length >= limit) continue;
+      const doc = new Document();
+      doc.setText(chunk);
+      for (const r of doc.rows(Math.max(1, width), limit - rows.length)) {
         rows.push({ segments: shiftSrc(r.segments, base), indent: TX_GUTTER });
       }
     } else if (t === "image") {
       const label = "(image)";
       source += label;
-      rows.push({ segments: [{ text: label, group: "TxToolMeta", src: base, srcEnd: base + label.length }], indent: TX_GUTTER });
+      if (rows.length < limit) rows.push({ segments: [{ text: label, group: "TxToolMeta", src: base, srcEnd: base + label.length }], indent: TX_GUTTER });
     } else {
       const view = /** @type {{ text?: string }} */ (v);
       const body = v && view.text ? view.text : "";
       source += body;
-      for (const r of wrapBody(body, width, "TxToolBody")) rows.push({ ...r, segments: shiftSrc(r.segments, base) });
+      for (const r of wrapBody(body, width, "TxToolBody", limit - rows.length)) rows.push({ ...r, segments: shiftSrc(r.segments, base) });
     }
   }
   return { rows, source };
 }
 
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @returns {{ rows: TranscriptRow[], source: string }} */
-function toolBody(part, width) {
+/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {number} [limit] @returns {{ rows: TranscriptRow[], source: string }} */
+function toolBody(part, width, limit = Infinity) {
   const views = part.state && /** @type {{ view?: readonly Wire.View[] }} */ (part.state).view;
-  if (views && views.length) return viewRows(views, width);
+  if (views && views.length) return viewRows(views, width, limit);
   const text = toolBodyText(part);
   const kind = toolStateKind(part.state);
   const group = kind === "error" ? "TxToolError" : "TxToolBody";
-  return { rows: wrapBody(text, width, group), source: text };
+  return { rows: wrapBody(text, width, group, limit), source: text };
 }
 
 /** @param {Extract<Wire.AssistantPart, { type: "reasoning" }>} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @returns {{ rows: TranscriptRow[], source: string }} */
@@ -664,15 +665,24 @@ function reasoningRows(part, width, expanded, live, tree) {
   const text = part.text || "";
   source += "\n" + text;
   const base = name.length + 1;
-  const body = wrapBody(text, width, "TxThought").map((r) => ({
-    ...r,
+  const body = wrapBody(text, width, "TxThought", ACTION_PREVIEW_ROWS, 1);
+  /** @param {TranscriptRow} row @returns {TranscriptRow} */
+  const decorate = (row) => ({
+    ...row,
     ...actionBodyAttrs(tree),
     markerGroup: "TxThought",
     kind: "reasoning-body",
     partId: part.id,
-    segments: shiftSrc(r.segments, base),
-  }));
-  for (const r of capRows(body, ACTION_PREVIEW_ROWS)) rows.push(r);
+    segments: shiftSrc(row.segments, base),
+  });
+  if (body.length <= ACTION_PREVIEW_ROWS) {
+    for (const row of body) rows.push(decorate(row));
+  } else {
+    const first = decorate(/** @type {TranscriptRow} */ (body[0]));
+    rows.push(first);
+    rows.push({ ...first, segments: undefined, text: "…", group: "TxToolMeta" });
+    rows.push(decorate(/** @type {TranscriptRow} */ (body[body.length - 1])));
+  }
   return { rows, source };
 }
 
@@ -695,7 +705,7 @@ function toolRows(part, width, expanded, tree) {
     kind: "tool-detail",
     partId: part.id,
   });
-  const body = toolBody(part, Math.max(1, width - ACTION_LABEL_W));
+  const body = toolBody(part, Math.max(1, width - ACTION_LABEL_W), ACTION_PREVIEW_ROWS + 1);
   const shown = body.rows.slice(0, ACTION_PREVIEW_ROWS);
   if (body.source) {
     source += "\n" + body.source;
@@ -726,6 +736,7 @@ class PartDetails {
     this.sections = sections;
     this.pager = new Pager();
     this.width = -1;
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
     /** @type {Window | null} */
     this.win = null;
   }
@@ -742,13 +753,17 @@ class PartDetails {
     return rows;
   }
 
-  /** @param {Window} win @returns {void} */
-  draw(win) {
-    if (this.width !== win.inner.w) {
-      this.width = win.inner.w;
-      this.pager.setRows(this.rows(win.inner.w));
+  /** @param {Rect} bounds @returns {void} */
+  layout(bounds) {
+    this.rect = bounds;
+    if (this.width !== bounds.w) {
+      this.width = bounds.w;
+      this.pager.setRows(this.rows(bounds.w));
     }
-    this.pager.draw(win.inner);
+  }
+
+  draw() {
+    this.pager.draw(this.rect);
   }
 
   /** @param {HostEvent} event @returns {boolean} */
@@ -775,7 +790,7 @@ class PartDetails {
 /** @param {string} title @param {readonly { label: string, text: string, empty: string }[]} sections @returns {void} */
 function openDetails(title, sections) {
   const content = new PartDetails(sections);
-  const win = new Window({ title, footer: "j/k scroll · pgup/pgdn · esc close", border: "rounded", width: 0.9, height: 0.85, content });
+  const win = new Window({ title, footer: "j/k scroll · pgup/pgdn · esc close", border: "rounded", width: max => Math.round(max * 0.9), height: max => Math.round(max * 0.85), content });
   content.win = win;
   root.pushOverlay(win);
 }
@@ -813,7 +828,10 @@ export class Transcript {
     this.partOf = opts.partOf || null;
     this.partTextPage = opts.partTextPage || null;
     this.pager = new Pager();
-    this.pager.setSource(this);
+    this.pager.setSource({
+      rowCount: (width) => this.rowCount(width),
+      rows: (width, top, height) => this._rowsRange(width, top, height, false),
+    });
     /** @type {MessageDescriptor[]} */
     this._messages = []; // committed descriptors, oldest first
     /** @type {MessageDescriptor | null} */
@@ -827,7 +845,7 @@ export class Transcript {
     /** @type {Set<string>} */
     this._viewport = new Set();
     /** @type {Map<string, RowCache>} */
-    this._rows = new Map(); // id -> { w, rows, source, blocks }, oldest render first
+    this._rows = new Map(); // id -> { w, rows, source, blocks, partBases }, oldest render first
     /** @type {Map<string, Document>} */
     this._docs = new Map(); // id -> md Document, for the textOf path
     /** @type {Map<string, PartState>} */
@@ -844,8 +862,6 @@ export class Transcript {
     /** @type {Position | null} */
     this._press = null;
     this.onSelect = opts.onSelect || null;
-    // Lines to show while the transcript holds no message, so an empty pane still says something.
-    this.empty = opts.empty || null;
   }
 
   /** @returns {void} */
@@ -1093,18 +1109,40 @@ export class Transcript {
   _anchors() {
     const sel = this.selection;
     if (!sel || this._width <= 0) return null;
-    const a = this.sourceAt(sel.anchor);
-    const b = this.sourceAt(sel.cursor);
-    if (a < 0 || b < 0) return null;
+    /** @param {Position} pos @returns {{ id: number, off: number, was: string, partId?: string } | null} */
+    const anchor = (pos) => {
+      const off = this.sourceAt(pos);
+      if (off < 0) return null;
+      const cache = this._rows.get(String(pos.id));
+      const rows = this._rowsFor(pos.id);
+      const row = pos.row >= 0 && pos.row < rows.length ? /** @type {TranscriptRow} */ (rows[pos.row]) : null;
+      if (row && row.partId != null && cache) {
+        const partId = String(row.partId);
+        const part = this._parts.get(String(pos.id))?.rows.get(partId);
+        if (part) return { id: pos.id, partId, off: off - rowSourceBase(cache, row), was: part.source };
+      }
+      return { id: pos.id, off, was: this._sourceOf(pos.id) };
+    };
+    const a = anchor(sel.anchor);
+    const b = anchor(sel.cursor);
+    if (!a || !b) return null;
     return {
-      a: { id: sel.anchor.id, off: a, was: this._sourceOf(sel.anchor.id) },
-      b: { id: sel.cursor.id, off: b, was: this._sourceOf(sel.cursor.id) },
+      a,
+      b,
     };
   }
 
   // An edit before the anchor moves the text under it, so the offset no longer names it.
-  /** @param {{ id: number, off: number, was: string }} a @returns {Position | null} */
+  /** @param {{ id: number, off: number, was: string, partId?: string }} a @returns {Position | null} */
   _posAtAnchor(a) {
+    if (a.partId != null) {
+      this._rowsFor(a.id);
+      const part = this._parts.get(String(a.id))?.rows.get(a.partId);
+      if (!part || part.source.slice(0, a.off) !== a.was.slice(0, a.off)) return null;
+      const cache = this._rows.get(String(a.id));
+      const base = cache?.partBases.get(a.partId);
+      return base == null ? null : this.posAtSource(a.id, base + a.off);
+    }
     if (this._sourceOf(a.id).slice(0, a.off) !== a.was.slice(0, a.off)) return null;
     return this.posAtSource(a.id, a.off);
   }
@@ -1126,7 +1164,16 @@ export class Transcript {
   blocksOf(id) {
     this._rowsFor(id);
     const c = this._rows.get(String(id));
-    if (c && c.blocks) return c.blocks;
+    const state = this._parts.get(String(id));
+    if (c && state) {
+      const blocks = [];
+      for (const [key, base] of c.partBases) {
+        const doc = state.rows.get(key)?.doc;
+        if (!doc) continue;
+        for (const block of doc.blocks()) blocks.push({ kind: block.kind, at: base + block.at, end: base + block.end });
+      }
+      return blocks;
+    }
     const doc = this._docs.get(String(id));
     return doc ? doc.blocks() : [];
   }
@@ -1175,33 +1222,35 @@ export class Transcript {
     const rows = this._rowsFor(pos.id);
     if (pos.row >= rows.length) return -1;
     const row = /** @type {TranscriptRow} */ (rows[pos.row]);
-    return rowSourceAt(row, pos.col);
+    return rowSourceAt(row, pos.col, rowSourceBase(this._rows.get(String(pos.id)), row));
   }
 
   // The position that renders source `offset`, or the first after it, so a selection to the end survives a rewrap.
   /** @param {number} id @param {number} offset @returns {Position | null} */
   posAtSource(id, offset) {
     const rows = this._rowsFor(id);
+    const cache = this._rows.get(String(id));
     let tail = null;
     let tailOff = -1;
     for (let k = 0; k < rows.length; k++) {
       const row = /** @type {TranscriptRow} */ (rows[k]);
+      const base = rowSourceBase(cache, row);
       const segments = row.segments;
       if (!segments) continue;
       let at = 0;
       for (const seg of segments) {
         const end = at + seg.text.length;
         if (seg.src != null) {
-          if (/** @type {number} */ (seg.srcEnd) > offset) {
+          if (base + /** @type {number} */ (seg.srcEnd) > offset) {
             // A caret at the end of the source before a gap belongs to that end, not past it.
             if (offset === tailOff) return tail;
-            const col = offset > seg.src && isLinear(seg) ? at + (offset - seg.src) : at;
+            const col = offset > base + seg.src && isLinear(seg) ? at + (offset - base - seg.src) : at;
             const body = rowText(row);
             const wrapRow = { start: 0, end: body.length, soft: false };
             return { id, row: k, col: caretAtCol(body, wrapRow, term.measure(body.slice(0, Math.min(col, end)))) };
           }
           tail = { id, row: k, col: end };
-          tailOff = /** @type {number} */ (seg.srcEnd);
+          tailOff = base + /** @type {number} */ (seg.srcEnd);
         }
         at = end;
       }
@@ -1244,16 +1293,16 @@ export class Transcript {
 
     let rows;
     let source = null;
-    let blocks = null;
+    let partBases = new Map();
     if (m.type === "user") {
       source = this.textOf(m.id) || "";
       if (m.source && m.source.type !== "parent_instruction") {
         const expanded = this._expand.get(this._expandKey(m.id, -1)) === true;
-        const body = wrapBody(source, Math.max(1, width - TX_GUTTER), "TxToolBody");
+        const body = wrapBody(source, Math.max(1, width - TX_GUTTER), "TxToolBody", expanded ? Infinity : REPORT_PREVIEW_LINES + 1);
         const shown = expanded ? body : body.slice(0, REPORT_PREVIEW_LINES);
-        rows = [{ text: inputSourceLabel(m.source), group: "TxToolMeta", marker: expanded ? "▾" : "▸", markerGroup: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1 },
-          ...shown.map((row) => ({ ...row, kind: "report-body", partId: -1 })),
-          ...(!expanded && body.length > shown.length ? [{ text: "… click the header to expand", group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1 }] : []), { text: "" }];
+        rows = [{ text: inputSourceLabel(m.source), group: "TxToolMeta", marker: expanded ? "▾" : "▸", markerGroup: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id },
+          ...shown.map((row) => ({ ...row, kind: "report-body", partId: -1, key: m.id })),
+          ...(!expanded && body.length > shown.length ? [{ text: "… click the header to expand", group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id }] : []), { text: "", key: m.id }];
       } else rows = userRows(m.id, source, width);
     } else if (m.type === "compaction") {
       source = this.textOf(m.id) || "";
@@ -1262,7 +1311,7 @@ export class Transcript {
       const built = this._partRows(m, width, index);
       rows = built.rows;
       source = built.source;
-      blocks = built.blocks;
+      partBases = built.partBases;
     } else {
       rows = this._assistantRows(m.id, width);
       const doc = this._docs.get(String(m.id));
@@ -1275,7 +1324,7 @@ export class Transcript {
       rows = rows.concat(err.rows);
     }
     this._rows.delete(key);
-    this._rows.set(key, { w: width, rows, source: source == null ? "" : source, blocks });
+    this._rows.set(key, { w: width, rows, source: source == null ? "" : source, partBases });
     this._counts.set(key, rows.length);
     return rows;
   }
@@ -1472,7 +1521,7 @@ export class Transcript {
     const completeOutput = this._wholePartField(id, part.id, part, field, output);
     const sections = [{ label: "input", text: input, empty: "(empty)" }, { label: "output", text: completeOutput, empty: "(no output)" }];
     const views = /** @type {{ view?: readonly Wire.View[] }} */ (state).view;
-    if (!completeOutput && views && views.length) sections.push({ label: "view preview", text: toolBody(part, 80).source, empty: "(empty)" });
+    if (!completeOutput && views && views.length) sections.push({ label: "view preview", text: toolBody(part, 80, 0).source, empty: "(empty)" });
     openDetails(String(part.name || "tool") + " · tool details", sections);
     return true;
   }
@@ -1546,15 +1595,15 @@ export class Transcript {
     return null;
   }
 
-  // Each part renders once per width, fold, and live state, so a delta rebuilds one part and re-bases the rest.
-  /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @returns {{ rows: TranscriptRow[], source: string, blocks: { kind: string, at: number, end: number }[] }} */
+  // Each part renders once per width, fold, and live state, so a delta rebuilds only the changed part.
+  /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @returns {{ rows: TranscriptRow[], source: string, partBases: Map<string, number> }} */
   _partRows(m, width, messageIndex) {
     const state = this._partState(m.id);
     const plan = this._actionPlan();
     const start = plan.starts[messageIndex] || 0;
     const seen = new Set();
     const rows = /** @type {TranscriptRow[]} */ ([]);
-    const blocks = /** @type {{ kind: string, at: number, end: number }[]} */ ([]);
+    const partBases = new Map();
     let source = "";
     const list = state.list || [];
     for (let index = 0; index < list.length; index++) {
@@ -1572,14 +1621,13 @@ export class Transcript {
         c = this._buildPart(m.id, part, width, expanded, live, tree, c ? c.doc : null);
         state.rows.set(key, c);
       }
-      if (c.base !== base) rebasePart(c, base);
+      partBases.set(key, base);
       source += c.source;
-      for (const b of c.blocks) blocks.push(b);
       for (const r of c.rows) rows.push(r);
     }
     for (const key of state.rows.keys()) if (!seen.has(key)) state.rows.delete(key);
     if (!plan.joinAfter[messageIndex]) rows.push({ text: "", key: m.id });
-    return { rows, source, blocks };
+    return { rows, source, partBases };
   }
 
   // Render one part at source base 0. A text part keeps its document, so a delta re-wraps only the open block.
@@ -1590,14 +1638,14 @@ export class Transcript {
     if (part.type === "text") {
       if (!doc) doc = new Document();
       doc.setText(part.text || "");
-      const rows = doc.rows(contentW).map((r) => ({ segments: r.segments, indent: TX_GUTTER, ...tag, kind: "text" }));
-      return { w: width, expanded, live, shape: tree, base: 0, rows, source: doc.sourceText(), blocks: doc.blocks(), doc };
+      const rows = doc.rows(contentW).map((r) => ({ segments: r.segments, indent: TX_GUTTER, key: id, partId: part.id, kind: "text" }));
+      return { w: width, expanded, live, shape: tree, rows, source: doc.sourceText(), doc };
     }
     const built = part.type === "tool"
       ? toolRows(part, contentW, expanded, tree)
       : reasoningRows(/** @type {Extract<Wire.AssistantPart, { type: "reasoning" }>} */ (part), contentW, expanded, live, tree);
     const rows = built.rows.map((r) => ({ ...r, ...tag }));
-    return { w: width, expanded, live, shape: tree, base: 0, rows, source: built.source, blocks: [], doc: null };
+    return { w: width, expanded, live, shape: tree, rows, source: built.source, doc: null };
   }
 
   // Assistant rows come from a per-message md Document, indented past the gutter, then a separator.
@@ -1683,6 +1731,7 @@ export class Transcript {
       const m = this._at(i);
       if (!m) break;
       const rows = this._rowsOf(m, this._width, i);
+      const cache = this._rows.get(String(m.id));
       const plain = [];
       let from = -1;
       let to = -1;
@@ -1691,7 +1740,7 @@ export class Transcript {
         const r = this._rowRange(range, i, k, rowText(row).length);
         if (!r) continue;
         plain.push(rowText(row).slice(r.from, r.to));
-        const span = rowSourceSpan(row, r.from, r.to);
+        const span = rowSourceSpan(row, r.from, r.to, rowSourceBase(cache, row));
         if (!span) continue;
         if (from < 0 || span.from < from) from = span.from;
         if (span.to > to) to = span.to;
@@ -1705,33 +1754,18 @@ export class Transcript {
     return out.join("\n");
   }
 
-  // The placeholder rows, or null when a message exists or no placeholder is set.
-  /** @returns {TranscriptRow[] | null} */
-  _emptyRows() {
-    if (!this.empty || this._messages.length > 0 || this._active) return null;
-    const lines = this.empty();
-    return lines && lines.length ? lines.map((l) => {
-      const line = /** @type {{ text?: unknown, group?: string }} */ (l);
-      return { text: line.text == null ? String(l) : String(line.text), group: line.group || "YukeEmpty", indent: TX_GUTTER };
-    }) : null;
-  }
-
   /** @param {number} width @returns {number} */
   rowCount(width) {
     if (width <= 0) return 0;
     this._invalidate(width);
-    const blank = this._emptyRows();
-    if (blank) return blank.length;
     this._indexRows();
     return this._offset(this._prefix.length - 1);
   }
 
-  /** @param {number} width @param {number} top @param {number} height @returns {TranscriptRow[]} */
-  rows(width, top, height) {
+  /** @param {number} width @param {number} top @param {number} height @param {boolean} absolute @returns {TranscriptRow[]} */
+  _rowsRange(width, top, height, absolute) {
     if (width <= 0 || height <= 0) return [];
     this._invalidate(width);
-    const blank = this._emptyRows();
-    if (blank) return blank.slice(top, top + height);
     this._indexRows();
     const first = this._messageAtRow(top);
     this._viewport.clear();
@@ -1744,15 +1778,22 @@ export class Transcript {
     for (let i = first; i + 1 < this._prefix.length && this._offset(i) < top + height; i++) {
       const m = /** @type {MessageDescriptor} */ (this._at(i));
       const rows = this._rowsOf(m, width, i);
+      const cache = this._rows.get(String(m.id));
       const base = this._offset(i);
       for (let k = Math.max(0, top - base); k < rows.length && base + k < top + height; k++) {
-        const row = /** @type {TranscriptRow} */ (rows[k]);
+        const local = /** @type {TranscriptRow} */ (rows[k]);
+        const row = absolute ? rowAtBase(local, rowSourceBase(cache, local)) : local;
         const r = range && this._rowRange(range, i, k, rowText(row).length);
         out.push(r && r.to > r.from ? { ...row, sel: r } : row);
       }
     }
     this._trimCaches();
     return out;
+  }
+
+  /** @param {number} width @param {number} top @param {number} height @returns {TranscriptRow[]} */
+  rows(width, top, height) {
+    return this._rowsRange(width, top, height, true);
   }
 
   // The committed messages oldest first, then the streaming draft, each a copy the caller cannot write through.
@@ -1882,8 +1923,23 @@ export class ChatView {
   /** @param {ChatViewOptions} [opts] */
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.transcript = new Transcript({ textOf: opts.textOf, partsOf: opts.partsOf, partOf: opts.partOf, partTextPage: opts.partTextPage, onSelect: opts.onSelect, empty: opts.empty });
+    this.transcript = new Transcript({ textOf: opts.textOf, partsOf: opts.partsOf, partOf: opts.partOf, partTextPage: opts.partTextPage, onSelect: opts.onSelect });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
+    claimView(this.composer, this);
+    this.sessionId = opts.sessionId || (() => null);
+    /** @type {{ provider: PresentationProvider, instance: PresentationInstance } | null} */
+    this.presentation = null;
+    /** @type {PresentationView[]} */
+    this.presentationViews = [];
+    /** @type {PresentationView | null} */
+    this.presentationFocus = null;
+    /** @type {PresentationView | null} */
+    this.presentationCapture = null;
+    this.transcriptRect = { x: 0, y: 0, w: 0, h: 0 };
+    this.stripRect = { x: 0, y: 0, w: 0, h: 0 };
+    this.ruleRect = { x: 0, y: 0, w: 0, h: 0 };
+    /** @type {StripRow[]} */
+    this.strip = [];
     // This field names the region that reads the keyboard. The mouse routes by rect instead.
     /** @type {ChatRegion} */
     this.focus = "composer";
@@ -1896,7 +1952,7 @@ export class ChatView {
   // The focused region names the deeper atom, so a binding can own one region alone.
   /** @returns {string[]} */
   contexts() {
-    return ["chat", this.focus];
+    return this.presentationFocus ? ["chat", "presentation", ...(this.presentationFocus.contexts?.() || [])] : ["chat", this.focus];
   }
 
   // A pane focus returns the keyboard to the composer.
@@ -1908,6 +1964,7 @@ export class ChatView {
   /** @param {ChatRegion} name @returns {void} */
   focusRegion(name) {
     if (name !== "composer" && name !== "transcript") throw new TypeError("focusRegion: unknown region " + name);
+    this.presentationFocus = null;
     if (this.focus === name) return;
     this.focus = name;
     events.emit("region.focused", this, name);
@@ -1915,53 +1972,174 @@ export class ChatView {
 
   /** @param {HostEvent} ev @returns {boolean} */
   onKey(ev) {
+    if (this.presentationFocus) return this.presentationFocus.onKey?.(ev) || false;
     // A focused transcript reads nothing here, because a nav binding scrolls it through the keymap.
     if (this.focus === "transcript") return false;
     return this.composer.onKey(ev);
   }
 
   // The widget a nav binding drives here. The transcript scrolls even while the composer types.
-  /** @returns {import("yuke:core").NavTarget} */
+  /** @returns {import("yuke:core").NavTarget | null} */
   navTarget() {
+    if (this.presentationFocus) return this.presentationFocus.navTarget?.() || null;
     return this.transcript.pager;
   }
 
   // Route by sub-rect, so a wheel step over the composer never moves the transcript; only a press hits this test.
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
+    if (this.presentationCapture && (ev.event === "drag" || ev.event === "release")) {
+      const held = this.presentationCapture;
+      if (ev.event === "release") this.presentationCapture = null;
+      return held.onMouse?.(ev) || false;
+    }
+    if (ev.event === "drag" || ev.event === "release") return this.transcript.onMouse(ev);
+    for (const view of this.presentationViews) {
+      const r = view.rect;
+      if (ev.col < r.x || ev.col >= r.x + r.w || ev.row < r.y || ev.row >= r.y + r.h) continue;
+      if (ev.event === "press" && ev.button === "left" && view.onMouse) {
+        this.presentationFocus = view;
+        this.presentationCapture = view;
+        view.onFocus?.();
+        root.invalidatePaint();
+      }
+      return view.onMouse?.(ev) || false;
+    }
+    if (ev.event === "press" && ev.button === "left") this.presentationFocus = null;
     const r = this.transcript.pager.rect();
     const inside = r && ev.col >= r.x && ev.col < r.x + r.w && ev.row >= r.y && ev.row < r.y + r.h;
-    const taken = inside || ev.event === "drag" || ev.event === "release" ? this.transcript.onMouse(ev) : false;
+    const taken = inside ? this.transcript.onMouse(ev) : false;
     // A provider may claim a left press to place its own caret, after the transcript reads it.
     if (ev.event !== "press" || ev.button !== "left") return taken;
     return slot.get(this, "press", ev) === true || taken;
   }
 
-  /** @param {boolean} focused @returns {void} */
-  draw(focused) {
-    const { x, y, w, h } = this.rect;
-    if (w <= 0 || h <= 0) {
-      this.composer.rect = { x, y, w: 0, h: 0 };
-      this.transcript.hide();
-      return;
+  /** @param {Rect} bounds @returns {void} */
+  layout(bounds) {
+    this.rect = bounds;
+    const { w, h } = bounds;
+    const composerRows = w > 0 && h > 0 ? Math.min(this.composer.height(w), Math.max(1, Math.floor(h / 2))) : 0;
+    this.strip = /** @type {StripRow[]} */ (slot.get(this, "strip") || []);
+    const stripRows = Math.min(this.strip.length, Math.max(0, h - composerRows - 2));
+    const defaultLayout = column([
+      child("transcript", grow()),
+      child("strip", fixed(stripRows)),
+      child("rule", fixed(h > composerRows && w > 0 ? 1 : 0)),
+      child("composer", fit(), { intrinsic: { w, h: composerRows } }),
+    ]);
+    const context = { bounds, empty: this.transcript._messages.length === 0 && !this.transcript._active, sessionId: this.sessionId(), composerRows, defaultLayout };
+    const provider = /** @type {PresentationProvider | null} */ (slot.get(this, "presentation", context));
+    let tree = defaultLayout;
+    try {
+      if (provider !== this.presentation?.provider) {
+        this.clearPresentation();
+        if (provider) this.presentation = { provider, instance: provider.mount(this) };
+      }
+      const active = this.presentation;
+      if (active) tree = active.instance.layout(context) || defaultLayout;
+      if (active !== this.presentation) tree = defaultLayout;
+      const placed = this.presentation;
+      this._placePresentation(tree, bounds);
+      if (placed !== this.presentation) {
+        this._releasePresentationViews();
+        this._placePresentation(defaultLayout, bounds);
+      }
+    } catch (error) {
+      this.clearPresentation();
+      events.emit("ext.error", error, "presentation");
+      this._placePresentation(defaultLayout, bounds);
     }
+    if (this.transcriptRect.w === 0 || this.transcriptRect.h === 0) this.transcript.hide();
+  }
 
-    // The composer grows with its text. It never takes more than half the pane.
-    const rows = Math.min(this.composer.height(w), Math.max(1, Math.floor(h / 2)));
-    this.composer.rect = { x, y: y + h - rows, w, h: rows };
-    const rule = y + h - rows - 1;
-    // A plugin puts rows between the transcript and the rule, such as the queued inputs. The transcript keeps one row.
-    const strip = /** @type {StripRow[]} */ (slot.get(this, "strip") || []);
-    const shown = Math.min(strip.length, Math.max(0, rule - y - 1));
-    const top = rule - shown;
-    if (top > y) this.transcript.draw({ x, y, w, h: top - y });
-    else this.transcript.hide();
-    for (let i = 0; i < shown; i++) {
-      const row = /** @type {StripRow} */ (strip[i]);
-      text(x, top + i, clip(row.text, w), row.group || "UIDim");
+  /** @param {PresentationProvider} [provider] @returns {void} */
+  clearPresentation(provider) {
+    if (provider && provider !== this.presentation?.provider) return;
+    const held = this.presentation;
+    this.presentation = null;
+    this._releasePresentationViews();
+    held?.instance.dispose();
+  }
+
+  /** @returns {void} */
+  _releasePresentationViews() {
+    for (const view of this.presentationViews) releaseView(view, this);
+    this.presentationViews = [];
+    this.presentationFocus = null;
+    this.presentationCapture = null;
+  }
+
+  /** @param {LayoutNode} tree @param {Rect} bounds @returns {void} */
+  _placePresentation(tree, bounds) {
+    const result = solve(tree, bounds);
+    /** @type {Map<string, Rect>} */
+    const regions = new Map();
+    /** @type {{ view: PresentationView, rect: Rect }[]} */
+    const views = [];
+    const seen = new Set();
+    /** @param {import("yuke:layout").LayoutResult} item */
+    const visit = item => {
+      if (item.children.length) { for (const sub of item.children) visit(sub); return; }
+      const value = item.value;
+      if (value === null) return;
+      if (seen.has(value)) throw new TypeError("presentation repeats a view or region");
+      seen.add(value);
+      if (typeof value === "string") {
+        if (!["transcript", "strip", "rule", "composer"].includes(value)) throw new TypeError("unknown chat region: " + value);
+        regions.set(value, item.rect);
+      } else {
+        const view = /** @type {PresentationView} */ (value);
+        if (!view || typeof view.layout !== "function" || typeof view.draw !== "function") throw new TypeError("presentation child needs layout and draw");
+        if (view === this || view === this.composer) throw new TypeError("use the composer region in a presentation");
+        views.push({ view, rect: item.rect });
+      }
+    };
+    for (const item of result.children) visit(item);
+    if (!regions.has("composer")) throw new TypeError("presentation needs one composer region");
+    const empty = { x: bounds.x, y: bounds.y, w: 0, h: 0 };
+    this.transcriptRect = regions.get("transcript") || empty;
+    this.stripRect = regions.get("strip") || empty;
+    this.ruleRect = regions.get("rule") || empty;
+    this.composer.layout(/** @type {Rect} */ (regions.get("composer")));
+    const visible = views.filter(item => item.rect.w > 0 && item.rect.h > 0).map(item => item.view);
+    for (const view of this.presentationViews) releaseView(view, this);
+    if (this.presentationFocus && !visible.includes(this.presentationFocus)) this.presentationFocus = null;
+    if (this.presentationCapture && !visible.includes(this.presentationCapture)) this.presentationCapture = null;
+    this.presentationViews = [];
+    for (const { view, rect } of views) {
+      claimView(view, this);
+      this.presentationViews.push(view);
+      view.layout(rect);
     }
-    if (rule >= y) this._drawRule(x, rule, w);
-    this.composer.draw(focused);
+  }
+
+  /** @returns {{ periodMs: number } | null} */
+  needsTick() {
+    let period = Infinity;
+    for (const view of this.presentationViews) {
+      const tick = view.needsTick?.();
+      if (tick) period = Math.min(period, tick.periodMs);
+    }
+    return period < Infinity ? { periodMs: period } : null;
+  }
+
+  /** @returns {void} */
+  tick() {
+    for (const view of this.presentationViews) if (view.needsTick?.()) view.tick?.();
+  }
+
+  /** @param {boolean} [focused] @returns {void} */
+  draw(focused = false) {
+    if (this.rect.w <= 0 || this.rect.h <= 0) return;
+    const transcript = this.transcriptRect;
+    if (transcript.w > 0 && transcript.h > 0) this.transcript.draw(transcript);
+    for (let i = 0; i < Math.min(this.strip.length, this.stripRect.h); i++) {
+      const row = /** @type {StripRow} */ (this.strip[i]);
+      text(this.stripRect.x, this.stripRect.y + i, clip(row.text, this.stripRect.w), row.group || "UIDim");
+    }
+    if (this.ruleRect.h > 0) this._drawRule(this.ruleRect.x, this.ruleRect.y, this.ruleRect.w);
+    this.composer.draw(focused && !this.presentationFocus);
+    for (const view of this.presentationViews) if (view.rect.w > 0 && view.rect.h > 0) view.draw(focused && view === this.presentationFocus);
   }
 
   // The rule row. A plugin puts a line on it, such as the working indicator, and the rule fills the rest.
@@ -1977,6 +2155,7 @@ export class ChatView {
   // The caret belongs to the focused region, so a transcript with no cursor provider shows none.
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
   cursor() {
+    if (this.presentationFocus) return this.presentationFocus.cursor?.() || null;
     const supplied = /** @type {{ x: number, y: number, visible: boolean } | null} */ (slot.get(this, "cursor"));
     if (supplied) return supplied;
     return this.focus === "composer" ? this.composer.cursor() : null;
