@@ -16,22 +16,11 @@ function cell(value, name) {
   return value;
 }
 
-/** @param {number} value @param {string} name @returns {number} */
-function positive(value, name) {
-  if (!Number.isFinite(value) || value <= 0) throw new TypeError(name + " must be positive");
-  return value;
-}
-
-/** @param {number | undefined} value @param {string} name @returns {number | undefined} */
-function limit(value, name) {
-  if (value === undefined) return undefined;
-  return cell(value, name);
-}
-
 /** @param {{ min?: number, max?: number } | undefined} options @returns {{ min?: number, max?: number }} */
 function limits(options) {
-  const min = limit(options && options.min, "min");
-  const max = limit(options && options.max, "max");
+  const min = options && options.min, max = options && options.max;
+  if (min !== undefined) cell(min, "min");
+  if (max !== undefined) cell(max, "max");
   if (min !== undefined && max !== undefined && min > max) throw new TypeError("min must not exceed max");
   return { ...(min === undefined ? {} : { min }), ...(max === undefined ? {} : { max }) };
 }
@@ -57,7 +46,7 @@ export function fit(options) {
 
 /** @param {number} [weight] @param {{ min?: number, max?: number }} [options] @returns {SizeSpec} */
 export function grow(weight = 1, options) {
-  positive(weight, "grow weight");
+  if (!Number.isFinite(weight) || weight <= 0) throw new TypeError("grow weight must be positive");
   return { kind: "grow", value: weight, ...limits(options) };
 }
 
@@ -149,85 +138,60 @@ export function solve(node, bounds) {
     const item = /** @type {LayoutChild} */ (node.children[i]);
     const mainSize = /** @type {number} */ (sizes[i]);
     const alignment = item.align || node.align;
-    const crossSize = crossSizeOf(item, cross, vertical, alignment);
+    const wanted = item.intrinsic ? vertical ? item.intrinsic.w : item.intrinsic.h : 0;
+    const crossSize = alignment === "stretch" ? cross : Math.min(cross, wanted);
     const crossAt = alignment === "center" ? Math.floor((cross - crossSize) / 2) : alignment === "end" ? cross - crossSize : 0;
     const childRect = vertical ? { x: inner.x + crossAt, y: at, w: crossSize, h: mainSize } : { x: at, y: inner.y + crossAt, w: mainSize, h: crossSize };
-    children.push({ value: item.value, rect: clipRect(childRect, inner), children: item.layout ? solve(item.layout, clipRect(childRect, inner)).children : [] });
+    const clipped = clipRect(childRect, inner);
+    children.push({ value: item.value, rect: clipped, children: item.layout ? solve(item.layout, clipped).children : [] });
     at += mainSize + node.gap;
   }
   return { value: node, rect, children };
 }
 
-/** @param {LayoutChild} item @param {number} cross @param {boolean} vertical @param {"start" | "center" | "end" | "stretch"} alignment @returns {number} */
-function crossSizeOf(item, cross, vertical, alignment) {
-  if (alignment === "stretch") return cross;
-  const intrinsic = item.intrinsic;
-  if (!intrinsic) return 0;
-  return Math.min(cross, vertical ? intrinsic.w : intrinsic.h);
-}
-
 /** @param {LayoutChild[]} children @param {number} total @param {boolean} vertical @returns {number[]} */
 function allocate(children, total, vertical) {
-  const out = children.map((item) => {
-    const spec = item.size;
-    const intrinsic = item.intrinsic;
-    const wanted = spec.kind === "fixed" ? spec.value : spec.kind === "fit" ? (intrinsic ? vertical ? intrinsic.h : intrinsic.w : 0) : 0;
-    return clamp(wanted, spec);
-  });
-  let used = 0;
-  for (let i = 0; i < children.length; i++) {
-    const item = /** @type {LayoutChild} */ (children[i]);
-    if (item.size.kind === "grow") {
-      out[i] = item.size.min === undefined ? 0 : item.size.min;
-      continue;
+  /** @type {{ i: number, weight: number, room: number, fraction: number }[]} */
+  let active = [];
+  let remaining = total;
+  const out = children.map(({ size, intrinsic }, i) => {
+    if (size.kind === "grow") {
+      const min = size.min ?? 0;
+      active.push({ i, weight: size.value, room: (size.max ?? Infinity) - min, fraction: 0 });
+      return min;
     }
-    const available = Math.max(0, total - used);
-    out[i] = Math.min(/** @type {number} */ (out[i]), available);
-    used += /** @type {number} */ (out[i]);
-  }
-  for (let i = 0; i < children.length; i++) {
-    const item = /** @type {LayoutChild} */ (children[i]);
-    if (item.size.kind === "grow") used += /** @type {number} */ (out[i]);
-  }
-  let remaining = Math.max(0, total - used);
-  const active = children.map((item, i) => item.size.kind === "grow" && (item.size.max === undefined || /** @type {number} */ (out[i]) < item.size.max) ? i : -1).filter((i) => i >= 0);
+    const wanted = size.kind === "fixed" ? size.value : intrinsic ? vertical ? intrinsic.h : intrinsic.w : 0;
+    const used = Math.min(clamp(wanted, size), remaining);
+    remaining -= used;
+    return used;
+  });
+  // The solver clips overflow when fixed sizes and grow minimums exceed the bounds.
+  for (const part of active) remaining -= /** @type {number} */ (out[part.i]);
+  remaining = Math.max(0, remaining);
+  active = active.filter(part => part.room > 0);
   while (remaining > 0 && active.length > 0) {
     let scale = 0;
-    for (const i of active) scale = Math.max(scale, /** @type {{ value: number }} */ (/** @type {LayoutChild} */ (children[i]).size).value);
-    let weights = 0;
-    for (const i of active) weights += /** @type {{ value: number }} */ (/** @type {LayoutChild} */ (children[i]).size).value / scale;
-    if (weights <= 0) break;
-    const additions = active.map((i) => {
-      const exact = remaining * (/** @type {{ value: number }} */ (/** @type {LayoutChild} */ (children[i]).size).value / scale) / weights;
-      return { i, whole: Math.floor(exact), fraction: exact - Math.floor(exact) };
-    });
-    let given = 0;
-    for (const part of additions) {
-      const item = /** @type {LayoutChild} */ (children[part.i]);
-      const max = item.size.max;
-      const add = max === undefined ? part.whole : Math.min(part.whole, max - /** @type {number} */ (out[part.i]));
+    for (const part of active) scale = Math.max(scale, part.weight);
+    const weights = active.reduce((sum, part) => sum + part.weight / scale, 0);
+    let left = remaining;
+    for (const part of active) {
+      const exact = remaining * (part.weight / scale) / weights;
+      part.fraction = exact - Math.floor(exact);
+      const add = Math.min(Math.floor(exact), part.room);
       out[part.i] = /** @type {number} */ (out[part.i]) + add;
-      given += add;
+      part.room -= add;
+      left -= add;
     }
-    let left = remaining - given;
-    additions.sort((a, b) => b.fraction - a.fraction || a.i - b.i);
-    for (const part of additions) {
+    for (const part of active.slice().sort((a, b) => b.fraction - a.fraction || a.i - b.i)) {
       if (left === 0) break;
-      const item = /** @type {LayoutChild} */ (children[part.i]);
-      const max = item.size.max;
-      if (max !== undefined && /** @type {number} */ (out[part.i]) >= max) continue;
+      if (part.room <= 0) continue;
       out[part.i] = /** @type {number} */ (out[part.i]) + 1;
+      part.room--;
       left--;
     }
-    const progress = remaining - left;
+    if (left === remaining) break;
     remaining = left;
-    for (let k = active.length - 1; k >= 0; k--) {
-      const i = /** @type {number} */ (active[k]);
-      const item = /** @type {LayoutChild} */ (children[i]);
-      const max = item.size.max;
-      if (max !== undefined && /** @type {number} */ (out[i]) >= max) active.splice(k, 1);
-    }
-    if (progress === 0) break;
+    active = active.filter(part => part.room > 0);
   }
   return out;
 }

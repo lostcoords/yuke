@@ -901,14 +901,9 @@ function normalizeStroke(stroke) {
 
 // A mounted layer or view must provide both layout and draw hooks.
 /** @param {object | null | undefined} obj @param {string} message @returns {void} */
-function requireDraw(obj, message) {
-  if (!obj || typeof /** @type {Record<string, unknown>} */ (obj).draw !== "function") throw new TypeError(message);
-}
-
-/** @param {object | null | undefined} obj @param {string} message @returns {void} */
 function requireView(obj, message) {
-  requireDraw(obj, message);
-  if (typeof /** @type {Record<string, unknown>} */ (obj).layout !== "function") throw new TypeError(message);
+  const view = /** @type {Record<string, unknown> | null | undefined} */ (obj);
+  if (!view || typeof view.draw !== "function" || typeof view.layout !== "function") throw new TypeError(message);
 }
 
 /** @type {WeakMap<object, object>} */
@@ -1389,7 +1384,8 @@ export class RootView {
 
   /** @param {Node | null} node @returns {void} */
   setRoot(node) {
-    const next = node ? node.leaves().map(leafView) : [];
+    const leaves = node ? node.leaves() : [];
+    const next = leaves.map(leafView);
     const seen = new Set();
     for (const view of next) {
       if (seen.has(view)) throw new TypeError("a root cannot mount a view twice");
@@ -1405,7 +1401,7 @@ export class RootView {
     this.activeLeaf = null;
     this._capture = null;
     // The first leaf takes the focus through the same path, so it runs `onFocus` like any other.
-    if (node) this._setActiveLeaf(/** @type {Node} */ (node.leaves()[0]));
+    if (node) this._setActiveLeaf(/** @type {Node} */ (leaves[0]));
     // A replaced tree drops its panes, so each owner hears it the way a close tells them.
     const kept = node ? node.leaves().map(leafView) : [];
     for (const v of gone) {
