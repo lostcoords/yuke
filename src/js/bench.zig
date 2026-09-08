@@ -41,7 +41,7 @@ pub const Harness = struct {
         };
         errdefer self.env.deinit();
         errdefer self.output.deinit();
-        self.render = try term.Render.init(io, gpa, &self.env, .{});
+        self.render = try term.Render.init(io, if (metrics_enabled) self.allocations.allocator() else gpa, &self.env, .{});
         errdefer self.render.deinit(&self.output.writer);
         try self.render.resize(&self.output.writer, .{ .cols = width, .rows = height, .x_pixel = 0, .y_pixel = 0 });
         self.host = Host.createWith(if (metrics_enabled) self.allocations.allocator() else gpa, io, .{});
@@ -68,9 +68,9 @@ pub const Harness = struct {
         self.host.ctx.freeValue(self.step_fn);
         self.host.ctx.freeValue(self.api);
         self.host.destroy();
+        self.render.deinit(&self.output.writer);
         std.debug.assert(self.allocations.liveBytes() == 0);
         std.debug.assert(self.allocations.liveCount() == 0);
-        self.render.deinit(&self.output.writer);
         self.output.deinit();
         self.env.deinit();
         gpa.destroy(self);
