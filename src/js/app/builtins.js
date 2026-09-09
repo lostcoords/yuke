@@ -182,7 +182,7 @@ async function edit(args, _signal, context) {
   if (replaced.count > 1 && !replaceAll) invalid(name, "old_string appears more than one time. You must add context or set replace_all");
   if (utf8Length(replaced.text) > MAX_FILE_BYTES) invalid(name, "the file exceeds the size limit");
   const mapped = await diff(path, old, replaced.text);
-  const bytes = await hostCall(name, fs.writeFile(path, replaced.text, context?.workspaceRoot));
+  await hostCall(name, fs.writeFile(path, replaced.text, context?.workspaceRoot));
   const view = viewOf(mapped);
   const text = view == null ? `The tool replaced ${replaced.count} match(es).` : `The tool replaced ${replaced.count} match(es) and changed ${changedLines(view)} line(s).`;
   return result(text, view);

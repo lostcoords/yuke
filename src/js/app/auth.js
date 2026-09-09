@@ -1,5 +1,7 @@
 // yuke:auth — /login and /logout: the provider list, the device-code dialog, and the API key prompt.
-import { root, copy, strokeOf, text, clip } from "yuke:core";
+import { root, copy, text } from "yuke:core";
+import { clip } from "yuke:text-input";
+import { strokeOf } from "yuke:keys";
 import { ui, Window, Prompt } from "yuke:ui";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";

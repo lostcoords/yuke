@@ -1,5 +1,7 @@
 // yuke:context — the context reading on the status bar and the `/context` breakdown window.
-import { root, strokeOf, text, clip } from "yuke:core";
+import { root, text } from "yuke:core";
+import { clip } from "yuke:text-input";
+import { strokeOf } from "yuke:keys";
 import { client } from "yuke:client";
 import { Window } from "yuke:ui";
 import { chatEntry } from "yuke:chat";

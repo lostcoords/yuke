@@ -1,0 +1,15 @@
+import { equal } from "yuke:test";
+import { ChatView } from "yuke:chat-view";
+import { root } from "yuke:core";
+import { plugins } from "yuke:ext";
+import { tuiPlugin } from "yuke:tui";
+import { chatPlugin } from "yuke:chat";
+plugins.use(tuiPlugin); const off = plugins.use(chatPlugin);
+const view = new ChatView({ textOf: () => "history" });
+root.setActive(view); root.flush();
+const welcome = view.presentationViews.some(child => child.text === "new chat");
+view.transcript.setOutline([{ id: 1, type: "user" }], null);
+root.invalidate(); root.flush();
+const history = view.presentationViews.length === 0 && view.transcript.pager.rect() !== null;
+root.setActive(null); off();
+equal(welcome && history ? "ok" : [welcome, history].join(","), "ok");

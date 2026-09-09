@@ -1,0 +1,21 @@
+import { check } from "yuke:test";
+import { command } from "yuke:core";
+import { plugins } from "yuke:ext";
+import { tuiPlugin } from "yuke:tui";
+import { commands } from "yuke";
+plugins.use(tuiPlugin);
+let got = null;
+commands.define({ name: "review", title: "Review", description: "ask for a review", args: true, run: (arg) => { got = arg; } });
+const listed = command.list().find((c) => c.name === "user:review");
+check("listed", !!listed && listed.slash === "review" && listed.args === true && listed.title === "Review");
+command.perform("user:review", "src");
+check("runs", got === "src");
+commands.define({ name: "review", title: "Review 2", description: "d", run: () => {} });
+check("redefine-replaces", command.list().filter((c) => c.name === "user:review").length === 1);
+commands.define({ name: "hidden", title: "H", description: "d", slash: null, run: () => {} });
+check("slash-opt-out", command.list().find((c) => c.name === "user:hidden").slash === null);
+plugins.dispose("command:review");
+check("dispose-removes", !command.available("user:review"));
+let threw = false;
+try { commands.define({ name: "x", title: "t", description: "d" }); } catch (_e) { threw = true; }
+check("refuses-no-run", threw);

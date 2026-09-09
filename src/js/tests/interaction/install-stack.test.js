@@ -1,0 +1,13 @@
+import { equal } from "yuke:test";
+import { interaction, plugins } from "yuke:ext";
+const answerer = (tag) => ({ surfaceFor: () => ({ notify: (m) => { globalThis.heard.push(tag + ":" + m); } }) });
+globalThis.heard = [];
+const first = interaction.install(answerer("first"));
+plugins.use({ name: "reporter", apply(ctx) { globalThis.say = (m) => ctx.interaction.notify(m); } });
+globalThis.say("a");
+const second = interaction.install(answerer("second"));
+globalThis.say("b");
+second();
+globalThis.say("c");
+first();
+equal(globalThis.heard.join(","), "first:a,second:b,first:c");

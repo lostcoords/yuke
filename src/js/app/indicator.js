@@ -1,5 +1,5 @@
 // yuke:indicator — the working line on the rule above the composer: a spinner, the phase, and the elapsed time.
-import { ChatView } from "yuke:transcript";
+import { ChatView } from "yuke:chat-view";
 import { chatOf, chats } from "yuke:chat";
 import { activityOf, isWorking } from "yuke:activity";
 

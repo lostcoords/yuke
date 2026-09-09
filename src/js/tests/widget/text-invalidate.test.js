@@ -1,0 +1,13 @@
+import { equal } from "yuke:test";
+import { Text } from "yuke:ui";
+import { root } from "yuke:core";
+const t = new Text({ text: "same" });
+t.layout({ x: 0, y: 0, w: 10, h: 2 });
+root._needsDraw = false; root._layoutDirty = false;
+t.setText("same");
+const same = !root._needsDraw && !root._layoutDirty;
+t.setText("世界");
+const changed = root._needsDraw && root._layoutDirty;
+t.layout({ x: 0, y: 0, w: 1, h: 2 });
+const clipped = t._layoutCache.rows.every(row => row === "");
+equal(same && changed && clipped ? "ok" : "text invalidation mismatch", "ok");

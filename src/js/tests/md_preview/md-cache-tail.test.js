@@ -1,0 +1,37 @@
+import { check } from "yuke:test";
+import { Document } from "yuke:md";
+const doc = new Document();
+let source = "# Prefix\n\nstable 世界 é 👩‍💻\n\n```txt\nbody\n```\n\nTail";
+doc.setText(source);
+doc.rows(24);
+const prefix = doc._cache.get(0);
+const codeAt = source.indexOf("```txt");
+const code = doc._cache.get(codeAt);
+check("closed-caches-exist", !!prefix && !!code);
+for (const delta of [" extended", "\r", "\n\r\nNext", "\n===", "\n\n| a | b |\n|---|---|\n| 1 | 2 |", "\n\nEnd"]) {
+  source += delta;
+  doc.setText(source);
+  const fresh = new Document();
+  fresh.setText(source);
+  check("append-rows", JSON.stringify(doc.rows(24)) === JSON.stringify(fresh.rows(24)));
+  check("append-blocks", JSON.stringify(doc.blocks()) === JSON.stringify(fresh.blocks()));
+  check("prefix-cache", doc._cache.get(0) === prefix);
+  check("closed-tail-cache", doc._cache.get(codeAt) === code);
+  const closed = new Set(doc._blocks.filter(block => !block.open).map(block => block.at));
+  check("no-orphan-cache", [...doc._cache.keys()].every(at => closed.has(at)));
+}
+const fresh = new Document();
+fresh.setText(source);
+check("resize", JSON.stringify(doc.rows(9)) === JSON.stringify(fresh.rows(9)));
+check("replacement-changed", doc.setText("replacement\r\ntext"));
+check("replacement-releases-cache", doc._cache.size === 0);
+check("replacement-normalized", doc.sourceText() === "replacement\ntext");
+check("unchanged", !doc.setText("replacement\r\ntext"));
+check("empty", doc.setText("") && doc.rows(24).length === 0 && doc._cache.size === 0);
+const short = new Document();
+short.setText("```txt\nlarge closed block\n```\n\nTail");
+short.rows(24);
+const shortCode = short._cache.get(0);
+short.setText(short.sourceText() + " extended");
+short.rows(24);
+check("two-block-cache", !!shortCode && short._cache.get(0) === shortCode);

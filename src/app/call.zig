@@ -1,8 +1,4 @@
-//! Call one engine command by name.
-//!
-//! There is no envelope here: no request id, no response wrapper, and no transport. One process
-//! calls a function. `proto.rpc.methods` already names each method's parameter and result type,
-//! so this file adds only the binding from a method to its command and the refusal table.
+//! Bind protocol methods to commands and map command refusals to wire errors.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -35,7 +31,7 @@ pub fn call(
 
     inline for (proto.rpc.methods) |spec| {
         if (method == spec.name) {
-            if (comptime bound(spec.name)) {
+            if (comptime @hasDecl(bindings, @tagName(spec.name))) {
                 const params = std.json.parseFromSliceLeaky(spec.params, arena, params_json, .{
                     .ignore_unknown_fields = true,
                 }) catch return Failure{ .code = .bad_request, .message = "bad parameters" };
@@ -55,63 +51,49 @@ pub fn call(
     unreachable; // The protocol validates one table entry for every method name.
 }
 
-/// Run the one command this method names. A comptime condition drops every other branch.
-fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, params: spec.params, launch: *?turn.Launch, diagnostic: *?[]const u8) !spec.result {
-    const n = spec.name;
-    const engine = &runtime.engine;
-    if (n == .@"agents.set_model") return @import("../engine/agent_config.zig").setModel(engine, arena, params);
-    if (n == .@"agents.get") return @import("../engine/agent_config.zig").get(engine, arena);
-    if (n == .@"agents.update") return @import("../engine/agent_config.zig").update(engine, arena, params);
-    if (n == .@"agents.resolve") return @import("../engine/agent_config.zig").resolve(engine, arena, params);
-    if (n == .initialize) return commands.initialize(engine, arena);
-    if (n == .@"session.list") return commands.sessionList(engine, arena, params);
-    if (n == .@"session.get") return commands.sessionGet(engine, arena, params);
-    if (n == .@"session.queue") return commands.sessionQueue(engine, arena, params);
-    if (n == .@"session.create") return commands.sessionCreateForRpc(engine, arena, params, launch, diagnostic);
-    if (n == .@"session.config") return commands.sessionConfig(engine, arena, params);
-    if (n == .@"session.history") return commands.sessionHistory(engine, arena, params);
-    if (n == .@"session.send_input") return commands.sessionSendInputForRpc(engine, arena, params, launch);
-    if (n == .@"session.cancel_input") return commands.sessionCancelInput(engine, arena, params);
-    if (n == .@"session.cancel_run") return commands.sessionCancelRun(engine, arena, params);
-    if (n == .@"session.remove") return commands.sessionRemove(engine, arena, params);
-    if (n == .@"catalog.list") return app_commands.catalogList(runtime, arena, params);
-    if (n == .@"catalog.reload") return app_commands.catalogReload(runtime, arena, params);
-    if (n == .@"auth.list") return app_commands.authList(runtime, arena, params);
-    if (n == .@"auth.set_api_key") return app_commands.authSetApiKey(runtime, arena, params);
-    if (n == .@"auth.remove") return app_commands.authRemove(runtime, arena, params);
-    if (n == .@"auth.login") return app_commands.authLogin(runtime, arena, params);
-    if (n == .@"auth.cancel_login") return app_commands.authCancelLogin(runtime, arena, params);
-    @compileError("`" ++ @tagName(n) ++ "` is bound but has no command");
+const bindings = struct {
+    pub const @"agents.set_model" = @import("../engine/agent_config.zig").setModel;
+    pub const @"agents.get" = @import("../engine/agent_config.zig").get;
+    pub const @"agents.update" = @import("../engine/agent_config.zig").update;
+    pub const @"agents.resolve" = @import("../engine/agent_config.zig").resolve;
+    pub const initialize = commands.initialize;
+    pub const @"session.list" = commands.sessionList;
+    pub const @"session.get" = commands.sessionGet;
+    pub const @"session.queue" = commands.sessionQueue;
+    pub const @"session.create" = commands.sessionCreateForRpc;
+    pub const @"session.config" = commands.sessionConfig;
+    pub const @"session.history" = commands.sessionHistory;
+    pub const @"session.send_input" = commands.sessionSendInputForRpc;
+    pub const @"session.cancel_input" = commands.sessionCancelInput;
+    pub const @"session.cancel_run" = commands.sessionCancelRun;
+    pub const @"session.remove" = commands.sessionRemove;
+    pub const @"catalog.list" = app_commands.catalogList;
+    pub const @"catalog.reload" = app_commands.catalogReload;
+    pub const @"auth.list" = app_commands.authList;
+    pub const @"auth.set_api_key" = app_commands.authSetApiKey;
+    pub const @"auth.remove" = app_commands.authRemove;
+    pub const @"auth.login" = app_commands.authLogin;
+    pub const @"auth.cancel_login" = app_commands.authCancelLogin;
+};
+
+comptime {
+    for (std.meta.declarations(bindings)) |binding| {
+        if (!@hasField(proto.enums.MethodName, binding.name))
+            @compileError("command binding has no protocol method: " ++ binding.name);
+    }
 }
 
-/// The methods this engine serves. A method outside this set answers `not_implemented`.
-/// Adding a method to `proto` therefore cannot silently reach a missing command.
-fn bound(comptime name: proto.enums.MethodName) bool {
-    return switch (name) {
-        .@"agents.set_model",
-        .@"agents.get",
-        .@"agents.update",
-        .@"agents.resolve",
-        .initialize,
-        .@"session.list",
-        .@"session.get",
-        .@"session.queue",
-        .@"session.create",
-        .@"session.config",
-        .@"session.history",
-        .@"session.send_input",
-        .@"session.cancel_input",
-        .@"session.cancel_run",
-        .@"session.remove",
-        .@"catalog.list",
-        .@"catalog.reload",
-        .@"auth.list",
-        .@"auth.set_api_key",
-        .@"auth.remove",
-        .@"auth.login",
-        .@"auth.cancel_login",
-        => true,
-        else => false,
+/// The handler signature states its owner and whether it needs response gates.
+fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, params: spec.params, launch: *?turn.Launch, diagnostic: *?[]const u8) !spec.result {
+    const handler = @field(bindings, @tagName(spec.name));
+    const args = @typeInfo(@TypeOf(handler)).@"fn".params;
+    const owner = if (args[0].type.? == *App) runtime else &runtime.engine;
+    return switch (args.len) {
+        2 => handler(owner, arena),
+        3 => handler(owner, arena, params),
+        4 => handler(owner, arena, params, launch),
+        5 => handler(owner, arena, params, launch, diagnostic),
+        else => @compileError("unsupported command signature"),
     };
 }
 

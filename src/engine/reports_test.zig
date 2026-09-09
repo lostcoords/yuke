@@ -1,36 +1,32 @@
 //! Report tests use durable run markers without a provider or a live model.
 
 const std = @import("std");
-const zio = @import("zio");
-const ai = @import("ai");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
-const Store = @import("../provider/provider_store.zig");
 const Engine = @import("Engine.zig");
 const reports = @import("reports.zig");
 const run = @import("run.zig");
 const commands = @import("commands.zig");
 const testing = std.testing;
+const Resources = @import("test_resources.zig");
 const root: proto.ids.SessionId = .bytes([_]u8{1} ** 16);
 const child: proto.ids.SessionId = .bytes([_]u8{2} ** 16);
 
 const Fixture = struct {
-    runtime: *zio.Runtime,
+    resources: Resources,
     db: database.Database,
-    env: std.process.Environ.Map,
-    store: Store,
-    transport: ai.transport.CannedTransport,
     arena: std.heap.ArenaAllocator,
     engine: Engine,
 
     fn init(self: *Fixture) !void {
-        self.runtime = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+        try self.resources.init();
+        errdefer self.resources.deinit();
         self.db = try database.Database.openTest();
-        self.env = .init(testing.allocator);
-        self.store = .init(testing.allocator, self.runtime.io(), &self.env);
-        self.transport = .{ .bytes = ai.transport.canned_reply };
+        errdefer self.db.deinit();
         self.arena = .init(testing.allocator);
-        self.engine = self.makeEngine();
+        errdefer self.arena.deinit();
+        self.engine = self.resources.makeEngine(&self.db);
+        errdefer self.engine.close();
         for ([_]proto.ids.SessionId{ root, child }) |id| {
             const is_child = std.mem.eql(u8, &id.raw, &child.raw);
             try database.session.create(&self.db, .{
@@ -53,17 +49,11 @@ const Fixture = struct {
         try self.engine.own(root);
     }
 
-    fn makeEngine(self: *Fixture) Engine {
-        return Engine.init(.{ .gpa = testing.allocator, .io = self.runtime.io(), .db = &self.db, .providers = &self.store, .route_transport = self.transport.transport(), .env = &self.env });
-    }
-
     fn deinit(self: *Fixture) void {
         self.engine.close();
         self.arena.deinit();
         self.db.deinit();
-        self.store.deinit();
-        self.env.deinit();
-        self.runtime.deinit();
+        self.resources.deinit();
     }
 
     /// The wake runs on the executor; wait until the parent run committed its terminal.
@@ -72,13 +62,13 @@ const Fixture = struct {
         for (0..1000) |_| {
             const marks = (try database.event.highWater(&self.db, a, root.raw)).?;
             if (marks.run_id_high >= run_id and (try database.session.snapshot(&self.db, a, root.raw)).?.open_run_id == null) return;
-            try std.Io.sleep(self.runtime.io(), .fromMilliseconds(1), .awake);
+            try std.Io.sleep(self.resources.runtime.io(), .fromMilliseconds(1), .awake);
         }
         return error.RootRunDidNotFinish;
     }
 
     fn start(self: *Fixture) !run.Started {
-        return run.beginTurn(&self.db, self.runtime.io(), self.arena.allocator(), child.raw, &.{.{ .text = .{ .text = "task" } }}, 0);
+        return run.beginTurn(&self.db, self.resources.runtime.io(), self.arena.allocator(), child.raw, &.{.{ .text = .{ .text = "task" } }}, 0);
     }
 
     fn terminal(self: *Fixture, started: run.Started, text: ?[]const u8, outcome: proto.run.RunOutcome) !reports.Terminal {
@@ -127,7 +117,7 @@ test "child reuse reports only the current run and preserves source through prom
     const resident = try f.engine.activate(root);
     try testing.expectEqual(@as(usize, 2), resident.queueDepth());
     try testing.expectEqual(@as(u64, 2), resident.queueEntries()[1].source.?.child_report.run_id);
-    const promoted = try run.beginQueuedTurn(&f.db, f.runtime.io(), a, root.raw, 0);
+    const promoted = try run.beginQueuedTurn(&f.db, f.resources.runtime.io(), a, root.raw, 0);
     try testing.expectEqual(@as(usize, 2), promoted.user_commits.len);
     const history = try database.message.historyPage(&f.db, a, root.raw, 0, 10);
     try testing.expectEqual(@as(u64, 1), history.messages[0].user.source.?.child_report.run_id);
@@ -171,7 +161,7 @@ test "report credits bound accepted work and preserve capacity after a lower lim
     try testing.expectEqual(before, (try database.event.highWater(&f.db, a, child.raw)).?.input_id_high);
     try f.engine.setAgentLimits(1, 1);
     try testing.expectError(error.ReportCapacityFull, reports.reserve(&f.engine, a, root));
-    _ = try run.beginQueuedTurn(&f.db, f.runtime.io(), a, root.raw, 0);
+    _ = try run.beginQueuedTurn(&f.db, f.resources.runtime.io(), a, root.raw, 0);
     try reports.reserve(&f.engine, a, root);
 }
 
@@ -205,7 +195,7 @@ test "one report reservation survives each hop from a grandchild to the root" {
         try tx.commit();
     }
     try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
-    const started = try run.beginQueuedTurn(&f.db, f.runtime.io(), a, grandchild, 0);
+    const started = try run.beginQueuedTurn(&f.db, f.resources.runtime.io(), a, grandchild, 0);
     try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
     {
         var tx = try f.db.begin();
@@ -223,11 +213,11 @@ test "one report reservation survives each hop from a grandchild to the root" {
         try tx.commit();
     }
     try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
-    const parent_run = try run.beginQueuedTurn(&f.db, f.runtime.io(), a, child.raw, 0);
+    const parent_run = try run.beginQueuedTurn(&f.db, f.resources.runtime.io(), a, child.raw, 0);
     try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
     _ = try f.terminal(parent_run, null, success);
     try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
-    _ = try run.beginQueuedTurn(&f.db, f.runtime.io(), a, root.raw, 0);
+    _ = try run.beginQueuedTurn(&f.db, f.resources.runtime.io(), a, root.raw, 0);
     try testing.expectEqual(@as(i64, 0), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
 }
 
@@ -274,7 +264,7 @@ test "a crash notice and parent report commit once without a child retry" {
     const a = f.arena.allocator();
     _ = try f.start();
     f.engine.close();
-    f.engine = f.makeEngine();
+    f.engine = f.resources.makeEngine(&f.db);
     try f.engine.own(child);
     try f.awaitRootRun(1);
     const parent = try database.message.historyPage(&f.db, a, root.raw, 0, 10);
@@ -345,7 +335,7 @@ test "an owned tree wakes an existing durable report without another terminal ev
     reports.publishReport(&f.engine, result.report.?, true);
     try testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, root.raw));
     f.engine.close();
-    f.engine = f.makeEngine();
+    f.engine = f.resources.makeEngine(&f.db);
     try f.engine.own(child);
     try f.awaitRootRun(1);
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, root.raw)).?.run_id_high);
@@ -366,14 +356,14 @@ test "automatic report wake respects a faulted parent and resumes after repair" 
     parent.faulted = true;
     const result = try f.terminal(try f.start(), "answer", success);
     reports.publishReport(&f.engine, result.report.?, true);
-    try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+    try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, root.raw)).?.run_id_high);
     try testing.expectEqual(@as(usize, 1), parent.queueDepth());
     parent.faulted = false;
     reports.requestWake(&f.engine, root);
     for (0..1000) |_| {
         if ((try database.event.highWater(&f.db, a, root.raw)).?.run_id_high > 0) break;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, root.raw)).?.run_id_high);
     try testing.expectEqual(@as(usize, 0), parent.queueDepth());

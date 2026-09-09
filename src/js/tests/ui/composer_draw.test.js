@@ -1,0 +1,10 @@
+import { term } from "yuke:term";
+import { Composer } from "yuke:ui";
+const c = new Composer();
+c.rect = { x: 0, y: 0, w: 7, h: 2 };
+c.text = "hello world";
+term.beginFrame();
+c.draw(true);
+const cur = c.cursor();
+term.endFrame();
+globalThis.result = cur.x === 2 + 5 - 1 && cur.y === 1 && cur.visible ? "ok" : "x=" + cur.x + " y=" + cur.y;

@@ -1,13 +1,6 @@
 // yuke:composer-vim — opt-in modal keys for the chat composer.
-import {
-  root,
-  Emitter,
-  prevGrapheme,
-  nextGrapheme,
-  nextWordStart,
-  prevWordStart,
-  nextWordEnd,
-} from "yuke:core";
+import { root, Emitter } from "yuke:core";
+import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:text-input";
 import { Composer } from "yuke:ui";
 import { register } from "yuke:vim";
 import { focusedChatView } from "yuke:chat";
@@ -85,7 +78,7 @@ function firstWord(text, caret) {
 
 /** @returns {ComposerType | null} */
 function chatComposer() {
-  const v = /** @type {import("yuke:transcript").ChatView | null} */ (focusedChatView());
+  const v = /** @type {import("yuke:chat-view").ChatView | null} */ (focusedChatView());
   return v ? v.composer : null;
 }
 

@@ -1,0 +1,97 @@
+import { check } from "yuke:test";
+import { command, root, keymap } from "yuke:core";
+import { ui } from "yuke:ui";
+import { Chat } from "yuke:chat";
+import { chat } from "yuke:defaults";
+const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0, ...o });
+root.focusView(chat.view);
+chat.view.focus = "composer";
+const sent = [];
+chat.startChat = (text) => { sent.push(text); return true; };
+let ran = null;
+const off = command.add(null, { "test:echo": (arg) => { ran = arg === undefined ? "" : arg; } },
+  { "test:echo": { title: "Echo", description: "d", slash: "echo", args: true } });
+const rowsOf = () => root.overlays[0].content.list.items;
+
+chat.composer.text = "/";
+check("opens", root.overlays.length === 1 && root.overlays[0].modal === false);
+check("composer-keeps-focus", root.focused === chat.view);
+check("lists-slash-entries", rowsOf().length > 3 && rowsOf().every((e) => e.slash));
+const offAgents = command.add(null, { "test:agents": () => {}, "test:models": () => {} }, {
+  "test:agents": { title: "Agents", slash: "agents" }, "test:models": { title: "Agent models", slash: "agent-models" },
+});
+chat.composer.text = "/a";
+root.overlays[0].content.selectKey("test:models");
+chat.composer.text = "/agent";
+check("new-query-selects-best", root.overlays[0].content.selected().slash === "agents");
+root.onEvent(key("tab"));
+check("agent-completes", chat.composer.text === "/agents");
+offAgents();
+chat.composer.text = "/ech";
+check("filters", rowsOf().length >= 1 && rowsOf()[0].slash === "echo");
+root.onEvent(key("tab"));
+check("tab-completes-with-space", chat.composer.text === "/echo ");
+check("space-closes", root.overlays.length === 0);
+chat.composer.text = "/ech";
+root.onEvent(key("enter"));
+check("enter-runs", ran === "" && chat.composer.text === "");
+check("enter-closes", root.overlays.length === 0);
+ran = null;
+chat.composer.text = "/ech";
+root.onEvent(key("esc"));
+check("esc-closes", root.overlays.length === 0 && chat.composer.text === "/ech");
+chat.composer.text = "/echo";
+check("edit-reopens", root.overlays.length === 1);
+root.onEvent(key("esc"));
+check("send-runs-known", chat.send("/echo hello world") === true && ran === "hello world");
+check("send-unknown-is-message", chat.send("/foo bar") === true && sent[sent.length - 1] === "/foo bar");
+check("double-slash-is-message", chat.send("//x") === true && sent[sent.length - 1] === "//x");
+check("path-is-message", chat.send("/tmp/x") === true && sent[sent.length - 1] === "/tmp/x");
+chat.composer.text = "/tmp/x";
+check("path-opens-nothing", root.overlays.length === 0);
+chat.composer.text = "/zzzz";
+check("no-match-opens-nothing", root.overlays.length === 0);
+chat.composer.text = "/ech";
+chat.view.focus = "transcript";
+chat.view.focusRegion("composer");
+chat.view.focusRegion("transcript");
+check("transcript-focus-closes", root.overlays.length === 0);
+chat.view.focusRegion("composer");
+chat.composer.text = "";
+// A dialog on top keeps the float shut, so a restored draft never opens a menu under it.
+const modal = ui.pick({ items: [] });
+chat.composer.text = "/ech";
+check("no-float-under-modal", root.overlays.length === 1 && root.overlays[0] === modal.win);
+root.popOverlay(modal.win);
+chat.composer.text = "";
+// Escape dismisses in one pane only, so the same text in another pane still opens its menu.
+chat.composer.text = "/ech";
+root.onEvent(key("esc"));
+const other = new Chat();
+root.split("row", other.view);
+root.focusView(other.view);
+other.view.focusRegion("composer");
+other.composer.text = "/ech";
+check("dismissal-is-per-pane", root.overlays.length === 1);
+other.composer.text = "";
+root.close();
+root.focusView(chat.view);
+chat.view.focusRegion("composer");
+chat.composer.text = "";
+// A pending chord takes the next key before the float, so Tab completes nothing here.
+chat.composer.text = "/ech";
+root.onEvent(key("char", { char: "k", mods: 4 }));
+check("chord-armed", keymap.pendingLabel() === "ctrl+k");
+root.onEvent(key("tab"));
+check("chord-beats-float", chat.composer.text === "/ech" && keymap.pendingLabel() === "");
+chat.view.focusRegion("composer");
+chat.composer.text = "";
+// A command that left the registry while its row showed runs nothing and keeps the draft.
+const gone = command.add(null, { "test:gone": () => {} }, { "test:gone": { title: "Gone", description: "d", slash: "gone" } });
+chat.composer.text = "/gone";
+check("gone-listed", root.overlays.length === 1);
+gone();
+root.onEvent(key("enter"));
+check("gone-keeps-draft", chat.composer.text === "/gone" && root.overlays.length === 0);
+chat.composer.text = "";
+off();

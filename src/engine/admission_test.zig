@@ -1,11 +1,8 @@
 //! Admission tests hold response gates to make capacity and queue order deterministic.
 
 const std = @import("std");
-const zio = @import("zio");
-const ai = @import("ai");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
-const Store = @import("../provider/provider_store.zig");
 const Engine = @import("Engine.zig");
 const commands = @import("commands.zig");
 const admission = @import("admission.zig");
@@ -13,14 +10,12 @@ const config = @import("agent_config.zig");
 const turn = @import("turn.zig");
 const Draft = @import("../session/draft.zig").Draft;
 const testing = std.testing;
+const Resources = @import("test_resources.zig");
 
 const Fixture = struct {
     tmp: testing.TmpDir,
-    runtime: *zio.Runtime,
+    resources: Resources,
     db: database.Database,
-    env: std.process.Environ.Map,
-    store: Store,
-    transport: ai.transport.CannedTransport,
     arena: std.heap.ArenaAllocator,
     engine: Engine,
     parent: proto.ids.SessionId,
@@ -31,20 +26,25 @@ const Fixture = struct {
 
     fn initWithPrompt(self: *Fixture, base_prompt: ?[]const u8) !void {
         self.tmp = testing.tmpDir(.{});
-        self.runtime = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+        errdefer self.tmp.cleanup();
+        try self.resources.init();
+        errdefer self.resources.deinit();
         self.db = try database.Database.openTest();
-        self.env = .init(testing.allocator);
+        errdefer self.db.deinit();
         var path: [std.fs.max_path_bytes]u8 = undefined;
-        try self.env.put("XDG_CONFIG_HOME", path[0..try self.tmp.dir.realPath(testing.io, &path)]);
-        try self.env.put("YUKE_APPNAME", "agents-test");
-        self.store = .init(testing.allocator, self.runtime.io(), &self.env);
+        try self.resources.env.put("XDG_CONFIG_HOME", path[0..try self.tmp.dir.realPath(testing.io, &path)]);
+        try self.resources.env.put("YUKE_APPNAME", "agents-test");
         var local = try @import("../provider/provider.zig").config.loadBytes(testing.allocator,
             \\{"version":1,"providers":[{"id":"test","base_url":"http://localhost:1/v1","protocol":"openai_chat","models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}}]}]}
         );
-        _ = try self.store.installLocal(&local);
-        self.transport = .{ .bytes = ai.transport.canned_reply };
+        _ = self.resources.providers.installLocal(&local) catch |err| {
+            local.deinit();
+            return err;
+        };
         self.arena = .init(testing.allocator);
-        self.engine = Engine.init(.{ .gpa = testing.allocator, .io = self.runtime.io(), .db = &self.db, .providers = &self.store, .route_transport = self.transport.transport(), .env = &self.env });
+        errdefer self.arena.deinit();
+        self.engine = self.resources.makeEngine(&self.db);
+        errdefer self.engine.close();
         const empty = try config.get(&self.engine, self.arena.allocator());
         _ = try config.update(&self.engine, self.arena.allocator(), .{ .revision = empty.revision, .config = .{ .models = .{ .small = .{ .model = "test/model" } } } });
         const root = try commands.sessionCreate(&self.engine, self.arena.allocator(), .{ .workspace_path = "/work", .model = "test/model", .system_prompt = base_prompt });
@@ -62,9 +62,7 @@ const Fixture = struct {
         self.engine.close();
         self.arena.deinit();
         self.db.deinit();
-        self.store.deinit();
-        self.env.deinit();
-        self.runtime.deinit();
+        self.resources.deinit();
         self.tmp.cleanup();
     }
 
@@ -155,7 +153,7 @@ test "one tree limit queues grandchildren and resumes their parent after reports
     for (0..1000) |_| {
         const marks = (try database.event.highWater(&f.db, a, child.session.id.raw)).?;
         if (marks.run_id_high >= 2 and admission.capacity(&f.engine, f.parent).active == 0) break;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     try testing.expectEqual(@as(u64, 0), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 2), (try database.event.highWater(&f.db, a, child.session.id.raw)).?.run_id_high);
@@ -226,7 +224,7 @@ test "child capacity excludes the parent and admits durable queues in FIFO order
     turn.Launch.release(&one_launch, &f.engine);
     for (0..1000) |_| {
         if (admission.capacity(&f.engine, f.parent).active == 0) break;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     try testing.expectEqual(@as(u64, 0), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 2), (try database.event.highWater(&f.db, a, one.session.id.raw)).?.run_id_high);
@@ -292,7 +290,7 @@ test "admission skips a faulted child and serves its sibling" {
     turn.Launch.release(&one_launch, &f.engine);
     for (0..1000) |_| {
         if ((try database.event.highWater(&f.db, a, three.session.id.raw)).?.run_id_high > 0) break;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, three.session.id.raw)).?.run_id_high);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, two.session.id.raw)).?.run_id_high);
@@ -316,7 +314,7 @@ test "a lower live limit preserves active runs and a higher limit drains queued 
     try f.engine.setAgentLimits(3, 1);
     for (0..1000) |_| {
         if ((try database.event.highWater(&f.db, a, third.session.id.raw)).?.run_id_high == 1 and admission.capacity(&f.engine, f.parent).active == 2) break;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, third.session.id.raw)).?.run_id_high);
     try testing.expectEqual(@as(u64, 2), admission.capacity(&f.engine, f.parent).active);
@@ -335,13 +333,13 @@ test "boot resumes queued children under the limit without a surviving parent dr
     var third_gate: ?turn.Launch = null;
     const third = try f.child("third", &third_gate);
     f.engine.close();
-    f.engine = Engine.init(.{ .gpa = testing.allocator, .io = f.runtime.io(), .db = &f.db, .providers = &f.store, .route_transport = f.transport.transport(), .env = &f.env });
+    f.engine = f.resources.makeEngine(&f.db);
     try f.engine.setAgentLimits(1, 1);
     try f.engine.resumeWorkspace("/work");
     try testing.expect(admission.capacity(&f.engine, f.parent).active <= 1);
     for (0..1000) |_| {
         if (admission.capacity(&f.engine, f.parent).active == 0) break;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     for ([_]proto.ids.SessionId{ first.session.id, second.session.id, third.session.id }) |id| {
         try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, id.raw)).?.run_id_high);
@@ -392,23 +390,23 @@ test "a terminal child retains capacity until native cleanup ends" {
     var cleanup: Cleanup = .{};
     slot.work.retain(&cleanup.operation);
     var retained = true;
-    defer if (retained) slot.work.release(f.runtime.io(), &cleanup.operation);
+    defer if (retained) slot.work.release(f.resources.runtime.io(), &cleanup.operation);
     var next: ?turn.Launch = null;
     const second = try f.child("second", &next);
     turn.Launch.release(&next, &f.engine);
     turn.Launch.release(&first, &f.engine);
     for (0..1000) |_| {
         if (cleanup.canceled) break;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     try testing.expect(cleanup.canceled);
     try testing.expectEqual(@as(u64, 1), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, second.session.id.raw)).?.run_id_high);
-    slot.work.release(f.runtime.io(), &cleanup.operation);
+    slot.work.release(f.resources.runtime.io(), &cleanup.operation);
     retained = false;
     for (0..1000) |_| {
         if (admission.capacity(&f.engine, f.parent).active == 0) break;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     try testing.expectEqual(@as(u64, 0), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, second.session.id.raw)).?.run_id_high);
@@ -437,12 +435,12 @@ test "child completion stays queued across an active parent interrupt" {
     const a = f.arena.allocator();
     var launch: ?turn.Launch = null;
     const child = try f.child("reporter", &launch);
-    f.store.deinit();
-    f.store = .init(testing.allocator, f.runtime.io(), &f.env);
+    f.resources.providers.deinit();
+    f.resources.providers = .init(testing.allocator, f.resources.runtime.io(), &f.resources.env);
     turn.Launch.release(&launch, &f.engine);
     for (0..1000) |_| {
         if (admission.capacity(&f.engine, f.parent).active == 0) break;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     const parent = f.engine.sessions.get(f.parent).?;
     try testing.expectEqual(@as(usize, 1), parent.queueDepth());
@@ -468,7 +466,7 @@ test "a canceled active child emits one terminal report" {
     turn.Launch.release(&launch, &f.engine);
     for (0..1000) |_| {
         if (admission.capacity(&f.engine, f.parent).active == 0) break;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     const queue = try database.input.list(&f.db, a, f.parent.raw);
     try testing.expectEqual(@as(usize, 1), queue.len);

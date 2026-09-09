@@ -1,0 +1,22 @@
+import { Transcript, inputSourceLabel } from "yuke:transcript";
+import { clearWorkQueue, queuedText } from "yuke:queue";
+(async () => {
+  const source = { type: "child_report", name: "one", outcome: { type: "turn" }, partial: false, truncated: false };
+  const full = Array.from({ length: 200 }, (_, i) => "line " + i).join("\n");
+  const t = new Transcript({ textOf: () => full });
+  t.setOutline([{ id: 1, type: "user", source }], null);
+  if (t.rowCount(80) > 15 || !inputSourceLabel(source).includes("one")) throw new Error("unfolded report");
+  t.togglePart(1, -1);
+  if (t.rowCount(80) < 200) throw new Error("lost full report");
+  t.togglePart(1, -1);
+  if (t.rowCount(80) > 15) throw new Error("cannot fold");
+  const report = { input_id: 3, source, content: [{ type: "text", text: full }] };
+  const inputs = [{ input_id: 1 }, { input_id: 2, source: { type: "parent_instruction" } }, report];
+  client.sessionQueue = async () => ({ items: inputs });
+  const canceled = [];
+  client.sessionCancelInput = async (_id, inputId) => { canceled.push(inputId); if (inputId === 2) throw new Error("started"); return { canceled_input: inputId }; };
+  const result = await clearWorkQueue("parent");
+  if (result.removed !== 1 || result.failed !== 1 || result.protected !== 1 || canceled.includes(3)) throw new Error("bad queue count");
+  if (!queuedText(report).startsWith("[protected]") || report.content[0].text !== full) throw new Error("report mutation");
+  globalThis.result = "ok";
+})().catch((e) => result = e.stack || e.message);

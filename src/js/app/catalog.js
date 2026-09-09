@@ -1,4 +1,5 @@
 // yuke:catalog — the model catalog, and the model a new chat starts with.
+import { Refresh } from "yuke:refresh";
 import { root } from "yuke:core";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
@@ -9,18 +10,12 @@ import { newestLocalModelSession } from "yuke:sessions";
 /** @typedef {{ session: Wire.Session, activity: { context_usage?: Wire.TokenUsage } | null }} StatusEntry */
 /** @typedef {{ entry?: () => StatusEntry | null }} CatalogConfig */
 
-// One engine, one catalog. `catalog.list` answers "unchanged" while the revision holds, so a reopen costs no work.
-/** @type {Promise<CatalogState> | null} */
-let catalogFlight = null;
-/** @type {boolean} */
-let catalogAgain = false;
-
 /** @type {CatalogState} */
 const catalog = {
   rev: null,
   providers: [],
   models: [],
-  get loading() { return catalogFlight !== null; },
+  get loading() { return refresh.loading; },
 };
 
 /** @returns {CatalogState} */
@@ -28,39 +23,20 @@ export function catalogOf() {
   return catalog;
 }
 
-// A load during a load runs one more after it, so a change that lands mid-flight still reaches the catalog.
-/** @returns {Promise<CatalogState>} */
-export function loadCatalog() {
-  if (catalogFlight) {
-    catalogAgain = true;
-    return catalogFlight;
-  }
-  return refreshCatalog();
-}
+const refresh = new Refresh(
+  () => client.catalogList(catalog.rev).then((r) => {
+    if (r && r.type === "full") {
+      catalog.rev = r.catalog_rev;
+      catalog.providers = r.providers || [];
+      catalog.models = r.models || [];
+    }
+  }),
+  () => { root.invalidate(); return catalog; },
+);
 
 /** @returns {Promise<CatalogState>} */
-function refreshCatalog() {
-  const flight = client
-    .catalogList(catalog.rev)
-    .then((r) => {
-      if (r && r.type === "full") {
-        catalog.rev = r.catalog_rev;
-        catalog.providers = r.providers || [];
-        catalog.models = r.models || [];
-      }
-    })
-    .catch(() => {})
-    .then(() => {
-      root.invalidate();
-      if (catalogAgain) {
-        catalogAgain = false;
-        return refreshCatalog();
-      }
-      catalogFlight = null;
-      return catalog;
-    });
-  catalogFlight = flight;
-  return flight;
+export function loadCatalog() {
+  return refresh.run();
 }
 
 // Read providers.json again, then refresh the catalog. A failed reload still refreshes what the engine holds.

@@ -1,9 +1,11 @@
 // yuke:queue — the queued inputs of each open session: rows above the rule, a picker that drops one, and a clear command.
-import { root, clip } from "yuke:core";
+import { root } from "yuke:core";
+import { clip } from "yuke:text-input";
 import { ui } from "yuke:ui";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
-import { ChatView, inputSourceLabel } from "yuke:transcript";
+import { inputSourceLabel } from "yuke:transcript";
+import { ChatView } from "yuke:chat-view";
 import { chatOf, focusedChat } from "yuke:chat";
 
 /** @typedef {import("yuke:ext").InjectContext} Ctx */

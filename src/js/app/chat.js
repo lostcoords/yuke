@@ -3,7 +3,7 @@ import { root, config, copy, command } from "yuke:core";
 import { term } from "yuke:term";
 import { ui, Text } from "yuke:ui";
 import { column, child, fixed, grow } from "yuke:layout";
-import { ChatView } from "yuke:transcript";
+import { ChatView } from "yuke:chat-view";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { feedItem } from "yuke:sessions";
@@ -202,7 +202,7 @@ function focusedLeaf(match) {
 }
 
 // The chat pane a layer drives. A bare ChatView counts, because a layer reads the view alone.
-/** @returns {import("yuke:transcript").ChatView | null} */
+/** @returns {import("yuke:chat-view").ChatView | null} */
 export function focusedChatView() {
   return focusedLeaf(v => v.name === "chat");
 }
@@ -318,7 +318,7 @@ export const chatPlugin = {
       ctx.tui.presentation(() => {
         const title = new Text({ text: "new chat", group: "YukeBrand" });
         const hint = new Text({ group: "YukeEmpty" });
-        return (/** @type {import("yuke:transcript").PresentationContext} */ { empty, sessionId, defaultLayout }) => {
+        return (/** @type {import("yuke:chat-view").PresentationContext} */ { empty, sessionId, defaultLayout }) => {
           if (!empty || sessionId) return defaultLayout;
           const model = defaultModel().model;
           hint.setText((model ? "model · " + model : "no model yet") + "\ntype a message to start the session");

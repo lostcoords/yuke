@@ -1,24 +1,19 @@
 //! Ownership and recovery tests use independent connections to one database.
 
 const std = @import("std");
-const zio = @import("zio");
 const zqlite = @import("zqlite");
-const ai = @import("ai");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
-const Store = @import("../provider/provider_store.zig");
 const Engine = @import("Engine.zig");
 const commands = @import("commands.zig");
 const turn = @import("turn.zig");
 const run = @import("run.zig");
 const testing = std.testing;
+const Resources = @import("test_resources.zig");
 
 const Fixture = struct {
     tmp: testing.TmpDir,
-    runtime: *zio.Runtime,
-    env: std.process.Environ.Map,
-    store: Store,
-    transport: ai.transport.CannedTransport,
+    resources: Resources,
     db: database.Database,
     other_db: database.Database,
     engine: Engine,
@@ -26,30 +21,19 @@ const Fixture = struct {
 
     fn init(self: *Fixture) !void {
         self.tmp = testing.tmpDir(.{});
-        self.runtime = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-        self.env = .init(testing.allocator);
-        self.store = .init(testing.allocator, self.runtime.io(), &self.env);
-        self.transport = .{ .bytes = ai.transport.canned_reply };
+        errdefer self.tmp.cleanup();
+        try self.resources.init();
+        errdefer self.resources.deinit();
         var root_buf: [std.fs.max_path_bytes]u8 = undefined;
         const root = root_buf[0..try self.tmp.dir.realPath(testing.io, &root_buf)];
         const path = try std.fmt.allocPrintSentinel(testing.allocator, "{s}/yuke.db", .{root}, 0);
         defer testing.allocator.free(path);
         const flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
         self.db = try database.Database.open(try zqlite.open(path, flags));
+        errdefer self.db.deinit();
         self.other_db = try database.Database.open(try zqlite.open(path, flags));
-        self.engine = self.makeEngine(&self.db);
-        self.other = self.makeEngine(&self.other_db);
-    }
-
-    fn makeEngine(self: *Fixture, db: *database.Database) Engine {
-        return Engine.init(.{
-            .gpa = testing.allocator,
-            .io = self.runtime.io(),
-            .db = db,
-            .providers = &self.store,
-            .route_transport = self.transport.transport(),
-            .env = &self.env,
-        });
+        self.engine = self.resources.makeEngine(&self.db);
+        self.other = self.resources.makeEngine(&self.other_db);
     }
 
     fn deinit(self: *Fixture) void {
@@ -57,9 +41,7 @@ const Fixture = struct {
         self.engine.close();
         self.other_db.deinit();
         self.db.deinit();
-        self.store.deinit();
-        self.env.deinit();
-        self.runtime.deinit();
+        self.resources.deinit();
         self.tmp.cleanup();
     }
 };
@@ -92,7 +74,7 @@ fn awaitIdle(f: *Fixture, arena: std.mem.Allocator, id: [16]u8, run_id: u64) !vo
     for (0..1000) |_| {
         const marks = (try database.event.highWater(&f.db, arena, id)).?;
         if (marks.run_id_high >= run_id and (try database.session.snapshot(&f.db, arena, id)).?.open_run_id == null) return;
-        try std.Io.sleep(f.runtime.io(), .fromMilliseconds(1), .awake);
+        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     return error.RunDidNotFinish;
 }
@@ -118,7 +100,7 @@ test "repair wakes an idle intermediate parent after a grandchild interruption" 
     try seed(&f.db, root, null, "/work");
     try seed(&f.db, child, root, "/work");
     try seed(&f.db, grandchild, child, "/work");
-    try start(&f.db, f.runtime.io(), a, grandchild);
+    try start(&f.db, f.resources.runtime.io(), a, grandchild);
     try f.engine.own(.bytes(root));
     try awaitIdle(&f, a, child, 1);
     try awaitIdle(&f, a, root, 1);
@@ -144,8 +126,8 @@ test "tree ownership protects live runs and repair preserves committed input" {
     try seed(&f.db, independent, null, "/elsewhere");
     try f.engine.own(.bytes(root));
     try f.other.own(.bytes(independent));
-    try start(&f.db, f.runtime.io(), a, root);
-    try start(&f.db, f.runtime.io(), a, child);
+    try start(&f.db, f.resources.runtime.io(), a, root);
+    try start(&f.db, f.resources.runtime.io(), a, child);
     const stale = try f.other.activate(.bytes(root));
     stale.pin();
     try queued(&f.db, a, root);
@@ -157,7 +139,7 @@ test "tree ownership protects live runs and repair preserves committed input" {
     try testing.expectEqual(@as(?u64, 1), (try database.session.snapshot(&f.db, a, root)).?.open_run_id);
 
     f.engine.close();
-    f.engine = f.makeEngine(&f.db);
+    f.engine = f.resources.makeEngine(&f.db);
     try f.other.own(.bytes(child));
     // The repair wakes the root on the executor: run 2 takes the queued input and the child report.
     try awaitIdle(&f, a, root, 2);
@@ -237,6 +219,6 @@ test "root removal releases only its tree claim" {
     try testing.expectError(error.SessionOwned, f.other.own(.bytes(root)));
     _ = try commands.sessionRemove(&f.engine, a, .{ .session_id = .bytes(root) });
     try testing.expectEqual(@as(u32, 0), f.engine.owners.count());
-    const guard = try @import("ownership.zig").acquire(testing.allocator, f.runtime.io(), &f.other_db, root);
-    defer guard.release(f.runtime.io());
+    const guard = try @import("ownership.zig").acquire(testing.allocator, f.resources.runtime.io(), &f.other_db, root);
+    defer guard.release(f.resources.runtime.io());
 }

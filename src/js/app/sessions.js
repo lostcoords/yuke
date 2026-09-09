@@ -1,16 +1,11 @@
 // yuke:sessions — the session feed the finder and the catalog read.
+import { Refresh } from "yuke:refresh";
 import { root } from "yuke:core";
 import { client } from "yuke:client";
 
 /** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
 /** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */
 /** @typedef {{ id: string, title: string, activity: FeedActivity, session: Wire.Session }} SessionRow */
-const IDLE_ACTIVITY = /** @type {FeedActivity} */ ({
-  state: { type: "idle" },
-  queued: 0,
-  context_usage: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 },
-  pending_compaction: null,
-});
 
 // --- session feed -------------------------------------------------------------------------
 // One engine, one feed. It keeps no parallel copy of the store: an index change makes it read
@@ -19,15 +14,15 @@ export class SessionFeed {
   constructor() {
     /** @type {Map<string, FeedItem>} */
     this.items = new Map();
-    /** @type {Promise<void> | null} */
-    this._refreshFlight = null;
-    /** @type {boolean} */
-    this._refreshAgain = false;
+    this._refresh = new Refresh(
+      () => client.sessionList().then((r) => this.seed(r)),
+      () => root.invalidate(),
+    );
     this.loaded = false;
   }
 
   get loading() {
-    return this._refreshFlight !== null;
+    return this._refresh.loading;
   }
 
   /** @param {Wire.SessionListResult} listResult @returns {void} */
@@ -42,29 +37,7 @@ export class SessionFeed {
   // Read the list again. A burst shares one read and one follow-up catches changes during it.
   /** @returns {Promise<void>} */
   refresh() {
-    if (this._refreshFlight) {
-      this._refreshAgain = true;
-      return this._refreshFlight;
-    }
-    return this._startRefresh();
-  }
-
-  /** @returns {Promise<void>} */
-  _startRefresh() {
-    const flight = client
-      .sessionList()
-      .then((r) => this.seed(r))
-      .catch(() => {})
-      .then(() => {
-        root.invalidate();
-        if (this._refreshAgain) {
-          this._refreshAgain = false;
-          return this._startRefresh();
-        }
-        this._refreshFlight = null;
-      });
-    this._refreshFlight = flight;
-    return flight;
+    return this._refresh.run();
   }
 
   /** @returns {void} */
@@ -162,7 +135,7 @@ export const sessionsPlugin = {
     // The engine is in this process, so the list is available at once and needs no connect event.
     feed.refresh();
 
-    // An index change makes the feed read the list again; `refresh` drops a call already in flight.
+    // An index change requests a fresh read, even if a previous read has not settled.
     ctx.on("index.changed", () => {
       feed.refresh();
     });

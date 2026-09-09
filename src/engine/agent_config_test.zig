@@ -1,59 +1,53 @@
 //! Model map tests use an isolated profile and explicit local providers.
 
 const std = @import("std");
-const zio = @import("zio");
-const ai = @import("ai");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
 const provider = @import("../provider/provider.zig");
-const ProviderStore = @import("../provider/provider_store.zig");
 const Engine = @import("Engine.zig");
 const config = @import("agent_config.zig");
 const testing = std.testing;
+const Resources = @import("test_resources.zig");
 const chosen: proto.agents.AgentModel = .{ .model = "local/family/model" };
 
 const Fixture = struct {
     tmp: testing.TmpDir,
-    runtime: *zio.Runtime,
-    env: std.process.Environ.Map,
+    resources: Resources,
     db: database.Database,
-    providers: ProviderStore,
-    transport: ai.transport.CannedTransport,
     arena: std.heap.ArenaAllocator,
     engine: Engine,
 
     fn init(self: *Fixture) !void {
         self.tmp = testing.tmpDir(.{});
-        self.runtime = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+        errdefer self.tmp.cleanup();
+        try self.resources.init();
+        errdefer self.resources.deinit();
         self.arena = .init(testing.allocator);
-        self.env = .init(testing.allocator);
+        errdefer self.arena.deinit();
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         const root = buf[0..try self.tmp.dir.realPath(testing.io, &buf)];
-        try self.env.put("XDG_CONFIG_HOME", root);
-        try self.env.put("YUKE_APPNAME", "agents-test");
+        try self.resources.env.put("XDG_CONFIG_HOME", root);
+        try self.resources.env.put("YUKE_APPNAME", "agents-test");
         self.db = try database.Database.openTest();
-        self.providers = .init(testing.allocator, self.runtime.io(), &self.env);
+        errdefer self.db.deinit();
         var local = try provider.config.loadBytes(testing.allocator,
             \\{"version":1,"providers":[{"id":"local","base_url":"http://localhost:1/v1","protocol":"openai_chat","models":[{"id":"family/model","upstream_id":"family/model","reasoning_levels":["low","medium","high"],"flags":{"supports_tools":true}},{"id":"no-tools","upstream_id":"n","flags":{"supports_tools":false}},{"id":"unknown-tools","upstream_id":"u"}]},{"id":"locked","base_url":"http://localhost:1/v1","protocol":"openai_chat","auth":{"api_key":{"header":"x_api_key","source":{"env":"ABSENT_KEY"}}},"models":[{"id":"model","upstream_id":"m","flags":{"supports_tools":true}}]}]}
         );
-        _ = try self.providers.installLocal(&local);
-        const unknown = self.providers.merged.resolveModel("local/unknown-tools").?;
+        _ = self.resources.providers.installLocal(&local) catch |err| {
+            local.deinit();
+            return err;
+        };
+        const unknown = self.resources.providers.merged.resolveModel("local/unknown-tools").?;
         @constCast(unknown.model).caps.tools = null;
-        self.transport = .{ .bytes = ai.transport.canned_reply };
-        self.engine = self.makeEngine();
-    }
-
-    fn makeEngine(self: *Fixture) Engine {
-        return Engine.init(.{ .gpa = testing.allocator, .io = self.runtime.io(), .db = &self.db, .providers = &self.providers, .route_transport = self.transport.transport(), .env = &self.env });
+        self.engine = self.resources.makeEngine(&self.db);
+        errdefer self.engine.close();
     }
 
     fn deinit(self: *Fixture) void {
         self.engine.close();
-        self.providers.deinit();
         self.db.deinit();
-        self.env.deinit();
         self.arena.deinit();
-        self.runtime.deinit();
+        self.resources.deinit();
         self.tmp.cleanup();
     }
 
@@ -90,7 +84,7 @@ test "missing agent config has no inherited model and a saved map resolves exact
         try testing.expectEqualStrings("medium", resolved.reasoning);
     }
     try testing.expectEqualStrings(chosen.model, (try f.get()).config.models.small.?.model);
-    var fresh = f.makeEngine();
+    var fresh = f.resources.makeEngine(&f.db);
     defer fresh.close();
     const restored = try config.resolve(&fresh, a, .{ .model = .small });
     try testing.expectEqualStrings(chosen.model, restored.model);
@@ -103,7 +97,7 @@ test "model validation checks readiness known tools and reasoning before save" {
     const empty = try f.get();
     try testing.expectError(error.AgentUnknownModel, f.save(empty.revision, .{ .small = .{ .model = "family/model" } }));
     try testing.expectError(error.AgentProviderUnavailable, f.save(empty.revision, .{ .small = .{ .model = "locked/model" } }));
-    @constCast(f.providers.merged.resolveModel("locked/model").?.provider).availability = .{ .unavailable = .needs_route };
+    @constCast(f.resources.providers.merged.resolveModel("locked/model").?.provider).availability = .{ .unavailable = .needs_route };
     try testing.expectError(error.AgentRouteUnavailable, f.save(empty.revision, .{ .small = .{ .model = "locked/model" } }));
     for ([_][]const u8{ "local/no-tools", "local/unknown-tools" }) |model| try testing.expectError(error.AgentToolsUnsupported, f.save(empty.revision, .{ .small = .{ .model = model } }));
     try testing.expectError(error.AgentReasoningUnsupported, f.save(empty.revision, .{ .small = .{ .model = chosen.model, .reasoning = "max" } }));
@@ -119,16 +113,16 @@ test "stale writers cannot replace another process choice and corrupt files stay
     defer f.deinit();
     const a = f.arena.allocator();
     const initial = try f.get();
-    var other = f.makeEngine();
+    var other = f.resources.makeEngine(&f.db);
     defer other.close();
     _ = try config.get(&other, a);
     const saved = try f.save(initial.revision, .{ .small = chosen });
     try testing.expectError(error.AgentConfigConflict, config.update(&other, a, .{ .revision = initial.revision, .config = .{ .models = .{ .medium = chosen } } }));
     try testing.expectEqual(saved.revision, (try f.get()).revision);
-    try provider.config.writeFileBytes(f.runtime.io(), saved.path.?, "{broken");
+    try provider.config.writeFileBytes(f.resources.runtime.io(), saved.path.?, "{broken");
     try testing.expectError(error.BadAgentConfig, f.get());
     try testing.expectError(error.BadAgentConfig, f.save(saved.revision, .{ .medium = chosen }));
-    const bytes = try std.Io.Dir.cwd().readFileAlloc(f.runtime.io(), saved.path.?, a, .limited(1024));
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(f.resources.runtime.io(), saved.path.?, a, .limited(1024));
     try testing.expectEqualStrings("{broken", bytes);
 }
 
@@ -139,10 +133,10 @@ test "a failed atomic save preserves both file and live map" {
     defer f.deinit();
     const initial = try f.get();
     const saved = try f.save(initial.revision, .{ .small = chosen });
-    const directory = try std.Io.Dir.openDirAbsolute(f.runtime.io(), std.fs.path.dirname(saved.path.?).?, .{ .iterate = true });
-    defer directory.close(f.runtime.io());
-    try directory.setPermissions(f.runtime.io(), .fromMode(0o500));
-    defer directory.setPermissions(f.runtime.io(), .fromMode(0o700)) catch unreachable;
+    const directory = try std.Io.Dir.openDirAbsolute(f.resources.runtime.io(), std.fs.path.dirname(saved.path.?).?, .{ .iterate = true });
+    defer directory.close(f.resources.runtime.io());
+    try directory.setPermissions(f.resources.runtime.io(), .fromMode(0o500));
+    defer directory.setPermissions(f.resources.runtime.io(), .fromMode(0o700)) catch unreachable;
     try testing.expectError(error.AgentConfigSaveFailed, f.save(saved.revision, .{ .medium = chosen }));
     try testing.expectEqual(saved.revision, (try f.get()).revision);
 }

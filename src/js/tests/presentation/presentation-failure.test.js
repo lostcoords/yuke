@@ -1,0 +1,21 @@
+import { equal } from "yuke:test";
+import { ChatView } from "yuke:chat-view";
+import { events } from "yuke:core";
+import { column, child, fixed } from "yuke:layout";
+import { Context, Scope } from "yuke:ext";
+import { tui } from "yuke:tui";
+const view = new ChatView(), scope = new Scope("bad");
+let errors = 0, disposed = 0;
+const off = events.on("ext.error", () => errors++);
+const surface = tui.bindTo(new Context(scope, "bad"));
+const remove = surface.presentation((_chat, owner) => {
+  owner.effect(() => () => disposed++);
+  return () => column([child("composer", fixed(1)), child("composer", fixed(1))]);
+});
+view.layout({ x: 0, y: 0, w: 30, h: 10 });
+const duplicate = errors === 1 && disposed === 1 && view.presentation === null && view.composer.rect.w === 30;
+remove();
+surface.presentation((_chat, owner) => { owner.effect(() => () => disposed++); throw new Error("factory failure"); });
+view.layout({ x: 0, y: 0, w: 30, h: 10 });
+scope.dispose(); off();
+equal(duplicate && errors === 2 && disposed === 2 ? "ok" : [duplicate, errors, disposed].join(","), "ok");

@@ -1,0 +1,43 @@
+import { check } from "yuke:test";
+import { root, events } from "yuke:core";
+import { plugins } from "yuke:ext";
+import { client } from "yuke:client";
+import { feedOf } from "yuke:sessions";
+import { activityOf, isWorking } from "yuke:activity";
+import { chatEntry } from "yuke:chat";
+import { chat } from "yuke:defaults";
+const idle = { state: { type: "idle" }, queued: 0, context_usage: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, pending_compaction: null };
+const running = { ...idle, state: { type: "running", run_id: 1, started_at_ms: 5 }, queued: 2 };
+let reads = 0;
+let answer = running;
+client.sessionOpen = () => true;
+client.sessionActivity = () => { reads++; return answer; };
+const cancels = [];
+client.sessionCancelRun = (id, clear) => { cancels.push([id, clear]); return Promise.resolve({ cleared_inputs: [] }); };
+feedOf().seed({ items: [{ session: { id: "s1", model: "m", updated_at_ms: 1 }, activity: idle }] });
+const seen = [];
+events.on("activity.changed", (id, a) => seen.push(id + ":" + (a ? a.state.type : "null")));
+root.focusView(chat.view);
+chat.open("s1");
+check("open-reads", reads === 1 && isWorking(activityOf("s1")) && activityOf("s1").queued === 2);
+check("entry-overlays", chatEntry().activity === running && chatEntry().session.model === "m");
+// A quiet digest without the fact costs no read; one with the fact reads once.
+events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["run.started"] });
+check("no-fact-no-read", reads === 1);
+answer = idle;
+events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
+check("fact-reads", reads === 2 && !isWorking(activityOf("s1")) && chatEntry().activity === idle);
+// A null read means the pane let the session go, and a gone session forgets its entry.
+answer = null;
+events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
+check("null-forgets", activityOf("s1") === null && chatEntry().activity === idle);
+answer = running;
+events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
+events.emit("session.changed", { type: "session", session: "s1", kind: "gone", facts: ["session.removed"] });
+check("gone-forgets", activityOf("s1") === null);
+check("events", seen.join(",") === "s1:running,s1:idle,s1:null,s1:running,s1:null");
+// An interrupt stops the run and never clears the queue.
+chat.sessionId = "s1";
+chat.interrupt();
+check("interrupt-keeps-queue", cancels.length === 1 && cancels[0][0] === "s1" && cancels[0][1] === undefined);
+plugins.dispose("activity");

@@ -1,11 +1,12 @@
 // yuke:transcript-vim — opt-in cursor and yank keys for the transcript.
 import { term } from "yuke:term";
-import { root, copy, caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
-import { ChatView } from "yuke:transcript";
+import { root, copy } from "yuke:core";
+import { caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:text-input";
+import { ChatView } from "yuke:chat-view";
 import { register } from "yuke:vim";
 import { focusedChatView } from "yuke:chat";
 
-/** @typedef {import("yuke:transcript").ChatView["transcript"]} Transcript */
+/** @typedef {import("yuke:chat-view").ChatView["transcript"]} Transcript */
 /** @typedef {{ id: number, row: number, col: number }} Position */
 /** @typedef {{ cursor: Position | null, src: number, anchor: Position | null, visual: boolean, goal: number | null }} VimState */
 /** @typedef {{ x: number, y: number, visible: boolean }} Cursor */
@@ -305,7 +306,7 @@ export const transcriptVim = {
       });
 
       // A region change ends visual mode, so a return to the transcript starts clean.
-      ctx.on("region.focused", /** @param {ChatView} view @param {import("yuke:transcript").ChatRegion} region @returns {void} */ (view, region) => {
+      ctx.on("region.focused", /** @param {ChatView} view @param {import("yuke:chat-view").ChatRegion} region @returns {void} */ (view, region) => {
         const s = panes.get(view);
         if (!s) return;
         s.visual = false;
