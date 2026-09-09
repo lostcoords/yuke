@@ -4,7 +4,7 @@ import { plugins } from "yuke:ext";
 import { defineTool } from "yuke:tools";
 
 /** @typedef {(args: any, signal: { aborted: boolean }, context: { workspaceRoot: string }) => Promise<unknown>} ToolExecute */
-/** @typedef {{ name: string, description: string, parameters: Record<string, unknown>, execute: ToolExecute }} ToolDefinition */
+/** @typedef {{ name: string, description: string, parameters: Record<string, unknown>, execute: ToolExecute, spawnsAgents?: boolean, needsSkills?: boolean }} ToolDefinition */
 /** @typedef {{ name: string, title: string, description: string, slash?: string | null, args?: boolean, run: (arg?: string) => unknown }} CommandDefinition */
 
 // The tool registry. One object states the whole tool, so the name stays beside the rest of the definition.

@@ -117,7 +117,7 @@ export const catalogPlugin = {
           (e) => notice.show("reload failed · " + e.message),
         ),
       }, {
-        "catalog:reload": { title: "Reload providers", description: "read providers.json again", slash: "reload" },
+        "catalog:reload": { title: "Reload providers", description: "read providers.json again", slash: "reload-providers" },
       });
 
       ctx.tui.status({

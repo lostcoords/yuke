@@ -62,6 +62,8 @@ const bindings = struct {
     pub const @"session.queue" = commands.sessionQueue;
     pub const @"session.create" = commands.sessionCreateForRpc;
     pub const @"session.config" = commands.sessionConfig;
+    pub const @"session.reload_context" = commands.sessionReloadContext;
+    pub const @"skill.load" = commands.skillLoad;
     pub const @"session.history" = commands.sessionHistory;
     pub const @"session.send_input" = commands.sessionSendInputForRpc;
     pub const @"session.cancel_input" = commands.sessionCancelInput;
@@ -129,7 +131,9 @@ fn failureFor(err: anyerror) ?Failure {
         error.EngineClosing => .{ .code = .runtime_failed, .message = "the engine is closed" },
         error.SessionBusy => .{ .code = .session_busy, .message = "the session is open or has an active run" },
         error.SessionHasChildren => .{ .code = .session_has_children, .message = "the session has children" },
-        error.SkillUnsupported => .{ .code = .unknown_skill, .message = "skills are not supported" },
+        error.UnknownSkill => .{ .code = .unknown_skill, .message = "the session catalog has no skill with this name" },
+        error.SkillUnreadable => .{ .code = .bad_request, .message = "the engine cannot read the skill file" },
+        error.TooManySkills => .{ .code = .bad_request, .message = "a skill root holds more entries than the scan bound" },
         error.BadCursor => .{ .code = .stale_cursor, .message = "stale cursor" },
         error.RootNotAbsolute => .{ .code = .bad_request, .message = "the workspace path must be absolute" },
         error.BadPath => .{ .code = .bad_request, .message = "the engine cannot read the path" },

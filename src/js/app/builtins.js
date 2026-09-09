@@ -4,6 +4,7 @@ import { fs } from "yuke:fs";
 import { exec as runCommand } from "yuke:exec";
 import { diff } from "yuke:diff";
 import { defineTool } from "yuke:tools";
+import { client } from "yuke:client";
 
 /** @typedef {Record<string, unknown>} ToolArgs */
 /** @typedef {{ aborted: boolean }} ToolSignal */
@@ -12,7 +13,7 @@ import { defineTool } from "yuke:tools";
 /** @typedef {{ path: string, hunks: DiffHunk[] }} DiffFile */
 /** @typedef {{ type: "diff", files: DiffFile[] }} DiffView */
 /** @typedef {{ __yuke_result: true, text: string, view: DiffView[] | null }} BuiltinResult */
-/** @typedef {{ description: string, parameters: Record<string, unknown>, execute: (args: any, signal: ToolSignal, context: ToolContext) => Promise<unknown> }} ToolDefinition */
+/** @typedef {{ description: string, parameters: Record<string, unknown>, execute: (args: any, signal: ToolSignal, context: ToolContext) => Promise<unknown>, needsSkills?: boolean }} ToolDefinition */
 
 /** @param {string} text @param {DiffView[] | null} view @returns {BuiltinResult} */
 const result = (text, view) => ({ __yuke_result: true, text, view });
@@ -216,6 +217,18 @@ async function exec(args, signal, context) {
   return text;
 }
 
+// The engine wraps the body, so the tool and an explicit `/skill:name` produce one form in the transcript.
+/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
+async function skill(args, _signal, context) {
+  const name = "skill";
+  args = objectArgs(name, args);
+  only(name, args, ["name"]);
+  const skillName = stringArg(name, args, "name");
+  if (!context?.sessionId) invalid(name, "the tool has no session");
+  const loaded = await hostCall(name, client.skillLoad(context.sessionId, skillName));
+  return loaded.content;
+}
+
 builtin("read", {
   description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range.",
   parameters: { type: "object", properties: {
@@ -247,4 +260,10 @@ builtin("exec", {
     cwd: { type: ["string", "null"], description: "The working directory." },
     timeout_ms: { type: ["integer", "null"], minimum: 1, maximum: 600000, description: "The timeout in milliseconds." },
   }, required: ["command"], additionalProperties: false }, execute: exec,
+});
+builtin("skill", {
+  description: "Load the full instructions for a skill listed in the system prompt. Use this tool when the task matches the skill description.",
+  parameters: { type: "object", properties: {
+    name: { type: "string", description: "Pass the name from an available_skills entry." },
+  }, required: ["name"], additionalProperties: false }, execute: skill, needsSkills: true,
 });

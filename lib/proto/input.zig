@@ -5,7 +5,6 @@ const content = @import("content.zig");
 const ids = @import("ids.zig");
 const misc = @import("misc.zig");
 const tagged = @import("tagged.zig");
-const skill_mod = @import("skill.zig");
 
 /// This type accepts raw content or a skill invocation. Its fields borrow their data.
 pub const Input = union(enum) {
@@ -92,9 +91,11 @@ pub const InputQueuedData = struct {
     input: misc.QueuedInput,
 };
 
-/// This type describes a skill invocation.
+/// This input names a skill. The engine loads the body and appends one user message.
 pub const InputSkill = struct {
-    skill: skill_mod.SkillRef,
+    name: []const u8,
+    /// The engine appends this text after the body.
+    arguments: ?[]const u8 = null,
 };
 
 const testing = std.testing;
@@ -114,6 +115,20 @@ test "input content union round-trips" {
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(json, buf.written());
+}
+
+test "a skill input needs a name and keeps its arguments optional" {
+    const a = testing.allocator;
+    const parsed = try std.json.parseFromSlice(Input, a, "{\"type\":\"skill\",\"name\":\"pdf\"}", .{});
+    defer parsed.deinit();
+    try testing.expectEqualStrings("pdf", parsed.value.skill.name);
+    try testing.expect(parsed.value.skill.arguments == null);
+    const encoded = try std.json.Stringify.valueAlloc(a, parsed.value, .{ .emit_null_optional_fields = false });
+    defer a.free(encoded);
+    try testing.expectEqualStrings("{\"type\":\"skill\",\"name\":\"pdf\"}", encoded);
+    try testing.expectError(error.MissingField, std.json.parseFromSlice(Input, a, "{\"type\":\"skill\",\"arguments\":\"x\"}", .{}));
+    try testing.expectError(error.UnexpectedToken, std.json.parseFromSlice(Input, a, "{\"type\":\"skill\",\"name\":\"pdf\",\"arguments\":1}", .{}));
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(Input, a, "{\"type\":\"template\",\"name\":\"pdf\"}", .{}));
 }
 
 test "input sources form a closed union outside public input" {

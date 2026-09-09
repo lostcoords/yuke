@@ -17,7 +17,6 @@
     "max_reasoning_levels": 32,
     "max_session_list_cursor_bytes": 256,
     "max_session_list_page_size": 100,
-    "max_skills": 1024,
     "max_snapshot_configs": 501,
     "max_tool_output_stream_bytes": 1048576,
     "max_view_bytes": 1048576,
@@ -176,6 +175,22 @@
       "doc": "Fetch a session's run config.",
       "params": "SessionConfigParams",
       "result": "SessionConfigResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.reload_context",
+      "doc": "Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session.",
+      "params": "SessionReloadContextParams",
+      "result": "SessionReloadContextResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "skill.load",
+      "doc": "Read the body of one skill from the session catalog.",
+      "params": "SkillLoadParams",
+      "result": "SkillLoadResult",
       "direction": "clientToServer",
       "paramsOptional": false
     },
@@ -1314,18 +1329,24 @@
     },
     {
       "name": "InputSkill",
-      "doc": "This type describes a skill invocation.",
+      "doc": "This input names a skill. The engine loads the body and appends one user message.",
       "fields": [
         {
-          "name": "skill",
-          "type": "SkillRef",
+          "name": "name",
+          "type": "string",
           "presence": "required"
+        },
+        {
+          "name": "arguments",
+          "doc": "The engine appends this text after the body.",
+          "type": "string",
+          "presence": "optional"
         }
       ]
     },
     {
       "name": "SkillInfo",
-      "doc": "This type records discovered skill metadata.",
+      "doc": "The session snapshots this catalog entry at creation. The loader reads the body at invocation.",
       "fields": [
         {
           "name": "name",
@@ -1339,41 +1360,66 @@
         },
         {
           "name": "scope",
-          "doc": "This scope identifies a project or personal skill.",
-          "type": "SkillScope",
+          "type": "InstructionScope",
           "presence": "required"
         },
         {
-          "name": "argument_hint",
+          "name": "path",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "canonical_path",
           "type": "string",
           "presence": "required"
         }
       ]
     },
     {
-      "name": "SkillRef",
-      "doc": "This type names a skill and holds its rendered arguments.",
+      "name": "SkillLoadParams",
+      "doc": "These are the parameters for `skill.load`.",
       "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
         {
           "name": "name",
           "type": "string",
           "presence": "required"
-        },
-        {
-          "name": "arguments",
-          "type": "string",
-          "presence": "required"
         }
       ]
     },
     {
-      "name": "SkillsResult",
-      "doc": "This result lists discovered skills.",
+      "name": "SkillLoadResult",
+      "doc": "This result carries the body of one skill without its frontmatter.",
       "fields": [
         {
-          "name": "skills",
-          "doc": "This field lists discovered skills.",
-          "type": "[]SkillInfo",
+          "name": "body",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "directory",
+          "doc": "This directory holds SKILL.md. Relative paths in the body resolve against it.",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "scope",
+          "type": "InstructionScope",
+          "presence": "required"
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "content",
+          "doc": "The model sees this form: the body inside `skill_content` with the directory line.",
+          "type": "string",
           "presence": "required"
         }
       ]
@@ -1860,11 +1906,6 @@
           "name": "input_id",
           "type": "InputId",
           "presence": "required"
-        },
-        {
-          "name": "skill",
-          "type": "SkillRef",
-          "presence": "optional"
         },
         {
           "name": "time",
@@ -2660,6 +2701,55 @@
           "doc": "Select a direct child of session_id by name.",
           "type": "string",
           "presence": "optional"
+        },
+        {
+          "name": "check_files",
+          "doc": "Compare the stored AGENTS.md and skill snapshots with the files on disk.",
+          "type": "bool",
+          "presence": "defaulted"
+        }
+      ]
+    },
+    {
+      "name": "ContextChanges",
+      "doc": "Which stored snapshots differ from the files on disk.",
+      "fields": [
+        {
+          "name": "instructions",
+          "type": "bool",
+          "presence": "required"
+        },
+        {
+          "name": "skills",
+          "type": "bool",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionReloadContextParams",
+      "doc": "These are the parameters for `session.reload_context`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionReloadContextResult",
+      "doc": "This result lists the replaced snapshots.",
+      "fields": [
+        {
+          "name": "instruction_sources",
+          "type": "[]InstructionSource",
+          "presence": "required"
+        },
+        {
+          "name": "skills",
+          "type": "[]SkillInfo",
+          "presence": "required"
         }
       ]
     },
@@ -2732,8 +2822,19 @@
         },
         {
           "name": "instruction_sources",
-          "doc": "Only session.get includes the instruction sources.",
+          "doc": "Only session.get includes the instruction sources and the skill catalog.",
           "type": "[]InstructionSource",
+          "presence": "optional"
+        },
+        {
+          "name": "skills",
+          "type": "[]SkillInfo",
+          "presence": "optional"
+        },
+        {
+          "name": "context_changes",
+          "doc": "Only session.get with check_files includes this field.",
+          "type": "ContextChanges",
           "presence": "optional"
         }
       ]
@@ -3731,6 +3832,12 @@
           "type": "SessionConfigParams"
         },
         {
+          "type": "SessionReloadContextParams"
+        },
+        {
+          "type": "SkillLoadParams"
+        },
+        {
           "type": "CatalogListParams"
         },
         {
@@ -3799,6 +3906,12 @@
         },
         {
           "type": "SessionConfigResult"
+        },
+        {
+          "type": "SessionReloadContextResult"
+        },
+        {
+          "type": "SkillLoadResult"
         },
         {
           "type": "CatalogListResult"
@@ -4352,6 +4465,16 @@
           "doc": "Fetch a session's run config."
         },
         {
+          "name": "session.reload_context",
+          "wire": "session.reload_context",
+          "doc": "Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session."
+        },
+        {
+          "name": "skill.load",
+          "wire": "skill.load",
+          "doc": "Read the body of one skill from the session catalog."
+        },
+        {
           "name": "catalog.list",
           "wire": "catalog.list",
           "doc": "List the model catalog."
@@ -4568,20 +4691,6 @@
           "name": "expired",
           "wire": "expired",
           "doc": "The grant expired. The user must authenticate again."
-        }
-      ]
-    },
-    {
-      "name": "SkillScope",
-      "numeric": false,
-      "values": [
-        {
-          "name": "project",
-          "wire": "project"
-        },
-        {
-          "name": "personal",
-          "wire": "personal"
         }
       ]
     },

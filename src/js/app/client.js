@@ -74,6 +74,24 @@ function sessionGet(sessionId, childName) {
   return request("session.get", { session_id: sessionId, ...(childName ? { child_name: childName } : {}) });
 }
 
+// Read the session with `context_changes` set. The flags say whether AGENTS.md or the skill roots differ from the stored snapshots.
+/** @param {string} sessionId @returns {Promise<Wire.SessionListItem>} */
+function sessionCheckContext(sessionId) {
+  return request("session.get", { session_id: sessionId, check_files: true });
+}
+
+// Rescan AGENTS.md and the skill roots for one idle session. The next run uses the new snapshots.
+/** @param {string} sessionId @returns {Promise<Wire.SessionReloadContextResult>} */
+function sessionReloadContext(sessionId) {
+  return request("session.reload_context", { session_id: sessionId });
+}
+
+// Read the body of one skill from the session catalog. The engine reads the file now.
+/** @param {string} sessionId @param {string} name @returns {Promise<Wire.SkillLoadResult>} */
+function skillLoad(sessionId, name) {
+  return request("skill.load", { session_id: sessionId, name });
+}
+
 /** @param {Wire.SessionHistoryParams} params @returns {Promise<Wire.SessionHistoryResult>} */
 function sessionHistory(params) { return request("session.history", params); }
 
@@ -174,6 +192,12 @@ function partTextPage(sessionId, messageId, partId, field, offset = 0, limit = 0
 /** @param {string} id @param {string} text @param {Wire.ToolSite} [parentTool] @returns {Promise<Wire.SessionSendInputResult>} */
 function sessionSendInput(id, text, parentTool) {
   return sendInput({ ...(parentTool ? { parent_tool: parentTool } : {}), session_id: id, input: { type: "content", content: [{ type: "text", text }] } });
+}
+
+// Send an explicit skill invocation. The engine loads the body and appends one user message with the arguments after it.
+/** @param {string} id @param {string} name @param {string} [args] @returns {Promise<Wire.SessionSendInputResult>} */
+function sessionSendSkill(id, name, args) {
+  return sendInput({ session_id: id, input: { type: "skill", name, ...(args ? { arguments: args } : {}) } });
 }
 
 // Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
@@ -303,6 +327,9 @@ export const client = {
   sessionOutline,
   sessionActivity,
   sessionGet,
+  sessionCheckContext,
+  sessionReloadContext,
+  skillLoad,
   sessionHistory,
   sessionQueue,
   sessionText,
@@ -312,6 +339,7 @@ export const client = {
   sessionPart,
   partTextPage,
   sessionSendInput,
+  sessionSendSkill,
   sessionCancelRun,
   sessionCancelInput,
   sessionCreate,

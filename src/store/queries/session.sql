@@ -246,10 +246,20 @@ WHERE parent_id = :filter_parent_id
 -- prompt: []const u8!
 -- base_prompt: []const u8!
 -- instructions: []const u8!
+-- skills: []const u8!
 -- child_policy: []const u8
 -- environment: []const u8!
-INSERT INTO session_prompts(session_id, prompt, base_prompt, instructions, child_policy, environment)
-VALUES (:session_id, :prompt, :base_prompt, :instructions, :child_policy, :environment);
+INSERT INTO session_prompts(session_id, prompt, base_prompt, instructions, skills, child_policy, environment)
+VALUES (:session_id, :prompt, :base_prompt, :instructions, :skills, :child_policy, :environment);
+
+-- name: UpdatePromptContext :exec
+-- A reload replaces the two file-derived components and the composed prompt of one session.
+-- session_id: [16]u8!
+-- prompt: []const u8!
+-- instructions: []const u8!
+-- skills: []const u8!
+UPDATE session_prompts SET prompt = :prompt, instructions = :instructions, skills = :skills
+WHERE session_id = :session_id;
 
 -- name: SelectPrompt :optional
 -- Read the session's system prompt. An absent row reads back as null.
@@ -307,9 +317,53 @@ SELECT id FROM sessions WHERE parent_id = :parent_id AND name = :name;
 -- session_id: [16]u8!
 -- base_prompt: []const u8!
 -- instructions: []const u8!
+-- skills: []const u8!
 -- child_policy: []const u8
 -- environment: []const u8!
-SELECT base_prompt, instructions, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
+SELECT base_prompt, instructions, skills, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
+
+-- name: DeleteInstructions :exec
+-- session_id: [16]u8!
+DELETE FROM session_instructions WHERE session_id = :session_id;
+
+-- name: InsertSkill :exec
+-- session_id: [16]u8!
+-- name: []const u8!
+-- description: []const u8!
+-- scope: []const u8!
+-- path: []const u8!
+-- canonical_path: []const u8!
+INSERT INTO session_skills(session_id, name, description, scope, path, canonical_path)
+VALUES (:session_id, :name, :description, :scope, :path, :canonical_path);
+
+-- name: SelectSkills :many
+-- session_id: [16]u8!
+-- name: []const u8!
+-- description: []const u8!
+-- scope: []const u8!
+-- path: []const u8!
+-- canonical_path: []const u8!
+SELECT name, description, scope, path, canonical_path FROM session_skills
+WHERE session_id = :session_id ORDER BY name;
+
+-- name: SelectSkill :optional
+-- session_id: [16]u8!
+-- name: []const u8!
+-- description: []const u8!
+-- scope: []const u8!
+-- path: []const u8!
+-- canonical_path: []const u8!
+SELECT name, description, scope, path, canonical_path FROM session_skills
+WHERE session_id = :session_id AND name = :name;
+
+-- name: SessionHasSkills :optional
+-- session_id: [16]u8!
+-- present: i64!
+SELECT 1 AS present FROM session_skills WHERE session_id = :session_id LIMIT 1;
+
+-- name: DeleteSkills :exec
+-- session_id: [16]u8!
+DELETE FROM session_skills WHERE session_id = :session_id;
 
 -- name: InsertInstruction :exec
 -- session_id: [16]u8!

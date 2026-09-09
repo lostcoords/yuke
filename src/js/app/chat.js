@@ -16,6 +16,24 @@ import { catalogOf, reloadCatalog, chooseModel, defaultModel, providerState, pro
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
 /** @import { FeedItem } from "yuke:sessions" */
 
+// `/skill:<name> [arguments]`: the name ends at the first whitespace character, and the trimmed rest is the arguments text.
+/** @param {string} text @returns {{ name: string, args: string } | null} */
+export function parseSkillLine(text) {
+  const match = /^\/skill:([a-z0-9-]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  const name = match?.[1];
+  return name ? { name, args: (match[2] || "").trim() } : null;
+}
+
+/** @param {string} text @returns {Wire.Input} */
+function textInput(text) {
+  return { type: "content", content: [{ type: "text", text }] };
+}
+
+/** @param {{ name: string, args: string }} invocation @returns {Wire.Input} */
+function skillInput(invocation) {
+  return { type: "skill", name: invocation.name, ...(invocation.args ? { arguments: invocation.args } : {}) };
+}
+
 // One chat pane and the session it drives. Each pane owns its own view, transcript and session.
 export class Chat {
   constructor() {
@@ -64,13 +82,31 @@ export class Chat {
     // Message ids repeat across sessions, so the old render must go before the new outline lands.
     this.transcript.setOutline([], null);
     this.reload();
+    this.checkContext(id);
+  }
+
+  // Tell the user once per open when the files behind the stored snapshots changed. The user decides on /reload.
+  /** @param {string} id */
+  checkContext(id) {
+    const token = this.gen;
+    client.sessionCheckContext(id).then((item) => {
+      // A later open or new chat moves the generation, so a slow answer for an earlier open stays silent.
+      if (token !== this.gen || this.sessionId !== id) return;
+      const changes = item.context_changes;
+      if (!changes || (!changes.instructions && !changes.skills)) return;
+      const what = changes.instructions && changes.skills ? "AGENTS.md and skills" : changes.instructions ? "AGENTS.md" : "skills";
+      notice.show(what + " changed on disk. Run /reload to update this session.");
+      root.invalidate();
+    }).catch(() => {});
   }
 
   // Send composer text into the open session, or return false so the composer keeps the text.
   /** @param {string} text @returns {boolean} */
   send(text) {
-    if (!this.sessionId) return this.startChat(text);
-    client.sessionSendInput(this.sessionId, text).catch((e) => {
+    const invocation = parseSkillLine(text);
+    if (!this.sessionId) return this.startChat(text, invocation ? skillInput(invocation) : textInput(text));
+    const sent = invocation ? client.sessionSendSkill(this.sessionId, invocation.name, invocation.args) : client.sessionSendInput(this.sessionId, text);
+    sent.catch((e) => {
       this.restoreInput(text);
       notice.show("send failed · " + ((e && e.message) || "unknown"));
       root.invalidate();
@@ -100,16 +136,16 @@ export class Chat {
     root.invalidate();
   }
 
-  // Accept the session and first input together, then open the accepted session.
-  /** @param {string} text @returns {boolean} */
-  startChat(text) {
+  // Accept the session and first input together, then open the accepted session. `text` returns to the composer on failure.
+  /** @param {string} text @param {Wire.Input} [input] @returns {boolean} */
+  startChat(text, input = textInput(text)) {
     if (this.creating) return false;
     if (!term.cwd) {
       notice.show("no workspace directory");
       return false;
     }
     const d = defaultModel();
-    const params = /** @type {CreateSessionDraft} */ ({ workspace_path: term.cwd, ...(d.model ? { model: d.model } : {}), ...(d.reasoning ? { reasoning: d.reasoning } : {}), initial_input: { type: "content", content: [{ type: "text", text }] } });
+    const params = /** @type {CreateSessionDraft} */ ({ workspace_path: term.cwd, ...(d.model ? { model: d.model } : {}), ...(d.reasoning ? { reasoning: d.reasoning } : {}), initial_input: input });
     const token = ++this.gen;
     this.creating = true;
     client
@@ -348,8 +384,20 @@ export const chatPlugin = {
 
       ctx.tui.command(null, {
         "model:pick": (/** @type {string | undefined} */ query) => openModelPicker(ctx, query),
+        "context:reload": () => {
+          const c = focusedChat();
+          if (!c || !c.sessionId) return notice.show("no open chat");
+          client.sessionReloadContext(c.sessionId).then((r) => {
+            notice.show("Context reloaded: " + r.instruction_sources.length + " AGENTS.md, " + r.skills.length + " skills.");
+            root.invalidate();
+          }).catch((e) => {
+            notice.show("Context reload failed: " + ((e && e.message) || "unknown"));
+            root.invalidate();
+          });
+        },
       }, {
         "model:pick": { title: "Model", description: "choose the model for the next chat", slash: "model", args: true },
+        "context:reload": { title: "Reload context", description: "rescan AGENTS.md and skills for this chat", slash: "reload" },
       });
       });
 },

@@ -82,8 +82,8 @@ pub const structs = [_]TypeEntry{
     .{ .name = "InteractionValue", .ty = interaction.InteractionValue },
     .{ .name = "InputSkill", .ty = input.InputSkill },
     .{ .name = "SkillInfo", .ty = skill.SkillInfo },
-    .{ .name = "SkillRef", .ty = skill.SkillRef },
-    .{ .name = "SkillsResult", .ty = skill.SkillsResult },
+    .{ .name = "SkillLoadParams", .ty = skill.SkillLoadParams },
+    .{ .name = "SkillLoadResult", .ty = skill.SkillLoadResult },
     .{ .name = "ActiveDraft", .ty = message.ActiveDraft },
     .{ .name = "AssistantMessage", .ty = message.AssistantMessage },
     .{ .name = "CompactionMessage", .ty = message.CompactionMessage },
@@ -141,6 +141,9 @@ pub const structs = [_]TypeEntry{
     .{ .name = "SessionConfigResult", .ty = session.SessionConfigResult },
     .{ .name = "SessionForkParams", .ty = session.SessionForkParams },
     .{ .name = "SessionGetParams", .ty = session.SessionGetParams },
+    .{ .name = "ContextChanges", .ty = session.ContextChanges },
+    .{ .name = "SessionReloadContextParams", .ty = session.SessionReloadContextParams },
+    .{ .name = "SessionReloadContextResult", .ty = session.SessionReloadContextResult },
     .{ .name = "SessionHistoryParams", .ty = session.SessionHistoryParams },
     .{ .name = "SessionHistoryResult", .ty = session.SessionHistoryResult },
     .{ .name = "SessionListItem", .ty = session.SessionListItem },
@@ -226,7 +229,6 @@ pub const string_enums = [_]EnumEntry{
     .{ .name = "CompactionReason", .ty = enums.CompactionReason },
     .{ .name = "ProviderProtocol", .ty = enums.ProviderProtocol },
     .{ .name = "ProviderState", .ty = enums.ProviderState },
-    .{ .name = "SkillScope", .ty = enums.SkillScope },
     .{ .name = "ToolCancellationReason", .ty = tool.ToolCancellationReason },
 };
 

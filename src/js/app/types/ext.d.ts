@@ -49,6 +49,7 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>;
   execute: ToolExecute;
   spawnsAgents?: boolean;
+  needsSkills?: boolean;
 }
 
 export type InjectContext = Context & Record<string, any>;

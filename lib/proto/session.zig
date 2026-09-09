@@ -99,6 +99,14 @@ pub const SessionGetParams = struct {
     session_id: ids.SessionId,
     /// Select a direct child of session_id by name.
     child_name: ?[]const u8 = null,
+    /// Compare the stored AGENTS.md and skill snapshots with the files on disk.
+    check_files: bool = false,
+};
+
+/// Which stored snapshots differ from the files on disk.
+pub const ContextChanges = struct {
+    instructions: bool,
+    skills: bool,
 };
 
 /// This row summarizes a session for `session.list`, `session.get`, and session broadcasts. Its fields borrow their data.
@@ -107,8 +115,22 @@ pub const SessionListItem = struct {
     activity: SessionActivity,
     /// The outcome of the latest terminal turn; the engine reports it for a child.
     last_run: ?run.RunOutcome = null,
-    /// Only session.get includes the instruction sources.
+    /// Only session.get includes the instruction sources and the skill catalog.
     instruction_sources: ?[]const @import("instructions.zig").InstructionSource = null,
+    skills: ?[]const @import("skill.zig").SkillInfo = null,
+    /// Only session.get with check_files includes this field.
+    context_changes: ?ContextChanges = null,
+};
+
+/// These are the parameters for `session.reload_context`.
+pub const SessionReloadContextParams = struct {
+    session_id: ids.SessionId,
+};
+
+/// This result lists the replaced snapshots.
+pub const SessionReloadContextResult = struct {
+    instruction_sources: []const @import("instructions.zig").InstructionSource,
+    skills: []const @import("skill.zig").SkillInfo,
 };
 
 /// These are the `session.list` input fields. They borrow their data.
@@ -309,6 +331,16 @@ test "session population round-trips" {
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(json, buf.written());
+}
+
+test "session.get keeps check_files a boolean and reload_context needs its session" {
+    const a = std.testing.allocator;
+    const plain = try std.json.parseFromSlice(SessionGetParams, a, "{\"session_id\":\"" ++ "ab" ** 16 ++ "\"}", .{});
+    defer plain.deinit();
+    try std.testing.expect(!plain.value.check_files);
+    try std.testing.expectError(error.UnexpectedToken, std.json.parseFromSlice(SessionGetParams, a, "{\"session_id\":\"" ++ "ab" ** 16 ++ "\",\"check_files\":\"yes\"}", .{}));
+    try std.testing.expectError(error.MissingField, std.json.parseFromSlice(SessionReloadContextParams, a, "{}", .{}));
+    try std.testing.expectError(error.MissingField, std.json.parseFromSlice(ContextChanges, a, "{\"instructions\":true}", .{}));
 }
 
 test "queued admission requires a closed reason and preserves capacity" {

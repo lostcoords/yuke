@@ -8,7 +8,6 @@ const misc = @import("misc.zig");
 const tagged = @import("tagged.zig");
 const tool = @import("tool.zig");
 const view = @import("view.zig");
-const skill_mod = @import("skill.zig");
 
 /// This is the assistant draft that a run streams. Its fields borrow their data.
 pub const ActiveDraft = struct {
@@ -235,7 +234,6 @@ pub const UserMessage = struct {
     id: ids.MessageId,
     content: []const content.ContentPart,
     input_id: ids.InputId,
-    skill: ?skill_mod.SkillRef = null,
     time: misc.CreatedTime,
 };
 

@@ -147,7 +147,7 @@ test "headless extensions pump an async JavaScript tool" {
     const installed = app_runtime.engine.deps.tools;
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    const advertised = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = true });
+    const advertised = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = true, .has_skills = true });
     try std.testing.expectEqual(extensions.host.tools.entries.items.len, advertised.len);
     const found = for (advertised) |d| {
         if (std.mem.eql(u8, d.name, "read_note")) break true;
@@ -206,6 +206,7 @@ test "tool declarations and dispatch enforce per-session spawn visibility" {
         \\const parameters = { type: "object", properties: {} };
         \\defineTool("normal_tool", { description: "normal", parameters, execute: async () => "normal" });
         \\defineTool("spawn_alias", { description: "spawn", parameters, spawnsAgents: true, execute: async () => "spawn" });
+        \\defineTool("skill_alias", { description: "skill", parameters, needsSkills: true, execute: async () => "skill" });
         \\let malformedRejected = false;
         \\try { defineTool("bad_metadata", { description: "bad", parameters, spawnsAgents: 1, execute: async () => "bad" }); } catch { malformedRejected = true; }
         \\globalThis.malformedRejected = malformedRejected ? 1 : 0;
@@ -215,7 +216,7 @@ test "tool declarations and dispatch enforce per-session spawn visibility" {
     const host = f.extensions.host;
     const installed = f.app.engine.deps.tools;
     const spawn_index = host.tools.find("spawn_agent") orelse unreachable;
-    try std.testing.expect(host.tools.entries.items[spawn_index].spawns_agents);
+    try std.testing.expect(host.tools.entries.items[spawn_index].flags.spawns_agents);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.malformedRejected"));
     try std.testing.expect(host.tools.find("bad_metadata") == null);
 
@@ -228,12 +229,21 @@ test "tool declarations and dispatch enforce per-session spawn visibility" {
     try std.testing.expect(!findDecl(hidden, "spawn_alias"));
     try std.testing.expect(findDecl(visible, "spawn_agent"));
     try std.testing.expect(findDecl(visible, "spawn_alias"));
+    // The skill tool and any tool that needs a catalog stay out of a session that lists no skill.
+    try std.testing.expect(!findDecl(visible, "skill"));
+    try std.testing.expect(!findDecl(visible, "skill_alias"));
+    const with_skills = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = false, .has_skills = true });
+    try std.testing.expect(findDecl(with_skills, "skill"));
+    try std.testing.expect(findDecl(with_skills, "skill_alias"));
+    try std.testing.expect(!findDecl(with_skills, "spawn_alias"));
+    try std.testing.expect(!installed.isAllowed(installed.ctx, "skill", .{ .can_spawn = true }));
+    try std.testing.expect(installed.isAllowed(installed.ctx, "skill", .{ .has_skills = true }));
     try std.testing.expect(!installed.isAllowed(installed.ctx, "spawn_alias", .{ .can_spawn = false }));
     try std.testing.expect(installed.isAllowed(installed.ctx, "normal_tool", .{ .can_spawn = false }));
     try std.testing.expect(installed.isAllowed(installed.ctx, "spawn_alias", .{ .can_spawn = true }));
 
     const before = host.tools.find("spawn_alias") orelse unreachable;
-    try std.testing.expect(host.tools.entries.items[before].spawns_agents);
+    try std.testing.expect(host.tools.entries.items[before].flags.spawns_agents);
     try host.evalModule(
         \\import { removeTool } from "yuke:tools";
         \\globalThis.removedSpawnAlias = removeTool("spawn_alias") ? 1 : 0;
@@ -241,7 +251,7 @@ test "tool declarations and dispatch enforce per-session spawn visibility" {
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.removedSpawnAlias"));
     try std.testing.expect(host.tools.find("spawn_alias") == null);
     const normal_index = host.tools.find("normal_tool") orelse unreachable;
-    try std.testing.expect(!host.tools.entries.items[normal_index].spawns_agents);
+    try std.testing.expect(!host.tools.entries.items[normal_index].flags.spawns_agents);
 }
 
 test "tool rejection codes cross the native bridge as cancellation reasons" {
@@ -626,10 +636,10 @@ test "a JavaScript build hook reconstructs exact prompt components" {
         \\import { plugins } from "yuke:ext";
         \\plugins.use({ name: "prompt-parts", apply(ctx) {
         \\  ctx.hook("request.build", (request) => {
-        \\    const { base, instructions, child_policy, environment } = request.context.prompt;
+        \\    const { base, instructions, skills, child_policy, environment } = request.context.prompt;
         \\    const join = (parts) => parts.filter((text) => text != null && text.length > 0).join("\n\n");
-        \\    if (join([base, instructions, child_policy, environment]) !== request.system) return { block: "prompt mismatch" };
-        \\    return { replace: { ...request, system: join(["custom base", instructions, child_policy, environment]) } };
+        \\    if (join([base, instructions, skills, child_policy, environment]) !== request.system) return { block: "prompt mismatch" };
+        \\    return { replace: { ...request, system: join(["custom base", instructions, skills, child_policy, environment]) } };
         \\  });
         \\} });
     , kernel_boot);
@@ -642,6 +652,7 @@ test "a JavaScript build hook reconstructs exact prompt components" {
     const cases = [_]struct { parts: Parts, system: []const u8, expected: []const u8 }{
         .{ .parts = .{ .base = "base\n\nwith separators", .instructions = "project rules", .child_policy = "child policy", .environment = environment }, .system = "base\n\nwith separators\n\nproject rules\n\nchild policy\n\n" ++ environment, .expected = "custom base\n\nproject rules\n\nchild policy\n\n" ++ environment },
         .{ .parts = .{ .base = "", .child_policy = null, .environment = environment }, .system = environment, .expected = "custom base\n\n" ++ environment },
+        .{ .parts = .{ .base = "base", .instructions = "rules", .skills = "<available_skills/>", .child_policy = null, .environment = environment }, .system = "base\n\nrules\n\n<available_skills/>\n\n" ++ environment, .expected = "custom base\n\nrules\n\n<available_skills/>\n\n" ++ environment },
     };
     for (cases) |case| {
         const payload = try std.json.Stringify.valueAlloc(a, .{
@@ -657,6 +668,39 @@ test "a JavaScript build hook reconstructs exact prompt components" {
         try std.testing.expectEqualStrings("replace", parsed.object.get("type").?.string);
         try std.testing.expectEqualStrings(case.expected, parsed.object.get("value").?.object.get("system").?.string);
     }
+}
+
+test "the skill tool answers a catalog body through skill.load" {
+    const commands = @import("../engine/commands.zig");
+    var f: Fixture = undefined;
+    try f.init("", kernel_boot);
+    defer f.deinit();
+    try f.tmp.dir.createDirPath(std.testing.io, ".agents/skills/pdf");
+    try f.tmp.dir.writeFile(std.testing.io, .{ .sub_path = ".agents/skills/pdf/SKILL.md", .data = "---\ndescription: Handle PDFs\n---\nRead the pdf.\n" });
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const host = f.extensions.host;
+    const created = try commands.sessionCreate(&f.app.engine, a, .{ .workspace_path = host.cwd });
+    try std.testing.expect(try database.session.hasSkills(&f.app.db, a, created.session.id.raw));
+
+    const call = host.calls.submit("skill", "{\"name\":\"pdf\"}", host.cwd);
+    call.site = .{ .session_id = created.session.id, .message_id = 1, .part_id = 0 };
+    try pumpUntilSettled(host, call);
+    try std.testing.expect(!call.is_error);
+    try std.testing.expect(std.mem.startsWith(u8, call.text.?, "<skill_content name=\"pdf\">\nRead the pdf.\n\nSkill directory: "));
+    try std.testing.expect(std.mem.endsWith(u8, call.text.?, ".agents/skills/pdf\nResolve relative paths against this directory.\n</skill_content>"));
+    call.finish();
+    try host.pump();
+
+    // The catalog decides what a name means, so an unknown name is an error the model can read.
+    const missing = host.calls.submit("skill", "{\"name\":\"nope\"}", host.cwd);
+    missing.site = .{ .session_id = created.session.id, .message_id = 1, .part_id = 0 };
+    try pumpUntilSettled(host, missing);
+    try std.testing.expect(missing.is_error);
+    try std.testing.expect(std.mem.indexOf(u8, missing.text.?, "has no skill with this name") != null);
+    missing.finish();
+    try host.pump();
 }
 
 test "session create returns the invalid instruction path through the call API" {

@@ -486,7 +486,7 @@ test "session cancel reaches the builtin exec process group" {
     _ = try commands.sessionSendInputForRpc(&f.app.engine, a, .{
         .session_id = created.session.id,
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "Run the command." } }} } },
-    }, &launch);
+    }, &launch, null);
     turn.Launch.release(&launch, &f.app.engine);
     const pids = try waitExecPids(host, f.tmp.dir);
     const canceled = try commands.sessionCancelRun(&f.app.engine, a, .{ .session_id = created.session.id });

@@ -12,6 +12,7 @@ const message = @import("message.zig");
 const misc = @import("misc.zig");
 const run = @import("run.zig");
 const session = @import("session.zig");
+const skill = @import("skill.zig");
 const tool = @import("tool.zig");
 
 fn stringifyPayload(self: anytype, jw: *std.json.Stringify) !void {
@@ -39,6 +40,8 @@ pub const RequestParams = union(enum) {
     session_cancel_run_params: session.SessionCancelRunParams,
     session_history_params: session.SessionHistoryParams,
     session_config_params: session.SessionConfigParams,
+    session_reload_context_params: session.SessionReloadContextParams,
+    skill_load_params: skill.SkillLoadParams,
     catalog_list_params: catalog.CatalogListParams,
     empty: misc.Empty,
     auth_set_api_key_params: auth.AuthSetApiKeyParams,
@@ -68,6 +71,8 @@ pub const ResponseResult = union(enum) {
     session_cancel_run_result: session.SessionCancelRunResult,
     session_history_result: session.SessionHistoryResult,
     session_config_result: session.SessionConfigResult,
+    session_reload_context_result: session.SessionReloadContextResult,
+    skill_load_result: skill.SkillLoadResult,
     catalog_list_result: catalog.CatalogListResult,
     catalog_reload_result: catalog.CatalogReloadResult,
     auth_list_result: auth.AuthListResult,
@@ -137,6 +142,8 @@ pub const methods = [_]MethodSpec{
     .{ .name = .@"session.cancel_run", .params = session.SessionCancelRunParams, .result = session.SessionCancelRunResult, .params_optional = false },
     .{ .name = .@"session.history", .params = session.SessionHistoryParams, .result = session.SessionHistoryResult, .params_optional = false },
     .{ .name = .@"session.config", .params = session.SessionConfigParams, .result = session.SessionConfigResult, .params_optional = false },
+    .{ .name = .@"session.reload_context", .params = session.SessionReloadContextParams, .result = session.SessionReloadContextResult, .params_optional = false },
+    .{ .name = .@"skill.load", .params = skill.SkillLoadParams, .result = skill.SkillLoadResult, .params_optional = false },
     .{ .name = .@"catalog.list", .params = catalog.CatalogListParams, .result = catalog.CatalogListResult, .params_optional = true },
     .{ .name = .@"catalog.reload", .params = misc.Empty, .result = catalog.CatalogReloadResult, .params_optional = true },
     .{ .name = .@"auth.list", .params = misc.Empty, .result = auth.AuthListResult, .params_optional = true },

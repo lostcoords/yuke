@@ -6,12 +6,14 @@ const limit = @import("proto").meta.limits.max_message_string_bytes;
 pub const Parts = struct {
     base: []const u8,
     instructions: []const u8 = "",
+    /// The skill catalog component. It is empty when the session lists no skill.
+    skills: []const u8 = "",
     child_policy: ?[]const u8,
     environment: []const u8,
 
     /// Return one owned buffer; skip empty parts and separate the rest with two newline characters.
     pub fn render(self: Parts, gpa: std.mem.Allocator) ![]u8 {
-        const parts = [_][]const u8{ self.base, self.instructions, self.child_policy orelse "", self.environment };
+        const parts = [_][]const u8{ self.base, self.instructions, self.skills, self.child_policy orelse "", self.environment };
         var size: usize = 0;
         for (parts) |part| {
             if (part.len == 0) continue;

@@ -104,6 +104,10 @@ pub const MethodName = enum {
     @"session.history",
     /// Fetch a session's run config.
     @"session.config",
+    /// Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session.
+    @"session.reload_context",
+    /// Read the body of one skill from the session catalog.
+    @"skill.load",
     /// List the model catalog.
     @"catalog.list",
     /// Read providers.json again and rebuild the catalog.
@@ -152,8 +156,6 @@ pub const ProviderState = enum {
     /// The grant expired. The user must authenticate again.
     expired,
 };
-
-pub const SkillScope = enum { project, personal };
 
 /// Workspace execution environment.
 /// Advertised engine capability.

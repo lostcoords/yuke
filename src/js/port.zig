@@ -19,17 +19,24 @@ fn declsFor(ctx: *anyopaque, arena: std.mem.Allocator, selection: toolset.Select
     const decls = try arena.alloc(ir.Tool, host.tools.entries.items.len);
     var at: usize = 0;
     for (host.tools.entries.items) |entry| {
-        if (!selection.can_spawn and entry.spawns_agents) continue;
+        if (!visible(entry.flags, selection)) continue;
         decls[at] = try proto.dupe(arena, entry.decl);
         at += 1;
     }
     return decls[0..at];
 }
 
+/// The declaration and the execution check agree, so a hidden tool never runs by name.
+fn visible(flags: @import("tools.zig").Tools.Flags, selection: toolset.Selection) bool {
+    if (flags.spawns_agents and !selection.can_spawn) return false;
+    if (flags.needs_skills and !selection.has_skills) return false;
+    return true;
+}
+
 fn isAllowed(ctx: *anyopaque, name: []const u8, selection: toolset.Selection) bool {
     const host: *Host = @ptrCast(@alignCast(ctx));
     const index = host.tools.find(name) orelse return true;
-    return selection.can_spawn or !host.tools.entries.items[index].spawns_agents;
+    return visible(host.tools.entries.items[index].flags, selection);
 }
 
 /// Submit one call and wait at the turn cancellation point for the owner to answer it.

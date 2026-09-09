@@ -663,16 +663,29 @@ pub const SessionCountParent = sql.OneQuery(
 );
 
 pub const InsertPrompt = sql.ExecQuery(
-    \\INSERT INTO session_prompts(session_id, prompt, base_prompt, instructions, child_policy, environment)
-    \\VALUES (:session_id, :prompt, :base_prompt, :instructions, :child_policy, :environment);
+    \\INSERT INTO session_prompts(session_id, prompt, base_prompt, instructions, skills, child_policy, environment)
+    \\VALUES (:session_id, :prompt, :base_prompt, :instructions, :skills, :child_policy, :environment);
 ,
     struct {
         session_id: [16]u8,
         prompt: []const u8,
         base_prompt: []const u8,
         instructions: []const u8,
+        skills: []const u8,
         child_policy: ?[]const u8,
         environment: []const u8,
+    },
+);
+
+pub const UpdatePromptContext = sql.ExecQuery(
+    \\UPDATE session_prompts SET prompt = :prompt, instructions = :instructions, skills = :skills
+    \\WHERE session_id = :session_id;
+,
+    struct {
+        prompt: []const u8,
+        instructions: []const u8,
+        skills: []const u8,
+        session_id: [16]u8,
     },
 );
 
@@ -764,7 +777,7 @@ pub const ChildByName = sql.OptionalQuery(
 );
 
 pub const SelectPromptParts = sql.OptionalQuery(
-    \\SELECT base_prompt, instructions, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
+    \\SELECT base_prompt, instructions, skills, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
 ,
     struct {
         session_id: [16]u8,
@@ -772,8 +785,83 @@ pub const SelectPromptParts = sql.OptionalQuery(
     struct {
         base_prompt: []const u8,
         instructions: []const u8,
+        skills: []const u8,
         child_policy: ?[]const u8,
         environment: []const u8,
+    },
+);
+
+pub const DeleteInstructions = sql.ExecQuery(
+    \\DELETE FROM session_instructions WHERE session_id = :session_id;
+,
+    struct {
+        session_id: [16]u8,
+    },
+);
+
+pub const InsertSkill = sql.ExecQuery(
+    \\INSERT INTO session_skills(session_id, name, description, scope, path, canonical_path)
+    \\VALUES (:session_id, :name, :description, :scope, :path, :canonical_path);
+,
+    struct {
+        session_id: [16]u8,
+        name: []const u8,
+        description: []const u8,
+        scope: []const u8,
+        path: []const u8,
+        canonical_path: []const u8,
+    },
+);
+
+pub const SelectSkills = sql.ManyQuery(
+    \\SELECT name, description, scope, path, canonical_path FROM session_skills
+    \\WHERE session_id = :session_id ORDER BY name;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        name: []const u8,
+        description: []const u8,
+        scope: []const u8,
+        path: []const u8,
+        canonical_path: []const u8,
+    },
+);
+
+pub const SelectSkill = sql.OptionalQuery(
+    \\SELECT name, description, scope, path, canonical_path FROM session_skills
+    \\WHERE session_id = :session_id AND name = :name;
+,
+    struct {
+        session_id: [16]u8,
+        name: []const u8,
+    },
+    struct {
+        name: []const u8,
+        description: []const u8,
+        scope: []const u8,
+        path: []const u8,
+        canonical_path: []const u8,
+    },
+);
+
+pub const SessionHasSkills = sql.OptionalQuery(
+    \\SELECT 1 AS present FROM session_skills WHERE session_id = :session_id LIMIT 1;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        present: i64,
+    },
+);
+
+pub const DeleteSkills = sql.ExecQuery(
+    \\DELETE FROM session_skills WHERE session_id = :session_id;
+,
+    struct {
+        session_id: [16]u8,
     },
 );
 
@@ -856,6 +944,7 @@ pub const Queries = struct {
     session_count_recent: SessionCountRecent,
     session_count_parent: SessionCountParent,
     insert_prompt: InsertPrompt,
+    update_prompt_context: UpdatePromptContext,
     select_prompt: SelectPrompt,
     select_base_prompt: SelectBasePrompt,
     delete_session: DeleteSession,
@@ -864,6 +953,12 @@ pub const Queries = struct {
     child_admission_candidates: ChildAdmissionCandidates,
     child_by_name: ChildByName,
     select_prompt_parts: SelectPromptParts,
+    delete_instructions: DeleteInstructions,
+    insert_skill: InsertSkill,
+    select_skills: SelectSkills,
+    select_skill: SelectSkill,
+    session_has_skills: SessionHasSkills,
+    delete_skills: DeleteSkills,
     insert_instruction: InsertInstruction,
     select_instructions: SelectInstructions,
     select_instruction_sources: SelectInstructionSources,

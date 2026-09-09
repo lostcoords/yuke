@@ -50,7 +50,7 @@ const Fixture = struct {
         const root = try commands.sessionCreate(&self.engine, self.arena.allocator(), .{ .workspace_path = "/work", .model = "test/model", .system_prompt = base_prompt });
         self.parent = root.session.id;
         var launch: ?turn.Launch = null;
-        _ = try commands.sessionSendInputForRpc(&self.engine, self.arena.allocator(), .{ .session_id = self.parent, .input = input() }, &launch);
+        _ = try commands.sessionSendInputForRpc(&self.engine, self.arena.allocator(), .{ .session_id = self.parent, .input = input() }, &launch, null);
         const slot = launch.?.slot;
         slot.phase = .running;
         const resident = self.engine.sessions.get(self.parent).?;
@@ -218,7 +218,7 @@ test "child capacity excludes the parent and admits durable queues in FIFO order
     turn.Launch.release(&three_launch, &f.engine);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, two.session.id.raw)).?.run_id_high);
     var followup: ?turn.Launch = null;
-    const queued = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = one.session.id, .input = input() }, &followup);
+    const queued = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = one.session.id, .input = input() }, &followup, null);
     try testing.expectEqual(proto.session.InputQueueReason.session_busy, queued.queued.reason);
     turn.Launch.release(&followup, &f.engine);
     turn.Launch.release(&one_launch, &f.engine);
@@ -233,7 +233,7 @@ test "child capacity excludes the parent and admits durable queues in FIFO order
     defer row.deinit();
     try testing.expectEqual(@as(i64, 1), row.int(0));
     var next: ?turn.Launch = null;
-    const reused = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = two.session.id, .input = input() }, &next);
+    const reused = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = two.session.id, .input = input() }, &next, null);
     try testing.expectEqual(@as(u64, 2), reused.started.run_id);
 }
 
@@ -357,12 +357,12 @@ test "a full child input queue rejects work without an input id or event" {
     const params: proto.session.SessionSendInputParams = .{ .session_id = child.session.id, .input = input() };
     for (0..proto.meta.limits.max_queued_inputs) |_| {
         var wake: ?turn.Launch = null;
-        const result = try commands.sessionSendInputForRpc(&f.engine, a, params, &wake);
+        const result = try commands.sessionSendInputForRpc(&f.engine, a, params, &wake, null);
         try testing.expectEqual(proto.session.InputQueueReason.session_busy, result.queued.reason);
     }
     const before = (try database.event.highWater(&f.db, a, child.session.id.raw)).?;
     var refused: ?turn.Launch = null;
-    try testing.expectError(error.QueueFull, commands.sessionSendInputForRpc(&f.engine, a, params, &refused));
+    try testing.expectError(error.QueueFull, commands.sessionSendInputForRpc(&f.engine, a, params, &refused, null));
     const after = (try database.event.highWater(&f.db, a, child.session.id.raw)).?;
     try testing.expectEqual(before.seq_high, after.seq_high);
     try testing.expectEqual(before.input_id_high, after.input_id_high);
@@ -498,9 +498,9 @@ test "native child admission enforces the slot and preserves parent instruction 
     try testing.expectEqualStrings(try std.fmt.allocPrint(a, "custom child prompt\n\n{s}\n\n{s}", .{ @import("prompt.zig").default_child_instructions, (try database.session.promptParts(&f.db, a, child.session.id.raw)).environment }), prompt);
     var next: ?turn.Launch = null;
     var followup: proto.session.SessionSendInputParams = .{ .session_id = child.session.id, .input = input(), .parent_tool = .{ .session_id = f.parent, .message_id = 999, .part_id = 0 } };
-    try testing.expectError(error.BadToolSite, commands.sessionSendInputForRpc(&f.engine, a, followup, &next));
+    try testing.expectError(error.BadToolSite, commands.sessionSendInputForRpc(&f.engine, a, followup, &next, null));
     followup.parent_tool.?.message_id = 2;
-    _ = try commands.sessionSendInputForRpc(&f.engine, a, followup, &next);
+    _ = try commands.sessionSendInputForRpc(&f.engine, a, followup, &next, null);
     const queue = try commands.sessionQueue(&f.engine, a, .{ .session_id = child.session.id });
     try testing.expectEqual(f.parent, queue.items[0].source.?.parent_instruction.session_id);
     try testing.expectEqual(@as(u64, 2), queue.items[0].source.?.parent_instruction.message_id);
@@ -553,7 +553,7 @@ test "root templates resolve once and invalid templates create no session" {
     try testing.expectEqualStrings(expected, (try database.session.prompt(&f.db, a, root.session.id.raw)).?);
     try f.engine.setPromptConfig("changed", f.engine.child_instructions);
     var launch: ?turn.Launch = null;
-    _ = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = root.session.id, .input = input() }, &launch);
+    _ = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = root.session.id, .input = input() }, &launch, null);
     try testing.expectEqualStrings(expected, launch.?.slot.config.system_prompt);
     try testing.expectError(error.InvalidPromptPlaceholder, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .system_prompt = "${missing}" }));
     try testing.expectEqual(@as(u64, 2), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
@@ -645,4 +645,154 @@ test "instruction snapshots survive file edits and child creation" {
     const fresh_sources = try database.session.instructionSnapshots(&f.db, a, fresh.session.id.raw);
     try testing.expectEqualStrings("new rules", fresh_sources[0].text);
     try testing.expectEqualStrings(root_parts.instructions, (try database.session.promptParts(&f.db, a, root.session.id.raw)).instructions);
+}
+
+const NoticeLog = struct {
+    count: usize = 0,
+    text: [512]u8 = undefined,
+    len: usize = 0,
+
+    fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
+        const self: *@This() = @ptrCast(@alignCast(ctx));
+        if (note.method != .notice) return;
+        self.count += 1;
+        const message_text = note.params.notice.message;
+        self.len = @min(message_text.len, self.text.len);
+        @memcpy(self.text[0..self.len], message_text[0..self.len]);
+    }
+
+    fn last(self: *const @This()) []const u8 {
+        return self.text[0..self.len];
+    }
+};
+
+fn skillFile(tmp: testing.TmpDir, name: []const u8, text: []const u8) !void {
+    var buffer: [128]u8 = undefined;
+    const sub = try std.fmt.bufPrint(&buffer, ".agents/skills/{s}", .{name});
+    try tmp.dir.createDirPath(testing.io, sub);
+    var file_buffer: [128]u8 = undefined;
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = try std.fmt.bufPrint(&file_buffer, "{s}/SKILL.md", .{sub}), .data = text });
+}
+
+test "skill catalogs snapshot at creation, children inherit them, and bodies load from disk" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const workspace = path_buf[0..try tmp.dir.realPath(testing.io, &path_buf)];
+    try skillFile(tmp, "pdf", "---\ndescription: Handle PDFs & forms\n---\nDo the pdf thing.\n");
+    try skillFile(tmp, "bad", "---\nname: bad\n---\n");
+    var notices: NoticeLog = .{};
+    f.engine.sinks.add(.{ .ctx = @ptrCast(&notices), .on_event = NoticeLog.onEvent });
+    defer f.engine.sinks.remove(@ptrCast(&notices));
+
+    var root_launch: ?turn.Launch = null;
+    const root = try commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model", .initial_input = input() }, &root_launch, null);
+    const parts = try database.session.promptParts(&f.db, a, root.session.id.raw);
+    try testing.expect(std.mem.indexOf(u8, parts.skills, "<name>pdf</name>") != null);
+    try testing.expect(std.mem.indexOf(u8, parts.skills, "Handle PDFs &amp; forms") != null);
+    try testing.expect(std.mem.indexOf(u8, (try database.session.prompt(&f.db, a, root.session.id.raw)).?, parts.skills) != null);
+    try testing.expectEqual(@as(usize, 1), notices.count);
+    try testing.expect(std.mem.indexOf(u8, notices.last(), "bad/SKILL.md") != null);
+    try testing.expect(std.mem.indexOf(u8, notices.last(), "description is missing") != null);
+    const selection = try @import("request.zig").selectionFor(&f.engine, a, root_launch.?.slot);
+    try testing.expect(selection.has_skills);
+    try testing.expect(!(try @import("request.zig").selectionFor(&f.engine, a, f.engine.sessions.get(f.parent).?.active_run.?)).has_skills);
+
+    const item = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id });
+    try testing.expectEqual(@as(usize, 1), item.skills.?.len);
+    try testing.expectEqualStrings("pdf", item.skills.?[0].name);
+    try testing.expectEqual(.workspace, item.skills.?[0].scope);
+    try testing.expect(item.context_changes == null);
+
+    var unused: ?turn.Launch = null;
+    var diagnostic: ?[]const u8 = null;
+    const loaded = try commands.skillLoad(&f.engine, a, .{ .session_id = root.session.id, .name = "pdf" }, &unused, &diagnostic);
+    try testing.expectEqualStrings("Do the pdf thing.", loaded.body);
+    try testing.expect(std.mem.startsWith(u8, loaded.content, "<skill_content name=\"pdf\">\nDo the pdf thing.\n\nSkill directory: "));
+    try testing.expect(std.mem.endsWith(u8, loaded.directory, ".agents/skills/pdf"));
+    try testing.expectError(error.UnknownSkill, commands.skillLoad(&f.engine, a, .{ .session_id = root.session.id, .name = "missing" }, &unused, &diagnostic));
+    try testing.expectError(error.UnknownSkill, commands.skillLoad(&f.engine, a, .{ .session_id = root.session.id, .name = "Bad Name" }, &unused, &diagnostic));
+    try testing.expectError(error.UnknownSession, commands.skillLoad(&f.engine, a, .{ .session_id = .bytes(.{7} ** 16), .name = "pdf" }, &unused, &diagnostic));
+
+    // The child copies the catalog and never rescans, so a deleted skill stays listed and fails only at load.
+    try tmp.dir.deleteTree(testing.io, ".agents/skills/pdf");
+    f.engine.max_agent_depth = 2;
+    var params = f.params("worker");
+    params.workspace_path = workspace;
+    params.child.?.site = try f.toolSite(root.session.id);
+    var child_launch: ?turn.Launch = null;
+    const child = try commands.sessionCreateForRpc(&f.engine, a, params, &child_launch, null);
+    const inherited = try database.session.skillCatalog(&f.db, a, child.session.id.raw);
+    try testing.expectEqual(@as(usize, 1), inherited.len);
+    try testing.expectEqualStrings("pdf", inherited[0].name);
+    try testing.expectEqualStrings(parts.skills, (try database.session.promptParts(&f.db, a, child.session.id.raw)).skills);
+    try testing.expectError(error.SkillUnreadable, commands.skillLoad(&f.engine, a, .{ .session_id = child.session.id, .name = "pdf" }, &unused, &diagnostic));
+    try testing.expect(std.mem.indexOf(u8, diagnostic.?, "pdf/SKILL.md") != null);
+    const checked = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id, .check_files = true });
+    try testing.expect(checked.context_changes.?.skills);
+    try testing.expect(!checked.context_changes.?.instructions);
+    try testing.expectError(error.SessionBusy, commands.sessionReloadContext(&f.engine, a, .{ .session_id = root.session.id }, &unused, &diagnostic));
+
+    // An explicit invocation reads the body now, so an edit after creation reaches the message.
+    try skillFile(tmp, "pdf", "---\ndescription: Handle PDFs\n---\nNew body.\n");
+    const queue_before = (try commands.sessionQueue(&f.engine, a, .{ .session_id = root.session.id })).items.len;
+    try testing.expectError(error.UnknownSkill, commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = root.session.id, .input = .{ .skill = .{ .name = "nope" } } }, &unused, &diagnostic));
+    try testing.expectEqual(queue_before, (try commands.sessionQueue(&f.engine, a, .{ .session_id = root.session.id })).items.len);
+    const queued = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = root.session.id, .input = .{ .skill = .{ .name = "pdf", .arguments = " on report.pdf \n" } } }, &unused, &diagnostic);
+    try testing.expect(queued == .queued);
+    const queue = try commands.sessionQueue(&f.engine, a, .{ .session_id = root.session.id });
+    const text = queue.items[queue.items.len - 1].content[0].text.text;
+    try testing.expect(std.mem.startsWith(u8, text, "<skill_content name=\"pdf\">\nNew body.\n\nSkill directory: "));
+    try testing.expect(std.mem.endsWith(u8, text, "\n</skill_content>\n\non report.pdf"));
+}
+
+test "reload replaces both snapshots of an idle session and the stale check tracks the files" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const workspace = path_buf[0..try tmp.dir.realPath(testing.io, &path_buf)];
+    try skillFile(tmp, "pdf", "---\ndescription: Handle PDFs\n---\nBody.\n");
+    const root = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model" });
+    const fresh = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id, .check_files = true });
+    try testing.expect(!fresh.context_changes.?.skills and !fresh.context_changes.?.instructions);
+
+    try skillFile(tmp, "pdf", "---\ndescription: Handle PDFs v2\n---\nBody.\n");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = "project rules" });
+    const stale = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id, .check_files = true });
+    try testing.expect(stale.context_changes.?.skills and stale.context_changes.?.instructions);
+    try testing.expectEqualStrings("Handle PDFs", stale.skills.?[0].description);
+
+    var unused: ?turn.Launch = null;
+    var diagnostic: ?[]const u8 = null;
+    const reloaded = try commands.sessionReloadContext(&f.engine, a, .{ .session_id = root.session.id }, &unused, &diagnostic);
+    try testing.expectEqual(@as(usize, 1), reloaded.instruction_sources.len);
+    try testing.expectEqualStrings("Handle PDFs v2", reloaded.skills[0].description);
+    const parts = try database.session.promptParts(&f.db, a, root.session.id.raw);
+    try testing.expect(std.mem.indexOf(u8, parts.skills, "Handle PDFs v2") != null);
+    try testing.expect(std.mem.indexOf(u8, parts.instructions, "project rules") != null);
+    const prompt = (try database.session.prompt(&f.db, a, root.session.id.raw)).?;
+    try testing.expect(std.mem.indexOf(u8, prompt, parts.skills) != null);
+    try testing.expect(std.mem.indexOf(u8, prompt, parts.instructions).? < std.mem.indexOf(u8, prompt, parts.skills).?);
+    const settled = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id, .check_files = true });
+    try testing.expect(!settled.context_changes.?.skills and !settled.context_changes.?.instructions);
+    try testing.expectEqual(@as(usize, 1), settled.instruction_sources.?.len);
+
+    // A root left without skills renders no component and hides the tool on the next run.
+    try tmp.dir.deleteTree(testing.io, ".agents");
+    const emptied = try commands.sessionReloadContext(&f.engine, a, .{ .session_id = root.session.id }, &unused, &diagnostic);
+    try testing.expectEqual(@as(usize, 0), emptied.skills.len);
+    try testing.expectEqualStrings("", (try database.session.promptParts(&f.db, a, root.session.id.raw)).skills);
+    try testing.expect(!try database.session.hasSkills(&f.db, a, root.session.id.raw));
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = "\xff" });
+    try testing.expectError(error.InvalidInstructions, commands.sessionReloadContext(&f.engine, a, .{ .session_id = root.session.id }, &unused, &diagnostic));
+    try testing.expect(std.mem.indexOf(u8, diagnostic.?, "AGENTS.md") != null);
+    try testing.expect(std.mem.indexOf(u8, (try database.session.promptParts(&f.db, a, root.session.id.raw)).instructions, "project rules") != null);
 }

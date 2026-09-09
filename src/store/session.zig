@@ -5,6 +5,7 @@ const std = @import("std");
 const sql = @import("sql");
 const Database = @import("store.zig").Database;
 const instructions = @import("../session/instructions.zig");
+const skills = @import("../session/skills.zig");
 const instruction_types = @import("proto").instructions;
 const queries_gen = @import("queries_gen.zig");
 
@@ -79,22 +80,77 @@ pub const PromptInput = struct {
     child_policy: ?[]const u8,
     environment: []const u8,
     sources: []const instructions.Snapshot = &.{},
+    skills: []const skills.Entry = &.{},
 };
 
 pub fn promptParts(db: *Database, arena: std.mem.Allocator, id: [16]u8) !PromptParts {
     const row = (try db.queries.select_prompt_parts.maybeOne(arena, .{ .session_id = id })) orelse return error.MissingSessionPrompt;
     std.debug.assert(row.value.environment.len <= @import("proto").meta.limits.max_message_string_bytes);
-    return .{ .base = row.value.base_prompt, .instructions = row.value.instructions, .child_policy = row.value.child_policy, .environment = row.value.environment };
+    return .{ .base = row.value.base_prompt, .instructions = row.value.instructions, .skills = row.value.skills, .child_policy = row.value.child_policy, .environment = row.value.environment };
 }
 
 /// Render and store the exact parts; the caller owns the returned text.
 pub fn setPrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8, parts: PromptInput) ![]const u8 {
-    const resolved: PromptParts = .{ .base = parts.base, .instructions = try instructions.render(arena, parts.sources), .child_policy = parts.child_policy, .environment = parts.environment };
+    const resolved: PromptParts = .{ .base = parts.base, .instructions = try instructions.render(arena, parts.sources), .skills = try skills.render(arena, parts.skills), .child_policy = parts.child_policy, .environment = parts.environment };
     const text = try resolved.render(arena);
     errdefer arena.free(text);
-    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text, .base_prompt = parts.base, .instructions = resolved.instructions, .child_policy = parts.child_policy, .environment = parts.environment });
-    for (parts.sources) |source| try db.queries.insert_instruction.exec(.{ .session_id = id, .scope = @tagName(source.source.scope), .path = source.source.path, .canonical_path = source.source.canonical_path, .content_hash = source.source.content_hash.raw, .text = source.text });
+    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text, .base_prompt = parts.base, .instructions = resolved.instructions, .skills = resolved.skills, .child_policy = parts.child_policy, .environment = parts.environment });
+    try insertSources(db, id, parts.sources);
+    try insertSkills(db, id, parts.skills);
     return text;
+}
+
+/// Replace the two file-derived snapshots and recompose the prompt. Run inside one transaction.
+pub fn reloadContext(db: *Database, arena: std.mem.Allocator, id: [16]u8, sources: []const instructions.Snapshot, catalog: []const skills.Entry) ![]const u8 {
+    std.debug.assert(sql.inTransaction(db.conn));
+    var parts = try promptParts(db, arena, id);
+    parts.instructions = try instructions.render(arena, sources);
+    parts.skills = try skills.render(arena, catalog);
+    const text = try parts.render(arena);
+    try db.queries.update_prompt_context.exec(.{ .session_id = id, .prompt = text, .instructions = parts.instructions, .skills = parts.skills });
+    try db.queries.delete_instructions.exec(.{ .session_id = id });
+    try db.queries.delete_skills.exec(.{ .session_id = id });
+    try insertSources(db, id, sources);
+    try insertSkills(db, id, catalog);
+    return text;
+}
+
+fn insertSources(db: *Database, id: [16]u8, sources: []const instructions.Snapshot) !void {
+    for (sources) |source| try db.queries.insert_instruction.exec(.{ .session_id = id, .scope = @tagName(source.source.scope), .path = source.source.path, .canonical_path = source.source.canonical_path, .content_hash = source.source.content_hash.raw, .text = source.text });
+}
+
+fn insertSkills(db: *Database, id: [16]u8, catalog: []const skills.Entry) !void {
+    for (catalog) |entry| {
+        std.debug.assert(skills.nameFault(entry.name) == null);
+        try db.queries.insert_skill.exec(.{ .session_id = id, .name = entry.name, .description = entry.description, .scope = @tagName(entry.scope), .path = entry.path, .canonical_path = entry.canonical_path });
+    }
+}
+
+/// Return the catalog snapshot of one session, sorted by name.
+pub fn skillCatalog(db: *Database, arena: std.mem.Allocator, id: [16]u8) ![]const skills.Entry {
+    var rows = try db.queries.select_skills.rows(.{ .session_id = id });
+    defer rows.deinit();
+    var result: std.ArrayList(skills.Entry) = .empty;
+    while (try rows.next(arena)) |row| try result.append(arena, skillEntry(row.value));
+    return result.items;
+}
+
+/// Return the catalog entry with `name`, or null when the session does not list it.
+pub fn skill(db: *Database, arena: std.mem.Allocator, id: [16]u8, name: []const u8) !?skills.Entry {
+    const row = (try db.queries.select_skill.maybeOne(arena, .{ .session_id = id, .name = name })) orelse return null;
+    return skillEntry(row.value);
+}
+
+pub fn hasSkills(db: *Database, arena: std.mem.Allocator, id: [16]u8) !bool {
+    var row = (try db.queries.session_has_skills.maybeOne(arena, .{ .session_id = id })) orelse return false;
+    defer row.deinit();
+    return true;
+}
+
+fn skillEntry(row: anytype) skills.Entry {
+    const scope = std.meta.stringToEnum(instruction_types.InstructionScope, row.scope) orelse unreachable;
+    std.debug.assert(skills.nameFault(row.name) == null);
+    return .{ .name = row.name, .description = row.description, .scope = scope, .path = row.path, .canonical_path = row.canonical_path };
 }
 
 pub fn instructionSnapshots(db: *Database, arena: std.mem.Allocator, id: [16]u8) ![]const instructions.Snapshot {

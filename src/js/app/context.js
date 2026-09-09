@@ -62,8 +62,8 @@ export function sessionCost(total, cost) {
 }
 
 // Build the label and value rows of the breakdown window. The cost row needs the model in the catalog.
-/** @param {Reading} r @param {ReadonlyArray<Wire.InstructionSource>} [sources] @returns {[string, string][]} */
-export function contextRows(r, sources = []) {
+/** @param {Reading} r @param {ReadonlyArray<Wire.InstructionSource>} [sources] @param {ReadonlyArray<Wire.SkillInfo>} [skills] @returns {[string, string][]} */
+export function contextRows(r, sources = [], skills = []) {
   const u = r.usage;
   const t = r.total;
   const model = catalogOf().models.find((m) => m.selector === r.model);
@@ -84,13 +84,14 @@ export function contextRows(r, sources = []) {
     rows.push(["cost", "$" + cost.toFixed(cost < 1 ? 3 : 2)]);
   }
   for (const source of sources) rows.push([source.scope + " AGENTS", source.path]);
+  for (const skill of skills) rows.push([skill.scope + " skill", skill.name + " · " + skill.description]);
   return rows;
 }
 
 class ContextPanel {
-  /** @param {Reading} r @param {ReadonlyArray<Wire.InstructionSource>} sources @param {() => void} onClose */
-  constructor(r, sources, onClose) {
-    this.rows = contextRows(r, sources);
+  /** @param {Reading} r @param {ReadonlyArray<Wire.InstructionSource>} sources @param {ReadonlyArray<Wire.SkillInfo>} skills @param {() => void} onClose */
+  constructor(r, sources, skills, onClose) {
+    this.rows = contextRows(r, sources, skills);
     this.onClose = onClose;
     /** @type {{ x: number, y: number, w: number, h: number }} */
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
@@ -134,10 +135,10 @@ export const contextPlugin = {
         "context:show": async () => {
           const current = reading();
           const entry = chatEntry();
-          const sources = entry ? (await client.sessionGet(entry.session.id)).instruction_sources || [] : [];
+          const item = entry ? await client.sessionGet(entry.session.id) : null;
           /** @type {(() => void)} */
           let release = () => {};
-          const panel = new ContextPanel(current, sources, () => release());
+          const panel = new ContextPanel(current, item?.instruction_sources || [], item?.skills || [], () => release());
           const win = new Window({ title: "context", footer: "esc close", border: "rounded", width: max => Math.round(max * 0.6), height: panel.rows.length + 2, content: panel });
           root.pushOverlay(win);
           release = ctx.tui.overlay(win);

@@ -12,6 +12,8 @@ const run = @import("run.zig");
 const run_task = @import("turn.zig");
 const session_events = @import("events.zig");
 const paths = @import("../paths.zig");
+const instructions = @import("../session/instructions.zig");
+const skills = @import("../session/skills.zig");
 const reports = @import("reports.zig");
 const admission = @import("admission.zig");
 const provider_registry = @import("../provider/registry.zig");
@@ -118,7 +120,87 @@ pub fn sessionGet(engine: *Engine, arena: std.mem.Allocator, params: proto.sessi
     if (snapshot.parent_id != null) item.last_run = try database.run.latestOutcome(engine.deps.db, arena, snapshot.id);
     item.activity = try liveActivity(engine, arena, session_id, item.activity);
     item.instruction_sources = try session_store.instructionSources(engine.deps.db, arena, session_id.raw);
+    item.skills = try session_store.skillCatalog(engine.deps.db, arena, session_id.raw);
+    if (params.check_files) item.context_changes = .{
+        .instructions = try instructionsChanged(engine, arena, snapshot.root, item.instruction_sources.?),
+        .skills = try skills.changed(arena, engine.deps.io, engine.deps.env, snapshot.root, item.skills.?),
+    };
     return item;
+}
+
+/// Report whether the AGENTS.md files on disk differ from the stored sources. An unloadable file counts as a change.
+fn instructionsChanged(engine: *Engine, arena: std.mem.Allocator, root: []const u8, stored: []const proto.instructions.InstructionSource) !bool {
+    const fresh = instructions.load(arena, engine.deps.io, engine.deps.env, root, null) catch |err| switch (err) {
+        error.InvalidInstructions => return true,
+        else => |e| return e,
+    };
+    if (fresh.len != stored.len) return true;
+    // Both lists order global before workspace.
+    for (fresh, stored) |a, b| {
+        if (a.source.scope != b.scope) return true;
+        if (!std.mem.eql(u8, a.source.canonical_path, b.canonical_path)) return true;
+        if (!std.mem.eql(u8, &a.source.content_hash.raw, &b.content_hash.raw)) return true;
+    }
+    return false;
+}
+
+/// Handle skill.load: read the body of one catalog entry. The catalog is the session snapshot, not the disk.
+pub fn skillLoad(engine: *Engine, arena: std.mem.Allocator, params: proto.skill.SkillLoadParams, _: *?run_task.Launch, diagnostic: ?*?[]const u8) !proto.skill.SkillLoadResult {
+    if (skills.nameFault(params.name) != null) return error.UnknownSkill;
+    const sid = params.session_id.raw;
+    const entry = (try session_store.skill(engine.deps.db, arena, sid, params.name)) orelse {
+        if (!try session_store.exists(engine.deps.db, arena, sid)) return error.UnknownSession;
+        return error.UnknownSkill;
+    };
+    const body = try skills.readBody(arena, engine.deps.io, entry, diagnostic);
+    return .{ .body = body.body, .directory = body.directory, .scope = entry.scope, .path = entry.path, .content = try skills.wrap(arena, entry.name, body) };
+}
+
+/// Handle session.reload_context: rescan both roots and replace the stored snapshots of one idle session.
+pub fn sessionReloadContext(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionReloadContextParams, _: *?run_task.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionReloadContextResult {
+    try engine.own(params.session_id);
+    const sid = params.session_id.raw;
+    const snapshot = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
+    // A run holds its prompt for its whole life, so a swap under it would split one turn across two prompts.
+    if (engine.sessions.get(params.session_id)) |rt| if (rt.active_run != null) return error.SessionBusy;
+    const sources = try instructions.load(arena, engine.deps.io, engine.deps.env, snapshot.root, diagnostic);
+    const catalog = try skills.load(arena, engine.deps.io, engine.deps.env, snapshot.root);
+    const notices = try skippedNotices(arena, catalog.skipped);
+    const listed = try arena.alloc(proto.instructions.InstructionSource, sources.len);
+    for (sources, listed) |source, *out| out.* = source.source;
+    {
+        var tx = try engine.deps.db.begin();
+        defer tx.deinit();
+        _ = try session_store.reloadContext(engine.deps.db, arena, sid, sources, catalog.entries);
+        try tx.commit();
+    }
+    emitNotices(engine, notices);
+    return .{ .instruction_sources = listed, .skills = catalog.entries };
+}
+
+/// Format one notice per skipped skill before the transaction, so the emit after commit cannot fail.
+fn skippedNotices(arena: std.mem.Allocator, skipped: []const skills.Skipped) ![]const []const u8 {
+    const texts = try arena.alloc([]const u8, skipped.len);
+    for (skipped, texts) |entry, *text| text.* = try std.fmt.allocPrint(arena, "The engine skipped the skill at {s}: {s}", .{ entry.path, entry.reason });
+    return texts;
+}
+
+/// A skipped skill never blocks a session, so a notice is the whole answer.
+fn emitNotices(engine: *Engine, texts: []const []const u8) void {
+    for (texts) |text| engine.sinks.emit(.{ .method = .notice, .params = .{ .notice = .{ .level = .warn, .source = "skills", .message = text } } });
+}
+
+/// Turn an explicit skill invocation into one user message: the wrapped body, then the arguments.
+fn skillContent(engine: *Engine, arena: std.mem.Allocator, catalog: []const skills.Entry, invocation: proto.input.InputSkill, diagnostic: ?*?[]const u8) ![]const proto.content.ContentPart {
+    if (skills.nameFault(invocation.name) != null) return error.UnknownSkill;
+    const entry = skills.find(catalog, invocation.name) orelse return error.UnknownSkill;
+    const body = try skills.readBody(arena, engine.deps.io, entry, diagnostic);
+    const wrapped = try skills.wrap(arena, entry.name, body);
+    const arguments = std.mem.trim(u8, invocation.arguments orelse "", " \t\r\n");
+    const text = if (arguments.len == 0) wrapped else try std.mem.concat(arena, u8, &.{ wrapped, "\n\n", arguments });
+    const parts = try arena.alloc(proto.content.ContentPart, 1);
+    parts[0] = .{ .text = .{ .text = text } };
+    return parts;
 }
 
 /// Return the live activity of a resident session, or the idle activity with the queue depth for the rest.
@@ -199,14 +281,14 @@ pub fn sessionHistory(engine: *Engine, arena: std.mem.Allocator, params: proto.s
 }
 
 /// Accept input for an RPC and return its prepared run to the response gate.
-pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionSendInputParams, launch: *?run_task.Launch) !proto.session.SessionSendInputResult {
+pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionSendInputParams, launch: *?run_task.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionSendInputResult {
     try engine.own(params.session_id);
     std.debug.assert(launch.* == null);
+    const sid = params.session_id.raw;
     const content = switch (params.input) {
         .content => |c| c.content,
-        .skill => return error.SkillUnsupported,
+        .skill => |invocation| try skillContent(engine, arena, try session_store.skillCatalog(engine.deps.db, arena, sid), invocation, diagnostic),
     };
-    const sid = params.session_id.raw;
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
     const rt = try engine.activate(params.session_id);
     if (rt.faulted) return error.RuntimeFailed;
@@ -406,12 +488,15 @@ pub fn sessionCreate(engine: *Engine, arena: std.mem.Allocator, params: proto.mi
 pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.misc.CreateSession, launch: *?run_task.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionResult {
     std.debug.assert(launch.* == null);
     if (engine.closing) return error.EngineClosing;
-    const content: ?[]const proto.content.ContentPart = if (params.initial_input) |input| switch (input) {
-        .content => |c| c.content,
-        .skill => return error.SkillUnsupported,
-    } else null;
     const root = try paths.canonicalizeWorkspace(arena, engine.deps.env, params.workspace_path);
     const parent: ?proto.ids.SessionId = if (params.child) |child| child.site.session_id else null;
+    // A child inherits the parent's catalog. A root scans the two skill roots once.
+    const catalog: skills.Catalog = if (parent) |pid| .{ .entries = try session_store.skillCatalog(engine.deps.db, arena, pid.raw), .skipped = &.{} } else try skills.load(arena, engine.deps.io, engine.deps.env, root);
+    const notices = try skippedNotices(arena, catalog.skipped);
+    const content: ?[]const proto.content.ContentPart = if (params.initial_input) |input| switch (input) {
+        .content => |c| c.content,
+        .skill => |invocation| try skillContent(engine, arena, catalog.entries, invocation, diagnostic),
+    } else null;
     var parent_tree: ?admission.Location = null;
     var selected: ?proto.agents.AgentsResolveResult = null;
     if (params.child) |child| {
@@ -447,7 +532,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     else
         prompts.default_system_prompt;
     const child_prompt = if (parent != null) try prompts.expand(arena, engine.child_instructions orelse prompts.default_child_instructions, prompt_context) else null;
-    const sources = if (parent) |pid| try session_store.instructionSnapshots(engine.deps.db, arena, pid.raw) else try @import("../session/instructions.zig").load(arena, engine.deps.io, engine.deps.env, root, diagnostic);
+    const sources = if (parent) |pid| try session_store.instructionSnapshots(engine.deps.db, arena, pid.raw) else try instructions.load(arena, engine.deps.io, engine.deps.env, root, diagnostic);
     const now = engine.nowMillis();
     const environment = try prompts.environment(arena, root, now);
     if (parent_tree) |tree| try reports.reserve(engine, arena, tree.root);
@@ -478,7 +563,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
             .created_at_ms = now,
             .updated_at_ms = now,
         });
-        const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, .{ .base = base_prompt, .child_policy = child_prompt, .environment = environment, .sources = sources });
+        const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, .{ .base = base_prompt, .child_policy = child_prompt, .environment = environment, .sources = sources, .skills = catalog.entries });
         if (available) prepared = try run.RunSlot.prepare(engine.deps.gpa, model, reasoning, system_prompt, params.max_rounds);
         try config_store.recordInitial(engine.deps.db, id.raw, model, reasoning);
         if (content) |parts| queued = try input_store.enqueueSource(engine.deps.db, arena, id.raw, engine.newId(), now, parts, now, if (params.child) |child| .{ .parent_instruction = child.site } else null);
@@ -497,6 +582,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
             session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = run_start.handle.started } });
         } else if (parent) |pid| launch.* = .{ .wake = pid };
     }
+    emitNotices(engine, notices);
     session_events.announceSummary(engine, id);
     return .{ .session = .{
         .id = id,

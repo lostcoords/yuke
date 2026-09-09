@@ -11,6 +11,8 @@ pub const Site = proto.input.ToolSite;
 
 pub const Selection = struct {
     can_spawn: bool = false,
+    /// The session catalog lists at least one skill, so the skill tool has something to load.
+    has_skills: bool = false,
 };
 
 pub const Context = struct {

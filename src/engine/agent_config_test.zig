@@ -163,7 +163,7 @@ test "an explicit model edit preserves a child history and requires an idle run 
     try testing.expectEqual(@as(u64, 1), changed.config.config_rev);
     try testing.expectEqualStrings("low", (try database.config.byRevision(&f.db, a, child.raw, 0)).?.reasoning);
     var launch: ?@import("turn.zig").Launch = null;
-    _ = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = child, .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "continue" } }} } } }, &launch);
+    _ = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = child, .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "continue" } }} } } }, &launch, null);
     try testing.expectError(error.SessionBusy, config.setModel(&f.engine, a, .{ .session_id = child, .model = chosen }));
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, child.raw)).?.run_id_high);
     try testing.expectEqualStrings("high", (try database.session.snapshot(&f.db, a, child.raw)).?.reasoning);

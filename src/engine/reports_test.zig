@@ -157,7 +157,7 @@ test "report credits bound accepted work and preserve capacity after a lower lim
     try testing.expectError(error.ReportCapacityFull, reports.reserve(&f.engine, a, root));
     var launch: ?@import("turn.zig").Launch = null;
     const before = (try database.event.highWater(&f.db, a, child.raw)).?.input_id_high;
-    try testing.expectError(error.ReportCapacityFull, commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = child, .input = .{ .content = .{ .content = &.{} } } }, &launch));
+    try testing.expectError(error.ReportCapacityFull, commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = child, .input = .{ .content = .{ .content = &.{} } } }, &launch, null));
     try testing.expectEqual(before, (try database.event.highWater(&f.db, a, child.raw)).?.input_id_high);
     try f.engine.setAgentLimits(1, 1);
     try testing.expectError(error.ReportCapacityFull, reports.reserve(&f.engine, a, root));

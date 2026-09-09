@@ -902,8 +902,8 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
     }
 
     const tools = engine.deps.tools;
-    if (!tools.isAllowed(tools.ctx, call.name, .{ .can_spawn = slot.depth < engine.max_agent_depth })) {
-        return .{ .output = "The tool is unavailable at this agent depth.", .is_error = true };
+    if (!tools.isAllowed(tools.ctx, call.name, try round_request.selectionFor(engine, arena, slot))) {
+        return .{ .output = "The tool is unavailable in this session.", .is_error = true };
     }
     const res = tools.run(tools.ctx, arena, call.name, call.arguments, .{
         .workspace_root = workspace_root,
@@ -980,7 +980,6 @@ const StreamerFixture = struct {
         .id = 0,
         .input_id = 1,
         .content = &.{.{ .text = .{ .text = "hello" } }},
-        .skill = null,
         .time = .{ .created_at_ms = 0 },
     } };
 

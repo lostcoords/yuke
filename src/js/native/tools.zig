@@ -20,9 +20,7 @@ pub fn install(host: *Host) void {
     });
 }
 
-/// `defineTool(name, {description, parameters, execute, spawnsAgents})`.
-///
-/// `parameters` is a JSON Schema object, so a tool can state an enum, an array, or a nested object; a shape the provider refuses fails here at boot.
+/// `defineTool(name, {description, parameters, execute, spawnsAgents, needsSkills})`. The host rejects a parameter shape the provider refuses at boot.
 fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 2) return ctx.throwTypeError("defineTool needs a name and a definition");
@@ -42,11 +40,10 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     defer ctx.freeValue(parameters);
     if (schemaFault(ctx, parameters)) |message| return ctx.throwTypeError(message);
 
-    const spawns_agents = ctx.getPropertyStr(args[1], "spawnsAgents");
-    defer ctx.freeValue(spawns_agents);
-    if (!ctx.isUndefined(spawns_agents) and !ctx.isBool(spawns_agents))
-        return ctx.throwTypeError("the tool spawnsAgents option must be a boolean");
-    const spawns_agents_value = if (ctx.isUndefined(spawns_agents)) false else ctx.toBool(spawns_agents) catch return module.throwPending(ctx);
+    const flags: table.Tools.Flags = .{
+        .spawns_agents = flagOf(ctx, args[1], "spawnsAgents") orelse return ctx.throwTypeError("the tool spawnsAgents option must be a boolean"),
+        .needs_skills = flagOf(ctx, args[1], "needsSkills") orelse return ctx.throwTypeError("the tool needsSkills option must be a boolean"),
+    };
 
     const execute = ctx.getPropertyStr(args[1], "execute");
     // The table takes this reference on success, so only a failure frees it here.
@@ -68,11 +65,20 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     };
     defer ctx.freeCString(schema_text.ptr);
 
-    host.tools.register(name, description_text, schema_text, execute, spawns_agents_value) catch |err| {
+    host.tools.register(name, description_text, schema_text, execute, flags) catch |err| {
         ctx.freeValue(execute);
         return ctx.throwTypeError(registerMessage(err));
     };
     return quickjs.UNDEFINED;
+}
+
+/// Read one optional boolean option. Null means the value is present and not a boolean.
+fn flagOf(ctx: Context, definition: Value, key: [:0]const u8) ?bool {
+    const value = ctx.getPropertyStr(definition, key);
+    defer ctx.freeValue(value);
+    if (ctx.isUndefined(value)) return false;
+    if (!ctx.isBool(value)) return null;
+    return ctx.toBool(value) catch null;
 }
 
 /// `removeTool(name)` withdraws one tool. It answers true when a tool held that name.

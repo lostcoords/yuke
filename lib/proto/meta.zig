@@ -21,7 +21,6 @@ pub const limits = struct {
     pub const max_reasoning_levels: u64 = 32;
     pub const max_session_list_cursor_bytes: u64 = 256;
     pub const max_session_list_page_size: u64 = 100;
-    pub const max_skills: u64 = 1024;
     pub const max_snapshot_configs: u64 = 501;
     pub const max_tool_output_stream_bytes: u64 = 1048576;
     pub const max_view_bytes: u64 = 1048576;

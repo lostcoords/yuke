@@ -35,7 +35,15 @@ pub const Tools = struct {
     pub const Entry = struct {
         decl: ir.Tool,
         handler: Value,
+        flags: Flags = .{},
+    };
+
+    /// These flags state what a tool needs from the session before the provider may see it.
+    pub const Flags = struct {
+        /// The tool is hidden at the agent depth limit.
         spawns_agents: bool = false,
+        /// The tool is hidden when the session catalog lists no skill.
+        needs_skills: bool = false,
     };
 
     pub fn deinit(self: *Tools, ctx: Context) void {
@@ -56,7 +64,7 @@ pub const Tools = struct {
     /// Add one tool. The table copies the text and takes the handler reference on success only.
     ///
     /// `JS_ToCStringLen` writes WTF-8 for a lone surrogate, so the copies become valid UTF-8 here, because a provider request accepts text only.
-    pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, handler: Value, spawns_agents: bool) RegisterError!void {
+    pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, handler: Value, flags: Flags) RegisterError!void {
         if (!validName(name)) return error.InvalidName;
         const slot = self.lookup(name);
         if (slot.found) return error.DuplicateName;
@@ -69,7 +77,7 @@ pub const Tools = struct {
                 .input_schema = utf8.sanitize(self.gpa, input_schema) catch unreachable,
             },
             .handler = handler,
-            .spawns_agents = spawns_agents,
+            .flags = flags,
         }) catch unreachable;
     }
 
@@ -302,12 +310,12 @@ test "the table refuses a duplicate name, a bad name, and a late registration" {
     var tools: Tools = .{ .gpa = testing.allocator };
     defer tools.deinit(bare.ctx);
 
-    try tools.register("probe", "a test tool", "{\"type\":\"object\"}", quickjs.UNDEFINED, false);
-    try testing.expectError(error.DuplicateName, tools.register("probe", "d", "{}", quickjs.UNDEFINED, false));
-    try testing.expectError(error.InvalidName, tools.register("bad name", "d", "{}", quickjs.UNDEFINED, false));
+    try tools.register("probe", "a test tool", "{\"type\":\"object\"}", quickjs.UNDEFINED, .{});
+    try testing.expectError(error.DuplicateName, tools.register("probe", "d", "{}", quickjs.UNDEFINED, .{}));
+    try testing.expectError(error.InvalidName, tools.register("bad name", "d", "{}", quickjs.UNDEFINED, .{}));
 
     // A tool registers at any time, so a plugin can add one after boot.
-    try tools.register("late", "d", "{}", quickjs.UNDEFINED, false);
+    try tools.register("late", "d", "{}", quickjs.UNDEFINED, .{});
 }
 
 test "the declarations follow the registered tools" {
@@ -317,9 +325,9 @@ test "the declarations follow the registered tools" {
     defer tools.deinit(bare.ctx);
 
     // Register out of order, because the load order of a plugin must not move the sorted prefix.
-    try tools.register("beta", "the second", "{\"type\":\"object\",\"properties\":{}}", quickjs.UNDEFINED, true);
-    try tools.register("alpha", "the first", "{\"type\":\"object\"}", quickjs.UNDEFINED, false);
-    try tools.register("gamma", "the third", "{\"type\":\"object\"}", quickjs.UNDEFINED, false);
+    try tools.register("beta", "the second", "{\"type\":\"object\",\"properties\":{}}", quickjs.UNDEFINED, .{ .spawns_agents = true });
+    try tools.register("alpha", "the first", "{\"type\":\"object\"}", quickjs.UNDEFINED, .{});
+    try tools.register("gamma", "the third", "{\"type\":\"object\"}", quickjs.UNDEFINED, .{});
 
     try testing.expectEqual(@as(usize, 3), tools.entries.items.len);
     try testing.expectEqualStrings("alpha", tools.entries.items[0].decl.name);
@@ -327,8 +335,8 @@ test "the declarations follow the registered tools" {
     try testing.expectEqualStrings("gamma", tools.entries.items[2].decl.name);
     try testing.expectEqualStrings("the second", tools.entries.items[1].decl.description);
     try testing.expectEqualStrings("{\"type\":\"object\",\"properties\":{}}", tools.entries.items[1].decl.input_schema);
-    try testing.expect(!tools.entries.items[0].spawns_agents);
-    try testing.expect(tools.entries.items[1].spawns_agents);
+    try testing.expect(!tools.entries.items[0].flags.spawns_agents);
+    try testing.expect(tools.entries.items[1].flags.spawns_agents);
     try testing.expectEqual(@as(?usize, 1), tools.find("beta"));
     try testing.expect(tools.find("delta") == null);
 }

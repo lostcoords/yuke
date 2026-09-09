@@ -55,6 +55,8 @@ pub const RunSlot = struct {
     tree_root: ids.SessionId,
     depth: u32 = 0,
     work: @import("work.zig") = .{},
+    /// The catalog cannot change under a run, so the first tool selection caches this for the run.
+    has_skills: ?bool = null,
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
 

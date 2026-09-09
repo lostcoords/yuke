@@ -166,7 +166,7 @@ test "tree ownership protects live runs and repair preserves committed input" {
     const result = try commands.sessionSendInputForRpc(&f.other, a, .{
         .session_id = .bytes(child),
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "continue" } }} } },
-    }, &launch);
+    }, &launch, null);
     try testing.expectEqual(@as(u64, 2), result.started.run_id);
     turn.Launch.release(&launch, &f.other);
     f.other.stopTurns();

@@ -62,6 +62,13 @@ fn thinkingBudget(model: *const registry.ModelSpec, output_limit: u32) ?u64 {
     return if (budget >= output_limit) null else budget;
 }
 
+/// The tools this run may see: spawn tools below the depth limit, and the skill tool with a catalog.
+pub fn selectionFor(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !@import("toolset.zig").Selection {
+    // A reload refuses an active run, so one read per run answers every round and tool call.
+    if (slot.has_skills == null) slot.has_skills = try database.session.hasSkills(engine.deps.db, arena, slot.sessionId().raw);
+    return .{ .can_spawn = slot.depth < engine.max_agent_depth, .has_skills = slot.has_skills.? };
+}
+
 /// Build the real provider request. It sets the run protocol, the endpoint URL, and the auth headers.
 pub fn prepare(
     arena: std.mem.Allocator,
@@ -93,7 +100,7 @@ pub fn prepare(
     var build: RequestBuild = .{
         .model = model.upstream_id,
         .system = slot.config.system_prompt,
-        .tools = try engine.deps.tools.getDecls(engine.deps.tools.ctx, arena, .{ .can_spawn = slot.depth < engine.max_agent_depth }),
+        .tools = try engine.deps.tools.getDecls(engine.deps.tools.ctx, arena, try selectionFor(engine, arena, slot)),
         .max_output_tokens = output_limit,
     };
     if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"request.build")) {

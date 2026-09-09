@@ -331,30 +331,37 @@ export interface InteractionValue {
   readonly value: string;
 }
 
-/** This type describes a skill invocation. */
+/** This input names a skill. The engine loads the body and appends one user message. */
 export interface InputSkill {
-  readonly skill: SkillRef;
+  readonly name: string;
+  /** The engine appends this text after the body. */
+  readonly arguments?: string;
 }
 
-/** This type records discovered skill metadata. */
+/** The session snapshots this catalog entry at creation. The loader reads the body at invocation. */
 export interface SkillInfo {
   readonly name: string;
   readonly description: string;
-  /** This scope identifies a project or personal skill. */
-  readonly scope: SkillScope;
-  readonly argument_hint: string;
+  readonly scope: InstructionScope;
+  readonly path: string;
+  readonly canonical_path: string;
 }
 
-/** This type names a skill and holds its rendered arguments. */
-export interface SkillRef {
+/** These are the parameters for `skill.load`. */
+export interface SkillLoadParams {
+  readonly session_id: SessionId;
   readonly name: string;
-  readonly arguments: string;
 }
 
-/** This result lists discovered skills. */
-export interface SkillsResult {
-  /** This field lists discovered skills. */
-  readonly skills: ReadonlyArray<SkillInfo>;
+/** This result carries the body of one skill without its frontmatter. */
+export interface SkillLoadResult {
+  readonly body: string;
+  /** This directory holds SKILL.md. Relative paths in the body resolve against it. */
+  readonly directory: string;
+  readonly scope: InstructionScope;
+  readonly path: string;
+  /** The model sees this form: the body inside `skill_content` with the directory line. */
+  readonly content: string;
 }
 
 /** This is the assistant draft that a run streams. Its fields borrow their data. */
@@ -508,7 +515,6 @@ export interface UserMessage {
   readonly id: MessageId;
   readonly content: ReadonlyArray<ContentPart>;
   readonly input_id: InputId;
-  readonly skill?: SkillRef;
   readonly time: CreatedTime;
 }
 
@@ -770,6 +776,25 @@ export interface SessionGetParams {
   readonly session_id: SessionId;
   /** Select a direct child of session_id by name. */
   readonly child_name?: string;
+  /** Compare the stored AGENTS.md and skill snapshots with the files on disk. */
+  readonly check_files?: boolean;
+}
+
+/** Which stored snapshots differ from the files on disk. */
+export interface ContextChanges {
+  readonly instructions: boolean;
+  readonly skills: boolean;
+}
+
+/** These are the parameters for `session.reload_context`. */
+export interface SessionReloadContextParams {
+  readonly session_id: SessionId;
+}
+
+/** This result lists the replaced snapshots. */
+export interface SessionReloadContextResult {
+  readonly instruction_sources: ReadonlyArray<InstructionSource>;
+  readonly skills: ReadonlyArray<SkillInfo>;
 }
 
 /** These are the parameters for `session.history`. */
@@ -793,8 +818,11 @@ export interface SessionListItem {
   readonly activity: SessionActivity;
   /** The outcome of the latest terminal turn; the engine reports it for a child. */
   readonly last_run?: RunOutcome;
-  /** Only session.get includes the instruction sources. */
+  /** Only session.get includes the instruction sources and the skill catalog. */
   readonly instruction_sources?: ReadonlyArray<InstructionSource>;
+  readonly skills?: ReadonlyArray<SkillInfo>;
+  /** Only session.get with check_files includes this field. */
+  readonly context_changes?: ContextChanges;
 }
 
 /** These are the `session.list` input fields. They borrow their data. */
@@ -1183,6 +1211,10 @@ export type MethodName =
   | "session.history"
   /** Fetch a session's run config. */
   | "session.config"
+  /** Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session. */
+  | "session.reload_context"
+  /** Read the body of one skill from the session catalog. */
+  | "skill.load"
   /** List the model catalog. */
   | "catalog.list"
   /** Read providers.json again and rebuild the catalog. */
@@ -1263,11 +1295,6 @@ export type ProviderState =
   | "needs_route"
   /** The grant expired. The user must authenticate again. */
   | "expired"
-;
-
-export type SkillScope =
-  | "project"
-  | "personal"
 ;
 
 export type ToolCancellationReason =
@@ -1428,6 +1455,8 @@ export type RequestParams =
   | SessionCancelRunParams
   | SessionHistoryParams
   | SessionConfigParams
+  | SessionReloadContextParams
+  | SkillLoadParams
   | CatalogListParams
   | Empty
   | AuthSetApiKeyParams
@@ -1453,6 +1482,8 @@ export type ResponseResult =
   | SessionCancelRunResult
   | SessionHistoryResult
   | SessionConfigResult
+  | SessionReloadContextResult
+  | SkillLoadResult
   | CatalogListResult
   | CatalogReloadResult
   | AuthListResult
@@ -1580,6 +1611,10 @@ export interface Methods {
   "session.history": { paramsType: [SessionHistoryParams]; returnType: SessionHistoryResult };
   /** Fetch a session's run config. */
   "session.config": { paramsType: [SessionConfigParams]; returnType: SessionConfigResult };
+  /** Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session. */
+  "session.reload_context": { paramsType: [SessionReloadContextParams]; returnType: SessionReloadContextResult };
+  /** Read the body of one skill from the session catalog. */
+  "skill.load": { paramsType: [SkillLoadParams]; returnType: SkillLoadResult };
   /** List the model catalog. */
   "catalog.list": { paramsType: [CatalogListParams?]; returnType: CatalogListResult };
   /** Read providers.json again and rebuild the catalog. */

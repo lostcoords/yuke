@@ -7,6 +7,7 @@ declare module "yuke:tools" {
       description: string;
       parameters: Schema;
       spawnsAgents?: boolean;
+      needsSkills?: boolean;
       execute: (
         args: any,
         signal: { aborted: boolean },
