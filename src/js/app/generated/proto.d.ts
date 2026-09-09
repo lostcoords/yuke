@@ -511,6 +511,8 @@ export interface TurnProvenance {
 
 /** This payload describes a user transcript message. Its fields borrow their data. */
 export interface UserMessage {
+  /** Native admission records the skill name beside its exact text. */
+  readonly skill_name?: string;
   readonly source?: InputSource;
   readonly id: MessageId;
   readonly content: ReadonlyArray<ContentPart>;
@@ -602,6 +604,8 @@ export interface EngineInterruption {
 
 /** This input waits behind an active turn. */
 export interface QueuedInput {
+  /** The loaded skill body stays in content until this input commits. */
+  readonly skill_name?: string;
   readonly source?: InputSource;
   readonly input_id: InputId;
   readonly content: ReadonlyArray<ContentPart>;

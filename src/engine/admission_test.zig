@@ -746,6 +746,7 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
     try testing.expect(queued == .queued);
     const queue = try commands.sessionQueue(&f.engine, a, .{ .session_id = root.session.id });
     const text = queue.items[queue.items.len - 1].content[0].text.text;
+    try testing.expectEqualStrings("pdf", queue.items[queue.items.len - 1].skill_name.?);
     try testing.expect(std.mem.startsWith(u8, text, "<skill_content name=\"pdf\">\nNew body.\n\nSkill directory: "));
     try testing.expect(std.mem.endsWith(u8, text, "\n</skill_content>\n\non report.pdf"));
 }

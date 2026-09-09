@@ -66,6 +66,8 @@ pub const Notice = struct {
 
 /// This input waits behind an active turn.
 pub const QueuedInput = struct {
+    /// The loaded skill body stays in content until this input commits.
+    skill_name: ?[]const u8 = null,
     source: ?@import("input.zig").InputSource = null,
     input_id: ids.InputId,
     content: []const content.ContentPart,

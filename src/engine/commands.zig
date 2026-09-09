@@ -168,6 +168,8 @@ pub fn sessionReloadContext(engine: *Engine, arena: std.mem.Allocator, params: p
     const notices = try skippedNotices(arena, catalog.skipped);
     const listed = try arena.alloc(proto.instructions.InstructionSource, sources.len);
     for (sources, listed) |source, *out| out.* = source.source;
+    // File reads can yield to admission, so repeat the idle check before the transaction.
+    if (engine.sessions.get(params.session_id)) |rt| if (rt.active_run != null) return error.SessionBusy;
     {
         var tx = try engine.deps.db.begin();
         defer tx.deinit();
@@ -289,6 +291,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
         .content => |c| c.content,
         .skill => |invocation| try skillContent(engine, arena, try session_store.skillCatalog(engine.deps.db, arena, sid), invocation, diagnostic),
     };
+    // A skill file read can yield, so use the current config after the read.
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
     const rt = try engine.activate(params.session_id);
     if (rt.faulted) return error.RuntimeFailed;
@@ -307,7 +310,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
         const stored_prompt = try session_store.prompt(engine.deps.db, arena, sid);
         var prepared = try run.RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, stored_prompt orelse "", snapshot.max_rounds);
         errdefer prepared.deinit();
-        const started = try run.beginTurnSource(engine.deps.db, engine.deps.io, arena, sid, content, snapshot.config_rev, source);
+        const started = try run.beginTurn(engine.deps.db, engine.deps.io, arena, sid, .{ .content = content, .source = source, .skill_name = if (params.input == .skill) params.input.skill.name else null }, snapshot.config_rev);
         const slot = prepared.bind(started.handle, started.first_round, parent, tree);
         rt.active_run = slot;
         launch.* = .{ .slot = slot };
@@ -322,7 +325,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
     const now = engine.nowMillis();
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
-    const queued = try input_store.enqueueSource(engine.deps.db, arena, sid, engine.newId(), now, content, now, source);
+    const queued = try input_store.enqueue(engine.deps.db, arena, sid, engine.newId(), now, .{ .content = content, .source = source, .skill_name = if (params.input == .skill) params.input.skill.name else null }, now);
     try tx.commit();
     session_events.emitDurable(engine, rt, .{ .method = .@"input.queued", .params = .{
         .input_queued_data = .{ .session_id = params.session_id, .seq = queued.seq, .input = queued.input },
@@ -566,7 +569,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, .{ .base = base_prompt, .child_policy = child_prompt, .environment = environment, .sources = sources, .skills = catalog.entries });
         if (available) prepared = try run.RunSlot.prepare(engine.deps.gpa, model, reasoning, system_prompt, params.max_rounds);
         try config_store.recordInitial(engine.deps.db, id.raw, model, reasoning);
-        if (content) |parts| queued = try input_store.enqueueSource(engine.deps.db, arena, id.raw, engine.newId(), now, parts, now, if (params.child) |child| .{ .parent_instruction = child.site } else null);
+        if (content) |parts| queued = try input_store.enqueue(engine.deps.db, arena, id.raw, engine.newId(), now, .{ .content = parts, .source = if (params.child) |child| .{ .parent_instruction = child.site } else null, .skill_name = if (params.initial_input.? == .skill) params.initial_input.?.skill.name else null }, now);
         if (prepared != null) started = try run.beginQueuedTurnInTransaction(engine.deps.db, engine.deps.io, arena, id.raw, 0);
         try tx.commit();
     }
@@ -640,7 +643,7 @@ test "session.get and session.queue read the durable queue, resident or not" {
         .updated_at_ms = 1,
     });
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    const queued = try input_store.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, &.{.{ .text = .{ .text = "recover" } }}, 2);
+    const queued = try input_store.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, .{ .content = &.{.{ .text = .{ .text = "recover" } }} }, 2);
     try db.conn.execNoArgs("COMMIT");
 
     var store: provider_store = .init(std.testing.allocator, runtime.io(), &test_env);

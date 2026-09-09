@@ -9,7 +9,6 @@ const provider = @import("../provider/provider.zig");
 const draft = @import("../session/draft.zig");
 const Session = @import("../session/session.zig").Session;
 const database = @import("../store/store.zig");
-const turn_context = @import("context.zig");
 const toolset = @import("toolset.zig");
 const registry = @import("../provider/registry.zig");
 const ai = @import("ai");
@@ -338,10 +337,7 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, strea
     // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
     const resolved = engine.deps.providers.merged.resolveModel(model) orelse return error.UnknownModel;
 
-    // Project the resident transcript for this round. The model window sets the history budget.
-    const budget = turn_context.Budget.forModel(resolved.model.limits.context_window, resolved.model.limits.max_output_tokens);
-    const ctx = try turn_context.project(arena, &streamer.session.transcript, budget);
-    return round_request.prepare(arena, engine, slot, ctx.messages, resolved);
+    return round_request.prepare(arena, engine, slot, &streamer.session.context_floor, resolved);
 }
 
 /// Open the response and stream it into the draft, in a child so a cancel can interrupt a blocked read.
@@ -977,7 +973,7 @@ const StreamerFixture = struct {
     const session_id = [_]u8{9} ** 16;
     /// The one user turn a request test serializes.
     const hello: message.Message = .{ .user = .{
-        .id = 0,
+        .id = 1,
         .input_id = 1,
         .content = &.{.{ .text = .{ .text = "hello" } }},
         .time = .{ .created_at_ms = 0 },
@@ -1007,6 +1003,15 @@ const StreamerFixture = struct {
             .updated_at_ms = 1,
         });
         const system = try session_store.setPrompt(&self.db, arena.allocator(), session_id, parts);
+        {
+            var tx = try self.db.begin();
+            defer tx.deinit();
+            try std.testing.expectEqual(@as(u64, 1), try event_store.allocInputId(&self.db, arena.allocator(), session_id));
+            try std.testing.expectEqual(@as(u64, 1), try event_store.allocMessageId(&self.db, arena.allocator(), session_id));
+            _ = try database.message.appendCommittedMessage(&self.db, arena.allocator(), session_id, [_]u8{8} ** 16, 1, hello);
+            try std.testing.expectEqual(@as(u64, 2), try event_store.allocMessageId(&self.db, arena.allocator(), session_id));
+            try tx.commit();
+        }
         self.store = .init(std.testing.allocator, self.runtime.io(), &stream_test_env);
         errdefer self.store.deinit();
         self.engine = Engine.init(.{
@@ -1023,15 +1028,15 @@ const StreamerFixture = struct {
         var prepared = try RunSlot.prepare(std.testing.allocator, "mock", "", system, null);
         errdefer prepared.deinit();
         self.slot = prepared.bind(
-            .{ .input_id = 1, .started = .{ .session_id = .bytes(session_id), .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 } },
-            .{ .number = 1, .message_id = 1 },
+            .{ .input_id = 1, .started = .{ .session_id = .bytes(session_id), .seq = 2, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 } },
+            .{ .number = 1, .message_id = 2 },
             null,
             .{ .root = .bytes(session_id), .depth = 0 },
         );
         self.session.active_run = self.slot;
         try self.session.apply(.{ .message_started_data = .{
             .session_id = .bytes(session_id),
-            .message_id = 1,
+            .message_id = 2,
             .run_id = 1,
             .config_rev = 0,
             .agent = agent_name,
@@ -1148,7 +1153,6 @@ test "a capped tool round reloads with an assistant error and failed outcome" {
     fixture.slot.gpa.free(fixture.slot.config.model);
     fixture.slot.config.model = try fixture.slot.gpa.dupe(u8, "mock/model");
     fixture.slot.config.max_rounds = 1;
-    try fixture.session.transcript.append(StreamerFixture.hello);
     const old_reply = stream_test_transport.bytes;
     defer stream_test_transport.bytes = old_reply;
     stream_test_transport.bytes = capped_tool_reply;
@@ -1255,7 +1259,7 @@ test "part ids restart for each round" {
     try s.onEvent(.{ .block_stopped = .{ .block = 1, .result = .{ .tool = .{ .call_id = "a", .name = "read", .arguments = "{}" } } } });
     try std.testing.expectEqual(@as(usize, 2), fixture.session.draft.?.parts.items.len);
 
-    try fixture.newRound(2);
+    try fixture.newRound(3);
     s.reset();
     try s.onEvent(.{ .block_started = .{ .block = 0, .kind = .tool } });
     try s.onEvent(.{ .block_stopped = .{ .block = 0, .result = .{ .tool = .{ .call_id = "b", .name = "read", .arguments = "{}" } } } });
@@ -1339,10 +1343,9 @@ test "a build hook can discard the live registry and tools before the request se
     }}));
     f.engine.installTools(.{ .ctx = &state, .getDecls = State.decls });
     f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
-    const transcript = [_]message.Message{StreamerFixture.hello};
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    var prepared = try round_request.prepare(arena.allocator(), &f.engine, f.slot, &transcript, .{ .provider = row, .model = model });
+    var prepared = try round_request.prepare(arena.allocator(), &f.engine, f.slot, &f.session.context_floor, .{ .provider = row, .model = model });
     defer prepared.deinit();
     try std.testing.expect(state.discarded);
     const body = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, prepared.transport_request.body, .{});
@@ -1417,7 +1420,6 @@ test "a run cancel interrupts either request hook before it settles" {
                 .credential = .none,
             } },
         }};
-        try f.session.transcript.append(StreamerFixture.hello);
         var state: State = .{ .io = f.engine.deps.io, .slot = f.slot, .point = point };
         f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
         var canceller = try state.io.concurrent(State.cancel, .{&state});
@@ -1425,23 +1427,30 @@ test "a run cancel interrupts either request hook before it settles" {
         var streamer = f.streamer();
         defer streamer.blocks.deinit(std.testing.allocator);
         try std.testing.expect(streamRound(&f.engine, f.slot, &streamer) == .canceled);
-        try std.testing.expect(state.asked and !state.timed_out);
+        try std.testing.expect(state.asked);
+        try std.testing.expect(!state.timed_out);
+        try std.testing.expectEqual(@as(u64, 0), f.session.context_floor.message_id);
+        try std.testing.expectEqual(@as(u64, 0), f.session.context_floor.budget);
     }
 }
 
-test "a build hook cannot send an oversized system prompt" {
+test "the final build hook obeys prompt and context limits without a new floor" {
     const hookset = @import("hookset.zig");
     const State = struct {
+        size: usize = proto.meta.limits.max_message_string_bytes + 1,
+        output: u32 = 8192,
         fn holds(_: *anyopaque, point: proto.hook.Point) bool {
             return point == .@"request.build";
         }
 
-        fn ask(_: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
+        fn ask(ctx: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
             std.debug.assert(point == .@"request.build");
             var value = std.json.parseFromSliceLeaky(std.json.Value, arena, payload, .{}) catch unreachable;
-            const text = arena.alloc(u8, proto.meta.limits.max_message_string_bytes + 1) catch unreachable;
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            const text = arena.alloc(u8, self.size) catch unreachable;
             @memset(text, 'x');
             value.object.put(arena, "system", .{ .string = text }) catch unreachable;
+            value.object.put(arena, "max_output_tokens", .{ .integer = self.output }) catch unreachable;
             return .{ .replace = value };
         }
     };
@@ -1462,5 +1471,12 @@ test "a build hook cannot send an oversized system prompt" {
     const model: registry.ModelSpec = .{ .id = "model", .upstream_id = "model", .name = "Model" };
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    try std.testing.expectError(error.PromptTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, &.{StreamerFixture.hello}, .{ .provider = &row, .model = &model }));
+    try std.testing.expectError(error.PromptTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, &f.session.context_floor, .{ .provider = &row, .model = &model }));
+    try std.testing.expectEqual(@as(u64, 0), f.session.context_floor.message_id);
+    state.size = 400_000;
+    try std.testing.expectError(error.ContextTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, &f.session.context_floor, .{ .provider = &row, .model = &model }));
+    state.size = 0;
+    state.output = 128_000;
+    try std.testing.expectError(error.ContextTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, &f.session.context_floor, .{ .provider = &row, .model = &model }));
+    try std.testing.expectEqual(@as(u64, 0), f.session.context_floor.message_id);
 }

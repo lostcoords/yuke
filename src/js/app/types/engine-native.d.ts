@@ -2,7 +2,7 @@
 declare module "yuke:engine-native" {
   /** One session's outline: the committed message ids and roles, plus the live draft. */
   export type SessionOutline = {
-    messages: { id: number; type: "user" | "assistant" | "compaction"; source?: Wire.InputSource; error?: { type: string; message: string } }[];
+    messages: { id: number; type: "user" | "assistant" | "compaction"; source?: Wire.InputSource; skill_name?: string; error?: { type: string; message: string } }[];
     active: { id: number; type: "assistant" } | null;
   };
 

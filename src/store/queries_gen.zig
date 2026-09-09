@@ -382,6 +382,39 @@ pub const RunReportMessages = sql.ManyQuery(
     },
 );
 
+pub const ContextSizes = sql.ManyQuery(
+    \\SELECT m.message_id, m.role, length(CAST(e.payload AS BLOB)) AS bytes
+    \\FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+    \\WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
+    \\ORDER BY m.message_id DESC;
+,
+    struct {
+        session_id: [16]u8,
+        first_message_id: u64,
+    },
+    struct {
+        message_id: u64,
+        role: []const u8,
+        bytes: u64,
+    },
+);
+
+pub const ContextMessages = sql.ManyQuery(
+    \\SELECT m.message_id, e.payload
+    \\FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+    \\WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
+    \\ORDER BY m.message_id ASC;
+,
+    struct {
+        session_id: [16]u8,
+        first_message_id: u64,
+    },
+    struct {
+        message_id: u64,
+        payload: []const u8,
+    },
+);
+
 pub const InsertSession = sql.ExecQuery(
     \\INSERT INTO sessions(
     \\    id, root, origin, parent_id, parent_message_id, parent_part_id, source_id,
@@ -934,6 +967,8 @@ pub const Queries = struct {
     message_tail: MessageTail,
     last_assistant_usage: LastAssistantUsage,
     run_report_messages: RunReportMessages,
+    context_sizes: ContextSizes,
+    context_messages: ContextMessages,
     insert_session: InsertSession,
     session_exists: SessionExists,
     session_snapshot: SessionSnapshot,

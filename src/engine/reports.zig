@@ -79,7 +79,7 @@ pub fn canceledInputs(engine: *Engine, arena: std.mem.Allocator, child: proto.id
 }
 
 fn enqueue(engine: *Engine, arena: std.mem.Allocator, parent: proto.ids.SessionId, now: u64, text: []const u8, source: proto.input.InputSource) !proto.input.InputQueuedData {
-    const entry = try store.input.enqueueSource(engine.deps.db, arena, parent.raw, engine.newId(), now, &.{.{ .text = .{ .text = text } }}, now, source);
+    const entry = try store.input.enqueue(engine.deps.db, arena, parent.raw, engine.newId(), now, .{ .content = &.{.{ .text = .{ .text = text } }}, .source = source }, now);
     return .{ .session_id = parent, .seq = entry.seq, .input = entry.input };
 }
 

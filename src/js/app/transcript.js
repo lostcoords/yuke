@@ -959,11 +959,11 @@ export class Transcript {
     let doc;
     if (m.type === "user") {
       source = this.textOf(m.id) || "";
-      if (m.source && m.source.type !== "parent_instruction") {
+      if (m.skill_name || (m.source && m.source.type !== "parent_instruction")) {
         const expanded = this._expand.get(this._expandKey(m.id, -1)) === true;
         const body = wrapBody(source, Math.max(1, width - TX_GUTTER), "TxToolBody", expanded ? Infinity : REPORT_PREVIEW_LINES + 1);
-        const shown = expanded ? body : body.slice(0, REPORT_PREVIEW_LINES);
-        rows = [{ text: inputSourceLabel(m.source), group: "TxToolMeta", marker: expanded ? "▾" : "▸", markerGroup: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id },
+        const shown = expanded ? body : body.slice(0, m.skill_name ? 0 : REPORT_PREVIEW_LINES);
+        rows = [{ text: m.skill_name ? "Skill · " + m.skill_name : inputSourceLabel(m.source), group: "TxToolMeta", marker: expanded ? "▾" : "▸", markerGroup: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id },
           ...shown.map((row) => ({ ...row, kind: "report-body", partId: -1, key: m.id })),
           ...(!expanded && body.length > shown.length ? [{ text: "… click the header to expand", group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id }] : []), { text: "", key: m.id }];
       } else rows = messageRows(m.id, source, width, "user");

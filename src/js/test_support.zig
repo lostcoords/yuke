@@ -10,6 +10,13 @@ const modules = host_mod.default_baked ++ [_]BakedModule{
     .{ .name = "yuke:test", .source = @embedFile("tests/assert.js") },
 };
 
+/// Each pure JS case owns a fresh host and its teardown.
+pub fn run(comptime path: [:0]const u8) !void {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try eval(host, path);
+}
+
 pub fn eval(host: *Host, comptime path: [:0]const u8) !void {
     std.debug.assert(host.phase == .open);
     const previous = host.loader.baked;

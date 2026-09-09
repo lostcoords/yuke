@@ -1,20 +1,14 @@
+import { check, equal } from "yuke:test";
 import { style } from "yuke:core";
 import { clip } from "yuke:text-input";
-const before = style.resolve("Normal").fg;
+for (const [text, width, expected] of [["", 3, ""], ["abc", 0, ""], ["abc", 10, "abc"], ["abc", 1, "a"], ["abcd", 3, "ab…"], ["中文", 3, "中…"]]) {
+  equal(clip(text, width), expected);
+}
+equal(style.resolve("Normal").fg, "reset");
 style.palette.fg = "red";
-const stale = style.resolve("Normal").fg;
+equal(style.resolve("Normal").fg, "reset");
 style.invalidate();
-globalThis.result = (
-  clip("", 3) === "" &&
-  clip("abc", 0) === "" &&
-  clip("abc", 10) === "abc" &&
-  clip("abc", 1) === "a" &&
-  clip("abcd", 3) === "ab…" &&
-  clip("中文", 3) === "中…" &&
-  before === "reset" &&
-  stale === "reset" &&
-  style.resolve("Normal").fg === "red" &&
-  style.resolve("YukeHeader").fg === "red" &&
-  style.resolve("YukeHeader").dim === true &&
-  style.resolve("YukeBrand").bold === true
-) ? 1 : 0;
+equal(style.resolve("Normal").fg, "red");
+equal(style.resolve("YukeHeader").fg, "red");
+check("header is dim", style.resolve("YukeHeader").dim === true);
+check("brand is bold", style.resolve("YukeBrand").bold === true);

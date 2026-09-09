@@ -33,6 +33,10 @@ pub fn writeOutline(w: *std.Io.Writer, s: *domain_session.Session) !void {
             try w.writeAll(",\"source\":");
             try std.json.Stringify.value(source, .{ .emit_null_optional_fields = false }, w);
         };
+        if (entry.message == .user) if (entry.message.user.skill_name) |name| {
+            try w.writeAll(",\"skill_name\":");
+            try std.json.Stringify.encodeJsonString(name, .{}, w);
+        };
         if (messageError(entry.message)) |e| {
             try w.writeAll(",\"error\":{\"type\":");
             try std.json.Stringify.encodeJsonString(e.type, .{}, w);
@@ -595,7 +599,7 @@ test "a text part over the inline bound reports more and pages back whole" {
     try testing.expectEqualStrings(whole, rebuilt);
 }
 
-test "the outline carries report identity without the report body" {
+test "the outline carries report and skill identity without their bodies" {
     const a = std.testing.allocator;
     var session = domain_session.Session.init(a, .bytes([_]u8{1} ** 16));
     defer session.deinit();
@@ -618,6 +622,17 @@ test "the outline carries report identity without the report body" {
             } },
         } },
     } });
+    try session.apply(.{ .message_committed_data = .{
+        .session_id = session.id,
+        .seq = 2,
+        .message = .{ .user = .{
+            .id = 2,
+            .input_id = 2,
+            .time = .{ .created_at_ms = 2 },
+            .content = &.{.{ .text = .{ .text = body } }},
+            .skill_name = "pdf",
+        } },
+    } });
     var buffer: std.Io.Writer.Allocating = .init(a);
     defer buffer.deinit();
     try writeOutline(&buffer.writer, &session);
@@ -626,6 +641,9 @@ test "the outline carries report identity without the report body" {
     const source = parsed.value.object.get("messages").?.array.items[0].object.get("source").?.object;
     try std.testing.expectEqualStrings("research", source.get("name").?.string);
     try std.testing.expectEqual(@as(i64, 7), source.get("run_id").?.integer);
+    const skill = parsed.value.object.get("messages").?.array.items[1].object;
+    try std.testing.expectEqualStrings("pdf", skill.get("skill_name").?.string);
+    try std.testing.expect(!skill.contains("source"));
     try std.testing.expect(std.mem.indexOf(u8, buffer.written(), body) == null);
     const stored = session.transcript.list.items[0].message;
     const request = try @import("../../../provider/request_builder.zig").build(a, &.{stored}, .{});

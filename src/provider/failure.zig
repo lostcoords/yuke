@@ -18,6 +18,7 @@ pub fn classify(err: anyerror) Detail {
     return switch (err) {
         // The library never raises these, because they are decisions the engine makes.
         error.TurnTooLarge => .{ .class = .permanent, .code = .context_overflow, .message = "the turn is larger than the model context window" },
+        error.ContextTooLarge => .{ .class = .permanent, .code = .context_overflow, .message = "the prompt, tools, and output reserve exceed the model context budget" },
         error.UnsupportedReasoning => .{ .class = .permanent, .code = .unsupported_reasoning, .message = "the model does not support this reasoning level" },
         error.PromptTooLarge => .{ .class = .permanent, .code = .runtime, .message = "the system prompt exceeds the protocol string limit" },
         error.HookBlocked => .{ .class = .permanent, .code = .runtime, .message = "an extension stopped the request" },

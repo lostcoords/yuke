@@ -5,6 +5,7 @@ export interface MessageDescriptor {
   id: number;
   type: "user" | "assistant" | "compaction";
   source?: Wire.InputSource;
+  skill_name?: string;
   error?: { type: string; message: string };
 }
 

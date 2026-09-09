@@ -12,37 +12,17 @@ pub const Entry = struct {
     seq: u64,
 };
 
-/// Append input.queued and create its pending projection in one transaction.
-pub fn enqueue(
-    db: *Database,
-    arena: std.mem.Allocator,
-    session_id: [16]u8,
-    event_id: [16]u8,
-    committed_at_ms: u64,
-    content: []const proto.content.ContentPart,
-    queued_at_ms: u64,
-) !Entry {
-    return enqueueSource(db, arena, session_id, event_id, committed_at_ms, content, queued_at_ms, null);
-}
-
-pub fn enqueueSource(
-    db: *Database,
-    arena: std.mem.Allocator,
-    session_id: [16]u8,
-    event_id: [16]u8,
-    committed_at_ms: u64,
-    content: []const proto.content.ContentPart,
-    queued_at_ms: u64,
-    source: ?proto.input.InputSource,
-) !Entry {
+/// Commit the validated input and its queue projection in the caller's transaction.
+pub fn enqueue(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, event_id: [16]u8, committed_at_ms: u64, input: @import("../session/input.zig"), queued_at_ms: u64) !Entry {
     std.debug.assert(sql.inTransaction(db.conn));
 
     const input_id = try event.allocInputId(db, arena, session_id);
     const seq = try event.allocSeq(db, arena, session_id);
-    const stored_content = try proto.dupe(arena, content);
+    const stored_content = try proto.dupe(arena, input.content);
     const queued: proto.misc.QueuedInput = .{
+        .skill_name = try proto.dupe(arena, input.skill_name),
         .input_id = input_id,
-        .source = try proto.dupe(arena, source),
+        .source = try proto.dupe(arena, input.source),
         .content = stored_content,
         .queued_at_ms = queued_at_ms,
     };
@@ -124,7 +104,7 @@ fn checkedPending(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, i
 
 fn checkedRow(arena: std.mem.Allocator, row: anytype) !Entry {
     if (!std.mem.eql(u8, row.event_name, "input.queued")) return error.CorruptLog;
-    const projection = std.json.parseFromSliceLeaky(proto.misc.QueuedInput, arena, row.payload, .{}) catch |err| switch (err) {
+    const projection = std.json.parseFromSliceLeaky(proto.misc.QueuedInput, arena, row.payload, .{ .allocate = .alloc_always }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.CorruptLog,
     };
@@ -165,7 +145,7 @@ test "enqueue writes the full event, projection, and sequence" {
     try seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    const result = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, textContent("hello"), 149);
+    const result = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);
     try db.conn.execNoArgs("COMMIT");
 
     try testing.expectEqual(@as(u64, 1), result.input.input_id);
@@ -189,8 +169,8 @@ test "list returns oldest-first owned entries" {
     try seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, textContent("one"), 150);
-    _ = try enqueue(&db, a, sid, [_]u8{2} ** 16, 160, textContent("two"), 160);
+    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("one") }, 150);
+    _ = try enqueue(&db, a, sid, [_]u8{2} ** 16, 160, .{ .content = textContent("two") }, 160);
     try db.conn.execNoArgs("COMMIT");
 
     const entries = try list(&db, a, sid);
@@ -210,7 +190,7 @@ test "cancel appends the exact event and deletes the projection" {
     try seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, textContent("hello"), 149);
+    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);
     try db.conn.execNoArgs("COMMIT");
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try cancel(&db, a, sid, [_]u8{2} ** 16, 160, 1);
@@ -238,7 +218,7 @@ test "consume removes an input without a cancellation event" {
     try seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, textContent("hello"), 149);
+    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);
     try db.conn.execNoArgs("COMMIT");
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     try consume(&db, a, sid, 1);
@@ -291,7 +271,7 @@ test "pending projection enforces ownership and event foreign keys" {
     ));
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, textContent("hello"), 149);
+    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);
     try db.conn.execNoArgs("COMMIT");
     try db.conn.exec("DELETE FROM events WHERE session_id = ?1", .{zqlite.blob(&sid)});
     const pending_count = (try db.conn.row("SELECT count(*) FROM pending_inputs", .{})) orelse return error.NoRow;
@@ -309,7 +289,7 @@ test "list rejects a projection whose source event has the wrong name" {
     try seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, textContent("hello"), 149);
+    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);
     try db.conn.execNoArgs("COMMIT");
     try db.conn.exec("UPDATE events SET name = 'run.started' WHERE session_id = ?1", .{zqlite.blob(&sid)});
     try testing.expectError(error.CorruptLog, list(&db, a, sid));

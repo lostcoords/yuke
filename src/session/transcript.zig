@@ -36,10 +36,6 @@ pub const Transcript = struct {
     list: std.ArrayList(Entry) = .empty,
     total_bytes: usize = 0,
     has_more: bool = false,
-    /// The oldest message id the model context carries. A trim lowers it in one large step.
-    context_floor_id: ids.MessageId = 0,
-    /// The budget that set the floor. Another budget re-reads the floor from the oldest message.
-    context_floor_budget: u64 = 0,
     max_messages: usize = default_max_messages,
     max_bytes: usize = default_max_bytes,
 

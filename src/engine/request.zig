@@ -8,8 +8,9 @@ const RunSlot = @import("run.zig").RunSlot;
 const provider = @import("../provider/provider.zig");
 const registry = @import("../provider/registry.zig");
 const database = @import("../store/store.zig");
+const context = @import("context.zig");
 
-const max_output_tokens: u32 = 8192;
+const max_output_tokens = context.default_max_output;
 
 fn reasoningFor(
     model: *const registry.ModelSpec,
@@ -74,7 +75,7 @@ pub fn prepare(
     arena: std.mem.Allocator,
     engine: *Engine,
     slot: *RunSlot,
-    transcript: []const proto.message.Message,
+    floor: *context.Floor,
     r: registry.Match,
 ) !ai.PreparedRequest {
     // A provider the merge could not complete has no route, so it cannot serve a turn.
@@ -91,11 +92,6 @@ pub fn prepare(
         std.math.cast(u32, limit) orelse max_output_tokens
     else
         max_output_tokens;
-
-    const request_ir = try provider.request_builder.build(arena, transcript, .{
-        .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
-        .modalities = model.modalities,
-    });
 
     var build: RequestBuild = .{
         .model = model.upstream_id,
@@ -132,6 +128,12 @@ pub fn prepare(
     }
 
     if (build.system.len > proto.meta.limits.max_message_string_bytes) return error.PromptTooLarge;
+    const budget = try context.Budget.forRequest(model.limits.context_window, build.max_output_tokens, build.system, build.tools);
+    const projected = try context.project(arena, engine.deps.db, slot.sessionId().raw, floor.*, budget);
+    const request_ir = try provider.request_builder.build(arena, projected.messages, .{
+        .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
+        .modalities = model.modalities,
+    });
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
     const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
@@ -174,6 +176,7 @@ pub fn prepare(
         },
         .canceled => return error.Canceled,
     }
+    floor.* = projected.floor;
     return prepared;
 }
 

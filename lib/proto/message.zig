@@ -230,6 +230,8 @@ pub const TurnProvenance = struct {
 
 /// This payload describes a user transcript message. Its fields borrow their data.
 pub const UserMessage = struct {
+    /// Native admission records the skill name beside its exact text.
+    skill_name: ?[]const u8 = null,
     source: ?@import("input.zig").InputSource = null,
     id: ids.MessageId,
     content: []const content.ContentPart,

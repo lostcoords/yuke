@@ -102,3 +102,26 @@ LIMIT 1;
 SELECT e.payload FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
 WHERE m.session_id = :session_id AND m.run_id = :run_id AND m.role = 'assistant'
 ORDER BY m.message_id DESC;
+
+-- name: ContextSizes :many
+-- Inspect committed sizes before any body enters the request arena.
+-- session_id: [16]u8!
+-- first_message_id: u64!
+-- message_id: u64!
+-- role: []const u8!
+-- bytes: u64!
+SELECT m.message_id, m.role, length(CAST(e.payload AS BLOB)) AS bytes
+FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
+ORDER BY m.message_id DESC;
+
+-- name: ContextMessages :many
+-- Read the selected committed suffix in transcript order.
+-- session_id: [16]u8!
+-- first_message_id: u64!
+-- message_id: u64!
+-- payload: []const u8!
+SELECT m.message_id, e.payload
+FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
+ORDER BY m.message_id ASC;

@@ -68,7 +68,7 @@ const Fixture = struct {
     }
 
     fn start(self: *Fixture) !run.Started {
-        return run.beginTurn(&self.db, self.resources.runtime.io(), self.arena.allocator(), child.raw, &.{.{ .text = .{ .text = "task" } }}, 0);
+        return run.beginTurn(&self.db, self.resources.runtime.io(), self.arena.allocator(), child.raw, .{ .content = &.{.{ .text = .{ .text = "task" } }} }, 0);
     }
 
     fn terminal(self: *Fixture, started: run.Started, text: ?[]const u8, outcome: proto.run.RunOutcome) !reports.Terminal {
@@ -134,7 +134,7 @@ test "a full user queue cannot block a terminal report or clear protected input"
     {
         var tx = try f.db.begin();
         defer tx.deinit();
-        for (0..proto.meta.limits.max_queued_inputs) |_| _ = try database.input.enqueue(&f.db, a, root.raw, f.engine.newId(), 1, &.{.{ .text = .{ .text = "user work" } }}, 1);
+        for (0..proto.meta.limits.max_queued_inputs) |_| _ = try database.input.enqueue(&f.db, a, root.raw, f.engine.newId(), 1, .{ .content = &.{.{ .text = .{ .text = "user work" } }} }, 1);
         try tx.commit();
     }
     const result = try f.terminal(try f.start(), "answer", success);
@@ -191,7 +191,7 @@ test "one report reservation survives each hop from a grandchild to the root" {
     {
         var tx = try f.db.begin();
         defer tx.deinit();
-        _ = try database.input.enqueue(&f.db, a, grandchild, f.engine.newId(), 1, &.{.{ .text = .{ .text = "task" } }}, 1);
+        _ = try database.input.enqueue(&f.db, a, grandchild, f.engine.newId(), 1, .{ .content = &.{.{ .text = .{ .text = "task" } }} }, 1);
         try tx.commit();
     }
     try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
@@ -244,7 +244,7 @@ test "cancel before admission reports input IDs without a run ID" {
     {
         var tx = try f.db.begin();
         defer tx.deinit();
-        for (&ids) |*id| id.* = (try database.input.enqueue(&f.db, a, child.raw, f.engine.newId(), 1, &.{.{ .text = .{ .text = "task" } }}, 1)).input.input_id;
+        for (&ids) |*id| id.* = (try database.input.enqueue(&f.db, a, child.raw, f.engine.newId(), 1, .{ .content = &.{.{ .text = .{ .text = "task" } }} }, 1)).input.input_id;
         try tx.commit();
     }
     _ = try commands.sessionCancelInput(&f.engine, a, .{ .session_id = child, .input_id = ids[0] });

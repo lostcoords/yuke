@@ -7,7 +7,10 @@ test "yuke:core clip and style.resolve" {
     const host = Host.create(std.testing.allocator);
     defer host.destroy();
     try support.eval(host, "tests/ui/core.test.js");
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.result"));
+}
+
+test "skill messages fold by native identity and preserve their exact text" {
+    try support.run("tests/ui/skill-message.test.js");
 }
 
 test "yuke:core wrapOffsets keeps every byte and caretRowCol places the caret" {

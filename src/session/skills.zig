@@ -87,7 +87,11 @@ fn scanRoot(arena: std.mem.Allocator, io: std.Io, root: []const u8, scope: proto
         try names.append(arena, try arena.dupe(u8, item.name));
     }
     // Directory order is not stable, so the sorted name order decides the first entry.
-    std.mem.sort([]const u8, names.items, {}, lessThanNames);
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lessThan);
     var candidates: usize = 0;
     for (names.items) |name| {
         const path = try std.fs.path.join(arena, &.{ root, name, "SKILL.md" });
@@ -135,10 +139,6 @@ fn scanRoot(arena: std.mem.Allocator, io: std.Io, root: []const u8, scope: proto
         }
         try entries.append(arena, .{ .name = skill_name, .description = description, .scope = scope, .path = path, .canonical_path = canonical });
     }
-}
-
-fn lessThanNames(_: void, a: []const u8, b: []const u8) bool {
-    return std.mem.lessThan(u8, a, b);
 }
 
 fn countCandidate(candidates: *usize) error{TooManySkills}!void {

@@ -39,6 +39,12 @@ pub const RunProgress = struct {
     current: ?RoundState = null,
 };
 
+/// The model trim cursor is separate from the resident transcript cache.
+pub const ContextFloor = struct {
+    message_id: u64 = 0,
+    budget: u64 = 0,
+};
+
 pub const RunSlot = struct {
     gpa: std.mem.Allocator,
     handle: RunHandle,
@@ -135,6 +141,7 @@ pub const Session = struct {
     draft: ?Draft = null,
     pending: std.ArrayList(QueueItem) = .empty,
     transcript: Transcript,
+    context_floor: ContextFloor = .{},
     base_seq: ids.Seq = 0,
     finalized_message_id: ids.MessageId = 0,
     active_run: ?*RunSlot = null,
@@ -323,6 +330,7 @@ pub const Session = struct {
     fn onTruncated(self: *Session, d: proto.misc.TranscriptTruncatedData) void {
         self.raiseFinalized(d.first_removed_id); // truncated ids reject a late draft
         self.transcript.trimFrom(d.first_removed_id); // drop the truncated messages from the cache
+        self.context_floor = .{};
         self.advance(d.seq);
     }
 
@@ -352,13 +360,15 @@ pub const QueueItem = struct {
     content: []const content.ContentPart,
     queued_at_ms: u64,
     source: ?proto.input.InputSource = null,
+    skill_name: ?[]const u8 = null,
 
     fn clone(gpa: std.mem.Allocator, qi: misc.QueuedInput) Error!QueueItem {
         var arena = std.heap.ArenaAllocator.init(gpa);
         errdefer arena.deinit();
         const owned = try proto.dupe(arena.allocator(), qi.content);
         const source = try proto.dupe(arena.allocator(), qi.source);
-        return .{ .arena = arena, .input_id = qi.input_id, .content = owned, .queued_at_ms = qi.queued_at_ms, .source = source };
+        const skill_name = try proto.dupe(arena.allocator(), qi.skill_name);
+        return .{ .arena = arena, .input_id = qi.input_id, .content = owned, .queued_at_ms = qi.queued_at_ms, .source = source, .skill_name = skill_name };
     }
 
     fn deinit(self: *QueueItem) void {

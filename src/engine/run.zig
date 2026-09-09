@@ -40,21 +40,8 @@ fn appendRunStarted(db: *Database, arena: std.mem.Allocator, io: std.Io, session
     });
 }
 
-/// Tx1 allocates the IDs and commits the user message in one transaction. The engine runs Tx1 before it spawns the run.
-/// Therefore, send_input returns the run ID at once. `input` borrows `arena`.
-pub fn beginTurn(
-    db: *Database,
-    io: std.Io,
-    arena: std.mem.Allocator,
-    session_id: [16]u8,
-    input: []const proto.content.ContentPart,
-    config_rev: proto.ids.ConfigRev,
-) !Started {
-    return beginTurnSource(db, io, arena, session_id, input, config_rev, null);
-}
-
-/// A validated parent tool site follows its instruction into durable history.
-pub fn beginTurnSource(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, input: []const proto.content.ContentPart, config_rev: proto.ids.ConfigRev, source: ?proto.input.InputSource) !Started {
+/// Commit the validated input and the run start in one transaction.
+pub fn beginTurn(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, input: @import("../session/input.zig"), config_rev: proto.ids.ConfigRev) !Started {
     var tx = try db.begin();
     defer tx.deinit();
     const input_id = try event_store.allocInputId(db, arena, session_id);
@@ -64,9 +51,10 @@ pub fn beginTurnSource(db: *Database, io: std.Io, arena: std.mem.Allocator, sess
     const user_now = util.nowMillis(io);
     const user_message: proto.message.Message = .{ .user = .{
         .id = user_message_id,
-        .content = input,
+        .content = input.content,
         .input_id = input_id,
-        .source = source,
+        .source = input.source,
+        .skill_name = input.skill_name,
         .time = .{ .created_at_ms = user_now },
     } };
     const user_seq = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), user_now, user_message);
@@ -115,6 +103,7 @@ pub fn beginQueuedTurnInTransaction(db: *Database, io: std.Io, arena: std.mem.Al
             .id = user_message_id,
             .content = entry.input.content,
             .source = entry.input.source,
+            .skill_name = entry.input.skill_name,
             .input_id = entry.input.input_id,
             .time = .{ .created_at_ms = entry.input.queued_at_ms },
         } };
@@ -173,8 +162,8 @@ test "beginQueuedTurn drains all durable inputs in FIFO order" {
     const one = [_]proto.content.ContentPart{.{ .text = .{ .text = "one" } }};
     const two = [_]proto.content.ContentPart{.{ .text = .{ .text = "two" } }};
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try input_store.enqueue(&db, a, sid, [_]u8{1} ** 16, 110, &one, 101);
-    _ = try input_store.enqueue(&db, a, sid, [_]u8{2} ** 16, 120, &two, 102);
+    _ = try input_store.enqueue(&db, a, sid, [_]u8{1} ** 16, 110, .{ .content = &one, .skill_name = "pdf" }, 101);
+    _ = try input_store.enqueue(&db, a, sid, [_]u8{2} ** 16, 120, .{ .content = &two }, 102);
     try db.conn.execNoArgs("COMMIT");
 
     const started = try beginQueuedTurn(&db, rt.io(), a, sid, 7);
@@ -203,6 +192,8 @@ test "beginQueuedTurn drains all durable inputs in FIFO order" {
     try testing.expectEqual(@as(u64, 101), page.messages[0].user.time.created_at_ms);
     try testing.expectEqual(@as(u64, 102), page.messages[1].user.time.created_at_ms);
     try testing.expectEqualStrings("one", page.messages[0].user.content[0].text.text);
+    try testing.expectEqualStrings("pdf", page.messages[0].user.skill_name.?);
+    try testing.expect(page.messages[1].user.skill_name == null);
     try testing.expectEqualStrings("two", page.messages[1].user.content[0].text.text);
     try testing.expectEqual(@as(i64, 1), try eventCount(&db, "run.started"));
     try testing.expectEqual(@as(i64, 0), try eventCount(&db, "run.done"));

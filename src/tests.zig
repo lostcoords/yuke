@@ -20,6 +20,7 @@ test {
     _ = @import("util.zig");
     _ = @import("utf8.zig");
     _ = @import("engine/run.zig");
+    _ = @import("engine/turn.zig");
     _ = @import("engine/commands.zig");
     _ = @import("engine/Engine.zig");
     _ = @import("app/commands.zig");

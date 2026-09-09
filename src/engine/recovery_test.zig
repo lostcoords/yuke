@@ -66,7 +66,7 @@ fn seed(db: *database.Database, id: [16]u8, parent: ?[16]u8, workspace: []const 
 }
 
 fn start(db: *database.Database, io: std.Io, arena: std.mem.Allocator, id: [16]u8) !void {
-    _ = try run.beginTurn(db, io, arena, id, &.{.{ .text = .{ .text = "committed input" } }}, 0);
+    _ = try run.beginTurn(db, io, arena, id, .{ .content = &.{.{ .text = .{ .text = "committed input" } }} }, 0);
 }
 
 /// A wake runs on the executor; wait until that run committed its terminal.
@@ -83,8 +83,45 @@ fn queued(db: *database.Database, arena: std.mem.Allocator, id: [16]u8) !void {
     var tx = try db.begin();
     defer tx.deinit();
     const event_id = @import("../util.zig").newId(testing.io);
-    _ = try database.input.enqueue(db, arena, id, event_id, 2, &.{.{ .text = .{ .text = "queued input" } }}, 2);
+    _ = try database.input.enqueue(db, arena, id, event_id, 2, .{ .content = &.{.{ .text = .{ .text = "queued input" } }} }, 2);
     try tx.commit();
+}
+
+test "skill input survives admission teardown and recovery through another connection" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const sid = [_]u8{91} ** 16;
+    const text = "<skill_content name=\"pdf\">\nExact </skill_content> & body.\n</skill_content>\n\nreport.pdf";
+    try seed(&f.db, sid, null, "/work");
+    {
+        var admission: std.heap.ArenaAllocator = .init(testing.allocator);
+        defer admission.deinit();
+        var tx = try f.db.begin();
+        defer tx.deinit();
+        _ = try database.input.enqueue(&f.db, admission.allocator(), sid, [_]u8{92} ** 16, 2, .{
+            .content = &.{.{ .text = .{ .text = text } }},
+            .skill_name = "pdf",
+        }, 2);
+        try tx.commit();
+    }
+    const resident = try f.other.activate(.bytes(sid));
+    try testing.expectEqualStrings("pdf", resident.queueEntries()[0].skill_name.?);
+    try testing.expectEqualStrings(text, resident.queueEntries()[0].content[0].text.text);
+    {
+        var admission: std.heap.ArenaAllocator = .init(testing.allocator);
+        defer admission.deinit();
+        _ = try run.beginQueuedTurn(&f.other_db, f.resources.runtime.io(), admission.allocator(), sid, 0);
+    }
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const page = try database.message.historyPage(&f.db, arena.allocator(), sid, 0, 10);
+    try testing.expectEqual(@as(usize, 1), page.messages.len);
+    try testing.expectEqualStrings("pdf", page.messages[0].user.skill_name.?);
+    try testing.expectEqualStrings(text, page.messages[0].user.content[0].text.text);
+    const projected = try @import("context.zig").project(arena.allocator(), &f.db, sid, .{}, .{ .max_tokens = 10_000, .input_ceiling = 40_000 });
+    try testing.expectEqualStrings("pdf", projected.messages[0].user.skill_name.?);
+    try testing.expectEqualStrings(text, projected.messages[0].user.content[0].text.text);
 }
 
 test "repair wakes an idle intermediate parent after a grandchild interruption" {

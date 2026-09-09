@@ -337,7 +337,7 @@ test "activation restores durable pending input into the runtime queue" {
         .updated_at_ms = 1,
     });
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    const queued = try database.input.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, &.{.{ .text = .{ .text = "recover" } }}, 2);
+    const queued = try database.input.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, .{ .content = &.{.{ .text = .{ .text = "recover" } }} }, 2);
     try db.conn.execNoArgs("COMMIT");
 
     var store: provider_store = .init(std.testing.allocator, runtime.io(), &test_env);
