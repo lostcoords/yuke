@@ -17,7 +17,7 @@ check("one-group", rows.filter((r) => r.kind === "action-group-header" && rowTex
 check("single-group", rows.filter((r) => r.kind === "action-group-header" && rowText(r) === "1 action").length === 1);
 check("tree", tools.map((r) => r.marker).join(",") === "  ├─,  ├─,  └─,  └─");
 check("tree-alignment", !!groupHeader && groupHeader.indent === 2 && tools.every((r) => r.marker.startsWith("  ") && r.indent === 5));
-check("reasoning-action", rows.some((r) => r.kind === "reasoning-header" && r.marker === "  ├─" && rowText(r) === "thought"));
+check("reasoning-action", rows.some((r) => r.kind === "reasoning-header" && r.marker === "  ├─" && rowText(r) === "thought · continued analysis"));
 const aRows = t.rows(60, t._globalRow({ id: "a", row: 0, col: 0 }), t.rowCountOf("a"));
 check("joined-messages", aRows.length > 0 && rowText(aRows[aRows.length - 1]) !== "");
 check("text-breaks", tools.length === 4 && tools[3].marker === "  └─" && rows.some((r) => rowText(r).indexOf("visible answer") >= 0));
@@ -62,6 +62,6 @@ const reason = new Transcript({ partsOf: (id) => parts[id] || [] });
 reason.setOutline([], { id: "reason", type: "assistant" });
 const reasonRows = reason.rows(12, 0, reason.rowCount(12));
 check("reasoning-preview-cap", reasonRows.filter((r) => r.kind === "reasoning-body").length === 3);
-check("reasoning-label", reasonRows.some((r) => r.kind === "reasoning-header" && rowText(r) === "thinking") && !reasonRows.some((r) => rowText(r).indexOf("resumed") >= 0));
+check("reasoning-label", reasonRows.some((r) => r.kind === "reasoning-header" && rowText(r).startsWith("thinking · one two three")) && !reasonRows.some((r) => rowText(r).indexOf("resumed") >= 0));
 check("reasoning-details", reason.openReasoning("reason", 8) && root.overlays.length === 1 && root.overlays[0].content.sections[0].text === parts.reason[0].text);
 root.popOverlay(root.overlays[0]);

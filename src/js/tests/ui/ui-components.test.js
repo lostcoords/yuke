@@ -2,7 +2,7 @@ import { check } from "yuke:test";
 import { term } from "yuke:term";
 import { root, Node } from "yuke:core";
 import { plugins } from "yuke:ext";
-import { Transcript } from "yuke:transcript";
+import { Transcript, presenters } from "yuke:transcript";
 import { ChatView } from "yuke:chat-view";
 import { transcriptVim } from "yuke:transcript-vim";
 import { tuiPlugin } from "yuke:tui";
@@ -28,14 +28,14 @@ t.pager.toTop();
 paint();
 
 const done = t.rows(40, 0, 4);
-check("done-name", rowsHave(done, "read"));
+check("done-name", rowsHave(done, "Read"));
 check("done-path", rowsHave(done, "a.zig"));
-check("done-state", rowsHave(done, "done"));
+check("done-state", !rowsHave(done, "done") && !rowsHave(done, "12ms"));
 check("done-collapsed", markerOf(done) === "└─" && !rowsHave(done, "alpha"));
 
 const runStart = t._globalRow({ id: "run", row: 0, col: 0 });
 const run = t.rows(40, runStart, 6);
-check("run-name", rowsHave(run, "exec"));
+check("run-name", rowsHave(run, "Run") && rowsHave(run, "zig build test"));
 check("run-expanded", markerOf(run) === "└─" && rowsHave(run, "compiling"));
 
 const errStart = t._globalRow({ id: "err", row: 0, col: 0 });
@@ -64,12 +64,12 @@ mix.setOutline([{ id: "mix", type: "assistant" }], null);
 term.beginFrame(); mix.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
 const mixRows = mix.rows(40, 0, 8);
 check("mix-text", rowsHave(mixRows, "hi") && rowsHave(mixRows, "there"));
-check("mix-tool", rowsHave(mixRows, "read") && rowsHave(mixRows, "c.zig"));
+check("mix-tool", rowsHave(mixRows, "Read") && rowsHave(mixRows, "c.zig"));
 const srcEnd = mix._sourceOf("mix").length;
 mix.select(mix.posAtSource("mix", 0), mix.posAtSource("mix", srcEnd));
 const src = mix.selectedSource();
 check("mix-source-md", src.indexOf("hi") >= 0 && src.indexOf("there") >= 0);
-check("mix-source-tool", src.indexOf("read") >= 0 && src.indexOf("c.zig") >= 0);
+check("mix-source-tool", src.indexOf("Read") >= 0 && src.indexOf("c.zig") >= 0);
 
 const dt = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
 dt.setOutline([{ id: "diff", type: "assistant" }], null);
@@ -122,3 +122,30 @@ thought.onMouse(at(6, 2, "press"));
 thought.onMouse(at(6, 2, "release"));
 check("reasoning-body-details", root.overlays.length === 1 && root.overlays[0].content.sections[0].text === parts.thought[0].text);
 root.popOverlay(root.overlays[0]);
+
+// The presenter table is public: an override moves the row and the source together, and a fault falls back.
+parts.pres = [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"MISE_SHELL=bash /usr/bin/zig build test-js"}', state: { type: "completed", output: "ok", duration_ms: 1 } }];
+const pres = new Transcript({ partsOf: (id) => parts[id] || [] });
+pres.setOutline([{ id: "pres", type: "assistant" }], null);
+const presRows = pres.rows(60, 0, 4);
+check("exec-label", rowsHave(presRows, "Run") && rowsHave(presRows, "zig build test-js"));
+
+parts.unknown = [{ type: "tool", id: 0, name: "mcp_thing", arguments: '{"path":"/tmp/x.txt"}', state: { type: "completed", output: "ok", duration_ms: 1 } }];
+const unknown = new Transcript({ partsOf: (id) => parts[id] || [] });
+unknown.setOutline([{ id: "unknown", type: "assistant" }], null);
+const unknownRows = unknown.rows(60, 0, 4);
+check("fallback-name", rowsHave(unknownRows, "mcp_thing") && rowsHave(unknownRows, "x.txt"));
+
+const savedExec = presenters.exec;
+presenters.exec = { category: "run", present: () => ({ verb: "$", subject: "custom" }) };
+const over = new Transcript({ partsOf: (id) => parts[id] || [] });
+over.setOutline([{ id: "pres", type: "assistant" }], null);
+const overRows = over.rows(60, 0, 4);
+check("override-row", rowsHave(overRows, "$") && rowsHave(overRows, "custom"));
+check("override-source", over._sourceOf("pres").indexOf("$ custom") === 0);
+
+presenters.exec = { category: "run", present: () => { throw new Error("bad"); } };
+const faulty = new Transcript({ partsOf: (id) => parts[id] || [] });
+faulty.setOutline([{ id: "pres", type: "assistant" }], null);
+check("presenter-fault-falls-back", rowsHave(faulty.rows(60, 0, 4), "exec"));
+presenters.exec = savedExec;

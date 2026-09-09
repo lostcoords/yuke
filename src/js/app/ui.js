@@ -29,6 +29,11 @@ const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
   TxError: { fg: "danger", bold: true },
   TxSelect: { reverse: true },
   TxToolName: { fg: "fg", bold: true },
+  // One group per tool category. Each starts as the plain name group, so the default stays monochrome and a theme separates them.
+  TxToolRead: { fg: "fg", bold: true },
+  TxToolWrite: { fg: "fg", bold: true },
+  TxToolRun: { fg: "fg", bold: true },
+  TxToolAgent: { fg: "fg", bold: true },
   TxToolMeta: { fg: "fg", dim: true },
   TxToolError: { fg: "danger", bold: true },
   TxToolBody: { fg: "fg", dim: true },

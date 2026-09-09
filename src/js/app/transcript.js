@@ -9,7 +9,7 @@ import { Window, NAV_KEYS } from "yuke:ui";
 
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
-/** @import { ActionEntry, ActionPlan, CodeBlock, MessageDescriptor, PartCache, PartHit, PartOf, PartState, PartsOf, Position, RowCache, Selection, SelectionAnchors, SelectionRange, TranscriptOptions } from "./types/transcript.js" */
+/** @import { ActionEntry, ActionPlan, CodeBlock, MessageDescriptor, PartCache, PartHit, PartOf, PartState, PartsOf, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions } from "./types/transcript.js" */
 
 // Left gutter for a transcript row marker; the body indents past it.
 const TX_GUTTER = 2;
@@ -30,9 +30,9 @@ const ACTION_FIRST = 1;
 const ACTION_LAST = 2;
 const ACTION_SCALE = 4;
 // A part joins the run of actions, closes it, or passes through it. Tools and reasoning group alike.
-const ROLE_NONE = 0;
-const ROLE_ACTION = 1;
-const ROLE_TEXT = 2;
+export const ROLE_NONE = 0;
+export const ROLE_ACTION = 1;
+export const ROLE_TEXT = 2;
 
 /** @param {Wire.InputSource | undefined | null} source @returns {string} */
 export function inputSourceLabel(source) {
@@ -51,12 +51,124 @@ function sameId(a, b) {
   return a != null && b != null && String(a) === String(b);
 }
 
-/** @param {Wire.AssistantPart} part @returns {number} */
-function groupingRole(part) {
-  if (part.type === "tool" || part.type === "reasoning") return ROLE_ACTION;
-  if (part.type === "text" && String(part.text || "").length > 0) return ROLE_TEXT;
-  return ROLE_NONE;
+// The process directory. A path under it drops this prefix.
+const CWD = String(term.cwd || "");
+const CWD_PREFIX = CWD + "/";
+// Bound the command scan. The header clips to the pane width, so a longer pipeline carries nothing.
+const COMMAND_MAX = 160;
+// Bound a reasoning title, so a prose summary with no line break cannot build a long string.
+const TITLE_MAX = 72;
+
+/** @param {unknown} path @returns {string} */
+function shortPath(path) {
+  const s = String(path || "");
+  if (s.length === 0 || s.charCodeAt(0) !== 47) return s;
+  if (CWD.length !== 0 && s.length > CWD_PREFIX.length && s.charCodeAt(CWD.length) === 47 && s.startsWith(CWD)) return s.slice(CWD_PREFIX.length);
+  return s.slice(s.lastIndexOf("/") + 1);
 }
+
+// True for a space, a tab, or a line feed.
+/** @param {number} code @returns {boolean} */
+function blank(code) {
+  return code === 32 || code === 9 || code === 10;
+}
+
+// Skip a leading run of blank lines and `#` comments, so a script header shows its first real command.
+/** @param {string} s @returns {number} */
+function skipComments(s) {
+  let i = 0;
+  for (;;) {
+    while (i < s.length && blank(s.charCodeAt(i))) i++;
+    if (s.charCodeAt(i) !== 35) return i;
+    const nl = s.indexOf("\n", i);
+    if (nl < 0) return i;
+    i = nl + 1;
+  }
+}
+
+// Skip a leading run of `NAME=value` assignments, because they are the environment and not the command.
+/** @param {string} s @param {number} from @returns {number} */
+function skipAssignments(s, from) {
+  let i = from;
+  for (;;) {
+    while (i < s.length && blank(s.charCodeAt(i))) i++;
+    let j = i;
+    let eq = -1;
+    while (j < s.length && !blank(s.charCodeAt(j))) {
+      if (eq < 0 && s.charCodeAt(j) === 61) eq = j;
+      j++;
+    }
+    // A name holds no separator, so `bin/x=y` is a path and closes the run.
+    if (eq <= i || s.lastIndexOf("/", eq) >= i) return i;
+    i = j;
+  }
+}
+
+// Reduce a shell command to its program basename and its arguments on one line.
+/** @param {unknown} raw @returns {string} */
+function shortCommand(raw) {
+  const s = String(raw || "");
+  const start = skipAssignments(s, skipComments(s));
+  const cut = s.slice(start, start + COMMAND_MAX);
+  const line = cut.indexOf("\n") < 0 ? cut : cut.split("\n").join(" ");
+  // A path under the process directory reads relative to it, as it does on its own header.
+  const flat = CWD.length !== 0 && line.indexOf(CWD_PREFIX) >= 0 ? line.split(CWD_PREFIX).join("") : line;
+  let end = 0;
+  while (end < flat.length && !blank(flat.charCodeAt(end))) end++;
+  const program = flat.slice(0, end);
+  return program.slice(program.lastIndexOf("/") + 1) + flat.slice(end) + (s.length > start + COMMAND_MAX ? "…" : "");
+}
+
+/** @param {unknown} start @param {unknown} end @returns {string} */
+function lineRange(start, end) {
+  if (typeof start !== "number") return "";
+  return " (" + start + "-" + (typeof end === "number" ? end : "") + ")";
+}
+
+// A presenter names one tool call. It must not walk tool output and must not scan a whole text.
+/** @type {Record<string, Presenter>} */
+export const presenters = Object.create(null);
+
+presenters.read = { category: "read", present: (o) => ({ verb: "Read", subject: shortPath(o.path) + lineRange(o.start, o.end) }) };
+presenters.write = { category: "write", present: (o) => ({ verb: "Write", subject: shortPath(o.path) }) };
+presenters.edit = { category: "write", present: (o) => ({ verb: "Edit", subject: shortPath(o.path) + (o.replace_all ? " (all)" : "") }) };
+presenters.exec = { category: "run", present: (o) => ({ verb: "Run", subject: shortCommand(o.command) }) };
+presenters.skill = { category: "other", present: (o) => ({ verb: "Skill", subject: String(o.name || "") }) };
+presenters.spawn_agent = { category: "agent", present: (o) => ({ verb: "Agent", subject: String(o.name || "") + " · " + String(o.model || "") }) };
+presenters.send_agent_input = { category: "agent", present: (o) => ({ verb: "Send", subject: String(o.child || "") }) };
+presenters.stop_agent = { category: "agent", present: (o) => ({ verb: "Stop", subject: String(o.child || "") }) };
+presenters.list_agents = { category: "read", present: () => ({ verb: "Agents", subject: "" }) };
+presenters.read_agent = { category: "read", present: (o) => ({ verb: "Read agent", subject: String(o.child || "") }) };
+
+// The transcript presentation policy. Every member is a method, so `ctx.advise` reaches it and a plugin reload reverts it.
+export const presentation = {
+  // A tool with no presenter keeps its own name beside the field a reader acts on.
+  /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {Record<string, any>} args @param {string} raw @returns {ToolLabel} */
+  fallback(part, args, raw) {
+    const verb = String(part.name || "tool");
+    if (typeof args.path === "string") return { verb, subject: shortPath(args.path), category: "other" };
+    if (typeof args.command === "string") return { verb, subject: shortCommand(args.command), category: "other" };
+    return { verb, subject: raw.length > 48 ? raw.slice(0, 47) + "…" : raw, category: "other" };
+  },
+
+  // A part joins the run of actions, closes it, or passes through it. An empty summary takes no place.
+  /** @param {Wire.AssistantPart} part @returns {number} */
+  role(part) {
+    if (part.type === "tool") return ROLE_ACTION;
+    if (part.type === "reasoning") return emptyPart(part) ? ROLE_NONE : ROLE_ACTION;
+    if (part.type === "text" && part.text) return ROLE_TEXT;
+    return ROLE_NONE;
+  },
+};
+
+// A part with no content renders nothing, so it takes no row and no place in its group.
+/** @param {Wire.AssistantPart} part @returns {boolean} */
+function emptyPart(part) {
+  return part.type === "reasoning" && !part.text;
+}
+
+// A category names a style group, so a theme separates a read from a run with no renderer change.
+const CATEGORY_GROUPS = Object.assign(Object.create(null), { read: "TxToolRead", write: "TxToolWrite", run: "TxToolRun", agent: "TxToolAgent" });
 
 /** @param {number} tree @returns {number} */
 function actionCount(tree) {
@@ -144,17 +256,24 @@ function wrapBody(src, width, group, limit = Infinity, tail = 0) {
   }));
 }
 
-/** @param {string} args @returns {string} */
-function toolSummary(args) {
+// Parse the arguments once, then answer through the table. A presenter is user input, so a fault falls back.
+/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @returns {ToolLabel} */
+function describe(part) {
+  const raw = String(part.arguments || "");
+  let args = {};
   try {
-    const o = JSON.parse(args);
-    if (o && typeof o === "object") {
-      if (typeof o.path === "string") return o.path;
-      if (typeof o.command === "string") return o.command;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") args = parsed;
+  } catch (_) {}
+  const presenter = presenters[String(part.name || "")];
+  try {
+    const out = presenter ? presenter.present(args, raw) : presentation.fallback(part, args, raw);
+    const category = presenter ? presenter.category : out && out.category;
+    if (out && typeof out.verb === "string" && typeof out.subject === "string") {
+      return { verb: out.verb, subject: out.subject, category: typeof category === "string" ? category : "other" };
     }
   } catch (_) {}
-  const s = String(args || "");
-  return s.length > 48 ? s.slice(0, 47) + "…" : s;
+  return { verb: String(part.name || "tool"), subject: "", category: "other" };
 }
 
 /** @param {Wire.ToolState | null | undefined} state @returns {Wire.ToolState["type"]} */
@@ -165,10 +284,21 @@ function toolStateKind(state) {
 /** @param {Wire.ToolState | null | undefined} state @returns {string} */
 function toolStateLabel(state) {
   const t = toolStateKind(state);
-  if (t === "completed") return "done";
+  // A completed call needs no word, because the absence of an error already says it.
+  if (t === "completed") return "";
   if (state?.type === "canceled" && state.reason === "setup_declined") return "setup declined";
   if (state?.type === "canceled" && state.reason === "setup_dismissed") return "setup incomplete";
   return t;
+}
+
+// Report a duration only over one second. A sub-second value is not a fact a reader acts on.
+/** @param {Wire.ToolState | null | undefined} state @returns {string} */
+function rightLabel(state) {
+  const label = toolStateLabel(state);
+  const ms = /** @type {{ duration_ms?: number }} */ (state || {}).duration_ms;
+  const took = typeof ms === "number" && ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : "";
+  if (label && took) return label + " · " + took;
+  return label || took;
 }
 
 /** @param {Wire.ToolState | null | undefined} state @returns {boolean} */
@@ -177,26 +307,25 @@ function defaultExpanded(state) {
   return t === "running" || t === "error" || t === "canceled";
 }
 
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {string} summary @returns {string} */
-function toolHeaderSource(part, summary) {
-  const name = String(part.name || "tool");
-  return summary ? name + " " + summary : name;
+/** @param {ToolLabel} label @returns {string} */
+function toolHeaderSource(label) {
+  return label.subject ? label.verb + " " + label.subject : label.verb;
 }
 
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {boolean} expanded @param {number} width @param {string} summary @param {number} tree @returns {TranscriptRow} */
-function toolHeaderRow(part, expanded, width, summary, tree) {
-  const name = String(part.name || "tool");
+/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {boolean} expanded @param {number} width @param {ToolLabel} label @param {number} tree @returns {TranscriptRow} */
+function toolHeaderRow(part, expanded, width, label, tree) {
+  const name = label.verb;
+  const summary = label.subject;
   const state = part.state || {};
   const kind = toolStateKind(state);
-  const duration = /** @type {{ duration_ms?: number }} */ (state);
-  const right = toolStateLabel(state) + (duration.duration_ms != null ? " · " + duration.duration_ms + "ms" : "");
+  const right = rightLabel(state);
   const err = kind === "error";
   const contentW = Math.max(1, width);
   const rightW = term.measure(right);
   const leftW = Math.max(1, contentW - (rightW > 0 ? rightW + 1 : 0));
   const segs = /** @type {Segment[]} */ ([]);
   const nameT = clip(name, leftW);
-  segs.push({ text: nameT, group: "TxToolName", src: 0, srcEnd: name.length });
+  segs.push({ text: nameT, group: CATEGORY_GROUPS[label.category] || "TxToolName", src: 0, srcEnd: name.length });
   let used = term.measure(nameT);
   if (summary && used + 1 < leftW) {
     const t = clip(summary, leftW - used - 1);
@@ -332,22 +461,51 @@ function toolBody(part, width, limit = Infinity) {
   return { rows: wrapBody(text, width, group, limit), source: text };
 }
 
+// A summary on the OpenAI Responses protocol opens with a bold title; prose falls back to its first line.
+/** @param {string} text @returns {string} */
+function reasoningTitle(text) {
+  let i = 0;
+  while (i < text.length && (text.charCodeAt(i) === 32 || text.charCodeAt(i) === 10)) i++;
+  // Search one bounded window, so a long summary never scans past the title.
+  const head = text.slice(i, i + TITLE_MAX + 4);
+  let from = 0;
+  let end = -1;
+  if (head.charCodeAt(0) === 42 && head.charCodeAt(1) === 42) {
+    const close = head.indexOf("**", 2);
+    if (close > 2) {
+      from = 2;
+      end = close;
+    }
+  }
+  if (end < 0) {
+    const nl = head.indexOf("\n", from);
+    end = nl < 0 ? head.length : nl;
+  }
+  if (end - from > TITLE_MAX) return head.slice(from, from + TITLE_MAX) + "…";
+  return head.slice(from, end);
+}
+
 /** @param {Extract<Wire.AssistantPart, { type: "reasoning" }>} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @returns {{ rows: TranscriptRow[], source: string }} */
 function reasoningRows(part, width, expanded, live, tree) {
   const name = live ? "thinking" : "thought";
+  const text = part.text || "";
+  // The collapsed row carries the title, because two thirds of the stored summaries hold nothing else.
+  const title = reasoningTitle(text);
+  const headerSrc = title ? name + " · " + title : name;
+  const segments = /** @type {Segment[]} */ ([{ text: name, group: "TxThought", src: 0, srcEnd: name.length }]);
+  if (title) segments.push({ text: " · " + title, group: "TxThought", src: name.length, srcEnd: headerSrc.length });
   const header = {
-    segments: [{ text: name, group: "TxThought", src: 0, srcEnd: name.length }],
+    segments,
     ...actionHeaderAttrs(tree, expanded),
     markerGroup: "TxThought",
     kind: "reasoning-header",
     partId: part.id,
   };
   const rows = /** @type {TranscriptRow[]} */ ([header]);
-  let source = name;
+  let source = headerSrc;
   if (!expanded) return { rows, source };
-  const text = part.text || "";
   source += "\n" + text;
-  const base = name.length + 1;
+  const base = headerSrc.length + 1;
   const body = wrapBody(text, width, "TxThought", ACTION_PREVIEW_ROWS, 1);
   /** @param {TranscriptRow} row @returns {TranscriptRow} */
   const decorate = (row) => ({
@@ -371,10 +529,10 @@ function reasoningRows(part, width, expanded, live, tree) {
 
 /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {boolean} expanded @param {number} tree @returns {{ rows: TranscriptRow[], source: string }} */
 function toolRows(part, width, expanded, tree) {
-  // `toolSummary` parses the arguments, so the row and the source share one result.
-  const summary = toolSummary(part.arguments);
-  const header = toolHeaderRow(part, expanded, width, summary, tree);
-  const headerSrc = toolHeaderSource(part, summary);
+  // `describe` parses the arguments, so the row and the source share one result.
+  const label = describe(part);
+  const header = toolHeaderRow(part, expanded, width, label, tree);
+  const headerSrc = toolHeaderSource(label);
   const rows = /** @type {TranscriptRow[]} */ ([header]);
   let source = headerSrc;
   if (!expanded) return { rows, source };
@@ -738,7 +896,7 @@ export class Transcript {
       const before = /** @type {Wire.AssistantPart} */ (state.list[at]);
       state.list[at] = fresh;
       const c = state.rows.get(String(partId));
-      const groupingChanged = groupingRole(before) !== groupingRole(fresh);
+      const groupingChanged = presentation.role(before) !== presentation.role(fresh);
       const rowsChanged = !c || c.expanded || !toolHeaderSame(before, fresh);
       if (c && rowsChanged) stale(c);
       return { groupingChanged, rowsChanged };
@@ -1065,7 +1223,7 @@ export class Transcript {
       starts.push(trees.length);
       for (let index = 0; index < messageParts.length; index++) {
         const part = /** @type {Wire.AssistantPart} */ (messageParts[index]);
-        const role = groupingRole(part);
+        const role = presentation.role(part);
         if (role === ROLE_TEXT) flush();
         if (role !== ROLE_ACTION) continue;
         segment.push({ part: start + index, message });
@@ -1273,6 +1431,7 @@ export class Transcript {
     const list = state.list || [];
     for (let index = 0; index < list.length; index++) {
       const part = /** @type {Wire.AssistantPart} */ (list[index]);
+      if (emptyPart(part)) continue;
       const tree = plan.trees[start + index] || 0;
       if (tree && actionFirst(tree)) rows.push({ ...actionGroupRow(actionCount(tree)), key: m.id });
       if (source) source += "\n";

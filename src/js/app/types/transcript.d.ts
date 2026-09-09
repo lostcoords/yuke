@@ -89,3 +89,14 @@ export interface ActionEntry {
   part: number;
   message: number;
 }
+
+export interface ToolLabel {
+  verb: string;
+  subject: string;
+  category: string;
+}
+
+export interface Presenter {
+  category: string;
+  present(args: Record<string, any>, raw: string): { verb: string; subject: string };
+}
