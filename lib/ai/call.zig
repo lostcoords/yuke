@@ -39,6 +39,8 @@ pub const Options = struct {
     temperature: ?f64 = null,
     /// Nucleus sampling mass. A null value leaves the endpoint default.
     top_p: ?f64 = null,
+    /// One stable key per session. Only Responses reads it, and it routes a repeated prefix to one cache.
+    cache_key: []const u8 = "",
 };
 
 pub const Content = union(enum) {
@@ -196,6 +198,7 @@ fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
         .max_tokens_field = model.dialect.max_tokens_field,
         .responses_dialect = model.route.responses_dialect,
         .cache = instance.CachePolicy.markerFor(model.route.cache, model.caps.cache_breakpoint),
+        .cache_key = options.cache_key,
         .output_schema = options.output_schema,
         .temperature = options.temperature,
         .top_p = options.top_p,

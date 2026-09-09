@@ -138,6 +138,8 @@ pub const Request = struct {
     responses_dialect: ResponsesDialect = .standard,
     /// The marker this request writes. The instance cache policy selects it.
     cache: types.CacheMarker = .none,
+    /// Only Responses reads this field. One stable key per session routes a repeated prefix to one cache.
+    cache_key: []const u8 = "",
     /// Sampling temperature. A null value leaves the endpoint default, which every host defines.
     temperature: ?f64 = null,
     /// Nucleus sampling mass. Anthropic asks that a request set this or `temperature`, not both.
@@ -150,6 +152,7 @@ pub const Request = struct {
 pub fn validate(arena: std.mem.Allocator, request: Request, request_ir: RequestIr) !void {
     if (request.model.len == 0 or request.model.len > types.limits.max_string_bytes) return error.InvalidRequest;
     if (request.system.len > types.limits.max_string_bytes) return error.InvalidRequest;
+    if (request.cache_key.len > types.limits.max_cache_key_bytes or !stringValid(request.cache_key)) return error.InvalidRequest;
     if (request.max_output_tokens == 0) return error.InvalidRequest;
     if (request_ir.blocks.len == 0 or request_ir.blocks.len > types.limits.max_blocks) return error.InvalidRequest;
     if (request.tools.len > types.limits.max_blocks) return error.InvalidRequest;
@@ -281,6 +284,14 @@ test "request validation enforces count, size, and token boundaries" {
     var long_model = base;
     long_model.model = too_long;
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), long_model, .{ .blocks = &block }));
+
+    // The host refuses a key over the cap, so a caller learns it here and not from a 400.
+    var long_key = base;
+    long_key.cache_key = "k" ** (types.limits.max_cache_key_bytes + 1);
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), long_key, .{ .blocks = &block }));
+    var full_key = base;
+    full_key.cache_key = "k" ** types.limits.max_cache_key_bytes;
+    try validate(arena.allocator(), full_key, .{ .blocks = &block });
 
     var too_many_blocks: [types.limits.max_blocks + 1]Block = undefined;
     for (&too_many_blocks) |*item| item.* = block[0];

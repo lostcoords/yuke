@@ -21,9 +21,11 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.objectField("store");
     try jw.write(false);
 
-    // GPT-5.6 and later cache only what a breakpoint marks, and top-level instructions cannot carry one.
+    // A stable key sends every round of one session to the same cache node.
+    if (request.cache_key.len != 0) try json.field(&jw, "prompt_cache_key", request.cache_key);
+
+    // An explicit breakpoint pins the last user text; the implicit one still tracks the tail of a tool loop.
     const cache_index = if (request.cache == .openai) lastUserText(request_ir.blocks) else null;
-    if (cache_index != null) try json.nested(&jw, "prompt_cache_options", "mode", "explicit");
 
     // The Codex backend refuses the sampling limits an API key accepts.
     switch (request.responses_dialect) {
@@ -143,7 +145,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.endObject();
 }
 
-/// Return the last user text block, the only place this endpoint accepts a breakpoint.
+/// Return the last user text block. A breakpoint on a tool result is accepted but never writes a cache.
 fn lastUserText(blocks: []const ir.Block) ?usize {
     var i = blocks.len;
     while (i > 0) {
@@ -401,18 +403,24 @@ test "each attachment kind reaches its own input part" {
     );
 }
 
-test "an explicit breakpoint marks the last user text and nothing else" {
+test "an explicit breakpoint marks the last user text and never disables the implicit one" {
     const blocks = [_]ir.Block{
         .{ .role = .user, .value = .{ .text = "one" } },
         .{ .role = .assistant, .value = .{ .text = "two" } },
         .{ .role = .user, .value = .{ .text = "three" } },
     };
     try expectJson(
-        \\{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_options":{"mode":"explicit"},"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"one"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}
+        \\{"model":"gpt-5.6","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"one"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}
     ,
         .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai },
         .{ .blocks = &blocks },
     );
+
+    // Explicit mode would drop the implicit breakpoint, and a tool loop needs it to reach the tail.
+    var explicit: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer explicit.deinit();
+    try serialize(&explicit.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai }, .{ .blocks = &blocks });
+    try testing.expect(std.mem.indexOf(u8, explicit.written(), "prompt_cache_options") == null);
 
     // A route that marks nothing, or marks another protocol's shape, writes neither member.
     inline for (.{ types.CacheMarker.none, types.CacheMarker.anthropic }) |marker| {
@@ -423,7 +431,24 @@ test "an explicit breakpoint marks the last user text and nothing else" {
     }
 }
 
-test "a turn with no user text carries no breakpoint and no options member" {
+test "a cache key rides every dialect and does not need a breakpoint marker" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c1", .content = "ok", .is_error = false } } }};
+    // The codex route marks no breakpoint, so the key is the only cache control it carries.
+    try expectJson(
+        \\{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_key":"0123456789abcdef","instructions":"You are a helpful assistant.","input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}
+    ,
+        .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .none, .cache_key = "0123456789abcdef", .responses_dialect = .codex },
+        .{ .blocks = &blocks },
+    );
+
+    // An empty key writes no member, so a route that never sets one keeps its old body.
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try serialize(&buf.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai }, .{ .blocks = &blocks });
+    try testing.expect(std.mem.indexOf(u8, buf.written(), "prompt_cache_key") == null);
+}
+
+test "a turn with no user text carries no breakpoint" {
     // The endpoint refuses a breakpoint on instructions, so a tool-result-only turn marks nothing.
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c1", .content = "ok", .is_error = false } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);

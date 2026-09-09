@@ -137,6 +137,8 @@ pub fn prepare(
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
     const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
+    // The serializer copies this into the request body, so it only has to outlive `prepare`.
+    const cache_key = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
     var prepared = try ai.prepare(engine.deps.gpa, .{
         .id = build.model,
         .route = route.route,
@@ -151,6 +153,8 @@ pub fn prepare(
             .max_output_tokens = build.max_output_tokens,
             // The budget shares the ceiling, so it follows whatever the chain left there.
             .reasoning = try reasoningFor(&model, slot.config.reasoning, build.max_output_tokens),
+            // Every round of one session repeats a prefix, so the session id keeps them on one cache.
+            .cache_key = &cache_key,
         },
     });
     errdefer prepared.deinit();
