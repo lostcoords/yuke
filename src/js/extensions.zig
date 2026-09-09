@@ -93,6 +93,7 @@ pub const Fixture = struct {
         self.env = .init(self.gpa.allocator());
         self.canned = .{ .bytes = ai.transport.canned_reply };
         try self.app.initTest(self.gpa.allocator(), self.reactor.io(), try database.Database.openTest(), &self.env, self.canned.transport());
+        try self.app.installTestModel();
         try self.extensions.init(self.gpa.allocator(), self.reactor.io(), &self.app, .{
             .host = .{ .cwd = root, .env = &self.env },
             .boot = boot,
@@ -490,7 +491,7 @@ fn startDeferredInput(host: *Host) !void {
     try host.evalModule(
         \\globalThis.finished = 0;
         \\globalThis.waiting = 0;
-        \\request("session.create", { workspace_path: "/tmp/yuke-hooks" }).then((result) => {
+        \\request("session.create", { workspace_path: "/tmp/yuke-hooks", model: "test/model" }).then((result) => {
         \\  globalThis.sid = result.session.id;
         \\  return sendInput({ session_id: sid, input: { type: "content", content: [{ type: "text", text: "original" }] } });
         \\}).then(() => { globalThis.finished = 1; }, (e) => { globalThis.failure = e.code; globalThis.finished = 2; });
@@ -681,7 +682,7 @@ test "the skill tool answers a catalog body through skill.load" {
     defer arena.deinit();
     const a = arena.allocator();
     const host = f.extensions.host;
-    const created = try commands.sessionCreate(&f.app.engine, a, .{ .workspace_path = host.cwd });
+    const created = try commands.sessionCreate(&f.app.engine, a, .{ .workspace_path = host.cwd, .model = "test/model" });
     try std.testing.expect(try database.session.hasSkills(&f.app.db, a, created.session.id.raw));
 
     const call = host.calls.submit("skill", "{\"name\":\"pdf\"}", host.cwd);
@@ -712,7 +713,7 @@ test "session create returns the invalid instruction path through the call API" 
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const params = try std.json.Stringify.valueAlloc(a, .{ .workspace_path = f.extensions.host.cwd }, .{});
+    const params = try std.json.Stringify.valueAlloc(a, .{ .workspace_path = f.extensions.host.cwd, .model = "test/model" }, .{});
     var output: std.Io.Writer.Allocating = .init(a);
     const failure = (try @import("../app/call.zig").call(&f.app, a, "session.create", params, &output.writer)).?;
     try std.testing.expectEqual(proto.enums.ErrorCode.bad_request, failure.code);

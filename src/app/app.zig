@@ -112,6 +112,18 @@ pub const App = struct {
         });
     }
 
+    /// Offer `test/model` so a test that creates a session can name a model the catalog serves.
+    pub fn installTestModel(self: *App) !void {
+        std.debug.assert(builtin.is_test);
+        var local = try provider.config.loadBytes(self.gpa,
+            \\{"version":1,"providers":[{"id":"test","base_url":"http://localhost:1/v1","protocol":"openai_chat","models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}}]}]}
+        );
+        _ = self.store.installLocal(&local) catch |err| {
+            local.deinit();
+            return err;
+        };
+    }
+
     /// Publish one provider's new authentication state. A null `kind` means the engine holds no credential.
     pub fn announceAuthChanged(self: *App, provider_id: []const u8, kind: ?proto.enums.AuthCredentialKind) void {
         const note: proto.rpc.Notification = .{

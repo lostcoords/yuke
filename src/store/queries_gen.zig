@@ -2,14 +2,15 @@
 const sql = @import("sql");
 
 pub const InsertConfig = sql.ExecQuery(
-    \\INSERT INTO session_configs(session_id, config_rev, model, reasoning)
-    \\    VALUES (:session_id, :config_rev, :model, :reasoning);
+    \\INSERT INTO session_configs(session_id, config_rev, model, reasoning, max_rounds)
+    \\    VALUES (:session_id, :config_rev, :model, :reasoning, :max_rounds);
 ,
     struct {
         session_id: [16]u8,
         config_rev: u64,
         model: []const u8,
         reasoning: []const u8,
+        max_rounds: ?u64,
     },
 );
 
@@ -17,6 +18,7 @@ pub const AdvanceConfig = sql.OneQuery(
     \\UPDATE sessions SET
     \\    model           = :model,
     \\    reasoning       = :reasoning,
+    \\    max_rounds      = :max_rounds,
     \\    config_rev      = :config_rev,
     \\    config_rev_high = MAX(config_rev_high, :config_rev),
     \\    projection_seq  = :seq,
@@ -26,6 +28,7 @@ pub const AdvanceConfig = sql.OneQuery(
     struct {
         model: []const u8,
         reasoning: []const u8,
+        max_rounds: ?u64,
         config_rev: u64,
         seq: u64,
         updated_at_ms: u64,
@@ -37,7 +40,7 @@ pub const AdvanceConfig = sql.OneQuery(
 );
 
 pub const ConfigByRevision = sql.OptionalQuery(
-    \\SELECT model, reasoning FROM session_configs WHERE session_id = :session_id AND config_rev = :config_rev;
+    \\SELECT model, reasoning, max_rounds FROM session_configs WHERE session_id = :session_id AND config_rev = :config_rev;
 ,
     struct {
         session_id: [16]u8,
@@ -46,6 +49,7 @@ pub const ConfigByRevision = sql.OptionalQuery(
     struct {
         model: []const u8,
         reasoning: []const u8,
+        max_rounds: ?u64,
     },
 );
 

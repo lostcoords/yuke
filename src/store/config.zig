@@ -26,12 +26,14 @@ pub fn appendConfig(
         .config_rev = config.config_rev,
         .model = config.model,
         .reasoning = config.reasoning,
+        .max_rounds = config.max_rounds,
     });
     _ = try db.queries.advance_config.one(arena, .{
         .id = session_id,
         .config_rev = config.config_rev,
         .model = config.model,
         .reasoning = config.reasoning,
+        .max_rounds = config.max_rounds,
         .seq = seq,
         .updated_at_ms = committed_at_ms,
     });
@@ -40,15 +42,22 @@ pub fn appendConfig(
 
 /// Record the birth config as revision 0 so every referenced revision resolves.
 /// Create calls this without a log event because the session row already carries the config.
-pub fn recordInitial(db: *Database, session_id: [16]u8, model: []const u8, reasoning: []const u8) !void {
+pub fn recordInitial(db: *Database, session_id: [16]u8, config: proto.run.RunConfig) !void {
     std.debug.assert(sql.inTransaction(db.conn)); // Create records this with the session in one commit.
-    try db.queries.insert_config.exec(.{ .session_id = session_id, .config_rev = 0, .model = model, .reasoning = reasoning });
+    std.debug.assert(config.config_rev == 0); // The birth config is always revision 0.
+    try db.queries.insert_config.exec(.{
+        .session_id = session_id,
+        .config_rev = 0,
+        .model = config.model,
+        .reasoning = config.reasoning,
+        .max_rounds = config.max_rounds,
+    });
 }
 
 /// Read one historical config revision into `arena`, or null when the revision does not exist.
 pub fn byRevision(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, config_rev: u64) !?proto.run.RunConfig {
     const row = (try db.queries.config_by_revision.maybeOne(arena, .{ .session_id = session_id, .config_rev = config_rev })) orelse return null;
-    return .{ .config_rev = config_rev, .model = row.value.model, .reasoning = row.value.reasoning };
+    return .{ .config_rev = config_rev, .model = row.value.model, .reasoning = row.value.reasoning, .max_rounds = row.value.max_rounds };
 }
 
 /// Append the config for a revision to `list` once. Fetch it from SQLite. A missing revision is corrupt.
@@ -99,7 +108,7 @@ test "a config change stores a revision and sets the current config" {
     });
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    const seq = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 1, .model = "sonnet", .reasoning = "low" });
+    const seq = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 1, .model = "sonnet", .reasoning = "low", .max_rounds = 7 });
     try db.conn.execNoArgs("COMMIT");
     try testing.expectEqual(@as(u64, 1), seq);
 
@@ -111,6 +120,7 @@ test "a config change stores a revision and sets the current config" {
     try testing.expectEqualStrings("sonnet", snap.model);
     try testing.expectEqualStrings("low", snap.reasoning);
     try testing.expectEqual(@as(u64, 1), snap.config_rev);
+    try testing.expectEqual(@as(?u64, 7), snap.max_rounds);
 }
 
 test "byRevision reads a stored revision and misses an absent one" {
@@ -134,11 +144,12 @@ test "byRevision reads a stored revision and misses an absent one" {
         .updated_at_ms = 100,
     });
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 1, .model = "sonnet", .reasoning = "low" });
+    _ = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 1, .model = "sonnet", .reasoning = "low", .max_rounds = 5 });
     try db.conn.execNoArgs("COMMIT");
 
     const got = (try byRevision(&db, a, sid, 1)).?;
     try testing.expectEqual(@as(u64, 1), got.config_rev);
+    try testing.expectEqual(@as(?u64, 5), got.max_rounds);
     try testing.expectEqualStrings("sonnet", got.model);
     try testing.expectEqualStrings("low", got.reasoning);
     try testing.expect((try byRevision(&db, a, sid, 99)) == null);

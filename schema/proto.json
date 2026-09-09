@@ -31,13 +31,6 @@
   },
   "methods": [
     {
-      "name": "agents.set_model",
-      "params": "AgentsSetModelParams",
-      "result": "SessionConfigResult",
-      "direction": "clientToServer",
-      "paramsOptional": false
-    },
-    {
       "name": "agents.get",
       "params": "Empty",
       "result": "AgentsGetResult",
@@ -48,13 +41,6 @@
       "name": "agents.update",
       "params": "AgentsUpdateParams",
       "result": "AgentsGetResult",
-      "direction": "clientToServer",
-      "paramsOptional": false
-    },
-    {
-      "name": "agents.resolve",
-      "params": "AgentsResolveParams",
-      "result": "AgentsResolveResult",
       "direction": "clientToServer",
       "paramsOptional": false
     },
@@ -94,7 +80,7 @@
       "name": "session.patch",
       "doc": "Update a session's mutable fields.",
       "params": "SessionPatchParams",
-      "result": "SessionResult",
+      "result": "Session",
       "direction": "clientToServer",
       "paramsOptional": false
     },
@@ -110,7 +96,7 @@
       "name": "session.fork",
       "doc": "Fork a session at a message.",
       "params": "SessionForkParams",
-      "result": "SessionResult",
+      "result": "Session",
       "direction": "clientToServer",
       "paramsOptional": false
     },
@@ -395,32 +381,13 @@
   ],
   "structures": [
     {
-      "name": "AgentsSetModelParams",
-      "fields": [
-        {
-          "name": "session_id",
-          "type": "SessionId",
-          "presence": "required"
-        },
-        {
-          "name": "model",
-          "type": "AgentModel",
-          "presence": "required"
-        }
-      ]
-    },
-    {
       "name": "AgentModel",
+      "doc": "A child inherits its reasoning level from its parent session.",
       "fields": [
         {
           "name": "model",
           "type": "string",
           "presence": "required"
-        },
-        {
-          "name": "reasoning",
-          "type": "string",
-          "presence": "optional"
         }
       ]
     },
@@ -480,41 +447,6 @@
         {
           "name": "config",
           "type": "AgentsConfig",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "AgentsResolveParams",
-      "fields": [
-        {
-          "name": "model",
-          "type": "AgentModelSlot",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "AgentsResolveResult",
-      "fields": [
-        {
-          "name": "slot",
-          "type": "AgentModelSlot",
-          "presence": "required"
-        },
-        {
-          "name": "model",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "reasoning",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "revision",
-          "type": "AgentConfigRev",
           "presence": "required"
         }
       ]
@@ -2344,6 +2276,12 @@
           "name": "reasoning",
           "type": "string",
           "presence": "required"
+        },
+        {
+          "name": "max_rounds",
+          "doc": "A null value means the run has no round limit.",
+          "type": "u64",
+          "presence": "optional"
         }
       ]
     },
@@ -3044,7 +2982,7 @@
     },
     {
       "name": "SessionResult",
-      "doc": "This result contains the session after creation, a fork, or a patch.",
+      "doc": "This result contains the new session and the state of its first input.",
       "fields": [
         {
           "name": "session",
@@ -3793,13 +3731,7 @@
       "discriminator": "",
       "arms": [
         {
-          "type": "AgentsSetModelParams"
-        },
-        {
           "type": "AgentsUpdateParams"
-        },
-        {
-          "type": "AgentsResolveParams"
         },
         {
           "type": "SessionListParams"
@@ -3881,9 +3813,6 @@
           "type": "AgentsGetResult"
         },
         {
-          "type": "AgentsResolveResult"
-        },
-        {
           "type": "InitializeResult"
         },
         {
@@ -3894,6 +3823,9 @@
         },
         {
           "type": "SessionResult"
+        },
+        {
+          "type": "Session"
         },
         {
           "type": "Empty"
@@ -4392,14 +4324,6 @@
         {
           "name": "agents.update",
           "wire": "agents.update"
-        },
-        {
-          "name": "agents.resolve",
-          "wire": "agents.resolve"
-        },
-        {
-          "name": "agents.set_model",
-          "wire": "agents.set_model"
         },
         {
           "name": "initialize",

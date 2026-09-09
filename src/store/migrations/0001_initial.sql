@@ -160,6 +160,7 @@ CREATE TABLE session_configs (
     config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991), -- proto.ConfigRev
     model      TEXT NOT NULL CHECK (length(CAST(model AS BLOB)) <= 288),
     reasoning  TEXT NOT NULL CHECK (length(reasoning) <= 32),
+    max_rounds INTEGER CHECK (max_rounds IS NULL OR max_rounds BETWEEN 0 AND 9007199254740991), -- u64
 
     PRIMARY KEY (session_id, config_rev)
 ) STRICT, WITHOUT ROWID;

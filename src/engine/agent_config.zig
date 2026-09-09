@@ -4,7 +4,7 @@ const std = @import("std");
 const proto = @import("proto");
 const paths = @import("../paths.zig");
 const provider = @import("../provider/provider.zig");
-const registry = @import("../provider/registry.zig");
+const model_config = @import("model_config.zig");
 const Engine = @import("Engine.zig");
 const Wire = proto.agents;
 const max_file_bytes = 64 * 1024;
@@ -30,8 +30,9 @@ pub fn update(engine: *Engine, arena: std.mem.Allocator, params: Wire.AgentsUpda
     try lock.lock(engine.deps.io, .exclusive);
     const current = try read(engine, arena);
     if (!std.mem.eql(u8, &current.revision.raw, &params.revision.raw)) return error.AgentConfigConflict;
+    // A slot names no level, so the update validates each model with its own default level.
     for ([_]Wire.AgentModelSlot{ .small, .medium }) |slot| if (params.config.models.get(slot)) |entry| {
-        _ = try validate(engine, arena, entry);
+        _ = try model_config.validate(engine, arena, entry.model, .default);
     };
     const bytes = try std.json.Stringify.valueAlloc(arena, params.config, .{ .emit_null_optional_fields = false, .whitespace = .indent_2 });
     const result = try parse(arena, path, bytes);
@@ -41,30 +42,11 @@ pub fn update(engine: *Engine, arena: std.mem.Allocator, params: Wire.AgentsUpda
     return result;
 }
 
-/// A read refreshes the map; a model check uses the current provider snapshot.
-pub fn resolve(engine: *Engine, arena: std.mem.Allocator, params: Wire.AgentsResolveParams) !Wire.AgentsResolveResult {
+/// The model one slot names. A read refreshes the map from disk.
+pub fn slotModel(engine: *Engine, arena: std.mem.Allocator, slot: Wire.AgentModelSlot) ![]const u8 {
     const current = try read(engine, arena);
-    const entry = current.config.models.get(params.model) orelse return error.AgentSetupRequired;
-    const reasoning = try validate(engine, arena, entry);
-    return .{ .slot = params.model, .model = entry.model, .reasoning = reasoning, .revision = current.revision };
-}
-
-fn validate(engine: *Engine, arena: std.mem.Allocator, entry: Wire.AgentModel) ![]const u8 {
-    const match = engine.deps.providers.merged.resolveModel(entry.model) orelse return error.AgentUnknownModel;
-    if (match.provider.availability == .unavailable) return switch (match.provider.availability.unavailable) {
-        .needs_route => error.AgentRouteUnavailable,
-        .needs_credential, .expired => error.AgentProviderUnavailable,
-    };
-    if (registry.credential(match.provider.availability.ready.credential, engine.deps.env, engine.nowMillis()) == null) return error.AgentProviderUnavailable;
-    if (match.model.caps.tools != true) return error.AgentToolsUnsupported;
-    const normal = try registry.defaultLevel(arena, match.model.*);
-    const level = entry.reasoning orelse normal;
-    if (level.len > 0) {
-        for (try registry.levelNames(arena, match.model.*)) |candidate| if (std.mem.eql(u8, level, candidate)) return arena.dupe(u8, level);
-        return error.AgentReasoningUnsupported;
-    }
-    if (normal.len != 0) return error.AgentReasoningUnsupported;
-    return "";
+    const entry = current.config.models.get(slot) orelse return error.AgentSetupRequired;
+    return entry.model;
 }
 
 fn configPath(arena: std.mem.Allocator, io: std.Io, env: ?*const std.process.Environ.Map) !?[]const u8 {
@@ -101,25 +83,4 @@ pub fn parse(arena: std.mem.Allocator, path: ?[]const u8, bytes: []const u8) !Wi
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
     return .{ .path = path, .revision = .bytes(digest), .config = config };
-}
-
-/// A saved slot edit affects future children; an explicit edit changes one idle child.
-pub fn setModel(engine: *Engine, arena: std.mem.Allocator, params: Wire.AgentsSetModelParams) !proto.session.SessionConfigResult {
-    try engine.own(params.session_id);
-    const store = @import("../store/store.zig");
-    const row = (try store.session.snapshot(engine.deps.db, arena, params.session_id.raw)) orelse return error.UnknownSession;
-    if (row.parent_id == null) return error.BadChild;
-    if (engine.sessions.get(params.session_id)) |resident| if (resident.active_run != null) return error.SessionBusy;
-    const reasoning = try validate(engine, arena, params.model);
-    const marks = (try store.event.highWater(engine.deps.db, arena, params.session_id.raw)).?;
-    const config: proto.run.RunConfig = .{ .config_rev = marks.config_rev_high + 1, .model = params.model.model, .reasoning = reasoning };
-    var tx = try engine.deps.db.begin();
-    defer tx.deinit();
-    const seq = try store.config.appendConfig(engine.deps.db, arena, params.session_id.raw, engine.newId(), engine.nowMillis(), config);
-    try tx.commit();
-    const note: proto.rpc.Notification = .{ .method = .@"config.changed", .params = .{ .config_changed_data = .{ .session_id = params.session_id, .seq = seq, .config = config } } };
-    const events = @import("events.zig");
-    if (engine.sessions.get(params.session_id)) |resident| events.emitDurable(engine, resident, note) else engine.sinks.emit(note);
-    events.announceSummary(engine, params.session_id);
-    return .{ .config = config };
 }

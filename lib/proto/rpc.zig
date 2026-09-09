@@ -23,9 +23,7 @@ fn stringifyPayload(self: anytype, jw: *std.json.Stringify) !void {
 
 /// This union carries client request parameters.
 pub const RequestParams = union(enum) {
-    agents_set_model_params: agents.AgentsSetModelParams,
     agents_update_params: agents.AgentsUpdateParams,
-    agents_resolve_params: agents.AgentsResolveParams,
     session_list_params: session.SessionListParams,
     session_get_params: session.SessionGetParams,
     create_session: misc.CreateSession,
@@ -58,11 +56,11 @@ pub const RequestParams = union(enum) {
 /// This union carries server response results.
 pub const ResponseResult = union(enum) {
     agents_get_result: agents.AgentsGetResult,
-    agents_resolve_result: agents.AgentsResolveResult,
     initialize_result: misc.InitializeResult,
     session_list_result: session.SessionListResult,
     session_list_item: session.SessionListItem,
     session_result: session.SessionResult,
+    session: misc.Session,
     empty: misc.Empty,
     session_compact_result: session.SessionCompactResult,
     session_send_input_result: session.SessionSendInputResult,
@@ -123,17 +121,15 @@ pub const MethodSpec = struct {
 
 /// This table maps each RPC method to its wire types.
 pub const methods = [_]MethodSpec{
-    .{ .name = .@"agents.set_model", .params = agents.AgentsSetModelParams, .result = session.SessionConfigResult, .params_optional = false },
     .{ .name = .@"agents.get", .params = misc.Empty, .result = agents.AgentsGetResult, .params_optional = true },
     .{ .name = .@"agents.update", .params = agents.AgentsUpdateParams, .result = agents.AgentsGetResult, .params_optional = false },
-    .{ .name = .@"agents.resolve", .params = agents.AgentsResolveParams, .result = agents.AgentsResolveResult, .params_optional = false },
     .{ .name = .initialize, .params = misc.Empty, .result = misc.InitializeResult, .params_optional = true },
     .{ .name = .@"session.list", .params = session.SessionListParams, .result = session.SessionListResult, .params_optional = true },
     .{ .name = .@"session.get", .params = session.SessionGetParams, .result = session.SessionListItem, .params_optional = false },
     .{ .name = .@"session.create", .params = misc.CreateSession, .result = session.SessionResult, .params_optional = false },
-    .{ .name = .@"session.patch", .params = session.SessionPatchParams, .result = session.SessionResult, .params_optional = false },
+    .{ .name = .@"session.patch", .params = session.SessionPatchParams, .result = misc.Session, .params_optional = false },
     .{ .name = .@"session.remove", .params = session.SessionRemoveParams, .result = misc.Empty, .params_optional = false },
-    .{ .name = .@"session.fork", .params = session.SessionForkParams, .result = session.SessionResult, .params_optional = false },
+    .{ .name = .@"session.fork", .params = session.SessionForkParams, .result = misc.Session, .params_optional = false },
     .{ .name = .@"session.compact", .params = session.SessionCompactParams, .result = session.SessionCompactResult, .params_optional = false },
     .{ .name = .@"session.rewind", .params = session.SessionRewindParams, .result = misc.Empty, .params_optional = false },
     .{ .name = .@"session.send_input", .params = session.SessionSendInputParams, .result = session.SessionSendInputResult, .params_optional = false },
@@ -362,6 +358,24 @@ pub fn resultFromValue(a: std.mem.Allocator, method: enums.MethodName, v: std.js
 
 const testing = std.testing;
 const parse_opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+
+test "every method result and broadcast payload has a union arm to decode into" {
+    @setEvalBranchQuota(10_000);
+    inline for (methods) |spec| {
+        comptime var found = false;
+        inline for (@typeInfo(ResponseResult).@"union".fields) |field| {
+            if (field.type == spec.result) found = true;
+        }
+        if (!found) @compileError("no ResponseResult arm decodes " ++ @tagName(spec.name));
+    }
+    inline for (broadcasts) |spec| {
+        comptime var found = false;
+        inline for (@typeInfo(BroadcastData).@"union".fields) |field| {
+            if (field.type == spec.data) found = true;
+        }
+        if (!found) @compileError("no BroadcastData arm decodes " ++ @tagName(spec.name));
+    }
+}
 
 test "optional method parameters decode from an empty object" {
     inline for (methods) |spec| {

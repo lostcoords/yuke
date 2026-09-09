@@ -488,7 +488,7 @@ test "native child admission enforces the slot and preserves parent instruction 
     try testing.expectError(error.AgentConfigConflict, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
     params.model = null;
     params.reasoning = "high";
-    try testing.expectError(error.AgentConfigConflict, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
+    try testing.expectError(error.ChildReasoningDerived, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
     try testing.expectEqual(@as(u64, 1), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
     params.reasoning = null;
     params.system_prompt = "custom child prompt";
@@ -555,7 +555,7 @@ test "root templates resolve once and invalid templates create no session" {
     var launch: ?turn.Launch = null;
     _ = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = root.session.id, .input = input() }, &launch, null);
     try testing.expectEqualStrings(expected, launch.?.slot.config.system_prompt);
-    try testing.expectError(error.InvalidPromptPlaceholder, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .system_prompt = "${missing}" }));
+    try testing.expectError(error.InvalidPromptPlaceholder, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .system_prompt = "${missing}" }));
     try testing.expectEqual(@as(u64, 2), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
 }
 
@@ -571,25 +571,25 @@ test "default and empty bases retain the environment and reject oversized compos
     try testing.expectEqualStrings(try original.render(a), (try database.session.prompt(&f.db, a, f.parent.raw)).?);
 
     try f.engine.setPromptConfig("configured", null);
-    const configured = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work" });
+    const configured = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model" });
     try testing.expectEqualStrings("configured", (try database.session.promptParts(&f.db, a, configured.session.id.raw)).base);
-    const explicit = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .system_prompt = "" });
+    const explicit = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .system_prompt = "" });
     const empty = try database.session.promptParts(&f.db, a, explicit.session.id.raw);
     try testing.expectEqualStrings("", empty.base);
     try testing.expectEqualStrings(empty.environment, (try database.session.prompt(&f.db, a, explicit.session.id.raw)).?);
 
     try f.engine.setPromptConfig("", null);
-    const disabled = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work" });
+    const disabled = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model" });
     try testing.expectEqualStrings("", (try database.session.promptParts(&f.db, a, disabled.session.id.raw)).base);
     try f.engine.setPromptConfig(null, null);
-    const restored = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work" });
+    const restored = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model" });
     try testing.expectEqualStrings(prompts.default_system_prompt, (try database.session.promptParts(&f.db, a, restored.session.id.raw)).base);
     try testing.expectEqualStrings(original.environment, (try database.session.promptParts(&f.db, a, f.parent.raw)).environment);
 
     const count = (try commands.sessionList(&f.engine, a, .{})).total;
     const oversized = try a.alloc(u8, proto.meta.limits.max_message_string_bytes);
     @memset(oversized, 'x');
-    try testing.expectError(error.PromptTooLarge, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .system_prompt = oversized }));
+    try testing.expectError(error.PromptTooLarge, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .system_prompt = oversized }));
     try testing.expectEqual(count, (try commands.sessionList(&f.engine, a, .{})).total);
 }
 
@@ -636,12 +636,12 @@ test "instruction snapshots survive file edits and child creation" {
     const count = (try commands.sessionList(&f.engine, a, .{})).total;
     var refused: ?turn.Launch = null;
     var diagnostic: ?[]const u8 = null;
-    try testing.expectError(error.InvalidInstructions, commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = workspace }, &refused, &diagnostic));
+    try testing.expectError(error.InvalidInstructions, commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model" }, &refused, &diagnostic));
     try testing.expect(std.mem.indexOf(u8, diagnostic.?, metadata[0].path) != null);
     try testing.expectEqual(count, (try commands.sessionList(&f.engine, a, .{})).total);
     try testing.expect(refused == null);
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = "new rules" });
-    const fresh = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = workspace });
+    const fresh = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model" });
     const fresh_sources = try database.session.instructionSnapshots(&f.db, a, fresh.session.id.raw);
     try testing.expectEqualStrings("new rules", fresh_sources[0].text);
     try testing.expectEqualStrings(root_parts.instructions, (try database.session.promptParts(&f.db, a, root.session.id.raw)).instructions);

@@ -488,7 +488,7 @@ test "a print run answers the reply text, then continues the same session as JSO
     try testing.expectEqualStrings("yuke -p: unknown session\n", unknown.err);
 }
 
-test "a print run reports a model the catalog cannot resolve as a failed outcome" {
+test "a print run refuses a model the catalog cannot resolve before it creates a session" {
     var f: Fixture = undefined;
     try f.init("");
     defer f.deinit();
@@ -503,10 +503,8 @@ test "a print run reports a model the catalog cannot resolve as a failed outcome
 
     const bad = try f.print(arena, "hello", .{ .model = "nope/nothing", .json = true });
     try testing.expectEqual(@as(u8, 1), bad.status);
-    const report = try std.json.parseFromSliceLeaky(Report, arena, bad.out, .{ .ignore_unknown_fields = true });
-    try testing.expectEqual(proto.enums.RunErrorCode.unknown_model, report.outcome.failed.code);
-    try testing.expectEqualStrings("", report.text);
-    try testing.expect(std.mem.startsWith(u8, bad.err, "yuke -p: unknown_model: "));
+    try testing.expectEqualStrings("", bad.out); // The create refuses, so no run reports an outcome.
+    try testing.expect(std.mem.startsWith(u8, bad.err, "yuke -p: unsupported_model: "));
 }
 
 test "a print run denies a plugin question and reports it as a notice" {

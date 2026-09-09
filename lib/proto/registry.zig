@@ -24,14 +24,11 @@ pub const EnumEntry = struct { name: []const u8, ty: type };
 pub const AliasEntry = struct { name: []const u8, base: []const u8 };
 
 pub const structs = [_]TypeEntry{
-    .{ .name = "AgentsSetModelParams", .ty = agents.AgentsSetModelParams },
     .{ .name = "AgentModel", .ty = agents.AgentModel },
     .{ .name = "AgentModels", .ty = agents.AgentModels },
     .{ .name = "AgentsConfig", .ty = agents.AgentsConfig },
     .{ .name = "AgentsGetResult", .ty = agents.AgentsGetResult },
     .{ .name = "AgentsUpdateParams", .ty = agents.AgentsUpdateParams },
-    .{ .name = "AgentsResolveParams", .ty = agents.AgentsResolveParams },
-    .{ .name = "AgentsResolveResult", .ty = agents.AgentsResolveResult },
 
     .{ .name = "Client", .ty = initialize.Client },
     .{ .name = "ContentText", .ty = content.ContentText },

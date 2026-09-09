@@ -1,9 +1,9 @@
 import { events } from "yuke:core";
 (async () => {
   map.config.models = { small: { model: "p/family/model" }, medium: { model: "p/family/model" } };
-  const resolve = client.agentsResolve;
+  const resolve = globalThis.resolveSlot;
   let ready = false, logins = 0;
-  client.agentsResolve = async (slot) => { if (!ready) throw Object.assign(new Error("key expired"), { code: "auth_required" }); return resolve(slot); };
+  globalThis.resolveSlot = async (slot) => { if (!ready) throw Object.assign(new Error("key expired"), { code: "auth_required" }); return resolve(slot); };
   client.authList = async () => ({ providers: [{ provider_id: "p", can_login: true }] });
   client.authLogin = async () => {
     logins++;

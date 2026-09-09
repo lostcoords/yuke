@@ -87,7 +87,7 @@ test "a pending input hook still accepts an interaction response" {
     };
     defer stream.deinit();
     rpc.serve(testing.allocator, &stream,
-        \\{"id":"c","method":"session.create","params":{"workspace_path":"/tmp/yuke-rpc-hook"}}
+        \\{"id":"c","method":"session.create","params":{"workspace_path":"/tmp/yuke-rpc-hook","model":"test/model"}}
     );
     const Created = struct { result: struct { session: struct { id: []const u8 } } };
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

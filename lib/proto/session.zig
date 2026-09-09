@@ -245,7 +245,7 @@ pub const SessionRemovedData = struct {
     session_id: ids.SessionId,
 };
 
-/// This result contains the session after creation, a fork, or a patch.
+/// This result contains the new session and the state of its first input.
 pub const SessionResult = struct {
     session: misc.Session,
     input: ?SessionSendInputResult = null,

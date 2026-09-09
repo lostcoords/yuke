@@ -5,9 +5,9 @@ const ids = @import("ids.zig");
 
 pub const AgentModelSlot = enum { small, medium };
 
+/// A child inherits its reasoning level from its parent session.
 pub const AgentModel = struct {
     model: []const u8,
-    reasoning: ?[]const u8 = null,
 };
 
 pub const AgentModels = struct {
@@ -36,7 +36,6 @@ pub const AgentsConfig = struct {
         const parsed = try std.json.parseFromValueLeaky(struct { models: AgentModels = .{} }, a, value, strict);
         for ([_]?AgentModel{ parsed.models.small, parsed.models.medium }) |entry| if (entry) |model| {
             if (model.model.len == 0 or model.model.len > 4096) return error.InvalidCharacter;
-            if (model.reasoning) |level| if (level.len > 256) return error.InvalidCharacter;
         };
         return .{ .models = parsed.models };
     }
@@ -52,32 +51,3 @@ pub const AgentsUpdateParams = struct {
     revision: ids.AgentConfigRev,
     config: AgentsConfig,
 };
-
-pub const AgentsResolveParams = struct { model: AgentModelSlot };
-
-pub const AgentsResolveResult = struct {
-    slot: AgentModelSlot,
-    model: []const u8,
-    reasoning: []const u8,
-    revision: ids.AgentConfigRev,
-};
-
-pub const AgentsSetModelParams = struct {
-    session_id: ids.SessionId,
-    model: AgentModel,
-};
-
-test "slot resolution requires a closed explicit model" {
-    const a = std.testing.allocator;
-    for ([_][]const u8{ "{}", "{\"model\":null}", "{\"model\":\"large\"}", "{\"model\":\"provider/model\"}" }) |json| {
-        if (std.json.parseFromSlice(AgentsResolveParams, a, json, .{})) |parsed| {
-            parsed.deinit();
-            return error.AcceptedInvalidSlot;
-        } else |_| {}
-    }
-    for ([_][]const u8{ "{\"model\":\"small\"}", "{\"model\":\"medium\"}" }) |json| {
-        const parsed = try std.json.parseFromSlice(AgentsResolveParams, a, json, .{});
-        defer parsed.deinit();
-        try std.testing.expect(parsed.value.model == .small or parsed.value.model == .medium);
-    }
-}

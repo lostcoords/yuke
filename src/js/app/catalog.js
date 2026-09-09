@@ -71,16 +71,25 @@ export function contextWindowOf(modelId) {
   return m && m.context_window ? m.context_window : 0;
 }
 
-// The model a new chat starts with; `session.patch` is not implemented, so a choice cannot move an open session.
+// The model a new chat starts with. A named session moves to the same choice.
 /** @type {ModelDefaults} */
 const chatDefaults = { model: null, reasoning: "" };
 
-/** @param {Wire.ModelInfo} model @param {string} reasoning @returns {void} */
-export function chooseModel(model, reasoning) {
+/** @param {Wire.ModelInfo} model @param {string} reasoning @param {string | null} [sessionId] @returns {void} */
+export function chooseModel(model, reasoning, sessionId = null) {
+  const previous = { ...chatDefaults };
   chatDefaults.model = model.selector;
   chatDefaults.reasoning = reasoning;
   notice.show("model · " + model.name + (reasoning ? " · " + reasoning : ""));
   root.invalidate();
+  if (!sessionId) return;
+  // A run in flight keeps the settings it started with, so the move lands on the next turn.
+  client.sessionPatch(sessionId, { model: model.selector, reasoning }).then(() => root.invalidate()).catch((e) => {
+    // The engine refused, so the default must not keep a choice the engine rejected.
+    Object.assign(chatDefaults, previous);
+    notice.show("model · " + ((e && e.message) || "unknown"));
+    root.invalidate();
+  });
 }
 
 // Without a choice this run, the newest session names the model and reasoning, so a restart keeps working.

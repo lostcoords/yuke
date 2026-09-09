@@ -72,8 +72,6 @@ pub const RunErrorCode = enum {
 pub const MethodName = enum {
     @"agents.get",
     @"agents.update",
-    @"agents.resolve",
-    @"agents.set_model",
     /// Establish the connection and negotiate the protocol version.
     initialize,
     /// List the sessions.

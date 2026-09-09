@@ -89,12 +89,11 @@ test "a live setup follower resumes after the lead tool is canceled" {
     const question = host.interactions.takeNext().?;
     try std.testing.expect(question.interaction_id != old_question.interaction_id);
     try host.interactions.respond(.{ .interaction_id = question.interaction_id, .response = .{ .confirm = .{ .value = true } } });
-    for (0..2) |_| {
-        try host.pump();
-        const pick = host.interactions.takeNext().?;
-        try std.testing.expect(pick.request == .select);
-        try host.interactions.respond(.{ .interaction_id = pick.interaction_id, .response = .{ .select = .{ .value = pick.request.select.options[0] } } });
-    }
+    // One provider needs no pick, and a slot names no level, so the model is the only choice.
+    try host.pump();
+    const pick = host.interactions.takeNext().?;
+    try std.testing.expect(pick.request == .select);
+    try host.interactions.respond(.{ .interaction_id = pick.interaction_id, .response = .{ .select = .{ .value = pick.request.select.options[0] } } });
     try host.pump();
     const both = host.interactions.takeNext().?;
     try host.interactions.respond(.{ .interaction_id = both.interaction_id, .response = .{ .confirm = .{ .value = true } } });

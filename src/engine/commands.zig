@@ -16,7 +16,7 @@ const instructions = @import("../session/instructions.zig");
 const skills = @import("../session/skills.zig");
 const reports = @import("reports.zig");
 const admission = @import("admission.zig");
-const provider_registry = @import("../provider/registry.zig");
+const model_config = @import("model_config.zig");
 
 const session_store = database.session;
 const message_store = database.message;
@@ -99,13 +99,6 @@ pub fn sessionList(engine: *Engine, arena: std.mem.Allocator, params: proto.sess
         .next_cursor = next_cursor,
         .total = try session_store.count(engine.deps.db, arena, sel),
     };
-}
-
-/// Return the catalog default level of a model, or an empty level for an unknown model.
-fn defaultLevelOf(engine: *Engine, arena: std.mem.Allocator, model: []const u8) ![]const u8 {
-    const match = engine.deps.providers.merged.resolveModel(model) orelse return "";
-    // The level borrows the merged registry, and a reload can free it before the commit, so the arena keeps a copy.
-    return arena.dupe(u8, try provider_registry.defaultLevel(arena, match.model.*));
 }
 
 /// Handle session.get. The result is one `session.list` item with the activity the engine holds now.
@@ -262,8 +255,47 @@ pub fn sessionConfig(engine: *Engine, arena: std.mem.Allocator, params: proto.se
     const config: proto.run.RunConfig = if (params.config_rev) |rev|
         (try config_store.byRevision(engine.deps.db, arena, sid, rev)) orelse return error.UnknownConfigRev
     else
-        .{ .config_rev = snap.config_rev, .model = snap.model, .reasoning = snap.reasoning };
+        .{ .config_rev = snap.config_rev, .model = snap.model, .reasoning = snap.reasoning, .max_rounds = snap.max_rounds };
     return .{ .config = config, .system_prompt = try session_store.prompt(engine.deps.db, arena, sid) };
+}
+
+/// Handle session.patch: settle the named fields into one config revision and publish it.
+pub fn sessionPatch(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionPatchParams) !proto.misc.Session {
+    try engine.own(params.session_id);
+    const sid = params.session_id.raw;
+    const snapshot = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
+    const patch = params.patch;
+    if (patch.model == null and patch.reasoning == null and patch.max_rounds == null) return error.EmptyPatch;
+    // A patch checks only the settings it names, so a round limit still moves while a credential is stale.
+    const resolved: model_config.Resolved = if (patch.model) |model|
+        // A new model settles its own default level unless the patch names one.
+        try model_config.validate(engine, arena, model, if (patch.reasoning) |level| .{ .explicit = level } else .default)
+    else if (patch.reasoning) |level|
+        try model_config.validate(engine, arena, snapshot.model, .{ .explicit = level })
+    else
+        .{ .model = snapshot.model, .reasoning = snapshot.reasoning };
+    const marks = (try database.event.highWater(engine.deps.db, arena, sid)).?;
+    std.debug.assert(marks.config_rev_high >= snapshot.config_rev); // The mark never falls behind the current config.
+    const config: proto.run.RunConfig = .{
+        .config_rev = marks.config_rev_high + 1,
+        .model = resolved.model,
+        .reasoning = resolved.reasoning,
+        .max_rounds = patch.max_rounds orelse snapshot.max_rounds,
+    };
+    const seq = seq: {
+        var tx = try engine.deps.db.begin();
+        defer tx.deinit();
+        const seq = try config_store.appendConfig(engine.deps.db, arena, sid, engine.newId(), engine.nowMillis(), config);
+        try tx.commit();
+        break :seq seq;
+    };
+    // The fold takes seq in order, so no suspension point may separate the commit above from this emit.
+    const note: proto.rpc.Notification = .{ .method = .@"config.changed", .params = .{ .config_changed_data = .{ .session_id = params.session_id, .seq = seq, .config = config } } };
+    if (engine.sessions.get(params.session_id)) |resident| session_events.emitDurable(engine, resident, note) else engine.sinks.emit(note);
+    session_events.announceSummary(engine, params.session_id);
+    const patched = (try session_store.snapshot(engine.deps.db, arena, sid)).?;
+    std.debug.assert(patched.config_rev == config.config_rev); // The advance guard let this revision through.
+    return (try session_events.sessionItem(arena, patched)).session;
 }
 
 /// Handle session.history: return a page of committed messages oldest first, the configs those
@@ -500,19 +532,21 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         .skill => |invocation| try skillContent(engine, arena, catalog.entries, invocation, diagnostic),
     } else null;
     var parent_tree: ?admission.Location = null;
-    var selected: ?proto.agents.AgentsResolveResult = null;
+    var selected: ?model_config.Resolved = null;
     if (params.child) |child| {
         if (content == null) return error.BadChild;
         if (!admission.validName(child.name)) return error.BadChildName;
+        // A child derives both settings, so an explicit choice is a caller mistake, not a preference.
+        if (params.reasoning != null) return error.ChildReasoningDerived;
         try engine.own(child.site.session_id);
         const row = (try session_store.snapshot(engine.deps.db, arena, child.site.session_id.raw)) orelse return error.UnknownSession;
         if (!std.mem.eql(u8, row.root, root)) return error.BadChild;
         parent_tree = try admission.location(engine, arena, child.site.session_id);
         if ((try engine.deps.db.queries.child_by_name.maybeOne(arena, .{ .parent_id = child.site.session_id.raw, .name = child.name })) != null) return error.DuplicateChildName;
-        selected = try @import("agent_config.zig").resolve(engine, arena, .{ .model = child.slot });
+        const slot_model = try @import("agent_config.zig").slotModel(engine, arena, child.slot);
+        selected = try model_config.validate(engine, arena, slot_model, .{ .inherit = row.reasoning });
         if (parent_tree.?.depth >= engine.max_agent_depth) return error.AgentDepthLimit;
         if (params.model) |model| if (!std.mem.eql(u8, model, selected.?.model)) return error.AgentConfigConflict;
-        if (params.reasoning) |reasoning| if (!std.mem.eql(u8, reasoning, selected.?.reasoning)) return error.AgentConfigConflict;
         try validateParentSite(engine, child.site);
     }
     const id: proto.ids.SessionId = .bytes(engine.newId());
@@ -521,8 +555,15 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     const base = std.fs.path.basename(root);
     const title = if (params.child) |child| child.name else if (base.len == 0) root else base;
     const profile = params.profile orelse "default";
-    const model = if (selected) |value| value.model else params.model orelse "";
-    const reasoning = if (selected) |value| value.reasoning else params.reasoning orelse try defaultLevelOf(engine, arena, model);
+    const resolved = selected orelse try model_config.validate(
+        engine,
+        arena,
+        params.model orelse return error.NoModel,
+        if (params.reasoning) |level| .{ .explicit = level } else .default,
+    );
+    const model = resolved.model;
+    const reasoning = resolved.reasoning;
+    const birth_config: proto.run.RunConfig = .{ .config_rev = 0, .model = model, .reasoning = reasoning, .max_rounds = params.max_rounds };
     const prompts = @import("prompt.zig");
     const prompt_context: prompts.Context = .{ .workspace = root, .session_id = id, .agent_name = if (params.child) |child| child.name else "root" };
     const base_prompt = if (params.system_prompt) |text|
@@ -567,7 +608,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         });
         const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, .{ .base = base_prompt, .child_policy = child_prompt, .environment = environment, .sources = sources, .skills = catalog.entries });
         if (available) prepared = try run.RunSlot.prepare(engine.deps.gpa, model, reasoning, system_prompt, params.max_rounds);
-        try config_store.recordInitial(engine.deps.db, id.raw, model, reasoning);
+        try config_store.recordInitial(engine.deps.db, id.raw, birth_config);
         if (content) |parts| queued = try input_store.enqueue(engine.deps.db, arena, id.raw, engine.newId(), now, .{ .content = parts, .source = if (params.child) |child| .{ .parent_instruction = child.site } else null, .skill_name = if (params.initial_input.? == .skill) params.initial_input.?.skill.name else null }, now);
         if (prepared != null) started = try run.beginQueuedTurnInTransaction(engine.deps.db, engine.deps.io, arena, id.raw, 0);
         try tx.commit();
@@ -761,9 +802,7 @@ test "a new session takes the catalog default level, and a stated level stays" {
     try std.testing.expectEqualStrings("high", by_default.session.reasoning);
     const stated = try sessionCreate(&engine, arena, .{ .workspace_path = "/tmp", .model = "minimax/MiniMax-M3", .reasoning = "off" });
     try std.testing.expectEqualStrings("off", stated.session.reasoning);
-    const unknown = try sessionCreate(&engine, arena, .{ .workspace_path = "/tmp", .model = "nope/nope" });
-    try std.testing.expectEqualStrings("", unknown.session.reasoning);
-    // A stated empty level is a choice, not an absence, so the default does not replace it.
-    const empty = try sessionCreate(&engine, arena, .{ .workspace_path = "/tmp", .model = "minimax/MiniMax-M3", .reasoning = "" });
-    try std.testing.expectEqualStrings("", empty.session.reasoning);
+    // A model with an effort to prefer must run with one, and the catalog must name the model.
+    try std.testing.expectError(error.ReasoningUnsupported, sessionCreate(&engine, arena, .{ .workspace_path = "/tmp", .model = "minimax/MiniMax-M3", .reasoning = "" }));
+    try std.testing.expectError(error.ModelUnknown, sessionCreate(&engine, arena, .{ .workspace_path = "/tmp", .model = "nope/nope" }));
 }

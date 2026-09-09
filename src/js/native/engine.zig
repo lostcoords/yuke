@@ -308,6 +308,7 @@ test "a request reaches a command and answers with its result" {
     var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
     var runtime: app.App = undefined;
     try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), &env, canned.transport());
+    try runtime.installTestModel();
     defer runtime.logins.deinit();
     defer runtime.store.deinit();
     defer runtime.db.deinit();
@@ -340,7 +341,7 @@ test "a request reaches a command and answers with its result" {
     // A command with real parameters must decode them, not fall back to an empty object.
     try host.evalModule(
         \\import { native } from "yuke:engine-native";
-        \\native.request("session.create", JSON.stringify({ workspace_path: "/tmp/yuke-probe" })).then((text) => {
+        \\native.request("session.create", JSON.stringify({ workspace_path: "/tmp/yuke-probe", model: "test/model" })).then((text) => {
         \\  const r = JSON.parse(text);
         \\  globalThis.created = r && r.session ? 1 : 0;
         \\  globalThis.sid = r && r.session ? r.session.id : "";

@@ -221,6 +221,12 @@ function sessionCreate(params) {
   return createSession(params);
 }
 
+// Change the named settings of one session; an absent field keeps its current value.
+/** @param {string} sessionId @param {Wire.SessionPatch} patch @returns {Promise<Wire.Session>} */
+function sessionPatch(sessionId, patch) {
+  return request("session.patch", { session_id: sessionId, patch });
+}
+
 // The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
 /** @param {Wire.CatalogRev | null | undefined} sinceRev @returns {Promise<Wire.CatalogListResult>} */
 function catalogList(sinceRev) {
@@ -308,17 +314,10 @@ function authRemove(providerId) {
 function agentsGet() { return request("agents.get", {}); }
 /** @param {Wire.AgentsUpdateParams} params @returns {Promise<Wire.AgentsGetResult>} */
 function agentsUpdate(params) { return request("agents.update", params); }
-/** @param {Wire.AgentModelSlot} model @returns {Promise<Wire.AgentsResolveResult>} */
-function agentsResolve(model) { return request("agents.resolve", { model }); }
-
-/** @param {string} sessionId @param {Wire.AgentModel} model @returns {Promise<Wire.SessionConfigResult>} */
-function agentsSetModel(sessionId, model) { return request("agents.set_model", { session_id: sessionId, model }); }
 
 export const client = {
-  agentsSetModel,
   agentsGet,
   agentsUpdate,
-  agentsResolve,
   request,
   sessionList,
   sessionOpen,
@@ -343,6 +342,7 @@ export const client = {
   sessionCancelRun,
   sessionCancelInput,
   sessionCreate,
+  sessionPatch,
   catalogList,
   catalogReload,
   authList,

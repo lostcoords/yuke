@@ -16,6 +16,8 @@ pub const RunConfig = struct {
     config_rev: ids.ConfigRev,
     model: []const u8,
     reasoning: []const u8,
+    /// A null value means the run has no round limit.
+    max_rounds: ?u64 = null,
 };
 
 /// This payload describes `run.done`.

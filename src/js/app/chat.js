@@ -278,7 +278,7 @@ function openModelPicker(ctx, query) {
     if (query) {
       const m = models.find((x) => x.selector === query || x.id === query || x.name === query);
       if (m) {
-        if (modelAvailable(m)) chooseModel(m, m.default_reasoning || m.reasoning_levels[0] || "");
+        if (modelAvailable(m)) chooseModel(m, m.default_reasoning || m.reasoning_levels[0] || "", chat.sessionId);
       }
       else notice.show("no model named " + query);
       return null;
@@ -301,7 +301,7 @@ function openModelPicker(ctx, query) {
         return label ? { text: m.name, right: m.provider + " · " + label, group: "UIDim" } : { text: m.name, right: m.provider };
       },
       onAccept: m => {
-        if (modelAvailable(m)) pickReasoning(ctx, m);
+        if (modelAvailable(m)) pickReasoning(ctx, m, chat.sessionId);
       },
     });
     ctx.tui.overlay(p.win);
@@ -322,12 +322,12 @@ function modelAvailable(model) {
   return false;
 }
 
-// A model with one level needs no second step, so the pick ends there.
-/** @param {InjectContext} ctx @param {Wire.ModelInfo} model @returns {void} */
-function pickReasoning(ctx, model) {
+// A model with at most one level needs no second step, so the pick ends there.
+/** @param {InjectContext} ctx @param {Wire.ModelInfo} model @param {string | null} sessionId @returns {void} */
+function pickReasoning(ctx, model, sessionId) {
   const levels = model.reasoning_levels;
   if (levels.length < 2) {
-    chooseModel(model, model.default_reasoning || levels[0] || "");
+    chooseModel(model, model.default_reasoning || levels[0] || "", sessionId);
     return;
   }
   const step = ui.pick({
@@ -340,7 +340,7 @@ function pickReasoning(ctx, model) {
     key: l => l.id,
     filterText: l => l.id,
     format: l => ({ text: l.id }),
-    onAccept: l => chooseModel(model, l.id),
+    onAccept: l => chooseModel(model, l.id, sessionId),
   });
   ctx.tui.overlay(step.win);
   step.content.selectKey(model.default_reasoning || levels[0]);

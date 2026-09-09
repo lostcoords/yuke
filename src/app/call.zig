@@ -52,15 +52,14 @@ pub fn call(
 }
 
 const bindings = struct {
-    pub const @"agents.set_model" = @import("../engine/agent_config.zig").setModel;
     pub const @"agents.get" = @import("../engine/agent_config.zig").get;
     pub const @"agents.update" = @import("../engine/agent_config.zig").update;
-    pub const @"agents.resolve" = @import("../engine/agent_config.zig").resolve;
     pub const initialize = commands.initialize;
     pub const @"session.list" = commands.sessionList;
     pub const @"session.get" = commands.sessionGet;
     pub const @"session.queue" = commands.sessionQueue;
     pub const @"session.create" = commands.sessionCreateForRpc;
+    pub const @"session.patch" = commands.sessionPatch;
     pub const @"session.config" = commands.sessionConfig;
     pub const @"session.reload_context" = commands.sessionReloadContext;
     pub const @"skill.load" = commands.skillLoad;
@@ -108,12 +107,15 @@ fn failureFor(err: anyerror) ?Failure {
         error.AgentConfigReadFailed => .{ .code = .runtime_failed, .message = "cannot read agents.json" },
         error.AgentConfigSaveFailed => .{ .code = .runtime_failed, .message = "cannot save agents.json; the previous live config remains active" },
         error.AgentSetupRequired => .{ .code = .setup_required, .message = "the requested subagent model slot needs setup" },
-        error.AgentUnknownModel => .{ .code = .unsupported_model, .message = "the subagent slot names an unknown model selector" },
-        error.AgentProviderUnavailable => .{ .code = .auth_required, .message = "the subagent provider needs setup or credential repair" },
-        error.AgentRouteUnavailable => .{ .code = .unsupported_model, .message = "the subagent provider needs a valid route in providers.json" },
-        error.AgentToolsUnsupported => .{ .code = .unsupported_model, .message = "the subagent model must have known tool support" },
-        error.AgentReasoningUnsupported => .{ .code = .unsupported_reasoning, .message = "the subagent model does not support the selected reasoning level" },
-        error.BadChild => .{ .code = .bad_request, .message = "a child needs initial input, a model, and a parent in the same workspace" },
+        error.NoModel => .{ .code = .bad_request, .message = "a session must name a model" },
+        error.EmptyPatch => .{ .code = .invalid_patch, .message = "the patch names no field to change" },
+        error.ModelUnknown => .{ .code = .unsupported_model, .message = "the catalog names no model with this selector" },
+        error.ModelUnavailable => .{ .code = .auth_required, .message = "the provider of this model needs setup or credential repair" },
+        error.ModelRouteUnavailable => .{ .code = .unsupported_model, .message = "the provider of this model needs a valid route in providers.json" },
+        error.ModelToolsUnsupported => .{ .code = .unsupported_model, .message = "the model must have known tool support" },
+        error.ReasoningUnsupported => .{ .code = .unsupported_reasoning, .message = "the model does not support the selected reasoning level" },
+        error.BadChild => .{ .code = .bad_request, .message = "a child needs initial input and a parent in the same workspace" },
+        error.ChildReasoningDerived => .{ .code = .bad_request, .message = "a child takes the reasoning level of its parent; it cannot name one" },
         error.AgentDepthLimit => .{ .code = .bad_request, .message = "the parent has reached the agent depth limit" },
         error.BadChildName => .{ .code = .bad_request, .message = "the child name is invalid" },
         error.DuplicateChildName => .{ .code = .bad_request, .message = "the parent already has a child with this name" },

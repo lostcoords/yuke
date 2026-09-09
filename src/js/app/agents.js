@@ -133,10 +133,8 @@ async function pickModel(ctx, slot, signal) {
     const label = await select(ctx, "Model · " + slot, choices.map(modelLabel), signal);
     const model = choices.find((item) => modelLabel(item) === label);
     if (!model) throw failure("bad_request", "The picker returned an unknown model.");
-    if (!model.reasoning_levels.length) return { model: model.selector };
-    const normal = "Model default" + (model.default_reasoning ? " · " + model.default_reasoning : "");
-    const level = await select(ctx, "Reasoning · " + slot, [normal, ...model.reasoning_levels], signal);
-    return level === normal ? { model: model.selector } : { model: model.selector, reasoning: level };
+    // A slot names no level. A child takes the level of its parent session.
+    return { model: model.selector };
   }
 }
 
@@ -221,7 +219,7 @@ export async function recoverAgent(ctx, childId, slot, signal) {
   } else if (action === "Change this child's model") {
     const model = await pickModel(ctx, slot || "child", signal);
     check(signal);
-    await client.agentsSetModel(childId, model);
+    await client.sessionPatch(childId, { model: model.model });
     if (answer(await ctx.interaction.confirm("Slot default", "Save this model for future children too?", { signal }), signal)) {
       const target = slot || answer(await ctx.interaction.select("Slot default", ["small", "medium"], { signal }), signal);
       if (target !== "small" && target !== "medium") throw failure("bad_request", "The slot is invalid.");

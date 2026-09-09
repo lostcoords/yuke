@@ -1,7 +1,7 @@
 import { plugins } from "yuke:ext";
 map.config.models.small = { model: "p/family/model" };
 globalThis.canceledLogin = "";
-client.agentsResolve = async () => { throw Object.assign(new Error("expired"), { code: "auth_required" }); };
+globalThis.resolveSlot = async () => { throw Object.assign(new Error("expired"), { code: "auth_required" }); };
 client.authList = async () => ({ providers: [{ provider_id: "p", can_login: true }] });
 client.authLogin = async () => ({ login_id: "login", verification_url: "https://example.com/login", user_code: "code" });
 client.authCancelLogin = async (id) => { canceledLogin = id; };

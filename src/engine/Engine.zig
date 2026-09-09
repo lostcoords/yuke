@@ -362,7 +362,7 @@ test {
     _ = @import("recovery_test.zig");
     _ = @import("admission_test.zig");
     _ = @import("reports_test.zig");
-    _ = @import("agent_config_test.zig");
+    _ = @import("model_config_test.zig");
 }
 
 /// Depth changes affect new children; active runs retain their slots.
