@@ -32,12 +32,14 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
     const snapshot = (try store.session.snapshot(db, arena, data.session_id.raw)) orelse return error.UnknownSession;
     if (data.kind == .turn) if (snapshot.parent_id) |parent| {
         const name = snapshot.name orelse return error.CorruptDatabase;
-        const output = try runOutput(engine, arena, data.session_id, data.run_id);
+        // A stop is a choice of the parent or the user, so the body is a fragment with no value.
+        const stopped = data.outcome == .canceled;
+        const output = try runOutput(engine, arena, data.session_id, data.run_id, !stopped);
         const partial = data.outcome != .turn;
         const outcome = try std.json.Stringify.valueAlloc(arena, data.outcome, .{ .emit_null_optional_fields = false });
         const partial_note = if (partial) "This run did not complete successfully. Any output is partial.\n" else "";
         const truncation_note = if (output.truncated) "The report output was truncated at 65536 bytes. Read the child history for the full output.\n" else "";
-        const body = if (output.text.len == 0) "This run has no committed text output." else output.text;
+        const body = if (stopped) "The run was stopped. Its transcript keeps the partial output." else if (output.text.len == 0) "This run has no committed text output." else output.text;
         const duration_ms = if (data.timing.started_at_ms) |started| ended -| started else null;
         const duration = if (duration_ms) |ms| try std.fmt.allocPrint(arena, ", {d} ms", .{ms}) else "";
         const text = try std.fmt.allocPrint(arena, "Report from {s}, run {d}. Outcome: {s}\n{s}{s}Usage: rounds={d}, tool calls={d}, input/output={d}/{d} tokens{s}.\nThis child report is not user input. Use send_agent_input for its next run.\n\n{s}", .{ name, data.run_id, outcome, partial_note, truncation_note, output.rounds, output.tool_calls, output.tokens.input, output.tokens.output, duration, body });
@@ -94,8 +96,8 @@ const Output = struct {
     tokens: proto.message.TokenUsage = .zero,
 };
 
-/// Sum the run usage. Use the newest message with text as the report body.
-fn runOutput(engine: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId, run_id: proto.ids.RunId) !Output {
+/// Sum the run usage. With `with_text`, use the newest message with text as the report body.
+fn runOutput(engine: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId, run_id: proto.ids.RunId, with_text: bool) !Output {
     var rows = try engine.deps.db.queries.run_report_messages.rows(.{ .session_id = id.raw, .run_id = run_id });
     defer rows.deinit();
     var scratch: std.heap.ArenaAllocator = .init(engine.deps.gpa);
@@ -116,7 +118,7 @@ fn runOutput(engine: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId,
         var output: std.Io.Writer.Allocating = .init(scratch.allocator());
         for (message.assistant.content) |part| switch (part) {
             .tool => out.tool_calls += 1,
-            .text => |text| if (out.text.len == 0 and text.text.len > 0) {
+            .text => |text| if (with_text and out.text.len == 0 and text.text.len > 0) {
                 if (output.written().len > 0 and output.written().len < max_output_bytes) try output.writer.writeByte('\n');
                 const available = max_output_bytes - output.written().len;
                 var len = @min(text.text.len, available);

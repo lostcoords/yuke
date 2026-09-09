@@ -290,18 +290,31 @@ test "a crash notice and parent report commit once without a child retry" {
     try testing.expectEqual(seq, (try database.event.highWater(&f.db, a, child.raw)).?.seq_high);
 }
 
-test "report output has a UTF-8 byte bound and cancellation preserves partial output" {
+test "report output has a UTF-8 byte bound and a failure keeps its partial output" {
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
     const text = try std.mem.concat(a, u8, &.{ "x" ** (reports.max_output_bytes - 1), "日本語" });
-    const result = try f.terminal(try f.start(), &.{text}, .{ .canceled = .{} });
+    const result = try f.terminal(try f.start(), &.{text}, .{ .failed = .{ .code = .provider, .message = "provider failed" } });
     const source = result.report.?.input.source.?.child_report;
     try testing.expect(source.partial and source.truncated);
     const body = result.report.?.input.content[0].text.text;
     try testing.expect(std.unicode.utf8ValidateSlice(body));
     try testing.expect(body.len < reports.max_output_bytes + 512);
+}
+
+test "a stopped run reports its usage and no body" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const result = try f.terminal(try f.start(), &.{"half an answer"}, .{ .canceled = .{} });
+    const source = result.report.?.input.source.?.child_report;
+    try testing.expect(source.partial and !source.truncated);
+    try testing.expectEqual(@as(u64, 1), source.usage.rounds);
+    const body = result.report.?.input.content[0].text.text;
+    try testing.expect(std.mem.indexOf(u8, body, "half an answer") == null);
+    try testing.expect(std.mem.endsWith(u8, body, "\n\nThe run was stopped. Its transcript keeps the partial output."));
 }
 
 test "compaction does not produce a child turn report" {
