@@ -99,10 +99,7 @@ pub fn authLogin(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Aut
 pub fn authCancelLogin(runtime: *App, _: std.mem.Allocator, params: proto.auth.AuthCancelLoginParams) !proto.misc.Empty {
     // A cancel for a login that already finished is not an error, so a retry stays harmless.
     const slot = runtime.logins.get(params.login_id) orelse return .{};
-    if (!slot.cancel_requested) {
-        slot.cancel_requested = true;
-        slot.wake_event.set(runtime.io);
-    }
+    if (!slot.cancel.requested) slot.cancel.request(runtime.io);
     return .{};
 }
 

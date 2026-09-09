@@ -5,6 +5,7 @@ const proto = @import("proto");
 const draftmod = @import("draft.zig");
 const transcriptmod = @import("transcript.zig");
 const transport = @import("ai").transport;
+const cancelmod = @import("../cancel.zig");
 
 const ids = proto.ids;
 const message = proto.message;
@@ -52,10 +53,9 @@ pub const RunSlot = struct {
     config: Config,
     phase: Phase = .pending_start,
     protocol: proto.enums.ProviderProtocol = .anthropic_messages,
-    cancel_requested: bool = false,
+    cancel: cancelmod.Cancel = .{},
     retry_budget: u8 = 8,
     retry_state: ?proto.activity.ActivityStateRetrying = null,
-    wake_event: std.Io.Event = .unset,
     body: ?transport.ResponseBody = null,
     parent_id: ?ids.SessionId = null,
     tree_root: ids.SessionId,

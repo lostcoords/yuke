@@ -405,9 +405,8 @@ pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto
 
     const canceled_run = if (active) |slot| slot.handle.started.run_id else null;
     if (active) |slot| {
-        if (!slot.cancel_requested) {
-            slot.cancel_requested = true;
-            slot.wake_event.set(engine.deps.io); // Wake the run task so it cancels its reader.
+        if (!slot.cancel.requested) {
+            slot.cancel.request(engine.deps.io); // Wake the run task so it cancels its reader.
         }
     }
     if (active == null) engine.sessions.evictIfIdle(params.session_id);
@@ -471,7 +470,7 @@ pub fn sessionRemove(engine: *Engine, arena: std.mem.Allocator, params: proto.se
 fn validateParentSite(engine: *Engine, site: proto.input.ToolSite) !void {
     const resident = engine.sessions.get(site.session_id) orelse return error.BadToolSite;
     const active = resident.active_run orelse return error.BadToolSite;
-    if (active.cancel_requested or active.phase != .running) return error.BadToolSite;
+    if (active.cancel.requested or active.phase != .running) return error.BadToolSite;
     const current = active.progress.current orelse return error.BadToolSite;
     if (current.message_id != site.message_id) return error.BadToolSite;
     const draft = resident.draft orelse return error.BadToolSite;

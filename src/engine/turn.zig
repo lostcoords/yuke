@@ -154,7 +154,7 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
         }
 
         // A cancel forces the canceled terminal. A failed stream or a plain answer also ends the turn.
-        const commit_terminal: Terminal = if (slot.cancel_requested) .canceled else terminal;
+        const commit_terminal: Terminal = if (slot.cancel.requested) .canceled else terminal;
         if (commit_terminal != .success or !has_tools) {
             commitFinal(engine, run_arena, slot, live, streamer.usage, commit_terminal);
             return;
@@ -171,7 +171,7 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
         };
         if (capped) return;
         // A cancel at the round boundary ends the run without a new empty round.
-        if (slot.cancel_requested) {
+        if (slot.cancel.requested) {
             finishRunOpen(engine, run_arena, slot, .{ .canceled = .{} }) catch |err| faultSlot(engine, session_id, slot, err);
             return;
         }
@@ -200,7 +200,7 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
     // A request hook can await indefinitely, so the build runs as a child a run cancel can reach.
     var request: ?ai.PreparedRequest = null;
     defer if (request) |*prepared| prepared.deinit();
-    const built = switch (runChild(engine, slot, requestChild, .{ engine, arena, slot, streamer, &request })) {
+    const built = switch (slot.cancel.runChild(engine.deps.io, requestChild, .{ engine, arena, slot, streamer, &request })) {
         .canceled, .aborted => return .canceled,
         .returned => |result| result,
     };
@@ -237,17 +237,7 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
             slot.retry_budget -= 1;
             publishRetrying(engine, slot, number, err, delay_ms);
             defer slot.retry_state = null;
-            // Wait on the slot event, NOT on a plain sleep. `cancel_run` sets this event, and a plain
-            // sleep would hold the run for the whole delay because the flag alone never wakes it.
-            slot.wake_event.reset();
-            const waited: std.Io.Clock.Duration = .{ .raw = .fromMilliseconds(@intCast(delay_ms)), .clock = .awake };
-            if (slot.wake_event.waitTimeout(engine.deps.io, .{ .duration = waited })) |_| {
-                return .canceled; // The event fired, so a cancel arrived during the delay.
-            } else |wait_err| switch (wait_err) {
-                error.Timeout => {}, // The delay elapsed. Open the next attempt.
-                error.Canceled => return .canceled,
-            }
-            if (slot.cancel_requested) return .canceled;
+            if (slot.cancel.holdFor(engine.deps.io, delay_ms) catch true) return .canceled;
             continue;
         };
         return terminal;
@@ -274,31 +264,6 @@ fn publishRetrying(engine: *Engine, slot: *RunSlot, number: u8, err: anyerror, d
     session_events.announceActivity(engine, rt);
 }
 
-/// What a cancelable child produced. A run cancel keeps the run alive. A canceled run task unwinds.
-const ChildResult = union(enum) {
-    /// The child returned. The payload holds its result.
-    returned: anyerror!void,
-    /// `cancel_run` reached the slot. The child stopped.
-    canceled,
-    /// A cancel stopped the run task, so the caller must unwind.
-    aborted,
-};
-
-/// Run `f` in a child task, so a cancel can interrupt a blocked call.
-fn runChild(engine: *Engine, slot: *RunSlot, comptime f: anytype, args: anytype) ChildResult {
-    slot.wake_event.reset(); // A one-shot event. The next child waits again.
-    var child = engine.deps.io.concurrent(f, args) catch |err| return .{ .returned = err };
-    slot.wake_event.wait(engine.deps.io) catch {
-        child.cancel(engine.deps.io) catch {}; // Shutdown canceled this run task. Stop the child.
-        return .aborted;
-    };
-    if (slot.cancel_requested) {
-        child.cancel(engine.deps.io) catch {}; // Interrupt a blocked call, then join the child.
-        return .canceled;
-    }
-    return .{ .returned = child.await(engine.deps.io) };
-}
-
 /// Run one attempt. The child owns the body and cancellation.
 fn streamAttempt(
     engine: *Engine,
@@ -308,25 +273,25 @@ fn streamAttempt(
     request: *const ai.PreparedRequest,
     info: *ai.transport.AttemptInfo,
 ) anyerror!Terminal {
-    const result = switch (runChild(engine, slot, streamChild, .{ engine, arena, slot, streamer, request, info })) {
+    const result = switch (slot.cancel.runChild(engine.deps.io, streamChild, .{ engine, arena, slot, streamer, request, info })) {
         .canceled, .aborted => return .canceled,
         .returned => |r| r,
     };
     if (result) |_| {
-        if (slot.cancel_requested) return .canceled;
+        if (slot.cancel.requested) return .canceled;
         const reason = streamer.stop_reason orelse
             return .{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } };
         return .{ .success = reason };
     } else |err| {
-        if (err == error.Canceled or slot.cancel_requested) return .canceled;
+        if (err == error.Canceled or slot.cancel.requested) return .canceled;
         return err;
     }
 }
 
 fn requestChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, out: *?ai.PreparedRequest) !void {
     std.debug.assert(out.* == null);
-    defer slot.wake_event.set(engine.deps.io);
-    try checkCanceled(engine.deps.io, slot);
+    defer slot.cancel.finish(engine.deps.io);
+    try slot.cancel.check(engine.deps.io);
     out.* = try roundRequest(engine, arena, slot, streamer);
 }
 
@@ -342,8 +307,8 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, strea
 
 /// Open the response and stream it into the draft, in a child so a cancel can interrupt a blocked read.
 fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, request: *const ai.PreparedRequest, info: *ai.transport.AttemptInfo) !void {
-    defer slot.wake_event.set(engine.deps.io);
-    try checkCanceled(engine.deps.io, slot);
+    defer slot.cancel.finish(engine.deps.io);
+    try slot.cancel.check(engine.deps.io);
     const body = try engine.deps.route_transport.open(arena, request.transport_request, info);
     std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
@@ -351,7 +316,7 @@ fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, stream
         slot.body = null;
         body.deinit();
     }
-    try checkCanceled(engine.deps.io, slot);
+    try slot.cancel.check(engine.deps.io);
     try ai.consume(engine.deps.gpa, body, request.protocol, streamer, Streamer.onEvent);
 }
 
@@ -571,11 +536,6 @@ pub fn resumeSession(engine: *Engine, rt: *Session) !void {
     try startQueued(engine, rt);
 }
 
-fn checkCanceled(io: std.Io, slot: *const RunSlot) !void {
-    try io.checkCancel();
-    if (slot.cancel_requested) return error.Canceled;
-}
-
 /// Report whether an event carries model output that closes the retry window.
 fn isSemantic(ev: event.StreamEvent) bool {
     return switch (ev) {
@@ -627,7 +587,7 @@ const Streamer = struct {
 
     fn onEvent(self: *Streamer, ev: event.StreamEvent) !void {
         // Check cancellation after each SSE event.
-        try checkCanceled(self.engine.deps.io, self.slot);
+        try self.slot.cancel.check(self.engine.deps.io);
         // Latch the boundary before the emit below. The latch then blocks a replay of this output.
         if (isSemantic(ev)) self.saw_semantic = true;
         switch (ev) {
@@ -777,7 +737,7 @@ fn settlePendingTools(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot,
         try pending.append(arena, .{ .part_id = p.tool.id, .name = p.tool.name, .arguments = p.tool.arguments });
     }
     for (pending.items) |pt| {
-        if (workspace_root == null or slot.cancel_requested) {
+        if (workspace_root == null or slot.cancel.requested) {
             try streamer.emitToolState(pt.part_id, .{ .canceled = .{} });
             continue;
         }
@@ -787,7 +747,7 @@ fn settlePendingTools(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot,
 
 /// Run one tool in a child task, so a cancel can interrupt a blocked call.
 fn runOneTool(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_root: []const u8, pt: PendingTool) !void {
-    return switch (runChild(engine, slot, toolChild, .{ engine, slot, streamer, workspace_root, pt })) {
+    return switch (slot.cancel.runChild(engine.deps.io, toolChild, .{ engine, slot, streamer, workspace_root, pt })) {
         .canceled => {}, // The child settled its part canceled. The next part still settles.
         .aborted => error.Canceled,
         .returned => |result| result,
@@ -798,7 +758,7 @@ fn runOneTool(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_ro
 fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_root: []const u8, pt: PendingTool) !void {
     std.debug.assert(slot.phase == .running); // the run loop owns the slot for this round
     std.debug.assert(slot.progress.current != null); // the round opened the message
-    defer slot.wake_event.set(engine.deps.io);
+    defer slot.cancel.finish(engine.deps.io);
     const started = engine.nowMillis();
     {
         const old = engine.deps.io.swapCancelProtection(.blocked);
@@ -817,7 +777,7 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_roo
     const duration = engine.nowMillis() -| started; // Saturate; the wall clock can move backward.
     const old = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old);
-    const settled: proto.tool.ToolState = if (slot.cancel_requested)
+    const settled: proto.tool.ToolState = if (slot.cancel.requested)
         .{ .canceled = .{ .duration_ms = duration } }
     else if (res.cancellation_reason) |reason|
         .{ .canceled = .{ .duration_ms = duration, .reason = reason } }
@@ -1400,8 +1360,7 @@ test "a run cancel interrupts either request hook before it settles" {
 
         fn cancel(self: *@This()) !void {
             try self.entered.wait(self.io);
-            self.slot.cancel_requested = true;
-            self.slot.wake_event.set(self.io);
+            self.slot.cancel.request(self.io);
         }
     };
     for ([_]proto.hook.Point{ .@"request.build", .@"request.send" }) |point| {

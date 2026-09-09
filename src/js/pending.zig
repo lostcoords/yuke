@@ -75,9 +75,8 @@ pub const Op = struct {
     result: ?Result = null,
     /// The exact tool signal remains rooted until this op leaves the table.
     signal: Value = quickjs.UNDEFINED,
-    /// Exec waits for either its worker result or a call abort on this event.
-    task_wake: std.Io.Event = .unset,
-    cancel_requested: bool = false,
+    /// Exec waits for either its worker result or a call abort on this token.
+    cancel: @import("../cancel.zig").Cancel = .{},
     work: ?*@import("../session/work.zig") = null,
     io: std.Io,
     operation: @import("../session/work.zig").Operation = .{ .cancel = cancelOperation },
@@ -85,8 +84,7 @@ pub const Op = struct {
     fn cancelOperation(operation: *@import("../session/work.zig").Operation) void {
         const self: *Op = @fieldParentPtr("operation", operation);
         std.debug.assert(self.result == null);
-        self.cancel_requested = true;
-        self.task_wake.set(self.io);
+        self.cancel.request(self.io);
     }
 
     /// Record the outcome and wake the owner. This runs on a task, so it enters no JavaScript and touches nothing after the wake.
@@ -138,8 +136,7 @@ pub const Ops = struct {
         std.debug.assert(ctx.isObject(signal));
         for (self.live.items) |op| {
             if (op.result != null or !ctx.isStrictEqual(op.signal, signal)) continue;
-            op.cancel_requested = true;
-            op.task_wake.set(self.io);
+            op.cancel.request(self.io);
         }
     }
 

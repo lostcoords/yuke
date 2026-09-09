@@ -99,26 +99,27 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     return host.startTaskWithSignal(Request, execTask, request, signal);
 }
 
+// TODO: fold this into Cancel.runChild once that helper carries a child result value.
 /// Join the command worker before the owner can free its op.
 fn execTask(host: *Host, op: *pending.Op, req: Request) void {
     defer req.free(host.gpa);
     std.debug.assert(op.result == null);
-    if (op.cancel_requested) return op.finish(.{ .failed = .{ .message = "the command was canceled" } });
+    if (op.cancel.requested) return op.finish(.{ .failed = .{ .message = "the command was canceled" } });
     var worker = host.io.concurrent(execWorker, .{ host, op, req }) catch
         return op.finish(.{ .failed = .{ .message = "the host cannot start another operation" } });
-    op.task_wake.wait(host.io) catch {
+    op.cancel.event.wait(host.io) catch {
         const result = worker.cancel(host.io);
         op.finish(result);
         return;
     };
-    const result = if (op.cancel_requested) worker.cancel(host.io) else worker.await(host.io);
+    const result = if (op.cancel.requested) worker.cancel(host.io) else worker.await(host.io);
     op.finish(result);
 }
 
 /// The worker touches no QuickJS values and signals its supervisor before return.
 fn execWorker(host: *Host, op: *pending.Op, req: Request) pending.Result {
-    defer op.task_wake.set(host.io);
-    if (op.cancel_requested) return .{ .failed = .{ .message = "the command was canceled" } };
+    defer op.cancel.finish(host.io);
+    if (op.cancel.requested) return .{ .failed = .{ .message = "the command was canceled" } };
     host.io.checkCancel() catch return .{ .failed = .{ .message = "the command was canceled" } };
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();

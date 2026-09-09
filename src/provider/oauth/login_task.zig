@@ -47,7 +47,7 @@ fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto
     // The clock counts the request time too, so a slow provider cannot outlast the deadline.
     const began_ms = runtime.nowMillis();
     var pace: poller.Poller = .init(0, slot.start.interval_ms, max_lifetime_ms);
-    if (try sleepOrCancel(runtime, slot, pace.firstWaitMs())) return .{ .canceled = .{} };
+    if (try slot.cancel.holdFor(runtime.io, pace.firstWaitMs())) return .{ .canceled = .{} };
 
     while (true) {
         var arena: std.heap.ArenaAllocator = .init(runtime.gpa);
@@ -65,7 +65,7 @@ fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto
         const reply: poller.Reply = if (result) |poll| switch (poll) {
             .tokens => |tokens| {
                 // Claim with no yield between, so a later cancel cannot contradict the outcome.
-                if (slot.cancel_requested) return .{ .canceled = .{} };
+                if (slot.cancel.requested) return .{ .canceled = .{} };
                 try install(runtime, arena.allocator(), slot, tokens);
                 return .{ .succeeded = .{} };
             },
@@ -78,19 +78,9 @@ fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto
                 .expired => "the login expired before approval",
                 .offline => "the provider stayed unreachable",
             } } },
-            .wait_ms => |delay_ms| if (try sleepOrCancel(runtime, slot, delay_ms)) return .{ .canceled = .{} },
+            .wait_ms => |delay_ms| if (try slot.cancel.holdFor(runtime.io, delay_ms)) return .{ .canceled = .{} },
         }
     }
-}
-
-/// Sleep, or stop early when a cancel wakes the slot. It reports whether the login was canceled.
-fn sleepOrCancel(runtime: *App, slot: *login_runtime.LoginSlot, delay_ms: u64) !bool {
-    if (slot.cancel_requested) return true;
-    slot.wake_event.waitTimeout(runtime.io, .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(@intCast(delay_ms)) } }) catch |err| switch (err) {
-        error.Timeout => return slot.cancel_requested,
-        else => return err,
-    };
-    return true; // Only a cancel sets the event.
 }
 
 fn pollFlow(arena: std.mem.Allocator, slot: *login_runtime.LoginSlot, seam: oauth.Http, now_ms: u64, body: []u8) !oauth.Poll {
@@ -316,7 +306,7 @@ test "a canceled login stops before its first poll" {
     try probe.init(rt.io(), &.{});
     defer probe.deinit();
     try probe.reserve("xai", .xai);
-    probe.slot.cancel_requested = true;
+    probe.slot.cancel.requested = true;
 
     var task = try rt.spawn(Probe.driveTask, .{&probe});
     try task.join();

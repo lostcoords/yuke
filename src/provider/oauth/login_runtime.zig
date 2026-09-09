@@ -26,10 +26,8 @@ pub const LoginSlot = struct {
     /// The reservation holds no code until `start` answers, so a second attempt still sees it.
     start: oauth.Start = .{ .user_code = "", .device_auth_id = "", .verification_url = "" },
     /// A cancel sets this before it wakes the task, so the task reports `canceled`.
-    cancel_requested: bool = false,
+    cancel: @import("../../cancel.zig").Cancel = .{},
     /// The RPC task sets this event so a waiting login stops before its next poll.
-    wake_event: std.Io.Event = .unset,
-
     pub fn destroy(self: *LoginSlot, gpa: std.mem.Allocator) void {
         self.arena.deinit();
         gpa.destroy(self);
