@@ -52,6 +52,7 @@ const Scan = struct {
         std.debug.assert(self.first == 0 or id < self.first);
         if (self.seen_user and !user) self.past_pin = true;
         self.seen_user = self.seen_user or user;
+        const before = self.total;
         self.total += tokensFor(bytes);
         self.first = id;
         if (!self.past_pin) {
@@ -59,7 +60,8 @@ const Scan = struct {
             self.pin = id;
             self.pin_tokens = self.total;
         }
-        if (self.recent == 0 or self.total <= self.budget.lowWater()) {
+        // Take the message that crosses the low water, so one large message never empties the tail.
+        if (self.recent == 0 or (before <= self.budget.lowWater() and self.total <= self.budget.max_tokens)) {
             self.recent = id;
             self.recent_tokens = self.total;
         }
@@ -140,6 +142,27 @@ test "a trim preserves the complete input batch and refuses an oversized live tu
     var large: Scan = .{ .budget = .{ .max_tokens = 10, .input_ceiling = 20 } };
     _ = try large.add(2, false, 30);
     try std.testing.expectError(error.TurnTooLarge, large.add(1, true, 33));
+}
+
+test "a trim keeps the message that crosses the low water" {
+    const t = std.testing;
+    // These are the measured budgets of a 1M-token model, so low water is the flat 20000.
+    var scan: Scan = .{ .budget = .{ .max_tokens = 230_500, .input_ceiling = 922_000 } };
+    try t.expectEqual(@as(u64, 20_000), scan.budget.lowWater());
+    try t.expect(try scan.add(4, true, 2_400)); // the new user turn, 800 tokens
+    try t.expect(try scan.add(3, false, 135_000)); // a 45000-token tool result straddles the mark
+    try t.expect(try scan.add(2, false, 3_000));
+    try t.expect(try scan.add(1, false, 3_000));
+    // A tail that stops before message 3 would hold 800 tokens of a 230500-token budget.
+    try t.expectEqual(@as(u64, 3), scan.recent);
+    try t.expectEqual(@as(u64, 45_800), scan.recent_tokens);
+
+    // A message wider than the whole budget stays out, because a trim may not exceed what it trims to.
+    var huge: Scan = .{ .budget = .{ .max_tokens = 20_000, .input_ceiling = 100_000 } };
+    try t.expect(try huge.add(3, true, 3_000));
+    try t.expect(!try huge.add(2, false, 90_000));
+    try t.expectEqual(@as(u64, 3), huge.recent);
+    try t.expectEqual(@as(u64, 1_000), huge.recent_tokens);
 }
 
 test "an empty history and a history within budget need no trim" {
