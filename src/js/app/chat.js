@@ -395,9 +395,21 @@ export const chatPlugin = {
             root.invalidate();
           });
         },
+        "context:compact": () => {
+          const c = focusedChat();
+          if (!c || !c.sessionId) return notice.show("no open chat");
+          client.sessionCompact(c.sessionId).then((r) => {
+            notice.show(r.status === "started" ? "Compacting the context." : "Compaction waits for the active run.");
+            root.invalidate();
+          }).catch((e) => {
+            notice.show("Compaction failed: " + ((e && e.message) || "unknown"));
+            root.invalidate();
+          });
+        },
       }, {
         "model:pick": { title: "Model", description: "choose the model for the next chat", slash: "model", args: true },
         "context:reload": { title: "Reload context", description: "rescan AGENTS.md and skills for this chat", slash: "reload" },
+        "context:compact": { title: "Compact context", description: "summarize the earlier history of this chat", slash: "compact" },
       });
       });
 },

@@ -96,6 +96,9 @@ pub fn sessionItem(arena: std.mem.Allocator, row: anytype) !proto.session.Sessio
 pub const RunInfo = struct {
     run_id: proto.ids.RunId,
     started_at_ms: u64,
+    kind: proto.enums.RunKind,
+    /// The reason for a compaction run. A turn carries none.
+    reason: ?proto.enums.CompactionReason = null,
     /// The run pins one config revision, so the activity reads it here and never queries.
     config: proto.run.RunConfig,
     retry: ?proto.activity.ActivityStateRetrying = null,
@@ -113,7 +116,7 @@ fn sessionActivity(
         .config = null,
         .queued = session.queueDepth(),
         .context_usage = context_usage,
-        .pending_compaction = null,
+        .pending_compaction = if (session.pending_compaction) |pending| pending.run_id else null,
     };
 
     const waiting: ?proto.activity.ActivityStateRetrying = if (run_info) |run| run.retry else null;
@@ -125,9 +128,13 @@ fn sessionActivity(
         std.debug.assert(draft.config_rev == run_info.?.config.config_rev); // one run pins one revision
         activity.state = try proto.dupe(arena, draft.deriveStreamingState(run_info.?.started_at_ms));
         activity.config = try proto.dupe(arena, run_info.?.config);
-    } else if (run_info) |run| {
-        activity.state = .{ .building = .{ .run_id = run.run_id, .started_at_ms = run.started_at_ms } };
-    }
+    } else if (run_info) |run| switch (run.kind) {
+        .turn => activity.state = .{ .building = .{ .run_id = run.run_id, .started_at_ms = run.started_at_ms } },
+        .compaction => {
+            std.debug.assert(run.reason != null); // the engine sets the reason at every compaction start
+            activity.state = .{ .compacting = .{ .run_id = run.run_id, .reason = run.reason.?, .started_at_ms = run.started_at_ms } };
+        },
+    };
     return activity;
 }
 
@@ -137,6 +144,8 @@ pub fn residentActivity(engine: *Engine, arena: std.mem.Allocator, rt: *Session)
     const run_info: ?RunInfo = if (rt.active_run) |slot| .{
         .run_id = slot.handle.started.run_id,
         .started_at_ms = slot.handle.started.started_at_ms,
+        .kind = slot.handle.started.kind,
+        .reason = slot.handle.started.reason,
         .config = .{
             .config_rev = slot.handle.started.config_rev,
             .model = slot.config.model,

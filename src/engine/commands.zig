@@ -17,6 +17,7 @@ const skills = @import("../session/skills.zig");
 const reports = @import("reports.zig");
 const admission = @import("admission.zig");
 const model_config = @import("model_config.zig");
+const compaction = @import("compaction.zig");
 
 const session_store = database.session;
 const message_store = database.message;
@@ -369,6 +370,27 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
     return .{ .queued = .{ .input_id = queued.input.input_id, .reason = if (rt.active_run != null) .session_busy else .concurrency_limit, .capacity = if (parent != null) admission.capacity(engine, tree.root) else null } };
 }
 
+/// Handle session.compact: start a compaction now, or hold it until the active run ends.
+pub fn sessionCompact(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionCompactParams, launch: *?run_task.Launch) !proto.session.SessionCompactResult {
+    try engine.own(params.session_id);
+    std.debug.assert(launch.* == null);
+    const sid = params.session_id.raw;
+    if (!try session_store.exists(engine.deps.db, arena, sid)) return error.UnknownSession;
+    const rt = try engine.activate(params.session_id);
+    if (rt.faulted) return error.RuntimeFailed;
+    // A second request while one waits answers the compaction the session already holds.
+    if (rt.pending_compaction) |held| return .{ .status = .queued, .run_id = held.run_id };
+
+    const run_id = try compaction.reserveRun(engine, arena, sid);
+    if (rt.active_run == null) {
+        launch.* = .{ .slot = try compaction.begin(engine, rt, .manual, run_id) };
+        return .{ .status = .started, .run_id = run_id };
+    }
+    rt.pending_compaction = .{ .run_id = run_id, .reason = .manual };
+    session_events.announceActivity(engine, rt);
+    return .{ .status = .queued, .run_id = run_id };
+}
+
 /// Cancel one exact queued input. A started input belongs to the active run.
 pub fn sessionCancelInput(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionCancelInputParams) !proto.session.SessionCancelInputResult {
     try engine.own(params.session_id);
@@ -441,8 +463,15 @@ pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto
             slot.cancel.request(engine.deps.io); // Wake the run task so it cancels its reader.
         }
     }
+    // A stop covers work that has not started, so a held compaction goes with the active run.
+    var cleared_compaction: ?proto.ids.RunId = null;
+    if (rt.pending_compaction) |held| {
+        cleared_compaction = held.run_id;
+        rt.pending_compaction = null;
+        session_events.announceActivity(engine, rt);
+    }
     if (active == null) engine.sessions.evictIfIdle(params.session_id);
-    return .{ .canceled_run = canceled_run, .cleared_inputs = cleared_inputs };
+    return .{ .canceled_run = canceled_run, .cleared_inputs = cleared_inputs, .cleared_compaction = cleared_compaction };
 }
 
 /// Collect the session and, with `cascade`, each session below it. The walk follows parent_id.

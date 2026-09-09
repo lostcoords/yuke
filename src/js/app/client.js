@@ -209,6 +209,12 @@ function sessionCancelRun(id, clearQueue = false) {
   });
 }
 
+// Summarize the history below a boundary. A run in flight holds the compaction until it ends.
+/** @param {string} id @returns {Promise<Wire.SessionCompactResult>} */
+function sessionCompact(id) {
+  return request("session.compact", { session_id: id });
+}
+
 // Drop one queued input. A started input belongs to the run, so the engine refuses it.
 /** @param {string} id @param {number} inputId @returns {Promise<Wire.SessionCancelInputResult>} */
 function sessionCancelInput(id, inputId) {
@@ -340,6 +346,7 @@ export const client = {
   sessionSendInput,
   sessionSendSkill,
   sessionCancelRun,
+  sessionCompact,
   sessionCancelInput,
   sessionCreate,
   sessionPatch,

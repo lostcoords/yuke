@@ -419,6 +419,22 @@ pub const ContextMessages = sql.ManyQuery(
     },
 );
 
+pub const NewestCompaction = sql.OptionalQuery(
+    \\SELECT m.message_id, e.payload
+    \\FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+    \\WHERE m.session_id = :session_id AND m.role = 'compaction'
+    \\ORDER BY m.message_id DESC
+    \\LIMIT 1;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        message_id: u64,
+        payload: []const u8,
+    },
+);
+
 pub const InsertSession = sql.ExecQuery(
     \\INSERT INTO sessions(
     \\    id, root, origin, parent_id, parent_message_id, parent_part_id, source_id,
@@ -973,6 +989,7 @@ pub const Queries = struct {
     run_report_messages: RunReportMessages,
     context_sizes: ContextSizes,
     context_messages: ContextMessages,
+    newest_compaction: NewestCompaction,
     insert_session: InsertSession,
     session_exists: SessionExists,
     session_snapshot: SessionSnapshot,

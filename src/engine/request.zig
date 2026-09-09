@@ -75,7 +75,6 @@ pub fn prepare(
     arena: std.mem.Allocator,
     engine: *Engine,
     slot: *RunSlot,
-    floor: *context.Floor,
     r: registry.Match,
 ) !ai.PreparedRequest {
     // A provider the merge could not complete has no route, so it cannot serve a turn.
@@ -129,7 +128,7 @@ pub fn prepare(
 
     if (build.system.len > proto.meta.limits.max_message_string_bytes) return error.PromptTooLarge;
     const budget = try context.Budget.forRequest(model.limits.context_window, build.max_output_tokens, build.system, build.tools);
-    const projected = try context.project(arena, engine.deps.db, slot.sessionId().raw, floor.*, budget);
+    const projected = try context.project(arena, engine.deps.db, slot.sessionId().raw, budget);
     const request_ir = try provider.request_builder.build(arena, projected.messages, .{
         .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
         .modalities = model.modalities,
@@ -180,7 +179,6 @@ pub fn prepare(
         },
         .canceled => return error.Canceled,
     }
-    floor.* = projected.floor;
     return prepared;
 }
 

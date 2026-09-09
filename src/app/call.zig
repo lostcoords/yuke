@@ -67,6 +67,7 @@ const bindings = struct {
     pub const @"session.send_input" = commands.sessionSendInputForRpc;
     pub const @"session.cancel_input" = commands.sessionCancelInput;
     pub const @"session.cancel_run" = commands.sessionCancelRun;
+    pub const @"session.compact" = commands.sessionCompact;
     pub const @"session.remove" = commands.sessionRemove;
     pub const @"catalog.list" = app_commands.catalogList;
     pub const @"catalog.reload" = app_commands.catalogReload;

@@ -125,3 +125,14 @@ SELECT m.message_id, e.payload
 FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
 WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
 ORDER BY m.message_id ASC;
+
+-- name: NewestCompaction :optional
+-- Read the newest compaction row, which stands for every message it covers.
+-- session_id: [16]u8!
+-- message_id: u64!
+-- payload: []const u8!
+SELECT m.message_id, e.payload
+FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+WHERE m.session_id = :session_id AND m.role = 'compaction'
+ORDER BY m.message_id DESC
+LIMIT 1;

@@ -36,8 +36,13 @@ pub const Launch = union(enum) {
         const launch = self.* orelse return;
         self.* = null;
         switch (launch) {
-            .slot => |slot| launchSlot(engine, slot) catch |err| {
-                std.log.err("cannot release the run launch gate: {t}", .{err});
+            .slot => |slot| switch (slot.handle.started.kind) {
+                .turn => launchSlot(engine, slot) catch |err| {
+                    std.log.err("cannot release the run launch gate: {t}", .{err});
+                },
+                .compaction => @import("compaction.zig").launch(engine, slot) catch |err| {
+                    std.log.err("cannot release the compaction launch gate: {t}", .{err});
+                },
             },
             .wake => |parent| @import("admission.zig").drain(engine, parent) catch |err| {
                 std.log.err("cannot admit a queued child: {t}", .{err});
@@ -200,7 +205,7 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
     // A request hook can await indefinitely, so the build runs as a child a run cancel can reach.
     var request: ?ai.PreparedRequest = null;
     defer if (request) |*prepared| prepared.deinit();
-    const built = switch (slot.cancel.runChild(engine.deps.io, requestChild, .{ engine, arena, slot, streamer, &request })) {
+    const built = switch (slot.cancel.runChild(engine.deps.io, requestChild, .{ engine, arena, slot, &request })) {
         .canceled, .aborted => return .canceled,
         .returned => |result| result,
     };
@@ -288,21 +293,21 @@ fn streamAttempt(
     }
 }
 
-fn requestChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, out: *?ai.PreparedRequest) !void {
+fn requestChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?ai.PreparedRequest) !void {
     std.debug.assert(out.* == null);
     defer slot.cancel.finish(engine.deps.io);
     try slot.cancel.check(engine.deps.io);
-    out.* = try roundRequest(engine, arena, slot, streamer);
+    out.* = try roundRequest(engine, arena, slot);
 }
 
 /// Build the request for one round. A retry re-sends these bytes, so the cached prefix still matches.
-fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !ai.PreparedRequest {
+fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !ai.PreparedRequest {
     const model = slot.config.model;
 
     // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
     const resolved = engine.deps.providers.merged.resolveModel(model) orelse return error.UnknownModel;
 
-    return round_request.prepare(arena, engine, slot, &streamer.session.context_floor, resolved);
+    return round_request.prepare(arena, engine, slot, resolved);
 }
 
 /// Open the response and stream it into the draft, in a child so a cancel can interrupt a blocked read.
@@ -420,7 +425,7 @@ fn commitRound(
 }
 
 /// Close an open run at a round boundary with `outcome`. The last round is already committed.
-fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, outcome: proto.run.RunOutcome) !void {
+pub fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, outcome: proto.run.RunOutcome) !void {
     std.debug.assert(slot.phase == .running);
     const old_cancel_protection = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old_cancel_protection);
@@ -459,13 +464,13 @@ fn beginRound(engine: *Engine, slot: *RunSlot) !void {
 }
 
 /// Preserve the open marker when Tx2 fails. A matching terminal event must clear it.
-fn faultSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot, err: anyerror) void {
+pub fn faultSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot, err: anyerror) void {
     slot.phase = .faulted;
     if (engine.sessions.get(session_id)) |rt| rt.faulted = true;
     reports.faultNotice(engine, session_id, slot.runId(), err);
 }
 
-fn finishSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot) void {
+pub fn finishSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot) void {
     slot.work.drain(engine.deps.io);
     std.debug.assert(slot.body == null);
     std.debug.assert(slot.phase == .terminalized or slot.phase == .faulted);
@@ -473,17 +478,25 @@ fn finishSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot) void {
     std.debug.assert(rt.active_run == slot);
     const can_drain = slot.phase == .terminalized and !engine.closing and !rt.faulted;
     const parent = slot.parent_id;
+    const kind = slot.handle.started.kind;
     rt.active_run = null;
     slot.destroy();
 
+    // A compaction jumps ahead of queued input, and only a turn end starts one, so none starts the next.
+    const compaction_mod = @import("compaction.zig");
+    const compacting = can_drain and (compaction_mod.startPending(engine, rt) or
+        (kind == .turn and compaction_mod.startAutomatic(engine, rt)));
     if (parent != null and !engine.closing) {
         @import("admission.zig").drain(engine, parent.?) catch |err| {
             std.log.err("cannot admit a queued child: {t}", .{err});
         };
-    } else if (can_drain and rt.queueDepth() > 0) {
-        startQueued(engine, rt) catch |err| {
-            if (engine.sessions.get(session_id)) |current| current.faulted = true;
-            std.log.err("cannot start a queued run: {t}", .{err});
+    } else if (!compacting and can_drain) {
+        // A failed launch nests a finish that can evict this session, so read the registry again.
+        if (engine.sessions.get(session_id)) |current| if (current.queueDepth() > 0) {
+            startQueued(engine, current) catch |err| {
+                if (engine.sessions.get(session_id)) |failed| failed.faulted = true;
+                std.log.err("cannot start a queued run: {t}", .{err});
+            };
         };
     }
     // A nested finishSlot can evict the session, so look the runtime up again before it is read.
@@ -1305,7 +1318,7 @@ test "a build hook can discard the live registry and tools before the request se
     f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    var prepared = try round_request.prepare(arena.allocator(), &f.engine, f.slot, &f.session.context_floor, .{ .provider = row, .model = model });
+    var prepared = try round_request.prepare(arena.allocator(), &f.engine, f.slot, .{ .provider = row, .model = model });
     defer prepared.deinit();
     try std.testing.expect(state.discarded);
     const body = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, prepared.transport_request.body, .{});
@@ -1388,8 +1401,6 @@ test "a run cancel interrupts either request hook before it settles" {
         try std.testing.expect(streamRound(&f.engine, f.slot, &streamer) == .canceled);
         try std.testing.expect(state.asked);
         try std.testing.expect(!state.timed_out);
-        try std.testing.expectEqual(@as(u64, 0), f.session.context_floor.message_id);
-        try std.testing.expectEqual(@as(u64, 0), f.session.context_floor.budget);
     }
 }
 
@@ -1430,12 +1441,10 @@ test "the final build hook obeys prompt and context limits without a new floor" 
     const model: registry.ModelSpec = .{ .id = "model", .upstream_id = "model", .name = "Model" };
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    try std.testing.expectError(error.PromptTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, &f.session.context_floor, .{ .provider = &row, .model = &model }));
-    try std.testing.expectEqual(@as(u64, 0), f.session.context_floor.message_id);
+    try std.testing.expectError(error.PromptTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
     state.size = 400_000;
-    try std.testing.expectError(error.ContextTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, &f.session.context_floor, .{ .provider = &row, .model = &model }));
+    try std.testing.expectError(error.ContextTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
     state.size = 0;
     state.output = 128_000;
-    try std.testing.expectError(error.ContextTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, &f.session.context_floor, .{ .provider = &row, .model = &model }));
-    try std.testing.expectEqual(@as(u64, 0), f.session.context_floor.message_id);
+    try std.testing.expectError(error.ContextTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
 }

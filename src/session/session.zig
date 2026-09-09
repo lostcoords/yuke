@@ -40,12 +40,6 @@ pub const RunProgress = struct {
     current: ?RoundState = null,
 };
 
-/// The model trim cursor is separate from the resident transcript cache.
-pub const ContextFloor = struct {
-    message_id: u64 = 0,
-    budget: u64 = 0,
-};
-
 pub const RunSlot = struct {
     gpa: std.mem.Allocator,
     handle: RunHandle,
@@ -80,6 +74,22 @@ pub const RunSlot = struct {
                 .gpa = self.gpa,
                 .handle = handle,
                 .progress = .{ .rounds_started = 1, .current = first_round },
+                .config = self.config,
+                .parent_id = parent_id,
+                .tree_root = location.root,
+                .depth = location.depth,
+            };
+            return slot;
+        }
+
+        /// Bind a run that makes one model call and opens no round, such as a compaction.
+        pub fn bindCall(self: *Prepared, handle: RunHandle, parent_id: ?ids.SessionId, location: Location) *RunSlot {
+            const slot = self.slot orelse unreachable;
+            if (parent_id == null) std.debug.assert(location.depth == 0) else std.debug.assert(location.depth > 0);
+            self.slot = null;
+            slot.* = .{
+                .gpa = self.gpa,
+                .handle = handle,
                 .config = self.config,
                 .parent_id = parent_id,
                 .tree_root = location.root,
@@ -132,6 +142,12 @@ pub const RunSlot = struct {
     }
 };
 
+/// A compaction the engine accepted while a run held the session. It starts when that run ends.
+pub const PendingCompaction = struct {
+    run_id: ids.RunId,
+    reason: proto.enums.CompactionReason,
+};
+
 pub const Error = error{OutOfMemory};
 
 /// A session projection. The engine owns one for each active session.
@@ -141,10 +157,10 @@ pub const Session = struct {
     draft: ?Draft = null,
     pending: std.ArrayList(QueueItem) = .empty,
     transcript: Transcript,
-    context_floor: ContextFloor = .{},
     base_seq: ids.Seq = 0,
     finalized_message_id: ids.MessageId = 0,
     active_run: ?*RunSlot = null,
+    pending_compaction: ?PendingCompaction = null,
     faulted: bool = false,
     hydrated: bool = false,
     context_usage: ?message.TokenUsage = null,
@@ -330,7 +346,6 @@ pub const Session = struct {
     fn onTruncated(self: *Session, d: proto.misc.TranscriptTruncatedData) void {
         self.raiseFinalized(d.first_removed_id); // truncated ids reject a late draft
         self.transcript.trimFrom(d.first_removed_id); // drop the truncated messages from the cache
-        self.context_floor = .{};
         self.advance(d.seq);
     }
 
