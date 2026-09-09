@@ -7,27 +7,9 @@ import { strokeOf } from "yuke:keys";
 import { Document, isLinear, normalizeSource } from "yuke:md";
 import { Window, NAV_KEYS } from "yuke:ui";
 
-/** @typedef {import("yuke:pager").ItemKey} ItemKey */
-/** @typedef {import("yuke:pager").Segment} Segment */
-/** @typedef {import("yuke:pager").TranscriptRow} TranscriptRow */
-/** @typedef {{ id: number, type: "user" | "assistant" | "compaction", source?: Wire.InputSource, error?: { type: string, message: string } }} MessageDescriptor */
-/** @typedef {{ anchor: Position, cursor: Position }} Selection */
-/** @typedef {{ id: number, partId: number, kind: string }} PartHit */
-/** @typedef {{ a: { id: number, off: number, was: string, partId?: string }, b: { id: number, off: number, was: string, partId?: string } }} SelectionAnchors */
-/** @typedef {{ start: Position, end: Position, si: number, ei: number }} SelectionRange */
-/** @typedef {{ w: number, rows: TranscriptRow[], source: string, partBases: Map<string, number>, doc: Document | undefined }} RowCache */
-/** @typedef {{ w: number, expanded: boolean, live: boolean, shape: number, rows: TranscriptRow[], source: string, doc: Document | null }} PartCache */
-/** @typedef {{ list: Wire.AssistantPart[] | null, rows: Map<string, PartCache> }} PartState */
-/** @typedef {(id: number) => readonly Wire.AssistantPart[]} PartsOf */
-/** @typedef {(id: number, partId: number) => Wire.AssistantPart | null} PartOf */
-/** @typedef {(id: number, partId: number, field: string, offset?: number, limit?: number) => { text: string, next: number | null }} PartTextPage */
-/** @typedef {{ id: number, lang: string, text: string }} CodeBlock */
-/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined }} TranscriptOptions */
-/** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
-/** @typedef {{ type: "mouse", col: number, row: number, button: string, event: string, mods: number, count: number }} MouseEvent */
-/** @typedef {{ id: number, row: number, col: number }} Position */
-/** @typedef {{ trees: number[] | Float64Array, starts: number[] | Float64Array, joinAfter: number[] | Uint8Array }} ActionPlan */
-/** @typedef {{ part: number, message: number }} ActionEntry */
+/** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
+/** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
+/** @import { ActionEntry, ActionPlan, CodeBlock, MessageDescriptor, PartCache, PartHit, PartOf, PartState, PartsOf, Position, RowCache, Selection, SelectionAnchors, SelectionRange, TranscriptOptions } from "./types/transcript.js" */
 
 // Left gutter for a transcript row marker; the body indents past it.
 const TX_GUTTER = 2;

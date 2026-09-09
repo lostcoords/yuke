@@ -7,8 +7,8 @@ import { notice } from "yuke:notice";
 import { allChildren } from "yuke:agent-tools";
 import { editSlot, recoverAgent } from "yuke:agents";
 
-/** @typedef {import("yuke:ext").InjectContext} Context */
-/** @typedef {import("yuke:engine-native").EngineEvent} EngineEvent */
+/** @import { InjectContext as Context } from "./types/ext.js" */
+/** @import { EngineEvent } from "yuke:engine-native" */
 /** @typedef {{ item: Wire.SessionListItem, depth: number }} AgentRow */
 /** @param {unknown} error */
 function failed(error) { notice.show("agents · " + (/** @type {Error} */ (error)?.message || String(error))); }

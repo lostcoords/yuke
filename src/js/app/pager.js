@@ -3,13 +3,8 @@ import { term } from "yuke:term";
 import { text, fill, isWheel, config } from "yuke:core";
 import { clip } from "yuke:text-input";
 import { isLinear } from "yuke:md";
-/** @typedef {import("yuke:core").Rect} Rect */
-/** @typedef {Extract<HostEvent, { type: "mouse" }>} MouseEvent */
-
-/** @typedef {{ segments?: Segment[] | undefined, text?: string | undefined, group?: string | undefined, bg?: string | undefined, marker?: string | null | undefined, markerGroup?: string | undefined, indent?: number | undefined, key?: ItemKey | undefined, kind?: string | undefined, partId?: number | undefined, sel?: { from: number, to: number } | undefined, selGroup?: string | undefined }} TranscriptRow */
-/** @typedef {{ text: string, group: string, src?: number, srcEnd?: number, mark?: boolean }} Segment */
-/** @typedef {string | number} ItemKey */
-/** @typedef {{ rowCount: (width: number) => number, rows: (width: number, top: number, height: number) => TranscriptRow[] }} RowSource */
+/** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
+/** @import { RowSource, Segment, TranscriptRow } from "./types/pager.js" */
 export class Pager {
   constructor() {
     /** @type {RowSource} */
@@ -27,7 +22,6 @@ export class Pager {
     return this._rect;
   }
 
-  /** @returns {void} */
   clearRect() {
     this._rect = null;
   }
@@ -56,19 +50,17 @@ export class Pager {
     return this.scroll >= this._maxScroll();
   }
 
-  /** @returns {void} */
   toBottom() {
     this.scroll = this._maxScroll();
     this.stuck = true;
   }
 
-  /** @returns {void} */
   toTop() {
     this.scroll = 0;
     this.stuck = false;
   }
 
-  /** @param {number} delta @returns {void} */
+  /** @param {number} delta */
   scrollBy(delta) {
     const max = this._maxScroll();
     this.scroll = Math.min(Math.max(0, this.scroll + delta), max);
@@ -76,7 +68,7 @@ export class Pager {
   }
 
   // Scroll the least that puts row `index` on the screen, and refresh `stuck` so an unfold cannot jump to the tail.
-  /** @param {number} index @returns {void} */
+  /** @param {number} index */
   scrollIntoView(index) {
     if (index < 0 || this._h <= 0) return;
     let next = this.scroll;
@@ -87,26 +79,25 @@ export class Pager {
     this.stuck = this.scroll >= max;
   }
 
-  /** @param {RowSource} source @returns {void} */
+  /** @param {RowSource} source */
   setSource(source) {
     this.source = source || staticRowSource([]);
   }
 
-  /** @param {TranscriptRow[]} rows @returns {void} */
+  /** @param {TranscriptRow[]} rows */
   setRows(rows) {
     this.setSource(staticRowSource(rows));
     this._clamp();
   }
 
   // Keep the scroll offset in range as the row count changes. A scroll to the tail re-sticks.
-  /** @returns {void} */
   _clamp() {
     const max = this._maxScroll();
     this.scroll = this.stuck ? max : Math.min(Math.max(0, this.scroll), max);
     if (this.scroll >= max) this.stuck = true;
   }
 
-  /** @param {Rect} rect @returns {void} */
+  /** @param {Rect} rect */
   draw(rect) {
     const { x, y, w, h } = rect;
     this._h = h;
@@ -128,17 +119,17 @@ export class Pager {
     }
   }
 
-  /** @param {number} delta @returns {void} */
+  /** @param {number} delta */
   navBy(delta) {
     this.scrollBy(delta);
   }
 
-  /** @param {number} dir @returns {void} */
+  /** @param {number} dir */
   navPage(dir) {
     this.scrollBy(dir * Math.max(1, this._h - 1));
   }
 
-  /** @param {number} dir @returns {void} */
+  /** @param {number} dir */
   navEdge(dir) {
     if (dir < 0) this.toTop();
     else this.toBottom();
@@ -244,7 +235,7 @@ function markSelection(segments, from, to, group) {
 const segmentWidths = [];
 
 // Clip the row as one string, so a split run never repeats the ellipsis.
-/** @param {number} x @param {number} sy @param {number} w @param {Segment[]} segments @returns {void} */
+/** @param {number} x @param {number} sy @param {number} w @param {Segment[]} segments */
 function drawSegments(x, sy, w, segments) {
   if (w <= 0) return;
   let total = 0;

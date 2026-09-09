@@ -5,7 +5,8 @@ import { Composer } from "yuke:ui";
 import { register } from "yuke:vim";
 import { focusedChatView } from "yuke:chat";
 
-/** @typedef {import("yuke:ui").Composer} ComposerType */
+/** @import { InjectContext } from "./types/ext.js" */
+/** @import { Composer as ComposerType } from "yuke:ui" */
 /** @typedef {"insert" | "normal"} ComposerMode */
 /** @typedef {{ mode: ComposerMode }} ComposerVimState */
 /** @typedef {{ start: number, end: number }} LineBounds */
@@ -222,7 +223,7 @@ function normalKey(c, k) {
 
 export const composerVim = {
   name: "composer-vim",
-  /** @param {import("yuke:ext").InjectContext} ctx @returns {void} */
+  /** @param {InjectContext} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       bus = new Emitter();

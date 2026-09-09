@@ -7,10 +7,11 @@ import { Prompt, Window, ui } from "yuke:ui";
 import { interaction } from "yuke:ext";
 import { notice } from "yuke:notice";
 import { confirmRequest, inputRequest, noticeLevel, selectRequest, watchCancellation } from "yuke:interaction";
+/** @import { InjectContext, InteractionOptions } from "./types/ext.js" */
 
 /** @typedef {() => void} Cancel */
 
-/** @param {import("yuke:ext").InjectContext} frontend */
+/** @param {InjectContext} frontend */
 function createAnswerer(frontend) {
   /** @type {Set<Cancel>} */
   const pending = new Set();
@@ -27,7 +28,7 @@ function createAnswerer(frontend) {
         for (const cancel of Array.from(owned)) cancel();
       });
 
-      /** @template T @param {(settle: (value: T | undefined) => void) => Cancel} open @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<T | undefined>} */
+      /** @template T @param {(settle: (value: T | undefined) => void) => Cancel} open @param {InteractionOptions} [options] @returns {Promise<T | undefined>} */
       const dialog = (open, options) => new Promise((resolve, reject) => {
         if (options?.signal?.aborted) { resolve(undefined); return; }
         let unwatch = () => {};
@@ -54,14 +55,14 @@ function createAnswerer(frontend) {
         unwatch = watchCancellation(options?.signal, cancel, (error) => { reject(error); cancel(); });
       });
 
-      /** @param {string} title @param {import("yuke:ext").InteractionOptions | undefined} options */
+      /** @param {string} title @param {InteractionOptions | undefined} options */
       const attributedTitle = (title, options) => {
         const id = options?.signal ? native.sessionId(options.signal) : null;
         return id ? "session " + id.slice(0, 8) + " · " + title : title;
       };
       return {
         interactive: true,
-        /** @param {Wire.AuthLoginResult} start @param {Promise<Wire.AuthLoginOutcome>} outcome @param {import("yuke:ext").InteractionOptions} [options] */
+        /** @param {Wire.AuthLoginResult} start @param {Promise<Wire.AuthLoginOutcome>} outcome @param {InteractionOptions} [options] */
         deviceLogin(start, outcome, options) {
           return dialog((settle) => {
             const device = new DeviceDialog(start);
@@ -72,7 +73,7 @@ function createAnswerer(frontend) {
             return frontend.tui.overlay(win);
           }, options);
         },
-        /** @param {string} title @param {string} [message] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
+        /** @param {string} title @param {string} [message] @param {InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
         confirm(title, message = "", options) {
           const request = confirmRequest(title, message);
           return dialog((settle) => {
@@ -94,7 +95,7 @@ function createAnswerer(frontend) {
           }, options);
         },
 
-        /** @param {string} title @param {string[]} choices @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+        /** @param {string} title @param {string[]} choices @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
         select(title, choices, options) {
           const request = selectRequest(title, choices);
           return dialog((settle) => {
@@ -112,7 +113,7 @@ function createAnswerer(frontend) {
           }, options);
         },
 
-        /** @param {string} title @param {string} [placeholder] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+        /** @param {string} title @param {string} [placeholder] @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
         input(title, placeholder, options) {
           const request = inputRequest(title, placeholder, options?.secret);
           return dialog((settle) => {

@@ -8,7 +8,7 @@ import { notice } from "yuke:notice";
 import { exec } from "yuke:exec";
 import { loadCatalog, providerState, providerStateLabel, reloadCatalog } from "yuke:catalog";
 
-/** @typedef {import("yuke:ext").InjectContext} Ctx */
+/** @import { InjectContext as Ctx } from "./types/ext.js" */
 /** @typedef {Wire.AuthProvider & { state: Wire.ProviderState | null }} ProviderRow */
 
 /** @param {ProviderRow} p @returns {string} */

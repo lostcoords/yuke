@@ -15,6 +15,8 @@ import { activityOf, activityPlugin } from "yuke:activity";
 import { indicatorPlugin } from "yuke:indicator";
 import { queuePlugin } from "yuke:queue";
 import { contextPlugin } from "yuke:context";
+/** @import { NavTarget } from "./types/core.js" */
+/** @import { InjectContext } from "./types/ext.js" */
 
 // The first chat pane. A split adds another, and each pane drives its own session.
 const chat = new Chat();
@@ -37,7 +39,7 @@ const workspace = Node.leaf(chat.view);
 
 // A session finder: read the sessions, fuzzy-search them by title, then open one.
 // This is the only place the session list appears, so nothing keeps it on screen.
-/** @param {import("yuke:ext").InjectContext} ctx @returns {null} */
+/** @param {InjectContext} ctx @returns {null} */
 function openSessionFinder(ctx) {
   const feed = feedOf();
   const show = () => {
@@ -72,7 +74,7 @@ function openSessionFinder(ctx) {
 // The stock commands and keybinds ship as a plugin, so they load and unload through the kernel.
 plugins.use({
   name: "app-keys",
-  /** @param {import("yuke:ext").InjectContext} ctx */
+  /** @param {InjectContext} ctx */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       // Vim calls this showcmd: the keys typed so far, while a chord or an operator waits.
@@ -118,7 +120,7 @@ plugins.use({
       ctx.tui.keymap({ tab: "chat:focus-toggle" }, "chat");
 
       // The nav keys drive whichever widget the focused layer offers, so any pane scrolls the same way.
-      /** @param {(t: import("yuke:core").NavTarget) => void} fn @returns {() => boolean} */
+      /** @param {(t: NavTarget) => void} fn @returns {() => boolean} */
       const nav = (fn) => () => {
         const target = root.navTarget();
         if (!target) return false;
@@ -127,7 +129,7 @@ plugins.use({
       };
       /** @type {Record<string, () => boolean>} */
       const navKeys = { "g g": nav((t) => t.navEdge(-1)) };
-      for (const stroke in NAV_KEYS) navKeys[stroke] = nav(/** @type {(t: import("yuke:core").NavTarget) => void} */ (NAV_KEYS[stroke]));
+      for (const stroke in NAV_KEYS) navKeys[stroke] = nav(/** @type {(t: NavTarget) => void} */ (NAV_KEYS[stroke]));
       ctx.tui.keymap(navKeys);
 
       ctx.tui.keymap({

@@ -4,10 +4,11 @@ import { ui } from "yuke:ui";
 import { fuzzyRank } from "yuke:fzy";
 import { Chat, focusedChat } from "yuke:chat";
 
-/** @typedef {import("yuke:core").CommandListing & { hint: string }} Entry */
-/** @typedef {import("yuke:ui").ListItem} ListItem */
-/** @typedef {import("yuke:ui").PickOptions<Entry>["keymap"]} FloatKeymap */
-/** @typedef {{ rows?: number, border?: import("yuke:ui").Border, format?: (entry: Entry, column: number) => string | ListItem, filterText?: (entry: Entry) => string, keymap?: FloatKeymap }} CommandUiConfig */
+/** @import { CommandListing } from "./types/core.js" */
+/** @import { Border, ListItem, PickOptions } from "./types/ui.js" */
+/** @typedef {CommandListing & { hint: string }} Entry */
+/** @typedef {PickOptions<Entry>["keymap"]} FloatKeymap */
+/** @typedef {{ rows?: number, border?: Border, format?: (entry: Entry, column: number) => string | ListItem, filterText?: (entry: Entry) => string, keymap?: FloatKeymap }} CommandUiConfig */
 /** @typedef {{ word: string, rest: string, complete: boolean }} SlashLine */
 
 // The first stroke that runs each command here. `candidates` drops what the context shadows.

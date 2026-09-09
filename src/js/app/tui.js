@@ -1,8 +1,9 @@
 // yuke:tui — the terminal capability. A block that declares `tui` registers its view effects here.
 import { command, keymap, route, slot, context, status, style, root, events } from "yuke:core";
 import { ChatView } from "yuke:chat-view";
+/** @import { LayoutNode } from "./types/layout.js" */
 
-/** @typedef {import("yuke:ext").Context} Context */
+/** @import { Context } from "yuke:ext" */
 /** @typedef {() => void} Disposer */
 /** @typedef {Parameters<typeof command.add>[0]} CommandPredicate */
 /** @typedef {Parameters<typeof command.add>[1]} CommandMap */
@@ -55,7 +56,7 @@ function bindTo(ctx) {
     },
 
     // The nearest class wins, then the newest registration; each mounted pane owns one child scope.
-    /** @param {(view: ChatView, scope: import("yuke:ext").Scope) => (context: import("yuke:chat-view").PresentationContext) => import("yuke:layout").LayoutNode | null} create @returns {Disposer} */
+    /** @param {(view: ChatView, scope: import("yuke:ext").Scope) => (context: import("yuke:chat-view").PresentationContext) => LayoutNode | null} create @returns {Disposer} */
     presentation(create) {
       if (typeof create !== "function") throw new TypeError("presentation needs a factory");
       return ctx.effect(() => {

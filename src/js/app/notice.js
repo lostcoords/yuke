@@ -2,19 +2,18 @@
 import { root } from "yuke:core";
 import { term } from "yuke:term";
 
-/** @typedef {import("yuke:engine-native").EngineEvent} EngineEvent */
+/** @import { EngineEvent } from "yuke:engine-native" */
 
 // The message itself. A caller keeps its own reference, so this survives a plugin unload.
 export const notice = {
   text: "",
 
-  /** @param {string} s @returns {void} */
+  /** @param {string} s */
   show(s) {
     this.text = s;
     root.invalidate();
   },
 
-  /** @returns {void} */
   clear() {
     if (this.text === "") return;
     this.text = "";

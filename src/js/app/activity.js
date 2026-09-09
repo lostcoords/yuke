@@ -2,7 +2,8 @@
 import { events, root } from "yuke:core";
 import { client } from "yuke:client";
 
-/** @typedef {Extract<import("yuke:engine-native").EngineEvent, { type: "session" }>} NativeSessionEvent */
+/** @import { EngineEvent } from "yuke:engine-native" */
+/** @typedef {Extract<EngineEvent, { type: "session" }>} NativeSessionEvent */
 
 // The last activity the engine reported for each session a pane holds open.
 /** @type {Map<string, Wire.SessionActivity>} */

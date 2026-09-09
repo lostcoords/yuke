@@ -10,10 +10,11 @@ import { feedItem } from "yuke:sessions";
 import { activityOf, refreshActivity } from "yuke:activity";
 import { catalogOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:catalog";
 
-
-/** @typedef {Extract<import("yuke:engine-native").EngineEvent, { type: "session" }>} NativeSessionEvent */
+/** @import { InjectContext } from "./types/ext.js" */
+/** @import { EngineEvent } from "yuke:engine-native" */
+/** @typedef {Extract<EngineEvent, { type: "session" }>} NativeSessionEvent */
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
-/** @typedef {import("yuke:sessions").FeedItem} FeedItem */
+/** @import { FeedItem } from "yuke:sessions" */
 
 // One chat pane and the session it drives. Each pane owns its own view, transcript and session.
 export class Chat {
@@ -225,7 +226,7 @@ export function chatEntry() {
 }
 
 // Load the catalog, then pick a model and its effort. A `query` names the model and skips the picker.
-/** @param {import("yuke:ext").InjectContext} ctx @param {string} [query] */
+/** @param {InjectContext} ctx @param {string} [query] */
 function openModelPicker(ctx, query) {
   const chat = focusedChat();
   if (!chat) return null;
@@ -286,7 +287,7 @@ function modelAvailable(model) {
 }
 
 // A model with one level needs no second step, so the pick ends there.
-/** @param {import("yuke:ext").InjectContext} ctx @param {Wire.ModelInfo} model @returns {void} */
+/** @param {InjectContext} ctx @param {Wire.ModelInfo} model @returns {void} */
 function pickReasoning(ctx, model) {
   const levels = model.reasoning_levels;
   if (levels.length < 2) {
@@ -312,7 +313,7 @@ function pickReasoning(ctx, model) {
 // The chat's own listeners and the model command.
 export const chatPlugin = {
   name: "chat",
-  /** @param {import("yuke:ext").InjectContext} ctx @returns {void} */
+  /** @param {InjectContext} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       ctx.tui.presentation(() => {

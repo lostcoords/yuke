@@ -5,45 +5,7 @@ import { callHook, config, defineConfig, Emitter, events } from "yuke:kernel";
 
 export { config, defineConfig, Emitter, events };
 
-/** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
-/** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
-/** @typedef {{ palette: Record<string, import("yuke:term").Color>, groups: Record<string, StyleGroup>, _refs: Record<string, number>, _cache: Record<string, import("yuke:term").Style>, add: (groups: Record<string, StyleGroup>) => () => void, resolve: (name: string) => import("yuke:term").Style, invalidate: () => void }} StyleConfig */
-/** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
-/** @typedef {{ chordMs: number }} KeymapConfig */
-/** @typedef {{ systemPrompt?: string | null, childInstructions?: string | null, mouse: MouseConfig, keymap: KeymapConfig }} Config */
-/** @typedef {{ systemPrompt?: string | null, childInstructions?: string | null, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig> }} ConfigPatch */
-/** @typedef {(value: unknown) => true | string} ConfigValidator */
-/** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
-/** @typedef {{ text: string, w: number }} TextPiece */
-/** @typedef {{ rect: Rect, layout: (rect: Rect) => void, draw: (focused?: boolean) => unknown, name?: string, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: Extract<HostEvent, { type: "mouse" }>) => boolean, onFocus?: () => void, contexts?: () => string[], navTarget?: () => NavTarget | null, needsTick?: () => { periodMs: number } | null, tick?: () => void, cursor?: () => { x: number, y: number, visible: boolean } | null, modal?: boolean }} ViewLike */
-/** @typedef {Omit<ViewLike, "rect"> & { rect?: Rect }} Overlay */
-/** @typedef {{ onStart?: () => void, onStop?: () => void, needsTick?: () => { periodMs: number } | null, tick?: () => void }} Tickable */
-/** @typedef {{ tickable: Tickable, refs: number, started: boolean }} TickableEntry */
-/** @typedef {{ type: "leaf", view: ViewLike } | { type: "split", kind: "row" | "col", a: Node, b: Node, ratio: number }} NodeShape */
-/** @typedef {(...args: any[]) => unknown} CommandAction */
-/** @typedef {(...args: any[]) => boolean | [boolean, ...any[]]} CommandPredicate */
-/** @typedef {{ title: string, description: string, slash?: string | null, args?: boolean }} CommandMeta */
-/** @typedef {{ predicate: CommandPredicate | null, perform: CommandAction, meta: CommandMeta | null }} CommandEntry */
-/** @typedef {{ name: string, title: string, description: string, slash: string | null, args: boolean }} CommandListing */
-/** @typedef {{ [name: string]: CommandEntry[] }} CommandMap */
-/** @typedef {{ map: CommandMap, add: (predicate: string | CommandPredicate | null, map: Record<string, CommandAction>, meta?: Record<string, CommandMeta>) => () => void, perform: (name: string, ...args: any[]) => boolean, available: (name: string) => boolean, list: () => CommandListing[] }} CommandRegistry */
-/** @typedef {string | ((ev: HostEvent) => boolean | void)} KeyBinding */
-/** @typedef {{ t: "atom", name: string } | { t: "eq", name: string, value: string, neg: boolean } | { t: "not", x: ContextNode } | { t: "and", a: ContextNode, b: ContextNode } | { t: "or", a: ContextNode, b: ContextNode }} ContextNode */
-/** @typedef {string | (() => string | null | undefined)} ContextFlag */
-/** @typedef {{ source: string, node: ContextNode, atoms: string[] }} ContextExpr */
-/** @typedef {"keymap" | "view"} RouteWhere */
-/** @typedef {{ where: RouteWhere, context: ContextExpr | null, order: number }} RouteEntry */
-/** @typedef {{ fn: (obj: any, arg?: any) => unknown }} SlotEntry */
-/** @typedef {{ fn: KeyBinding, context: ContextExpr | null, order: number, pending: "chord" | "operator" }} KeyEntry */
-/** @typedef {{ stroke: string, kind: "chord" | "operator", at: number, ev: Extract<HostEvent, { type: "key" }> | null }} Pending */
-/** @typedef {{ navBy: (delta: number) => void, navPage: (dir: number) => void, navEdge: (dir: number) => void }} NavTarget */
-/** @typedef {{ [name: string]: KeyEntry[] }} KeyMap */
-/** @typedef {{ map: KeyMap, prefixes: Record<string, string[]>, pending: Pending | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, ctx?: string, opts?: { pending?: "chord" | "operator" }) => () => void, _rebuildPrefixes: () => void, _armKind: (prefix: string) => "chord" | "operator" | null, owns: () => boolean, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _seq: number, arm: (stroke: string, kind: "chord" | "operator", ev?: Extract<HostEvent, { type: "key" }> | null) => void, pendingLabel: () => string, needsTick: () => { periodMs: number } | null, tick: () => void, candidates: (stroke: string) => KeyEntry[], describe: (stroke: string) => unknown, _perform: (stroke: string, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
-/** @typedef {{ side?: "left" | "right", order?: number, render: () => string | null | undefined }} StatusSegment */
-/** @typedef {{ side: "left" | "right", order: number, render: () => string | null | undefined }} StatusEntry */
-/** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
-/** @typedef {{ type: "start" } | { type: "input_closed" } | HostEvent } RootEvent */
-
+/** @import { CommandAction, CommandEntry, CommandListing, CommandMeta, CommandPredicate, CommandRegistry, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, SlotEntry, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
 
 // True for a wheel button. The wheel scrolls a pane but never moves the focus.
 /** @param {string} button @returns {boolean} */

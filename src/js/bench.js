@@ -2,7 +2,8 @@ import { Transcript } from "yuke:transcript";
 import { term } from "yuke:term";
 import { client } from "yuke:client";
 
-/** @typedef {import("yuke:transcript").MessageDescriptor} MessageDescriptor */
+/** @import { TranscriptRow } from "./app/types/pager.js" */
+/** @import { MessageDescriptor, TranscriptOptions } from "./app/types/transcript.js" */
 /** @typedef {{ type: MessageDescriptor["type"], text?: string, parts?: Wire.AssistantPart[] }} FixtureMessage */
 /** @type {FixtureMessage[]} */
 const sample = [
@@ -99,7 +100,7 @@ function configurePreview(scale) {
   }
 }
 
-/** @returns {import("yuke:transcript").TranscriptOptions} */
+/** @returns {TranscriptOptions} */
 function options() {
   return {
     textOf: id => texts.get(id) || "",
@@ -316,13 +317,13 @@ function verifyPreview() {
     throw new Error("preview reasoning source spans changed");
 }
 
-/** @param {number} id @returns {import("yuke:transcript").TranscriptRow[]} */
+/** @param {number} id @returns {TranscriptRow[]} */
 function publicRowsFor(id) {
   const rows = transcript.rows(width, 0, transcript.rowCount(width));
   return rows.filter((row) => String(row.key) === String(id));
 }
 
-/** @param {import("yuke:transcript").TranscriptRow} row */
+/** @param {TranscriptRow} row */
 function rowText(row) {
   return row.text || (row.segments || []).map((segment) => segment.text).join("");
 }

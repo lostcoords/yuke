@@ -1,41 +1,6 @@
 import { term } from "yuke:term";
 import { style } from "yuke:core";
-
-/** @typedef {{at: number, src: number, len: number}} SourceRun */
-/** @typedef {string[] & {[index: number]: string}} StringList */
-/** @typedef {number[] & {[index: number]: number}} NumberList */
-/** @typedef {[full: string, indent: string, fence: string, lang: string]} FenceMatch */
-/** @typedef {[full: string, indent: string, fence: string]} FenceCloseMatch */
-/** @typedef {[full: string, indent: string, marks: string, spacing: string | undefined, text: string | undefined]} HeadingMatch */
-/** @typedef {[full: string, indent: string, spacing: string, text: string]} QuoteMatch */
-/** @typedef {[full: string, indent: string, marker: string, spacing: string, text: string]} UlItemMatch */
-/** @typedef {[full: string, indent: string, number: string, delimiter: string, spacing: string, text: string]} OlItemMatch */
-/** @typedef {{text: string, runs: SourceRun[]}} InlineSource */
-/** @typedef {{text: string, runs: SourceRun[]}} TableCell */
-/** @typedef {{marker: string, length: number, indent: number, lang: string}} Fence */
-/** @typedef {{indent: number, marker: string, text: string, runs: SourceRun[], markAt: number, markEnd: number}} ListItem */
-/** @typedef {{raw: string, at: number, end: number, open?: boolean}} BlockMeta */
-/** @typedef {BlockMeta & {kind: "code", lang: string, lines: StringList, lineAt: NumberList, closed: boolean}} CodeBlock */
-/** @typedef {BlockMeta & {kind: "heading", level: number, text: string, runs: SourceRun[]}} HeadingBlock */
-/** @typedef {BlockMeta & {kind: "quote", text: string, runs: SourceRun[], markAt: number, markEnd: number}} QuoteBlock */
-/** @typedef {BlockMeta & {kind: "list", ordered: boolean, items: ListItem[]}} ListBlock */
-/** @typedef {BlockMeta & {kind: "table", columns: number, rows: TableCell[][], sepAt: number, sepEnd: number}} TableBlock */
-/** @typedef {BlockMeta & {kind: "paragraph", text: string, runs: SourceRun[]}} ParagraphBlock */
-/** @typedef {BlockMeta & {kind: "hr"}} RuleBlock */
-/** @typedef {CodeBlock | HeadingBlock | QuoteBlock | ListBlock | TableBlock | ParagraphBlock | RuleBlock} Block */
-/** @typedef {{kind: Block["kind"], at: number, end: number}} BlockSummary */
-/** @typedef {{kind: "text", text: string, at: number, len: number}} TextNode */
-/** @typedef {{kind: "seg", text: string, group: string, at: number, len: number}} StyledNode */
-/** @typedef {{kind: "delim", text: string, at: number, len: number, marker: string, count: number, canOpen: boolean, canClose: boolean, openStrong?: number, closeStrong?: number, openEm?: number, closeEm?: number}} DelimiterNode */
-/** @typedef {TextNode | StyledNode | DelimiterNode} InlineNode */
-/** @typedef {{text: string, group: string, at: number, len: number}} InlinePiece */
-/** @typedef {{text: string, group: string, src?: number, srcEnd?: number, mark?: boolean}} Segment */
-/** @typedef {{src: number, srcEnd: number, text: string, group: string}} LinearSegment */
-/** @typedef {{segments: Segment[]}} Row */
-/** @typedef {{segments: Segment[], w: number}} BreakPiece */
-/** @typedef {{pieces: Segment[], w: number, spaceGroup: string | null}} Word */
-/** @typedef {{firstPrefix?: Segment, contPrefix?: Segment, emptyGroup?: string, limit?: number}} WrapOptions */
-/** @typedef {{raw: string, width: number, rows: Row[]}} CacheEntry */
+/** @import { Block, BlockSummary, BreakPiece, CacheEntry, CodeBlock, DelimiterNode, Fence, FenceCloseMatch, FenceMatch, HeadingBlock, HeadingMatch, InlineNode, InlinePiece, InlineSource, LinearSegment, ListBlock, ListItem, NumberList, OlItemMatch, ParagraphBlock, QuoteBlock, QuoteMatch, Row, RuleBlock, Segment, SourceRun, StringList, TableBlock, TableCell, UlItemMatch, Word, WrapOptions } from "./types/md.js" */
 
 // Register the Markdown groups once.
 style.add({

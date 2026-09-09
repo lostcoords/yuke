@@ -5,25 +5,8 @@ import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, wrapPr
 import { strokeOf } from "yuke:keys";
 import { fuzzyRank } from "yuke:fzy";
 
-/** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
-/** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
-/** @typedef {string | number} ItemKey */
-/** @typedef {"accept" | "cancel" | "close" | "next" | "prev" | "top" | "bottom"} PickerAction */
-/** @typedef {string | number | object} ListKey */
-/** @typedef {{ text?: string, group?: string, lines?: ListItem[], detail?: string, detailGroup?: string, detailSelGroup?: string, right?: string, rightGroup?: string, rightSelGroup?: string, marker?: string | null, markerGroup?: string, markerSelGroup?: string, indent?: number, selGroup?: string }} ListItem */
-/** @typedef {{ type: "mouse", col: number, row: number, button: string, event: string, mods: number, count: number }} MouseEvent */
-/** @typedef {{ start: number, end: number, label: string }} PasteSpan */
-/** @typedef {{ span: PasteSpan, start: number, end: number, delta: number }} ProjectionPart */
-/** @typedef {{ text: string, parts: ProjectionPart[] }} Projection */
-/** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
-/** @typedef {{ prompt?: string | undefined, placeholder?: string | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, maxRows?: number | undefined }} ComposerOptions */
-/** @typedef {{ tl: string, t: string, tr: string, r: string, br: string, b: string, bl: string, l: string }} BorderSet */
-/** @typedef {"none" | "single" | "rounded" | "double" | BorderSet} Border */
-/** @typedef {number | ((max: number) => number)} Dimension */
-/** @typedef {{ layout: (rect: Rect) => void, draw: (focused?: boolean) => void, cursor?: () => { x: number, y: number, visible: boolean } | null, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: MouseEvent) => boolean, needsTick?: () => { periodMs: number } | null, tick?: () => void }} WindowContent */
-/** @typedef {{ name?: string, modal?: boolean, border?: Border, content?: WindowContent | null, width?: Dimension, height?: Dimension, anchor?: (() => Rect) | null, panelGroup?: string, borderGroup?: string, title?: string | (() => string), title_pos?: "left" | "center" | "right", titleGroup?: string, footer?: string | (() => string), footer_pos?: "left" | "center" | "right", footerGroup?: string }} WindowOptions */
-/** @template T @typedef {{ items?: T[] | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, itemHeight?: number | undefined, group?: string | undefined, selGroup?: string | undefined, dimGroup?: string | undefined, dimSelGroup?: string | undefined, drawCursor?: boolean | undefined }} ListOptions */
-/** @template T @typedef {{ items?: T[] | undefined, suggest?: (query: string) => T[] | undefined, filterText?: ((item: T) => string) | undefined, format?: ((item: T, index: number) => string | ListItem) | undefined, key?: ((item: T) => ListKey) | undefined, isSelectable?: ((item: T) => boolean) | undefined, itemGroup?: string | undefined, selGroup?: string | undefined, itemHeight?: number | undefined, onMove?: ((item: T, index: number) => void) | null | undefined, onAccept?: ((item: T, index: number) => void) | null | undefined, onCancel?: (() => void) | null | undefined, validate?: ((item: T) => boolean) | null | undefined, keymap?: Record<string, string | false | ((ev: HostEvent, content: Picker<T>) => void)> | null | undefined, closeOnAccept?: boolean | undefined, needsTick?: { periodMs: number } | null | undefined, filter?: boolean | undefined, body?: string | undefined } & WindowOptions} PickOptions */
+/** @import { HostMouseEvent as MouseEvent, Rect, StyleGroup } from "./types/core.js" */
+/** @import { BorderSet, ComposerOptions, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PasteSpan, PickerAction, PickOptions, Projection, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */
 
 // The kit adds only an absent highlight group, so a theme that set one first keeps it and a re-import does not re-seed.
 const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
@@ -62,7 +45,6 @@ const PAGE_FALLBACK = 10;
 
 
 // The nav vocabulary, written once. The shell binds these strokes and a modal layer reads them.
-/** @typedef {(t: import("yuke:core").NavTarget) => void} NavAction */
 /** @type {Record<string, NavAction | undefined>} */
 export const NAV_KEYS = Object.freeze(Object.assign(Object.create(null), /** @type {Record<string, NavAction>} */ ({
   j: (t) => t.navBy(1),
@@ -622,7 +604,6 @@ export class Composer {
   }
 }
 
-/** @typedef {{ text?: string, group?: string }} TextOptions */
 
 // A retained text leaf wraps during layout, so paint only copies its cached visible rows.
 export class Text {
@@ -1147,7 +1128,6 @@ export class Picker {
 }
 
 // A one-line prompt as window content. The prompt answers its text on Enter and no value on Escape.
-/** @typedef {{ placeholder?: string, mask?: boolean, settle: (value: string | undefined) => void }} PromptOptions */
 export class Prompt {
   /** @param {PromptOptions} opts */
   constructor(opts) {

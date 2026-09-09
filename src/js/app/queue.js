@@ -8,7 +8,7 @@ import { inputSourceLabel } from "yuke:transcript";
 import { ChatView } from "yuke:chat-view";
 import { chatOf, focusedChat } from "yuke:chat";
 
-/** @typedef {import("yuke:ext").InjectContext} Ctx */
+/** @import { InjectContext as Ctx } from "./types/ext.js" */
 
 // The rows the strip shows before it folds the rest into a count.
 const STRIP_ROWS = 3;

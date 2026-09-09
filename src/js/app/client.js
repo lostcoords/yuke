@@ -3,8 +3,7 @@ import { native } from "yuke:engine-native";
 import { events } from "yuke:core";
 import { sendInput, createSession } from "yuke:ext";
 
-/** @typedef {import("yuke:engine-native").ViewPart} ViewPart */
-/** @typedef {import("yuke:engine-native").ViewCut} ViewCut */
+/** @import { ViewPart } from "yuke:engine-native" */
 
 // This table maps a native event type to its core event name.
 /** @type {Record<string, string>} */

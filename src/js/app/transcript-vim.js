@@ -6,7 +6,7 @@ import { ChatView } from "yuke:chat-view";
 import { register } from "yuke:vim";
 import { focusedChatView } from "yuke:chat";
 
-/** @typedef {import("yuke:chat-view").ChatView["transcript"]} Transcript */
+/** @typedef {ChatView["transcript"]} Transcript */
 /** @typedef {{ id: number, row: number, col: number }} Position */
 /** @typedef {{ cursor: Position | null, src: number, anchor: Position | null, visual: boolean, goal: number | null }} VimState */
 /** @typedef {{ x: number, y: number, visible: boolean }} Cursor */

@@ -1,6 +1,7 @@
 // yuke:interaction — the shared question contract and the RPC answerer.
 import { interaction } from "yuke:ext";
 import { native } from "yuke:interaction-native";
+/** @import { InteractionOptions } from "./types/ext.js" */
 
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
 let nextId = 1;
@@ -88,7 +89,7 @@ const rpcAnswerer = {
       live.clear();
     });
 
-    /** @param {object} request @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<any>} */
+    /** @param {object} request @param {InteractionOptions} [options] @returns {Promise<any>} */
     const ask = (request, options) => {
       const id = allocateId();
       live.add(id);
@@ -97,15 +98,15 @@ const rpcAnswerer = {
 
     return {
       interactive: true,
-      /** @param {string} title @param {string} [message] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
+      /** @param {string} title @param {string} [message] @param {InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
       confirm(title, message = "", options) {
         return ask(confirmRequest(title, message), options);
       },
-      /** @param {string} title @param {string[]} choices @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+      /** @param {string} title @param {string[]} choices @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
       select(title, choices, options) {
         return ask(selectRequest(title, choices), options);
       },
-      /** @param {string} title @param {string} [placeholder] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+      /** @param {string} title @param {string} [placeholder] @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
       input(title, placeholder, options) {
         return ask(inputRequest(title, placeholder, options?.secret), options);
       },
@@ -133,17 +134,17 @@ const printAnswerer = {
     const deny = (title) => native.notify(ctx.id, "denied: " + title, "warn");
     return {
       interactive: false,
-      /** @param {string} title @param {string} [message] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
+      /** @param {string} title @param {string} [message] @param {InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
       confirm(title, message = "", options) {
         deny(confirmRequest(title, message).title);
         return Promise.resolve(false);
       },
-      /** @param {string} title @param {string[]} choices @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+      /** @param {string} title @param {string[]} choices @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
       select(title, choices, options) {
         deny(selectRequest(title, choices).title);
         return Promise.resolve(undefined);
       },
-      /** @param {string} title @param {string} [placeholder] @param {import("yuke:ext").InteractionOptions} [options] @returns {Promise<string | undefined>} */
+      /** @param {string} title @param {string} [placeholder] @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
       input(title, placeholder, options) {
         deny(inputRequest(title, placeholder).title);
         return Promise.resolve(undefined);

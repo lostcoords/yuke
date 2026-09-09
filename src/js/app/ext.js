@@ -4,27 +4,7 @@ import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installInputGate, setPoints } from "yuke:hooks";
 import { native } from "yuke:engine-native";
 
-/** @typedef {() => void} Disposer */
-/** @typedef {() => unknown} Effect */
-/** @typedef {(...args: any[]) => any} AdviceFunction */
-/** @typedef {"before" | "after" | "around" | "filterArgs" | "filterReturn"} AdviceWhere */
-/** @typedef {{ owner?: string, name?: string, order?: number }} AdviceOptions */
-/** @typedef {{ original: AdviceFunction, list: AdviceEntry[] }} AdviceRecord */
-/** @typedef {{ owner: string, name: string, key: string, where: AdviceWhere, fn: AdviceFunction, order: number }} AdviceEntry */
-/** @typedef {{ prop: string, owner: string, name: string, where: AdviceWhere, order: number }} AdviceInfo */
-/** @typedef {Parameters<typeof events.on>[1]} EventHandler */
-/** @typedef {Parameters<typeof events.on>[2]} EventOptions */
-/** @typedef {(ctx: Context, config: unknown) => unknown} PluginApply */
-/** @typedef {(args: any, signal: { aborted: boolean }, context: { workspaceRoot: string, sessionId?: string, messageId?: number, partId?: number }) => Promise<unknown>} ToolExecute */
-/** @typedef {{ name: string, description: string, parameters: Record<string, unknown>, execute: ToolExecute, spawnsAgents?: boolean }} ToolDefinition */
-/** @typedef {Context & Record<string, any>} InjectContext */
-/** @typedef {(ctx: InjectContext) => unknown} InjectApply */
-/** @typedef {{ name: string, apply: PluginApply }} Plugin */
-/** @typedef {(payload: any) => unknown} HookHandler */
-/** @typedef {{ owner: string, fn: HookHandler }} HookEntry */
-/** @typedef {{ block?: unknown, replace?: unknown }} HookAnswer */
-/** @typedef {{ type: "block", reason: string } | { type: "replace", value: any }} HookDecision */
-/** @typedef {{ owner: Scope | null, cleanup: Disposer | null }} ScopeEntry */
+/** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Answerer, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, InjectApply, InteractionSurface, Plugin, ScopeEntry, ToolDefinition } from "./types/ext.js" */
 
 const NOOP = () => {};
 
@@ -557,9 +537,6 @@ installInputGate((params, method = "session.send_input") => (method === "session
 
 // --- interaction: the service a frontend installs ---
 // A frontend answers a question and shows a message. It is always present, so it gates no block.
-/** @typedef {{ signal?: { aborted: boolean } | undefined, secret?: boolean, labels?: { accept?: string, cancel?: string } }} InteractionOptions */
-/** @typedef {{ interactive?: boolean, deviceLogin?: (start: Wire.AuthLoginResult, outcome: Promise<Wire.AuthLoginOutcome>, options?: InteractionOptions) => Promise<Wire.AuthLoginOutcome | undefined>, confirm(title: string, message?: string, options?: InteractionOptions): Promise<boolean | undefined>, select(title: string, choices: string[], options?: InteractionOptions): Promise<string | undefined>, input(title: string, placeholder?: string, options?: InteractionOptions): Promise<string | undefined>, notify(message: string, level?: "info" | "warn" | "error"): void }} InteractionSurface */
-/** @typedef {{ surfaceFor: (ctx: Context) => InteractionSurface }} Answerer */
 
 /** @param {string} name @returns {Error} */
 function noAnswerer(name) {

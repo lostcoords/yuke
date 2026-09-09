@@ -9,16 +9,12 @@ import { column, child, fixed, fit, grow, solve } from "yuke:layout";
 /** @typedef {"composer" | "transcript"} ChatRegion */
 /** @typedef {{ text: string, group?: string }} StripRow */
 /** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, sessionId?: () => string | null }} ChatViewOptions */
-/** @typedef {import("yuke:layout").LayoutNode} LayoutNode */
-/** @typedef {import("yuke:core").ViewLike} PresentationView */
+/** @import { HostMouseEvent as MouseEvent, NavTarget, Rect, ViewLike as PresentationView } from "./types/core.js" */
+/** @import { LayoutNode, LayoutResult } from "./types/layout.js" */
 /** @typedef {{ bounds: Rect, empty: boolean, sessionId: string | null, composerRows: number, defaultLayout: LayoutNode }} PresentationContext */
 /** @typedef {{ layout: (context: PresentationContext) => LayoutNode | null, dispose: () => void }} PresentationInstance */
 /** @typedef {{ mount: (view: ChatView) => PresentationInstance }} PresentationProvider */
-/** @typedef {import("yuke:transcript").PartsOf} PartsOf */
-/** @typedef {import("yuke:transcript").PartOf} PartOf */
-/** @typedef {import("yuke:transcript").PartTextPage} PartTextPage */
-/** @typedef {import("yuke:transcript").Rect} Rect */
-/** @typedef {import("yuke:transcript").MouseEvent} MouseEvent */
+/** @import { PartOf, PartsOf, PartTextPage } from "./types/transcript.js" */
 
 // The chat pane: a transcript above a composer in one leaf. Draw, layout, and mouse routing.
 export class ChatView {
@@ -58,12 +54,11 @@ export class ChatView {
   }
 
   // A pane focus returns the keyboard to the composer.
-  /** @returns {void} */
   onFocus() {
     this.focusRegion("composer");
   }
 
-  /** @param {ChatRegion} name @returns {void} */
+  /** @param {ChatRegion} name */
   focusRegion(name) {
     if (name !== "composer" && name !== "transcript") throw new TypeError("focusRegion: unknown region " + name);
     this.presentationFocus = null;
@@ -81,7 +76,7 @@ export class ChatView {
   }
 
   // The widget a nav binding drives here. The transcript scrolls even while the composer types.
-  /** @returns {import("yuke:core").NavTarget | null} */
+  /** @returns {NavTarget | null} */
   navTarget() {
     if (this.presentationFocus) return this.presentationFocus.navTarget?.() || null;
     return this.transcript.pager;
@@ -154,7 +149,7 @@ export class ChatView {
     if (this.transcriptRect.w === 0 || this.transcriptRect.h === 0) this.transcript.hide();
   }
 
-  /** @param {PresentationProvider} [provider] @returns {void} */
+  /** @param {PresentationProvider} [provider] */
   clearPresentation(provider) {
     if (provider && provider !== this.presentation?.provider) return;
     const held = this.presentation;
@@ -163,7 +158,6 @@ export class ChatView {
     held?.instance.dispose();
   }
 
-  /** @returns {void} */
   _releasePresentationViews() {
     for (const view of this.presentationViews) releaseView(view, this);
     this.presentationViews = [];
@@ -171,12 +165,12 @@ export class ChatView {
     this.presentationCapture = null;
   }
 
-  /** @param {LayoutNode} tree @param {Rect} bounds @returns {void} */
+  /** @param {LayoutNode} tree @param {Rect} bounds */
   _placePresentation(tree, bounds) {
     const result = solve(tree, bounds);
     /** @type {Map<string | PresentationView, Rect>} */
     const placements = new Map();
-    /** @param {import("yuke:layout").LayoutResult} item */
+    /** @param {LayoutResult} item */
     const visit = item => {
       if (item.children.length) { for (const sub of item.children) visit(sub); return; }
       const value = /** @type {string | PresentationView | null} */ (item.value);
@@ -224,7 +218,6 @@ export class ChatView {
     return period < Infinity ? { periodMs: period } : null;
   }
 
-  /** @returns {void} */
   tick() {
     for (const view of this.presentationViews) if (view.needsTick?.()) view.tick?.();
   }

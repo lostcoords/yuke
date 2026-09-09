@@ -1,12 +1,7 @@
 // yuke:layout — a small terminal-cell layout solver for retained views.
 
-/** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
-/** @typedef {{ top: number, right: number, bottom: number, left: number }} Padding */
-/** @typedef {{ w: number, h: number }} IntrinsicSize */
-/** @typedef {{ kind: "fixed", value: number, min?: number, max?: number } | { kind: "fit", min?: number, max?: number } | { kind: "grow", value: number, min?: number, max?: number }} SizeSpec */
-/** @typedef {{ value: unknown, size: SizeSpec, align?: "start" | "center" | "end" | "stretch", intrinsic?: IntrinsicSize, layout?: LayoutNode }} LayoutChild */
-/** @typedef {{ kind: "row" | "column", children: LayoutChild[], gap: number, padding: Padding, align: "start" | "center" | "end" | "stretch" }} LayoutNode */
-/** @typedef {{ value: unknown, rect: Rect, children: LayoutResult[] }} LayoutResult */
+/** @import { Rect } from "./types/core.js" */
+/** @import { IntrinsicSize, LayoutChild, LayoutNode, LayoutResult, Padding, SizeSpec } from "./types/layout.js" */
 
 const ALIGN = Object.freeze({ start: true, center: true, end: true, stretch: true });
 

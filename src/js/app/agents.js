@@ -2,7 +2,7 @@
 import { client } from "yuke:client";
 import { watchCancellation } from "yuke:interaction";
 
-/** @typedef {import("yuke:ext").Context} Context */
+/** @import { Context } from "yuke:ext" */
 /** @typedef {{ aborted: boolean }} Signal */
 /** @typedef {{ sessionId: string, messageId: number, partId: number }} Site */
 /** @type {Map<string, Promise<void>>} */
