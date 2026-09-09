@@ -1,6 +1,7 @@
 // yuke:agents — model setup and admission over the native slot contract.
 import { client } from "yuke:client";
 import { watchCancellation } from "yuke:interaction";
+import { config } from "yuke:kernel";
 
 /** @import { Context } from "yuke:ext" */
 /** @typedef {{ aborted: boolean }} Signal */
@@ -193,6 +194,9 @@ async function withSlot(ctx, slot, signal, attempt) {
   }
 }
 
+// Tell the parent to wait for the child report instead of polling or repeating the work.
+const spawn_note = "The child sends a report when its run ends. The report resumes your next turn. Finish independent work, then end your turn and wait. Do not repeat delegated work or guess its report.";
+
 /** @param {Context} ctx @param {{ name: string, message: string, model: Wire.AgentModelSlot }} args @param {Signal} signal @param {Site} site */
 export async function spawnAgent(ctx, args, signal, site) {
   if (!args || (args.model !== "small" && args.model !== "medium")) throw failure("bad_request", "model must be small or medium; it has no default.");
@@ -202,10 +206,12 @@ export async function spawnAgent(ctx, args, signal, site) {
   const parent = await client.sessionGet(site.sessionId);
   const result = await withSlot(ctx, args.model, signal, () => client.sessionCreate({
     workspace_path: parent.session.root,
+    max_rounds: config.agents.maxRounds,
     initial_input: { type: "content", content: [{ type: "text", text: args.message }] },
     child: { slot: args.model, site: { session_id: site.sessionId, message_id: site.messageId, part_id: site.partId }, name: args.name },
   }));
-  return { session_id: result.session.id, name: args.name, slot: args.model, model: result.session.model, input: result.input };
+  if (!result.input) throw failure("runtime_failed", "The child session has no initial run.");
+  return { name: args.name, session_id: result.session.id, model: result.session.model, state: result.input.type, note: spawn_note };
 }
 
 /** @param {Context} ctx @param {string} childId @param {Wire.AgentModelSlot | undefined} slot @param {Signal | undefined} signal */

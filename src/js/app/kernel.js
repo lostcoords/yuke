@@ -4,8 +4,8 @@ import { native } from "yuke:engine-native";
 
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
 /** @typedef {{ chordMs: number }} KeymapConfig */
-/** @typedef {{ systemPrompt?: string | null, childInstructions?: string | null, mouse: MouseConfig, keymap: KeymapConfig, agents: { maxConcurrent: number, maxDepth: number } }} Config */
-/** @typedef {{ systemPrompt?: string | null, childInstructions?: string | null, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig>, agents?: { maxConcurrent?: number, maxDepth?: number } }} ConfigPatch */
+/** @typedef {{ systemPrompt?: string | null, childInstructions?: string | null, mouse: MouseConfig, keymap: KeymapConfig, agents: { maxConcurrent: number, maxDepth: number, maxRounds: number } }} Config */
+/** @typedef {{ systemPrompt?: string | null, childInstructions?: string | null, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig>, agents?: { maxConcurrent?: number, maxDepth?: number, maxRounds?: number } }} ConfigPatch */
 /** @typedef {(value: unknown) => true | string} ConfigValidator */
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -17,7 +17,8 @@ export const config = {
   // A null base selects the built-in prompt for new root sessions.
   systemPrompt: null,
   childInstructions: null,
-  agents: { maxConcurrent: 8, maxDepth: 1 },
+  // A child run stops after maxRounds and reports partial output; the parent keeps no budget.
+  agents: { maxConcurrent: 8, maxDepth: 1, maxRounds: 50 },
   // Mouse reporting is always on; `scrollLines` counts screen lines, so a wheel step moves the same in every widget.
   mouse: {
     scrollLines: 3,
@@ -73,11 +74,13 @@ export function defineConfig(partial) {
   return partial;
 }
 
+/** @param {string} name @returns {ConfigValidator} */
+function positiveU32(name) {
+  return (v) => (typeof v === "number" && Number.isInteger(v) && v > 0 && v <= 4294967295) || "agents." + name + " must be a positive 32-bit integer";
+}
+
 /** @type {ConfigValidators} */
-const AGENT_FIELDS = {
-  maxConcurrent: (v) => (typeof v === "number" && Number.isInteger(v) && v > 0 && v <= 4294967295) || "agents.maxConcurrent must be a positive 32-bit integer",
-  maxDepth: (v) => (typeof v === "number" && Number.isInteger(v) && v > 0 && v <= 4294967295) || "agents.maxDepth must be a positive 32-bit integer",
-};
+const AGENT_FIELDS = { maxConcurrent: positiveU32("maxConcurrent"), maxDepth: positiveU32("maxDepth"), maxRounds: positiveU32("maxRounds") };
 
 /** @type {ConfigValidators} */
 const MOUSE_FIELDS = {

@@ -42,12 +42,14 @@ export default defineConfig({
   agents: {
     maxDepth: 2,
     maxConcurrent: 8,
+    maxRounds: 50,
   },
 });
 ```
 
 The root has depth zero. `maxDepth` defaults to `1`, which permits direct children.
-A value of `2` also permits grandchildren. Both limits require positive 32-bit integers.
+A value of `2` also permits grandchildren. `maxRounds` caps each child run; a capped run reports partial output.
+All three limits require positive 32-bit integers.
 At the depth limit, spawn tools are absent and native child creation fails.
 Custom tools can set `spawnsAgents: true` to use the same tool policy.
 

@@ -143,7 +143,8 @@ test "one tree limit queues grandchildren and resumes their parent after reports
     params.child.?.site = try f.toolSite(child.session.id);
     var grandchild_launch: ?turn.Launch = null;
     const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch, null);
-    try testing.expectEqual(@as(u64, 1), grandchild.input.?.queued.capacity.?.active);
+    try testing.expect(grandchild.input.? == .queued);
+    try testing.expectEqual(@as(u64, 1), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, grandchild.session.id.raw)).?.run_id_high);
     var sibling_launch: ?turn.Launch = null;
     const sibling = try f.child("later", &sibling_launch);
@@ -188,7 +189,7 @@ test "atomic creation binds its receipt and rejects invalid child sites without 
     var launch: ?turn.Launch = null;
     const first = try f.child("research", &launch);
     try testing.expectEqual(@as(u64, 1), first.input.?.started.run_id);
-    try testing.expectEqual(@as(u64, 1), first.input.?.started.capacity.?.active);
+    try testing.expectEqual(@as(u64, 1), admission.capacity(&f.engine, f.parent).active);
     const history = try database.message.historyPage(&f.db, a, first.session.id.raw, 0, 10);
     try testing.expectEqualStrings("task", history.messages[0].user.content[0].text.text);
     try testing.expectEqual(first.input.?.started.input_id, history.messages[0].user.input_id);
@@ -223,7 +224,8 @@ test "child capacity excludes the parent and admits durable queues in FIFO order
     var three_launch: ?turn.Launch = null;
     const three = try f.child("three", &three_launch);
     try testing.expectEqual(proto.session.InputQueueReason.concurrency_limit, two.input.?.queued.reason);
-    try testing.expectEqual(@as(u64, 1), three.input.?.queued.capacity.?.active);
+    try testing.expect(three.input.? == .queued);
+    try testing.expectEqual(@as(u64, 1), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, two.session.id.raw));
     turn.Launch.release(&two_launch, &f.engine);
     turn.Launch.release(&three_launch, &f.engine);
@@ -320,8 +322,9 @@ test "a lower live limit preserves active runs and a higher limit drains queued 
     try f.engine.setAgentLimits(1, 1);
     var pending: ?turn.Launch = null;
     const third = try f.child("third", &pending);
-    try testing.expectEqual(@as(u64, 2), third.input.?.queued.capacity.?.active);
-    try testing.expectEqual(@as(u64, 1), third.input.?.queued.capacity.?.limit);
+    try testing.expect(third.input.? == .queued);
+    try testing.expectEqual(@as(u64, 2), admission.capacity(&f.engine, f.parent).active);
+    try testing.expectEqual(@as(u64, 1), admission.capacity(&f.engine, f.parent).limit);
     try f.engine.setAgentLimits(3, 1);
     for (0..1000) |_| {
         if ((try database.event.highWater(&f.db, a, third.session.id.raw)).?.run_id_high == 1 and admission.capacity(&f.engine, f.parent).active == 2) break;
@@ -506,7 +509,10 @@ test "native child admission enforces the slot and preserves parent instruction 
     const child = try commands.sessionCreateForRpc(&f.engine, a, params, &gate, null);
     try testing.expectEqualStrings("test/model", child.session.model);
     const prompt = (try database.session.prompt(&f.db, a, child.session.id.raw)).?;
-    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "custom child prompt\n\n{s}\n\n{s}", .{ @import("prompt.zig").default_child_instructions, (try database.session.promptParts(&f.db, a, child.session.id.raw)).environment }), prompt);
+    const prompts = @import("prompt.zig");
+    const policy = try prompts.expand(a, prompts.default_child_instructions, .{ .workspace = child.session.root, .session_id = child.session.id, .agent_name = "guarded" });
+    try testing.expect(std.mem.indexOf(u8, policy, "You are guarded,") != null);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "custom child prompt\n\n{s}\n\n{s}", .{ policy, (try database.session.promptParts(&f.db, a, child.session.id.raw)).environment }), prompt);
     var next: ?turn.Launch = null;
     var followup: proto.session.SessionSendInputParams = .{ .session_id = child.session.id, .input = input(), .parent_tool = .{ .session_id = f.parent, .message_id = 999, .part_id = 0 } };
     try testing.expectError(error.BadToolSite, commands.sessionSendInputForRpc(&f.engine, a, followup, &next, null));

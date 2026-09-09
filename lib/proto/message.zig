@@ -210,6 +210,8 @@ pub const TokenUsage = struct {
     reasoning: u64,
     cache_read: u64,
     cache_write: u64,
+
+    pub const zero: TokenUsage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 };
 };
 
 /// This payload describes a tool part in an assistant message. Its fields borrow their data.

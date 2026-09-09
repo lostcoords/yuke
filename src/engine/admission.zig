@@ -23,7 +23,9 @@ pub fn location(engine: *Engine, arena: std.mem.Allocator, session_id: proto.ids
     }
 }
 
-pub fn capacity(engine: *Engine, root: proto.ids.SessionId) proto.session.ChildCapacity {
+pub const Capacity = struct { active: u64, limit: u64 };
+
+pub fn capacity(engine: *Engine, root: proto.ids.SessionId) Capacity {
     std.debug.assert(engine.max_concurrent_children > 0);
     var active: u64 = 0;
     var residents = engine.sessions.map.valueIterator();

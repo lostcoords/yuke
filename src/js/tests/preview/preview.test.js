@@ -21,7 +21,7 @@ const t = new Transcript({
   partsOf: (id) => id === "answer" ? parts : [],
 });
 t.setOutline([
-  { id: "report", type: "user", source: { type: "child_report", session_id: "s", run_id: 1, name: "agent", outcome: { type: "turn", finish: "stop", rounds: 1 }, partial: false, truncated: false } },
+  { id: "report", type: "user", source: { type: "child_report", session_id: "s", run_id: 1, name: "agent", outcome: { type: "turn", finish: "stop", rounds: 1 }, partial: false, truncated: false, usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } } } },
   { id: "answer", type: "assistant" },
 ], null);
 const width = 100;

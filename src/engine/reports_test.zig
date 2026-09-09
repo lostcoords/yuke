@@ -71,17 +71,19 @@ const Fixture = struct {
         return run.beginTurn(&self.db, self.resources.runtime.io(), self.arena.allocator(), child.raw, .{ .content = &.{.{ .text = .{ .text = "task" } }} }, 0);
     }
 
-    fn terminal(self: *Fixture, started: run.Started, text: ?[]const u8, outcome: proto.run.RunOutcome) !reports.Terminal {
+    /// Each text is one committed round with one tool call; only the first round carries tokens.
+    fn terminal(self: *Fixture, started: run.Started, texts: []const []const u8, outcome: proto.run.RunOutcome) !reports.Terminal {
         const a = self.arena.allocator();
         var tx = try self.db.begin();
         defer tx.deinit();
-        if (text) |value| _ = try database.message.appendCommittedMessage(&self.db, a, child.raw, self.engine.newId(), self.engine.nowMillis(), .{ .assistant = .{
+        for (texts, 0..) |value, i| _ = try database.message.appendCommittedMessage(&self.db, a, child.raw, self.engine.newId(), self.engine.nowMillis(), .{ .assistant = .{
             .id = try database.event.allocMessageId(&self.db, a, child.raw),
             .run_id = started.handle.started.run_id,
             .config_rev = 0,
             .agent = "child",
-            .content = &.{.{ .text = .{ .id = 0, .text = value } }},
+            .content = &.{ .{ .tool = .{ .id = 0, .name = "exec", .arguments = "{}", .state = .{ .completed = .{ .output = "", .duration_ms = 1 } } } }, .{ .text = .{ .id = 1, .text = value } } },
             .finish = .stop,
+            .tokens = if (i == 0) .{ .input = 10, .output = 5, .reasoning = 0, .cache_read = 0, .cache_write = 0 } else null,
             .time = .{ .created_at_ms = started.handle.started.started_at_ms },
         } });
         const result = try reports.append(&self.engine, a, .{
@@ -104,9 +106,18 @@ test "child reuse reports only the current run and preserves source through prom
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    const first = try f.terminal(try f.start(), "old answer", success);
+    const first = try f.terminal(try f.start(), &.{"old answer"}, success);
     try testing.expectEqualStrings("research", first.report.?.input.source.?.child_report.name);
-    const second = try f.terminal(try f.start(), null, .{ .failed = .{ .code = .provider, .message = "provider failed" } });
+    const usage = first.report.?.input.source.?.child_report.usage;
+    try testing.expectEqual(@as(u64, 1), usage.rounds);
+    try testing.expectEqual(@as(u64, 1), usage.tool_calls);
+    try testing.expectEqual(@as(u64, 10), usage.tokens.input);
+    try testing.expect(usage.duration_ms != null);
+    const first_text = first.report.?.input.content[0].text.text;
+    try testing.expect(std.mem.indexOf(u8, first_text, "Usage: rounds=1, tool calls=1, input/output=10/5 tokens, ") != null);
+    try testing.expect(std.mem.indexOf(u8, first_text, "not user input") != null);
+    try testing.expect(std.mem.endsWith(u8, first_text, "\n\nold answer"));
+    const second = try f.terminal(try f.start(), &.{}, .{ .failed = .{ .code = .provider, .message = "provider failed" } });
     const stored_child = try commands.sessionGet(&f.engine, a, .{ .session_id = child });
     try testing.expectEqual(proto.enums.RunErrorCode.provider, stored_child.last_run.?.failed.code);
     const listed = try commands.sessionList(&f.engine, a, .{ .population = .{ .children = .{ .parent_id = root } } });
@@ -137,7 +148,7 @@ test "a full user queue cannot block a terminal report or clear protected input"
         for (0..proto.meta.limits.max_queued_inputs) |_| _ = try database.input.enqueue(&f.db, a, root.raw, f.engine.newId(), 1, .{ .content = &.{.{ .text = .{ .text = "user work" } }} }, 1);
         try tx.commit();
     }
-    const result = try f.terminal(try f.start(), "answer", success);
+    const result = try f.terminal(try f.start(), &.{"answer"}, success);
     const input_id = result.report.?.input.input_id;
     try testing.expectEqual(@as(u64, 129), try database.input.count(&f.db, a, root.raw));
     try testing.expectError(error.ProtectedInput, commands.sessionCancelInput(&f.engine, a, .{ .session_id = root, .input_id = input_id }));
@@ -153,7 +164,7 @@ test "report credits bound accepted work and preserve capacity after a lower lim
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    for (0..136) |_| _ = try f.terminal(try f.start(), null, success);
+    for (0..136) |_| _ = try f.terminal(try f.start(), &.{}, success);
     try testing.expectError(error.ReportCapacityFull, reports.reserve(&f.engine, a, root));
     var launch: ?@import("turn.zig").Launch = null;
     const before = (try database.event.highWater(&f.db, a, child.raw)).?.input_id_high;
@@ -215,7 +226,7 @@ test "one report reservation survives each hop from a grandchild to the root" {
     try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
     const parent_run = try run.beginQueuedTurn(&f.db, f.resources.runtime.io(), a, child.raw, 0);
     try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
-    _ = try f.terminal(parent_run, null, success);
+    _ = try f.terminal(parent_run, &.{}, success);
     try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
     _ = try run.beginQueuedTurn(&f.db, f.resources.runtime.io(), a, root.raw, 0);
     try testing.expectEqual(@as(i64, 0), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
@@ -228,7 +239,7 @@ test "a report transaction failure leaves the run open for repair" {
     const a = f.arena.allocator();
     const started = try f.start();
     try f.db.conn.execNoArgs("CREATE TEMP TRIGGER refuse_report BEFORE INSERT ON pending_inputs BEGIN SELECT RAISE(FAIL, 'test refusal'); END");
-    try testing.expectError(error.ConstraintTrigger, f.terminal(started, "answer", success));
+    try testing.expectError(error.ConstraintTrigger, f.terminal(started, &.{"answer"}, success));
     try testing.expectEqual(@as(?u64, 1), (try database.session.snapshot(&f.db, a, child.raw)).?.open_run_id);
     try testing.expectEqual(@as(u64, 0), try database.input.count(&f.db, a, root.raw));
     const history = try database.message.historyPage(&f.db, a, child.raw, 0, 10);
@@ -285,7 +296,7 @@ test "report output has a UTF-8 byte bound and cancellation preserves partial ou
     defer f.deinit();
     const a = f.arena.allocator();
     const text = try std.mem.concat(a, u8, &.{ "x" ** (reports.max_output_bytes - 1), "日本語" });
-    const result = try f.terminal(try f.start(), text, .{ .canceled = .{} });
+    const result = try f.terminal(try f.start(), &.{text}, .{ .canceled = .{} });
     const source = result.report.?.input.source.?.child_report;
     try testing.expect(source.partial and source.truncated);
     const body = result.report.?.input.content[0].text.text;
@@ -313,7 +324,7 @@ test "a failed parent wake preserves the report and an explicit retry starts it"
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    _ = try f.terminal(try f.start(), "answer", success);
+    _ = try f.terminal(try f.start(), &.{"answer"}, success);
     try f.db.conn.execNoArgs("CREATE TEMP TRIGGER refuse_wake BEFORE INSERT ON messages BEGIN SELECT RAISE(FAIL, 'test refusal'); END");
     try testing.expectError(error.ConstraintTrigger, reports.wake(&f.engine, root));
     try testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, root.raw));
@@ -329,7 +340,7 @@ test "an owned tree wakes an existing durable report without another terminal ev
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    const result = try f.terminal(try f.start(), "saved before the engine stopped", success);
+    const result = try f.terminal(try f.start(), &.{"saved before the engine stopped"}, success);
     // A closing engine leaves the report durable and starts no run.
     f.engine.stopTurns();
     reports.publishReport(&f.engine, result.report.?, true);
@@ -354,7 +365,7 @@ test "automatic report wake respects a faulted parent and resumes after repair" 
     parent.pin();
     defer if (f.engine.sessions.get(root)) |resident| resident.unpin();
     parent.faulted = true;
-    const result = try f.terminal(try f.start(), "answer", success);
+    const result = try f.terminal(try f.start(), &.{"answer"}, success);
     reports.publishReport(&f.engine, result.report.?, true);
     try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, root.raw)).?.run_id_high);
@@ -367,4 +378,16 @@ test "automatic report wake respects a faulted parent and resumes after repair" 
     }
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, root.raw)).?.run_id_high);
     try testing.expectEqual(@as(usize, 0), parent.queueDepth());
+}
+
+test "a report sums every round and takes the newest text as its body" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const multi = try f.terminal(try f.start(), &.{ "first round", "newest answer" }, success);
+    const usage = multi.report.?.input.source.?.child_report.usage;
+    try testing.expectEqual(@as(u64, 2), usage.rounds);
+    try testing.expectEqual(@as(u64, 2), usage.tool_calls);
+    try testing.expectEqual(@as(u64, 10), usage.tokens.input);
+    try testing.expect(std.mem.endsWith(u8, multi.report.?.input.content[0].text.text, "\n\nnewest answer"));
 }

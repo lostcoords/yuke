@@ -350,7 +350,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
         // Fold each durable event in sequence order: the user message, then run.started.
         session_events.publishUserCommits(engine, rt, started.user_commits);
         session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
-        return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.started.run_id, .capacity = if (parent != null) admission.capacity(engine, tree.root) else null } };
+        return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.started.run_id } };
     }
 
     // A run is active. Persist and fold the queued input before the response.
@@ -367,7 +367,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
     if (parent) |id| if (launch.* == null) {
         launch.* = .{ .wake = id };
     };
-    return .{ .queued = .{ .input_id = queued.input.input_id, .reason = if (rt.active_run != null) .session_busy else .concurrency_limit, .capacity = if (parent != null) admission.capacity(engine, tree.root) else null } };
+    return .{ .queued = .{ .input_id = queued.input.input_id, .reason = if (rt.active_run != null) .session_busy else .concurrency_limit } };
 }
 
 /// Handle session.compact: start a compaction now, or hold it until the active run ends.
@@ -666,7 +666,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         .max_rounds = params.max_rounds,
         .title = title,
         .message_count = if (started != null) 1 else 0,
-        .usage_total = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
+        .usage_total = .zero,
         .created_at_ms = now,
         .updated_at_ms = now,
         .origin = if (params.child) |child| .{ .child = .{ .site = child.site } } else .{ .root = .{} },
@@ -674,11 +674,9 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     }, .input = if (started) |run_start| .{ .started = .{
         .input_id = run_start.handle.input_id,
         .run_id = run_start.handle.started.run_id,
-        .capacity = if (parent_tree) |tree| admission.capacity(engine, tree.root) else null,
     } } else if (queued) |entry| .{ .queued = .{
         .input_id = entry.input.input_id,
         .reason = .concurrency_limit,
-        .capacity = if (parent_tree) |tree| admission.capacity(engine, tree.root) else null,
     } } else null };
 }
 

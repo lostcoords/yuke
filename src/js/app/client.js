@@ -92,9 +92,6 @@ function skillLoad(sessionId, name) {
   return request("skill.load", { session_id: sessionId, name });
 }
 
-/** @param {Wire.SessionHistoryParams} params @returns {Promise<Wire.SessionHistoryResult>} */
-function sessionHistory(params) { return request("session.history", params); }
-
 // The queued inputs of a session, oldest first.
 /** @param {string} sessionId @returns {Promise<Wire.SessionQueueResult>} */
 function sessionQueue(sessionId) {
@@ -335,7 +332,6 @@ export const client = {
   sessionCheckContext,
   sessionReloadContext,
   skillLoad,
-  sessionHistory,
   sessionQueue,
   sessionText,
   sessionWholeText,

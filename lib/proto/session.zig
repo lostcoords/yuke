@@ -258,11 +258,6 @@ pub const ChildSession = struct {
     name: []const u8,
 };
 
-pub const ChildCapacity = struct {
-    active: u64,
-    limit: u64,
-};
-
 pub const InputQueueReason = enum { session_busy, concurrency_limit };
 
 /// These are the parameters for `session.rewind`.
@@ -299,14 +294,12 @@ pub const SessionSendInputResult = union(enum) {
 pub const SessionSendInputResultQueued = struct {
     input_id: ids.InputId,
     reason: InputQueueReason,
-    capacity: ?ChildCapacity = null,
 };
 
 /// The engine started the input immediately.
 pub const SessionSendInputResultStarted = struct {
     input_id: ids.InputId,
     run_id: ids.RunId,
-    capacity: ?ChildCapacity = null,
 };
 
 /// This payload describes `session.summary_changed`.
@@ -343,8 +336,8 @@ test "session.get keeps check_files a boolean and reload_context needs its sessi
     try std.testing.expectError(error.MissingField, std.json.parseFromSlice(ContextChanges, a, "{\"instructions\":true}", .{}));
 }
 
-test "queued admission requires a closed reason and preserves capacity" {
-    const json = "{\"type\":\"queued\",\"input_id\":1,\"reason\":\"concurrency_limit\",\"capacity\":{\"active\":2,\"limit\":2}}";
+test "queued admission requires a closed reason" {
+    const json = "{\"type\":\"queued\",\"input_id\":1,\"reason\":\"concurrency_limit\"}";
     const parsed = try std.json.parseFromSlice(SessionSendInputResult, std.testing.allocator, json, .{});
     defer parsed.deinit();
     try std.testing.expectEqual(InputQueueReason.concurrency_limit, parsed.value.queued.reason);

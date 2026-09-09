@@ -2064,6 +2064,37 @@
           "name": "truncated",
           "type": "bool",
           "presence": "required"
+        },
+        {
+          "name": "usage",
+          "type": "ChildReportUsage",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ChildReportUsage",
+      "doc": "This type sums the usage of the committed assistant messages in one child run.",
+      "fields": [
+        {
+          "name": "rounds",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "tool_calls",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "tokens",
+          "type": "TokenUsage",
+          "presence": "required"
+        },
+        {
+          "name": "duration_ms",
+          "type": "u64",
+          "presence": "optional"
         }
       ]
     },
@@ -3018,21 +3049,6 @@
       ]
     },
     {
-      "name": "ChildCapacity",
-      "fields": [
-        {
-          "name": "active",
-          "type": "u64",
-          "presence": "required"
-        },
-        {
-          "name": "limit",
-          "type": "u64",
-          "presence": "required"
-        }
-      ]
-    },
-    {
       "name": "SessionRewindParams",
       "doc": "These are the parameters for `session.rewind`.",
       "fields": [
@@ -3082,11 +3098,6 @@
           "name": "reason",
           "type": "InputQueueReason",
           "presence": "required"
-        },
-        {
-          "name": "capacity",
-          "type": "ChildCapacity",
-          "presence": "optional"
         }
       ]
     },
@@ -3103,11 +3114,6 @@
           "name": "run_id",
           "type": "RunId",
           "presence": "required"
-        },
-        {
-          "name": "capacity",
-          "type": "ChildCapacity",
-          "presence": "optional"
         }
       ]
     },

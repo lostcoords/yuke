@@ -365,7 +365,7 @@ const Report = struct {
 
 fn writeReport(arena: std.mem.Allocator, w: *std.Io.Writer, waiter: *const Waiter, pick: Pick, done: proto.run.RunDoneData) !void {
     var messages: std.ArrayList(proto.message.AssistantMessage) = .empty;
-    var usage: proto.message.TokenUsage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 };
+    var usage: proto.message.TokenUsage = .zero;
     for (waiter.messages.items) |m| {
         if (m.run_id != done.run_id) continue;
         try messages.append(arena, m);

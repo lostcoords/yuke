@@ -53,14 +53,12 @@ export async function stopAllChildren(parentId) {
 }
 
 /** @type {Record<string, unknown>} */
-const childField = { type: "string", description: "The child's session ID or its name." };
-const pageFields = { before_message_id: { type: "integer", minimum: 0, description: "0 reads the newest page. Pass the next_before_message_id of a result to read the page before it." }, limit: { type: "integer", minimum: 1, maximum: 50 } };
+const childField = { type: "string", description: "Child session ID or name." };
 const definitions = [
-    { name: "spawn_agent", description: "Start a child agent on one independent task. The name is unique per parent; later calls address the child by it. Nesting follows the configured maximum agent depth. The model is required: small for narrow research or simple edits, medium for general implementation, analysis, and review. Returns the child's name and session ID and whether its run started or is queued. The child reports back when its run ends; queued descendants are handled automatically.", fields: { name: { type: "string", pattern: NAME.source }, message: { type: "string", minLength: 1 }, model: { type: "string", enum: ["small", "medium"] } }, required: ["name", "message", "model"] },
-    { name: "send_agent_input", description: "Send a new message to one of your children. Returns whether the run started or is queued. A queued message waits; it has not failed.", fields: { child: childField, message: { type: "string", minLength: 1 } }, required: ["child", "message"] },
-    { name: "stop_agent", description: "Stop a child's current run and drop its queued messages. The transcript stays; completed side effects are not undone.", fields: { child: childField }, required: ["child"] },
-    { name: "list_agents", description: "List your children with their name, state, model, and last run outcome. A finished child stays reusable. Pass cursor to read the next page.", fields: { cursor: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 50 } }, required: [] },
-    { name: "read_agent", description: "Read a page of a child's full transcript, oldest first within each page. Pass before_message_id from a result's next_before_message_id to read older messages.", fields: { child: childField, ...pageFields }, required: ["child"] },
+    { name: "spawn_agent", description: "Start a child agent on one self-contained task in a fresh context. Delegate read-heavy or independent work: a wide search, a review, a separate implementation. Do a single focused task yourself. One child per task; never two on the same question. Give a complete brief: goal, files or areas, and the result to return. The name is unique per parent; later calls use it. model is required: small for narrow research or simple edits, medium for implementation, analysis, or review. The child reports when its run ends; the report resumes your next turn. Finish independent work, then end your turn to wait.", fields: { name: { type: "string", pattern: NAME.source }, message: { type: "string", minLength: 1 }, model: { type: "string", enum: ["small", "medium"] } }, required: ["name", "message", "model"] },
+    { name: "send_agent_input", description: "Send one child a follow-up. The child keeps its transcript, so refer to earlier work. Its next report resumes your turn. The result says whether the run started or is queued; queued input waits and has not failed.", fields: { child: childField, message: { type: "string", minLength: 1 } }, required: ["child", "message"] },
+    { name: "stop_agent", description: "Stop a child's current run; drop its queued input. The transcript stays; completed side effects are not undone.", fields: { child: childField }, required: ["child"] },
+    { name: "list_agents", description: "List each child's name, session ID, model, activity, and last run outcome. A finished child stays reusable. Pass cursor for the next page.", fields: { cursor: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 50 } }, required: [] },
 ];
 
 export const agentToolsPlugin = {
@@ -92,12 +90,10 @@ export const agentToolsPlugin = {
                         check(signal);
                         if (definition.name === "send_agent_input") {
                             if (context.messageId == null || context.partId == null) throw failure("bad_request", "The tool has no live parent site.");
-                            return client.sessionSendInput(child.session.id, required(args, "message"), { session_id: parentId, message_id: context.messageId, part_id: context.partId });
+                            const result = await client.sessionSendInput(child.session.id, required(args, "message"), { session_id: parentId, message_id: context.messageId, part_id: context.partId });
+                            return { state: result.type };
                         }
-                        if (definition.name === "stop_agent") return client.sessionCancelRun(child.session.id, true);
-                        const page = await client.sessionHistory({ session_id: child.session.id, before_message_id: integer(args.before_message_id, 0, 0, Number.MAX_SAFE_INTEGER), limit: integer(args.limit, 20, 1, 50) });
-                        const next_before_message_id = page.has_more && page.messages.length ? Math.min(...page.messages.map((message) => message.id)) : null;
-                        return { messages: page.messages, has_more: page.has_more, next_before_message_id };
+                        return client.sessionCancelRun(child.session.id, true);
                     },
                 });
             } catch (error) {

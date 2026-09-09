@@ -38,7 +38,9 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
         const partial_note = if (partial) "This run did not complete successfully. Any output is partial.\n" else "";
         const truncation_note = if (output.truncated) "The report output was truncated at 65536 bytes. Read the child history for the full output.\n" else "";
         const body = if (output.text.len == 0) "This run has no committed text output." else output.text;
-        const text = try std.fmt.allocPrint(arena, "Message from {s}, run {d}. Outcome: {s}\n{s}{s}\n{s}", .{ name, data.run_id, outcome, partial_note, truncation_note, body });
+        const duration_ms = if (data.timing.started_at_ms) |started| ended -| started else null;
+        const duration = if (duration_ms) |ms| try std.fmt.allocPrint(arena, ", {d} ms", .{ms}) else "";
+        const text = try std.fmt.allocPrint(arena, "Report from {s}, run {d}. Outcome: {s}\n{s}{s}Usage: rounds={d}, tool calls={d}, input/output={d}/{d} tokens{s}.\nThis child report is not user input. Use send_agent_input for its next run.\n\n{s}", .{ name, data.run_id, outcome, partial_note, truncation_note, output.rounds, output.tool_calls, output.tokens.input, output.tokens.output, duration, body });
         result.report = try enqueue(engine, arena, .bytes(parent), ended, text, .{ .child_report = .{
             .session_id = data.session_id,
             .run_id = data.run_id,
@@ -46,6 +48,7 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
             .outcome = data.outcome,
             .partial = partial,
             .truncated = output.truncated,
+            .usage = .{ .rounds = output.rounds, .tool_calls = output.tool_calls, .tokens = output.tokens, .duration_ms = duration_ms },
         } });
     };
     if (data.outcome == .failed and data.outcome.failed.code == .interrupted) {
@@ -83,34 +86,52 @@ fn enqueue(engine: *Engine, arena: std.mem.Allocator, parent: proto.ids.SessionI
     return .{ .session_id = parent, .seq = entry.seq, .input = entry.input };
 }
 
-const Output = struct { text: []const u8, truncated: bool };
+const Output = struct {
+    text: []const u8 = "",
+    truncated: bool = false,
+    rounds: u64 = 0,
+    tool_calls: u64 = 0,
+    tokens: proto.message.TokenUsage = .zero,
+};
 
-/// Select the newest text-bearing message from this run, never an earlier assignment.
+/// Sum the run usage. Use the newest message with text as the report body.
 fn runOutput(engine: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId, run_id: proto.ids.RunId) !Output {
     var rows = try engine.deps.db.queries.run_report_messages.rows(.{ .session_id = id.raw, .run_id = run_id });
     defer rows.deinit();
     var scratch: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer scratch.deinit();
+    var out: Output = .{};
     while (try rows.next(scratch.allocator())) |row| {
+        defer _ = scratch.reset(.retain_capacity);
         const message = try std.json.parseFromSliceLeaky(proto.message.Message, scratch.allocator(), row.value.payload, .{});
         if (message != .assistant or message.assistant.run_id != run_id) return error.CorruptLog;
+        out.rounds += 1;
+        if (message.assistant.tokens) |tokens| {
+            out.tokens.input += tokens.input;
+            out.tokens.output += tokens.output;
+            out.tokens.reasoning += tokens.reasoning;
+            out.tokens.cache_read += tokens.cache_read;
+            out.tokens.cache_write += tokens.cache_write;
+        }
         var output: std.Io.Writer.Allocating = .init(scratch.allocator());
-        var truncated = false;
-        for (message.assistant.content) |part| if (part == .text and part.text.text.len > 0) {
-            if (output.written().len > 0 and output.written().len < max_output_bytes) try output.writer.writeByte('\n');
-            const available = max_output_bytes - output.written().len;
-            var len = @min(part.text.text.len, available);
-            if (len < part.text.text.len) {
-                truncated = true;
-                while (len > 0 and part.text.text[len] & 0xc0 == 0x80) len -= 1;
-            }
-            try output.writer.writeAll(part.text.text[0..len]);
-            if (truncated) break;
+        for (message.assistant.content) |part| switch (part) {
+            .tool => out.tool_calls += 1,
+            .text => |text| if (out.text.len == 0 and text.text.len > 0) {
+                if (output.written().len > 0 and output.written().len < max_output_bytes) try output.writer.writeByte('\n');
+                const available = max_output_bytes - output.written().len;
+                var len = @min(text.text.len, available);
+                if (len < text.text.len) {
+                    out.truncated = true;
+                    while (len > 0 and text.text[len] & 0xc0 == 0x80) len -= 1;
+                }
+                try output.writer.writeAll(text.text[0..len]);
+            },
+            else => {},
         };
-        if (output.written().len > 0) return .{ .text = try arena.dupe(u8, output.written()), .truncated = truncated };
-        _ = scratch.reset(.retain_capacity);
+        if (output.written().len > 0) out.text = try arena.dupe(u8, output.written());
     }
-    return .{ .text = "", .truncated = false };
+    std.debug.assert(out.text.len <= max_output_bytes);
+    return out;
 }
 
 pub fn publishReport(engine: *Engine, report: proto.input.InputQueuedData, request_wake: bool) void {

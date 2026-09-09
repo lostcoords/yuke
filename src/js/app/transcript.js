@@ -138,7 +138,6 @@ presenters.spawn_agent = { category: "agent", present: (o) => ({ verb: "Agent", 
 presenters.send_agent_input = { category: "agent", present: (o) => ({ verb: "Send", subject: String(o.child || "") }) };
 presenters.stop_agent = { category: "agent", present: (o) => ({ verb: "Stop", subject: String(o.child || "") }) };
 presenters.list_agents = { category: "read", present: () => ({ verb: "Agents", subject: "" }) };
-presenters.read_agent = { category: "read", present: (o) => ({ verb: "Read agent", subject: String(o.child || "") }) };
 
 // The transcript presentation policy. Every member is a method, so `ctx.advise` reaches it and a plugin reload reverts it.
 export const presentation = {

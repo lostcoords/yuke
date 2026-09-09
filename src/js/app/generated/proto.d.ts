@@ -573,6 +573,15 @@ export interface ChildReport {
   readonly outcome: RunOutcome;
   readonly partial: boolean;
   readonly truncated: boolean;
+  readonly usage: ChildReportUsage;
+}
+
+/** This type sums the usage of the committed assistant messages in one child run. */
+export interface ChildReportUsage {
+  readonly rounds: number;
+  readonly tool_calls: number;
+  readonly tokens: TokenUsage;
+  readonly duration_ms?: number;
 }
 
 export interface ChildInputCanceled {
@@ -903,11 +912,6 @@ export interface ChildSession {
   readonly name: string;
 }
 
-export interface ChildCapacity {
-  readonly active: number;
-  readonly limit: number;
-}
-
 /** These are the parameters for `session.rewind`. */
 export interface SessionRewindParams {
   readonly session_id: SessionId;
@@ -925,14 +929,12 @@ export interface SessionSendInputParams {
 export interface SessionSendInputResultQueued {
   readonly input_id: InputId;
   readonly reason: InputQueueReason;
-  readonly capacity?: ChildCapacity;
 }
 
 /** The engine started the input immediately. */
 export interface SessionSendInputResultStarted {
   readonly input_id: InputId;
   readonly run_id: RunId;
-  readonly capacity?: ChildCapacity;
 }
 
 /** This payload describes `session.summary_changed`. */

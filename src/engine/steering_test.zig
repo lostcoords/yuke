@@ -317,7 +317,7 @@ test "a protected child report joins its active parent at the next boundary" {
     try testing.expectEqual(report.input.input_id, messages[2].user.input_id);
     try testing.expectEqualStrings("worker", messages[2].user.source.?.child_report.name);
     try testing.expectEqual(messages[1].assistant.run_id, messages[3].assistant.run_id);
-    try testing.expect(std.mem.indexOf(u8, f.requests.items[1], "Message from worker") != null);
+    try testing.expect(std.mem.indexOf(u8, f.requests.items[1], "Report from worker") != null);
     try testing.expectEqual(@as(i64, 0), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = Fixture.id.raw })).value.used);
 }
 

@@ -161,9 +161,8 @@ const tool_fixture =
     \\globalThis.child = { session: { id: "02".repeat(16), name: "one", root: "/work", model: "p/family/model", origin: { type: "child", site: { session_id: "01".repeat(16), message_id: 1, part_id: 0 } } }, activity: { state: { type: "idle" }, queued: 0 }, last_run: { type: "turn" } };
     \\client.sessionList = async (params) => { return { items: params.population.parent_id === "01".repeat(16) ? [child] : [], next_cursor: null, total: 1 }; };
     \\client.sessionGet = async (id, name) => name === child.session.name || id === child.session.id ? child : { session: { id, title: "Main conversation", root: "/work", model: "parent/large", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } };
-    \\client.sessionSendInput = async (id, text, site) => { if (id !== child.session.id || text !== "more" || site.message_id !== 2) throw new Error("instruction"); return { type: "queued", reason: "session_busy", input_id: 2, capacity: { active: 1, limit: 8 } }; };
+    \\client.sessionSendInput = async (id, text, site) => { if (id !== child.session.id || site.message_id !== 2) throw new Error("instruction"); return text === "go" ? { type: "started", input_id: 3, run_id: 1 } : { type: "queued", reason: "session_busy", input_id: 2 }; };
     \\client.sessionCancelRun = async (id, clear) => { if (id !== child.session.id || !clear) throw new Error("stop scope"); return { canceled_run: null, cleared_inputs: [2] }; };
-    \\client.sessionHistory = async (params) => { if (params.session_id !== child.session.id || params.before_message_id !== 0) throw new Error("history scope"); return { messages: [{ id: 3, type: "assistant", content: [{ type: "text", text: "x".repeat(70 * 1024) + "full child tail" }] }], has_more: true, configs: [] }; };
 ;
 
 test "nested child spawn delegates depth and child identity to native" {
@@ -179,7 +178,6 @@ test "agent tools expose explicit slots and truthful reusable child receipts" {
     defer host.destroy();
     try support.eval(host, "tests/agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
-    try std.testing.expectEqual(@as(usize, 5), host.tools.entries.items.len);
     for (host.tools.entries.items) |entry| if (std.mem.eql(u8, entry.decl.name, "spawn_agent")) {
         const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, entry.decl.input_schema, .{});
         defer parsed.deinit();
@@ -196,24 +194,24 @@ test "agent tools expose explicit slots and truthful reusable child receipts" {
     const spawn = try invokeAgent(host, "spawn_agent", "{\"name\":\"one\",\"message\":\"task\",\"model\":\"small\"}");
     defer std.testing.allocator.free(spawn.text);
     try std.testing.expect(!spawn.is_error);
-    try std.testing.expect(std.mem.indexOf(u8, spawn.text, "concurrency_limit") != null);
+    const receipt = try std.json.parseFromSlice(struct { name: []const u8, session_id: []const u8, model: []const u8, state: []const u8, note: []const u8 }, std.testing.allocator, spawn.text, .{});
+    defer receipt.deinit();
+    try std.testing.expectEqualStrings("queued", receipt.value.state);
+    try std.testing.expect(receipt.value.note.len > 0);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("created.child.slot === 'small' && stats.creates === 1 ? 1 : 0"));
     const cases = [_]struct { []const u8, []const u8, []const u8 }{
-        .{ "send_agent_input", "{\"child\":\"one\",\"message\":\"more\"}", "session_busy" },
+        .{ "send_agent_input", "{\"child\":\"one\",\"message\":\"more\"}", "{\"state\":\"queued\"}" },
+        .{ "send_agent_input", "{\"child\":\"one\",\"message\":\"go\"}", "{\"state\":\"started\"}" },
         .{ "stop_agent", "{\"child\":\"one\"}", "cleared_inputs" },
         .{ "list_agents", "{}", "\"name\":\"one\"" },
-        .{ "read_agent", "{\"child\":\"one\"}", "next_before_message_id\":3" },
     };
     for (cases) |case| {
         const answer = try invokeAgent(host, case[0], case[1]);
         defer std.testing.allocator.free(answer.text);
         try std.testing.expect(!answer.is_error);
         try std.testing.expect(std.mem.indexOf(u8, answer.text, case[2]) != null);
-        if (std.mem.eql(u8, case[0], "read_agent")) {
-            try std.testing.expect(answer.text.len > 64 * 1024);
-            try std.testing.expect(std.mem.indexOf(u8, answer.text, "full child tail") != null);
-        }
     }
+    for (host.tools.entries.items) |entry| try std.testing.expect(!std.mem.eql(u8, entry.decl.name, "read_agent"));
     try host.evalModule("child.session.origin.site.session_id = 'other';", "foreign.js");
     const foreign = try invokeAgent(host, "stop_agent", "{\"child\":\"02020202020202020202020202020202\"}");
     defer std.testing.allocator.free(foreign.text);
@@ -279,7 +277,6 @@ test "a user tool can replace a stock agent tool without a boot failure" {
     defer std.testing.allocator.free(result.text);
     try std.testing.expect(!result.is_error);
     try std.testing.expectEqualStrings("custom agent", result.text);
-    try std.testing.expectEqual(@as(usize, 5), host.tools.entries.items.len);
 }
 
 test "stop all distinguishes changed idle and failed children" {
