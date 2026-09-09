@@ -119,7 +119,7 @@ test "skill input survives admission teardown and recovery through another conne
     try testing.expectEqual(@as(usize, 1), page.messages.len);
     try testing.expectEqualStrings("pdf", page.messages[0].user.skill_name.?);
     try testing.expectEqualStrings(text, page.messages[0].user.content[0].text.text);
-    const projected = try @import("context.zig").project(arena.allocator(), &f.db, sid, .{ .max_tokens = 10_000, .input_ceiling = 40_000 });
+    const projected = try @import("context.zig").project(arena.allocator(), &f.db, sid, .{ .input_ceiling = 40_000 });
     try testing.expectEqualStrings("pdf", projected.messages[0].user.skill_name.?);
     try testing.expectEqualStrings(text, projected.messages[0].user.content[0].text.text);
 }

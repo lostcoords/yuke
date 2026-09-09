@@ -87,47 +87,10 @@ pub fn prepare(
     const model = try proto.dupe(arena, r.model.*);
     slot.protocol = provider.protocolToProto(route.route.protocol);
 
-    const output_limit = if (model.limits.max_output_tokens) |limit|
-        std.math.cast(u32, limit) orelse max_output_tokens
-    else
-        max_output_tokens;
+    const build = try buildConfig(arena, engine, slot, &model);
 
-    var build: RequestBuild = .{
-        .model = model.upstream_id,
-        .system = slot.config.system_prompt,
-        .tools = try engine.deps.tools.getDecls(engine.deps.tools.ctx, arena, try selectionFor(engine, arena, slot)),
-        .max_output_tokens = output_limit,
-    };
-    if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"request.build")) {
-        const snapshot = (try database.session.snapshot(engine.deps.db, arena, slot.sessionId().raw)) orelse return error.UnknownSession;
-        const hook_payload = .{
-            .model = build.model,
-            .system = build.system,
-            .tools = build.tools,
-            .max_output_tokens = build.max_output_tokens,
-            .context = .{
-                .session_id = slot.sessionId(),
-                .parent_id = slot.parent_id,
-                .workspace = snapshot.root,
-                .agent_name = snapshot.name orelse "root",
-                .prompt = try database.session.promptParts(engine.deps.db, arena, slot.sessionId().raw),
-            },
-        };
-        switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", hook_payload)) {
-            .proceed => {},
-            // A handler that answers an unreadable request keeps the one this round already holds.
-            .replace => |value| build = std.json.parseFromValueLeaky(RequestBuild, arena, value, .{ .ignore_unknown_fields = true }) catch build,
-            .block => |reason| {
-                // The wire message names a class, so record the reason before the error loses it.
-                std.log.warn("run {d} stopped at request.build: {s}", .{ slot.runId(), reason });
-                return error.HookBlocked;
-            },
-            .canceled => return error.Canceled,
-        }
-    }
-
-    if (build.system.len > proto.meta.limits.max_message_string_bytes) return error.PromptTooLarge;
     const budget = try context.Budget.forRequest(model.limits.context_window, build.max_output_tokens, build.system, build.tools);
+    try @import("compaction.zig").beforeRequest(engine, arena, slot, budget);
     const projected = try context.project(arena, engine.deps.db, slot.sessionId().raw, budget);
     const request_ir = try provider.request_builder.build(arena, projected.messages, .{
         .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
@@ -180,6 +143,59 @@ pub fn prepare(
         .canceled => return error.Canceled,
     }
     return prepared;
+}
+
+/// Build the session request configuration once before any context decision.
+fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, model: *const registry.ModelSpec) !RequestBuild {
+    const output_limit = if (model.limits.max_output_tokens) |limit|
+        std.math.cast(u32, limit) orelse max_output_tokens
+    else
+        max_output_tokens;
+
+    var build: RequestBuild = .{
+        .model = model.upstream_id,
+        .system = slot.config.system_prompt,
+        .tools = try engine.deps.tools.getDecls(engine.deps.tools.ctx, arena, try selectionFor(engine, arena, slot)),
+        .max_output_tokens = output_limit,
+    };
+    if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"request.build")) {
+        const snapshot = (try database.session.snapshot(engine.deps.db, arena, slot.sessionId().raw)) orelse return error.UnknownSession;
+        const hook_payload = .{
+            .model = build.model,
+            .system = build.system,
+            .tools = build.tools,
+            .max_output_tokens = build.max_output_tokens,
+            .context = .{
+                .session_id = slot.sessionId(),
+                .parent_id = slot.parent_id,
+                .workspace = snapshot.root,
+                .agent_name = snapshot.name orelse "root",
+                .prompt = try database.session.promptParts(engine.deps.db, arena, slot.sessionId().raw),
+            },
+        };
+        switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", hook_payload)) {
+            .proceed => {},
+            // A handler that answers an unreadable request keeps the one this round already holds.
+            .replace => |value| build = std.json.parseFromValueLeaky(RequestBuild, arena, value, .{ .ignore_unknown_fields = true }) catch build,
+            .block => |reason| {
+                // The wire message names a class, so record the reason before the error loses it.
+                std.log.warn("run {d} stopped at request.build: {s}", .{ slot.runId(), reason });
+                return error.HookBlocked;
+            },
+            .canceled => return error.Canceled,
+        }
+    }
+
+    if (build.system.len > proto.meta.limits.max_message_string_bytes) return error.PromptTooLarge;
+    return build;
+}
+
+/// Manual compaction uses the same prompt, tools, output, and build hook as a turn.
+pub fn budgetFor(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot) !context.Budget {
+    const resolved = engine.deps.providers.merged.resolveModel(slot.config.model) orelse return error.UnknownModel;
+    const model = try proto.dupe(arena, resolved.model.*);
+    const build = try buildConfig(arena, engine, slot, &model);
+    return context.Budget.forRequest(model.limits.context_window, build.max_output_tokens, build.system, build.tools);
 }
 
 /// The serialized request one round sends. A `request.send` handler may replace any field.

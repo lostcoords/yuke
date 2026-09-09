@@ -8,7 +8,6 @@ pub const default_context_window: u64 = 128_000;
 pub const default_max_output: u32 = 8192;
 
 pub const Budget = struct {
-    max_tokens: u64,
     input_ceiling: u64,
 
     /// Reserve the final build-hook prompt, tools, output, and a framing margin.
@@ -17,12 +16,7 @@ pub const Budget = struct {
         const fixed = tokensFor(system.len) + tokensFor(try jsonBytes(tools)) + 1024;
         if (output == 0 or output >= window or fixed >= window - output) return error.ContextTooLarge;
         const ceiling = window - output - fixed;
-        return .{ .max_tokens = @max(1, ceiling / 4), .input_ceiling = ceiling };
-    }
-
-    fn lowWater(self: Budget) u64 {
-        std.debug.assert(self.max_tokens > 0 and self.input_ceiling >= self.max_tokens);
-        return @max(1, @min(20_000, self.max_tokens / 2));
+        return .{ .input_ceiling = ceiling };
     }
 };
 
@@ -45,79 +39,42 @@ pub fn readHead(arena: std.mem.Allocator, db: *database.Database, session_id: [1
     return .{ .message = message, .id = row.value.message_id, .from_id = message.compaction.first_kept_id orelse 0 };
 }
 
-/// Scan newest first with constant memory and preserve the complete input batch.
-const Scan = struct {
-    budget: Budget,
-    total: u64 = 0,
-    first: u64 = 0,
-    recent: u64 = 0,
-    recent_tokens: u64 = 0,
-    pin: u64 = 0,
-    pin_tokens: u64 = 0,
-    seen_user: bool = false,
-    past_pin: bool = false,
+/// Charge the summary text and its provider wrapper once.
+pub fn summaryTokens(summary: []const u8) u64 {
+    return tokensFor(summary.len) + 128;
+}
 
-    fn add(self: *Scan, id: u64, user: bool, bytes: u64) !bool {
-        std.debug.assert(id > 0);
-        std.debug.assert(self.first == 0 or id < self.first);
-        if (self.seen_user and !user) self.past_pin = true;
-        self.seen_user = self.seen_user or user;
-        const before = self.total;
-        self.total += tokensFor(bytes);
-        self.first = id;
-        if (!self.past_pin) {
-            if (self.total > self.budget.input_ceiling) return error.TurnTooLarge;
-            self.pin = id;
-            self.pin_tokens = self.total;
-        }
-        // Take the message that crosses the low water, so one large message never empties the tail.
-        if (self.recent == 0 or (before <= self.budget.lowWater() and self.total <= self.budget.max_tokens)) {
-            self.recent = id;
-            self.recent_tokens = self.total;
-        }
-        return !(self.past_pin and self.total > self.budget.max_tokens);
-    }
-
-    fn selected(self: Scan) struct { id: u64, tokens: u64 } {
-        std.debug.assert(self.first == 0 or (self.pin > 0 and self.recent > 0));
-        if (self.total <= self.budget.max_tokens) return .{ .id = self.first, .tokens = self.total };
-        if (self.pin < self.recent) return .{ .id = self.pin, .tokens = self.pin_tokens };
-        return .{ .id = self.recent, .tokens = self.recent_tokens };
-    }
-};
-
-/// Build the model history: the newest checkpoint, then the committed suffix that fits the budget.
-pub fn project(arena: std.mem.Allocator, db: *database.Database, session_id: [16]u8, budget: Budget) !Projection {
-    std.debug.assert(budget.max_tokens > 0 and budget.max_tokens <= budget.input_ceiling);
+/// Estimate the complete checkpoint and tail without a body copy.
+pub fn estimate(arena: std.mem.Allocator, db: *database.Database, session_id: [16]u8) !u64 {
     const head = try readHead(arena, db, session_id);
-    // The checkpoint is charged once here, so no trim can drop the message that stands for the rest.
-    var scan: Scan = .{ .budget = budget, .total = if (head) |h| tokensFor(h.message.compaction.summary.len) else 0 };
-    {
-        var rows = try db.queries.context_sizes.rows(.{ .session_id = session_id, .first_message_id = if (head) |h| h.from_id else 0 });
-        defer rows.deinit();
-        while (try rows.next(arena)) |owned| {
-            var row = owned;
-            defer row.deinit();
-            if (head) |h| if (row.value.message_id == h.id) continue;
-            if (!try scan.add(row.value.message_id, std.mem.eql(u8, row.value.role, "user"), row.value.bytes)) break;
-        }
+    var total: u64 = if (head) |h| summaryTokens(h.message.compaction.summary) else 0;
+    var rows = try db.queries.context_sizes.rows(.{ .session_id = session_id, .first_message_id = if (head) |h| h.from_id else 0 });
+    defer rows.deinit();
+    while (try rows.next(arena)) |owned| {
+        var row = owned;
+        defer row.deinit();
+        if (std.mem.eql(u8, row.value.role, "compaction")) continue;
+        total += tokensFor(row.value.bytes);
     }
-    const selected = scan.selected().id;
+    return total;
+}
+
+/// Return the newest checkpoint and every retained message, or refuse the request.
+pub fn project(arena: std.mem.Allocator, db: *database.Database, session_id: [16]u8, budget: Budget) !Projection {
+    std.debug.assert(budget.input_ceiling > 0);
+    if (try estimate(arena, db, session_id) > budget.input_ceiling) return error.ContextHistoryTooLarge;
+    const head = try readHead(arena, db, session_id);
     var messages: std.ArrayList(proto.message.Message) = .empty;
-    // The checkpoint leads whatever id it holds, because it stands for the messages before the tail.
     if (head) |h| try messages.append(arena, h.message);
-    if (selected > 0) {
-        var rows = try db.queries.context_messages.rows(.{ .session_id = session_id, .first_message_id = selected });
-        defer rows.deinit();
-        while (try rows.next(arena)) |owned| {
-            var row = owned;
-            defer row.deinit();
-            const msg = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
-            if (msg.id() != row.value.message_id) return error.CorruptLog;
-            // An older checkpoint is redundant, because the head was written with its text.
-            if (msg == .compaction) continue;
-            try messages.append(arena, msg);
-        }
+    var rows = try db.queries.context_messages.rows(.{ .session_id = session_id, .first_message_id = if (head) |h| h.from_id else 0 });
+    defer rows.deinit();
+    while (try rows.next(arena)) |owned| {
+        var row = owned;
+        defer row.deinit();
+        const msg = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
+        if (msg.id() != row.value.message_id) return error.CorruptLog;
+        if (msg == .compaction) continue;
+        try messages.append(arena, msg);
     }
     return .{ .messages = messages.items };
 }
@@ -148,51 +105,7 @@ test "the budget charges the final prompt tools and output reserve" {
     try t.expectError(error.ContextTooLarge, Budget.forRequest(null, 0, "", &.{}));
 }
 
-test "a trim preserves the complete input batch and refuses an oversized live turn" {
-    var scan: Scan = .{ .budget = .{ .max_tokens = 10, .input_ceiling = 100 } };
-    try std.testing.expect(try scan.add(5, false, 30));
-    try std.testing.expect(try scan.add(4, true, 30));
-    try std.testing.expect(try scan.add(3, true, 30));
-    try std.testing.expect(!try scan.add(2, false, 3000));
-    try std.testing.expectEqual(@as(u64, 3), scan.selected().id);
-    try std.testing.expectEqual(@as(u64, 30), scan.selected().tokens);
-    var large: Scan = .{ .budget = .{ .max_tokens = 10, .input_ceiling = 20 } };
-    _ = try large.add(2, false, 30);
-    try std.testing.expectError(error.TurnTooLarge, large.add(1, true, 33));
-}
-
-test "a trim keeps the message that crosses the low water" {
-    const t = std.testing;
-    // These are the measured budgets of a 1M-token model, so low water is the flat 20000.
-    var scan: Scan = .{ .budget = .{ .max_tokens = 230_500, .input_ceiling = 922_000 } };
-    try t.expectEqual(@as(u64, 20_000), scan.budget.lowWater());
-    try t.expect(try scan.add(4, true, 2_400)); // the new user turn, 800 tokens
-    try t.expect(try scan.add(3, false, 135_000)); // a 45000-token tool result straddles the mark
-    try t.expect(try scan.add(2, false, 3_000));
-    try t.expect(try scan.add(1, false, 3_000));
-    // A tail that stops before message 3 would hold 800 tokens of a 230500-token budget.
-    try t.expectEqual(@as(u64, 3), scan.recent);
-    try t.expectEqual(@as(u64, 45_800), scan.recent_tokens);
-
-    // A message wider than the whole budget stays out, because a trim may not exceed what it trims to.
-    var huge: Scan = .{ .budget = .{ .max_tokens = 20_000, .input_ceiling = 100_000 } };
-    try t.expect(try huge.add(3, true, 3_000));
-    try t.expect(!try huge.add(2, false, 90_000));
-    try t.expectEqual(@as(u64, 3), huge.recent);
-    try t.expectEqual(@as(u64, 1_000), huge.recent_tokens);
-}
-
-test "an empty history and a history within budget need no trim" {
-    var scan: Scan = .{ .budget = .{ .max_tokens = 100, .input_ceiling = 400 } };
-    try std.testing.expectEqual(@as(u64, 0), scan.selected().id);
-    _ = try scan.add(3, true, 30);
-    _ = try scan.add(2, false, 30);
-    _ = try scan.add(1, true, 30);
-    try std.testing.expectEqual(@as(u64, 1), scan.selected().id);
-    try std.testing.expectEqual(@as(u64, 30), scan.selected().tokens);
-}
-
-test "model history survives cache eviction and a larger budget restores stored history" {
+test "model history survives cache eviction and an insufficient budget drops nothing" {
     const t = std.testing;
     var db = try database.Database.openTest();
     defer db.deinit();
@@ -219,18 +132,13 @@ test "model history survives cache eviction and a larger budget restores stored 
         try tx.commit();
     }
     try t.expectEqual(@as(u64, 8), cache.list.items[0].message.id());
-    const narrow: Budget = .{ .max_tokens = 100, .input_ceiling = 5000 };
-    const first = try project(a, &db, sid, narrow);
-    try t.expectEqual(@as(u64, 7), first.messages[0].id());
-    try t.expectEqual(@as(usize, 3), first.messages.len);
-    // The boundary follows the budget alone, so the same budget selects the same suffix.
-    const held = try project(a, &db, sid, narrow);
-    try t.expectEqual(first.messages[0].id(), held.messages[0].id());
-    const wide = try project(a, &db, sid, .{ .max_tokens = 10_000, .input_ceiling = 40_000 });
+    const wide = try project(a, &db, sid, .{ .input_ceiling = 40_000 });
     try t.expectEqual(@as(usize, 9), wide.messages.len);
     try t.expectEqual(@as(u64, 1), wide.messages[0].id());
     try t.expectEqual(@as(usize, 2), cache.list.items.len);
-    try t.expectError(error.TurnTooLarge, project(a, &db, sid, .{ .max_tokens = 1, .input_ceiling = 1 }));
+    try t.expectError(error.ContextHistoryTooLarge, project(a, &db, sid, .{ .input_ceiling = 100 }));
+    const again = try project(a, &db, sid, .{ .input_ceiling = 40_000 });
+    try t.expectEqual(@as(usize, 9), again.messages.len);
 }
 
 test "the newest checkpoint leads the request and an older one drops out" {
@@ -260,7 +168,7 @@ test "the newest checkpoint leads the request and an older one drops out" {
         try tx.commit();
     }
 
-    const projected = try project(a, &db, sid, .{ .max_tokens = 10_000, .input_ceiling = 40_000 });
+    const projected = try project(a, &db, sid, .{ .input_ceiling = 40_000 });
     try t.expectEqual(@as(usize, 2), projected.messages.len);
     try t.expectEqualStrings("second summary", projected.messages[0].compaction.summary);
     try t.expectEqual(@as(u64, 4), projected.messages[1].id());

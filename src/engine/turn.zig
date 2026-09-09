@@ -109,24 +109,11 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
         std.debug.assert(slot.progress.current != null); // bind or beginRound opened the round
         slot.progress.current.?.created_at_ms = created_at;
         std.debug.assert(rt.draft == null); // one draft per round
-        const started_note: proto.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = .{
-            .session_id = session_id,
-            .message_id = slot.progress.current.?.message_id,
-            .run_id = slot.runId(),
-            .config_rev = slot.handle.started.config_rev,
-            .agent = agent_name,
-            .created_at_ms = created_at,
-        } } };
-        // Fold the start into the session, then publish. The fold opens the draft.
-        rt.apply(started_note.params) catch |err| {
-            commitFinal(engine, run_arena, slot, null, streamer.usage, .{ .failed = failure(err) });
+        const terminal = streamRound(engine, slot, &streamer);
+        const live = if (rt.draft) |*live| live else {
+            commitFinal(engine, run_arena, slot, null, streamer.usage, terminal);
             return;
         };
-        const live = &rt.draft.?;
-        engine.sinks.emit(started_note);
-        session_events.announceActivity(engine, rt); // `run.started` says a run exists, not what it does.
-
-        const terminal = streamRound(engine, slot, &streamer);
 
         // Settle any tool parts into a terminal state. The request builder rejects a pending tool.
         const has_tools = hasToolPart(live);
@@ -215,6 +202,25 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
         return .{ .failed = failure(err) };
     };
     std.debug.assert(request != null);
+
+    const rt = streamer.session;
+    const session_id = slot.sessionId();
+    const created_at = engine.nowMillis();
+    slot.progress.current.?.created_at_ms = created_at;
+    const started_note: proto.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = .{
+        .session_id = session_id,
+        .message_id = slot.progress.current.?.message_id,
+        .run_id = slot.runId(),
+        .config_rev = slot.handle.started.config_rev,
+        .agent = agent_name,
+        .created_at_ms = created_at,
+    } } };
+    // Fold the start into the session, then publish. The fold opens the draft.
+    rt.apply(started_note.params) catch |err| {
+        return .{ .failed = failure(err) };
+    };
+    engine.sinks.emit(started_note);
+    session_events.announceActivity(engine, rt); // `run.started` says a run exists, not what it does.
 
     var number: u8 = 1;
     while (true) : (number += 1) {
@@ -478,14 +484,12 @@ pub fn finishSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot) vo
     std.debug.assert(rt.active_run == slot);
     const can_drain = slot.phase == .terminalized and !engine.closing and !rt.faulted;
     const parent = slot.parent_id;
-    const kind = slot.handle.started.kind;
     rt.active_run = null;
     slot.destroy();
 
-    // A compaction jumps ahead of queued input, and only a turn end starts one, so none starts the next.
+    // A manual compaction takes priority over queued input.
     const compaction_mod = @import("compaction.zig");
-    const compacting = can_drain and (compaction_mod.startPending(engine, rt) or
-        (kind == .turn and compaction_mod.startAutomatic(engine, rt)));
+    const compacting = can_drain and compaction_mod.startPending(engine, rt);
     if (parent != null and !engine.closing) {
         @import("admission.zig").drain(engine, parent.?) catch |err| {
             std.log.err("cannot admit a queued child: {t}", .{err});

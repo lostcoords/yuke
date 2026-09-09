@@ -17,6 +17,11 @@ pub const Detail = struct {
 pub fn classify(err: anyerror) Detail {
     return switch (err) {
         // The library never raises these, because they are decisions the engine makes.
+        error.ContextHistoryTooLarge => .{ .class = .permanent, .code = .context_overflow, .message = "the context exceeds the model budget and has no useful compaction cut" },
+        error.CompactionSourceTooLarge => .{ .class = .permanent, .code = .context_overflow, .message = "the history is too large for one summary request" },
+        error.CompactionDidNotFit => .{ .class = .permanent, .code = .context_overflow, .message = "the summary and retained history do not reduce the context to fit the model budget" },
+        error.IncompleteSummary => .{ .class = .permanent, .code = .provider, .message = "the model did not complete the summary; the context is unchanged" },
+        error.EmptySummary => .{ .class = .permanent, .code = .provider, .message = "the model returned an empty summary; the context is unchanged" },
         error.TurnTooLarge => .{ .class = .permanent, .code = .context_overflow, .message = "the turn is larger than the model context window" },
         error.ContextTooLarge => .{ .class = .permanent, .code = .context_overflow, .message = "the prompt, tools, and output reserve exceed the model context budget" },
         error.UnsupportedReasoning => .{ .class = .permanent, .code = .unsupported_reasoning, .message = "the model does not support this reasoning level" },

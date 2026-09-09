@@ -1,4 +1,4 @@
-//! One model call outside a turn. It answers its caller and touches no transcript and no broadcast.
+//! One text-only model call with no transcript or broadcast side effects.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -18,9 +18,10 @@ pub const Request = struct {
 /// What one call returned. The text lives in the arena the caller passed.
 pub const Response = struct {
     text: []const u8,
+    finish_reason: ai.types.FinishReason,
 };
 
-/// Run one call against a resolved match. A retry belongs to the caller, which owns the policy.
+/// Run one call within the caller's cancelable task.
 pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, match: registry.Match, request: Request) !Response {
     std.debug.assert(request.prompt.len > 0);
     std.debug.assert(request.max_output_tokens > 0);
@@ -54,27 +55,7 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
         .dialect = spec.dialect,
     };
 
-    var response: ?Response = null;
-    switch (cancel.runChild(engine.deps.io, callChild, .{ engine, arena, cancel, model, request, limit, &response })) {
-        .canceled, .aborted => return error.Canceled,
-        .returned => |result| try result,
-    }
-    std.debug.assert(response != null);
-    return response.?;
-}
-
-/// Open the response and collect its text, in a child so a cancel can interrupt a blocked read.
-fn callChild(
-    engine: *Engine,
-    arena: std.mem.Allocator,
-    cancel: *Cancel,
-    model: ai.Model,
-    request: Request,
-    limit: u32,
-    out: *?Response,
-) !void {
-    defer cancel.finish(engine.deps.io);
-    try cancel.check(engine.deps.io);
+    // The caller owns the cancelable task that covers the transport and its blocked reads.
     const blocks = [_]ai.ir.Block{.{ .role = .user, .value = .{ .text = request.prompt } }};
     var result = try ai.generateWithTransport(engine.deps.gpa, engine.deps.route_transport, model, .{
         .blocks = &blocks,
@@ -82,7 +63,9 @@ fn callChild(
         .options = .{ .max_output_tokens = limit },
     });
     defer result.deinit();
-    out.* = .{ .text = try arena.dupe(u8, result.text) };
+    try cancel.check(engine.deps.io);
+    for (result.content) |part| if (part == .tool_call) return error.IncompleteSummary;
+    return .{ .text = try arena.dupe(u8, result.text), .finish_reason = result.finish_reason };
 }
 
 const testing = std.testing;

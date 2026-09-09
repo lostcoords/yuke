@@ -48,6 +48,7 @@ pub const RunSlot = struct {
     phase: Phase = .pending_start,
     protocol: proto.enums.ProviderProtocol = .anthropic_messages,
     cancel: cancelmod.Cancel = .{},
+    compacting: bool = false,
     retry_budget: u8 = 8,
     retry_state: ?proto.activity.ActivityStateRetrying = null,
     body: ?transport.ResponseBody = null,

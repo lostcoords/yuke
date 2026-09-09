@@ -102,6 +102,7 @@ pub const RunInfo = struct {
     /// The run pins one config revision, so the activity reads it here and never queries.
     config: proto.run.RunConfig,
     retry: ?proto.activity.ActivityStateRetrying = null,
+    compacting: bool = false,
 };
 
 /// Build an activity from the session projection and its context usage.
@@ -120,7 +121,11 @@ fn sessionActivity(
     };
 
     const waiting: ?proto.activity.ActivityStateRetrying = if (run_info) |run| run.retry else null;
-    if (waiting) |retry| {
+    if (run_info != null and run_info.?.compacting) {
+        const run = run_info.?;
+        activity.state = .{ .compacting = .{ .run_id = run.run_id, .reason = .auto, .started_at_ms = run.started_at_ms } };
+        activity.config = try proto.dupe(arena, run.config);
+    } else if (waiting) |retry| {
         activity.state = try proto.dupe(arena, proto.activity.ActivityState{ .retrying = retry });
         if (session.active_run != null) activity.config = try proto.dupe(arena, run_info.?.config);
     } else if (session.draft) |*draft| {
@@ -152,6 +157,7 @@ pub fn residentActivity(engine: *Engine, arena: std.mem.Allocator, rt: *Session)
             .reasoning = slot.config.reasoning,
         },
         .retry = slot.retry_state,
+        .compacting = slot.compacting,
     } else null;
     // Only a committed message moves the gauge, and nothing commits inside a round.
     const usage = rt.context_usage orelse blk: {
