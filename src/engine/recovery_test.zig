@@ -259,3 +259,36 @@ test "root removal releases only its tree claim" {
     const guard = try @import("ownership.zig").acquire(testing.allocator, f.resources.runtime.io(), &f.other_db, root);
     defer guard.release(f.resources.runtime.io());
 }
+
+test "recovery preserves promoted steering and leaves later input pending" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const sid = [_]u8{74} ** 16;
+    try seed(&f.db, sid, null, "/work");
+    try f.engine.own(.bytes(sid));
+    try start(&f.db, f.resources.runtime.io(), a, sid);
+    try queued(&f.db, a, sid);
+    const promoted = blk: {
+        var tx = try f.db.begin();
+        defer tx.deinit();
+        const messages = try run.consumeQueued(&f.db, f.resources.runtime.io(), a, sid);
+        try tx.commit();
+        break :blk messages[0].message.user.input_id;
+    };
+    try queued(&f.db, a, sid);
+    f.engine.close();
+    f.engine = f.resources.makeEngine(&f.db);
+    try f.other.own(.bytes(sid));
+    const messages = (try database.message.historyPage(&f.other_db, a, sid, 0, 100)).messages;
+    try testing.expectEqual(@as(usize, 3), messages.len);
+    try testing.expectEqual(promoted, messages[1].user.input_id);
+    try testing.expect(messages[2].user.source.? == .engine_interruption);
+    const pending = try database.input.list(&f.other_db, a, sid);
+    try testing.expectEqual(@as(usize, 1), pending.len);
+    try testing.expect(pending[0].input.input_id != promoted);
+    try testing.expectEqual(proto.enums.RunErrorCode.interrupted, (try database.run.latestOutcome(&f.other_db, a, sid)).?.failed.code);
+}

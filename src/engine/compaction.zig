@@ -289,7 +289,7 @@ pub fn begin(engine: *Engine, rt: *Session, reason: proto.enums.CompactionReason
     });
     try tx.commit();
 
-    const slot = prepared.bindCall(.{ .input_id = 0, .started = started }, if (snapshot.parent_id) |id| .bytes(id) else null, tree);
+    const slot = prepared.bind(.{ .input_id = 0, .started = started }, if (snapshot.parent_id) |id| .bytes(id) else null, tree);
     rt.active_run = slot;
     session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started } });
     session_events.announceActivity(engine, rt); // A compaction opens no round, so nothing else says it runs.
@@ -375,7 +375,7 @@ pub fn beforeRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, 
     if (try context.estimate(arena, engine.deps.db, slot.sessionId().raw) <= budget.input_ceiling) return;
     std.debug.assert(slot.handle.started.kind == .turn);
     const rt = engine.sessions.get(slot.sessionId()) orelse return error.UnknownSession;
-    std.debug.assert(rt.active_run == slot and slot.progress.current != null);
+    std.debug.assert(rt.active_run == slot and slot.progress.current == null);
     std.debug.assert(rt.draft == null and !slot.compacting);
     slot.compacting = true;
     session_events.announceActivity(engine, rt);
@@ -442,8 +442,8 @@ fn commit(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, cut: Cut, s
     var tx = try engine.deps.db.begin();
     defer tx.deinit();
     std.debug.assert(rt.draft == null);
-    const message_id = if (slot.progress.current) |round| round.message_id else try database.event.allocMessageId(engine.deps.db, arena, session_id.raw);
-    const next_message_id = if (slot.progress.current != null) try database.event.allocMessageId(engine.deps.db, arena, session_id.raw) else null;
+    std.debug.assert(slot.progress.current == null);
+    const message_id = try database.event.allocMessageId(engine.deps.db, arena, session_id.raw);
     const message: proto.message.Message = .{ .compaction = .{
         .id = message_id,
         .run_id = slot.runId(),
@@ -456,8 +456,6 @@ fn commit(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, cut: Cut, s
     } };
     const seq = try database.message.appendCommittedMessage(engine.deps.db, arena, session_id.raw, engine.newId(), now, message);
     try tx.commit();
-
-    if (next_message_id) |id| slot.progress.current.?.message_id = id;
 
     session_events.emitDurable(engine, rt, .{ .method = .@"message.committed", .params = .{
         .message_committed_data = .{ .session_id = session_id, .seq = seq, .message = message },
@@ -1139,9 +1137,10 @@ test "an oversized single turn fails without a summary request or a context trim
     try sendAndWait(&f, a, "x" ** 40_000);
     try testing.expectEqual(@as(usize, 0), capture.requests.items.len);
     const page = try database.message.historyPage(&f.db, a, TaskFixture.sid, 0, 10);
-    try testing.expectEqual(@as(usize, 2), page.messages.len);
+    try testing.expectEqual(@as(usize, 1), page.messages.len);
     try testing.expectEqualStrings("x" ** 40_000, page.messages[0].user.content[0].text.text);
-    try testing.expectEqualStrings("context_overflow", page.messages[1].assistant.@"error".?.type);
+    const outcome = (try database.run.latestOutcome(&f.db, a, TaskFixture.sid)).?;
+    try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, outcome.failed.code);
 }
 
 test "a smaller summary that still exceeds the request budget does not commit" {

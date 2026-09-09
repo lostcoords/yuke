@@ -586,7 +586,7 @@ export interface EngineInterruption {
   readonly kind: RunKind;
 }
 
-/** This input waits behind an active turn. */
+/** This input waits for the next round or run. */
 export interface QueuedInput {
   /** The loaded skill body stays in content until this input commits. */
   readonly skill_name?: string;
@@ -921,7 +921,7 @@ export interface SessionSendInputParams {
   readonly input: Input;
 }
 
-/** The engine queued the input behind an active turn. */
+/** The engine accepted the input for the next round or run. */
 export interface SessionSendInputResultQueued {
   readonly input_id: InputId;
   readonly reason: InputQueueReason;
@@ -1142,7 +1142,7 @@ export type BroadcastName =
   | "tool.state_changed"
   /** The engine sent more output from a tool. */
   | "tool.output_delta"
-  /** The engine queued an input behind the active run. */
+  /** The engine accepted an input for the next round or run. */
   | "input.queued"
   /** The engine canceled a queued input. */
   | "input.canceled"
@@ -1656,7 +1656,7 @@ export interface Broadcasts {
   "tool.state_changed": ToolStateChangedData;
   /** The engine sent more output from a tool. */
   "tool.output_delta": ToolOutputDeltaData;
-  /** The engine queued an input behind the active run. */
+  /** The engine accepted an input for the next round or run. */
   "input.queued": InputQueuedData;
   /** The engine canceled a queued input. */
   "input.canceled": InputCanceledData;

@@ -53,6 +53,7 @@ const Fixture = struct {
         _ = try commands.sessionSendInputForRpc(&self.engine, self.arena.allocator(), .{ .session_id = self.parent, .input = input() }, &launch, null);
         const slot = launch.?.slot;
         slot.phase = .running;
+        try self.openRound(slot);
         const resident = self.engine.sessions.get(self.parent).?;
         resident.draft = try Draft.init(testing.allocator, .{ .session_id = self.parent, .message_id = slot.progress.current.?.message_id, .run_id = slot.runId(), .config_rev = 0, .agent = "parent", .created_at_ms = 1 });
         try resident.draft.?.addPart(.{ .session_id = self.parent, .message_id = slot.progress.current.?.message_id, .part = .{ .tool = .{ .id = 0, .name = "delegate", .arguments = "{}", .state = .{ .running = .{ .started_at_ms = 1 } } } } });
@@ -79,10 +80,19 @@ const Fixture = struct {
         const slot = resident.active_run.?;
         std.debug.assert(resident.draft == null);
         slot.phase = .running;
+        try self.openRound(slot);
         const message_id = slot.progress.current.?.message_id;
         resident.draft = try Draft.init(testing.allocator, .{ .session_id = id, .message_id = message_id, .run_id = slot.runId(), .config_rev = 0, .agent = "parent", .created_at_ms = 1 });
         try resident.draft.?.addPart(.{ .session_id = id, .message_id = message_id, .part = .{ .tool = .{ .id = 0, .name = "delegate", .arguments = "{}", .state = .{ .running = .{ .started_at_ms = 1 } } } } });
         return .{ .session_id = id, .message_id = message_id, .part_id = 0 };
+    }
+
+    fn openRound(self: *Fixture, slot: *@import("run.zig").RunSlot) !void {
+        var tx = try self.db.begin();
+        defer tx.deinit();
+        const id = try database.event.allocMessageId(&self.db, self.arena.allocator(), slot.sessionId().raw);
+        try tx.commit();
+        slot.progress.current = .{ .message_id = id, .created_at_ms = 1 };
     }
 
     fn releaseParent(self: *Fixture, launch: *?turn.Launch) void {
@@ -91,6 +101,7 @@ const Fixture = struct {
         std.debug.assert(resident.draft != null);
         resident.draft.?.deinit();
         resident.draft = null;
+        slot.progress.current = null;
         slot.phase = .pending_start;
         turn.Launch.release(launch, &self.engine);
     }
@@ -227,7 +238,7 @@ test "child capacity excludes the parent and admits durable queues in FIFO order
         try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
     }
     try testing.expectEqual(@as(u64, 0), admission.capacity(&f.engine, f.parent).active);
-    try testing.expectEqual(@as(u64, 2), (try database.event.highWater(&f.db, a, one.session.id.raw)).?.run_id_high);
+    try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, one.session.id.raw)).?.run_id_high);
     const zqlite = @import("zqlite");
     const row = (try f.db.conn.row("SELECT (SELECT min(rowid) FROM events WHERE session_id = ?1 AND name = 'run.started') < (SELECT min(rowid) FROM events WHERE session_id = ?2 AND name = 'run.started')", .{ zqlite.blob(&two.session.id.raw), zqlite.blob(&three.session.id.raw) })).?;
     defer row.deinit();

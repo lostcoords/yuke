@@ -76,7 +76,7 @@ const Fixture = struct {
         var tx = try self.db.begin();
         defer tx.deinit();
         if (text) |value| _ = try database.message.appendCommittedMessage(&self.db, a, child.raw, self.engine.newId(), self.engine.nowMillis(), .{ .assistant = .{
-            .id = started.first_round.message_id,
+            .id = try database.event.allocMessageId(&self.db, a, child.raw),
             .run_id = started.handle.started.run_id,
             .config_rev = 0,
             .agent = "child",

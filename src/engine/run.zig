@@ -14,17 +14,13 @@ const event_store = database.event;
 const input_store = database.input;
 const run_store = database.run;
 
-pub const Config = session.Config;
 pub const RunHandle = session.RunHandle;
-pub const RoundState = session.RoundState;
-pub const RunProgress = session.RunProgress;
 pub const RunSlot = session.RunSlot;
 
 /// A started run and the user messages it committed. The engine publishes each commit before run.started.
 /// The commit content borrows `arena`. The caller must publish before it frees the arena.
 pub const Started = struct {
     handle: RunHandle,
-    first_round: RoundState,
     user_commits: []const proto.message.MessageCommittedData,
 };
 
@@ -47,7 +43,6 @@ pub fn beginTurn(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id
     const input_id = try event_store.allocInputId(db, arena, session_id);
     const run_id = try event_store.allocRunId(db, arena, session_id);
     const user_message_id = try event_store.allocMessageId(db, arena, session_id);
-    const assistant_message_id = try event_store.allocMessageId(db, arena, session_id);
     const user_now = util.nowMillis(io);
     const user_message: proto.message.Message = .{ .user = .{
         .id = user_message_id,
@@ -65,13 +60,11 @@ pub fn beginTurn(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id
     try tx.commit();
     return .{
         .handle = .{ .input_id = input_id, .started = started },
-        .first_round = .{ .number = 1, .message_id = assistant_message_id },
         .user_commits = commits,
     };
 }
 
-/// Tx1 for a queued drain commits every durable queued input as one run.
-/// The handle uses the oldest input id; `first_round` carries the run's assistant message id.
+/// Commit all pending inputs and start one run.
 pub fn beginQueuedTurn(
     db: *Database,
     io: std.Io,
@@ -89,13 +82,22 @@ pub fn beginQueuedTurn(
 /// Create admission can share this transaction without a nested commit.
 pub fn beginQueuedTurnInTransaction(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, config_rev: proto.ids.ConfigRev) !Started {
     std.debug.assert(@import("sql").inTransaction(db.conn));
-    const queued = try input_store.list(db, arena, session_id);
-    if (queued.len == 0) return error.NoRow;
-
+    const commits = try consumeQueued(db, io, arena, session_id);
+    if (commits.len == 0) return error.NoRow;
     const run_id = try event_store.allocRunId(db, arena, session_id);
-    const started_at_ms = util.nowMillis(io);
-    const first_input_id = queued[0].input.input_id;
+    const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, util.nowMillis(io));
+    return .{
+        .handle = .{ .input_id = commits[0].message.user.input_id, .started = started },
+        .user_commits = commits,
+    };
+}
+
+/// Append pending inputs in FIFO order and remove them in the caller's transaction.
+pub fn consumeQueued(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8) ![]const proto.message.MessageCommittedData {
+    std.debug.assert(@import("sql").inTransaction(db.conn));
+    const queued = try input_store.list(db, arena, session_id);
     const commits = try arena.alloc(proto.message.MessageCommittedData, queued.len);
+    const now = util.nowMillis(io);
 
     for (queued, 0..) |entry, i| {
         const user_message_id = try event_store.allocMessageId(db, arena, session_id);
@@ -112,20 +114,14 @@ pub fn beginQueuedTurnInTransaction(db: *Database, io: std.Io, arena: std.mem.Al
             arena,
             session_id,
             util.newId(io),
-            started_at_ms,
+            now,
             user_message,
         );
         commits[i] = .{ .session_id = .bytes(session_id), .seq = seq, .message = user_message };
         try input_store.consume(db, arena, session_id, entry.input.input_id);
     }
 
-    const assistant_message_id = try event_store.allocMessageId(db, arena, session_id);
-    const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, started_at_ms);
-    return .{
-        .handle = .{ .input_id = first_input_id, .started = started },
-        .first_round = .{ .number = 1, .message_id = assistant_message_id },
-        .user_commits = commits,
-    };
+    return commits;
 }
 
 const testing = std.testing;
@@ -170,7 +166,6 @@ test "beginQueuedTurn drains all durable inputs in FIFO order" {
     const handle = started.handle;
     try testing.expectEqual(@as(u64, 1), handle.started.run_id);
     try testing.expectEqual(@as(u64, 1), handle.input_id);
-    try testing.expectEqual(@as(u64, 3), started.first_round.message_id);
     // The drain returns one committed user message per input in FIFO order with contiguous sequences.
     try testing.expectEqual(@as(usize, 2), started.user_commits.len);
     try testing.expectEqual(@as(u64, 1), started.user_commits[0].message.user.id);

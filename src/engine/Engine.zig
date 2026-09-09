@@ -365,6 +365,7 @@ test {
     _ = @import("model_config_test.zig");
     _ = @import("model_call.zig");
     _ = @import("compaction.zig");
+    _ = @import("steering_test.zig");
 }
 
 /// Depth changes affect new children; active runs retain their slots.

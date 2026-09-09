@@ -295,7 +295,7 @@ pub const SessionSendInputResult = union(enum) {
     }
 };
 
-/// The engine queued the input behind an active turn.
+/// The engine accepted the input for the next round or run.
 pub const SessionSendInputResultQueued = struct {
     input_id: ids.InputId,
     reason: InputQueueReason,

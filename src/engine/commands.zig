@@ -344,7 +344,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
         var prepared = try run.RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, stored_prompt orelse "", snapshot.max_rounds);
         errdefer prepared.deinit();
         const started = try run.beginTurn(engine.deps.db, engine.deps.io, arena, sid, .{ .content = content, .source = source, .skill_name = if (params.input == .skill) params.input.skill.name else null }, snapshot.config_rev);
-        const slot = prepared.bind(started.handle, started.first_round, parent, tree);
+        const slot = prepared.bind(started.handle, parent, tree);
         rt.active_run = slot;
         launch.* = .{ .slot = slot };
         // Fold each durable event in sequence order: the user message, then run.started.
@@ -647,7 +647,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         session_events.emitDurable(engine, rt, .{ .method = .@"input.queued", .params = .{ .input_queued_data = .{ .session_id = id, .seq = queued.?.seq, .input = queued.?.input } } });
         if (started) |run_start| {
             const location: run.RunSlot.Location = if (parent_tree) |tree| .{ .root = tree.root, .depth = tree.depth + 1 } else .{ .root = id, .depth = 0 };
-            const slot = prepared.?.bind(run_start.handle, run_start.first_round, parent, location);
+            const slot = prepared.?.bind(run_start.handle, parent, location);
             rt.active_run = slot;
             launch.* = .{ .slot = slot };
             session_events.publishUserCommits(engine, rt, run_start.user_commits);
@@ -750,7 +750,6 @@ test "session.get and session.queue read the durable queue, resident or not" {
     var prepared = try run.RunSlot.prepare(std.testing.allocator, "mock", "", "", null);
     const slot = prepared.bind(
         .{ .input_id = 1, .started = .{ .session_id = id, .seq = 1, .run_id = 7, .kind = .turn, .config_rev = 0, .started_at_ms = 5 } },
-        .{ .number = 1, .message_id = 1 },
         null,
         .{ .root = id, .depth = 0 },
     );

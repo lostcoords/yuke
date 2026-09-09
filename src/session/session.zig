@@ -29,13 +29,11 @@ pub const RunHandle = struct {
 };
 
 pub const RoundState = struct {
-    number: u64,
     message_id: ids.MessageId,
     created_at_ms: u64 = 0,
 };
 
 pub const RunProgress = struct {
-    rounds_started: u64 = 0,
     rounds_committed: u64 = 0,
     current: ?RoundState = null,
 };
@@ -66,25 +64,7 @@ pub const RunSlot = struct {
         slot: ?*RunSlot,
         config: Config,
 
-        pub fn bind(self: *Prepared, handle: RunHandle, first_round: RoundState, parent_id: ?ids.SessionId, location: Location) *RunSlot {
-            const slot = self.slot orelse unreachable;
-            std.debug.assert(first_round.number == 1);
-            if (parent_id == null) std.debug.assert(location.depth == 0) else std.debug.assert(location.depth > 0);
-            self.slot = null;
-            slot.* = .{
-                .gpa = self.gpa,
-                .handle = handle,
-                .progress = .{ .rounds_started = 1, .current = first_round },
-                .config = self.config,
-                .parent_id = parent_id,
-                .tree_root = location.root,
-                .depth = location.depth,
-            };
-            return slot;
-        }
-
-        /// Bind a run that makes one model call and opens no round, such as a compaction.
-        pub fn bindCall(self: *Prepared, handle: RunHandle, parent_id: ?ids.SessionId, location: Location) *RunSlot {
+        pub fn bind(self: *Prepared, handle: RunHandle, parent_id: ?ids.SessionId, location: Location) *RunSlot {
             const slot = self.slot orelse unreachable;
             if (parent_id == null) std.debug.assert(location.depth == 0) else std.debug.assert(location.depth > 0);
             self.slot = null;

@@ -1,4 +1,4 @@
-//! Own the run tasks. Each round commits one assistant message. The final round also commits run.done.
+//! Own the run tasks and commit input at round boundaries.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -54,7 +54,7 @@ pub const Launch = union(enum) {
 /// Launch one prepared run.
 pub fn launchSlot(engine: *Engine, slot: *RunSlot) !void {
     std.debug.assert(slot.phase == .pending_start);
-    std.debug.assert(slot.progress.current != null); // bind must open round 1 before launch
+    std.debug.assert(slot.progress.current == null);
     slot.retry_budget = engine.deps.retry_budget; // The budget covers this run, not one request.
     // The caller already folded and published run.started. This spawns the run task.
     const run_id = slot.runId();
@@ -62,8 +62,6 @@ pub fn launchSlot(engine: *Engine, slot: *RunSlot) !void {
     slot.phase = .running;
     engine.turn_tasks.concurrent(engine.deps.io, runSession, .{ engine, slot }) catch |err| {
         std.log.err("cannot launch run {d}: {t}", .{ run_id, err });
-        // The run task never ran, so set the round timestamp here before the commit.
-        slot.progress.current.?.created_at_ms = @max(engine.nowMillis(), slot.handle.started.started_at_ms);
         var terminal_arena = std.heap.ArenaAllocator.init(engine.deps.gpa);
         defer terminal_arena.deinit();
         commitFinal(engine, terminal_arena.allocator(), slot, null, null, .{ .failed = .{
@@ -83,8 +81,7 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
     const rt = engine.sessions.get(session_id) orelse unreachable;
     std.debug.assert(rt.active_run == slot);
 
-    // Only a value that outlives one round belongs here, such as the workspace root and commit data.
-    // A round builds its request on its own arena, because that memory would otherwise grow all run.
+    // The workspace path must outlive every round.
     var arena_state = std.heap.ArenaAllocator.init(engine.deps.gpa);
     defer arena_state.deinit();
     const run_arena = arena_state.allocator();
@@ -102,16 +99,23 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
     var workspace_root: ?[]const u8 = null;
     var root_resolved = false;
 
+    var boundary_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
+    defer boundary_state.deinit();
+    const boundary_arena = boundary_state.allocator();
+    consumeInitialInputs(engine, boundary_arena, slot) catch |err| {
+        commitFinal(engine, boundary_arena, slot, null, null, if (err == error.Canceled) .canceled else .{ .failed = failure(err) });
+        return;
+    };
+
     while (true) {
+        _ = boundary_state.reset(.retain_capacity);
         // Open this round. A commit reads the streamer, so clear it before any path can fail.
         streamer.reset();
-        const created_at = engine.nowMillis();
-        std.debug.assert(slot.progress.current != null); // bind or beginRound opened the round
-        slot.progress.current.?.created_at_ms = created_at;
+        std.debug.assert(slot.progress.current == null);
         std.debug.assert(rt.draft == null); // one draft per round
         const terminal = streamRound(engine, slot, &streamer);
         const live = if (rt.draft) |*live| live else {
-            commitFinal(engine, run_arena, slot, null, streamer.usage, terminal);
+            commitFinal(engine, boundary_arena, slot, null, streamer.usage, terminal);
             return;
         };
 
@@ -124,59 +128,65 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
                     workspace_root = workspaceRoot(engine, run_arena, session_id.raw) catch null;
                     root_resolved = true;
                 }
-                settlePendingTools(engine, run_arena, slot, &streamer, workspace_root, live) catch |err| {
+                settlePendingTools(engine, boundary_arena, slot, &streamer, workspace_root, live) catch |err| {
                     faultSlot(engine, session_id, slot, err);
                     return;
                 };
                 if (workspace_root == null) {
-                    commitFinal(engine, run_arena, slot, live, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
+                    commitFinal(engine, boundary_arena, slot, live, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
                     return;
                 }
             } else {
                 // Cancel any pending tool part; a canceled/failed stream or a malformed tool_use lands here.
-                settlePendingTools(engine, run_arena, slot, &streamer, null, live) catch |err| {
+                settlePendingTools(engine, boundary_arena, slot, &streamer, null, live) catch |err| {
                     faultSlot(engine, session_id, slot, err);
                     return;
                 };
                 if (terminal == .success) {
-                    commitFinal(engine, run_arena, slot, live, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
+                    commitFinal(engine, boundary_arena, slot, live, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
                     return;
                 }
             }
         }
 
-        // A cancel forces the canceled terminal. A failed stream or a plain answer also ends the turn.
-        const commit_terminal: Terminal = if (slot.cancel.requested) .canceled else terminal;
-        if (commit_terminal != .success or !has_tools) {
-            commitFinal(engine, run_arena, slot, live, streamer.usage, commit_terminal);
-            return;
-        }
-
-        // A capped tool round is terminal, so save its failure on the assistant message transaction.
-        const capped = if (slot.config.max_rounds) |cap| slot.progress.rounds_committed >= cap -| 1 else false;
-        const completion: RoundCompletion = if (capped) .final else .intermediate;
-        const round_terminal: Terminal = if (capped) .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } } else terminal;
-        // The commit fold extends the transcript and, for the capped round, closes the run.
-        _ = commitRound(engine, run_arena, slot, live, streamer.usage, round_terminal, completion) catch |err| {
+        commitRound(engine, boundary_arena, slot, live, streamer.usage, terminal) catch |err| {
             faultSlot(engine, session_id, slot, err);
             return;
         };
-        if (capped) return;
-        // A cancel at the round boundary ends the run without a new empty round.
-        if (slot.cancel.requested) {
-            finishRunOpen(engine, run_arena, slot, .{ .canceled = .{} }) catch |err| faultSlot(engine, session_id, slot, err);
-            return;
-        }
-        beginRound(engine, slot) catch |err| {
-            faultSlot(engine, session_id, slot, err);
-            return;
-        };
+        if (slot.phase == .terminalized) return;
     }
 }
 
-/// Commit the final round and fault the slot on a commit error.
+/// Include input accepted before the run task starts.
+fn consumeInitialInputs(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void {
+    try engine.deps.io.checkCancel();
+    const protection = engine.deps.io.swapCancelProtection(.blocked);
+    defer _ = engine.deps.io.swapCancelProtection(protection);
+    if (slot.cancel.requested) return error.Canceled;
+    std.debug.assert(slot.progress.current == null);
+    var tx = try engine.deps.db.begin();
+    defer tx.deinit();
+    const inputs = try run.consumeQueued(engine.deps.db, engine.deps.io, arena, slot.sessionId().raw);
+    try tx.commit();
+    const rt = engine.sessions.get(slot.sessionId()).?;
+    session_events.publishUserCommits(engine, rt, inputs);
+    if (inputs.len > 0) session_events.announceActivity(engine, rt);
+}
+
+/// End a failed or canceled run and fault the slot on a save error.
 fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: ?*const draft.Draft, usage: ?message.TokenUsage, terminal: Terminal) void {
-    _ = commitRound(engine, arena, slot, live, usage, terminal, .final) catch |err| {
+    std.debug.assert(terminal != .success);
+    if (live == null) {
+        const outcome: proto.run.RunOutcome = switch (terminal) {
+            .success => unreachable,
+            .canceled => .{ .canceled = .{} },
+            .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message } },
+        };
+        slot.progress.current = null;
+        finishRunOpen(engine, arena, slot, outcome) catch |err| faultSlot(engine, slot.sessionId(), slot, err);
+        return;
+    }
+    commitRound(engine, arena, slot, live.?, usage, terminal) catch |err| {
         faultSlot(engine, slot.sessionId(), slot, err);
         return;
     };
@@ -205,8 +215,8 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
 
     const rt = streamer.session;
     const session_id = slot.sessionId();
-    const created_at = engine.nowMillis();
-    slot.progress.current.?.created_at_ms = created_at;
+    beginRound(engine, slot) catch |err| return .{ .failed = failure(err) };
+    const created_at = slot.progress.current.?.created_at_ms;
     const started_note: proto.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = .{
         .session_id = session_id,
         .message_id = slot.progress.current.?.message_id,
@@ -348,27 +358,33 @@ fn failure(err: anyerror) Failure {
     return .{ .code = detail.code, .message = detail.message };
 }
 
-/// A round is intermediate (a tool round; the run continues) or final (the run ends).
-const RoundCompletion = enum { intermediate, final };
-
 /// Commit the current round, and terminalize the run only when this is the final round.
 fn commitRound(
     engine: *Engine,
     arena: std.mem.Allocator,
     slot: *RunSlot,
-    live: ?*const draft.Draft,
+    live: *const draft.Draft,
     usage: ?message.TokenUsage,
-    terminal: Terminal,
-    completion: RoundCompletion,
-) !message.Message {
+    response: Terminal,
+) !void {
     std.debug.assert(slot.phase == .running);
     std.debug.assert(slot.body == null);
-    std.debug.assert(slot.progress.current != null); // bind opened the round before launch
+    std.debug.assert(slot.progress.current != null);
     const old_cancel_protection = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old_cancel_protection);
 
+    const result: Terminal = if (slot.cancel.requested) .canceled else response;
+    const session_id = slot.sessionId();
+    var tx = try engine.deps.db.begin();
+    defer tx.deinit();
+    const pending = try database.input.count(engine.deps.db, arena, session_id.raw);
+    const wants_next = result == .success and (hasToolPart(live) or pending > 0);
+    const capped = wants_next and if (slot.config.max_rounds) |cap| slot.progress.rounds_committed >= cap -| 1 else false;
+    const terminal: Terminal = if (capped) .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } } else result;
+    const final = !wants_next or capped;
+    const rounds_committed = slot.progress.rounds_committed + 1;
     const round = &slot.progress.current.?;
-    const content = if (live) |value| (try value.toActiveDraft(arena)).message.content else &.{};
+    const content = (try live.toActiveDraft(arena)).message.content;
     const ended_at = @max(engine.nowMillis(), slot.handle.started.started_at_ms);
     const finish: proto.enums.StopReason = switch (terminal) {
         .success => |reason| reason,
@@ -392,21 +408,15 @@ fn commitRound(
         .@"error" = message_error,
         .provenance = .{ .protocol = slot.protocol, .model = slot.config.model },
     } };
-    slot.progress.rounds_committed += 1;
     const outcome: proto.run.RunOutcome = switch (terminal) {
-        .success => |reason| .{ .turn = .{ .finish = reason, .rounds = slot.progress.rounds_committed } },
+        .success => |reason| .{ .turn = .{ .finish = reason, .rounds = rounds_committed } },
         .canceled => .{ .canceled = .{} },
         .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message } },
     };
     // The committed content borrows the draft. The commit fold frees the draft, so own a copy first.
-    // Copy before the transaction, so an allocation failure consumes no durable sequence.
     const owned = try proto.dupe(arena, committed);
-    const session_id = slot.sessionId();
-
-    var tx = try engine.deps.db.*.begin();
-    defer tx.deinit();
     const seq = try message_store.appendCommittedMessage(engine.deps.db, arena, session_id.raw, engine.newId(), ended_at, owned);
-    const done: ?reports.Terminal = if (completion == .final) try reports.append(engine, arena, .{
+    const done: ?reports.Terminal = if (final) try reports.append(engine, arena, .{
         .session_id = session_id,
         .seq = 0,
         .run_id = slot.runId(),
@@ -414,25 +424,30 @@ fn commitRound(
         .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
         .outcome = outcome,
     }) else null;
+    const inputs = if (!final) try run.consumeQueued(engine.deps.db, engine.deps.io, arena, session_id.raw) else &.{};
     try tx.commit();
-    if (completion == .final) slot.phase = .terminalized;
+    slot.progress.rounds_committed = rounds_committed;
+    slot.progress.current = null;
+    if (final) slot.phase = .terminalized;
 
     const rt = engine.sessions.get(session_id) orelse unreachable;
     session_events.emitDurable(engine, rt, .{ .method = .@"message.committed", .params = .{
         .message_committed_data = .{ .session_id = session_id, .seq = seq, .message = owned },
     } });
-    session_events.announceSummary(engine, session_id); // The commit moved the count, the lifetime usage, and the order.
+    session_events.publishUserCommits(engine, rt, inputs);
+    if (inputs.len == 0) session_events.announceSummary(engine, session_id);
+    if (!final) session_events.announceActivity(engine, rt);
     if (done) |terminal_result| {
         session_events.emitDurable(engine, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = terminal_result.done } });
         if (terminal_result.notice) |notice| session_events.emitDurable(engine, rt, .{ .method = .@"message.committed", .params = .{ .message_committed_data = notice } });
         if (terminal_result.report) |report| reports.publishReport(engine, report, true);
     }
-    return owned;
 }
 
-/// Close an open run at a round boundary with `outcome`. The last round is already committed.
+/// End a run with no active assistant message.
 pub fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, outcome: proto.run.RunOutcome) !void {
     std.debug.assert(slot.phase == .running);
+    std.debug.assert(slot.progress.current == null);
     const old_cancel_protection = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old_cancel_protection);
 
@@ -459,14 +474,14 @@ pub fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, 
 
 /// Allocate the next round: allocate a message id, then advance the progress state.
 fn beginRound(engine: *Engine, slot: *RunSlot) !void {
+    std.debug.assert(slot.progress.current == null);
     var arena_state = std.heap.ArenaAllocator.init(engine.deps.gpa);
     defer arena_state.deinit();
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
     const message_id = try event_store.allocMessageId(engine.deps.db, arena_state.allocator(), slot.sessionId().raw);
     try tx.commit();
-    slot.progress.rounds_started += 1;
-    slot.progress.current = .{ .number = slot.progress.rounds_started, .message_id = message_id };
+    slot.progress.current = .{ .message_id = message_id, .created_at_ms = engine.nowMillis() };
 }
 
 /// Preserve the open marker when Tx2 fails. A matching terminal event must clear it.
@@ -519,8 +534,7 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
     std.debug.assert(rt.active_run == null);
     std.debug.assert(rt.queueDepth() > 0);
 
-    // Only a value that outlives one round belongs here, such as the workspace root and commit data.
-    // A round builds its request on its own arena, because that memory would otherwise grow all run.
+    // The workspace path must outlive every round.
     var arena_state = std.heap.ArenaAllocator.init(engine.deps.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -531,7 +545,7 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
     var prepared = try RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, prompt orelse "", snapshot.max_rounds);
     errdefer prepared.deinit();
     const started = try run.beginQueuedTurn(engine.deps.db, engine.deps.io, arena, session_id.raw, snapshot.config_rev);
-    const slot = prepared.bind(started.handle, started.first_round, if (snapshot.parent_id) |id| .bytes(id) else null, tree);
+    const slot = prepared.bind(started.handle, if (snapshot.parent_id) |id| .bytes(id) else null, tree);
     // Fold each durable event in sequence order: the drained user messages, then run.started.
     // The commit fold retires each drained input from the queue.
     session_events.publishUserCommits(engine, rt, started.user_commits);
@@ -1006,10 +1020,10 @@ const StreamerFixture = struct {
         errdefer prepared.deinit();
         self.slot = prepared.bind(
             .{ .input_id = 1, .started = .{ .session_id = .bytes(session_id), .seq = 2, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 } },
-            .{ .number = 1, .message_id = 2 },
             null,
             .{ .root = .bytes(session_id), .depth = 0 },
         );
+        self.slot.progress = .{ .current = .{ .message_id = 2 } };
         self.session.active_run = self.slot;
         try self.session.apply(.{ .message_started_data = .{
             .session_id = .bytes(session_id),
@@ -1044,6 +1058,15 @@ const StreamerFixture = struct {
         try tx.commit();
     }
 
+    fn queue(self: *StreamerFixture, arena: std.mem.Allocator, text: []const u8) !ids.InputId {
+        var tx = try self.db.begin();
+        defer tx.deinit();
+        const entry = try database.input.enqueue(&self.db, arena, session_id, self.engine.newId(), 2, .{ .content = &.{.{ .text = .{ .text = text } }} }, 2);
+        try tx.commit();
+        session_events.emitDurable(&self.engine, self.session, .{ .method = .@"input.queued", .params = .{ .input_queued_data = .{ .session_id = self.session.id, .seq = entry.seq, .input = entry.input } } });
+        return entry.input.input_id;
+    }
+
     /// Close the live draft and open the next round, so a test can check the part ids restart.
     fn newRound(self: *StreamerFixture, message_id: ids.MessageId) !void {
         self.session.draft.?.deinit();
@@ -1056,7 +1079,7 @@ const StreamerFixture = struct {
             .agent = agent_name,
             .created_at_ms = 2,
         } });
-        self.slot.progress.current = .{ .number = 2, .message_id = message_id };
+        self.slot.progress.current = .{ .message_id = message_id };
     }
 
     fn streamer(self: *StreamerFixture) Streamer {
@@ -1135,6 +1158,7 @@ test "a capped tool round reloads with an assistant error and failed outcome" {
     stream_test_transport.bytes = capped_tool_reply;
     fixture.session.draft.?.deinit();
     fixture.session.draft = null;
+    fixture.slot.progress = .{};
     fixture.slot.phase = .running;
     runSession(&fixture.engine, fixture.slot);
 
@@ -1451,4 +1475,52 @@ test "the final build hook obeys prompt and context limits without a new floor" 
     state.size = 0;
     state.output = 128_000;
     try std.testing.expectError(error.ContextTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
+}
+
+test "a failed boundary transaction preserves the draft progress and pending input" {
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try f.persistStarted(a);
+    f.slot.phase = .running;
+    const input_id = try f.queue(a, "next input");
+    try f.db.conn.execNoArgs("CREATE TEMP TRIGGER refuse_consume BEFORE DELETE ON pending_inputs BEGIN SELECT RAISE(FAIL, 'test refusal'); END");
+    try std.testing.expectError(error.ConstraintTrigger, commitRound(&f.engine, a, f.slot, &f.session.draft.?, null, .{ .success = .stop }));
+    try std.testing.expectEqual(@as(usize, 1), (try database.message.historyPage(&f.db, a, StreamerFixture.session_id, 0, 10)).messages.len);
+    try std.testing.expectEqual(@as(u64, 0), f.slot.progress.rounds_committed);
+    try std.testing.expectEqual(@as(u64, 2), f.slot.progress.current.?.message_id);
+    try std.testing.expectEqual(@as(usize, 1), f.session.queueDepth());
+    try std.testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, StreamerFixture.session_id));
+    try f.db.conn.execNoArgs("DROP TRIGGER refuse_consume");
+    try commitRound(&f.engine, a, f.slot, &f.session.draft.?, null, .{ .success = .stop });
+    try std.testing.expectEqual(@as(u64, 1), f.slot.progress.rounds_committed);
+    try std.testing.expect(f.slot.progress.current == null and f.session.draft == null);
+    try std.testing.expectEqual(@as(usize, 0), f.session.queueDepth());
+    const messages = (try database.message.historyPage(&f.db, a, StreamerFixture.session_id, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 3), messages.len);
+    try std.testing.expectEqual(@as(u64, 2), messages[1].assistant.id);
+    try std.testing.expectEqual(@as(u64, 3), messages[2].user.id);
+    try std.testing.expectEqual(input_id, messages[2].user.input_id);
+    try finishRunOpen(&f.engine, a, f.slot, .{ .canceled = .{} });
+}
+
+test "a cancel at the boundary wins over a successful response and preserves pending input" {
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try f.persistStarted(a);
+    f.slot.phase = .running;
+    _ = try f.queue(a, "pending");
+    f.slot.cancel.request(f.engine.deps.io);
+    try commitRound(&f.engine, a, f.slot, &f.session.draft.?, null, .{ .success = .stop });
+    try std.testing.expectEqual(RunSlot.Phase.terminalized, f.slot.phase);
+    try std.testing.expectEqual(@as(usize, 1), f.session.queueDepth());
+    try std.testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, StreamerFixture.session_id));
+    try std.testing.expect((try database.run.latestOutcome(&f.db, a, StreamerFixture.session_id)).? == .canceled);
 }

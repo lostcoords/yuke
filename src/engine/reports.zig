@@ -70,7 +70,7 @@ pub fn canceledInputs(engine: *Engine, arena: std.mem.Allocator, child: proto.id
     const parent = snapshot.parent_id orelse return null;
     const name = snapshot.name orelse return error.CorruptDatabase;
     const ids = try std.json.Stringify.valueAlloc(arena, input_ids, .{});
-    const text = try std.fmt.allocPrint(arena, "Message from {s}: inputs {s} were canceled before a run started for them.", .{ name, ids });
+    const text = try std.fmt.allocPrint(arena, "Message from {s}: inputs {s} were canceled before they entered the transcript.", .{ name, ids });
     return try enqueue(engine, arena, .bytes(parent), engine.nowMillis(), text, .{ .child_input_canceled = .{
         .session_id = child,
         .name = name,

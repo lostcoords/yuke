@@ -362,7 +362,7 @@
     },
     {
       "name": "input.queued",
-      "doc": "The engine queued an input behind the active run.",
+      "doc": "The engine accepted an input for the next round or run.",
       "params": "InputQueuedData",
       "direction": "serverToClient"
     },
@@ -2104,7 +2104,7 @@
     },
     {
       "name": "QueuedInput",
-      "doc": "This input waits behind an active turn.",
+      "doc": "This input waits for the next round or run.",
       "fields": [
         {
           "name": "skill_name",
@@ -3071,7 +3071,7 @@
     },
     {
       "name": "SessionSendInputResultQueued",
-      "doc": "The engine queued the input behind an active turn.",
+      "doc": "The engine accepted the input for the next round or run.",
       "fields": [
         {
           "name": "input_id",
@@ -4241,7 +4241,7 @@
         {
           "name": "input.queued",
           "wire": "input.queued",
-          "doc": "The engine queued an input behind the active run."
+          "doc": "The engine accepted an input for the next round or run."
         },
         {
           "name": "input.canceled",

@@ -45,7 +45,7 @@ pub const BroadcastName = enum {
     @"tool.state_changed",
     /// The engine sent more output from a tool.
     @"tool.output_delta",
-    /// The engine queued an input behind the active run.
+    /// The engine accepted an input for the next round or run.
     @"input.queued",
     /// The engine canceled a queued input.
     @"input.canceled",

@@ -64,7 +64,7 @@ pub const Notice = struct {
     message: []const u8,
 };
 
-/// This input waits behind an active turn.
+/// This input waits for the next round or run.
 pub const QueuedInput = struct {
     /// The loaded skill body stays in content until this input commits.
     skill_name: ?[]const u8 = null,

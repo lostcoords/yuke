@@ -578,6 +578,35 @@ test "a symlinked skill loads once and a body reads without its frontmatter" {
     try testing.expect(std.mem.indexOf(u8, diagnostic.?, "work/.agents/skills/shared/SKILL.md") != null);
 }
 
+test "the catalog skips invalid UTF-8 directory names and reports a valid path" {
+    const Names = struct {
+        fn read(userdata: ?*anyopaque, reader: *std.Io.Dir.Reader, entries: []std.Io.Dir.Entry) std.Io.Dir.Reader.Error!usize {
+            const count = try testing.io.vtable.dirRead(userdata, reader, entries);
+            for (entries[0..count]) |*entry| {
+                if (std.mem.eql(u8, entry.name, "invalid-name")) entry.name = "\xff";
+            }
+            return count;
+        }
+    };
+    var r: Roots = undefined;
+    try r.init();
+    defer r.deinit();
+    try r.skill("work", "invalid-name", "---\ndescription: hidden name\n---\n");
+    try r.skill("work", "visible", "---\ndescription: valid name\n---\n");
+    // Inject the directory entry because some filesystems reject invalid UTF-8 names.
+    var vtable = testing.io.vtable.*;
+    vtable.dirRead = Names.read;
+    const io: std.Io = .{ .userdata = testing.io.userdata, .vtable = &vtable };
+    const catalog = try skills_load(r.arena.allocator(), io, &r.env, r.workspace);
+    try testing.expectEqual(@as(usize, 1), catalog.entries.len);
+    try testing.expectEqualStrings("visible", catalog.entries[0].name);
+    try testing.expectEqual(@as(usize, 1), catalog.skipped.len);
+    try testing.expectEqualStrings("a directory name is not valid UTF-8", catalog.skipped[0].reason);
+    const root = try std.fs.path.join(r.arena.allocator(), &.{ r.workspace, ".agents", "skills" });
+    try testing.expectEqualStrings(root, catalog.skipped[0].path);
+    try testing.expect(std.unicode.utf8ValidateSlice(catalog.skipped[0].path));
+}
+
 test "an oversized skill is skipped and too many candidates refuse the root" {
     var r: Roots = undefined;
     try r.init();
@@ -586,14 +615,10 @@ test "an oversized skill is skipped and too many candidates refuse the root" {
     const large = try a.alloc(u8, max_file_bytes + 1);
     @memset(large, 'x');
     try r.skill("work", "big", large);
-    try r.tmp.dir.createDir(testing.io, "work/.agents/skills/\xff", .default_dir);
-    try r.tmp.dir.writeFile(testing.io, .{ .sub_path = "work/.agents/skills/\xff/SKILL.md", .data = "---\ndescription: hidden name\n---\n" });
     const catalog = try r.load();
     try testing.expectEqual(@as(usize, 0), catalog.entries.len);
-    try testing.expectEqual(@as(usize, 2), catalog.skipped.len);
-    try testing.expectEqualStrings("a directory name is not valid UTF-8", catalog.skipped[0].reason);
-    try testing.expectEqualStrings("the file exceeds 256 KiB", catalog.skipped[1].reason);
-    try r.tmp.dir.deleteTree(testing.io, "work/.agents/skills/\xff");
+    try testing.expectEqual(@as(usize, 1), catalog.skipped.len);
+    try testing.expectEqualStrings("the file exceeds 256 KiB", catalog.skipped[0].reason);
     // Exactly the bound loads; one more candidate refuses the root, even when the scan skips it.
     for (0..max_per_root - 1) |i| try r.skill("work", try std.fmt.allocPrint(a, "s{d:0>3}", .{i}), "---\ndescription: d\n---\n");
     try testing.expectEqual(@as(usize, max_per_root - 1), (try r.load()).entries.len);
