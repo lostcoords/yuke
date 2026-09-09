@@ -267,10 +267,12 @@ function describe(part) {
   } catch (_) {}
   const presenter = presenters[String(part.name || "")];
   try {
-    const out = presenter ? presenter.present(args, raw) : presentation.fallback(part, args, raw);
-    const category = presenter ? presenter.category : out && out.category;
+    // A presenter states its category beside the label it returns, so both branches answer one shape.
+    const out = presenter
+      ? { ...presenter.present(args, raw), category: presenter.category }
+      : presentation.fallback(part, args, raw);
     if (out && typeof out.verb === "string" && typeof out.subject === "string") {
-      return { verb: out.verb, subject: out.subject, category: typeof category === "string" ? category : "other" };
+      return { verb: out.verb, subject: out.subject, category: typeof out.category === "string" ? out.category : "other" };
     }
   } catch (_) {}
   return { verb: String(part.name || "tool"), subject: "", category: "other" };
