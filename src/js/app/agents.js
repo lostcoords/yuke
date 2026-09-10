@@ -194,8 +194,7 @@ async function withSlot(ctx, slot, signal, attempt) {
   }
 }
 
-// Tell the parent to wait for the child report instead of polling or repeating the work.
-const spawn_note = "The child sends a report when its run ends. The report resumes your next turn. Finish independent work, then end your turn and wait. Do not repeat delegated work or guess its report.";
+const spawn_note = "Child started. A report will resume this turn. Do not redo this task.";
 
 /** @param {Context} ctx @param {{ name: string, message: string, model: Wire.AgentModelSlot }} args @param {Signal} signal @param {Site} site */
 export async function spawnAgent(ctx, args, signal, site) {

@@ -5,7 +5,7 @@ import { defineConfig } from "yuke:kernel";
     spawnAgent(ctx, { name: "two", message: "task two", model: "medium" }, undefined, site),
   ]);
   if (stats.saves !== 1 || stats.prompts !== 2 || stats.creates !== 2) throw new Error(JSON.stringify(stats));
-  if (results[0].state !== "queued" || results[1].model !== "p/family/model" || !results[0].note.includes("end your turn")) throw new Error("receipt");
+  if (results[0].state !== "queued" || results[1].model !== "p/family/model" || !results[0].note.includes("Do not redo this task")) throw new Error("receipt");
   if (created.max_rounds !== 50) throw new Error("max_rounds");
   defineConfig({ agents: { maxRounds: 7 } });
   await spawnAgent(ctx, { name: "four", message: "task", model: "small" }, undefined, site);
