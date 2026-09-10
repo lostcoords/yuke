@@ -96,25 +96,14 @@ pub fn authHeaders(
     for (p.headers) |h| try out.append(arena, try h.cloneLeaky(arena));
 }
 
-/// What one request carries in a header rather than in its body. An empty field writes no header.
-pub const Routing = struct {
-    /// One stable id per session. It keeps every round of that session on one prompt cache.
-    session_id: []const u8 = "",
-    /// The sticky token the last response carried. It holds the next round on the same cache node.
-    turn_state: []const u8 = "",
-};
-
-/// Report whether this route reads the ChatGPT cache-routing headers. No other host reads them.
-fn readsCodexRouting(p: *const Route) bool {
-    return p.protocol == .openai_responses and p.responses_dialect == .codex;
-}
-
-/// Append one generated header. A source that pins the same name is a conflict, never a silent override.
-fn appendGenerated(arena: std.mem.Allocator, out: *std.ArrayList(Header), name: []const u8, value: []const u8) Error!void {
-    // The engine owns this name, so a pinned one conflicts whether or not this request holds a value.
-    if (header(out.items, name) != null) return error.HeaderConflict;
-    if (value.len == 0) return;
-    try out.append(arena, .{ .name = name, .value = try arena.dupe(u8, value) });
+/// Name the header that carries the session id, or null when the route reads no such header.
+/// The ChatGPT backend routes a repeated prefix to one prompt cache by this header, not by a body field.
+fn sessionHeaderName(p: *const Route) ?[]const u8 {
+    if (p.protocol != .openai_responses) return null;
+    return switch (p.responses_dialect) {
+        .codex => "session-id",
+        .standard => null,
+    };
 }
 
 /// Build the request one route sends, and copy its URL and headers into `arena`.
@@ -122,16 +111,16 @@ pub fn request(
     arena: std.mem.Allocator,
     p: *const Route,
     credential: Credential,
-    routing: Routing,
+    session_id: []const u8,
     body: []u8,
 ) Error!transport.Request {
     var headers: std.ArrayList(Header) = .empty;
     try authHeaders(arena, p, credential, &headers);
-    if (readsCodexRouting(p)) {
-        // The ChatGPT backend routes its prompt cache by these headers, never by a body field.
-        try appendGenerated(arena, &headers, "session-id", routing.session_id);
-        try appendGenerated(arena, &headers, "x-codex-turn-state", routing.turn_state);
-    }
+    if (session_id.len != 0) if (sessionHeaderName(p)) |name| {
+        // The engine owns this value, so a source that pins its own would send every session to one cache.
+        if (header(headers.items, name) != null) return error.HeaderConflict;
+        try headers.append(arena, .{ .name = name, .value = try arena.dupe(u8, session_id) });
+    };
     return .{
         .url = try endpointUrl(arena, p),
         .headers = headers.items,
@@ -269,13 +258,13 @@ test "only the codex responses route carries the session id as a header" {
         .auth = .none,
         .responses_dialect = .codex,
     };
-    const carried = try request(a, &codex, .none, .{ .session_id = "0123456789abcdef" }, &body);
+    const carried = try request(a, &codex, .none, "0123456789abcdef", &body);
     try testing.expectEqualStrings("0123456789abcdef", header(carried.headers, "session-id").?);
 
     // The public Responses endpoint routes on the body key, so a header there would be dead weight.
     var standard = codex;
     standard.responses_dialect = .standard;
-    const plain = try request(a, &standard, .none, .{ .session_id = "0123456789abcdef" }, &body);
+    const plain = try request(a, &standard, .none, "0123456789abcdef", &body);
     try testing.expect(header(plain.headers, "session-id") == null);
 
     // No other protocol reads this header.
@@ -284,40 +273,12 @@ test "only the codex responses route carries the session id as a header" {
         .protocol = .anthropic_messages,
         .auth = .none,
     };
-    const other = try request(a, &anthropic, .none, .{ .session_id = "0123456789abcdef" }, &body);
+    const other = try request(a, &anthropic, .none, "0123456789abcdef", &body);
     try testing.expect(header(other.headers, "session-id") == null);
 
     // A caller that names no session leaves the header off rather than sending an empty one.
-    const absent = try request(a, &codex, .none, .{}, &body);
+    const absent = try request(a, &codex, .none, "", &body);
     try testing.expect(header(absent.headers, "session-id") == null);
-}
-
-test "the turn state rides its own header, and only on the codex route" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var body = "{}".*;
-    const codex: Route = .{
-        .base_url = "https://chatgpt.com/backend-api/codex",
-        .protocol = .openai_responses,
-        .auth = .none,
-        .responses_dialect = .codex,
-    };
-    const carried = try request(a, &codex, .none, .{ .session_id = "sid", .turn_state = "gAAAAAB" }, &body);
-    try testing.expectEqualStrings("gAAAAAB", header(carried.headers, "x-codex-turn-state").?);
-
-    // The first round of a session holds no token, so it writes no header rather than an empty one.
-    const first = try request(a, &codex, .none, .{ .session_id = "sid" }, &body);
-    try testing.expect(header(first.headers, "x-codex-turn-state") == null);
-
-    // No other host reads this token.
-    const anthropic: Route = .{
-        .base_url = "https://api.anthropic.com/v1",
-        .protocol = .anthropic_messages,
-        .auth = .none,
-    };
-    const other = try request(a, &anthropic, .none, .{ .session_id = "sid", .turn_state = "gAAAAAB" }, &body);
-    try testing.expect(header(other.headers, "x-codex-turn-state") == null);
 }
 
 test "a source that pins the session header is a conflict, not a silent override" {
@@ -332,10 +293,12 @@ test "a source that pins the session header is a conflict, not a silent override
         // A header name is case-insensitive, so a different spelling is the same header.
         .headers = &.{.{ .name = "Session-ID", .value = "from-the-route" }},
     };
-    try testing.expectError(error.HeaderConflict, request(arena.allocator(), &route, .none, .{ .session_id = "0123456789abcdef" }, &body));
+    try testing.expectError(error.HeaderConflict, request(arena.allocator(), &route, .none, "0123456789abcdef", &body));
 
-    // The name conflicts on every request, so the first round refuses it too rather than send it once.
-    try testing.expectError(error.HeaderConflict, request(arena.allocator(), &route, .none, .{}, &body));
+    // The same route serves a caller that names no session, because nothing is generated to collide.
+    const built = try request(arena.allocator(), &route, .none, "", &body);
+    try testing.expectEqualStrings("from-the-route", header(built.headers, "session-id").?);
+    try testing.expect(instance.validHeaders(built.headers));
 }
 
 test "one call turns a route and a credential into a request that owns its strings" {
@@ -350,7 +313,7 @@ test "one call turns a route and a credential into a request that owns its strin
         .protocol = .anthropic_messages,
         .auth = .{ .api_key = .x_api_key },
         .headers = &.{.{ .name = "anthropic-version", .value = &version }},
-    }, .{ .api_key = &key }, .{}, &body);
+    }, .{ .api_key = &key }, "", &body);
 
     // The request outlives the route and the credential, so a later overwrite must not reach it.
     @memset(&version, 'x');
