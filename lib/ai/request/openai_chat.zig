@@ -46,6 +46,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             try jw.endObject();
         }
         try jw.endArray();
+        // This host reads no member as the automatic control, so only a refusal writes one.
+        if (request.tool_choice == .none) try json.field(&jw, "tool_choice", "none");
     }
 
     try jw.objectField("messages");

@@ -63,7 +63,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             try jw.endObject();
         }
         try jw.endArray();
-        try json.field(&jw, "tool_choice", "auto");
+        try json.field(&jw, "tool_choice", @tagName(request.tool_choice));
     }
 
     try jw.objectField("input");

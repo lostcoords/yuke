@@ -64,7 +64,19 @@ pub fn project(arena: std.mem.Allocator, db: *database.Database, session_id: [16
     std.debug.assert(budget.input_ceiling > 0);
     if (try estimate(arena, db, session_id) > budget.input_ceiling) return error.ContextHistoryTooLarge;
     const head = try readHead(arena, db, session_id);
+    return .{ .messages = try collect(arena, db, session_id, head, null) };
+}
+
+/// Read the history a request sends. A `stop_id` ends the range below that message.
+pub fn collect(
+    arena: std.mem.Allocator,
+    db: *database.Database,
+    session_id: [16]u8,
+    head: ?Head,
+    stop_id: ?u64,
+) ![]const proto.message.Message {
     var messages: std.ArrayList(proto.message.Message) = .empty;
+    // The checkpoint leads the range and stands for every message it replaced.
     if (head) |h| try messages.append(arena, h.message);
     var rows = try db.queries.context_messages.rows(.{ .session_id = session_id, .first_message_id = if (head) |h| h.from_id else 0 });
     defer rows.deinit();
@@ -73,10 +85,11 @@ pub fn project(arena: std.mem.Allocator, db: *database.Database, session_id: [16
         defer row.deinit();
         const msg = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
         if (msg.id() != row.value.message_id) return error.CorruptLog;
-        if (msg == .compaction) continue;
+        if (msg == .compaction) continue; // The head already states every checkpoint below it.
+        if (stop_id) |stop| if (msg.id() >= stop) break;
         try messages.append(arena, msg);
     }
-    return .{ .messages = messages.items };
+    return messages.items;
 }
 
 /// JSON byte counts are an estimate and do not replace a provider tokenizer.

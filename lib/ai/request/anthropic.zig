@@ -51,6 +51,13 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             try jw.endObject();
         }
         try jw.endArray();
+        // This host spells the control as an object, so only a refusal writes the member.
+        if (request.tool_choice == .none) {
+            try jw.objectField("tool_choice");
+            try jw.beginObject();
+            try json.field(&jw, "type", "none");
+            try jw.endObject();
+        }
     }
 
     // A thinking block cannot carry the marker. Mark the last eligible block.

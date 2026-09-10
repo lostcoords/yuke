@@ -43,6 +43,8 @@ pub const Options = struct {
     cache_key: []const u8 = "",
     /// One stable id per session. The route decides which header carries it, and some routes carry none.
     session_id: []const u8 = "",
+    /// Whether the model may call a tool. A request that declares no tool writes no control.
+    tool_choice: ir.ToolChoice = .auto,
 };
 
 pub const Content = union(enum) {
@@ -204,6 +206,7 @@ fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
         .output_schema = options.output_schema,
         .temperature = options.temperature,
         .top_p = options.top_p,
+        .tool_choice = options.tool_choice,
     };
     return adapter.serialize(arena, model.route.protocol, value, .{ .blocks = request.blocks });
 }

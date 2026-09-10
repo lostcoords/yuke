@@ -8,10 +8,14 @@ const registry = @import("../provider/registry.zig");
 const Cancel = @import("../cancel.zig").Cancel;
 const context = @import("context.zig");
 
-/// What one call asks for. The prompt is one user text block, so each task builds its own text.
+/// What one call asks for. The caller builds the blocks, so a call can repeat the prefix of a turn.
 pub const Request = struct {
     system: []const u8 = "",
-    prompt: []const u8,
+    blocks: []const ai.ir.Block,
+    /// The tools the turn declares. A call repeats the same tools to keep the turn prefix.
+    tools: []const ai.ir.Tool = &.{},
+    /// A call answers in text, so the request refuses every tool.
+    tool_choice: ai.ir.ToolChoice = .none,
     max_output_tokens: u32,
     /// The session reasoning level. An empty level leaves the provider default.
     reasoning: []const u8 = "",
@@ -25,7 +29,7 @@ pub const Response = struct {
 
 /// Run one call within the caller's cancelable task.
 pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, match: registry.Match, request: Request) !Response {
-    std.debug.assert(request.prompt.len > 0);
+    std.debug.assert(request.blocks.len > 0);
     std.debug.assert(request.max_output_tokens > 0);
     try cancel.check(engine.deps.io); // A cancel that already landed reports no other refusal.
 
@@ -62,14 +66,15 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
     const reasoning: ai.ir.ReasoningControl = if (control == .budget) .default else control;
 
     // The caller owns the cancelable task that covers the transport and its blocked reads.
-    const blocks = [_]ai.ir.Block{.{ .role = .user, .value = .{ .text = request.prompt } }};
     var result = try ai.generateWithTransport(engine.deps.gpa, engine.deps.route_transport, model, .{
-        .blocks = &blocks,
+        .blocks = request.blocks,
         .system = request.system,
+        .tools = request.tools,
         .options = .{
             .max_output_tokens = limit,
             // A call answers on the session model, so it must reason at the session level too.
             .reasoning = reasoning,
+            .tool_choice = request.tool_choice,
         },
     });
     defer result.deinit();
@@ -94,7 +99,8 @@ fn mockMatch(arena: std.mem.Allocator, credential: registry.CredentialSource) !r
     return .{ .provider = row, .model = spec };
 }
 
-const test_request: Request = .{ .prompt = "summarize the work", .max_output_tokens = 512 };
+const test_blocks = [_]ai.ir.Block{.{ .role = .user, .value = .{ .text = "summarize the work" } }};
+const test_request: Request = .{ .blocks = &test_blocks, .max_output_tokens = 512 };
 
 const Fixture = struct {
     resources: Resources,
@@ -168,13 +174,13 @@ test "a call reasons at the session level, and a level the model lacks never rea
     match.model = spec;
 
     try testing.expectError(error.UnsupportedReasoning, f.callWith(&cancel, match, .{
-        .prompt = "summarize the work",
+        .blocks = &test_blocks,
         .max_output_tokens = 512,
         .reasoning = "xhigh",
     }));
 
     const answer = try f.callWith(&cancel, match, .{
-        .prompt = "summarize the work",
+        .blocks = &test_blocks,
         .max_output_tokens = 512,
         .reasoning = "low",
     });

@@ -146,7 +146,12 @@ pub const Request = struct {
     top_p: ?f64 = null,
     /// Constrain the response to a schema. A null schema leaves the response free.
     output_schema: ?OutputSchema = null,
+    /// Whether the model may call a tool. A request that declares no tool writes no control.
+    tool_choice: ToolChoice = .auto,
 };
+
+/// The tool controls every host understands.
+pub const ToolChoice = enum { auto, none };
 
 /// Check one request, and bound the input bytes it carries before a serializer reads it.
 pub fn validate(arena: std.mem.Allocator, request: Request, request_ir: RequestIr) !void {

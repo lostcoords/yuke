@@ -66,93 +66,6 @@ pub fn selectCut(gpa: std.mem.Allocator, db: *database.Database, session_id: [16
     return selected;
 }
 
-/// What one compaction reads from the history it covers.
-pub const Source = struct {
-    /// The conversation the summarizer reads, as plain text.
-    text: []const u8,
-    /// The summary of the newest checkpoint, which the next summary must keep.
-    previous_summary: ?[]const u8,
-};
-
-/// Render the covered range and the previous checkpoint.
-pub fn readSource(arena: std.mem.Allocator, gpa: std.mem.Allocator, db: *database.Database, session_id: [16]u8, head: ?context.Head, first_kept_id: u64) !Source {
-    const from_id = if (head) |h| h.from_id else 0;
-    std.debug.assert(first_kept_id > from_id);
-    var out: std.Io.Writer.Allocating = .init(arena);
-
-    var rows = try db.queries.context_messages.rows(.{ .session_id = session_id, .first_message_id = from_id });
-    defer rows.deinit();
-    var scratch: std.heap.ArenaAllocator = .init(gpa);
-    defer scratch.deinit();
-    while (try rows.next(scratch.allocator())) |owned| {
-        {
-            var row = owned;
-            defer row.deinit();
-            if (row.value.message_id >= first_kept_id) break;
-            const message = try std.json.parseFromSliceLeaky(proto.message.Message, scratch.allocator(), row.value.payload, .{ .ignore_unknown_fields = true });
-            if (message.id() != row.value.message_id) return error.CorruptLog;
-            // A checkpoint is not conversation, and the head already states its summary.
-            if (message != .compaction) try renderMessage(&out.writer, message);
-        }
-        // The row and the parsed message borrow the scratch, so they release before the reset.
-        _ = scratch.reset(.retain_capacity);
-    }
-
-    return .{
-        .text = out.written(),
-        .previous_summary = if (head) |h| h.message.compaction.summary else null,
-    };
-}
-
-/// Write one message as summarizer text. Reasoning stays out; it is provider-private replay state.
-fn renderMessage(w: *std.Io.Writer, message: proto.message.Message) !void {
-    switch (message) {
-        .user => |user| {
-            for (user.content) |part| switch (part) {
-                .text => |t| if (t.text.len != 0) try w.print("[User]: {s}\n\n", .{t.text}),
-                // An attachment has no text, so the summary states that one arrived.
-                .image, .audio, .file => try w.writeAll("[User]: (an attachment)\n\n"),
-            };
-        },
-        .assistant => |assistant| {
-            for (assistant.content) |part| switch (part) {
-                .text => |t| if (t.text.len != 0) try w.print("[Assistant]: {s}\n\n", .{t.text}),
-                .tool => |t| {
-                    try w.print("[Assistant tool call]: {s}(", .{t.name});
-                    try writeCapped(w, t.arguments);
-                    try w.writeAll(")\n\n");
-                    try renderToolResult(w, t.state);
-                },
-                .reasoning, .redacted_reasoning => {},
-            };
-        },
-        .compaction => unreachable, // the caller skips a checkpoint, which is not conversation
-    }
-}
-
-fn renderToolResult(w: *std.Io.Writer, state: proto.tool.ToolState) !void {
-    const text: []const u8 = switch (state) {
-        .completed => |c| c.output,
-        .@"error" => |e| e.@"error",
-        .canceled => "(canceled)",
-        // A committed transcript holds only terminal tools.
-        .pending, .running => return,
-    };
-    if (text.len == 0) return;
-    try w.writeAll("[Tool result]: ");
-    try writeCapped(w, text);
-    try w.writeAll("\n\n");
-}
-
-/// Bound one field, so a large tool result or a whole file argument cannot fill the request.
-fn writeCapped(w: *std.Io.Writer, text: []const u8) !void {
-    if (text.len <= max_source_field_bytes) return w.writeAll(text);
-    var end = max_source_field_bytes;
-    while (end > 0 and text[end] & 0xc0 == 0x80) end -= 1;
-    try w.writeAll(text[0..end]);
-    try w.print("\n[... {d} more bytes]", .{text.len - end});
-}
-
 pub const summarizer_system_prompt =
     \\You are a context summarization assistant. You read a conversation between a user and an AI assistant, and you write one structured summary in the exact format the instructions name.
     \\
@@ -234,18 +147,6 @@ const merge_instructions =
     \\
     \\Keep each section short.
 ;
-
-/// Build the one user block the summarizer reads. A previous summary selects the merge instructions.
-pub fn buildPrompt(arena: std.mem.Allocator, source: Source) ![]const u8 {
-    std.debug.assert(source.text.len != 0);
-    var out: std.Io.Writer.Allocating = .init(arena);
-    try out.writer.print("<conversation>\n{s}</conversation>\n\n", .{source.text});
-    if (source.previous_summary) |previous| {
-        try out.writer.print("<previous-summary>\n{s}\n</previous-summary>\n\n", .{previous});
-    }
-    try out.writer.writeAll(if (source.previous_summary == null) summarize_instructions else merge_instructions);
-    return out.written();
-}
 
 const Engine = @import("Engine.zig");
 const session_mod = @import("../session/session.zig");
@@ -387,6 +288,15 @@ pub fn beforeRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, 
     if (outcome != .compacted) return error.ContextHistoryTooLarge;
 }
 
+/// Write the instruction that trails the covered range. The turn system prompt leads the request.
+fn summaryInstruction(arena: std.mem.Allocator, merges: bool) ![]const u8 {
+    return std.mem.concat(arena, u8, &.{
+        summarizer_system_prompt,
+        "\n\n",
+        if (merges) merge_instructions else summarize_instructions,
+    });
+}
+
 /// Summarize the covered range and commit the checkpoint. A range with no work is a skip.
 fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, request_budget: context.Budget) !proto.run.RunOutcome {
     try slot.cancel.check(engine.deps.io);
@@ -402,19 +312,40 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, request_
         return .{ .skipped = .{ .reason = .too_few_messages } };
     if (head) |h| cut.tokens_before += context.summaryTokens(h.message.compaction.summary);
     if (cut.tokens_kept >= request_budget.input_ceiling) return error.TurnTooLarge;
-    const source = try readSource(arena, engine.deps.gpa, db, sid, head, cut.first_kept_id);
-    if (source.text.len == 0) return .{ .skipped = .{ .reason = .nothing_to_summarize } };
-    const prompt = try buildPrompt(arena, source);
-
     // The merged registry can rebuild, so the resolve and the call stay in one step.
     const match = engine.deps.providers.merged.resolveModel(slot.config.model) orelse return error.UnknownModel;
-    const budget = try context.Budget.forRequest(window, summary_output_tokens, summarizer_system_prompt, &.{});
-    // Chunked summarization is not built, so a source above the window is an error, never a partial summary.
-    if (context.tokensFor(prompt.len) > budget.input_ceiling) return error.CompactionSourceTooLarge;
+    const live_route = switch (match.provider.availability) {
+        .ready => |ready| ready,
+        .unavailable => return error.UnknownModel,
+    };
+    // The summary repeats the system prompt and the tools of the turn, so it reuses the cached prefix.
+    // The selection mirrors `request.selectionFor`, because a different tool list breaks that prefix.
+    if (slot.has_skills == null) slot.has_skills = try database.session.hasSkills(db, arena, sid);
+    const tools = try engine.deps.tools.getDecls(engine.deps.tools.ctx, arena, .{
+        .can_spawn = slot.depth < engine.max_agent_depth,
+        .has_skills = slot.has_skills.?,
+    });
+    // `context.project` refuses a history above the budget, and a compaction runs only above it.
+    const covered = try context.collect(arena, db, sid, head, cut.first_kept_id);
+    const built = try provider.request_builder.build(arena, covered, .{
+        .target = .{ .protocol = live_route.route.protocol, .model = slot.config.model },
+        .modalities = match.model.modalities,
+    });
+    if (built.blocks.len == 0) return .{ .skipped = .{ .reason = .nothing_to_summarize } };
+
+    const budget = try context.Budget.forRequest(window, summary_output_tokens, slot.config.system_prompt, tools);
+    // No chunked summary exists, so a range above the window fails and never covers a part.
+    if (cut.tokens_before > budget.input_ceiling) return error.CompactionSourceTooLarge;
+
+    // The instruction trails the covered range, so every block above it repeats the turn prefix.
+    const blocks = try arena.alloc(ai.ir.Block, built.blocks.len + 1);
+    @memcpy(blocks[0..built.blocks.len], built.blocks);
+    blocks[built.blocks.len] = .{ .role = .user, .value = .{ .text = try summaryInstruction(arena, head != null) } };
 
     const answer = try model_call.generateWith(engine, arena, &slot.cancel, match, .{
-        .system = summarizer_system_prompt,
-        .prompt = prompt,
+        .system = slot.config.system_prompt,
+        .blocks = blocks,
+        .tools = tools,
         .max_output_tokens = summary_output_tokens,
         .reasoning = slot.config.reasoning,
     });
@@ -517,86 +448,6 @@ test "a history with no earlier turn is a skip" {
     try testing.expectEqual(@as(?Cut, null), try selectCut(testing.allocator, &db, sid, 0, 100));
     // A history under the target needs no compaction either.
     try testing.expectEqual(@as(?Cut, null), try selectCut(testing.allocator, &db, sid, 0, 1_000_000));
-}
-
-test "the source preserves tool paths and caps a large field" {
-    var db = try database.Database.openTest();
-    defer db.deinit();
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const sid = [_]u8{10} ** 16;
-    try seedSessionModel(&db, sid, "mock", "");
-
-    const long = try a.alloc(u8, max_source_field_bytes + 64);
-    @memset(long, 'x');
-    const messages = [_]proto.message.Message{
-        .{ .user = .{ .id = 1, .input_id = 1, .content = &.{.{ .text = .{ .text = "add a flag" } }}, .time = .{ .created_at_ms = 1 } } },
-        .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 0, .agent = "root", .time = .{ .created_at_ms = 2 }, .content = &.{
-            .{ .reasoning = .{ .id = 1, .text = "PRIVATE", .signature = "s" } },
-            .{ .text = .{ .id = 2, .text = "I read the file." } },
-            .{ .tool = .{ .id = 3, .call_id = "c1", .name = "read", .arguments = "{\"path\":\"src/main.zig\"}", .state = .{ .completed = .{ .output = long, .duration_ms = 1 } } } },
-            .{ .tool = .{ .id = 4, .call_id = "c2", .name = "edit", .arguments = "{\"path\":\"src/main.zig\"}", .state = .{ .completed = .{ .output = "ok", .duration_ms = 1 } } } },
-        } } },
-        .{ .user = .{ .id = 3, .input_id = 2, .content = &.{.{ .text = .{ .text = "the tail" } }}, .time = .{ .created_at_ms = 3 } } },
-    };
-    for (messages, 0..) |message, i| {
-        var event_id = sid;
-        event_id[0] = @intCast(i);
-        var tx = try db.begin();
-        defer tx.deinit();
-        _ = try database.message.appendCommittedMessage(&db, a, sid, event_id, i + 1, message);
-        try tx.commit();
-    }
-
-    const source = try readSource(a, testing.allocator, &db, sid, null, 3);
-    try testing.expect(std.mem.indexOf(u8, source.text, "[User]: add a flag") != null);
-    try testing.expect(std.mem.indexOf(u8, source.text, "[Assistant]: I read the file.") != null);
-    try testing.expect(std.mem.indexOf(u8, source.text, "read({\"path\":\"src/main.zig\"})") != null);
-    try testing.expect(std.mem.indexOf(u8, source.text, "more bytes]") != null);
-    try testing.expect(std.mem.indexOf(u8, source.text, "the tail") == null);
-    // Reasoning is provider-private replay state, so the summarizer never reads it.
-    try testing.expect(std.mem.indexOf(u8, source.text, "PRIVATE") == null);
-    try testing.expect(source.previous_summary == null);
-    try testing.expect(std.mem.indexOf(u8, source.text, "src/main.zig") != null);
-}
-
-test "the checkpoint merges whether the cut lands above it or below it" {
-    var db = try database.Database.openTest();
-    defer db.deinit();
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const sid = [_]u8{11} ** 16;
-    try seedSessionModel(&db, sid, "mock", "");
-    const messages = [_]proto.message.Message{
-        .{ .user = .{ .id = 1, .input_id = 1, .content = &.{.{ .text = .{ .text = "covered work" } }}, .time = .{ .created_at_ms = 1 } } },
-        .{ .compaction = .{ .id = 2, .run_id = 1, .reason = .manual, .summary = "## Goal\nship it", .first_kept_id = 1, .tokens_before = 10, .tokens_after = 2, .time = .{ .created_at_ms = 2 } } },
-        .{ .user = .{ .id = 3, .input_id = 2, .content = &.{.{ .text = .{ .text = "next task" } }}, .time = .{ .created_at_ms = 3 } } },
-    };
-    for (messages, 0..) |message, i| {
-        var event_id = sid;
-        event_id[0] = @intCast(i);
-        var tx = try db.begin();
-        defer tx.deinit();
-        _ = try database.message.appendCommittedMessage(&db, a, sid, event_id, i + 1, message);
-        try tx.commit();
-    }
-    const head = (try context.readHead(a, &db, sid)).?;
-
-    // A cut above the checkpoint covers it, and a cut below it leaves it in the tail.
-    for ([_]u64{ 3, 2 }) |first_kept_id| {
-        const source = try readSource(a, testing.allocator, &db, sid, head, first_kept_id);
-        try testing.expectEqualStrings("## Goal\nship it", source.previous_summary.?);
-        try testing.expect(std.mem.indexOf(u8, source.text, "covered work") != null);
-        const prompt = try buildPrompt(a, source);
-        try testing.expect(std.mem.indexOf(u8, prompt, "<previous-summary>") != null);
-        try testing.expect(std.mem.indexOf(u8, prompt, "Keep every fact from the previous summary.") != null);
-    }
-
-    const first = try buildPrompt(a, .{ .text = "x", .previous_summary = null });
-    try testing.expect(std.mem.indexOf(u8, first, "<previous-summary>") == null);
-    try testing.expect(std.mem.indexOf(u8, first, "another assistant uses to continue") != null);
 }
 
 fn seedSessionModel(db: *database.Database, id: [16]u8, model: []const u8, reasoning: []const u8) !void {
@@ -936,6 +787,43 @@ fn seedCompactableHistory(db: *database.Database, arena: std.mem.Allocator) !voi
     try seedMessage(db, arena, TaskFixture.sid, 2, .assistant, 300);
     try seedMessage(db, arena, TaskFixture.sid, 3, .user, 300);
     try seedMessage(db, arena, TaskFixture.sid, 4, .assistant, 70_000);
+}
+
+test "the summary call repeats the prefix of the turn and refuses a tool" {
+    var f: TaskFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try seedCompactableHistory(&f.db, a);
+    // A turn declares tools, so the summary call declares the same ones.
+    const Tools = struct {
+        fn decls(_: *anyopaque, tool_arena: std.mem.Allocator, _: @import("toolset.zig").Selection) error{OutOfMemory}![]const ai.ir.Tool {
+            return proto.dupe(tool_arena, @as([]const ai.ir.Tool, &.{.{
+                .name = "read",
+                .description = "Read a file.",
+                .input_schema = "{\"type\":\"object\"}",
+            }}));
+        }
+    };
+    var tool_ctx: u8 = 0;
+    f.engine.installTools(.{ .ctx = &tool_ctx, .getDecls = Tools.decls });
+    var capture: CaptureTransport = .{ .replies = &.{ai.transport.canned_reply} };
+    defer capture.deinit();
+    f.engine.deps.route_transport = capture.transport();
+
+    _ = try f.run(.manual);
+    try testing.expectEqual(@as(usize, 1), capture.requests.items.len);
+    const body = capture.requests.items[0];
+    // JSON escapes the line breaks of the instruction, so the test reads a single line.
+    try testing.expect(std.mem.indexOf(u8, body, "You are a context summarization assistant") != null);
+    // The tools of the turn ride the call, or the prefix would differ from the cached prefix.
+    try testing.expect(std.mem.indexOf(u8, body, "\"name\":\"read\"") != null);
+    // The old shape wrapped the history in one text blob. The new shape sends the real message blocks.
+    try testing.expect(std.mem.indexOf(u8, body, "<conversation>") == null);
+    // A summary answers in text, so the call refuses every tool.
+    try testing.expect(std.mem.indexOf(u8, body, "\"type\":\"none\"") != null);
 }
 
 test "the summary call reasons at the session level" {
