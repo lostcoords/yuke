@@ -5,6 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const host = b.graph.host;
     const test_filter = b.option([]const u8, "test-filter", "Run tests whose names contain this text");
+    const strip = b.option(bool, "strip", "Omit the debug info from the yuke binary");
     const test_filters: []const []const u8 = if (test_filter) |filter| &.{filter} else &.{};
 
     const zqlite = b.dependency("zqlite", .{ .target = target, .optimize = optimize });
@@ -194,6 +195,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip,
             .imports = app_imports,
         }),
     });
