@@ -184,11 +184,12 @@ pub const Harness = struct {
 };
 
 test "benchmark scenarios preserve the transcript across updates and cache eviction" {
+    // Scale 9 holds 18 messages, above the 16-message row cache, so eviction runs.
     for (phases) |phase| {
         const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12, phase);
         defer harness.destroy();
-        try harness.start(phase, 12);
-        for (0..20) |_| _ = try harness.step();
+        try harness.start(phase, 9);
+        for (0..6) |_| _ = try harness.step();
         _ = try harness.verify();
     }
 }

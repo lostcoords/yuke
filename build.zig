@@ -8,8 +8,10 @@ pub fn build(b: *std.Build) void {
     const strip = b.option(bool, "strip", "Omit the debug info from the yuke binary");
     const test_filters: []const []const u8 = if (test_filter) |filter| &.{filter} else &.{};
 
-    const zqlite = b.dependency("zqlite", .{ .target = target, .optimize = optimize });
-    const zqlite_host = b.dependency("zqlite", .{ .target = host, .optimize = optimize });
+    // A Debug test run spends most of its time in QuickJS and SQLite, so the C dependencies build optimized.
+    const dep_optimize: std.builtin.OptimizeMode = if (optimize == .Debug) .ReleaseSafe else optimize;
+    const zqlite = b.dependency("zqlite", .{ .target = target, .optimize = dep_optimize });
+    const zqlite_host = b.dependency("zqlite", .{ .target = host, .optimize = dep_optimize });
     const zio = b.dependency("zio", .{ .target = target, .optimize = optimize });
     const uucode = b.dependency("uucode", .{
         .target = target,
@@ -21,7 +23,7 @@ pub fn build(b: *std.Build) void {
             "is_emoji_presentation",
         }),
     });
-    const quickjs = b.dependency("quickjs", .{ .target = target, .optimize = optimize });
+    const quickjs = b.dependency("quickjs", .{ .target = target, .optimize = dep_optimize });
     const quickjs_c = quickjs.module("quickjs").import_table.get("c").?;
     const metrics = b.addOptions();
     metrics.addOption(bool, "enabled", b.option(bool, "metrics", "Enable allocation and UI work counters") orelse false);

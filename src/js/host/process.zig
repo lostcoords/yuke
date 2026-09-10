@@ -8,8 +8,8 @@ const h = @import("operations.zig");
 const paths = @import("../../paths.zig");
 const execution = @import("../../execution.zig");
 
-/// The wait between SIGTERM and SIGKILL. A shell runs its SIGTERM trap in this time.
-const grace_ns: u64 = 2 * std.time.ns_per_s;
+/// The wait between SIGTERM and SIGKILL. A shell runs its SIGTERM trap in this time. A test waits less.
+const grace_ns: u64 = if (@import("builtin").is_test) 100 * std.time.ns_per_ms else 2 * std.time.ns_per_s;
 
 /// One drain leg: it reads one stream to its end and keeps its head and its tail, because a build prints its error last.
 const Drain = struct {
