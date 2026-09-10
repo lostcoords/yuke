@@ -17,6 +17,7 @@ test {
     _ = @import("app/print_cli.zig");
     _ = @import("main.zig");
     _ = @import("cli.zig");
+    _ = @import("execution.zig");
     _ = @import("util.zig");
     _ = @import("utf8.zig");
     _ = @import("engine/run.zig");
