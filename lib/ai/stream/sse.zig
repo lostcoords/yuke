@@ -7,7 +7,15 @@ pub const max_bytes = 1 << 20;
 
 pub const Error = error{ LineTooLong, EventTooLarge, OutOfMemory };
 
-/// The framer owns two buffers across calls. It copies each complete payload into the caller's arena.
+/// Return the index of the next line terminator. A chunk that holds none answers its length.
+fn lineEnd(bytes: []const u8) usize {
+    // A single-byte search uses SIMD, so two passes cost less than one search for both terminators.
+    const lf = std.mem.findScalar(u8, bytes, '\n') orelse
+        return std.mem.findScalar(u8, bytes, '\r') orelse bytes.len;
+    return std.mem.findScalar(u8, bytes[0..lf], '\r') orelse lf;
+}
+
+/// The parser owns two buffers across calls. It copies each complete payload into the caller's arena.
 pub const Sse = struct {
     gpa: std.mem.Allocator,
     line: std.ArrayList(u8) = .empty,
@@ -36,24 +44,33 @@ pub const Sse = struct {
         arena: std.mem.Allocator,
         out: *std.ArrayList([]const u8),
     ) Error!void {
-        for (bytes) |b| {
-            // A CR ends a line. The next LF is the second half of a CRLF terminator.
+        var rest = bytes;
+        while (rest.len != 0) {
+            // A CR ended the previous line. The next LF is the second half of a CRLF terminator.
             if (self.saw_cr) {
                 self.saw_cr = false;
-                if (b == '\n') continue;
+                if (rest[0] == '\n') {
+                    rest = rest[1..];
+                    continue;
+                }
             }
-            switch (b) {
-                '\r' => {
-                    self.saw_cr = true;
-                    try self.completeLine(arena, out);
-                },
-                '\n' => try self.completeLine(arena, out),
-                else => {
-                    if (self.line.items.len >= max_bytes) return error.LineTooLong;
-                    try self.line.append(self.gpa, b);
-                    std.debug.assert(self.line.items.len <= max_bytes);
-                },
+            const end = lineEnd(rest);
+            if (end != 0) {
+                if (end > max_bytes - self.line.items.len) return error.LineTooLong;
+                // A whole line inside one chunk needs no copy, so the parser reads its fields directly.
+                if (self.line.items.len == 0 and end != rest.len) {
+                    try self.processFields(rest[0..end], arena, out);
+                    self.saw_cr = rest[end] == '\r';
+                    rest = rest[end + 1 ..];
+                    continue;
+                }
+                try self.line.appendSlice(self.gpa, rest[0..end]);
+                std.debug.assert(self.line.items.len <= max_bytes);
             }
+            if (end == rest.len) return; // The line runs past this chunk, so it waits for the next push.
+            self.saw_cr = rest[end] == '\r';
+            try self.completeLine(arena, out);
+            rest = rest[end + 1 ..];
         }
     }
 
@@ -71,20 +88,19 @@ pub const Sse = struct {
         arena: std.mem.Allocator,
         out: *std.ArrayList([]const u8),
     ) Error!void {
-        var line: []const u8 = self.line.items;
-        if (self.at_start and std.mem.startsWith(u8, line, "\xEF\xBB\xBF")) line = line[3..];
-        self.at_start = false;
-
-        try self.processFields(line, arena, out);
+        try self.processFields(self.line.items, arena, out);
         self.line.clearRetainingCapacity();
     }
 
     fn processFields(
         self: *Sse,
-        line: []const u8,
+        raw: []const u8,
         arena: std.mem.Allocator,
         out: *std.ArrayList([]const u8),
     ) Error!void {
+        var line = raw;
+        if (self.at_start and std.mem.startsWith(u8, line, "\xEF\xBB\xBF")) line = line[3..];
+        self.at_start = false;
         if (line.len == 0) {
             if (self.data_seen) {
                 try out.append(arena, try arena.dupe(u8, self.data.items));
