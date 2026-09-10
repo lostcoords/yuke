@@ -59,7 +59,9 @@ function thousands(n) {
 /** @param {Wire.TokenUsage} total @param {Wire.ModelCost} cost @returns {number} */
 export function sessionCost(total, cost) {
   const per = (/** @type {number} */ n, /** @type {number | undefined} */ price) => (n / 1e6) * (price || 0);
-  return per(total.input, cost.input) + per(total.output, cost.output) + per(total.cache_read, cost.cache_read) + per(total.cache_write, cost.cache_write);
+  // The input total holds both cache subsets, so only the remainder pays the full input price.
+  const fresh = Math.max(0, total.input - total.cache_read - total.cache_write);
+  return per(fresh, cost.input) + per(total.output, cost.output) + per(total.cache_read, cost.cache_read) + per(total.cache_write, cost.cache_write);
 }
 
 // Build the label and value rows of the breakdown window. The cost row needs the model in the catalog.

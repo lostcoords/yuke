@@ -76,6 +76,11 @@ check("elapsed", elapsedLabel(12000) === "12s" && elapsedLabel(65000) === "1m05s
 check("phase", phaseLabel({ type: "retrying", run_id: 1, attempt: 2, max_attempts: 5, next_at_ms: 4000, code: "rate_limited", message: "" }, 0) === "retry 2/5 in 4s · rate_limited");
 check("bar", contextBar(0, 1000) === "[░░░░░░]" && contextBar(1, 1000) === "[░░░░░░]" && contextBar(500, 1000) === "[███░░░]" && contextBar(1000, 1000) === "[██████]" && contextBar(5, 0) === "[░░░░░░]");
 check("cost", sessionCost({ input: 1000000, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, { input: 10 }) === 10 && sessionCost(usage, {}) === 0);
+// The input total holds the cached subsets, so a cached token pays the cache price alone, never both prices.
+check("cost-cache", sessionCost({ input: 1000000, output: 0, reasoning: 0, cache_read: 500000, cache_write: 0 }, { input: 10, cache_read: 2 }) === 6);
+check("cost-cache-write", sessionCost({ input: 1000000, output: 0, reasoning: 0, cache_read: 250000, cache_write: 250000 }, { input: 10, cache_read: 2, cache_write: 4 }) === 6.5);
+// A peer that reports more cached tokens than input tokens leaves no fresh remainder to charge.
+check("cost-cache-over", sessionCost({ input: 100, output: 0, reasoning: 0, cache_read: 500, cache_write: 0 }, { input: 10, cache_read: 0 }) === 0);
 // With no session the reading describes the next chat: the default model's window and 0%.
 chat.newChat();
 check("empty-reading", status.side("right").indexOf("[░░░░░░] 0% context") >= 0);
