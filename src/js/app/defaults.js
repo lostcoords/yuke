@@ -16,7 +16,9 @@ import { indicatorPlugin } from "yuke:indicator";
 import { queuePlugin } from "yuke:queue";
 import { contextPlugin } from "yuke:context";
 import { cachePlugin } from "yuke:cache";
+import { term } from "yuke:term";
 /** @import { NavTarget } from "./types/core.js" */
+/** @import { Composer } from "./ui.js" */
 /** @import { InjectContext } from "./types/ext.js" */
 
 // The first chat pane. A split adds another, and each pane drives its own session.
@@ -37,6 +39,15 @@ function withChat(fn) {
 }
 
 const workspace = Node.leaf(chat.view);
+
+// A first Ctrl-C cancels the active run. A second press on an empty composer quits, while a
+// non-empty draft never turns into an exit gesture.
+/** @type {Composer | null} */
+let emptyCtrlCComposer = null;
+
+function disarmEmptyCtrlC() {
+  emptyCtrlCComposer = null;
+}
 
 // A session finder: read the sessions, fuzzy-search them by title, then open one.
 // This is the only place the session list appears, so nothing keeps it on screen.
@@ -77,7 +88,18 @@ plugins.use({
   name: "app-keys",
   /** @param {InjectContext} ctx */
   apply(ctx) {
+    disarmEmptyCtrlC();
     ctx.inject(["tui"], (ctx) => {
+      // Any intervening interaction makes the next Ctrl-C a fresh first press. Keep the second
+      // Ctrl-C itself armed until the keymap handles it.
+      ctx.on("key.press", /** @param {Extract<HostEvent, { type: "key" }>} ev */ (ev) => {
+        if (ev.event === "press" && ev.code === "char" && ev.char === "c" && (ev.mods & 4) !== 0) return;
+        disarmEmptyCtrlC();
+      });
+      ctx.on("composer.changed", disarmEmptyCtrlC);
+      ctx.on("pane.focused", disarmEmptyCtrlC);
+      ctx.on("region.focused", disarmEmptyCtrlC);
+
       // Vim calls this showcmd: the keys typed so far, while a chord or an operator waits.
       ctx.tui.status({ side: "right", order: -1, render: () => keymap.pendingLabel() });
 
@@ -108,6 +130,17 @@ plugins.use({
             " · obj " + mb(m.objects) + "/" + k(m.objectCount) + " · prop " + mb(m.properties) + "/" + k(m.propertyCount) +
             " · shape " + mb(m.shapes) + " · arr " + k(m.arrayCount));
         },
+        "session:ctrl-c": () => withChat(c => {
+          const empty = c.composer.text === "";
+          const quit = empty && emptyCtrlCComposer === c.composer;
+          if (quit) {
+            term.quit();
+          } else {
+            emptyCtrlCComposer = empty ? c.composer : null;
+            c.interrupt();
+            if (empty) notice.show("press Ctrl-C again to exit");
+          }
+        }),
         "chat:focus-toggle": () => withChat(c => {
           c.view.focusRegion(c.view.focus === "transcript" ? "composer" : "transcript");
           root.invalidate();
@@ -136,7 +169,7 @@ plugins.use({
       ctx.tui.keymap({
         "ctrl+n": "chat:new",
         "ctrl+f": "ui:sessions",
-        "ctrl+c": "session:interrupt",
+        "ctrl+c": "session:ctrl-c",
         "ctrl+q": "quit",
         "ctrl+k h": "focus:left",
         "ctrl+k j": "focus:down",
