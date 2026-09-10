@@ -142,6 +142,12 @@ test "the indicator, the queue strip, and the context reading follow the live ac
     try support.eval(host, "tests/app/indicator.test.js");
 }
 
+test "the cache window reads the session totals and the catalog prices" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    try support.eval(host, "tests/app/cache.test.js");
+}
+
 test "commands.define registers a user command with a slash word and removes it" {
     const host = Host.create(std.testing.allocator);
     defer host.destroy();
