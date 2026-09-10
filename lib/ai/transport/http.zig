@@ -92,8 +92,10 @@ pub const HttpTransport = struct {
             error.TooManyHttpRedirects => return Error.RedirectRefused, // Never follow a redirect.
             else => return err,
         };
-        readRetryHeaders(hb.response.head, info); // The reader below invalidates these slices.
+        try readAttemptHeaders(arena, hb.response.head, info); // The reader below invalidates these slices.
         if (hb.response.head.status != .ok) {
+            // A node that refused this request is no node to route the next one to.
+            info.turn_state = "";
             if (@intFromEnum(hb.response.head.status) == 429) return classify429(hb, arena);
             return mapStatus(hb.response.head.status);
         }
@@ -190,8 +192,8 @@ const HttpBody = struct {
     }
 };
 
-/// Read the retry headers before `response.reader()`, which invalidates every head string slice.
-fn readRetryHeaders(head: std.http.Client.Response.Head, info: *transport.AttemptInfo) void {
+/// Read the attempt headers before `response.reader()`, which invalidates every head string slice.
+fn readAttemptHeaders(arena: Allocator, head: std.http.Client.Response.Head, info: *transport.AttemptInfo) Allocator.Error!void {
     var it = head.iterateHeaders();
     while (it.next()) |h| {
         if (std.ascii.eqlIgnoreCase(h.name, "retry-after-ms")) {
@@ -206,6 +208,9 @@ fn readRetryHeaders(head: std.http.Client.Response.Head, info: *transport.Attemp
             const v = std.mem.trim(u8, h.value, " ");
             if (std.ascii.eqlIgnoreCase(v, "true")) info.should_retry = true;
             if (std.ascii.eqlIgnoreCase(v, "false")) info.should_retry = false;
+        } else if (std.ascii.eqlIgnoreCase(h.name, "x-codex-turn-state")) {
+            // The reader replaces the head storage, so this token needs a copy that outlives it.
+            info.turn_state = try arena.dupe(u8, h.value);
         }
     }
 }
@@ -287,6 +292,7 @@ const Server = struct {
     status: std.http.Status,
     location: ?[]const u8 = null, // A redirect target. The client must never follow it.
     stall: bool = false, // Send the body, then wait on `release`. Keep the stream open.
+    extra: ?std.http.Header = null, // One more response header, for the tests that read one.
     release: ?*std.Io.Event = null,
     err: ?anyerror = null,
 };
@@ -308,14 +314,19 @@ fn serveOnceInner(s: *Server) !void {
     var server = std.http.Server.init(&reader.interface, &writer.interface);
     var request = try server.receiveHead();
 
-    var header_storage: [2]std.http.Header = .{
+    var header_storage: [3]std.http.Header = .{
         .{ .name = "content-type", .value = "text/event-stream" },
+        undefined,
         undefined,
     };
     var header_len: usize = 1;
     if (s.location) |loc| {
-        header_storage[1] = .{ .name = "location", .value = loc };
-        header_len = 2;
+        header_storage[header_len] = .{ .name = "location", .value = loc };
+        header_len += 1;
+    }
+    if (s.extra) |h| {
+        header_storage[header_len] = h;
+        header_len += 1;
     }
 
     var body_buf: [1024]u8 = undefined;
@@ -340,6 +351,7 @@ const ClientOut = struct {
     release: ?*std.Io.Event = null, // Signal the stalled server to end after the read returns.
     bytes: std.ArrayList(u8) = .empty,
     err: ?anyerror = null,
+    turn_state: []const u8 = "", // The routing token the attempt read. The test frees it.
 };
 
 fn clientTask(out: *ClientOut) void {
@@ -359,6 +371,10 @@ fn runClient(out: *ClientOut) !void {
     const headers = [_]transport.Header{.{ .name = "x-api-key", .value = "test-key" }};
     var request_body: [0]u8 = .{};
     var info: transport.AttemptInfo = .{};
+    // The arena dies with this function, so the token needs its own copy before it does.
+    defer if (info.turn_state.len != 0) {
+        out.turn_state = out.gpa.dupe(u8, info.turn_state) catch "";
+    };
     const body = try http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = &request_body }, &info);
     defer body.deinit();
     while (true) {
@@ -406,6 +422,38 @@ test "a non-200 status maps to a transport error" {
 
     try testing.expectEqual(@as(?anyerror, Error.AuthFailed), out.err);
     try testing.expectEqual(@as(usize, 0), out.bytes.items.len);
+}
+
+test "an answered request reads the cache node of its response" {
+    var srv: Server = .{
+        .body = canned_sse,
+        .status = .ok,
+        .extra = .{ .name = "x-codex-turn-state", .value = "gAAAAAB-node" },
+    };
+    var out: ClientOut = .{};
+    defer out.bytes.deinit(testing.allocator);
+    defer if (out.turn_state.len != 0) testing.allocator.free(out.turn_state);
+    try exchange(&srv, &out);
+
+    if (srv.err) |err| return err;
+    if (out.err) |err| return err;
+    try testing.expectEqualStrings("gAAAAAB-node", out.turn_state);
+}
+
+test "a refused request names no cache node for the next one" {
+    var srv: Server = .{
+        .body = "",
+        .status = .unauthorized,
+        .extra = .{ .name = "x-codex-turn-state", .value = "gAAAAAB-node" },
+    };
+    var out: ClientOut = .{};
+    defer out.bytes.deinit(testing.allocator);
+    defer if (out.turn_state.len != 0) testing.allocator.free(out.turn_state);
+    try exchange(&srv, &out);
+
+    // The node refused this request, so the run must not send the next one back to it.
+    try testing.expectEqual(@as(?anyerror, Error.AuthFailed), out.err);
+    try testing.expectEqualStrings("", out.turn_state);
 }
 
 test "a stalled stream returns an idle timeout" {

@@ -30,6 +30,8 @@ pub const AttemptInfo = struct {
     should_retry: ?bool = null,
     /// The adapter sets this before the first body write. A later transport fault is then ambiguous.
     delivery: Delivery = .definitely_unsent,
+    /// `x-codex-turn-state`, a sticky routing token. It borrows the arena the transport opened with.
+    turn_state: []const u8 = "",
 
     pub const Delivery = enum { definitely_unsent, possibly_sent };
 };

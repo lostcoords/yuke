@@ -120,6 +120,8 @@ pub fn prepare(
             .cache_key = &session_hex,
             // The ChatGPT backend reads the header, not the body key, so both carry the same id.
             .session_id = &session_hex,
+            // The last response named the cache node, so this round asks for that node again.
+            .turn_state = slot.turn_state,
         },
     });
     errdefer prepared.deinit();

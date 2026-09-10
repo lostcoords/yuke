@@ -56,6 +56,8 @@ pub const RunSlot = struct {
     work: @import("work.zig") = .{},
     /// The catalog cannot change under a run, so the first tool selection caches this for the run.
     has_skills: ?bool = null,
+    /// The sticky routing token the last response carried. The slot owns it and replays it next round.
+    turn_state: []const u8 = "",
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
 
@@ -113,9 +115,19 @@ pub const RunSlot = struct {
         return self.handle.started.run_id;
     }
 
+    /// Keep the routing token one response carried, so the next request lands on the same cache node.
+    pub fn keepTurnState(self: *RunSlot, value: []const u8) void {
+        if (value.len == 0) return; // A response without the header leaves the last token in place.
+        // A token this slot cannot copy costs one cache miss, never the run.
+        const copy = self.gpa.dupe(u8, value) catch return;
+        if (self.turn_state.len != 0) self.gpa.free(self.turn_state);
+        self.turn_state = copy;
+    }
+
     pub fn destroy(self: *RunSlot) void {
         std.debug.assert(self.body == null);
         std.debug.assert(self.work.pending == 0);
+        if (self.turn_state.len != 0) self.gpa.free(self.turn_state);
         self.gpa.free(self.config.model);
         self.gpa.free(self.config.reasoning);
         self.gpa.free(self.config.system_prompt);

@@ -236,6 +236,8 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
     while (true) : (number += 1) {
         streamer.reset();
         var info: ai.transport.AttemptInfo = .{};
+        // A response carries the routing token whether it answers or fails, and the next round replays it.
+        defer slot.keepTurnState(info.turn_state);
         const terminal = streamAttempt(engine, arena, slot, streamer, &request.?, &info) catch |err| {
             const decision = retry.decide(engine.deps.retry_policy, .{
                 .err = err,
@@ -1350,6 +1352,51 @@ test "a build hook can discard the live registry and tools before the request se
         }
     }
     try std.testing.expect(auth_seen and source_seen);
+}
+
+/// Read one header of a prepared request, or null when the request carries no such name.
+fn headerValue(headers: []const ai.transport.Header, name: []const u8) ?[]const u8 {
+    for (headers) |h| if (std.ascii.eqlIgnoreCase(h.name, name)) return h.value;
+    return null;
+}
+
+test "a codex round names its session and replays the routing token of the last response" {
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const model = try a.create(registry.ModelSpec);
+    model.* = .{ .id = "mock", .upstream_id = "gpt-5.6-luna", .name = "Luna", .caps = .{ .tools = true } };
+    const row = try a.create(registry.Provider);
+    row.* = .{ .id = "openai-codex", .name = "Codex", .models = &.{}, .availability = .{ .ready = .{
+        .route = .{
+            .base_url = "https://chatgpt.com/backend-api/codex",
+            .protocol = .openai_responses,
+            .auth = .{ .api_key = .authorization_bearer },
+            .responses_dialect = .codex,
+        },
+        .credential = .{ .literal = "secret" },
+    } } };
+    const match: registry.Match = .{ .provider = row, .model = model };
+    const hex = std.fmt.bytesToHex(f.slot.sessionId().raw, .lower);
+
+    // The first round of a session holds no token, so it names the session and nothing more.
+    var first = try round_request.prepare(a, &f.engine, f.slot, match);
+    defer first.deinit();
+    try std.testing.expectEqualStrings(&hex, headerValue(first.transport_request.headers, "session-id").?);
+    try std.testing.expect(headerValue(first.transport_request.headers, "x-codex-turn-state") == null);
+
+    // The response of that round named a cache node, so the next round asks for the same node.
+    f.slot.keepTurnState("gAAAAAB-first");
+    // A later response replaces the token, and a response without the header keeps the one the slot holds.
+    f.slot.keepTurnState("gAAAAAB-second");
+    f.slot.keepTurnState("");
+    var second = try round_request.prepare(a, &f.engine, f.slot, match);
+    defer second.deinit();
+    try std.testing.expectEqualStrings("gAAAAAB-second", headerValue(second.transport_request.headers, "x-codex-turn-state").?);
+    try std.testing.expectEqualStrings(&hex, headerValue(second.transport_request.headers, "session-id").?);
 }
 
 test "a run cancel interrupts either request hook before it settles" {
