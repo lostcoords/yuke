@@ -162,6 +162,11 @@ jobs:
     if: needs.setup.outputs.skip == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # This job has no checkout, so `gh release` cannot read a git remote.
+    # `gh api` names the repository itself, but `gh release` infers it.
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
@@ -176,8 +181,6 @@ jobs:
       # --target is set on both paths. gh release edit keeps the old commit
       # otherwise, and an orphaned draft would then publish the wrong tag.
       - name: Open the draft
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           short="${TIP_SHA:0:7}"
@@ -197,8 +200,6 @@ jobs:
       # The API moves the tag, so no checkout here holds a write credential.
       # A draft carries the commit through --target, so only an old tag moves.
       - name: Move the tip tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/tip" >/dev/null 2>&1; then
@@ -208,8 +209,6 @@ jobs:
 
       # The check in setup cannot see a merge that landed during the build.
       - name: Publish the draft
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
