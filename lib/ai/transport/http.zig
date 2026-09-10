@@ -112,7 +112,8 @@ const HttpBody = struct {
     idle_timeout: std.Io.Timeout,
     request: std.http.Client.Request,
     response: std.http.Client.Response,
-    transfer_buffer: [4096]u8,
+    /// The largest frame a provider sends stays under this size, so a whole line needs no second copy.
+    transfer_buffer: [8192]u8,
     reader: *std.Io.Reader,
 
     const vtable: transport.ResponseBody.VTable = .{ .peek = peek, .toss = toss, .deinit = deinit };
