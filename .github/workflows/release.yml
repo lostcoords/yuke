@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# The job creates a GitHub Release and uploads its assets.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ONE job builds every target rather than a matrix. Zig cross-compiles all
+  # four from Linux, so a matrix would buy about four minutes on an event that
+  # happens rarely, and would cost a create/upload/checksum dance between jobs.
+  # One job also makes the release atomic: every asset lands, or none does.
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # actions/checkout leaves the job token in .git/config by default, and
+          # this job holds `contents: write`. `zig build` then runs build.zig
+          # from the tag, so the default would hand a repository write token to
+          # tag-controlled code.
+          persist-credentials: false
+
+      - uses: mlugg/setup-zig@v2
+
+      # `gh release create --verify-tag` only checks that the tag EXISTS. If the
+      # tag is force-moved after the run starts, checkout still builds the event
+      # commit, and the release would publish binaries from the old commit under
+      # a tag now pointing somewhere else. Compare and refuse.
+      - name: Refuse a tag that moved under us
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" --jq .sha)"
+          if [ "${tag_sha}" != "${GITHUB_SHA}" ]; then
+            echo "::error::${GITHUB_REF_NAME} now points at ${tag_sha}, but this run built ${GITHUB_SHA}."
+            exit 1
+          fi
+
+      # Linux targets are musl, so the binaries are static and depend on no
+      # glibc version. macOS binaries are cross-compiled and ad-hoc signed by
+      # Zig's linker, which is enough to execute; they are NOT notarized, so a
+      # browser-downloaded copy stays quarantined.
+      - name: Build every target
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          version="${GITHUB_REF_NAME}"
+          for pair in \
+            "x86_64-linux-musl:linux-amd64" \
+            "aarch64-linux-musl:linux-arm64" \
+            "x86_64-macos:macos-amd64" \
+            "aarch64-macos:macos-arm64"
+          do
+            target="${pair%%:*}"
+            name="${pair##*:}"
+            echo "::group::${name} (${target})"
+            zig build \
+              -Dtarget="${target}" \
+              -Doptimize=ReleaseFast \
+              -Dstrip=true \
+              --prefix "build/${name}"
+            tar -czf "dist/yuke-${version}-${name}.tar.gz" -C "build/${name}/bin" yuke
+            echo "::endgroup::"
+          done
+          cd dist && sha256sum ./*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      # PUBLISHED LAST, ON PURPOSE. `gh release create` makes the release
+      # visible immediately, so uploading assets afterwards means a failed
+      # upload leaves a public release that is empty or half-populated. Create
+      # it as a DRAFT, fill it, then flip it visible in one step.
+      #
+      # This is also what keeps the workflow working if immutable releases are
+      # ever enabled on the org: an immutable release cannot be clobbered after
+      # publication, but it can be assembled as a draft.
+      #
+      # `gh release create` FAILS outright when the release already exists, so a
+      # rerun after a partial failure would go red and never repair the assets.
+      # Create once, then always upload with --clobber, so reruns converge.
+      #
+      # A tag carrying a suffix, such as v0.1.0-rc1, publishes as a prerelease.
+      - name: Assemble the release as a draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          if gh release view "${version}" >/dev/null 2>&1; then
+            # A RERUN OVER A PUBLISHED RELEASE GOES BACK TO DRAFT FIRST.
+            # Without this, --clobber deletes each asset before uploading its
+            # replacement, so a rerun that fails halfway leaves the PUBLIC
+            # release missing binaries it used to have.
+            echo "release ${version} exists; hiding it while its assets are replaced"
+            gh release edit "${version}" --draft=true
+          else
+            prerelease=()
+            case "${version}" in *-*) prerelease=(--prerelease) ;; esac
+            gh release create "${version}" \
+              --draft \
+              --title "${version}" \
+              --generate-notes \
+              --verify-tag \
+              "${prerelease[@]}"
+          fi
+          gh release upload "${version}" dist/* --clobber
+
+      # The tag is checked AGAIN, immediately before the release becomes
+      # visible. The check before the build cannot cover a tag moved during the
+      # build, and `--verify-tag` only asserts that the tag exists. This shrinks
+      # the window to the gap between these two commands; GitHub offers no
+      # compare-and-swap that would close it completely.
+      - name: Publish the draft once the tag still matches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${version}" --jq .sha)"
+          if [ "${tag_sha}" != "${GITHUB_SHA}" ]; then
+            echo "::error::${version} moved to ${tag_sha} during the build; the draft is left unpublished."
+            exit 1
+          fi
+          gh release edit "${version}" --draft=false

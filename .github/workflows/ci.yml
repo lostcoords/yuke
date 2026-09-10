@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # No version pin here on purpose: the action reads minimum_zig_version
+      # from build.zig.zon, so the compiler follows the manifest. It also keeps
+      # the Zig cache between runs, which is why no cache paths are set by hand.
+      - uses: mlugg/setup-zig@v2
+
+      - name: Check formatting
+        run: zig fmt --check .
+
+      # `zig build test` also covers test-js and check-schema; see build.zig.
+      # The test binaries log to stderr, so even a passing run prints
+      # "failed command". The exit status is the gate: one failed test exits 1.
+      - name: Test
+        run: zig build test
+
+  # Debug, not ReleaseFast. This gate catches a target that stops compiling; the
+  # optimized build belongs to the release. Ghostty cross-compiles its CI
+  # targets the same way and reserves ReleaseFast for releases and benchmarks.
+  #
+  # Windows is deliberately absent. It is not a target.
+  cross:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-musl
+          - aarch64-linux-musl
+          - x86_64-macos
+          - aarch64-macos
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+
+      - name: Build ${{ matrix.target }}
+        run: zig build -Dtarget=${{ matrix.target }}
