@@ -41,6 +41,8 @@ pub const Options = struct {
     top_p: ?f64 = null,
     /// One stable key per session. Only Responses reads it, and it routes a repeated prefix to one cache.
     cache_key: []const u8 = "",
+    /// One stable id per session. The route decides which header carries it, and some routes carry none.
+    session_id: []const u8 = "",
 };
 
 pub const Content = union(enum) {
@@ -155,7 +157,7 @@ pub fn prepare(gpa: std.mem.Allocator, model: Model, request: Request) !Prepared
 
     const body_bytes = try requestBody(arena, model, request);
     // `resolve.request` copies the URL and every header, so the route and the credential may change.
-    const http_request = try resolve.request(arena, &model.route, model.credential, body_bytes);
+    const http_request = try resolve.request(arena, &model.route, model.credential, request.options.session_id, body_bytes);
     return .{
         .arena = call_arena,
         .protocol = model.route.protocol,
