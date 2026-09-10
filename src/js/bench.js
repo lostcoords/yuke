@@ -220,6 +220,8 @@ function paint(view, followTail = false) {
 }
 
 function verify() {
+  // The boot phase drives no transcript, so it compares nothing.
+  if (phase === "boot") return 0;
   if (phase === "projection") {
     if (projected?.type !== "text" || projected.text !== globalThis.PROJECTION_TEXT)
       throw new Error("native projection lost text across a page boundary");

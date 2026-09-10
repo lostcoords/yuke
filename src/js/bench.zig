@@ -10,7 +10,7 @@ const native_term = @import("native/term.zig");
 const Projection = @import("bench_projection.zig");
 pub const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
-pub const Phase = enum { build, reflow, scroll, stream, stream_native, paint, colors, selection, preview, projection, gc };
+pub const Phase = enum { build, reflow, scroll, stream, stream_native, paint, colors, selection, preview, projection, gc, boot };
 pub const Colors = enum { ansi_raw, rgb_raw, ansi_group, rgb_group, rgb_fresh };
 pub const phases = std.enums.values(Phase);
 
@@ -114,11 +114,30 @@ pub const Harness = struct {
         self.phase = phase;
     }
 
+    /// The frontend boots this way, so the phase pays for the runtime, the modules, and the plugins.
+    const boot_source =
+        \\import { plugins } from "yuke:ext";
+        \\import { tuiPlugin } from "yuke:tui";
+        \\import "yuke:core";
+        \\import "yuke:defaults";
+        \\plugins.use(tuiPlugin);
+    ;
+
+    /// Boot one throwaway host. A fresh runtime parses every module again, which one host would cache.
+    fn bootOnce(self: *Harness) !void {
+        const host = Host.createWith(self.host.gpa, self.host.io, .{ .cwd = "", .execution = self.context() });
+        defer host.destroy();
+        host.interrupt_budget = std.math.maxInt(u32);
+        try host.evalModule(boot_source, "boot.js");
+    }
+
     pub fn step(self: *Harness) !u64 {
         const phase = self.phase orelse unreachable;
         self.output.clearRetainingCapacity();
         if (phase == .gc) {
             self.host.runtime.runGC();
+        } else if (phase == .boot) {
+            try self.bootOnce();
         } else {
             if (phase == .stream_native) {
                 try (self.projection orelse unreachable).appendNative(self.native_step);
