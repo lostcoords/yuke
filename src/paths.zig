@@ -16,7 +16,7 @@ pub const app_name_env = "YUKE_APPNAME";
 pub const db_file = "yuke.db";
 
 /// This variable names the home directory: `USERPROFILE` on Windows and `HOME` elsewhere.
-const home_env = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
+pub const home_env = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 
 /// Return the non-empty value for `key`, or null.
 fn envNonEmpty(env: *const Map, key: []const u8) ?[]const u8 {

@@ -40,13 +40,12 @@ pub const App = struct {
         const self = try gpa.create(App);
         errdefer gpa.destroy(self);
 
-        const data_dir = try resolveDataDir(gpa, io, env);
-        defer if (data_dir) |path| gpa.free(path);
+        // A store that resolves from no base at all would lose every session at exit, so it stops startup.
+        const data_dir = (try resolveDataDir(gpa, io, env)) orelse return error.NoStateDirectory;
+        defer gpa.free(data_dir);
 
-        const owned_db_path = if (data_dir) |base| try dbPathZ(gpa, base) else null;
-        defer if (owned_db_path) |path| gpa.free(path);
-
-        const db_path: [:0]const u8 = if (owned_db_path) |p| p else ":memory:";
+        const db_path = try dbPathZ(gpa, data_dir);
+        defer gpa.free(db_path);
 
         self.* = .{
             .gpa = gpa,
@@ -223,6 +222,31 @@ fn ensureDataDir(io: std.Io, dir: []const u8) !void {
 /// The test dependencies. An empty environment allocates nothing, so no test frees it.
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+
+test "an environment with no base for the store stops startup instead of losing every session" {
+    const testing = std.testing;
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    // No home directory and no XDG base, which is the container case the plan names.
+    var bare: std.process.Environ.Map = .init(testing.allocator);
+    defer bare.deinit();
+    try testing.expectError(error.NoStateDirectory, App.open(testing.allocator, rt.io(), &bare));
+}
+
+test "an absolute XDG base opens the store with no home directory at all" {
+    const testing = std.testing;
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    var xdg: std.process.Environ.Map = .init(testing.allocator);
+    defer xdg.deinit();
+    try xdg.put("XDG_DATA_HOME", root);
+    const opened = try App.open(testing.allocator, rt.io(), &xdg);
+    opened.close();
+}
 
 test "a catalog replacement announces the merged revision" {
     const testing = std.testing;

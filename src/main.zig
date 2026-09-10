@@ -144,7 +144,11 @@ fn run(init: std.process.Init) !u8 {
 
     // Independent session trees can share this store; each tree has one engine owner.
     const application = app.App.open(init.gpa, io, init.environ_map) catch |err| {
-        std.log.err("yuke: the app did not start: {t}", .{err});
+        // This one failure has a direct operator remedy, so it names the remedy instead of the error.
+        if (err == error.NoStateDirectory)
+            std.log.err("yuke: no directory holds the session store; set XDG_DATA_HOME or {s}", .{paths.home_env})
+        else
+            std.log.err("yuke: the app did not start: {t}", .{err});
         return 1;
     };
     defer application.close();
