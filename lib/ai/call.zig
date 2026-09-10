@@ -365,9 +365,14 @@ const LifecycleTransport = struct {
             return .{ .ctx = self, .vtable = &body_vtable };
         }
 
-        fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
+        fn peek(ctx: *anyopaque) anyerror![]const u8 {
             const self: *Body = @ptrCast(@alignCast(ctx));
-            return self.reader.body().read(buf);
+            return self.reader.body().peek();
+        }
+
+        fn toss(ctx: *anyopaque, count: usize) void {
+            const self: *Body = @ptrCast(@alignCast(ctx));
+            self.reader.body().toss(count);
         }
 
         fn deinit(ctx: *anyopaque) void {
@@ -375,7 +380,7 @@ const LifecycleTransport = struct {
             self.owner.deinit_count += 1;
         }
 
-        const body_vtable: transport.ResponseBody.VTable = .{ .read = read, .deinit = deinit };
+        const body_vtable: transport.ResponseBody.VTable = .{ .peek = peek, .toss = toss, .deinit = deinit };
     };
 
     fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: transport.Request, info: *transport.AttemptInfo) anyerror!transport.ResponseBody {

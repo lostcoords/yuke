@@ -113,27 +113,33 @@ const HttpBody = struct {
     transfer_buffer: [4096]u8,
     reader: *std.Io.Reader,
 
-    const vtable: transport.ResponseBody.VTable = .{ .read = read, .deinit = deinit };
+    const vtable: transport.ResponseBody.VTable = .{ .peek = peek, .toss = toss, .deinit = deinit };
 
-    fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
-        std.debug.assert(buf.len > 0);
+    fn peek(ctx: *anyopaque) anyerror![]const u8 {
         const self: *HttpBody = @ptrCast(@alignCast(ctx));
-        return self.readWithIdleTimeout(buf);
+        return self.peekWithIdleTimeout();
     }
 
-    /// Bound each read with the idle deadline, and let the child read separate a cancel from it.
-    fn readWithIdleTimeout(self: *HttpBody, buf: []u8) anyerror!usize {
+    /// Drop what the parser read. The reader keeps the peeked bytes until the next fill.
+    fn toss(ctx: *anyopaque, count: usize) void {
+        const self: *HttpBody = @ptrCast(@alignCast(ctx));
+        std.debug.assert(count <= self.reader.bufferedLen()); // A toss never passes the last peek.
+        self.reader.toss(count);
+    }
+
+    /// Bound each fill with the idle deadline. The child fill separates a cancel from a timeout.
+    fn peekWithIdleTimeout(self: *HttpBody) anyerror![]const u8 {
+        // The reader already holds bytes, so this call needs no fill and no child task.
+        if (self.reader.bufferedLen() > 0) return self.reader.buffered();
         switch (self.idle_timeout) {
-            .none => return self.readRaw(buf),
+            .none => return self.peekRaw(),
             else => {},
         }
-        // The reader already holds bytes, so no child task is needed.
-        if (self.reader.bufferedLen() > 0) return self.readRaw(buf);
 
         var done: std.Io.Event = .unset;
-        var future = try self.io.concurrent(readLeg, .{ self, buf, &done });
+        var future = try self.io.concurrent(peekLeg, .{ self, &done });
         done.waitTimeout(self.io, self.idle_timeout) catch |err| {
-            _ = future.cancel(self.io) catch 0; // Cancel joins the child before this function returns, so the child cannot access buf.
+            _ = future.cancel(self.io) catch 0; // Cancel joins the child before this function returns.
             return switch (err) {
                 error.Timeout => Error.IdleTimeout,
                 else => err,
@@ -142,29 +148,26 @@ const HttpBody = struct {
         return future.await(self.io);
     }
 
-    /// Read one chunk in a child task. Set `done` after the read.
-    fn readLeg(self: *HttpBody, buf: []u8, done: *std.Io.Event) anyerror!usize {
+    /// Fill in a child task. Set `done` after the fill.
+    fn peekLeg(self: *HttpBody, done: *std.Io.Event) anyerror![]const u8 {
         defer done.set(self.io);
-        return self.readRaw(buf);
+        return self.peekRaw();
     }
 
     /// Return the bytes the stream holds now, because a full-buffer read would delay every SSE event.
-    fn readAvailable(self: *HttpBody, buf: []u8) std.Io.Reader.Error!usize {
+    fn peekAvailable(self: *HttpBody) std.Io.Reader.Error![]const u8 {
         self.reader.fill(1) catch |err| switch (err) {
-            error.EndOfStream => return 0,
+            error.EndOfStream => return "",
             else => |e| return e,
         };
         const have = self.reader.buffered();
-        const n = @min(have.len, buf.len);
-        @memcpy(buf[0..n], have[0..n]);
-        self.reader.toss(n);
-        std.debug.assert(n > 0); // fill(1) returned, so the reader holds at least one byte
-        return n;
+        std.debug.assert(have.len > 0); // fill(1) returned, so the reader holds at least one byte
+        return have;
     }
 
-    /// Return zero only at end of stream, as ResponseBody requires.
-    fn readRaw(self: *HttpBody, buf: []u8) anyerror!usize {
-        return self.readAvailable(buf) catch |err| switch (err) {
+    /// Return an empty slice only at the end of the stream, as ResponseBody requires.
+    fn peekRaw(self: *HttpBody) anyerror![]const u8 {
+        return self.peekAvailable() catch |err| switch (err) {
             error.ReadFailed => {
                 // A malformed or truncated body sets bodyErr without a socket error. Return it as a peer error.
                 if (self.response.bodyErr()) |be| {
@@ -223,13 +226,23 @@ fn mapStatus(status: std.http.Status) Error {
 fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
     hb.reader = hb.response.reader(&hb.transfer_buffer);
     var buf: [2048]u8 = undefined;
-    const n = hb.readWithIdleTimeout(&buf) catch |err| switch (err) {
-        error.Canceled => return error.Canceled,
-        else => return Error.RateLimitUnknown,
-    };
-    if (bodyIsQuota(arena, buf[0..n])) return Error.QuotaExhausted;
+    var len: usize = 0;
+    // One peek can hold part of the body only. A part of the body names no failure class.
+    while (len < buf.len) {
+        const chunk = hb.peekWithIdleTimeout() catch |err| switch (err) {
+            error.Canceled => return error.Canceled,
+            else => return Error.RateLimitUnknown,
+        };
+        if (chunk.len == 0) break;
+        const take = @min(chunk.len, buf.len - len);
+        @memcpy(buf[len..][0..take], chunk[0..take]);
+        len += take;
+        hb.reader.toss(take);
+    }
+    const body = buf[0..len];
+    if (bodyIsQuota(arena, body)) return Error.QuotaExhausted;
     // A rate limit must prove itself. An unreadable body may still name a spend cap.
-    return if (bodyIsRateLimit(arena, buf[0..n])) Error.RateLimited else Error.RateLimitUnknown;
+    return if (bodyIsRateLimit(arena, body)) Error.RateLimited else Error.RateLimitUnknown;
 }
 
 /// Report whether the error body names a temporary rate limit. Absence of proof is not proof.
@@ -348,11 +361,11 @@ fn runClient(out: *ClientOut) !void {
     var info: transport.AttemptInfo = .{};
     const body = try http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = &request_body }, &info);
     defer body.deinit();
-    var buf: [128]u8 = undefined;
     while (true) {
-        const n = try body.read(&buf);
-        if (n == 0) break;
-        try out.bytes.appendSlice(out.gpa, buf[0..n]);
+        const chunk = try body.peek();
+        if (chunk.len == 0) break;
+        try out.bytes.appendSlice(out.gpa, chunk);
+        body.toss(chunk.len);
     }
 }
 

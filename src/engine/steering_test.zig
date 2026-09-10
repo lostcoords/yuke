@@ -127,7 +127,7 @@ const Fixture = struct {
         }
         const body = try arena.create(Body);
         body.* = .{ .fixture = self, .bytes = if (self.stage == .tool and index == 0) tool_reply else ai.transport.canned_reply, .gated = self.stage == .stream and index == 0 };
-        return .{ .ctx = body, .vtable = &.{ .read = Body.read, .deinit = Body.close } };
+        return .{ .ctx = body, .vtable = &.{ .peek = Body.peek, .toss = Body.toss, .deinit = Body.close } };
     }
 
     const Body = struct {
@@ -136,14 +136,21 @@ const Fixture = struct {
         pos: usize = 0,
         gated: bool,
 
-        fn read(ctx: *anyopaque, out: []u8) !usize {
+        /// Deliver the whole gate prefix, then pause one time before the rest of the reply.
+        fn peek(ctx: *anyopaque) anyerror![]const u8 {
             const self: *Body = @ptrCast(@alignCast(ctx));
-            if (self.gated and self.pos > 0) try self.fixture.pause();
-            const end = if (self.gated and self.pos == 0) std.mem.indexOf(u8, self.bytes, "data: {\"type\":\"message_delta\"") orelse self.bytes.len / 2 else self.bytes.len;
-            const len = @min(out.len, end - self.pos);
-            @memcpy(out[0..len], self.bytes[self.pos..][0..len]);
-            self.pos += len;
-            return len;
+            const gate = if (self.gated)
+                std.mem.indexOf(u8, self.bytes, "data: {\"type\":\"message_delta\"") orelse self.bytes.len / 2
+            else
+                self.bytes.len;
+            if (self.pos < gate) return self.bytes[self.pos..gate];
+            if (self.gated) try self.fixture.pause();
+            return self.bytes[self.pos..];
+        }
+
+        fn toss(ctx: *anyopaque, count: usize) void {
+            const self: *Body = @ptrCast(@alignCast(ctx));
+            self.pos += count;
         }
 
         fn close(_: *anyopaque) void {}

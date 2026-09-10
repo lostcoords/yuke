@@ -54,20 +54,25 @@ pub const ResponseBody = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        /// Fill a non-empty `buf` with one or more bytes, and return zero only at end of stream.
-        read: *const fn (ctx: *anyopaque, buf: []u8) anyerror!usize,
+        /// Return the bytes the response holds now, or an empty slice at the end of the stream.
+        peek: *const fn (ctx: *anyopaque) anyerror![]const u8,
+        /// Drop the first `count` bytes of the last peek, which stay readable until the next peek.
+        toss: *const fn (ctx: *anyopaque, count: usize) void,
         deinit: *const fn (ctx: *anyopaque) void,
     };
 
-    pub fn read(self: ResponseBody, buf: []u8) anyerror!usize {
-        return self.vtable.read(self.ctx, buf);
+    pub fn peek(self: ResponseBody) anyerror![]const u8 {
+        return self.vtable.peek(self.ctx);
+    }
+    pub fn toss(self: ResponseBody, count: usize) void {
+        self.vtable.toss(self.ctx, count);
     }
     pub fn deinit(self: ResponseBody) void {
         self.vtable.deinit(self.ctx);
     }
 };
 
-/// Hand each StreamEvent to `onEvent`, which copies what it keeps before the next read resets scratch.
+/// Hand each StreamEvent to `onEvent`, which copies what it keeps before the next payload replaces it.
 pub fn stream(
     gpa: std.mem.Allocator,
     body: ResponseBody,
@@ -75,7 +80,7 @@ pub fn stream(
     ctx: anytype,
     comptime onEvent: fn (@TypeOf(ctx), event.StreamEvent) anyerror!void,
 ) !void {
-    var parser: sse.Sse = .init(gpa);
+    var parser: sse.Sse = .init(gpa, max_response_bytes);
     defer parser.deinit();
     var scratch: std.heap.ArenaAllocator = .init(gpa);
     defer scratch.deinit();
@@ -83,33 +88,13 @@ pub fn stream(
     var events: std.ArrayList(event.StreamEvent) = .empty;
     defer events.deinit(reducer.gpa);
 
-    var buf: [4096]u8 = undefined;
-    var total: usize = 0;
     var saw_done = false;
-
-    while (true) {
-        const n = try body.read(&buf);
-        if (n == 0) break;
-        total += n;
-        if (total > max_response_bytes) return error.ResponseTooLarge;
-        // Create the list inside the read loop. The scratch allocator owns and resets its backing after the read.
-        var frames: std.ArrayList([]const u8) = .empty;
-        try parser.push(buf[0..n], scratch.allocator(), &frames);
-        for (frames.items) |data| {
-            events.clearRetainingCapacity();
-            try decodeFrame(reducer, data, scratch.allocator(), &events);
-            try emit(events.items, &saw_done, ctx, onEvent);
-        }
-        _ = scratch.reset(.retain_capacity); // Reset the arena after this read.
-    }
-
-    // Drain the parser tail and the reducer's terminal event.
-    var tail: std.ArrayList([]const u8) = .empty;
-    try parser.finish(scratch.allocator(), &tail);
-    for (tail.items) |data| {
+    // The parser owns the payload until the next call, so the decode and the emit run first.
+    while (try parser.next(body)) |data| {
         events.clearRetainingCapacity();
         try decodeFrame(reducer, data, scratch.allocator(), &events);
         try emit(events.items, &saw_done, ctx, onEvent);
+        _ = scratch.reset(.retain_capacity);
     }
 
     if (!saw_done) return error.IncompleteStream; // Treat a stream without the terminal done event as truncated.
@@ -150,18 +135,19 @@ pub const ReplayReader = struct {
         return .{ .ctx = self, .vtable = &vtable };
     }
 
-    const vtable: ResponseBody.VTable = .{ .read = read, .deinit = deinitNoop };
+    const vtable: ResponseBody.VTable = .{ .peek = peek, .toss = toss, .deinit = deinitNoop };
 
-    fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
-        std.debug.assert(buf.len > 0); // The seam never reads into an empty buffer.
+    fn peek(ctx: *anyopaque) anyerror![]const u8 {
         const self: *ReplayReader = @ptrCast(@alignCast(ctx));
         const remaining = self.bytes[self.offset..];
-        if (remaining.len == 0) return self.after orelse 0;
-        const limit = if (self.chunk_size == 0) buf.len else @min(buf.len, self.chunk_size);
-        const n = @min(limit, remaining.len);
-        @memcpy(buf[0..n], remaining[0..n]);
-        self.offset += n;
-        return n;
+        if (remaining.len == 0) return if (self.after) |err| err else "";
+        if (self.chunk_size == 0) return remaining;
+        return remaining[0..@min(self.chunk_size, remaining.len)];
+    }
+    fn toss(ctx: *anyopaque, count: usize) void {
+        const self: *ReplayReader = @ptrCast(@alignCast(ctx));
+        std.debug.assert(count <= self.bytes.len - self.offset); // A toss never passes the last peek.
+        self.offset += count;
     }
     fn deinitNoop(_: *anyopaque) void {}
 };

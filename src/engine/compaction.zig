@@ -1046,18 +1046,20 @@ test "a cancel interrupts a blocked summary and leaves the history intact" {
         closed: bool = false,
 
         fn open(ctx: *anyopaque, _: std.mem.Allocator, _: ai.transport.Request, _: *ai.transport.AttemptInfo) !ai.transport.ResponseBody {
-            return .{ .ctx = ctx, .vtable = &.{ .read = read, .deinit = close } };
+            return .{ .ctx = ctx, .vtable = &.{ .peek = peek, .toss = toss, .deinit = close } };
         }
 
-        fn read(ctx: *anyopaque, _: []u8) !usize {
+        fn peek(ctx: *anyopaque) anyerror![]const u8 {
             const self: *@This() = @ptrCast(@alignCast(ctx));
             self.entered.set(self.io);
             self.parked.waitTimeout(self.io, .{ .duration = .{ .raw = .fromSeconds(1), .clock = .awake } }) catch |err| {
                 if (err == error.Timeout) self.timed_out = true;
                 return err;
             };
-            return 0;
+            return "";
         }
+
+        fn toss(_: *anyopaque, _: usize) void {}
 
         fn close(ctx: *anyopaque) void {
             const self: *@This() = @ptrCast(@alignCast(ctx));
