@@ -41,6 +41,27 @@ check("D", t.text === "alpha " && register.text === "bravo charli");
 press("$p");
 check("put-char", t.text === "alpha bravo charli");
 
+// "dw" follows vim's word classes and never joins lines.
+t.setText("alpha bravo\ncharlie");
+setComposerMode(v.composer, "normal");
+press("ggdw");
+check("dw-word", t.text === "bravo\ncharlie" && t.caret === 0 && register.text === "alpha ");
+press("$dw");
+check("dw-line-end", t.text === "brav\ncharlie" && register.text === "o");
+t.setText("alpha, bravo");
+setComposerMode(v.composer, "normal");
+press("0dw");
+check("dw-punctuation", t.text === ", bravo" && register.text === "alpha");
+t.setText("alpha bravo");
+setComposerMode(v.composer, "normal");
+press("0llldw");
+check("dw-inside-word", t.text === "alpbravo" && register.text === "ha ");
+t.setText("alpha\n\nbravo");
+setComposerMode(v.composer, "normal");
+t.caret = 6;
+press("dw");
+check("dw-empty-line", t.text === "alpha\n\nbravo" && register.text === "ha ");
+
 // "p" leaves the caret on the last character it put.
 t.setText("abc");
 setComposerMode(v.composer, "normal");
