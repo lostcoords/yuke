@@ -15,7 +15,7 @@ test "yuke:fs reads, writes and stats a real directory through promises" {
     // A real task needs a reactor, so this test runs on one instead of the testing I/O.
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
+    const host = Host.createTest(std.testing.allocator, rt.io(), root);
     defer host.destroy();
     try support.eval(host, "tests/native_tools/fsp.test.js");
     try support.pumpUntilIdle(host);
@@ -122,7 +122,7 @@ test "a handler that awaits a primitive answers when the task finishes" {
 
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
+    const host = Host.createTest(std.testing.allocator, rt.io(), root);
     defer host.destroy();
 
     try support.eval(host, "tests/native_tools/await.test.js");
@@ -240,7 +240,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
 
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = "/tmp" });
+    const host = Host.createTest(std.testing.allocator, rt.io(), "/tmp");
     defer host.destroy();
     try support.eval(host, "tests/native_tools/builtins-test.test.js");
 
@@ -349,7 +349,7 @@ test "exec call abort ends its process group and preserves unrelated work" {
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
+    const host = Host.createTest(std.testing.allocator, rt.io(), root);
     defer host.destroy();
     try host.evalModule("import \"yuke:builtins\";", "builtins.js");
 
@@ -387,7 +387,7 @@ test "exec rejects forged and retained signals and aborts before process creatio
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
+    const host = Host.createTest(std.testing.allocator, rt.io(), root);
     defer host.destroy();
     try support.eval(host, "tests/native_tools/exec-signal.test.js");
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.refusals"));
@@ -413,7 +413,7 @@ test "exec completion detaches before call abort and host close rejects late exe
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
+    const host = Host.createTest(std.testing.allocator, rt.io(), root);
     defer host.destroy();
     try support.eval(host, "tests/native_tools/exec-complete.test.js");
     const call = host.calls.submit("probe", "{}", "/tmp");
@@ -512,7 +512,7 @@ test "yuke:exec runs commands on tasks and reports each outcome" {
     // A command needs a real reactor, because it runs on its own task.
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
+    const host = Host.createTest(std.testing.allocator, rt.io(), root);
     defer host.destroy();
 
     try support.eval(host, "tests/native_tools/exec.test.js");
@@ -523,7 +523,7 @@ test "yuke:exec runs commands on tasks and reports each outcome" {
 test "yuke:exec ends a command that passes its deadline" {
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = "/tmp" });
+    const host = Host.createTest(std.testing.allocator, rt.io(), "/tmp");
     defer host.destroy();
 
     // The deadline must stop the command and name the outcome. A failed kill would wait 30 seconds.
@@ -557,7 +557,7 @@ test "a primitive stays pending until the owner lets its task run" {
 
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
+    const host = Host.createTest(std.testing.allocator, rt.io(), root);
     defer host.destroy();
 
     try support.eval(host, "tests/native_tools/pend.test.js");
@@ -580,7 +580,7 @@ test "a throwing await handler faults once and leaves no pending exception" {
 
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const host = Host.createWith(std.testing.allocator, rt.io(), .{ .cwd = root });
+    const host = Host.createTest(std.testing.allocator, rt.io(), root);
     defer host.destroy();
 
     // A resolver that throws must not leave an exception for the next owner turn.
@@ -607,7 +607,7 @@ test "run cleanup stops signaled exec without another owner pump" {
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
     const runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer runtime.deinit();
-    const host = Host.createWith(std.testing.allocator, runtime.io(), .{ .cwd = root });
+    const host = Host.createTest(std.testing.allocator, runtime.io(), root);
     defer host.destroy();
     try host.evalModule("import \"yuke:builtins\";", "builtins.js");
     var work: @import("../session/work.zig") = .{};

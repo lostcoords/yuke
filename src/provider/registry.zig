@@ -34,12 +34,12 @@ pub const CredentialSource = union(enum) {
 };
 
 /// Resolve the credential of one run. A named variable the process lost gives null.
-pub fn credential(source: CredentialSource, env: ?*const EnvMap, now_ms: u64) ?ai.resolve.Credential {
+pub fn credential(source: CredentialSource, env: *const EnvMap, now_ms: u64) ?ai.resolve.Credential {
     return switch (source) {
         .none => .none,
         .env => |name| blk: {
             // An empty value is no value, so a run reports a missing credential and sends no header.
-            const value = (if (env) |e| e.get(name) else null) orelse return null;
+            const value = env.get(name) orelse return null;
             break :blk if (value.len == 0) null else .{ .api_key = value };
         },
         .literal => |key| .{ .api_key = key },
@@ -100,13 +100,13 @@ pub const Sources = struct {
     local: ?*const provider.config.Loaded = null,
     /// The baked table. A test names its own rows, so this is not always the whole catalog.
     catalog: []const catalog.Provider = &.{},
-    env: ?*const EnvMap = null,
+    env: *const EnvMap,
 };
 
 /// What one snapshot build needs. `load` always reads the whole baked table, so it names no catalog.
 pub const Inputs = struct {
     local: ?*const provider.config.Loaded = null,
-    env: ?*const EnvMap = null,
+    env: *const EnvMap,
 };
 
 /// One provider snapshot. The arena owns the rows, and a route borrows the state-owned sources.
@@ -176,7 +176,7 @@ pub fn resolve(arena: std.mem.Allocator, sources: Sources) ![]const Provider {
 }
 
 /// Report whether the process can offer this provider with no `providers.json` entry.
-fn offerable(c: *const catalog.Provider, env: ?*const EnvMap) bool {
+fn offerable(c: *const catalog.Provider, env: *const EnvMap) bool {
     return switch (c.auth) {
         // A grant needs a login, so the provider stays visible for the user to start one.
         .oauth => true,
@@ -185,8 +185,8 @@ fn offerable(c: *const catalog.Provider, env: ?*const EnvMap) bool {
 }
 
 /// Read a named variable. An empty value is no value, so a blank variable offers nothing.
-fn envValue(env: ?*const EnvMap, name: []const u8) ?[]const u8 {
-    const value = (if (env) |e| e.get(name) else null) orelse return null;
+fn envValue(env: *const EnvMap, name: []const u8) ?[]const u8 {
+    const value = env.get(name) orelse return null;
     return if (value.len == 0) null else value;
 }
 
@@ -195,7 +195,7 @@ fn providerRow(
     arena: std.mem.Allocator,
     p: provider.config.LocalProvider,
     from_catalog: ?*const catalog.Provider,
-    env: ?*const EnvMap,
+    env: *const EnvMap,
 ) !Provider {
     return .{
         .id = p.id,
@@ -241,7 +241,7 @@ fn localAvailability(
     arena: std.mem.Allocator,
     p: provider.config.LocalProvider,
     from_catalog: ?*const catalog.Provider,
-    env: ?*const EnvMap,
+    env: *const EnvMap,
 ) Availability {
     const template: ?*const instance.Route = if (from_catalog) |c| &c.route else null;
     const base_url = p.base_url orelse (if (template) |t| t.base_url else null) orelse return .{ .unavailable = .needs_route };
@@ -265,8 +265,7 @@ fn localAvailability(
             switch (from_file) {
                 .env => |name| {
                     // An empty value is no value, so it must not reach a request as a blank header.
-                    const value = (if (env) |e| e.get(name) else null) orelse return .{ .unavailable = .needs_credential };
-                    if (value.len == 0) return .{ .unavailable = .needs_credential };
+                    if (envValue(env, name) == null) return .{ .unavailable = .needs_credential };
                     source = .{ .env = name };
                 },
                 .literal => |literal| source = .{ .literal = literal },

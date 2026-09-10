@@ -139,6 +139,7 @@ fn failureFor(err: anyerror) ?Failure {
         error.TooManySkills => .{ .code = .bad_request, .message = "a skill root holds more entries than the scan bound" },
         error.BadCursor => .{ .code = .stale_cursor, .message = "stale cursor" },
         error.RootNotAbsolute => .{ .code = .bad_request, .message = "the workspace path must be absolute" },
+        error.HomeUnavailable => .{ .code = .bad_request, .message = "the environment names no home directory, so a ~ path has no meaning" },
         error.BadPath => .{ .code = .bad_request, .message = "the engine cannot read the path" },
         error.InvalidInstructions => .{ .code = .bad_request, .message = "an AGENTS.md source is invalid" },
         error.InvalidPromptPlaceholder => .{ .code = .bad_request, .message = "the prompt contains an unknown or incomplete placeholder" },
@@ -166,6 +167,11 @@ test "a name outside the protocol refuses with the unknown method code" {
     try std.testing.expectEqual(proto.enums.ErrorCode.unknown_method, failure.code);
     try std.testing.expectEqualStrings("unknown method", failure.message);
     try std.testing.expectEqual(@as(usize, 0), sink.written().len);
+}
+
+test "an unresolvable home directory refuses the call rather than reaching the client bare" {
+    const refusal = failureFor(error.HomeUnavailable).?;
+    try std.testing.expectEqual(proto.enums.ErrorCode.bad_request, refusal.code);
 }
 
 test "tree contention uses the existing session busy error" {

@@ -9,7 +9,8 @@ const quickjs = @import("quickjs");
 const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 const os = @import("../host/operations.zig");
-const LocalHost = @import("../host/local.zig").LocalHost;
+const local_host = @import("../host/local.zig");
+const LocalHost = local_host.LocalHost;
 const paths = @import("../../paths.zig");
 const pending = @import("../pending.zig");
 
@@ -44,6 +45,7 @@ fn errorMessage(err: os.HostError) []const u8 {
         error.AccessDenied => "the file system denied access to the path",
         error.TooLarge => "the file exceeds the size limit",
         error.InvalidUtf8 => "the file holds invalid UTF-8",
+        error.HomeUnavailable => "the environment names no home directory, so a ~ path has no meaning",
         error.Canceled => "the call was canceled",
         error.HostFailure => "the file system reported a failure",
     };
@@ -230,8 +232,10 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     const arena = call.alloc();
 
     const requested = pathArg(ctx, arena, args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string");
-    const path = paths.canonicalizeWorkspace(arena, host.env, requested) catch
-        return rejected(ctx, "the path is not a directory this process can read");
+    const path = paths.canonicalizeWorkspace(arena, host.env, requested) catch |err| switch (err) {
+        error.HomeUnavailable => return rejected(ctx, errorMessage(error.HomeUnavailable)),
+        else => return rejected(ctx, "the path is not a directory this process can read"),
+    };
     const page = call.local.listDir(arena, path, .{ .limit = max_entries, .include_files = false }) catch |err|
         return rejected(ctx, errorMessage(err));
 
@@ -293,7 +297,7 @@ test "list answers the directories of a real path and marks a repository" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var local: LocalHost = .{ .io = testing.io, .root = root, .env = null };
+    var local: LocalHost = .{ .io = testing.io, .root = root, .env = &local_host.test_env };
     const page = try local.listDir(arena, root, .{ .limit = max_entries, .include_files = false });
 
     var aw: std.Io.Writer.Allocating = .init(testing.allocator);

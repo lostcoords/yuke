@@ -38,8 +38,7 @@ pub const LoadError = error{ OutOfMemory, Canceled, TooManySkills };
 /// Scan `<workspace>/.agents/skills` then `~/.agents/skills`. Each direct subdirectory with a SKILL.md is a candidate.
 pub fn load(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, workspace: []const u8) LoadError!Catalog {
     std.debug.assert(std.fs.path.isAbsolute(workspace));
-    const home = paths.homeDir(env);
-    const global = if (home != null and std.fs.path.isAbsolute(home.?)) try std.fs.path.join(arena, &.{ home.?, ".agents", "skills" }) else null;
+    const global = if (paths.homeDir(env)) |home| try std.fs.path.join(arena, &.{ home, ".agents", "skills" }) else null;
     const local = try std.fs.path.join(arena, &.{ workspace, ".agents", "skills" });
     var entries: std.ArrayList(Entry) = .empty;
     var skipped: std.ArrayList(Skipped) = .empty;

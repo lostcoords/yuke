@@ -11,7 +11,7 @@ const Map = std.process.Environ.Map;
 pub const LocalHost = struct {
     io: std.Io,
     root: []const u8, // The canonical workspace root, the base for a relative path.
-    env: ?*const Map, // The environment expands an initial `~`.
+    env: *const Map, // The environment expands an initial `~`.
 
     pub fn readRange(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, range: h.Range, limits: h.ReadLimits) h.HostError!h.RangeRead {
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
@@ -217,6 +217,7 @@ fn mapError(err: NativeError) h.HostError {
         error.AccessDenied, error.PermissionDenied => error.AccessDenied,
         // `readFileAlloc` reports the byte limit this way. The caller must see the size, not a fault.
         error.StreamTooLong, error.FileTooBig => error.TooLarge,
+        error.HomeUnavailable => error.HomeUnavailable,
         error.Canceled => error.Canceled,
         else => error.HostFailure,
     };
@@ -332,6 +333,9 @@ fn selectPage(io: std.Io, dir: std.Io.Dir, scratch: std.mem.Allocator, options: 
 
 const testing = std.testing;
 
+/// The environment every host test borrows. An empty environment allocates nothing, so no test frees it.
+pub var test_env: Map = .init(testing.allocator);
+
 const test_limits: h.ReadLimits = .{ .max_lines = 2000, .max_line_bytes = 64, .max_bytes = 4096 };
 
 /// The fixture writes `data` to a temporary file. It reads a range through `LocalHost`.
@@ -351,7 +355,7 @@ const Fixture = struct {
     }
     /// Build the host per call. A stored root slice would dangle if the fixture moved.
     fn read(self: *Fixture, a: std.mem.Allocator, range: h.Range, limits: h.ReadLimits) h.HostError!h.RangeRead {
-        var local: LocalHost = .{ .io = testing.io, .root = self.root_buf[0..self.root_len], .env = null };
+        var local: LocalHost = .{ .io = testing.io, .root = self.root_buf[0..self.root_len], .env = &test_env };
         return local.readRange(a, "a.txt", range, limits);
     }
 };
@@ -509,7 +513,7 @@ test "LocalHost maps a missing path and a directory" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
     try testing.expectError(error.NotFound, local.readRange(a, "nope.txt", .{}, test_limits));
     try testing.expectError(error.NotAFile, local.readRange(a, ".", .{}, test_limits));
 }
@@ -530,6 +534,23 @@ test "LocalHost expands a leading tilde against HOME" {
     try testing.expectEqualStrings("hi\n", got.text);
 }
 
+test "LocalHost refuses a tilde path when the environment names no home directory" {
+    var f: Fixture = undefined;
+    try f.init("hi\n");
+    defer f.deinit();
+    var relative = Map.init(testing.allocator);
+    defer relative.deinit();
+    try relative.put("HOME", "relative/home");
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // An absent home and a relative home both refuse; neither may read `<root>/~/a.txt`.
+    for ([_]*const Map{ &test_env, &relative }) |env| {
+        var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = env };
+        try testing.expectError(error.HomeUnavailable, local.readRange(arena.allocator(), "~/a.txt", .{}, test_limits));
+    }
+}
+
 test "LocalHost does not confine reads to the workspace" {
     var f: Fixture = undefined;
     try f.init("inside\n");
@@ -544,7 +565,7 @@ test "LocalHost does not confine reads to the workspace" {
     defer arena.deinit();
     const a = arena.allocator();
     const outside = try std.fs.path.join(a, &.{ other_root, "outside.txt" });
-    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
     // An absolute path outside the workspace reads freely (no confinement).
     const got = try local.readRange(a, outside, .{}, test_limits);
     try testing.expectEqualStrings("secret\n", got.text);
@@ -557,7 +578,7 @@ test "LocalHost readAll returns exact bytes and reports the size limit" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
 
     // The bytes must be exact. `readRange` cuts long lines, so a write-back needs this path.
     try testing.expectEqualStrings("one\ntwo", try local.readAll(a, "a.txt", 1024));
@@ -573,7 +594,7 @@ test "LocalHost readAll refuses a file it cannot decode as UTF-8" {
     defer f.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
     try testing.expectError(error.InvalidUtf8, local.readAll(arena.allocator(), "a.txt", 1024));
 }
 
@@ -592,7 +613,7 @@ test "LocalHost writeFile replaces a file and keeps its permissions" {
 
     const before = (try f.tmp.dir.statFile(testing.io, "a.txt", .{})).permissions;
 
-    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
     try local.writeFile(a, "a.txt", "new content\n");
     try testing.expectEqualStrings("new content\n", try local.readAll(a, "a.txt", 1024));
 
@@ -609,7 +630,7 @@ test "LocalHost writeFile creates a file that does not exist" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
     try local.writeFile(a, "fresh.txt", "hello\n");
     try testing.expectEqualStrings("hello\n", try local.readAll(a, "fresh.txt", 1024));
 }
@@ -623,7 +644,7 @@ test "LocalHost writeFile refuses a target that is not a regular file" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
     // A rename replaces the link itself, so a write through a symlink would change the wrong object.
     try testing.expectError(error.NotAFile, local.writeFile(a, "link.txt", "x"));
     try testing.expectError(error.NotAFile, local.writeFile(a, ".", "x"));
@@ -649,7 +670,7 @@ const TreeFixture = struct {
         self.tmp.cleanup();
     }
     fn list(self: *TreeFixture, a: std.mem.Allocator, options: h.ListOptions) h.HostError!h.DirPage {
-        var local: LocalHost = .{ .io = testing.io, .root = self.root_buf[0..self.root_len], .env = null };
+        var local: LocalHost = .{ .io = testing.io, .root = self.root_buf[0..self.root_len], .env = &test_env };
         return local.listDir(a, ".", options);
     }
 };
@@ -718,7 +739,7 @@ test "stat reports a directory, a file, and a missing path" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
 
     const dir = try local.stat(a, "sub");
     try testing.expect(dir.is_dir);

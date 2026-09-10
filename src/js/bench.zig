@@ -48,7 +48,7 @@ pub const Harness = struct {
         self.render = try term.Render.init(io, if (metrics_enabled) self.allocations.allocator() else gpa, &self.env, .{});
         errdefer self.render.deinit(&self.output.writer);
         try self.render.resize(&self.output.writer, .{ .cols = width, .rows = height, .x_pixel = 0, .y_pixel = 0 });
-        self.host = Host.createWith(if (metrics_enabled) self.allocations.allocator() else gpa, io, .{});
+        self.host = Host.createWith(if (metrics_enabled) self.allocations.allocator() else gpa, io, .{ .cwd = "", .env = &self.env });
         errdefer self.host.destroy();
         self.host.runtime.setMemoryLimit(1024 * 1024 * 1024);
         self.host.interrupt_budget = std.math.maxInt(u32);

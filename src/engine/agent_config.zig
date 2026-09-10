@@ -49,8 +49,8 @@ pub fn slotModel(engine: *Engine, arena: std.mem.Allocator, slot: Wire.AgentMode
     return entry.model;
 }
 
-fn configPath(arena: std.mem.Allocator, io: std.Io, env: ?*const std.process.Environ.Map) !?[]const u8 {
-    const directory = (try paths.configDir(arena, env orelse return null)) orelse return null;
+fn configPath(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !?[]const u8 {
+    const directory = (try paths.configDir(arena, env)) orelse return null;
     const canonical = std.Io.Dir.realPathFileAbsoluteAlloc(io, directory, arena) catch |err| switch (err) {
         error.FileNotFound => directory,
         else => return err,

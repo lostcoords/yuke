@@ -314,7 +314,7 @@ test "a request reaches a command and answers with its result" {
     defer runtime.db.deinit();
     defer runtime.engine.close();
 
-    const host = Host.createWith(testing.allocator, rt.io(), .{});
+    const host = Host.createTest(testing.allocator, rt.io(), "");
     defer host.destroy();
 
     // With no engine, a view read answers its empty projection and a request refuses.

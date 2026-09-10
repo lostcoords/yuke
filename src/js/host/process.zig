@@ -46,7 +46,7 @@ const Drain = struct {
 };
 
 /// Run `spec` and return its output. It returns an error rather than an assertion, because `spec` is validated tool input.
-pub fn run(io: std.Io, root: []const u8, env: ?*const std.process.Environ.Map, scratch: std.mem.Allocator, spec: h.ExecSpec) h.HostError!h.ExecResult {
+pub fn run(io: std.Io, root: []const u8, env: *const std.process.Environ.Map, scratch: std.mem.Allocator, spec: h.ExecSpec) h.HostError!h.ExecResult {
     if (spec.timeout_ms == 0 or spec.max_stream_bytes == 0) return error.HostFailure;
     const cwd = try resolveCwd(scratch, root, env, spec.cwd);
     const argv = [_][]const u8{ "/bin/sh", "-c", spec.command };
@@ -145,9 +145,12 @@ fn joinGroup(io: std.Io, group: *std.Io.Group, done: *std.Io.Event) void {
 }
 
 /// Resolve the working directory. A null `cwd` uses the workspace root itself.
-fn resolveCwd(scratch: std.mem.Allocator, root: []const u8, env: ?*const std.process.Environ.Map, cwd: ?[]const u8) h.HostError![]const u8 {
+fn resolveCwd(scratch: std.mem.Allocator, root: []const u8, env: *const std.process.Environ.Map, cwd: ?[]const u8) h.HostError![]const u8 {
     const rel = cwd orelse return root;
-    return paths.anchorAt(scratch, env, root, rel) catch unreachable;
+    return paths.anchorAt(scratch, env, root, rel) catch |err| switch (err) {
+        error.HomeUnavailable => error.HomeUnavailable,
+        error.OutOfMemory => error.HostFailure,
+    };
 }
 
 fn mapDrainError(err: anyerror) h.HostError {
@@ -190,8 +193,11 @@ fn keepTail(scratch: std.mem.Allocator, state: *Drain, bytes: []const u8, half: 
 
 const testing = std.testing;
 
+/// The environment every command test borrows. An empty environment allocates nothing, so no test frees it.
+var test_env: std.process.Environ.Map = .init(testing.allocator);
+
 fn runShell(a: std.mem.Allocator, command: []const u8, timeout_ms: u32) !h.ExecResult {
-    return run(testing.io, "/tmp", null, a, .{ .command = command, .timeout_ms = timeout_ms, .max_stream_bytes = 256 });
+    return run(testing.io, "/tmp", &test_env, a, .{ .command = command, .timeout_ms = timeout_ms, .max_stream_bytes = 256 });
 }
 
 test "exec captures stdout, stderr, and the exit code" {
@@ -214,7 +220,7 @@ test "exec runs in the requested working directory" {
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const res = try run(testing.io, root, null, arena.allocator(), .{
+    const res = try run(testing.io, root, &test_env, arena.allocator(), .{
         .command = "cat marker.txt",
         .timeout_ms = 10_000,
         .max_stream_bytes = 4096,
@@ -284,6 +290,20 @@ test "exec ends a command that ignores SIGTERM" {
     // A failed escalation waits for the full 30-second sleep.
     try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 10 * std.time.ns_per_s);
     try testing.expect(res.outcome == .timed_out);
+}
+
+test "a tilde cwd without a home directory fails instead of running somewhere else" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // `test_env` names no home, so the anchor cannot resolve `~` and the command must never start.
+    for ([_][]const u8{ "~", "~/child" }) |cwd| {
+        try testing.expectError(error.HomeUnavailable, run(testing.io, "/tmp", &test_env, arena.allocator(), .{
+            .command = "echo ran",
+            .cwd = cwd,
+            .timeout_ms = 10_000,
+            .max_stream_bytes = 4096,
+        }));
+    }
 }
 
 test "exec expands a leading tilde in cwd like the file tools" {

@@ -169,6 +169,7 @@ fn errorMessage(err: os.HostError) []const u8 {
         error.AccessDenied => "the file system denied access to the working directory",
         error.TooLarge => "the command produced more than the host accepts",
         error.InvalidUtf8 => "the working directory name holds invalid UTF-8",
+        error.HomeUnavailable => "the environment names no home directory, so a ~ working directory has no meaning",
         error.Canceled => "the command was canceled",
         error.HostFailure => "the host could not run the command",
     };

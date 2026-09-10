@@ -12,8 +12,7 @@ pub const Snapshot = struct {
 
 pub fn load(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, workspace: []const u8, diagnostic: ?*?[]const u8) ![]const Snapshot {
     std.debug.assert(std.fs.path.isAbsolute(workspace));
-    const home = paths.homeDir(env);
-    const global = if (home != null and std.fs.path.isAbsolute(home.?)) try std.fs.path.join(arena, &.{ home.?, ".agents", "AGENTS.md" }) else null;
+    const global = if (paths.homeDir(env)) |home| try std.fs.path.join(arena, &.{ home, ".agents", "AGENTS.md" }) else null;
     const local = try std.fs.path.join(arena, &.{ workspace, "AGENTS.md" });
     var result: [2]Snapshot = undefined;
     var count: usize = 0;

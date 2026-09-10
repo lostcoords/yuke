@@ -31,10 +31,9 @@ fn envBasePath(env: *const Map, key: []const u8) ?[]const u8 {
     return if (std.fs.path.isAbsolute(value)) value else null;
 }
 
-/// Return the user's home directory, or null when its environment variable has no value.
-/// The result borrows `env`.
+/// Return the user's home directory, or null when its variable is empty or relative, because a home directory is a base path.
 pub fn homeDir(env: *const Map) ?[]const u8 {
-    return envNonEmpty(env, home_env);
+    return envBasePath(env, home_env);
 }
 
 /// Return true for a directory name with no separator that is not `.` or `..`.
@@ -98,22 +97,25 @@ pub fn dbPathIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
     return std.fs.path.join(alloc, &.{ base, db_file });
 }
 
-/// Expand an initial `~` against the home directory.
-/// Return `path` unchanged when the home directory or the initial `~` is absent. The caller frees the result.
-pub fn expandHome(alloc: std.mem.Allocator, env: *const Map, path: []const u8) ![]u8 {
+pub const ExpandError = error{HomeUnavailable} || std.mem.Allocator.Error;
+
+/// Expand a bare `~` or a `~/...` path against an absolute home directory, or return `HomeUnavailable`; `~alice` stays literal and the caller frees the result.
+pub fn expandHome(alloc: std.mem.Allocator, env: *const Map, path: []const u8) ExpandError![]u8 {
     const sep = std.fs.path.sep;
     if (path.len == 0 or path[0] != '~') return alloc.dupe(u8, path);
     if (path.len > 1 and path[1] != sep) return alloc.dupe(u8, path);
 
-    const home = homeDir(env) orelse return alloc.dupe(u8, path);
+    // A tilde that survives expansion would anchor under the workspace root and name the wrong file.
+    const home = homeDir(env) orelse return error.HomeUnavailable;
     const rest = std.mem.trimStart(u8, path[1..], &.{sep});
     if (rest.len == 0) return alloc.dupe(u8, home);
     return std.fs.path.join(alloc, &.{ home, rest });
 }
 
 /// Anchor a tool path: expand an initial `~`, then resolve it against `root`. There is no confinement.
-pub fn anchorAt(alloc: std.mem.Allocator, env: ?*const Map, root: []const u8, path: []const u8) ![]const u8 {
-    const expanded = if (env) |e| try expandHome(alloc, e, path) else path;
+pub fn anchorAt(alloc: std.mem.Allocator, env: *const Map, root: []const u8, path: []const u8) ExpandError![]const u8 {
+    const expanded = try expandHome(alloc, env, path);
+    defer alloc.free(expanded);
     if (std.fs.path.isAbsolute(expanded)) return std.fs.path.resolve(alloc, &.{expanded});
     return std.fs.path.resolve(alloc, &.{ root, expanded });
 }
@@ -122,8 +124,8 @@ pub const WorkspaceError = error{RootNotAbsolute};
 
 /// Normalize a workspace root: expand a leading `~`, then resolve `.`/`..`.
 /// Reject a relative or empty root with `RootNotAbsolute`. The result is lexical. The caller frees it.
-pub fn canonicalizeWorkspace(alloc: std.mem.Allocator, env: ?*const Map, path: []const u8) (WorkspaceError || std.mem.Allocator.Error)![]u8 {
-    const expanded = if (env) |e| try expandHome(alloc, e, path) else try alloc.dupe(u8, path);
+pub fn canonicalizeWorkspace(alloc: std.mem.Allocator, env: *const Map, path: []const u8) (WorkspaceError || ExpandError)![]u8 {
+    const expanded = try expandHome(alloc, env, path);
     defer alloc.free(expanded);
     const resolved = try std.fs.path.resolve(alloc, &.{expanded});
     errdefer alloc.free(resolved);
@@ -249,9 +251,54 @@ test "canonicalizeWorkspace folds equivalent forms to one root" {
 test "canonicalizeWorkspace rejects a relative or empty root" {
     var env = try testEnv(&.{.{ "HOME", "/home/u" }});
     defer env.deinit();
+    var homeless = try testEnv(&.{});
+    defer homeless.deinit();
 
-    // A relative root, an empty root, and an unexpandable `~` are not absolute.
+    // A relative root and an empty root return `RootNotAbsolute`; an unexpandable `~` returns `HomeUnavailable`.
     try testing.expectError(WorkspaceError.RootNotAbsolute, canonicalizeWorkspace(testing.allocator, &env, "relative/dir"));
     try testing.expectError(WorkspaceError.RootNotAbsolute, canonicalizeWorkspace(testing.allocator, &env, ""));
-    try testing.expectError(WorkspaceError.RootNotAbsolute, canonicalizeWorkspace(testing.allocator, null, "~/proj"));
+    try testing.expectError(error.HomeUnavailable, canonicalizeWorkspace(testing.allocator, &homeless, "~/proj"));
+}
+
+test "a tilde without an absolute home fails instead of resolving somewhere else" {
+    const a = testing.allocator;
+    // An absent, an empty, and a relative value all give the environment no home directory.
+    const homeless = [_][]const u8{ "", "relative/home" };
+    var absent = try testEnv(&.{});
+    defer absent.deinit();
+    try testing.expectError(error.HomeUnavailable, expandHome(a, &absent, "~"));
+    try testing.expectError(error.HomeUnavailable, expandHome(a, &absent, "~/x"));
+    for (homeless) |value| {
+        var env = try testEnv(&.{.{ home_env, value }});
+        defer env.deinit();
+        try testing.expectError(error.HomeUnavailable, expandHome(a, &env, "~"));
+        try testing.expectError(error.HomeUnavailable, expandHome(a, &env, "~/x"));
+        try testing.expectError(error.HomeUnavailable, anchorAt(a, &env, "/work", "~/x"));
+    }
+
+    // A path that needs no home directory still resolves, and `~alice` is not home expansion here.
+    for ([_][]const u8{ "rel/x", "/abs/x", "~alice/x" }) |path| {
+        const got = try expandHome(a, &absent, path);
+        defer a.free(got);
+        try testing.expectEqualStrings(path, got);
+    }
+}
+
+test "anchorAt never turns a tilde into a path under the workspace" {
+    const a = testing.allocator;
+    var env = try testEnv(&.{.{ home_env, "/home/u" }});
+    defer env.deinit();
+
+    const cases = [_][2][]const u8{
+        .{ "~", "/home/u" },
+        .{ "~/x", "/home/u/x" },
+        .{ "rel/x", "/work/rel/x" },
+        .{ "/abs/x", "/abs/x" },
+    };
+    for (cases) |case| {
+        const got = try anchorAt(a, &env, "/work", case[0]);
+        defer a.free(got);
+        try testing.expectEqualStrings(case[1], got);
+        try testing.expect(std.mem.indexOfScalar(u8, got, '~') == null);
+    }
 }

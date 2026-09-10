@@ -217,7 +217,7 @@ test "a chat retains only successful session pins" {
 }
 
 test "navigation after initial admission neither sends twice nor closes an unowned pin" {
-    const host = Host.createWith(std.testing.allocator, std.testing.io, .{ .cwd = "/work" });
+    const host = Host.createTest(std.testing.allocator, std.testing.io, "/work");
     defer host.destroy();
     try support.eval(host, "tests/app/navigation.test.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.submitted && globalThis.firstInput === 'first task' && globalThis.chat.sessionId === null"));

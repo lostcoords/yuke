@@ -87,10 +87,13 @@ pub const default_baked = blk: {
 pub const Options = struct {
     max_file_bytes: usize = loader_mod.default_max_file_bytes,
     /// The directory the process runs in. A new session takes it as the workspace root.
-    cwd: []const u8 = "",
+    cwd: []const u8,
     /// The process environment. `yuke:fs` expands a leading `~` with it.
-    env: ?*const std.process.Environ.Map = null,
+    env: *const std.process.Environ.Map,
 };
+
+/// The environment every test host borrows. An empty environment allocates nothing, so no test frees it.
+pub var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 
 /// Own one QuickJS runtime and context. The TUI owner calls `eval` and `destroy`.
 pub const Host = struct {
@@ -113,7 +116,7 @@ pub const Host = struct {
     /// The reactor I/O. `yuke:fs` reads the file system through it.
     io: std.Io,
     /// The process environment. The caller owns it for the life of the host.
-    env: ?*const std.process.Environ.Map,
+    env: *const std.process.Environ.Map,
     /// Every primitive call in flight. A task finishes one; the owner settles it.
     ops: pending.Ops,
     /// The tools `index.js` registered. The process reads its declarations after boot.
@@ -131,10 +134,15 @@ pub const Host = struct {
 
     pub const Phase = enum { open, closing, drained };
 
-    /// Allocate a host with the test I/O.
+    /// Allocate a host with the test I/O and no workspace.
     pub fn create(gpa: std.mem.Allocator) *Host {
+        return createTest(gpa, std.testing.io, "");
+    }
+
+    /// Allocate a test host that uses `io` and takes `cwd` as its workspace root.
+    pub fn createTest(gpa: std.mem.Allocator, io: std.Io, cwd: []const u8) *Host {
         std.debug.assert(builtin.is_test);
-        return createWith(gpa, std.testing.io, .{});
+        return createWith(gpa, io, .{ .cwd = cwd, .env = &test_env });
     }
 
     /// Allocate a host and install its limits, interrupt handler, and loader.
@@ -708,7 +716,7 @@ test "import a file beside the entry" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = Host.createWith(std.testing.allocator, std.testing.io, .{});
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
 
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -731,7 +739,7 @@ test "a file outside the entry directory loads" {
     const shared_len = try outside.dir.realPathFile(std.testing.io, "shared.js", &shared_buf);
     const shared = shared_buf[0..shared_len];
 
-    const host = Host.createWith(std.testing.allocator, std.testing.io, .{});
+    const host = Host.create(std.testing.allocator);
     defer host.destroy();
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
@@ -752,7 +760,7 @@ test "an oversize module file does not load" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = Host.createWith(std.testing.allocator, std.testing.io, .{ .max_file_bytes = 8 });
+    const host = Host.createWith(std.testing.allocator, std.testing.io, .{ .max_file_bytes = 8, .cwd = "", .env = &test_env });
     defer host.destroy();
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});

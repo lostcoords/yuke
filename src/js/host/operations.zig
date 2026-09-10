@@ -8,6 +8,8 @@ pub const HostError = error{
     AccessDenied,
     TooLarge,
     InvalidUtf8,
+    /// A `~` path reached the host, but the environment names no absolute home directory.
+    HomeUnavailable,
     HostFailure,
     Canceled,
 };

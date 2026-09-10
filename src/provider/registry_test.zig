@@ -11,6 +11,9 @@ const catalog = ai.catalog;
 const resolve = registry.resolve;
 const credential = registry.credential;
 const EnvMap = std.process.Environ.Map;
+
+/// The environment every case without a named credential borrows. An empty environment allocates nothing, so no test frees it.
+var no_env: EnvMap = .init(testing.allocator);
 const testing = std.testing;
 
 fn catalogRow(id: []const u8, name: []const u8, models: []const registry.ModelSpec) catalog.Provider {
@@ -69,7 +72,7 @@ test "an id and a key alone resolve a full route from the catalog" {
     );
     defer loaded.deinit();
 
-    const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})} });
+    const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})}, .env = &no_env });
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expectEqualStrings("Acme", rows[0].name); // The catalog names it.
 
@@ -96,7 +99,7 @@ test "a local field beats the catalog field by field" {
     );
     defer loaded.deinit();
 
-    const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{})} });
+    const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{})}, .env = &no_env });
     const route = rows[0].availability.ready;
     try testing.expectEqualStrings("https://pinned.example/v1", route.route.base_url);
     try testing.expectEqual(instance.Protocol.openai_chat, route.route.protocol);
@@ -114,7 +117,7 @@ test "local model reasoning levels reach the registry" {
     );
     defer loaded.deinit();
 
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded });
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &no_env });
     const model = rows[0].models[0];
     try testing.expectEqual(@as(usize, 2), model.reasoning_levels.len);
     try testing.expect(model.reasoning_levels[0] == .none);
@@ -131,7 +134,7 @@ test "a minimal entry with no catalog row is offered but not routable" {
     );
     defer loaded.deinit();
 
-    const rows = try resolve(a, .{ .local = &loaded });
+    const rows = try resolve(a, .{ .local = &loaded, .env = &no_env });
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expectEqual(registry.Reason.needs_route, rows[0].availability.unavailable);
     // The state never claims a provider is ready when no route can be built.
@@ -148,7 +151,7 @@ test "a local codex grant routes with a bearer and its account header" {
     );
     defer loaded.deinit();
 
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")} });
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")}, .env = &no_env });
     const route = rows[0].availability.ready;
     // The file stores only the grant, so the catalog row is what selects this shape.
     try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
@@ -169,7 +172,7 @@ test "a grant whose pinned header the file also names is never ready" {
     );
     defer loaded.deinit();
 
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")} });
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")}, .env = &no_env });
     // The flow pins this header, so every request would fail. A ready route must be a usable one.
     try testing.expectEqual(proto.enums.ProviderState.needs_route, rows[0].availability.state());
 }
@@ -183,7 +186,7 @@ test "a catalog row the engine cannot build leaves the grant unroutable" {
     );
     defer loaded.deinit();
 
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("other", "wat")} });
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("other", "wat")}, .env = &no_env });
     try testing.expectEqual(proto.enums.ProviderState.needs_route, rows[0].availability.state());
 }
 
@@ -217,7 +220,7 @@ test "an entry that names a key and holds none needs a credential" {
     );
     defer loaded.deinit();
 
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded });
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &no_env });
     // The route is complete, so only the missing value keeps it from serving a turn.
     try testing.expectEqual(proto.enums.ProviderState.needs_credential, rows[0].availability.state());
 }
@@ -231,7 +234,7 @@ test "a keyless entry routes with no credential" {
     );
     defer loaded.deinit();
 
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded });
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &no_env });
     const route = rows[0].availability.ready;
     try testing.expect(route.route.auth == .none);
     try testing.expect(route.credential == .none);
@@ -247,7 +250,7 @@ test "a local entry with no credential never routes a catalog provider that need
     );
     defer loaded.deinit();
 
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{})} });
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{})}, .env = &no_env });
     // A ready row here would send an unauthenticated request to a paid endpoint.
     try testing.expectEqual(proto.enums.ProviderState.needs_credential, rows[0].availability.state());
 }
@@ -262,7 +265,7 @@ test "a pinned header that shadows the catalog credential header is not ready" {
     );
     defer loaded.deinit();
 
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{})} });
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{})}, .env = &no_env });
     // The loader cannot see the catalog header, so the merge must reject the collision.
     try testing.expectEqual(proto.enums.ProviderState.needs_route, rows[0].availability.state());
 }
@@ -330,7 +333,7 @@ test "load composes the file over the real baked table" {
     );
     defer loaded.deinit();
 
-    var snapshot = try registry.Registry.load(testing.allocator, .{ .local = &loaded });
+    var snapshot = try registry.Registry.load(testing.allocator, .{ .local = &loaded, .env = &no_env });
     defer snapshot.deinit();
 
     // A synthetic row could never produce this URL, so the route demonstrably came from the table.
@@ -350,7 +353,7 @@ test "a model that can stop its reasoning offers off after its efforts, and the 
     );
     defer loaded.deinit();
 
-    var snapshot = try registry.Registry.load(testing.allocator, .{ .local = &loaded });
+    var snapshot = try registry.Registry.load(testing.allocator, .{ .local = &loaded, .env = &no_env });
     defer snapshot.deinit();
 
     // The baked capability flag and the local null level both mean the same choice.
@@ -371,7 +374,7 @@ test "the registry emits a bare selector and resolves it back" {
     );
     defer loaded.deinit();
 
-    var snapshot = try registry.Registry.load(testing.allocator, .{ .local = &loaded });
+    var snapshot = try registry.Registry.load(testing.allocator, .{ .local = &loaded, .env = &no_env });
     defer snapshot.deinit();
 
     // `lib/ai` owns the grammar; what the registry owns is emitting it and resolving it back.

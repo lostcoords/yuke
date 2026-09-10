@@ -131,7 +131,7 @@ test "a capability binds onto the block that declared it" {
 }
 
 test "a host with no renderer loads the view tier and leaves a view plugin inert" {
-    const host = host_mod.Host.createWith(std.testing.allocator, std.testing.io, .{});
+    const host = host_mod.Host.create(std.testing.allocator);
     defer host.destroy();
 
     // `index.js` is one file for both frontends, so a view import must load with no terminal bound.
@@ -154,7 +154,7 @@ test "a change during a build rebuilds the block instead of leaving it stale" {
 }
 
 test "a headless bus refuses a name only the view tier emits" {
-    const host = host_mod.Host.createWith(std.testing.allocator, std.testing.io, .{});
+    const host = host_mod.Host.create(std.testing.allocator);
     defer host.destroy();
 
     // Without the view tier nothing emits these names, so a listener would wait for ever.
