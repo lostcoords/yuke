@@ -57,15 +57,16 @@ jobs:
           echo "stale=${stale}" >> "${GITHUB_OUTPUT}"
 
       # The commits API dereferences an annotated tag to its commit.
-      # An API error leaves the value empty, and then the workflow builds.
+      # gh prints the error body on stdout, so read the exit status, not the output.
+      # A missing tag leaves the value empty, and then the workflow builds.
       - name: Read the current nightly
         id: nightly
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          current="$(gh api "repos/${GITHUB_REPOSITORY}/commits/nightly" --jq .sha 2>/dev/null || true)"
-          draft="$(gh release view nightly --json isDraft --jq .isDraft 2>/dev/null || echo true)"
+          current="$(gh api "repos/${GITHUB_REPOSITORY}/commits/nightly" --jq .sha 2>/dev/null)" || current=""
+          draft="$(gh release view nightly --json isDraft --jq .isDraft 2>/dev/null)" || draft="true"
           echo "sha=${current}" >> "${GITHUB_OUTPUT}"
           echo "draft=${draft}" >> "${GITHUB_OUTPUT}"
           [ -n "${current}" ] && echo "exists=true" >> "${GITHUB_OUTPUT}" || echo "exists=false" >> "${GITHUB_OUTPUT}"
