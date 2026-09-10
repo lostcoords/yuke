@@ -28,7 +28,7 @@ pub const Winsize = struct {
 };
 
 /// Initialize a Vaxis application.
-pub fn init(io: std.Io, alloc: std.mem.Allocator, env_map: *std.process.Environ.Map, opts: Vaxis.Options) !Vaxis {
+pub fn init(io: std.Io, alloc: std.mem.Allocator, env_map: *const std.process.Environ.Map, opts: Vaxis.Options) !Vaxis {
     return Vaxis.init(io, alloc, env_map, opts);
 }
 

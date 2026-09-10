@@ -49,7 +49,7 @@ pub const Options = struct {
 };
 
 io: std.Io,
-env_map: *std.process.Environ.Map,
+env_map: *const std.process.Environ.Map,
 
 /// the screen we write to
 screen: Screen,
@@ -107,7 +107,7 @@ state: struct {
 } = .{},
 
 /// Initialize Vaxis with runtime options
-pub fn init(io: std.Io, alloc: std.mem.Allocator, env_map: *std.process.Environ.Map, opts: Options) !Vaxis {
+pub fn init(io: std.Io, alloc: std.mem.Allocator, env_map: *const std.process.Environ.Map, opts: Options) !Vaxis {
     return .{
         .io = io,
         .env_map = env_map,

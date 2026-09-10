@@ -17,7 +17,7 @@ pub const Render = struct {
     pub fn init(
         io: std.Io,
         alloc: std.mem.Allocator,
-        env_map: *std.process.Environ.Map,
+        env_map: *const std.process.Environ.Map,
         opts: Options,
     ) !Render {
         var vx = try xvaxis.Vaxis.init(io, alloc, env_map, opts);

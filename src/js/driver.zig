@@ -79,7 +79,7 @@ pub const boot =
 const drain_max = 64;
 
 /// Open the TTY, enter the alternate screen, and run until quit. The caller owns `extensions`.
-pub fn runIo(env: *std.process.Environ.Map, extensions: *extensions_mod.Extensions) !void {
+pub fn runIo(env: *const std.process.Environ.Map, extensions: *extensions_mod.Extensions) !void {
     const gpa = extensions.host.gpa;
     const io = extensions.host.io;
     var tty = try term_pkg.Tty.open(io);
