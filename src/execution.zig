@@ -93,7 +93,8 @@ fn bashOnPath(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Envi
     var entries = std.mem.splitScalar(u8, list, std.fs.path.delimiter);
     while (entries.next()) |entry| {
         if (!std.fs.path.isAbsolute(entry)) continue;
-        const candidate = try std.fs.path.join(arena, &.{ entry, "bash" });
+        // A `PATH` entry may hold `..`, and the answer must be one normalized absolute path.
+        const candidate = try std.fs.path.resolve(arena, &.{ entry, "bash" });
         if (probe.executable(io, candidate)) return candidate;
         arena.free(candidate);
     }
