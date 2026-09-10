@@ -181,10 +181,9 @@ jobs:
         run: |
           set -euo pipefail
           short="${TIP_SHA:0:7}"
-          notes="Rolling build of \`main\` at ${TIP_SHA}. Not a supported release.
+          notes="This tip release is automatically built and generated on every commit to main that passes tests.
 
-          The macOS binaries have an ad-hoc signature, but no notarization.
-          After a browser download, run \`xattr -d com.apple.quarantine <file>\`."
+          note: This is a nightly build, not a tagged release. We recommend using tagged releases."
           if gh release view tip >/dev/null 2>&1; then
             gh release edit tip --draft=true --target "${TIP_SHA}" \
               --title "Tip (${short})" --notes "${notes}"
