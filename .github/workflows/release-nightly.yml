@@ -1,7 +1,7 @@
-name: Release Tip
+name: Release Nightly
 
-# CI must pass on main before this workflow starts. It also exercises the
-# release path on every merge. The shape follows ghostty's release-tip.yml.
+# CI must pass on main before this workflow starts.
+# It also exercises the release path on every merge.
 on:
   workflow_run:
     workflows: [CI]
@@ -14,11 +14,11 @@ permissions:
 
 # Two runs on one rolling tag corrupt the assets of the second run.
 concurrency:
-  group: release-tip
+  group: release-nightly
   cancel-in-progress: false
 
 env:
-  TIP_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  NIGHTLY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
   setup:
@@ -36,7 +36,7 @@ jobs:
     outputs:
       skip: ${{ steps.check.outputs.skip }}
     steps:
-      # paths-filter compares this commit with the tip tag.
+      # paths-filter compares this commit with the nightly tag.
       # A shallow clone cannot reach that tag.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,7 +45,7 @@ jobs:
           persist-credentials: false
 
       # A rerun of an old CI run keeps the old sha.
-      # Without this check, such a rerun moves tip backward.
+      # Without this check, such a rerun moves nightly backward.
       - name: Is this still the head of main?
         id: head
         env:
@@ -53,32 +53,32 @@ jobs:
         run: |
           set -euo pipefail
           main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
-          [ "${main_sha}" = "${TIP_SHA}" ] && stale=false || stale=true
+          [ "${main_sha}" = "${NIGHTLY_SHA}" ] && stale=false || stale=true
           echo "stale=${stale}" >> "${GITHUB_OUTPUT}"
 
       # The commits API dereferences an annotated tag to its commit.
       # An API error leaves the value empty, and then the workflow builds.
-      - name: Read the current tip
-        id: tip
+      - name: Read the current nightly
+        id: nightly
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          current="$(gh api "repos/${GITHUB_REPOSITORY}/commits/tip" --jq .sha 2>/dev/null || true)"
-          draft="$(gh release view tip --json isDraft --jq .isDraft 2>/dev/null || echo true)"
+          current="$(gh api "repos/${GITHUB_REPOSITORY}/commits/nightly" --jq .sha 2>/dev/null || true)"
+          draft="$(gh release view nightly --json isDraft --jq .isDraft 2>/dev/null || echo true)"
           echo "sha=${current}" >> "${GITHUB_OUTPUT}"
           echo "draft=${draft}" >> "${GITHUB_OUTPUT}"
           [ -n "${current}" ] && echo "exists=true" >> "${GITHUB_OUTPUT}" || echo "exists=false" >> "${GITHUB_OUTPUT}"
 
       # `build` matches every file that can change the binary.
       # `every` skips only when all changed files are inert.
-      - name: Detect changes since the last tip
+      - name: Detect changes since the last nightly
         id: changes
-        if: github.event_name == 'workflow_run' && steps.tip.outputs.exists == 'true'
+        if: github.event_name == 'workflow_run' && steps.nightly.outputs.exists == 'true'
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           token: ""
-          base: tip
+          base: nightly
           predicate-quantifier: "every"
           filters: |
             build:
@@ -90,7 +90,7 @@ jobs:
               - '!.gitignore'
               - '!.githooks/**'
             workflow:
-              - '.github/workflows/release-tip.yml'
+              - '.github/workflows/release-nightly.yml'
 
       # A manual dispatch always builds. It is the escape hatch.
       - name: Decide
@@ -100,20 +100,19 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "skip=false" >> "${GITHUB_OUTPUT}"
           elif [ "${{ steps.head.outputs.stale }}" = "true" ]; then
-            echo "main moved past ${TIP_SHA}"
+            echo "main moved past ${NIGHTLY_SHA}"
             echo "skip=true" >> "${GITHUB_OUTPUT}"
-          elif [ "${{ steps.tip.outputs.sha }}" = "${TIP_SHA}" ] &&
-               [ "${{ steps.tip.outputs.draft }}" = "false" ]; then
-            echo "tip already points at ${TIP_SHA}"
+          elif [ "${{ steps.nightly.outputs.sha }}" = "${NIGHTLY_SHA}" ] &&
+               [ "${{ steps.nightly.outputs.draft }}" = "false" ]; then
+            echo "nightly already points at ${NIGHTLY_SHA}"
             echo "skip=true" >> "${GITHUB_OUTPUT}"
           elif [ "${{ steps.changes.outputs.build }}" = "false" ] &&
                [ "${{ steps.changes.outputs.workflow }}" = "false" ]; then
-            echo "only inert files changed since the last tip"
+            echo "only inert files changed since the last nightly"
             echo "skip=true" >> "${GITHUB_OUTPUT}"
           else
             echo "skip=false" >> "${GITHUB_OUTPUT}"
           fi
-
 
   # The build uploads an artifact, not a release asset. The release stays
   # untouched until every target succeeds, so a failed leg hides nothing.
@@ -153,7 +152,7 @@ jobs:
       # Artifact storage is free on a public repository.
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: tip-${{ matrix.target }}
+          name: nightly-${{ matrix.target }}
           path: yuke-${{ matrix.target }}.tar.gz
           retention-days: 1
 
@@ -170,7 +169,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
-          pattern: tip-*
+          pattern: nightly-*
           merge-multiple: true
           path: dist
 
@@ -183,28 +182,30 @@ jobs:
       - name: Open the draft
         run: |
           set -euo pipefail
-          short="${TIP_SHA:0:7}"
-          notes="This tip release is automatically built and generated on every commit to main that passes tests.
+          short="${NIGHTLY_SHA:0:7}"
+          notes="Built from every commit to main that passes CI. Not a tagged release.
 
-          note: This is a nightly build, not a tagged release. We recommend using tagged releases."
-          if gh release view tip >/dev/null 2>&1; then
-            gh release edit tip --draft=true --target "${TIP_SHA}" \
-              --title "Tip (${short})" --notes "${notes}"
+          Install it with:
+
+              curl -fsSL https://yuke.sh/install | YUKE_CHANNEL=nightly bash"
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly --draft=true --target "${NIGHTLY_SHA}" \
+              --title "Nightly (${short})" --notes "${notes}"
           else
-            # A draft creates its tag at publication, so the first tip needs none.
-            gh release create tip --draft --prerelease --target "${TIP_SHA}" \
-              --title "Tip (${short})" --notes "${notes}"
+            # A draft creates its tag at publication, so the first nightly needs none.
+            gh release create nightly --draft --prerelease --target "${NIGHTLY_SHA}" \
+              --title "Nightly (${short})" --notes "${notes}"
           fi
-          gh release upload tip dist/* --clobber
+          gh release upload nightly dist/* --clobber
 
       # The API moves the tag, so no checkout here holds a write credential.
       # A draft carries the commit through --target, so only an old tag moves.
-      - name: Move the tip tag
+      - name: Move the nightly tag
         run: |
           set -euo pipefail
-          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/tip" >/dev/null 2>&1; then
-            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/tip" \
-              -f sha="${TIP_SHA}" -F force=true >/dev/null
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/nightly" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" \
+              -f sha="${NIGHTLY_SHA}" -F force=true >/dev/null
           fi
 
       # The check in setup cannot see a merge that landed during the build.
@@ -212,8 +213,8 @@ jobs:
         run: |
           set -euo pipefail
           main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
-          if [ "${main_sha}" != "${TIP_SHA}" ]; then
+          if [ "${main_sha}" != "${NIGHTLY_SHA}" ]; then
             echo "::notice::main moved to ${main_sha}; the draft stays unpublished."
             exit 0
           fi
-          gh release edit tip --draft=false
+          gh release edit nightly --draft=false
