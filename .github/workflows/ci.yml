@@ -17,27 +17,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # No version pin here on purpose: the action reads minimum_zig_version
-      # from build.zig.zon, so the compiler follows the manifest. It also keeps
-      # the Zig cache between runs, which is why no cache paths are set by hand.
-      - uses: mlugg/setup-zig@v2
+      # The action reads minimum_zig_version from build.zig.zon.
+      # It also keeps the Zig cache between runs.
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
 
       - name: Check formatting
         run: zig fmt --check .
 
-      # `zig build test` also covers test-js and check-schema; see build.zig.
-      # The test binaries log to stderr, so even a passing run prints
-      # "failed command". The exit status is the gate: one failed test exits 1.
+      # This step also covers test-js and check-schema. See build.zig.
+      # The tests write to stderr, so a pass also prints "failed command".
       - name: Test
         run: zig build test
 
-  # Debug, not ReleaseFast. This gate catches a target that stops compiling; the
-  # optimized build belongs to the release. Ghostty cross-compiles its CI
-  # targets the same way and reserves ReleaseFast for releases and benchmarks.
-  #
-  # Windows is deliberately absent. It is not a target.
+  # Only this job runs the macOS code. Ten files branch on the host system.
+  # zio selects kqueue there, and lib/term/tty_posix.zig has a Darwin path.
+  test-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+
+      - name: Test
+        run: zig build test
+
+  # Debug, not ReleaseFast. This gate finds a target that does not compile.
+  # The release builds the optimized binaries. Windows is not a target.
   cross:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -50,8 +57,8 @@ jobs:
           - x86_64-macos
           - aarch64-macos
     steps:
-      - uses: actions/checkout@v7
-      - uses: mlugg/setup-zig@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
 
       - name: Build ${{ matrix.target }}
         run: zig build -Dtarget=${{ matrix.target }}

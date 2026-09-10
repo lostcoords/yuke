@@ -1,14 +1,7 @@
 name: Release Tip
 
-# Fires when CI COMPLETES on main, not when main is pushed. Nothing ships that
-# did not pass its tests, and the release path itself gets exercised on every
-# merge -- so a tagged release is never the first time this code runs.
-#
-# READ THE GUARDS BELOW BEFORE CHANGING THEM. `workflow_run` grants a write
-# token even when the run that triggered it had none: "The workflow started by
-# the workflow_run event is able to access secrets and write tokens, even if the
-# previous workflow was not." A job here that builds attacker code is a
-# repository compromise, not a broken build.
+# CI must pass on main before this workflow starts. It also exercises the
+# release path on every merge. The shape follows ghostty's release-tip.yml.
 on:
   workflow_run:
     workflows: [CI]
@@ -19,25 +12,18 @@ on:
 permissions:
   contents: write
 
-# NEVER two at once. Two runs racing on the same rolling tag corrupt the assets
-# of whichever finishes second, so a queued run waits instead of cancelling.
+# Two runs on one rolling tag corrupt the assets of the second run.
 concurrency:
   group: release-tip
   cancel-in-progress: false
 
+env:
+  TIP_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
 jobs:
-  tip:
-    # `branches: [main]` above is NOT sufficient on its own. It matches the
-    # TRIGGERING RUN's branch, and a fork's pull request carries its own source
-    # branch name -- a fork whose branch is called `main` would match it. Three
-    # conditions close that:
-    #
-    #   event == 'push'                  a fork pull request is 'pull_request'
-    #   head_repository == this repo     the code came from here, not a fork
-    #   head_branch == 'main'            and from main specifically
-    #
-    # The dispatch path is pinned to main for the same reason: without it,
-    # anyone able to dispatch could publish any branch as tip without CI.
+  setup:
+    # workflow_run grants a write token that the CI run did not hold.
+    # `branches` matches the trigger branch, which a fork can also name main.
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' &&
@@ -46,88 +32,150 @@ jobs:
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      # The commit CI actually passed on, NOT whatever main points at now. Those
-      # differ whenever a merge lands while this workflow is queued.
-      TIP_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    timeout-minutes: 10
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
     steps:
-      - uses: actions/checkout@v7
+      # paths-filter compares this commit with the tip tag.
+      # A shallow clone cannot reach that tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
-      # RERUNNING AN OLD CI RUN WOULD OTHERWISE ROLL TIP BACKWARD. A rerun keeps
-      # the original run's sha, so `TIP_SHA` can be an ancestor of main. Without
-      # this, rerunning yesterday's green run republishes yesterday's binaries
-      # as tip and force-moves the tag back to them.
-      #
-      # tip tracks the head of main. Anything else is a stale trigger, and a
-      # stale trigger is a no-op, not a failure.
-      - name: Confirm this is still the head of main
+      # A rerun of an old CI run keeps the old sha.
+      # Without this check, such a rerun moves tip backward.
+      - name: Is this still the head of main?
         id: head
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
-          if [ "${main_sha}" != "${TIP_SHA}" ]; then
-            echo "main is at ${main_sha}, this run built ${TIP_SHA}; nothing to publish"
-            echo "skip=true" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          # Resolved through the commits API so an annotated tip tag derefs to
-          # its commit; `git/ref` would return the tag object's own sha.
-          # An API error here leaves `current` empty and we rebuild: wasted work
-          # is the safe direction, and the alternative is skipping a real build.
+          [ "${main_sha}" = "${TIP_SHA}" ] && stale=false || stale=true
+          echo "stale=${stale}" >> "${GITHUB_OUTPUT}"
+
+      # The commits API dereferences an annotated tag to its commit.
+      # An API error leaves the value empty, and then the workflow builds.
+      - name: Read the current tip
+        id: tip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
           current="$(gh api "repos/${GITHUB_REPOSITORY}/commits/tip" --jq .sha 2>/dev/null || true)"
-          if [ "${current}" = "${TIP_SHA}" ]; then
+          draft="$(gh release view tip --json isDraft --jq .isDraft 2>/dev/null || echo true)"
+          echo "sha=${current}" >> "${GITHUB_OUTPUT}"
+          echo "draft=${draft}" >> "${GITHUB_OUTPUT}"
+          [ -n "${current}" ] && echo "exists=true" >> "${GITHUB_OUTPUT}" || echo "exists=false" >> "${GITHUB_OUTPUT}"
+
+      # `build` matches every file that can change the binary.
+      # `every` skips only when all changed files are inert.
+      - name: Detect changes since the last tip
+        id: changes
+        if: github.event_name == 'workflow_run' && steps.tip.outputs.exists == 'true'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          token: ""
+          base: tip
+          predicate-quantifier: "every"
+          filters: |
+            build:
+              - '**'
+              - '!.github/**'
+              - '!**/*.md'
+              - '!LICENSE'
+              - '!.gitattributes'
+              - '!.gitignore'
+              - '!.githooks/**'
+            workflow:
+              - '.github/workflows/release-tip.yml'
+
+      # A manual dispatch always builds. It is the escape hatch.
+      - name: Decide
+        id: check
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+          elif [ "${{ steps.head.outputs.stale }}" = "true" ]; then
+            echo "main moved past ${TIP_SHA}"
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+          elif [ "${{ steps.tip.outputs.sha }}" = "${TIP_SHA}" ] &&
+               [ "${{ steps.tip.outputs.draft }}" = "false" ]; then
             echo "tip already points at ${TIP_SHA}"
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+          elif [ "${{ steps.changes.outputs.build }}" = "false" ] &&
+               [ "${{ steps.changes.outputs.workflow }}" = "false" ]; then
+            echo "only inert files changed since the last tip"
             echo "skip=true" >> "${GITHUB_OUTPUT}"
           else
             echo "skip=false" >> "${GITHUB_OUTPUT}"
           fi
 
-      - uses: mlugg/setup-zig@v2
-        if: steps.head.outputs.skip == 'false'
 
-      # Asset names carry no commit, so `--clobber` replaces them in place
-      # instead of letting one file per build pile up forever. The commit lives
-      # in the release title and notes.
-      - name: Build every target
-        if: steps.head.outputs.skip == 'false'
+  # The build uploads an artifact, not a release asset. The release stays
+  # untouched until every target succeeds, so a failed leg hides nothing.
+  build:
+    needs: setup
+    if: needs.setup.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-musl
+          - aarch64-linux-musl
+          - x86_64-macos
+          - aarch64-macos
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+
+      # The asset name is the Zig target triple, the same as a tagged release.
+      # ../yuke-cloud/lib/install.sh builds that name; see its install-contract.
+      - name: Build ${{ matrix.target }}
         run: |
           set -euo pipefail
-          mkdir -p dist
-          for pair in \
-            "x86_64-linux-musl:linux-amd64" \
-            "aarch64-linux-musl:linux-arm64" \
-            "x86_64-macos:macos-amd64" \
-            "aarch64-macos:macos-arm64"
-          do
-            target="${pair%%:*}"
-            name="${pair##*:}"
-            echo "::group::${name} (${target})"
-            zig build \
-              -Dtarget="${target}" \
-              -Doptimize=ReleaseFast \
-              -Dstrip=true \
-              --prefix "build/${name}"
-            tar -czf "dist/yuke-tip-${name}.tar.gz" -C "build/${name}/bin" yuke
-            echo "::endgroup::"
-          done
-          cd dist && sha256sum ./*.tar.gz > SHA256SUMS
+          zig build \
+            -Dtarget=${{ matrix.target }} \
+            -Doptimize=ReleaseFast \
+            -Dstrip=true \
+            --prefix out
+          tar -czf "yuke-${{ matrix.target }}.tar.gz" -C out/bin yuke
 
-      # HIDDEN WHILE IT CHANGES. Moving the tag and replacing four assets is not
-      # atomic, so an observer would otherwise see the new tag with the old
-      # binaries, then a mixture as each upload lands. Draft first, and the
-      # release simply disappears for the ~seconds the update takes.
-      #
-      # The ref moves through the API rather than `git push --force`, so the
-      # checkout keeps `persist-credentials: false` and build.zig never sees a
-      # write token. PATCH moves an existing ref; POST creates the first one.
-      - name: Publish the tip release
-        if: steps.head.outputs.skip == 'false'
+      # Artifact storage is free on a public repository.
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: tip-${{ matrix.target }}
+          path: yuke-${{ matrix.target }}.tar.gz
+          retention-days: 1
+
+  publish:
+    needs: [setup, build]
+    if: needs.setup.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          pattern: tip-*
+          merge-multiple: true
+          path: dist
+
+      # No `./` prefix: the install script compares the bare asset name.
+      - name: Checksum the assets
+        run: cd dist && sha256sum yuke-*.tar.gz > SHA256SUMS && cat SHA256SUMS
+
+      # --target is set on both paths. gh release edit keeps the old commit
+      # otherwise, and an orphaned draft would then publish the wrong tag.
+      - name: Open the draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -135,29 +183,39 @@ jobs:
           short="${TIP_SHA:0:7}"
           notes="Rolling build of \`main\` at ${TIP_SHA}. Not a supported release.
 
-          macOS binaries are ad-hoc signed but not notarized: after downloading
-          in a browser, run \`xattr -d com.apple.quarantine <file>\`."
-
+          The macOS binaries have an ad-hoc signature, but no notarization.
+          After a browser download, run \`xattr -d com.apple.quarantine <file>\`."
           if gh release view tip >/dev/null 2>&1; then
-            gh release edit tip --draft=true
+            gh release edit tip --draft=true --target "${TIP_SHA}" \
+              --title "Tip (${short})" --notes "${notes}"
+          else
+            # A draft creates its tag at publication, so the first tip needs none.
+            gh release create tip --draft --prerelease --target "${TIP_SHA}" \
+              --title "Tip (${short})" --notes "${notes}"
           fi
+          gh release upload tip dist/* --clobber
 
+      # The API moves the tag, so no checkout here holds a write credential.
+      # A draft carries the commit through --target, so only an old tag moves.
+      - name: Move the tip tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
           if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/tip" >/dev/null 2>&1; then
             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/tip" \
               -f sha="${TIP_SHA}" -F force=true >/dev/null
-          else
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f ref="refs/tags/tip" -f sha="${TIP_SHA}" >/dev/null
           fi
 
-          # Always a prerelease, so `gh release list` and the "Latest release"
-          # badge keep pointing at the newest real version, not a rolling build.
-          if gh release view tip >/dev/null 2>&1; then
-            gh release edit tip --title "Tip (${short})" --notes "${notes}"
-          else
-            gh release create tip --draft --prerelease --verify-tag \
-              --title "Tip (${short})" --notes "${notes}"
+      # The check in setup cannot see a merge that landed during the build.
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+          if [ "${main_sha}" != "${TIP_SHA}" ]; then
+            echo "::notice::main moved to ${main_sha}; the draft stays unpublished."
+            exit 0
           fi
-
-          gh release upload tip dist/* --clobber
           gh release edit tip --draft=false
