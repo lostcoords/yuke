@@ -4,6 +4,8 @@ import { ui } from "yuke:ui";
 import { fuzzyRank } from "yuke:fzy";
 import { Chat, focusedChat } from "yuke:chat";
 
+/** @import { Context } from "yuke:ext" */
+/** @import { Picker, Window } from "yuke:ui" */
 /** @import { CommandListing } from "./types/core.js" */
 /** @import { Border, ListItem, PickOptions } from "./types/ui.js" */
 /** @typedef {CommandListing & { hint: string }} Entry */
@@ -79,7 +81,7 @@ function run(e, rest) {
 
 export const commandUiPlugin = {
   name: "command-ui",
-  /** @param {import("yuke:ext").Context} ctx @param {unknown} [config] @returns {void} */
+  /** @param {Context} ctx @param {unknown} [config] @returns {void} */
   apply(ctx, config) {
     const cfg = /** @type {CommandUiConfig} */ (config || {});
     const rows = cfg.rows || 6;
@@ -88,7 +90,7 @@ export const commandUiPlugin = {
 
     ctx.inject(["tui"], (ctx) => {
       // One float, for the composer that has the focus.
-      /** @type {{ chat: Chat, picker: import("yuke:ui").Picker<Entry>, win: import("yuke:ui").Window, query: string } | null} */
+      /** @type {{ chat: Chat, picker: Picker<Entry>, win: Window, query: string } | null} */
       let float = null;
       // The text Escape dismissed in one chat. That menu stays closed until its text changes.
       /** @type {{ chat: Chat, text: string } | null} */
@@ -108,7 +110,7 @@ export const commandUiPlugin = {
 
       /** @param {Chat} chat @param {Entry[]} ranked @param {number} col @param {string} query @returns {void} */
       const open = (chat, ranked, col, query) => {
-        /** @type {import("yuke:ui").Picker<Entry> | null} */
+        /** @type {Picker<Entry> | null} */
         let content = null;
         const p = ui.select(ranked, {
           name: "slash",
@@ -183,7 +185,7 @@ export const commandUiPlugin = {
         const all = entries();
         const col = columnOf(all);
         const chat = focusedChat();
-        /** @type {import("yuke:ui").Picker<Entry> | null} */
+        /** @type {Picker<Entry> | null} */
         let content = null;
         const p = ui.pick({
           name: "commands",

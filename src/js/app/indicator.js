@@ -3,6 +3,8 @@ import { ChatView } from "yuke:chat-view";
 import { chatOf, chats } from "yuke:chat";
 import { activityOf, isWorking } from "yuke:activity";
 
+/** @import { Context } from "yuke:ext" */
+
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const PERIOD_MS = 100;
 
@@ -61,7 +63,7 @@ function anyWorking() {
 
 export const indicatorPlugin = {
   name: "indicator",
-  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       ctx.tui.slot(ChatView, "rule", /** @param {ChatView} view @returns {{ text: string, group: string } | null} */ (view) => {

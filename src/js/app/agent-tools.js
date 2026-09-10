@@ -2,6 +2,8 @@
 import { client } from "yuke:client";
 import { NAME, check, failure, spawnAgent } from "yuke:agents";
 
+/** @import { Context } from "yuke:ext" */
+
 /** @param {unknown} value @param {string[]} fields @returns {Record<string, any>} */
 function argsOf(value, fields) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw failure("bad_request", "The arguments must be an object.");
@@ -63,7 +65,7 @@ const definitions = [
 
 export const agentToolsPlugin = {
     name: "agent-tools",
-    /** @param {import("yuke:ext").Context} ctx */
+    /** @param {Context} ctx */
     apply(ctx) {
         for (const definition of definitions) {
             try {

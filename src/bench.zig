@@ -12,6 +12,7 @@ pub fn main(init: std.process.Init) !void {
     var iterations: u32 = 100;
     var selected: ?bench.Phase = null;
     var fixture_path: ?[]const u8 = null;
+    var colors: bench.Colors = .ansi_raw;
     var i: usize = 1;
     while (i < args.len) : (i += 2) {
         if (i + 1 == args.len) return error.MissingArgument;
@@ -25,6 +26,8 @@ pub fn main(init: std.process.Init) !void {
             selected = std.meta.stringToEnum(bench.Phase, value) orelse return error.InvalidPhase;
         } else if (std.mem.eql(u8, arg, "--fixture")) {
             fixture_path = value;
+        } else if (std.mem.eql(u8, arg, "--colors")) {
+            colors = std.meta.stringToEnum(bench.Colors, value) orelse return error.InvalidColors;
         } else return error.UnknownArgument;
     }
     if (scale == 0 or iterations == 0) return error.InvalidCount;
@@ -47,8 +50,9 @@ pub fn main(init: std.process.Init) !void {
 
     for (bench.phases) |phase| {
         if (selected) |chosen| if (chosen != phase) continue;
-        const harness = try bench.Harness.create(gpa, io, fixture, 100, 40);
+        const harness = try bench.Harness.create(gpa, io, fixture, 100, 40, phase);
         defer harness.destroy();
+        harness.colors = colors;
         for (0..5) |repeat| {
             try harness.start(phase, scale);
             const before = harness.allocations.counts;
@@ -67,6 +71,7 @@ pub fn main(init: std.process.Init) !void {
             std.mem.sort(u64, samples, {}, std.sort.asc(u64));
             try std.json.Stringify.value(.{
                 .phase = @tagName(phase),
+                .colors = if (phase == .colors) @tagName(colors) else null,
                 .repeat = repeat,
                 .scale = scale,
                 .iterations = iterations,

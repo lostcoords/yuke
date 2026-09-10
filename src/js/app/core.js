@@ -5,6 +5,7 @@ import { callHook, config, defineConfig, Emitter, events } from "yuke:kernel";
 
 export { config, defineConfig, Emitter, events };
 
+/** @import { Color, Style } from "yuke:term" */
 /** @import { CommandAction, CommandEntry, CommandListing, CommandMeta, CommandPredicate, CommandRegistry, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, SlotEntry, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
 
 // True for a wheel button. The wheel scrolls a pane but never moves the focus.
@@ -87,10 +88,11 @@ export const style = {
     for (let i = 0; def && def.link && i < link_depth_max; i++) def = this.groups[def.link];
     if (def && def.link) def = null;
 
-    /** @type {import("yuke:term").Style} */
+    /** @type {Style} */
     const out = {};
     if (def) {
-      if (def.bg !== undefined) out.bg = /** @type {import("yuke:term").Color} */ (this.palette[def.bg] !== undefined ? this.palette[def.bg] : def.bg);
+      if (def.bg !== undefined) out.bg = resolveColor(this.palette, def.bg);
+      if (def.ul !== undefined) out.ul = resolveColor(this.palette, def.ul);
       if (def.bold) out.bold = true;
       if (def.dim) out.dim = true;
       if (def.italic) out.italic = true;
@@ -98,7 +100,7 @@ export const style = {
       if (def.reverse) out.reverse = true;
     }
     const fg = def && def.fg !== undefined ? def.fg : "fg";
-    out.fg = /** @type {import("yuke:term").Color} */ (this.palette[fg] !== undefined ? this.palette[fg] : fg);
+    out.fg = resolveColor(this.palette, fg);
 
     this._cache[name] = out;
     return out;
@@ -107,6 +109,12 @@ export const style = {
     this._cache = Object.create(null);
   },
 };
+
+/** @param {Record<string, Color>} palette @param {Color | string} color @returns {Color} */
+function resolveColor(palette, color) {
+  if (typeof color === "string" && Object.hasOwn(palette, color) && palette[color] !== undefined) return palette[color];
+  return /** @type {Color} */ (color);
+}
 
 /** @param {number} x @param {number} y @param {number} w @param {number} h @param {string} group @returns {void} */
 export function fill(x, y, w, h, group) {

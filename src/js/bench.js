@@ -2,6 +2,7 @@ import { Transcript } from "yuke:transcript";
 import { term } from "yuke:term";
 import { client } from "yuke:client";
 
+/** @import { SessionOutline } from "yuke:engine-native" */
 /** @import { TranscriptRow } from "./app/types/pager.js" */
 /** @import { MessageDescriptor, TranscriptOptions } from "./app/types/transcript.js" */
 /** @typedef {{ type: MessageDescriptor["type"], text?: string, parts?: Wire.AssistantPart[] }} FixtureMessage */
@@ -146,7 +147,7 @@ function start(name, scale, w, h) {
   }
   if (phase === "preview") configurePreview(scale);
   if (phase === "stream_native") {
-    const snapshot = /** @type {import("yuke:engine-native").SessionOutline} */ (client.sessionOutline(globalThis.PROJECTION_SESSION));
+    const snapshot = /** @type {SessionOutline} */ (client.sessionOutline(globalThis.PROJECTION_SESSION));
     if (!snapshot) throw new Error("native stream session missing");
     outline = snapshot.messages;
     const part = client.sessionPart(globalThis.PROJECTION_SESSION, NATIVE_STREAM_MESSAGE_ID, NATIVE_STREAM_PART_ID);

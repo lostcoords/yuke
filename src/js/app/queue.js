@@ -8,6 +8,7 @@ import { inputSourceLabel } from "yuke:transcript";
 import { ChatView } from "yuke:chat-view";
 import { chatOf, focusedChat } from "yuke:chat";
 
+/** @import { Context } from "yuke:ext" */
 /** @import { InjectContext as Ctx } from "./types/ext.js" */
 
 // The rows the strip shows before it folds the rest into a count.
@@ -120,7 +121,7 @@ function openQueuePicker(ctx, sessionId) {
 
 export const queuePlugin = {
   name: "queue",
-  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       // The engine announces the activity on every queue change, so the count is the one trigger to read again.

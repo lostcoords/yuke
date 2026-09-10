@@ -2,6 +2,7 @@
 import { events, root } from "yuke:core";
 import { client } from "yuke:client";
 
+/** @import { Context } from "yuke:ext" */
 /** @import { EngineEvent } from "yuke:engine-native" */
 /** @typedef {Extract<EngineEvent, { type: "session" }>} NativeSessionEvent */
 
@@ -41,7 +42,7 @@ function forget(sessionId) {
 // The digest names the fact and this plugin reads the projection, so a burst of changes costs one read per frame.
 export const activityPlugin = {
   name: "activity",
-  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.on("session.changed", /** @param {NativeSessionEvent} ev */ (ev) => {
       if (!ev) return;

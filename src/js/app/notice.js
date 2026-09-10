@@ -2,6 +2,7 @@
 import { root } from "yuke:core";
 import { term } from "yuke:term";
 
+/** @import { Context } from "yuke:ext" */
 /** @import { EngineEvent } from "yuke:engine-native" */
 
 // The message itself. A caller keeps its own reference, so this survives a plugin unload.
@@ -24,7 +25,7 @@ export const notice = {
 // The registrations that draw and drive the message. An unload stops them and leaves the object.
 export const noticePlugin = {
   name: "notice",
-  /** @param {import("yuke:ext").Context} ctx */
+  /** @param {Context} ctx */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       // A load starts clean, so a reload never shows the message an unload left behind.

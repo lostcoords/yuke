@@ -9,7 +9,8 @@ const native_term = @import("native/term.zig");
 const Projection = @import("bench_projection.zig");
 pub const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
-pub const Phase = enum { build, reflow, scroll, stream, stream_native, paint, selection, preview, projection, gc };
+pub const Phase = enum { build, reflow, scroll, stream, stream_native, paint, colors, selection, preview, projection, gc };
+pub const Colors = enum { ansi_raw, rgb_raw, ansi_group, rgb_group, rgb_fresh };
 pub const phases = std.enums.values(Phase);
 
 pub const Harness = struct {
@@ -24,8 +25,10 @@ pub const Harness = struct {
     projection: ?*Projection = null,
     phase: ?Phase = null,
     native_step: usize = 0,
+    colors: Colors = .ansi_raw,
+    color_benchmark: bool,
 
-    pub fn create(gpa: std.mem.Allocator, io: std.Io, fixture: []const u8, width: u16, height: u16) !*Harness {
+    pub fn create(gpa: std.mem.Allocator, io: std.Io, fixture: []const u8, width: u16, height: u16, phase: Phase) !*Harness {
         std.debug.assert(width > 1 and height > 0);
         const self = try gpa.create(Harness);
         errdefer gpa.destroy(self);
@@ -38,6 +41,7 @@ pub const Harness = struct {
             .output = .init(gpa),
             .api = quickjs.UNDEFINED,
             .step_fn = quickjs.UNDEFINED,
+            .color_benchmark = phase == .colors,
         };
         errdefer self.env.deinit();
         errdefer self.output.deinit();
@@ -53,7 +57,7 @@ pub const Harness = struct {
         const global = ctx.getGlobalObject();
         defer ctx.freeValue(global);
         try ctx.setPropertyStr(global, "FIXTURE", ctx.newString(fixture));
-        try self.host.evalModule(@embedFile("bench.js"), "bench.js");
+        try self.host.evalModule(if (self.color_benchmark) @embedFile("bench_colors.js") else @embedFile("bench.js"), "bench.js");
         self.api = ctx.getPropertyStr(global, "bench");
         self.step_fn = ctx.getPropertyStr(self.api, "step");
         std.debug.assert(ctx.isObject(self.api));
@@ -78,6 +82,7 @@ pub const Harness = struct {
 
     pub fn start(self: *Harness, phase: Phase, scale: u32) !void {
         std.debug.assert(scale > 0);
+        std.debug.assert(self.color_benchmark == (phase == .colors));
         self.phase = null;
         self.native_step = 0;
         self.host.engine.detach();
@@ -87,13 +92,15 @@ pub const Harness = struct {
             self.projection = try Projection.create(self.host, self.host.io, &self.env, scale, phase == .stream_native);
         const ctx = self.host.ctx;
         const args = [_]quickjs.Value{
-            ctx.newString(@tagName(phase)),      ctx.newUint32(scale),
-            ctx.newInt32(self.host.paint.width), ctx.newInt32(self.host.paint.height),
+            ctx.newString(@tagName(phase)),       ctx.newUint32(scale),
+            ctx.newInt32(self.host.paint.width),  ctx.newInt32(self.host.paint.height),
+            ctx.newString(@tagName(self.colors)),
         };
         defer for (args) |arg| ctx.freeValue(arg);
         const function = ctx.getPropertyStr(self.api, "start");
         defer ctx.freeValue(function);
         _ = try self.call(function, &args);
+        if (phase == .colors) _ = try self.call(self.step_fn, &.{});
         self.host.runtime.runGC();
         self.output.clearRetainingCapacity();
         self.allocations.resetPeak();
@@ -152,9 +159,9 @@ pub const Harness = struct {
 };
 
 test "benchmark scenarios preserve the transcript across updates and cache eviction" {
-    const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12);
-    defer harness.destroy();
     for (phases) |phase| {
+        const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12, phase);
+        defer harness.destroy();
         try harness.start(phase, 12);
         for (0..20) |_| _ = try harness.step();
         _ = try harness.verify();
@@ -162,7 +169,7 @@ test "benchmark scenarios preserve the transcript across updates and cache evict
 }
 
 test "an unchanged transcript frame has stable cells and no terminal output" {
-    const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12);
+    const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12, .paint);
     defer harness.destroy();
     try harness.start(.paint, 1);
     try std.testing.expect(try harness.step() > 0);
@@ -176,4 +183,18 @@ test "an unchanged transcript frame has stable cells and no terminal output" {
         try std.testing.expect(after.measure_calls - before.measure_calls <= after.text_calls - before.text_calls);
     }
     try std.testing.expectEqual(first, try harness.verify());
+}
+
+test "reused RGB and ANSI colors need no backing allocations after warmup" {
+    const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12, .colors);
+    defer harness.destroy();
+    for ([_]Colors{ .ansi_raw, .rgb_raw, .ansi_group, .rgb_group }) |colors| {
+        harness.colors = colors;
+        try harness.start(.colors, 1);
+        const before = harness.allocations.counts;
+        for (0..8) |_| try std.testing.expectEqual(@as(u64, 0), try harness.step());
+        const counts = harness.allocations.counts.since(before);
+        try std.testing.expectEqualDeep(Allocations.Counts{}, counts);
+        _ = try harness.verify();
+    }
 }

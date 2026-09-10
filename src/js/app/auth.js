@@ -8,6 +8,7 @@ import { notice } from "yuke:notice";
 import { exec } from "yuke:exec";
 import { loadCatalog, providerState, providerStateLabel, reloadCatalog } from "yuke:catalog";
 
+/** @import { Context } from "yuke:ext" */
 /** @import { InjectContext as Ctx } from "./types/ext.js" */
 /** @typedef {Wire.AuthProvider & { state: Wire.ProviderState | null }} ProviderRow */
 
@@ -224,7 +225,7 @@ function openLogout(ctx, query) {
 
 export const authPlugin = {
   name: "auth",
-  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       ctx.tui.command(null, {

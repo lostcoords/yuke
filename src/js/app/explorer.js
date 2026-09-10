@@ -4,6 +4,7 @@ import { ui } from "yuke:ui";
 import { fs } from "yuke:fs";
 
 
+/** @import { Context } from "yuke:ext" */
 /** @typedef {{ name: string, path: string, is_git_repo: boolean }} FsEntry */
 /** @typedef {{ path: string, parent: string | null, entries: FsEntry[], more: boolean }} FsPage */
 /** @typedef {{ key: string, notice: true, text: string, up?: never, dest?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, up: true, dest: string, notice?: never, text?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, name: string, path: string, is_git_repo?: boolean, notice?: never, up?: never, dest?: never, text?: never }} ExplorerRow */
@@ -79,7 +80,7 @@ function openExplorer(startPath) {
 // The command that opens the picker; the context owns the overlay, so an unload takes it away.
 export const explorerPlugin = {
   name: "explorer",
-  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       ctx.tui.command(null, {

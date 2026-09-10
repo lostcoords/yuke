@@ -5,6 +5,7 @@ import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { newestLocalModelSession } from "yuke:sessions";
 
+/** @import { Context } from "yuke:ext" */
 /** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[], loading: boolean }} CatalogState */
 /** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
 /** @typedef {{ session: Wire.Session, activity: { context_usage?: Wire.TokenUsage } | null }} StatusEntry */
@@ -111,7 +112,7 @@ export function tokenLabel(n) {
 // The model reading on the right of the status bar. `yuke:context` shows the usage beside it.
 export const catalogPlugin = {
   name: "catalog",
-  /** @param {import("yuke:ext").Context} ctx @param {unknown} config @returns {void} */
+  /** @param {Context} ctx @param {unknown} config @returns {void} */
   apply(ctx, config) {
     ctx.inject(["tui"], (ctx) => {
       const cfg = /** @type {CatalogConfig} */ (config || {});

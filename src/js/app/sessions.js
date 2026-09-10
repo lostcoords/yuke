@@ -3,6 +3,7 @@ import { Refresh } from "yuke:refresh";
 import { root } from "yuke:core";
 import { client } from "yuke:client";
 
+/** @import { Context } from "yuke:ext" */
 /** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
 /** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */
 /** @typedef {{ id: string, title: string, activity: FeedActivity, session: Wire.Session }} SessionRow */
@@ -130,7 +131,7 @@ export function activityMark(activity) {
 // The feed registration. No view keeps the list on screen; the finder reads it on demand.
 export const sessionsPlugin = {
   name: "sessions",
-  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     // The engine is in this process, so the list is available at once and needs no connect event.
     feed.refresh();

@@ -3,7 +3,7 @@ import { native } from "yuke:engine-native";
 import { events } from "yuke:core";
 import { sendInput, createSession } from "yuke:ext";
 
-/** @import { ViewPart } from "yuke:engine-native" */
+/** @import { MemoryUsage, SessionOutline, ViewPart } from "yuke:engine-native" */
 
 // This table maps a native event type to its core event name.
 /** @type {Record<string, string>} */
@@ -51,13 +51,13 @@ function sessionClose(sessionId) {
 
 
 // What the JavaScript runtime holds right now. The process footprint also carries the Zig side.
-/** @returns {import("yuke:engine-native").MemoryUsage} */
+/** @returns {MemoryUsage} */
 function memoryUsage() {
   return native.memoryUsage();
 }
 
 // The transcript outline (message ids, roles, and the draft), or null when the session is not open.
-/** @param {string} sessionId @returns {import("yuke:engine-native").SessionOutline | null} */
+/** @param {string} sessionId @returns {SessionOutline | null} */
 function sessionOutline(sessionId) {
   return JSON.parse(native.sessionOutline(sessionId));
 }

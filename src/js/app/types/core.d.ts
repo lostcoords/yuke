@@ -9,8 +9,10 @@ export interface Rect {
 }
 
 export interface StyleGroup {
-  fg?: string;
-  bg?: string;
+  // A string first selects an own palette key, then a literal color.
+  fg?: Color | string;
+  bg?: Color | string;
+  ul?: Color | string;
   link?: string;
   bold?: boolean;
   dim?: boolean;

@@ -7,6 +7,7 @@ import { Prompt, Window, ui } from "yuke:ui";
 import { interaction } from "yuke:ext";
 import { notice } from "yuke:notice";
 import { confirmRequest, inputRequest, noticeLevel, selectRequest, watchCancellation } from "yuke:interaction";
+/** @import { Context } from "yuke:ext" */
 /** @import { InjectContext, InteractionOptions } from "./types/ext.js" */
 
 /** @typedef {() => void} Cancel */
@@ -20,7 +21,7 @@ function createAnswerer(frontend) {
   });
 
   return {
-    /** @param {import("yuke:ext").Context} consumer */
+    /** @param {Context} consumer */
     surfaceFor(consumer) {
       /** @type {Set<Cancel>} */
       const owned = new Set();
@@ -143,7 +144,7 @@ function createAnswerer(frontend) {
 
 export const tuiInteractionPlugin = {
   name: "tui-interaction",
-  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (frontend) => interaction.install(createAnswerer(frontend)));
   },

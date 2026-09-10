@@ -2,6 +2,8 @@ declare module "yuke:term" {
   interface Style {
     fg?: Color;
     bg?: Color;
+    // The underline color does not enable the underline.
+    ul?: Color;
     bold?: boolean;
     dim?: boolean;
     italic?: boolean;
@@ -9,7 +11,9 @@ declare module "yuke:term" {
     underline?: boolean;
   }
 
-  type Color = number | ColorName;
+  // Native code validates six hex digits and integer indices from 0 to 255.
+  type RgbColor = `#${string}`;
+  type Color = number | ColorName | RgbColor;
 
   type ColorName =
     | "reset"
@@ -50,5 +54,5 @@ declare module "yuke:term" {
     height: number;
   };
 
-  export { Style, Color, ColorName };
+  export { Style, Color, ColorName, RgbColor };
 }

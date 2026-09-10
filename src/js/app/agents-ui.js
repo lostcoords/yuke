@@ -7,6 +7,7 @@ import { notice } from "yuke:notice";
 import { allChildren } from "yuke:agent-tools";
 import { editSlot, recoverAgent } from "yuke:agents";
 
+/** @import { Context as PluginContext } from "yuke:ext" */
 /** @import { InjectContext as Context } from "./types/ext.js" */
 /** @import { EngineEvent } from "yuke:engine-native" */
 /** @typedef {{ item: Wire.SessionListItem, depth: number }} AgentRow */
@@ -142,7 +143,7 @@ export async function openAgents(ctx, sessionId) {
 
 export const agentsUiPlugin = {
   name: "agents-ui",
-  /** @param {import("yuke:ext").Context} ctx */
+  /** @param {PluginContext} ctx */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       ctx.tui.command(() => focusedChat()?.sessionId != null, {

@@ -385,6 +385,7 @@ fn parseStyle(ctx: Context, maybe: ?Value) error{Exception}!term_pkg.Style {
 
     if (try colorProp(ctx, st, "fg")) |c| style.fg = c;
     if (try colorProp(ctx, st, "bg")) |c| style.bg = c;
+    if (try colorProp(ctx, st, "ul")) |c| style.ul = c;
     style.bold = try boolProp(ctx, st, "bold");
     style.dim = try boolProp(ctx, st, "dim");
     style.italic = try boolProp(ctx, st, "italic");
@@ -412,13 +413,21 @@ fn boolProp(ctx: Context, obj: Value, name: [*:0]const u8) error{Exception}!bool
 
 fn parseColor(ctx: Context, v: Value) error{Exception}!?term_pkg.Color {
     if (ctx.isNumber(v)) {
-        const n = ctx.toInt32(v) catch return error.Exception;
-        if (n < 0 or n > 255) return null;
+        const n = module.integer(ctx, v, 0, 255) orelse return null;
         return .{ .index = @intCast(n) };
     }
     if (!ctx.isString(v)) return null;
     const s = ctx.toCStringLen(v) catch return error.Exception;
     defer ctx.freeCString(s.ptr);
+    if (s.len == 7 and s[0] == '#') {
+        var rgb: [3]u8 = undefined;
+        for (&rgb, 0..) |*component, i| {
+            const hi = std.fmt.charToDigit(s[1 + i * 2], 16) catch return null;
+            const lo = std.fmt.charToDigit(s[2 + i * 2], 16) catch return null;
+            component.* = hi * 16 + lo;
+        }
+        return .{ .rgb = rgb };
+    }
     return ansiFromName(s);
 }
 
@@ -454,6 +463,134 @@ fn ansiFromName(name: []const u8) ?term_pkg.Color {
 fn evalOk(host: *Host, src: [:0]const u8) !i32 {
     try host.evalModule(src, "term.js");
     return host.evalInt("globalThis.result");
+}
+
+test "colors accept exact hex and integer indices" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    const cases = .{
+        .{ "'#000000'", term_pkg.Color{ .rgb = .{ 0, 0, 0 } } },
+        .{ "'#fFfFfF'", term_pkg.Color{ .rgb = .{ 255, 255, 255 } } },
+        .{ "'#12aBcD'", term_pkg.Color{ .rgb = .{ 18, 171, 205 } } },
+        .{ "0", term_pkg.Color{ .index = 0 } },
+        .{ "255", term_pkg.Color{ .index = 255 } },
+        .{ "'reset'", term_pkg.Color.default },
+        .{ "'red'", term_pkg.Color{ .index = 1 } },
+        .{ "'light_cyan'", term_pkg.Color{ .index = 14 } },
+        .{ "'grey'", term_pkg.Color{ .index = 7 } },
+        .{ "'dark_gray'", term_pkg.Color{ .index = 8 } },
+    };
+    inline for (cases) |case| {
+        const value = try host.ctx.eval(case[0], "color.js", .{});
+        defer host.ctx.freeValue(value);
+        const actual = (try parseColor(host.ctx, value)) orelse return error.MissingColor;
+        try std.testing.expect(term_pkg.Color.eql(case[1], actual));
+    }
+    try std.testing.expect(!term_pkg.Color.eql(.{ .index = 0 }, .{ .rgb = .{ 0, 0, 0 } }));
+    for ([_][]const u8{
+        "'#123'",    "'#12345'",               "'#1234567'", "'#12345678'", "'123456'",        "'#gg0000'",
+        "'#12_456'", "'#12+456'",              "' #123456'", "'#123456 '",  "'#12345\\u0000'",
+        "'#１２３４５６'",
+        "-1",        "256",                    "1.5",        "-0.5",        "NaN",             "Infinity",
+        "-Infinity", "2 ** 32",                "'42'",       "null",        "undefined",       "true",
+        "[1, 2, 3]", "({ r: 1, g: 2, b: 3 })",
+    }) |source| {
+        const value = try host.ctx.eval(source, "color.js", .{});
+        defer host.ctx.freeValue(value);
+        try std.testing.expectEqual(@as(?term_pkg.Color, null), try parseColor(host.ctx, value));
+    }
+}
+
+test "style colors preserve defaults and propagate property faults" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    for ([_][]const u8{ "({})", "({ fg: '#bad', bg: 256, ul: [1, 2, 3] })" }) |source| {
+        const value = try host.ctx.eval(source, "color.js", .{});
+        defer host.ctx.freeValue(value);
+        try std.testing.expect(term_pkg.Style.eql(.{}, try parseStyle(host.ctx, value)));
+    }
+    inline for (.{ "fg", "bg", "ul" }) |channel| {
+        const value = try host.ctx.eval("({ get " ++ channel ++ "() { throw new Error('color getter'); } })", "color.js", .{});
+        defer host.ctx.freeValue(value);
+        try std.testing.expectError(error.Exception, parseStyle(host.ctx, value));
+        const exception = host.ctx.getException();
+        host.ctx.freeValue(exception);
+        try std.testing.expect(!host.ctx.hasException());
+    }
+}
+
+test "RGB styles reach all paint paths and preserve frame diffs" {
+    const PaintTest = @import("../test_paint.zig").Paint;
+    for (0..3) |mode| {
+        var paint: PaintTest = undefined;
+        try paint.setup(std.testing.allocator, 3, 4);
+        defer paint.deinit();
+        paint.render.vx.sgr = if (mode == 1) .legacy else .standard;
+        paint.render.vx.enable_workarounds = mode == 2;
+        paint.render.vx.caps.no_color = false;
+        const host = Host.create(std.testing.allocator);
+        defer host.destroy();
+        paint.bind(host);
+        try host.evalModule(
+            \\import { term } from 'yuke:term';
+            \\import { style, text, fill } from 'yuke:core';
+            \\style.palette.rgbFg = '#123456';
+            \\style.palette.rgbBg = '#789abc';
+            \\style.palette.rgbUl = '#def012';
+            \\style.add({
+            \\  RgbLiteral: { fg: '#123456', bg: '#789abc', ul: '#def012', underline: true },
+            \\  RgbPalette: { fg: 'rgbFg', bg: 'rgbBg', ul: 'rgbUl', underline: true },
+            \\  RgbLinked: { link: 'RgbPalette' },
+            \\});
+            \\globalThis.drawRgb = () => {
+            \\  term.beginFrame();
+            \\  const raw = { fg: '#123456', bg: '#789abc', ul: '#def012', underline: true };
+            \\  term.fill(0, 0, 4, 1, raw);
+            \\  term.text(0, 0, 'raw', raw);
+            \\  fill(0, 1, 4, 1, 'RgbLiteral');
+            \\  text(0, 1, 'lit', 'RgbLiteral');
+            \\  fill(0, 2, 4, 1, 'RgbLinked');
+            \\  text(0, 2, 'pal', 'RgbLinked');
+            \\  term.endFrame();
+            \\};
+            \\globalThis.resetRgb = () => {
+            \\  term.beginFrame();
+            \\  term.fill(0, 0, 4, 3, { fg: 'reset', bg: 'reset', ul: 'reset' });
+            \\  term.text(0, 0, 'raw');
+            \\  term.text(0, 1, 'lit', {});
+            \\  term.text(0, 2, 'pal', { fg: 'reset', bg: 'reset', ul: 'reset' });
+            \\  term.endFrame();
+            \\};
+            \\drawRgb();
+        , "rgb.js");
+        const expected = term_pkg.Style{ .fg = .{ .rgb = .{ 18, 52, 86 } }, .bg = .{ .rgb = .{ 120, 154, 188 } }, .ul = .{ .rgb = .{ 222, 240, 18 } }, .ul_style = .single };
+        for (0..3) |y| {
+            for (0..4) |x| {
+                const cell = paint.render.window().readCell(@intCast(x), @intCast(y)).?;
+                try std.testing.expect(term_pkg.Style.eql(expected, cell.style));
+            }
+        }
+        const fg = if (mode == 1) "\x1b[38;2;18;52;86m" else "\x1b[38:2:18:52:86m";
+        const bg = if (mode == 1) "\x1b[48;2;120;154;188m" else "\x1b[48:2:120:154:188m";
+        const ul = if (mode == 2) "\x1b[58:2::222:240:18m" else if (mode == 1) "\x1b[58;2;222;240;18m" else "\x1b[58:2:222:240:18m";
+        for ([_][]const u8{ fg, bg, ul }) |sequence| {
+            try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), sequence) != null);
+        }
+        paint.out.clearRetainingCapacity();
+        try host.eval("drawRgb()", "rgb.js");
+        try std.testing.expectEqual(@as(usize, 0), paint.out.written().len);
+        try host.eval("resetRgb()", "rgb.js");
+        try std.testing.expect(paint.out.written().len > 0);
+        for (0..3) |y| {
+            for (0..4) |x| {
+                const cell = paint.render.window().readCell(@intCast(x), @intCast(y)).?;
+                try std.testing.expect(term_pkg.Style.eql(.{}, cell.style));
+            }
+        }
+        paint.out.clearRetainingCapacity();
+        try host.eval("resetRgb()", "rgb.js");
+        try std.testing.expectEqual(@as(usize, 0), paint.out.written().len);
+    }
 }
 
 test "an extra yuke:term export name fails" {

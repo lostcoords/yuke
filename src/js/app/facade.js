@@ -3,6 +3,7 @@ import { defineConfig } from "yuke:kernel";
 import { plugins } from "yuke:ext";
 import { defineTool } from "yuke:tools";
 
+/** @import { Context } from "yuke:ext" */
 /** @typedef {(args: any, signal: { aborted: boolean }, context: { workspaceRoot: string }) => Promise<unknown>} ToolExecute */
 /** @typedef {{ name: string, description: string, parameters: Record<string, unknown>, execute: ToolExecute, spawnsAgents?: boolean, needsSkills?: boolean }} ToolDefinition */
 /** @typedef {{ name: string, title: string, description: string, slash?: string | null, args?: boolean, run: (arg?: string) => unknown }} CommandDefinition */
@@ -33,7 +34,7 @@ export const commands = {
     const meta = { title, description, slash: definition.slash === undefined ? name : definition.slash, args: !!definition.args };
     return plugins.use({
       name: "command:" + name,
-      /** @param {import("yuke:ext").Context} ctx */
+      /** @param {Context} ctx */
       apply(ctx) {
         ctx.inject(["tui"], (ctx) => {
           ctx.tui.command(null, { [id]: run }, { [id]: meta });

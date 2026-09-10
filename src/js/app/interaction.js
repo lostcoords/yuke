@@ -1,6 +1,7 @@
 // yuke:interaction — the shared question contract and the RPC answerer.
 import { interaction } from "yuke:ext";
 import { native } from "yuke:interaction-native";
+/** @import { Context } from "yuke:ext" */
 /** @import { InteractionOptions } from "./types/ext.js" */
 
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
@@ -81,7 +82,7 @@ export function watchCancellation(signal, canceled, failed = () => canceled()) {
 }
 
 const rpcAnswerer = {
-  /** @param {import("yuke:ext").Context} ctx */
+  /** @param {Context} ctx */
   surfaceFor(ctx) {
     const live = new Set();
     ctx.effect(() => () => {
@@ -120,7 +121,7 @@ const rpcAnswerer = {
 
 export const rpcInteractionPlugin = {
   name: "rpc-interaction",
-  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.effect(() => interaction.install(rpcAnswerer));
   },
@@ -128,7 +129,7 @@ export const rpcInteractionPlugin = {
 
 // A print run has nobody to ask, so every question is denied and the denial is a notice.
 const printAnswerer = {
-  /** @param {import("yuke:ext").Context} ctx */
+  /** @param {Context} ctx */
   surfaceFor(ctx) {
     /** @param {string} title @returns {void} */
     const deny = (title) => native.notify(ctx.id, "denied: " + title, "warn");
@@ -159,7 +160,7 @@ const printAnswerer = {
 
 export const printInteractionPlugin = {
   name: "print-interaction",
-  /** @param {import("yuke:ext").Context} ctx @returns {void} */
+  /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.effect(() => interaction.install(printAnswerer));
   },

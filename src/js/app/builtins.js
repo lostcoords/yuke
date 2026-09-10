@@ -6,6 +6,8 @@ import { diff } from "yuke:diff";
 import { defineTool } from "yuke:tools";
 import { client } from "yuke:client";
 
+/** @import { DiffFile as ParsedDiffFile } from "yuke:diff" */
+/** @import { RangeRead } from "yuke:fs" */
 /** @typedef {Record<string, unknown>} ToolArgs */
 /** @typedef {{ aborted: boolean }} ToolSignal */
 /** @typedef {{ workspaceRoot: string, sessionId?: string, messageId?: number, partId?: number }} ToolContext */
@@ -85,7 +87,7 @@ function utf8Length(text) {
   return bytes;
 }
 
-/** @param {import("yuke:diff").DiffFile} file @returns {DiffView[] | null} */
+/** @param {ParsedDiffFile} file @returns {DiffView[] | null} */
 function viewOf(file) {
   if (file.hunks.length === 0) return null;
   return [{
@@ -103,7 +105,7 @@ function viewOf(file) {
   }];
 }
 
-/** @param {import("yuke:fs").RangeRead} got @param {number} first @returns {string} */
+/** @param {RangeRead} got @param {number} first @returns {string} */
 function renderRead(got, first) {
   const lines = got.text.length === 0 ? [] : got.text.slice(0, -1).split("\n");
   const out = lines.map((line, i) => `${first + i}: ${line}`).join("\n");

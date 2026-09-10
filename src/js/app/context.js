@@ -7,6 +7,7 @@ import { Window } from "yuke:ui";
 import { chatEntry } from "yuke:chat";
 import { catalogOf, contextWindowOf, defaultModel, tokenLabel } from "yuke:catalog";
 
+/** @import { Context } from "yuke:ext" */
 /** @typedef {{ model: string, count: number, usage: Wire.TokenUsage, total: Wire.TokenUsage, queued: number, compaction: boolean }} Reading */
 /** @typedef {{ bar?: string }} ContextConfig */
 
@@ -123,7 +124,7 @@ class ContextPanel {
 
 export const contextPlugin = {
   name: "context",
-  /** @param {import("yuke:ext").Context} ctx @param {unknown} config @returns {void} */
+  /** @param {Context} ctx @param {unknown} config @returns {void} */
   apply(ctx, config) {
     const cfg = /** @type {ContextConfig} */ (config || {});
     // Two glyphs, or the default. A user with a font that fits the parallelograms passes "▰▱" from index.js.
