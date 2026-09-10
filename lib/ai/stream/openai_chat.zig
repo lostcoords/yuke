@@ -299,6 +299,7 @@ fn identity(value: std.json.Value, key: []const u8) Error!?[]const u8 {
 }
 
 const testing = std.testing;
+const stream_testing = @import("testing.zig");
 
 /// The parse arena and reducer must stay alive while emitted events borrow them.
 const Harness = struct {
@@ -338,14 +339,7 @@ test "text turn: started, deltas, stopped, done with usage" {
         "[DONE]",
     });
 
-    try testing.expectEqual(@as(usize, 5), h.out.items.len);
-    try testing.expect(h.out.items[0] == .block_started);
-    try testing.expectEqual(event.BlockKind.text, h.out.items[0].block_started.kind);
-    try testing.expectEqualStrings("Hel", h.out.items[1].text_delta.text);
-    try testing.expectEqualStrings("lo", h.out.items[2].text_delta.text);
-    try testing.expect(h.out.items[3].block_stopped.result == .text);
-    const done = h.out.items[4].done;
-    try testing.expectEqual(types.FinishReason.stop, done.stop_reason);
+    const done = try stream_testing.expectTextResponse(h.out.items);
     try testing.expectEqualStrings("stop", done.raw_stop_reason);
     try testing.expectEqual(@as(u64, 100), done.usage.input);
     try testing.expectEqual(@as(u64, 5), done.usage.output);

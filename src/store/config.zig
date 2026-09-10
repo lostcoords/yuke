@@ -94,18 +94,7 @@ test "a config change stores a revision and sets the current config" {
     const a = arena.allocator();
 
     const sid = [_]u8{3} ** 16;
-    try session.create(&db, .{
-        .id = sid,
-        .root = "/w",
-        .origin = "root",
-        .profile = "default",
-        .model = "opus",
-        .reasoning = "high",
-        .config_rev = 0,
-        .title = "t",
-        .created_at_ms = 100,
-        .updated_at_ms = 100,
-    });
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     const seq = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 1, .model = "sonnet", .reasoning = "low", .max_rounds = 7 });
@@ -131,18 +120,7 @@ test "byRevision reads a stored revision and misses an absent one" {
     const a = arena.allocator();
 
     const sid = [_]u8{3} ** 16;
-    try session.create(&db, .{
-        .id = sid,
-        .root = "/w",
-        .origin = "root",
-        .profile = "default",
-        .model = "opus",
-        .reasoning = "high",
-        .config_rev = 0,
-        .title = "t",
-        .created_at_ms = 100,
-        .updated_at_ms = 100,
-    });
+    try session.seedSession(&db, sid);
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 1, .model = "sonnet", .reasoning = "low", .max_rounds = 5 });
     try db.conn.execNoArgs("COMMIT");
@@ -175,18 +153,7 @@ test "appendConfig keeps the current config monotonic" {
     const a = arena.allocator();
 
     const sid = [_]u8{3} ** 16;
-    try session.create(&db, .{
-        .id = sid,
-        .root = "/w",
-        .origin = "root",
-        .profile = "default",
-        .model = "opus",
-        .reasoning = "high",
-        .config_rev = 0,
-        .title = "t",
-        .created_at_ms = 100,
-        .updated_at_ms = 100,
-    });
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 2, .model = "sonnet", .reasoning = "low" });

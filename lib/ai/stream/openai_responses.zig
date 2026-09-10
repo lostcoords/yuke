@@ -469,6 +469,7 @@ fn partSlot(output: *Output, part_type: []const u8) ?PartSlot {
 }
 
 const testing = std.testing;
+const stream_testing = @import("testing.zig");
 
 /// The parse arena and reducer must stay alive while emitted events borrow them.
 const Harness = struct {
@@ -512,14 +513,7 @@ test "text turn: started, deltas, stopped, done with usage" {
         \\{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":100,"output_tokens":5,"input_tokens_details":{"cached_tokens":20}}}}
     });
 
-    try testing.expectEqual(@as(usize, 5), h.out.items.len);
-    try testing.expect(h.out.items[0] == .block_started);
-    try testing.expectEqual(event.BlockKind.text, h.out.items[0].block_started.kind);
-    try testing.expectEqualStrings("Hel", h.out.items[1].text_delta.text);
-    try testing.expectEqualStrings("lo", h.out.items[2].text_delta.text);
-    try testing.expect(h.out.items[3].block_stopped.result == .text);
-    const done = h.out.items[4].done;
-    try testing.expectEqual(types.FinishReason.stop, done.stop_reason);
+    const done = try stream_testing.expectTextResponse(h.out.items);
     try testing.expectEqualStrings("completed", done.raw_stop_reason);
     try testing.expectEqual(@as(u64, 100), done.usage.input);
     try testing.expectEqual(@as(u64, 20), done.usage.cache_read);

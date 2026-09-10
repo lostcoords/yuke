@@ -939,11 +939,7 @@ test "the stream cap rejects an oversized provider delta" {
     try std.testing.expectError(error.ResponseTooLarge, checkStreamCap(max + 1, 0));
 }
 
-const zio = @import("zio");
-const provider_store = @import("../provider/provider_store.zig");
-
-var stream_test_env: std.process.Environ.Map = .init(std.testing.allocator);
-var stream_test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+const Resources = @import("test_resources.zig");
 const capped_tool_reply =
     "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
     "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"unknown\"}}\n\n" ++
@@ -954,9 +950,8 @@ const capped_tool_reply =
 
 /// Drive `Streamer.onEvent` over a real engine, session, and draft. The caller reads the draft parts.
 const StreamerFixture = struct {
-    runtime: *zio.Runtime,
+    resources: Resources,
     db: database.Database,
-    store: provider_store,
     engine: Engine,
     slot: *RunSlot,
     session: *Session,
@@ -977,8 +972,8 @@ const StreamerFixture = struct {
     fn initWithPrompt(self: *StreamerFixture, parts: session_store.PromptInput) !void {
         var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
         defer arena.deinit();
-        self.runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-        errdefer self.runtime.deinit();
+        try self.resources.init();
+        errdefer self.resources.deinit();
         self.db = try database.Database.openTest();
         errdefer self.db.deinit();
         try session_store.create(&self.db, .{
@@ -1003,17 +998,7 @@ const StreamerFixture = struct {
             try std.testing.expectEqual(@as(u64, 2), try event_store.allocMessageId(&self.db, arena.allocator(), session_id));
             try tx.commit();
         }
-        self.store = .init(std.testing.allocator, self.runtime.io(), &stream_test_env);
-        errdefer self.store.deinit();
-        self.engine = Engine.init(.{
-            .gpa = std.testing.allocator,
-            .io = self.runtime.io(),
-            .db = &self.db,
-            .providers = &self.store,
-            .route_transport = stream_test_transport.transport(),
-            .env = &stream_test_env,
-            .tools = .{},
-        });
+        self.engine = self.resources.makeEngine(&self.db);
         errdefer self.engine.close();
         self.session = try self.engine.activate(.bytes(session_id));
         var prepared = try RunSlot.prepare(std.testing.allocator, "mock", "", system, null);
@@ -1038,8 +1023,7 @@ const StreamerFixture = struct {
     fn deinit(self: *StreamerFixture) void {
         self.engine.close();
         self.db.deinit();
-        self.store.deinit();
-        self.runtime.deinit();
+        self.resources.deinit();
     }
 
     fn persistStarted(self: *StreamerFixture, arena: std.mem.Allocator) !void {
@@ -1141,7 +1125,7 @@ test "a capped tool round reloads with an assistant error and failed outcome" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     try fixture.persistStarted(a);
-    fixture.store.merged.rows = &.{.{
+    fixture.resources.providers.merged.rows = &.{.{
         .id = "mock",
         .name = "Mock",
         .models = &.{.{ .id = "model", .upstream_id = "model", .name = "Model", .caps = .{ .tools = true } }},
@@ -1153,9 +1137,7 @@ test "a capped tool round reloads with an assistant error and failed outcome" {
     fixture.slot.gpa.free(fixture.slot.config.model);
     fixture.slot.config.model = try fixture.slot.gpa.dupe(u8, "mock/model");
     fixture.slot.config.max_rounds = 1;
-    const old_reply = stream_test_transport.bytes;
-    defer stream_test_transport.bytes = old_reply;
-    stream_test_transport.bytes = capped_tool_reply;
+    fixture.resources.transport.bytes = capped_tool_reply;
     fixture.session.draft.?.deinit();
     fixture.session.draft = null;
     fixture.slot.progress = .{};
@@ -1411,7 +1393,7 @@ test "a run cancel interrupts either request hook before it settles" {
         f.slot.gpa.free(f.slot.config.model);
         f.slot.config.model = try f.slot.gpa.dupe(u8, "mock/model");
         f.slot.phase = .running;
-        f.store.merged.rows = &.{.{
+        f.resources.providers.merged.rows = &.{.{
             .id = "mock",
             .name = "Mock",
             .models = &.{.{ .id = "model", .upstream_id = "model", .name = "Model" }},

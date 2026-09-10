@@ -142,18 +142,7 @@ test "beginQueuedTurn drains all durable inputs in FIFO order" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try session_store.create(&db, .{
-        .id = sid,
-        .root = "/w",
-        .origin = "root",
-        .profile = "default",
-        .model = "opus",
-        .reasoning = "high",
-        .config_rev = 0,
-        .title = "t",
-        .created_at_ms = 100,
-        .updated_at_ms = 100,
-    });
+    try session_store.seedSession(&db, sid);
 
     const one = [_]proto.content.ContentPart{.{ .text = .{ .text = "one" } }};
     const two = [_]proto.content.ContentPart{.{ .text = .{ .text = "two" } }};

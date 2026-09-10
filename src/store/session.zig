@@ -292,6 +292,12 @@ pub fn count(db: *Database, arena: std.mem.Allocator, sel: Selector) !u64 {
 const testing = std.testing;
 const event = @import("event.zig");
 
+/// Insert the one root session that every store and engine test seeds.
+pub fn seedSession(db: *Database, id: [16]u8) !void {
+    std.debug.assert(@import("builtin").is_test);
+    try create(db, rootParams(id, "/w"));
+}
+
 fn rootParams(id: [16]u8, root: []const u8) CreateParams {
     return .{
         .id = id,

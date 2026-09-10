@@ -116,21 +116,6 @@ const testing = std.testing;
 const zqlite = @import("zqlite");
 const session = @import("session.zig");
 
-fn seedSession(db: *Database, id: [16]u8) !void {
-    try session.create(db, .{
-        .id = id,
-        .root = "/w",
-        .origin = "root",
-        .profile = "default",
-        .model = "opus",
-        .reasoning = "high",
-        .config_rev = 0,
-        .title = "t",
-        .created_at_ms = 100,
-        .updated_at_ms = 100,
-    });
-}
-
 fn textContent(comptime text: []const u8) []const proto.content.ContentPart {
     return &.{.{ .text = .{ .text = text } }};
 }
@@ -142,7 +127,7 @@ test "enqueue writes the full event, projection, and sequence" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     const result = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);
@@ -166,7 +151,7 @@ test "list returns oldest-first owned entries" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("one") }, 150);
@@ -187,7 +172,7 @@ test "cancel appends the exact event and deletes the projection" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);
@@ -215,7 +200,7 @@ test "consume removes an input without a cancellation event" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);
@@ -239,7 +224,7 @@ test "missing cancel does not append an event" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     try testing.expectError(error.NoRow, cancel(&db, a, sid, [_]u8{1} ** 16, 150, 1));
@@ -256,7 +241,7 @@ test "pending projection enforces ownership and event foreign keys" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
     const row = (try db.conn.row("SELECT sql FROM sqlite_master WHERE name = 'pending_inputs'", .{})) orelse return error.NoRow;
     defer row.deinit();
     try testing.expect(std.mem.indexOf(u8, row.text(0), "WITHOUT ROWID") != null);
@@ -286,7 +271,7 @@ test "list rejects a projection whose source event has the wrong name" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);

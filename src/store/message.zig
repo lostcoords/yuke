@@ -233,21 +233,6 @@ pub fn contextUsage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8)
 const testing = std.testing;
 const session = @import("session.zig");
 
-fn seedSession(db: *Database, id: [16]u8) !void {
-    try session.create(db, .{
-        .id = id,
-        .root = "/w",
-        .origin = "root",
-        .profile = "default",
-        .model = "opus",
-        .reasoning = "high",
-        .config_rev = 0,
-        .title = "t",
-        .created_at_ms = 100,
-        .updated_at_ms = 100,
-    });
-}
-
 fn scalar(db: *Database, query: []const u8) !i64 {
     const row = (try db.conn.row(query, .{})) orelse return error.NoRow;
     defer row.deinit();
@@ -262,7 +247,7 @@ test "a committed user then assistant message advances the summary" {
     const a = arena.allocator();
 
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     const user: proto.message.Message = .{ .user = .{
         .id = 1,
@@ -328,7 +313,7 @@ test "each committed turn adds its usage one time and the gauge names the newest
     const a = arena.allocator();
 
     const sid = [_]u8{9} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     // Three rounds of one turn. Each round commits its own assistant message.
     const rounds = [_]proto.message.TokenUsage{
@@ -366,7 +351,7 @@ test "the context gauge skips a turn that reported no usage" {
     const a = arena.allocator();
 
     const sid = [_]u8{11} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     // A session with no assistant turn reports zero rather than an error.
     const empty = try contextUsage(&db, a, sid);
@@ -402,7 +387,7 @@ test "a later commit with an earlier timestamp does not regress recency" {
     const a = arena.allocator();
 
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     const first: proto.message.Message = .{ .user = .{ .id = 1, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 200 } } };
     const second: proto.message.Message = .{ .user = .{ .id = 2, .content = &.{}, .input_id = 2, .time = .{ .created_at_ms = 150 } } };
@@ -424,7 +409,7 @@ test "a rolled-back commit leaves no event, row, or seq advance" {
     const a = arena.allocator();
 
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
     const msg: proto.message.Message = .{ .user = .{ .id = 1, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 100 } } };
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
@@ -446,7 +431,7 @@ test "historyPage returns a page oldest-first with has_more" {
     const a = arena.allocator();
 
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     for (1..4) |i| {
@@ -478,7 +463,7 @@ test "tail streams the newest messages oldest-first" {
     const a = arena.allocator();
 
     const sid = [_]u8{4} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     for (1..4) |i| {
         const n: u8 = @intCast(i);

@@ -45,21 +45,6 @@ pub fn appendOpenDone(
 const testing = std.testing;
 const zqlite = @import("zqlite");
 
-fn seedSession(db: *Database, id: [16]u8) !void {
-    try session.create(db, .{
-        .id = id,
-        .root = "/w",
-        .origin = "root",
-        .profile = "default",
-        .model = "opus",
-        .reasoning = "high",
-        .config_rev = 0,
-        .title = "t",
-        .created_at_ms = 100,
-        .updated_at_ms = 100,
-    });
-}
-
 fn countEvents(db: *Database, name: []const u8) !u64 {
     const row = (try db.conn.row("SELECT count(*) FROM events WHERE name = ?1", .{name})) orelse return error.NoRow;
     defer row.deinit();
@@ -73,7 +58,7 @@ test "start and done events move the open-run triad in their transactions" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try event.allocRunId(&db, a, sid);
@@ -125,7 +110,7 @@ test "a terminal event must match the complete open-run marker" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try event.allocRunId(&db, a, sid);
@@ -174,7 +159,7 @@ test "an open-run terminal rejects absent or backwards start timing" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try event.allocRunId(&db, a, sid);

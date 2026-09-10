@@ -105,21 +105,6 @@ fn eid(n: u8) [16]u8 {
     return [_]u8{n} ** 16;
 }
 
-fn seedSession(db: *Database, id: [16]u8) !void {
-    try session.create(db, .{
-        .id = id,
-        .root = "/w",
-        .origin = "root",
-        .profile = "default",
-        .model = "opus",
-        .reasoning = "high",
-        .config_rev = 0,
-        .title = "t",
-        .created_at_ms = 100,
-        .updated_at_ms = 100,
-    });
-}
-
 test "append allocates contiguous seqs and raises the high-water mark" {
     var db = try Database.openTest();
     defer db.deinit();
@@ -128,7 +113,7 @@ test "append allocates contiguous seqs and raises the high-water mark" {
     const a = arena.allocator();
 
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     try testing.expectEqual(@as(u64, 1), try append(&db, a, sid, eid(1), 1, "run.started", "{}"));
@@ -159,7 +144,7 @@ test "a rolled-back append leaves no seq hole" {
     const a = arena.allocator();
 
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try append(&db, a, sid, eid(1), 1, "run.started", "{}");
@@ -210,7 +195,7 @@ test "highWater returns zeros for a fresh session and null for a missing one" {
     const a = arena.allocator();
 
     const sid = [_]u8{3} ** 16;
-    try seedSession(&db, sid);
+    try session.seedSession(&db, sid);
 
     const hw = (try highWater(&db, a, sid)).?;
     try testing.expectEqual(@as(u64, 0), hw.seq_high);

@@ -685,13 +685,12 @@ const ai = @import("ai");
 const provider = @import("../provider/provider.zig");
 const provider_store = @import("../provider/provider_store.zig");
 
-/// These test dependencies use an empty environment. The map has no allocation to free.
-var test_env: std.process.Environ.Map = .init(std.testing.allocator);
-var test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+const Resources = @import("test_resources.zig");
 
 test "session.get and session.queue read the durable queue, resident or not" {
-    var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer runtime.deinit();
+    var resources: Resources = undefined;
+    try resources.init();
+    defer resources.deinit();
     var db = try database.Database.openTest();
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
@@ -713,17 +712,7 @@ test "session.get and session.queue read the durable queue, resident or not" {
     const queued = try input_store.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, .{ .content = &.{.{ .text = .{ .text = "recover" } }} }, 2);
     try db.conn.execNoArgs("COMMIT");
 
-    var store: provider_store = .init(std.testing.allocator, runtime.io(), &test_env);
-    defer store.deinit();
-    var engine = Engine.init(.{
-        .gpa = std.testing.allocator,
-        .io = runtime.io(),
-        .db = &db,
-        .providers = &store,
-        .route_transport = test_transport.transport(),
-        .env = &test_env,
-        .tools = .{},
-    });
+    var engine = resources.makeEngine(&db);
     defer engine.close();
     defer db.deinit();
 
@@ -799,28 +788,19 @@ test "session.get and session.queue read the durable queue, resident or not" {
 }
 
 test "a new session takes the catalog default level, and a stated level stays" {
-    var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer runtime.deinit();
+    var resources: Resources = undefined;
+    try resources.init();
+    defer resources.deinit();
     var db = try database.Database.openTest();
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var store: provider_store = .init(std.testing.allocator, runtime.io(), &test_env);
-    defer store.deinit();
     var loaded = try provider.config.loadBytes(std.testing.allocator,
         \\{"version":1,"providers":[{"id":"minimax","api_key":"k"}]}
     );
-    _ = try store.installLocal(&loaded);
-    var engine = Engine.init(.{
-        .gpa = std.testing.allocator,
-        .io = runtime.io(),
-        .db = &db,
-        .providers = &store,
-        .route_transport = test_transport.transport(),
-        .env = &test_env,
-        .tools = .{},
-    });
+    _ = try resources.providers.installLocal(&loaded);
+    var engine = resources.makeEngine(&db);
     defer engine.close();
     defer db.deinit();
 

@@ -312,13 +312,10 @@ pub fn jitter(self: *const Engine) f64 {
     return util.jitterFrom(self.newId());
 }
 
-/// These test dependencies use an empty environment. The map has no allocation to free.
-var test_env: std.process.Environ.Map = .init(std.testing.allocator);
-var test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
-
 test "activation restores durable pending input into the runtime queue" {
-    var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer runtime.deinit();
+    var resources: @import("test_resources.zig") = undefined;
+    try resources.init();
+    defer resources.deinit();
     var db = try database.Database.openTest();
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
@@ -340,17 +337,7 @@ test "activation restores durable pending input into the runtime queue" {
     const queued = try database.input.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, .{ .content = &.{.{ .text = .{ .text = "recover" } }} }, 2);
     try db.conn.execNoArgs("COMMIT");
 
-    var store: provider_store = .init(std.testing.allocator, runtime.io(), &test_env);
-    defer store.deinit();
-    var engine = Engine.init(.{
-        .gpa = std.testing.allocator,
-        .io = runtime.io(),
-        .db = &db,
-        .providers = &store,
-        .route_transport = test_transport.transport(),
-        .env = &test_env,
-        .tools = .{},
-    });
+    var engine = resources.makeEngine(&db);
     defer engine.close();
     defer db.deinit();
     const rt = try engine.activate(.bytes(session_id));

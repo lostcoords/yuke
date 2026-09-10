@@ -271,6 +271,7 @@ fn blockIndex(root: std.json.Value) Error!usize {
 }
 
 const testing = std.testing;
+const stream_testing = @import("testing.zig");
 
 /// Keep the parse arena and reducer alive while emitted events borrow them.
 const Harness = struct {
@@ -312,14 +313,7 @@ test "text turn: started, deltas, stopped, done with usage" {
         \\{"type":"message_stop"}
     });
 
-    try testing.expectEqual(@as(usize, 5), h.out.items.len);
-    try testing.expect(h.out.items[0] == .block_started);
-    try testing.expectEqual(event.BlockKind.text, h.out.items[0].block_started.kind);
-    try testing.expectEqualStrings("Hel", h.out.items[1].text_delta.text);
-    try testing.expectEqualStrings("lo", h.out.items[2].text_delta.text);
-    try testing.expect(h.out.items[3].block_stopped.result == .text);
-    const done = h.out.items[4].done;
-    try testing.expectEqual(types.FinishReason.stop, done.stop_reason);
+    const done = try stream_testing.expectTextResponse(h.out.items);
     try testing.expectEqualStrings("end_turn", done.raw_stop_reason);
     try testing.expectEqual(@as(u64, 120), done.usage.input); // The cache subsets belong to input.
     try testing.expectEqual(@as(u64, 20), done.usage.cache_read);
