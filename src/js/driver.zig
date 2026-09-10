@@ -79,7 +79,7 @@ pub const boot =
 const drain_max = 64;
 
 /// Open the TTY, enter the alternate screen, and run until quit. The caller owns `extensions`.
-pub fn runIo(env: *const std.process.Environ.Map, extensions: *extensions_mod.Extensions) !void {
+pub fn runIo(extensions: *extensions_mod.Extensions) !void {
     const gpa = extensions.host.gpa;
     const io = extensions.host.io;
     var tty = try term_pkg.Tty.open(io);
@@ -89,7 +89,7 @@ pub fn runIo(env: *const std.process.Environ.Map, extensions: *extensions_mod.Ex
     var file_w = tty.writerStreaming(&write_buf);
     const writer = &file_w.interface;
 
-    var render = try term_pkg.Render.init(io, gpa, env, .{});
+    var render = try term_pkg.Render.init(io, gpa, extensions.host.execution.env, .{});
     defer render.deinit(writer);
     try render.enterAltScreen(writer);
     // The terminal wraps pasted text in start and end markers.

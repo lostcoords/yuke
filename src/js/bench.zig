@@ -1,6 +1,7 @@
 //! The same transcript scenarios drive correctness tests and release benchmarks.
 
 const std = @import("std");
+const execution = @import("../execution.zig");
 const quickjs = @import("quickjs");
 const term = @import("term");
 const Host = @import("host.zig").Host;
@@ -28,6 +29,11 @@ pub const Harness = struct {
     colors: Colors = .ansi_raw,
     color_benchmark: bool,
 
+    /// The benchmark borrows its own environment and runs no command of its own.
+    fn context(self: *Harness) execution.Context {
+        return .{ .env = &self.env, .shell = .{ .path = execution.fallback_shell } };
+    }
+
     pub fn create(gpa: std.mem.Allocator, io: std.Io, fixture: []const u8, width: u16, height: u16, phase: Phase) !*Harness {
         std.debug.assert(width > 1 and height > 0);
         const self = try gpa.create(Harness);
@@ -48,7 +54,7 @@ pub const Harness = struct {
         self.render = try term.Render.init(io, if (metrics_enabled) self.allocations.allocator() else gpa, &self.env, .{});
         errdefer self.render.deinit(&self.output.writer);
         try self.render.resize(&self.output.writer, .{ .cols = width, .rows = height, .x_pixel = 0, .y_pixel = 0 });
-        self.host = Host.createWith(if (metrics_enabled) self.allocations.allocator() else gpa, io, .{ .cwd = "", .env = &self.env });
+        self.host = Host.createWith(if (metrics_enabled) self.allocations.allocator() else gpa, io, .{ .cwd = "", .execution = self.context() });
         errdefer self.host.destroy();
         self.host.runtime.setMemoryLimit(1024 * 1024 * 1024);
         self.host.interrupt_budget = std.math.maxInt(u32);
@@ -89,7 +95,7 @@ pub const Harness = struct {
         if (self.projection) |projection| projection.destroy();
         self.projection = null;
         if (phase == .projection or phase == .stream_native)
-            self.projection = try Projection.create(self.host, self.host.io, &self.env, scale, phase == .stream_native);
+            self.projection = try Projection.create(self.host, self.host.io, scale, phase == .stream_native);
         const ctx = self.host.ctx;
         const args = [_]quickjs.Value{
             ctx.newString(@tagName(phase)),       ctx.newUint32(scale),

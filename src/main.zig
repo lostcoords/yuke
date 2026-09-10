@@ -10,6 +10,7 @@ const extensions_mod = @import("js/extensions.zig");
 const auth_cli = @import("app/auth_cli.zig");
 const print_cli = @import("app/print_cli.zig");
 const paths = @import("paths.zig");
+const execution = @import("execution.zig");
 const zio = @import("zio");
 
 pub const std_options: std.Options = .{ .logFn = logFn };
@@ -132,18 +133,29 @@ fn run(init: std.process.Init) !u8 {
     defer reactor.deinit();
     const io = reactor.io();
 
+    // Every later owner reads this one environment and runs this one shell.
+    const context = execution.startup(init.arena.allocator(), io, init.environ_map, .native) catch |err| {
+        // Each cause has its own remedy, so none of them borrows another one's message.
+        switch (err) {
+            error.ShellNotFound => std.log.err("yuke: no command shell; install bash or provide {s}", .{execution.fallback_shell}),
+            error.UnsupportedPlatform => std.log.err("yuke: this platform states no shell contract", .{}),
+            error.OutOfMemory => std.log.err("yuke: startup ran out of memory", .{}),
+        }
+        return 1;
+    };
+
     const tui = command == .tui;
-    if (tui) startTuiLog(init.gpa, init.io, init.environ_map);
+    if (tui) startTuiLog(init.gpa, init.io, context.env);
     defer if (tui) stopTuiLog(init.io);
 
     // A null directory is not an error. The baked UI still runs without a config file.
-    const config_dir = try paths.configDir(init.gpa, init.environ_map);
+    const config_dir = try paths.configDir(init.gpa, context.env);
     defer if (config_dir) |dir| init.gpa.free(dir);
     var cwd_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const cwd_len = try std.Io.Dir.cwd().realPath(io, &cwd_buf);
 
     // Independent session trees can share this store; each tree has one engine owner.
-    const application = app.App.open(init.gpa, io, init.environ_map) catch |err| {
+    const application = app.App.open(init.gpa, io, context) catch |err| {
         // This one failure has a direct operator remedy, so it names the remedy instead of the error.
         if (err == error.NoStateDirectory)
             std.log.err("yuke: no directory holds the session store; set XDG_DATA_HOME or {s}", .{paths.home_env})
@@ -160,7 +172,7 @@ fn run(init: std.process.Init) !u8 {
     try extensions.init(init.gpa, io, application, .{
         .host = .{
             .cwd = cwd_buf[0..cwd_len],
-            .env = init.environ_map,
+            .execution = context,
         },
         .boot = switch (command) {
             .tui => tui_app.boot,
@@ -174,7 +186,7 @@ fn run(init: std.process.Init) !u8 {
 
     switch (command) {
         .rpc => try rpc.runIo(&extensions),
-        .tui => try tui_app.runIo(init.environ_map, &extensions),
+        .tui => try tui_app.runIo(&extensions),
         .print => |opts| return print_cli.run(init.gpa, io, &extensions, cwd_buf[0..cwd_len], opts),
         .login, .logout => unreachable, // The auth commands return before the host starts.
     }

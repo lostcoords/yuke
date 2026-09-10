@@ -27,7 +27,7 @@ pub fn validate(engine: *Engine, arena: std.mem.Allocator, model: []const u8, re
         .needs_route => error.ModelRouteUnavailable,
         .needs_credential, .expired => error.ModelUnavailable,
     };
-    if (registry.credential(match.provider.availability.ready.credential, engine.deps.env, engine.nowMillis()) == null) return error.ModelUnavailable;
+    if (registry.credential(match.provider.availability.ready.credential, engine.deps.execution.env, engine.nowMillis()) == null) return error.ModelUnavailable;
     if (match.model.caps.tools != true) return error.ModelToolsUnsupported;
     // The merged registry can reload before the caller commits, so the arena keeps its own copies.
     const owned_model = try arena.dupe(u8, model);

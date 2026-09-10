@@ -1,6 +1,7 @@
 //! Drive one device login to its single terminal outcome, then store the grant it produced.
 
 const std = @import("std");
+const execution = @import("../../execution.zig");
 const ai = @import("ai");
 const proto = @import("proto");
 const provider = @import("../provider.zig");
@@ -273,7 +274,7 @@ const Probe = struct {
     fn init(self: *Probe, io: std.Io, replies: []const oauth.CannedHttp.Reply) !void {
         const database = @import("../../store/store.zig");
         self.* = .{ .env = .init(testing.allocator), .canned = .{ .replies = replies } };
-        try self.runtime.initTest(testing.allocator, io, try database.Database.openTest(), &self.env, self.transport.transport());
+        try self.runtime.initTest(testing.allocator, io, try database.Database.openTest(), execution.testContext(&self.env), self.transport.transport());
     }
 
     /// The engine borrows the store, the logins, and the database, so it closes first.

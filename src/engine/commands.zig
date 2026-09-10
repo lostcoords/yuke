@@ -117,14 +117,14 @@ pub fn sessionGet(engine: *Engine, arena: std.mem.Allocator, params: proto.sessi
     item.skills = try session_store.skillCatalog(engine.deps.db, arena, session_id.raw);
     if (params.check_files) item.context_changes = .{
         .instructions = try instructionsChanged(engine, arena, snapshot.root, item.instruction_sources.?),
-        .skills = try skills.changed(arena, engine.deps.io, engine.deps.env, snapshot.root, item.skills.?),
+        .skills = try skills.changed(arena, engine.deps.io, engine.deps.execution.env, snapshot.root, item.skills.?),
     };
     return item;
 }
 
 /// Report whether the AGENTS.md files on disk differ from the stored sources. An unloadable file counts as a change.
 fn instructionsChanged(engine: *Engine, arena: std.mem.Allocator, root: []const u8, stored: []const proto.instructions.InstructionSource) !bool {
-    const fresh = instructions.load(arena, engine.deps.io, engine.deps.env, root, null) catch |err| switch (err) {
+    const fresh = instructions.load(arena, engine.deps.io, engine.deps.execution.env, root, null) catch |err| switch (err) {
         error.InvalidInstructions => return true,
         else => |e| return e,
     };
@@ -157,8 +157,8 @@ pub fn sessionReloadContext(engine: *Engine, arena: std.mem.Allocator, params: p
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
     // A run holds its prompt for its whole life, so a swap under it would split one turn across two prompts.
     if (engine.sessions.get(params.session_id)) |rt| if (rt.active_run != null) return error.SessionBusy;
-    const sources = try instructions.load(arena, engine.deps.io, engine.deps.env, snapshot.root, diagnostic);
-    const catalog = try skills.load(arena, engine.deps.io, engine.deps.env, snapshot.root);
+    const sources = try instructions.load(arena, engine.deps.io, engine.deps.execution.env, snapshot.root, diagnostic);
+    const catalog = try skills.load(arena, engine.deps.io, engine.deps.execution.env, snapshot.root);
     const notices = try skippedNotices(arena, catalog.skipped);
     const listed = try arena.alloc(proto.instructions.InstructionSource, sources.len);
     for (sources, listed) |source, *out| out.* = source.source;
@@ -551,10 +551,10 @@ pub fn sessionCreate(engine: *Engine, arena: std.mem.Allocator, params: proto.mi
 pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.misc.CreateSession, launch: *?run_task.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionResult {
     std.debug.assert(launch.* == null);
     if (engine.closing) return error.EngineClosing;
-    const root = try paths.canonicalizeWorkspace(arena, engine.deps.env, params.workspace_path);
+    const root = try paths.canonicalizeWorkspace(arena, engine.deps.execution.env, params.workspace_path);
     const parent: ?proto.ids.SessionId = if (params.child) |child| child.site.session_id else null;
     // A child inherits the parent's catalog. A root scans the two skill roots once.
-    const catalog: skills.Catalog = if (parent) |pid| .{ .entries = try session_store.skillCatalog(engine.deps.db, arena, pid.raw), .skipped = &.{} } else try skills.load(arena, engine.deps.io, engine.deps.env, root);
+    const catalog: skills.Catalog = if (parent) |pid| .{ .entries = try session_store.skillCatalog(engine.deps.db, arena, pid.raw), .skipped = &.{} } else try skills.load(arena, engine.deps.io, engine.deps.execution.env, root);
     const notices = try skippedNotices(arena, catalog.skipped);
     const content: ?[]const proto.content.ContentPart = if (params.initial_input) |input| switch (input) {
         .content => |c| c.content,
@@ -604,7 +604,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     else
         prompts.default_system_prompt;
     const child_prompt = if (parent != null) try prompts.expand(arena, engine.child_instructions orelse prompts.default_child_instructions, prompt_context) else null;
-    const sources = if (parent) |pid| try session_store.instructionSnapshots(engine.deps.db, arena, pid.raw) else try instructions.load(arena, engine.deps.io, engine.deps.env, root, diagnostic);
+    const sources = if (parent) |pid| try session_store.instructionSnapshots(engine.deps.db, arena, pid.raw) else try instructions.load(arena, engine.deps.io, engine.deps.execution.env, root, diagnostic);
     const now = engine.nowMillis();
     const environment = try prompts.environment(arena, root, now);
     if (parent_tree) |tree| try reports.reserve(engine, arena, tree.root);

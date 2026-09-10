@@ -15,6 +15,7 @@ const zio = @import("zio");
 const Sinks = @import("sink.zig").Sinks;
 const toolset = @import("toolset.zig");
 const hookset = @import("hookset.zig");
+const execution = @import("../execution.zig");
 
 const reports = @import("reports.zig");
 const ownership = @import("ownership.zig");
@@ -33,7 +34,8 @@ pub const Deps = struct {
     providers: *provider_store,
     /// Every resolved route opens its response through this transport.
     route_transport: ai.transport.Transport,
-    env: *const std.process.Environ.Map,
+    /// The startup answers every turn reads: the effective environment and the one command shell.
+    execution: execution.Context,
     /// The tools this process can run. The engine borrows the set from the extension owner.
     tools: toolset.ToolSet = .{},
     /// The hooks this process can ask. The engine borrows the set from the same owner.

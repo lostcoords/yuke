@@ -1,6 +1,7 @@
 //! `yuke -p`: one turn without a view. The reply goes to stdout and the run outcome picks the status.
 
 const std = @import("std");
+const execution = @import("../execution.zig");
 const zio = @import("zio");
 const proto = @import("proto");
 const cli = @import("../cli.zig");
@@ -426,10 +427,12 @@ const Fixture = struct {
         self.env = .init(testing.allocator);
         try self.env.put("ANTHROPIC_API_KEY", "sk-test");
         self.canned = .{ .bytes = ai.transport.canned_reply };
-        try self.app.initTest(testing.allocator, self.reactor.io(), try database.Database.openTest(), &self.env, self.canned.transport());
+        // One context, so a split between the two owners is a test failure and not a silent drift.
+        const context = execution.testContext(&self.env);
+        try self.app.initTest(testing.allocator, self.reactor.io(), try database.Database.openTest(), context, self.canned.transport());
         _ = try self.app.store.rebuild();
         try self.extensions.init(testing.allocator, self.reactor.io(), &self.app, .{
-            .host = .{ .cwd = self.root, .env = &self.env },
+            .host = .{ .cwd = self.root, .execution = context },
             .boot = boot,
             .config_dir = self.root,
         });

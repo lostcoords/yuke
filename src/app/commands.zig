@@ -2,6 +2,7 @@
 //! Each handler owns its write transaction.
 
 const std = @import("std");
+const execution = @import("../execution.zig");
 const ai = @import("ai");
 const proto = @import("proto");
 const App = @import("app.zig").App;
@@ -146,7 +147,7 @@ test "auth.list reports the providers the environment offers, not only the file"
 
     var transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
     var runtime: App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), &env, transport.transport());
+    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), execution.testContext(&env), transport.transport());
     defer runtime.logins.deinit();
     defer runtime.store.deinit();
     defer runtime.db.deinit();
@@ -185,7 +186,7 @@ test "catalog.reload reads the file again and reports whether the revision moved
     defer env.deinit();
     var transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
     var runtime: App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), &env, transport.transport());
+    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), execution.testContext(&env), transport.transport());
     defer runtime.logins.deinit();
     defer runtime.store.deinit();
     defer runtime.db.deinit();

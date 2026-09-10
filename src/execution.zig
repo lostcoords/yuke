@@ -6,8 +6,9 @@ const builtin = @import("builtin");
 const paths = @import("paths.zig");
 
 /// The automatic candidates, in order. Bash comes first, because a command may need its syntax.
-const bash_path = "/bin/bash";
-const sh_path = "/bin/sh";
+const bafallback_shell = "/bin/bash";
+/// The final candidate, and the shell a caller names when it runs no command of its own.
+pub const fallback_shell = "/bin/sh";
 
 /// The cap for one user-database record. A record above this size names no home Yuke can use.
 const max_passwd_bytes = 64 * 1024;
@@ -28,6 +29,12 @@ pub const Context = struct {
     env: *const std.process.Environ.Map,
     shell: Shell,
 };
+
+/// A context for a test. It names the caller's environment and the POSIX shell every platform has.
+pub fn testContext(env: *const std.process.Environ.Map) Context {
+    std.debug.assert(builtin.is_test);
+    return .{ .env = env, .shell = .{ .path = fallback_shell } };
+}
 
 /// The platform lookups this module needs. A test replaces them, so no unit test reads this machine.
 pub const Probe = struct {
@@ -74,9 +81,9 @@ fn recoverHome(arena: std.mem.Allocator, io: std.Io, probe: Probe) std.mem.Alloc
 fn resolveShell(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, probe: Probe) Error!Shell {
     // Windows has no `<shell> -c` contract, so it needs its own design instead of a silent fallback.
     if (builtin.os.tag == .windows) return error.UnsupportedPlatform;
-    if (probe.executable(io, bash_path)) return .{ .path = bash_path };
+    if (probe.executable(io, bafallback_shell)) return .{ .path = bafallback_shell };
     if (try bashOnPath(arena, io, env, probe)) |path| return .{ .path = path };
-    if (probe.executable(io, sh_path)) return .{ .path = sh_path };
+    if (probe.executable(io, fallback_shell)) return .{ .path = fallback_shell };
     return error.ShellNotFound;
 }
 
@@ -153,7 +160,7 @@ test "an absolute home stays, and every invalid form recovers from the platform"
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     fake_home = "/native/home";
-    fake_executables = &.{sh_path};
+    fake_executables = &.{fallback_shell};
 
     // An absolute value is kept; an absent, an empty, and a relative value each recover.
     const cases = [_][2][]const u8{
@@ -176,7 +183,7 @@ test "an absolute home stays, and every invalid form recovers from the platform"
 test "an unusable platform home installs nothing and still starts" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    fake_executables = &.{sh_path};
+    fake_executables = &.{fallback_shell};
 
     // A container with no passwd entry is usually correct, so none of these may stop the process.
     const cases = [_]?[]const u8{ "", "relative/home", "/has\x00nul", null };
@@ -185,7 +192,7 @@ test "an unusable platform home installs nothing and still starts" {
         defer env.deinit();
         fake_home = home;
         const context = try startup(arena.allocator(), testing.io, &env, fake_probe);
-        try testing.expectEqualStrings(sh_path, context.shell.path);
+        try testing.expectEqualStrings(fallback_shell, context.shell.path);
         // `paths.homeDir` rejects these itself, so the map must hold no value at all.
         try testing.expect(env.get(paths.home_env) == null);
     }
@@ -224,10 +231,10 @@ test "the shell resolver follows one order and every result is absolute" {
         want: []const u8,
     };
     const cases = [_]Case{
-        .{ .pairs = &.{home}, .present = &.{ bash_path, sh_path }, .want = bash_path },
+        .{ .pairs = &.{home}, .present = &.{ bafallback_shell, fallback_shell }, .want = bafallback_shell },
         // A lost skip would join an empty entry to `bash` or a relative one to `rel/bin/bash`.
-        .{ .pairs = &.{ home, .{ "PATH", ":rel/bin:/opt/bin" } }, .present = &.{ "bash", "rel/bin/bash", "/opt/bin/bash", sh_path }, .want = "/opt/bin/bash" },
-        .{ .pairs = &.{ home, .{ "PATH", "/opt/bin" } }, .present = &.{sh_path}, .want = sh_path },
+        .{ .pairs = &.{ home, .{ "PATH", ":rel/bin:/opt/bin" } }, .present = &.{ "bash", "rel/bin/bash", "/opt/bin/bash", fallback_shell }, .want = "/opt/bin/bash" },
+        .{ .pairs = &.{ home, .{ "PATH", "/opt/bin" } }, .present = &.{fallback_shell}, .want = fallback_shell },
     };
     for (cases) |case| {
         var env = try testEnv(case.pairs);

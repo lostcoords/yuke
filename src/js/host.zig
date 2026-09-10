@@ -19,6 +19,7 @@ const hooks_table = @import("hooks.zig");
 const interactions_table = @import("interactions.zig");
 const call_run = @import("call_run.zig");
 const pending = @import("pending.zig");
+const execution_mod = @import("../execution.zig");
 
 /// Limit the client heap. Scripts fail when they exceed this limit.
 pub const memory_limit: usize = 64 * 1024 * 1024;
@@ -61,6 +62,7 @@ pub const default_baked = blk: {
         "indicator",
         "queue",
         "context",
+        "cache",
         "command-ui",
         "catalog",
         "agents-ui",
@@ -88,8 +90,8 @@ pub const Options = struct {
     max_file_bytes: usize = loader_mod.default_max_file_bytes,
     /// The directory the process runs in. A new session takes it as the workspace root.
     cwd: []const u8,
-    /// The process environment. `yuke:fs` expands a leading `~` with it.
-    env: *const std.process.Environ.Map,
+    /// The startup answers: the effective environment and the one command shell.
+    execution: execution_mod.Context,
 };
 
 /// The environment every test host borrows. An empty environment allocates nothing, so no test frees it.
@@ -115,8 +117,8 @@ pub const Host = struct {
     cwd: []const u8,
     /// The reactor I/O. `yuke:fs` reads the file system through it.
     io: std.Io,
-    /// The process environment. The caller owns it for the life of the host.
-    env: *const std.process.Environ.Map,
+    /// The startup answers. The caller owns them for the life of the host.
+    execution: execution_mod.Context,
     /// Every primitive call in flight. A task finishes one; the owner settles it.
     ops: pending.Ops,
     /// The tools `index.js` registered. The process reads its declarations after boot.
@@ -142,7 +144,7 @@ pub const Host = struct {
     /// Allocate a test host that uses `io` and takes `cwd` as its workspace root.
     pub fn createTest(gpa: std.mem.Allocator, io: std.Io, cwd: []const u8) *Host {
         std.debug.assert(builtin.is_test);
-        return createWith(gpa, io, .{ .cwd = cwd, .env = &test_env });
+        return createWith(gpa, io, .{ .cwd = cwd, .execution = execution_mod.testContext(&test_env) });
     }
 
     /// Allocate a host and install its limits, interrupt handler, and loader.
@@ -177,7 +179,7 @@ pub const Host = struct {
             .engine = eng,
             .cwd = opts.cwd,
             .io = io,
-            .env = opts.env,
+            .execution = opts.execution,
             .ops = .{ .gpa = gpa, .io = io, .wake = &self.wake },
             .tools = .{ .gpa = gpa },
             .hooks = .{},
@@ -760,7 +762,7 @@ test "an oversize module file does not load" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = Host.createWith(std.testing.allocator, std.testing.io, .{ .max_file_bytes = 8, .cwd = "", .env = &test_env });
+    const host = Host.createWith(std.testing.allocator, std.testing.io, .{ .max_file_bytes = 8, .cwd = "", .execution = execution_mod.testContext(&test_env) });
     defer host.destroy();
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});

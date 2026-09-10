@@ -14,6 +14,7 @@ const provider_registry = @import("../provider/registry.zig");
 const login_runtime = @import("../provider/oauth/login_runtime.zig");
 const Engine = @import("../engine/Engine.zig");
 const scheduler_mod = @import("scheduler.zig");
+const execution = @import("../execution.zig");
 
 // The timeout wakes a stalled provider read. Cancellation also interrupts the read.
 const provider_idle_timeout = std.Io.Duration.fromMilliseconds(60_000);
@@ -36,12 +37,12 @@ pub const App = struct {
     maintenance: std.Io.Group = .init,
 
     /// Open the store, load the configuration, and start the maintenance task.
-    pub fn open(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !*App {
+    pub fn open(gpa: std.mem.Allocator, io: std.Io, context: execution.Context) !*App {
         const self = try gpa.create(App);
         errdefer gpa.destroy(self);
 
         // A store that resolves from no base at all would lose every session at exit, so it stops startup.
-        const data_dir = (try resolveDataDir(gpa, io, env)) orelse return error.NoStateDirectory;
+        const data_dir = (try resolveDataDir(gpa, io, context.env)) orelse return error.NoStateDirectory;
         defer gpa.free(data_dir);
 
         const db_path = try dbPathZ(gpa, data_dir);
@@ -53,7 +54,7 @@ pub const App = struct {
             .http_transport = ai.http_transport.HttpTransport.init(gpa, io, provider_idle_timeout),
             .db = undefined,
             .logins = .init(gpa),
-            .store = .init(gpa, io, env),
+            .store = .init(gpa, io, context.env),
             .engine = undefined,
         };
         errdefer self.http_transport.deinit();
@@ -63,7 +64,7 @@ pub const App = struct {
         errdefer self.deinitState();
 
         // The app owns this path, because an invalid file fails startup and `auth.set_api_key` rewrites it.
-        self.store.path = try configFilePath(gpa, env, "providers.json");
+        self.store.path = try configFilePath(gpa, context.env, "providers.json");
         if (self.store.path != null) {
             // An absent or empty file installs an empty layer, which every reader treats like none.
             _ = try self.store.reload();
@@ -77,7 +78,7 @@ pub const App = struct {
             .db = &self.db,
             .providers = &self.store,
             .route_transport = self.http_transport.transportFor(),
-            .env = env,
+            .execution = context,
         });
 
         self.scheduler = .init(self);
@@ -91,14 +92,14 @@ pub const App = struct {
     }
 
     /// Build one app around a test database. The caller closes the owned resources.
-    pub fn initTest(self: *App, gpa: std.mem.Allocator, io: std.Io, db: database.Database, env: *const std.process.Environ.Map, route_transport: ai.transport.Transport) !void {
+    pub fn initTest(self: *App, gpa: std.mem.Allocator, io: std.Io, db: database.Database, context: execution.Context, route_transport: ai.transport.Transport) !void {
         self.* = .{
             .gpa = gpa,
             .io = io,
             .http_transport = undefined,
             .db = db,
             .logins = .init(gpa),
-            .store = .init(gpa, io, env),
+            .store = .init(gpa, io, context.env),
             .engine = undefined,
         };
         self.engine = Engine.init(.{
@@ -107,7 +108,7 @@ pub const App = struct {
             .db = &self.db,
             .providers = &self.store,
             .route_transport = route_transport,
-            .env = env,
+            .execution = context,
         });
     }
 
@@ -230,7 +231,7 @@ test "an environment with no base for the store stops startup instead of losing 
     // No home directory and no XDG base, which is the container case the plan names.
     var bare: std.process.Environ.Map = .init(testing.allocator);
     defer bare.deinit();
-    try testing.expectError(error.NoStateDirectory, App.open(testing.allocator, rt.io(), &bare));
+    try testing.expectError(error.NoStateDirectory, App.open(testing.allocator, rt.io(), execution.testContext(&bare)));
 }
 
 test "an absolute XDG base opens the store with no home directory at all" {
@@ -244,7 +245,7 @@ test "an absolute XDG base opens the store with no home directory at all" {
     var xdg: std.process.Environ.Map = .init(testing.allocator);
     defer xdg.deinit();
     try xdg.put("XDG_DATA_HOME", root);
-    const opened = try App.open(testing.allocator, rt.io(), &xdg);
+    const opened = try App.open(testing.allocator, rt.io(), execution.testContext(&xdg));
     opened.close();
 }
 
@@ -253,7 +254,7 @@ test "a catalog replacement announces the merged revision" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     var runtime: App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), &test_env, test_transport.transport());
+    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), execution.testContext(&test_env), test_transport.transport());
     defer runtime.logins.deinit();
     defer runtime.store.deinit();
     defer runtime.db.deinit();

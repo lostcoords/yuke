@@ -99,7 +99,7 @@ pub fn prepare(
     });
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
-    const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
+    const secret = registry.credential(route.credential, engine.deps.execution.env, engine.nowMillis()) orelse return error.MissingCredential;
     // The serializer and the header builder both copy this, so it only has to outlive `prepare`.
     const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
     var prepared = try ai.prepare(engine.deps.gpa, .{

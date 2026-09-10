@@ -41,7 +41,7 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
     route.route.cache = null;
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on this call.
-    const secret = registry.credential(route.credential, engine.deps.env, engine.nowMillis()) orelse return error.MissingCredential;
+    const secret = registry.credential(route.credential, engine.deps.execution.env, engine.nowMillis()) orelse return error.MissingCredential;
     const ceiling = if (spec.limits.max_output_tokens) |limit|
         std.math.cast(u32, limit) orelse context.default_max_output
     else

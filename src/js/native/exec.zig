@@ -123,7 +123,7 @@ fn execWorker(host: *Host, op: *pending.Op, req: Request) pending.Result {
     host.io.checkCancel() catch return .{ .failed = .{ .message = "the command was canceled" } };
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
-    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.env };
+    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
 
     const result = local.exec(arena.allocator(), .{
         .command = req.command,

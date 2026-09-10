@@ -6,6 +6,7 @@
 //! so one call copies a bounded number of bytes however large the message is.
 
 const std = @import("std");
+const execution = @import("../../execution.zig");
 const quickjs = @import("quickjs");
 const zio = @import("zio");
 const proto = @import("proto");
@@ -307,7 +308,7 @@ test "a request reaches a command and answers with its result" {
     var env: std.process.Environ.Map = .init(testing.allocator);
     var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
     var runtime: app.App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), &env, canned.transport());
+    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), execution.testContext(&env), canned.transport());
     try runtime.installTestModel();
     defer runtime.logins.deinit();
     defer runtime.store.deinit();

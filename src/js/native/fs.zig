@@ -68,7 +68,7 @@ const Call = struct {
     fn open(host: *Host, root: []const u8) Call {
         return .{
             .arena = .init(host.gpa),
-            .local = .{ .io = host.io, .root = root, .env = host.env },
+            .local = .{ .io = host.io, .root = root, .env = host.execution.env },
         };
     }
     fn close(self: *Call) void {
@@ -132,7 +132,7 @@ fn readTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer req.free(host.gpa);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
-    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.env };
+    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
 
     const text = local.readAll(arena.allocator(), req.path, max_read_bytes) catch |err|
         return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
@@ -145,7 +145,7 @@ fn readRangeTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer req.free(host.gpa);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
-    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.env };
+    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
     const got = local.readRange(arena.allocator(), req.path, req.range, read_limits) catch |err|
         return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
     const json = encodeRange(host.gpa, got);
@@ -232,7 +232,7 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     const arena = call.alloc();
 
     const requested = pathArg(ctx, arena, args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string");
-    const path = paths.canonicalizeWorkspace(arena, host.env, requested) catch |err| switch (err) {
+    const path = paths.canonicalizeWorkspace(arena, host.execution.env, requested) catch |err| switch (err) {
         error.HomeUnavailable => return rejected(ctx, errorMessage(error.HomeUnavailable)),
         else => return rejected(ctx, "the path is not a directory this process can read"),
     };

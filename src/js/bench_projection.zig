@@ -18,7 +18,7 @@ session_id: proto.ids.SessionId,
 stream_offset: usize = 0,
 source_bytes: usize = 0,
 
-pub fn create(host: *Host, io: std.Io, env: *const std.process.Environ.Map, scale: u32, native_stream: bool) !*Projection {
+pub fn create(host: *Host, io: std.Io, scale: u32, native_stream: bool) !*Projection {
     std.debug.assert(scale > 0);
     const gpa = host.gpa;
     const self = try gpa.create(Projection);
@@ -26,7 +26,7 @@ pub fn create(host: *Host, io: std.Io, env: *const std.process.Environ.Map, scal
     self.* = .{ .gpa = gpa, .app = undefined, .transport = .{ .bytes = "" }, .session = undefined, .session_id = undefined };
     var db = try Database.openTest();
     errdefer db.deinit();
-    try self.app.initTest(gpa, io, db, env, self.transport.transport());
+    try self.app.initTest(gpa, io, db, host.execution, self.transport.transport());
     errdefer self.app.logins.deinit();
     errdefer self.app.store.deinit();
     errdefer self.app.engine.close();

@@ -37,6 +37,6 @@ pub fn makeEngine(self: *@This(), db: *Database) Engine {
         .db = db,
         .providers = &self.providers,
         .route_transport = self.transport.transport(),
-        .env = &self.env,
+        .execution = @import("../execution.zig").testContext(&self.env),
     });
 }

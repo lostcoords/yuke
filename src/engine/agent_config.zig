@@ -21,7 +21,7 @@ pub fn get(engine: *Engine, arena: std.mem.Allocator) !Wire.AgentsGetResult {
 pub fn update(engine: *Engine, arena: std.mem.Allocator, params: Wire.AgentsUpdateParams) !Wire.AgentsGetResult {
     try engine.agents.mutex.lock(engine.deps.io);
     defer engine.agents.mutex.unlock(engine.deps.io);
-    const path = (try configPath(arena, engine.deps.io, engine.deps.env)) orelse return error.AgentConfigDirectoryMissing;
+    const path = (try configPath(arena, engine.deps.io, engine.deps.execution.env)) orelse return error.AgentConfigDirectoryMissing;
     const parent = std.fs.path.dirname(path).?;
     std.Io.Dir.cwd().createDirPath(engine.deps.io, parent) catch return error.AgentConfigSaveFailed;
     const lock_path = try std.mem.concat(arena, u8, &.{ path, ".lock" });
@@ -59,7 +59,7 @@ fn configPath(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Envi
 }
 
 fn read(engine: *Engine, arena: std.mem.Allocator) !Wire.AgentsGetResult {
-    const path = try configPath(arena, engine.deps.io, engine.deps.env);
+    const path = try configPath(arena, engine.deps.io, engine.deps.execution.env);
     const file = std.Io.Dir.openFileAbsolute(engine.deps.io, path orelse return parse(arena, null, "{}"), .{ .follow_symlinks = false }) catch |err| switch (err) {
         error.FileNotFound => return parse(arena, path, "{}"),
         else => return error.AgentConfigReadFailed,

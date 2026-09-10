@@ -1,6 +1,7 @@
 //! Compose the one QuickJS host used by the TUI and JSONL RPC frontends.
 
 const std = @import("std");
+const execution = @import("../execution.zig");
 const zio = @import("zio");
 const host_mod = @import("host.zig");
 const port = @import("port.zig");
@@ -92,10 +93,12 @@ pub const Fixture = struct {
         self.reactor = try zio.Runtime.init(self.gpa.allocator(), .{ .executors = .exact(1) });
         self.env = .init(self.gpa.allocator());
         self.canned = .{ .bytes = ai.transport.canned_reply };
-        try self.app.initTest(self.gpa.allocator(), self.reactor.io(), try database.Database.openTest(), &self.env, self.canned.transport());
+        // One context, so a split between the two owners is a test failure and not a silent drift.
+        const context = execution.testContext(&self.env);
+        try self.app.initTest(self.gpa.allocator(), self.reactor.io(), try database.Database.openTest(), context, self.canned.transport());
         try self.app.installTestModel();
         try self.extensions.init(self.gpa.allocator(), self.reactor.io(), &self.app, .{
-            .host = .{ .cwd = root, .env = &self.env },
+            .host = .{ .cwd = root, .execution = context },
             .boot = boot,
             .config_dir = root,
         });
@@ -125,6 +128,18 @@ fn pumpUntilSettled(host: *Host, call: *tools_table.Call) !void {
         host.wake.reset();
         try host.pump();
     }
+}
+
+test "one execution context reaches both the engine and the JavaScript host" {
+    var f: Fixture = undefined;
+    try f.init("", kernel_boot);
+    defer f.deinit();
+
+    // A later split between these two owners would make the prompt promise a shell the runner never uses.
+    const engine_side = f.app.engine.deps.execution;
+    const host_side = f.extensions.host.execution;
+    try std.testing.expectEqual(engine_side.env, host_side.env);
+    try std.testing.expectEqualStrings(engine_side.shell.path, host_side.shell.path);
 }
 
 test "headless extensions pump an async JavaScript tool" {
