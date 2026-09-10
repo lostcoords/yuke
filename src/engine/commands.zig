@@ -606,7 +606,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     const child_prompt = if (parent != null) try prompts.expand(arena, engine.child_instructions orelse prompts.default_child_instructions, prompt_context) else null;
     const sources = if (parent) |pid| try session_store.instructionSnapshots(engine.deps.db, arena, pid.raw) else try instructions.load(arena, engine.deps.io, engine.deps.execution.env, root, diagnostic);
     const now = engine.nowMillis();
-    const environment = try prompts.environment(arena, root, now);
+    const environment = try prompts.environment(arena, root, engine.deps.execution.shell, now);
     if (parent_tree) |tree| try reports.reserve(engine, arena, tree.root);
     const available = content != null and (parent_tree == null or try admission.available(engine, arena, parent_tree.?.root, id));
     var prepared: ?run.RunSlot.Prepared = null;

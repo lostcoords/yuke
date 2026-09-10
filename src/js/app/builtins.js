@@ -256,7 +256,7 @@ builtin("edit", {
   }, required: ["path", "old_string", "new_string"], additionalProperties: false }, execute: edit,
 });
 builtin("exec", {
-  description: "Run one shell command with /bin/sh and return its output.",
+  description: "Run one command with the session shell and return its output. The environment block names that shell.",
   parameters: { type: "object", properties: {
     command: { type: "string", description: "The shell command to run." },
     cwd: { type: ["string", "null"], description: "The working directory." },
