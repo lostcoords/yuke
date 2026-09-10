@@ -12,7 +12,8 @@ const context = @import("context.zig");
 
 const max_output_tokens = context.default_max_output;
 
-fn reasoningFor(
+/// Map a configured reasoning level onto one model. An empty level leaves the provider default.
+pub fn reasoningFor(
     model: *const registry.ModelSpec,
     level: []const u8,
     output_limit: u32,

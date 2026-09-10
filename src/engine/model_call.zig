@@ -13,6 +13,8 @@ pub const Request = struct {
     system: []const u8 = "",
     prompt: []const u8,
     max_output_tokens: u32,
+    /// The session reasoning level. An empty level leaves the provider default.
+    reasoning: []const u8 = "",
 };
 
 /// What one call returned. The text lives in the arena the caller passed.
@@ -55,12 +57,20 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
         .dialect = spec.dialect,
     };
 
+    const control = try @import("request.zig").reasoningFor(&spec, request.reasoning, limit);
+    // A budget shares the output ceiling, and this call sets a small ceiling for its answer alone.
+    const reasoning: ai.ir.ReasoningControl = if (control == .budget) .default else control;
+
     // The caller owns the cancelable task that covers the transport and its blocked reads.
     const blocks = [_]ai.ir.Block{.{ .role = .user, .value = .{ .text = request.prompt } }};
     var result = try ai.generateWithTransport(engine.deps.gpa, engine.deps.route_transport, model, .{
         .blocks = &blocks,
         .system = request.system,
-        .options = .{ .max_output_tokens = limit },
+        .options = .{
+            .max_output_tokens = limit,
+            // A call answers on the session model, so it must reason at the session level too.
+            .reasoning = reasoning,
+        },
     });
     defer result.deinit();
     try cancel.check(engine.deps.io);
@@ -108,7 +118,11 @@ const Fixture = struct {
 
     /// A call waits for its own child, so it runs inside a task.
     fn call(self: *Fixture, cancel: *Cancel, match: registry.Match) !Response {
-        var handle = try self.resources.runtime.spawn(generateWith, .{ &self.engine, self.arena.allocator(), cancel, match, test_request });
+        return self.callWith(cancel, match, test_request);
+    }
+
+    fn callWith(self: *Fixture, cancel: *Cancel, match: registry.Match, request: Request) !Response {
+        var handle = try self.resources.runtime.spawn(generateWith, .{ &self.engine, self.arena.allocator(), cancel, match, request });
         return handle.join();
     }
 };
@@ -138,6 +152,33 @@ test "a call without a credential sends no request" {
     var cancel: Cancel = .{};
     // The test environment is empty, so this name resolves to no value.
     try testing.expectError(error.MissingCredential, f.call(&cancel, try mockMatch(f.arena.allocator(), .{ .env = "YUKE_ABSENT_KEY" })));
+}
+
+test "a call reasons at the session level, and a level the model lacks never reaches the wire" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var cancel: Cancel = .{};
+    const a = f.arena.allocator();
+    var match = try mockMatch(a, .{ .literal = "secret" });
+    const spec = try a.create(registry.ModelSpec);
+    spec.* = match.model.*;
+    // A model that declares its levels answers no other level.
+    spec.reasoning_levels = &.{.{ .named = "low" }};
+    match.model = spec;
+
+    try testing.expectError(error.UnsupportedReasoning, f.callWith(&cancel, match, .{
+        .prompt = "summarize the work",
+        .max_output_tokens = 512,
+        .reasoning = "xhigh",
+    }));
+
+    const answer = try f.callWith(&cancel, match, .{
+        .prompt = "summarize the work",
+        .max_output_tokens = 512,
+        .reasoning = "low",
+    });
+    try testing.expectEqualStrings("Hello from the yuke mock provider.", answer.text);
 }
 
 test "a provider the merge could not complete serves no call" {

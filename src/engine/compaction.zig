@@ -416,6 +416,7 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, request_
         .system = summarizer_system_prompt,
         .prompt = prompt,
         .max_output_tokens = summary_output_tokens,
+        .reasoning = slot.config.reasoning,
     });
     if (answer.finish_reason != .stop) return error.IncompleteSummary;
     if (std.mem.trim(u8, answer.text, " \t\r\n").len == 0) return error.EmptySummary;
@@ -472,7 +473,7 @@ test "the cut lands on the start of the turn that holds the tail target" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const sid = [_]u8{7} ** 16;
-    try seedSessionModel(&db, sid, "mock");
+    try seedSessionModel(&db, sid, "mock", "");
 
     try seedMessage(&db, arena.allocator(), sid, 1, .user, 300);
     try seedMessage(&db, arena.allocator(), sid, 2, .assistant, 300);
@@ -491,7 +492,7 @@ test "a drained queue starts one turn, so the cut takes every user message of th
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const sid = [_]u8{8} ** 16;
-    try seedSessionModel(&db, sid, "mock");
+    try seedSessionModel(&db, sid, "mock", "");
     try seedMessage(&db, arena.allocator(), sid, 1, .user, 300);
     try seedMessage(&db, arena.allocator(), sid, 2, .assistant, 300);
     try seedMessage(&db, arena.allocator(), sid, 3, .user, 300);
@@ -508,7 +509,7 @@ test "a history with no earlier turn is a skip" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const sid = [_]u8{9} ** 16;
-    try seedSessionModel(&db, sid, "mock");
+    try seedSessionModel(&db, sid, "mock", "");
     try seedMessage(&db, arena.allocator(), sid, 1, .user, 300);
     try seedMessage(&db, arena.allocator(), sid, 2, .assistant, 30_000);
 
@@ -525,7 +526,7 @@ test "the source preserves tool paths and caps a large field" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{10} ** 16;
-    try seedSessionModel(&db, sid, "mock");
+    try seedSessionModel(&db, sid, "mock", "");
 
     const long = try a.alloc(u8, max_source_field_bytes + 64);
     @memset(long, 'x');
@@ -567,7 +568,7 @@ test "the checkpoint merges whether the cut lands above it or below it" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{11} ** 16;
-    try seedSessionModel(&db, sid, "mock");
+    try seedSessionModel(&db, sid, "mock", "");
     const messages = [_]proto.message.Message{
         .{ .user = .{ .id = 1, .input_id = 1, .content = &.{.{ .text = .{ .text = "covered work" } }}, .time = .{ .created_at_ms = 1 } } },
         .{ .compaction = .{ .id = 2, .run_id = 1, .reason = .manual, .summary = "## Goal\nship it", .first_kept_id = 1, .tokens_before = 10, .tokens_after = 2, .time = .{ .created_at_ms = 2 } } },
@@ -598,14 +599,14 @@ test "the checkpoint merges whether the cut lands above it or below it" {
     try testing.expect(std.mem.indexOf(u8, first, "another assistant uses to continue") != null);
 }
 
-fn seedSessionModel(db: *database.Database, id: [16]u8, model: []const u8) !void {
+fn seedSessionModel(db: *database.Database, id: [16]u8, model: []const u8, reasoning: []const u8) !void {
     try database.session.create(db, .{
         .id = id,
         .root = "/w",
         .origin = "root",
         .profile = "default",
         .model = model,
-        .reasoning = "",
+        .reasoning = reasoning,
         .config_rev = 0,
         .title = "t",
         .created_at_ms = 1,
@@ -640,10 +641,17 @@ const TaskFixture = struct {
     models: [1]registry.ModelSpec,
     rows: [1]registry.Provider,
     session: *Session,
+    /// The session reasoning level, which the session row keeps.
+    reasoning: []const u8,
 
     const sid = [_]u8{21} ** 16;
 
     fn init(self: *TaskFixture) !void {
+        return self.initWith("");
+    }
+
+    fn initWith(self: *TaskFixture, reasoning: []const u8) !void {
+        self.reasoning = reasoning;
         try self.resources.init();
         self.db = try database.Database.openTest();
         self.engine = self.resources.makeEngine(&self.db);
@@ -654,7 +662,7 @@ const TaskFixture = struct {
         } } }};
         // The test owns this snapshot, so no reload can free it under a run.
         self.engine.deps.providers.merged.rows = &self.rows;
-        try seedSessionModel(&self.db, sid, "mock/m");
+        try seedSessionModel(&self.db, sid, "mock/m", self.reasoning);
         self.session = try self.engine.activate(.bytes(sid));
     }
 
@@ -920,6 +928,53 @@ test "automatic compaction preserves the exact tail and the next assistant id" {
     const projected = try context.project(a, &f.db, TaskFixture.sid, .{ .input_ceiling = 11_000 });
     try testing.expectEqual(@as(usize, 5), projected.messages.len);
     try testing.expectEqualSlices(u8, page.messages[3].assistant.content[0].text.text, projected.messages[2].assistant.content[0].text.text);
+}
+
+/// Seed a history large enough that one compaction reaches the model instead of skipping.
+fn seedCompactableHistory(db: *database.Database, arena: std.mem.Allocator) !void {
+    try seedMessage(db, arena, TaskFixture.sid, 1, .user, 300);
+    try seedMessage(db, arena, TaskFixture.sid, 2, .assistant, 300);
+    try seedMessage(db, arena, TaskFixture.sid, 3, .user, 300);
+    try seedMessage(db, arena, TaskFixture.sid, 4, .assistant, 70_000);
+}
+
+test "the summary call reasons at the session level" {
+    var f: TaskFixture = undefined;
+    try f.initWith("high");
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    f.models[0].reasoning_levels = &.{.{ .named = "high" }};
+    try seedCompactableHistory(&f.db, a);
+    var capture: CaptureTransport = .{ .replies = &.{ai.transport.canned_reply} };
+    defer capture.deinit();
+    f.engine.deps.route_transport = capture.transport();
+
+    _ = try f.run(.manual);
+    try testing.expectEqual(@as(usize, 1), capture.requests.items.len);
+    // The session asks for one effort, so the summary call asks the model for the same one.
+    try testing.expect(std.mem.indexOf(u8, capture.requests.items[0], "\"effort\":\"high\"") != null);
+}
+
+test "a budget control never rides the summary call, because it would spend the answer ceiling" {
+    var f: TaskFixture = undefined;
+    try f.initWith("high");
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    f.models[0].reasoning_levels = &.{.{ .named = "high" }};
+    // This ceiling sits under the summary output limit, so a budget would take most of the answer.
+    f.models[0].dialect.reasoning_budget = .{ .range = .{ .max = 2000 } };
+    try seedCompactableHistory(&f.db, a);
+    var capture: CaptureTransport = .{ .replies = &.{ai.transport.canned_reply} };
+    defer capture.deinit();
+    f.engine.deps.route_transport = capture.transport();
+
+    _ = try f.run(.manual);
+    try testing.expectEqual(@as(usize, 1), capture.requests.items.len);
+    try testing.expect(std.mem.indexOf(u8, capture.requests.items[0], "budget_tokens") == null);
 }
 
 test "an incomplete or empty summary leaves the checkpoint unchanged" {
