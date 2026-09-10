@@ -125,7 +125,7 @@ fn execWorker(host: *Host, op: *pending.Op, req: Request) pending.Result {
     defer arena.deinit();
     var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
 
-    const result = local.exec(arena.allocator(), .{
+    const result = local.exec(arena.allocator(), host.execution.shell, .{
         .command = req.command,
         .cwd = req.cwd,
         .timeout_ms = req.timeout_ms,

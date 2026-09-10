@@ -6,6 +6,7 @@ const std = @import("std");
 const utf8 = @import("../../utf8.zig");
 const h = @import("operations.zig");
 const paths = @import("../../paths.zig");
+const execution = @import("../../execution.zig");
 
 /// The wait between SIGTERM and SIGKILL. A shell runs its SIGTERM trap in this time.
 const grace_ns: u64 = 2 * std.time.ns_per_s;
@@ -46,14 +47,18 @@ const Drain = struct {
 };
 
 /// Run `spec` and return its output. It returns an error rather than an assertion, because `spec` is validated tool input.
-pub fn run(io: std.Io, root: []const u8, env: *const std.process.Environ.Map, scratch: std.mem.Allocator, spec: h.ExecSpec) h.HostError!h.ExecResult {
+pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: std.mem.Allocator, spec: h.ExecSpec) h.HostError!h.ExecResult {
     if (spec.timeout_ms == 0 or spec.max_stream_bytes == 0) return error.HostFailure;
-    const cwd = try resolveCwd(scratch, root, env, spec.cwd);
-    const argv = [_][]const u8{ "/bin/sh", "-c", spec.command };
+    std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
+    const cwd = try resolveCwd(scratch, root, context.env, spec.cwd);
+    // The shell reads one language string, which no direct program execution can accept.
+    const argv = [_][]const u8{ context.shell.path, "-c", spec.command };
 
     var child = std.process.spawn(io, .{
         .argv = &argv,
         .cwd = .{ .path = cwd },
+        // Without this the child inherits the raw process environment and loses the recovered home.
+        .environ_map = context.env,
         .stdin = .ignore,
         .stdout = .pipe,
         .stderr = .pipe,
@@ -196,8 +201,93 @@ const testing = std.testing;
 /// The environment every command test borrows. An empty environment allocates nothing, so no test frees it.
 var test_env: std.process.Environ.Map = .init(testing.allocator);
 
+/// A behaviour test replaces the child environment, so it must name the PATH its utilities need.
+/// Every release target holds `cat`, `head`, `tr`, `sleep` and `yes` under these two directories.
+fn utilityEnv() !std.process.Environ.Map {
+    var env: std.process.Environ.Map = .init(testing.allocator);
+    errdefer env.deinit();
+    try env.put("PATH", "/usr/bin:/bin");
+    return env;
+}
+
 fn runShell(a: std.mem.Allocator, command: []const u8, timeout_ms: u32) !h.ExecResult {
-    return run(testing.io, "/tmp", &test_env, a, .{ .command = command, .timeout_ms = timeout_ms, .max_stream_bytes = 256 });
+    var env = try utilityEnv();
+    defer env.deinit();
+    return run(testing.io, "/tmp", execution.testContext(&env), a, .{ .command = command, .timeout_ms = timeout_ms, .max_stream_bytes = 256 });
+}
+
+test "the runner spawns the shell it receives and gives it the command" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    // A fixture stands in for a shell, so this proves the argument vector without naming a real one.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "fake-shell", .data = "#!/bin/sh\necho \"ran $0 with $1 $2\"\n" });
+    try tmp.dir.setFilePermissions(testing.io, "fake-shell", .fromMode(0o755), .{});
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const fake = try std.fs.path.join(a, &.{ root, "fake-shell" });
+    const res = try run(testing.io, root, .{ .env = &test_env, .shell = .{ .path = fake } }, a, .{
+        .command = "MARKER",
+        .timeout_ms = 10_000,
+        .max_stream_bytes = 4096,
+    });
+    try testing.expect(std.mem.indexOf(u8, res.stdout, fake) != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "with -c MARKER") != null);
+}
+
+test "the child reads the environment Yuke resolved, not the one Yuke inherited" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // The real process environment holds a different HOME, so only the map can produce this one.
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("HOME", "/sentinel/home");
+    const with_home = try run(testing.io, "/tmp", execution.testContext(&env), a, .{
+        .command = "printf '%s' \"$HOME\"",
+        .timeout_ms = 10_000,
+        .max_stream_bytes = 4096,
+    });
+    try testing.expectEqualStrings("/sentinel/home", with_home.stdout);
+
+    // A map with no home directory gives the child none, so Git finds no global configuration.
+    const without = try run(testing.io, "/tmp", execution.testContext(&test_env), a, .{
+        .command = "printf '%s' \"${HOME-unset}\"",
+        .timeout_ms = 10_000,
+        .max_stream_bytes = 4096,
+    });
+    try testing.expectEqualStrings("unset", without.stdout);
+}
+
+test "git reads the global configuration from the home directory Yuke resolved" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    try tmp.dir.writeFile(testing.io, .{
+        .sub_path = ".gitconfig",
+        .data = "[user]\n\tname = Yuke Fixture\n\temail = fixture@example.invalid\n",
+    });
+
+    var env = try utilityEnv();
+    defer env.deinit();
+    try env.put("HOME", home);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // This is the reported bug: without the explicit map the child kept the parent home and found nothing.
+    const name = try run(testing.io, "/tmp", execution.testContext(&env), a, .{
+        .command = "git config --global user.name",
+        .timeout_ms = 20_000,
+        .max_stream_bytes = 4096,
+    });
+    if (name.outcome != .exited or name.outcome.exited != 0) return error.SkipZigTest; // no git here
+    try testing.expectEqualStrings("Yuke Fixture\n", name.stdout);
 }
 
 test "exec captures stdout, stderr, and the exit code" {
@@ -220,7 +310,9 @@ test "exec runs in the requested working directory" {
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const res = try run(testing.io, root, &test_env, arena.allocator(), .{
+    var env = try utilityEnv();
+    defer env.deinit();
+    const res = try run(testing.io, root, execution.testContext(&env), arena.allocator(), .{
         .command = "cat marker.txt",
         .timeout_ms = 10_000,
         .max_stream_bytes = 4096,
@@ -297,7 +389,7 @@ test "a tilde cwd without a home directory fails instead of running somewhere el
     defer arena.deinit();
     // `test_env` names no home, so the anchor cannot resolve `~` and the command must never start.
     for ([_][]const u8{ "~", "~/child" }) |cwd| {
-        try testing.expectError(error.HomeUnavailable, run(testing.io, "/tmp", &test_env, arena.allocator(), .{
+        try testing.expectError(error.HomeUnavailable, run(testing.io, "/tmp", execution.testContext(&test_env), arena.allocator(), .{
             .command = "echo ran",
             .cwd = cwd,
             .timeout_ms = 10_000,
@@ -320,7 +412,7 @@ test "exec expands a leading tilde in cwd like the file tools" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     // The workspace root is elsewhere, so only the expansion can reach the file.
-    const res = try run(testing.io, "/tmp", &env, arena.allocator(), .{
+    const res = try run(testing.io, "/tmp", execution.testContext(&env), arena.allocator(), .{
         .command = "cat marker.txt",
         .cwd = "~",
         .timeout_ms = 10_000,
