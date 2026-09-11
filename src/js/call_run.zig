@@ -157,7 +157,7 @@ fn acceptPromise(host: *Host, call: *table.Call, answer: Value) void {
     poll(host, call);
 }
 
-/// Read one Promise. A pending Promise stays; the owner asks again after the next job drain.
+/// Read one Promise. A pending Promise stays. `Calls.hasWork` asks for a pump after it settles.
 fn poll(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     const state = ctx.promiseState(call.promise);

@@ -324,7 +324,7 @@ test "a request reaches a command and answers with its result" {
         \\globalThis.detached = 0;
         \\native.request("catalog.list", "{}").catch(() => { globalThis.detached = 1; });
     , "detached.js");
-    try pumpRequests(host);
+    try support.pumpUntilIdle(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.detached"));
 
     // With the engine attached, the same call reaches `commands.catalogList`.
@@ -336,7 +336,7 @@ test "a request reaches a command and answers with its result" {
         \\  globalThis.ok = r && Array.isArray(r.models) ? 1 : 0;
         \\});
     , "attached.js");
-    try pumpRequests(host);
+    try support.pumpUntilIdle(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ok"));
 
     // A command with real parameters must decode them, not fall back to an empty object.
@@ -349,7 +349,7 @@ test "a request reaches a command and answers with its result" {
         \\  native.sessionOpen(globalThis.sid);
         \\});
     , "create.js");
-    try pumpRequests(host);
+    try support.pumpUntilIdle(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.created"));
 
     // The client shape of an input must decode. A wrong shape refuses every message a person sends.
@@ -358,7 +358,7 @@ test "a request reaches a command and answers with its result" {
         \\globalThis.sent = 0;
         \\client.sessionSendInput(globalThis.sid, "probe").then(() => { globalThis.sent = 1; }, () => { globalThis.sent = 2; });
     , "send.js");
-    try pumpRequests(host);
+    try support.pumpUntilIdle(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.sent"));
 
     // The text a person typed must come back. A default limit reads one page, never zero bytes.
@@ -390,7 +390,7 @@ test "a request reaches a command and answers with its result" {
         \\  globalThis.isUnknown = e.code === "unknown_session" ? 1 : 0;
         \\});
     , "refuse.js");
-    try pumpRequests(host);
+    try support.pumpUntilIdle(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.isUnknown"));
     try host.evalModule(
         \\import { native } from "yuke:engine-native";
@@ -399,20 +399,12 @@ test "a request reaches a command and answers with its result" {
     host.engine.detach();
 }
 
+const support = @import("../test_support.zig");
+
 test {
     _ = digest;
     _ = paging;
     _ = project;
-}
-
-fn pumpRequests(host: *Host) !void {
-    for (0..64) |_| {
-        try host.pump();
-        if (host.ops.live.items.len == 0) return;
-        host.wake.reset();
-        if (!host.hasPending()) host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
-    }
-    return error.RequestNeverSettled;
 }
 
 fn jsSetAgentLimits(ctx: Context, _: Value, args: []const Value) Value {

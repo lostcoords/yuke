@@ -45,26 +45,67 @@ pub fn expectString(host: *Host, comptime property: []const u8, want: []const u8
     try std.testing.expectEqualStrings(want, text);
 }
 
+/// The longest owner sleep. A test that reaches it found work that no task announced.
+const wake_timeout: std.Io.Clock.Duration = .{ .raw = .fromSeconds(10), .clock = .awake };
+/// The most passes for one helper. A test that reaches it found an owner that never settles.
+const max_pumps = 1024;
+
+/// Drive the owner until no primitive is in flight.
 pub fn pumpUntilIdle(host: *Host) !void {
-    var rounds: u32 = 0;
-    while (host.ops.live.items.len != 0) : (rounds += 1) {
-        if (rounds == 64) return error.PrimitiveNeverSettled;
-        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
-        host.wake.reset();
+    for (0..max_pumps) |_| {
         try host.pump();
+        if (host.ops.live.items.len == 0) return;
+        try awaitWork(host);
     }
-    try host.pump();
+    return error.PrimitiveNeverSettled;
 }
 
-pub fn pumpUntilSettled(host: *Host, call: *tools_table.Call, wake: ?*std.Io.Event) !void {
-    var rounds: u32 = 0;
-    while (call.state != .settled) : (rounds += 1) {
-        if (rounds == 64) return error.CallNeverSettled;
-        if (wake) |w| {
-            w.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
-            w.reset();
-        }
+/// Drive the owner until the call settles.
+pub fn pumpUntilSettled(host: *Host, call: *tools_table.Call) !void {
+    for (0..max_pumps) |_| {
         try host.pump();
+        if (call.state == .settled) return;
+        try awaitWork(host);
+    }
+    return error.CallNeverSettled;
+}
+
+/// Drive the owner until a task sets the event. The task must set `host.wake` after the event.
+pub fn pumpUntilSet(host: *Host, event: *const std.Io.Event) !void {
+    for (0..max_pumps) |_| {
+        try host.pump();
+        if (event.isSet()) return;
+        try awaitWork(host);
+    }
+    return error.TaskNeverFinished;
+}
+
+/// Drive the owner until the JavaScript expression answers a nonzero integer.
+pub fn pumpUntilTrue(host: *Host, expression: [:0]const u8) !void {
+    for (0..max_pumps) |_| {
+        try host.pump();
+        if (try host.evalInt(expression) != 0) return;
+        try awaitWork(host);
+    }
+    return error.ConditionNeverTrue;
+}
+
+/// Sleep as the owner loops do: clear the wake, and sleep only when no work waits.
+fn awaitWork(host: *Host) !void {
+    std.debug.assert(host.phase == .open);
+    host.wake.reset();
+    if (host.hasPending()) return;
+    const deadline = std.Io.Clock.Timestamp.fromNow(host.io, wake_timeout);
+    while (true) {
+        host.wake.waitTimeout(host.io, .{ .deadline = deadline }) catch |err| switch (err) {
+            error.Canceled => return err,
+            // A spurious wakeup also returns Timeout, so only the deadline proves a missed wake.
+            error.Timeout => {
+                if (deadline.durationFromNow(host.io).raw.nanoseconds > 0) continue;
+                return error.OwnerNeverWoken;
+            },
+        };
+        return;
     }
 }
 

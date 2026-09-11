@@ -250,7 +250,7 @@ pub const Host = struct {
     /// Report whether the owner has primitive work waiting. It asks before it sleeps.
     pub fn hasPending(self: *const Host) bool {
         return self.ops.anyDone() or self.engine.hasPending() or
-            self.calls.hasWork(self.runtime.isJobPending());
+            self.calls.hasWork(self.ctx, self.runtime.isJobPending());
     }
 
     /// Drain jobs, release QuickJS resources, and destroy the host.

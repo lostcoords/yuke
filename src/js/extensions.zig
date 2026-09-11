@@ -70,6 +70,7 @@ pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
 const ai = @import("ai");
 const database = @import("../store/store.zig");
 const tools_table = @import("tools.zig");
+const support = @import("test_support.zig");
 
 /// The boot a headless test host runs: the kernel and the plugin bus, and nothing of the view tier.
 const kernel_boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";
@@ -117,18 +118,6 @@ pub const Fixture = struct {
         std.debug.assert(self.gpa.deinit() == .ok);
     }
 };
-
-/// Drive the owner until one call settles, the way `serve` does between frames.
-fn pumpUntilSettled(host: *Host, call: *tools_table.Call) !void {
-    try host.pump();
-    var rounds: u32 = 0;
-    while (call.state != .settled) : (rounds += 1) {
-        if (rounds == 64) return error.CallNeverSettled;
-        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
-        host.wake.reset();
-        try host.pump();
-    }
-}
 
 test "one execution context reaches both the engine and the JavaScript host" {
     var f: Fixture = undefined;
@@ -208,7 +197,7 @@ test "headless extensions pump an async JavaScript tool" {
     try std.testing.expectEqualStrings("", app_runtime.engine.child_instructions.?);
 
     const call = extensions.host.calls.submit("read_note", "{\"path\":\"note.txt\"}", "");
-    try pumpUntilSettled(extensions.host, call);
+    try support.pumpUntilSettled(extensions.host, call);
     try std.testing.expect(!call.is_error);
     try std.testing.expectEqualStrings("{\"text\":\"from rpc\"}", call.text.?);
     call.finish();
@@ -292,7 +281,7 @@ test "tool rejection codes cross the native bridge as cancellation reasons" {
     for (cases) |case| {
         const call = host.calls.submit(case.name, "{}", "");
         defer call.finish();
-        try pumpUntilSettled(host, call);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expectEqual(case.reason, call.cancellation_reason);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings(case.name, call.text.?);
@@ -418,10 +407,44 @@ test "a hook chain replaces a payload and the first block ends it" {
     try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"refused\"}", refused);
 }
 
+test "a turn task gets its hook answer from the owner without a second wake" {
+    var f: Fixture = undefined;
+    try f.init(
+        \\import { plugins } from "yuke";
+        \\plugins.use({ name: "gate", apply: (ctx) => {
+        \\  ctx.hook("tool.before", (ev) => ({ block: "denied " + ev.name }));
+        \\}});
+    , kernel_boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+
+    // The task asks through the port, as a turn task does.
+    const Asker = struct {
+        host: *Host,
+        arena: std.heap.ArenaAllocator,
+        decision: ?@import("../engine/hookset.zig").Decision = null,
+        answered: std.Io.Event = .unset,
+
+        fn run(self: *@This()) void {
+            const hooks = port.hookSet(self.host);
+            self.decision = hooks.ask(hooks.ctx, self.arena.allocator(), .@"tool.before", "{\"name\":\"bash\",\"arguments\":\"{}\"}");
+            self.answered.set(self.host.io);
+            self.host.wake.set(self.host.io);
+        }
+    };
+    var asker: Asker = .{ .host = host, .arena = .init(std.testing.allocator) };
+    defer asker.arena.deinit();
+    var task = try host.io.concurrent(Asker.run, .{&asker});
+    defer task.cancel(host.io);
+
+    try support.pumpUntilSet(host, &asker.answered);
+    try std.testing.expectEqualStrings("denied bash", asker.decision.?.block);
+}
+
 /// Submit one hook call, pump the owner until it settles, and copy the answer, because the owner frees the record's text on its next sweep.
 fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) ![]u8 {
     const call = extensions.host.calls.submitHook(point, payload);
-    try pumpUntilSettled(extensions.host, call);
+    try support.pumpUntilSettled(extensions.host, call);
     try std.testing.expect(!call.is_error);
     const text = try std.testing.allocator.dupe(u8, call.text.?);
     call.finish();
@@ -477,16 +500,6 @@ test "a throwing user entry is a JavaScriptFault the loop absorbs" {
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "bad config") != null);
 }
 
-fn pumpUntil(host: *Host, expression: [:0]const u8) !void {
-    for (0..64) |_| {
-        try host.pump();
-        if (try host.evalInt(expression) != 0) return;
-        host.wake.reset();
-        if (!host.hasPending()) host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } }) catch {};
-    }
-    return error.RequestNeverSettled;
-}
-
 const deferred_input =
     \\import { plugins } from "yuke";
     \\import { native } from "yuke:engine-native";
@@ -511,7 +524,7 @@ fn startDeferredInput(host: *Host) !void {
         \\  return sendInput({ session_id: sid, input: { type: "content", content: [{ type: "text", text: "original" }] } });
         \\}).then(() => { globalThis.finished = 1; }, (e) => { globalThis.failure = e.code; globalThis.finished = 2; });
     , "input-start.js");
-    try pumpUntil(host, "globalThis.waiting === 1");
+    try support.pumpUntilTrue(host, "globalThis.waiting === 1");
 }
 
 test "an input hook leaves the owner free and its replacement reaches the store" {
@@ -524,19 +537,19 @@ test "an input hook leaves the owner free and its replacement reaches the store"
     try host.evalModule(
         \\request("initialize").then(() => { globalThis.responsive = 1; });
     , "input-concurrent.js");
-    try pumpUntil(host, "globalThis.responsive === 1");
+    try support.pumpUntilTrue(host, "globalThis.responsive === 1");
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.finished"));
     try host.evalModule(
         \\release({ replace: { ...payload, content: [{ type: "text", text: "replaced" }] } });
     , "input-release.js");
-    try pumpUntil(host, "globalThis.finished !== 0");
+    try support.pumpUntilTrue(host, "globalThis.finished !== 0");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.finished"));
     try host.evalModule(
         \\request("session.history", { session_id: sid, before_message_id: Number.MAX_SAFE_INTEGER }).then((history) => {
         \\  globalThis.stored = history.messages.some((m) => m.type === "user" && m.content[0].text === "replaced") ? 1 : 2;
         \\}).catch(() => { globalThis.stored = 3; });
     , "input-history.js");
-    try pumpUntil(host, "globalThis.stored > 0");
+    try support.pumpUntilTrue(host, "globalThis.stored > 0");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.stored"));
 }
 
@@ -549,9 +562,9 @@ test "an input hook cannot revive a session removed while it waits" {
     try host.evalModule(
         \\request("session.remove", { session_id: sid }).then(() => { globalThis.removed = 1; });
     , "input-remove.js");
-    try pumpUntil(host, "globalThis.removed === 1");
+    try support.pumpUntilTrue(host, "globalThis.removed === 1");
     try host.eval("release();", "input-release.js");
-    try pumpUntil(host, "globalThis.finished !== 0");
+    try support.pumpUntilTrue(host, "globalThis.finished !== 0");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.finished === 2 && globalThis.failure === 'unknown_session'"));
 }
 
@@ -562,12 +575,12 @@ test "a blocked input answers its code and reaches no store" {
     const host = f.extensions.host;
     try startDeferredInput(host);
     try host.eval("release({ block: 'denied' });", "input-block.js");
-    try pumpUntil(host, "globalThis.finished !== 0");
+    try support.pumpUntilTrue(host, "globalThis.finished !== 0");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.finished === 2 && globalThis.failure === 'bad_request'"));
     try host.evalModule(
         \\request("session.history", { session_id: sid, before_message_id: Number.MAX_SAFE_INTEGER }).then((history) => { globalThis.empty = history.messages.length === 0 ? 1 : 2; }).catch(() => { globalThis.empty = 3; });
     , "input-after-block.js");
-    try pumpUntil(host, "globalThis.empty > 0");
+    try support.pumpUntilTrue(host, "globalThis.empty > 0");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.empty"));
 }
 
@@ -599,7 +612,7 @@ test "create with input shares the hook gate and a refusal leaves no session" {
         try host.eval(text, "mode.js");
         const call = host.calls.submitInputMethod("session.create", params);
         defer call.finish();
-        try pumpUntilSettled(host, call);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "failure") != null);
         try std.testing.expectEqual(@as(u64, 0), try database.session.count(&f.app.db, a, .{}));
     }
@@ -607,7 +620,7 @@ test "create with input shares the hook gate and a refusal leaves no session" {
     try host.eval("globalThis.mode='replace'", "mode.js");
     const call = host.calls.submitInputMethod("session.create", params);
     defer call.finish();
-    try pumpUntilSettled(host, call);
+    try support.pumpUntilSettled(host, call);
     const answer = try std.json.parseFromSliceLeaky(struct { result: proto.session.SessionResult }, a, call.text.?, .{});
     const id = answer.result.session.id;
     const page = try database.message.historyPage(&f.app.db, a, id.raw, 0, 10);
@@ -702,7 +715,7 @@ test "the skill tool answers a catalog body through skill.load" {
 
     const call = host.calls.submit("skill", "{\"name\":\"pdf\"}", host.cwd);
     call.site = .{ .session_id = created.session.id, .message_id = 1, .part_id = 0 };
-    try pumpUntilSettled(host, call);
+    try support.pumpUntilSettled(host, call);
     try std.testing.expect(!call.is_error);
     try std.testing.expect(std.mem.startsWith(u8, call.text.?, "<skill_content name=\"pdf\">\nRead the pdf.\n\nSkill directory: "));
     try std.testing.expect(std.mem.endsWith(u8, call.text.?, ".agents/skills/pdf\nResolve relative paths against this directory.\n</skill_content>"));
@@ -712,7 +725,7 @@ test "the skill tool answers a catalog body through skill.load" {
     // The catalog decides what a name means, so an unknown name is an error the model can read.
     const missing = host.calls.submit("skill", "{\"name\":\"nope\"}", host.cwd);
     missing.site = .{ .session_id = created.session.id, .message_id = 1, .part_id = 0 };
-    try pumpUntilSettled(host, missing);
+    try support.pumpUntilSettled(host, missing);
     try std.testing.expect(missing.is_error);
     try std.testing.expect(std.mem.indexOf(u8, missing.text.?, "has no skill with this name") != null);
     missing.finish();

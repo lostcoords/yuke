@@ -240,13 +240,17 @@ pub const Calls = struct {
         return null;
     }
 
-    /// Report whether the owner has work: a queued call needs a start, a running one a poll while jobs remain, a left one a sweep.
-    pub fn hasWork(self: *const Calls, jobs_pending: bool) bool {
+    /// Report whether a call needs the owner: a start, a poll, or a sweep.
+    pub fn hasWork(self: *const Calls, ctx: Context, jobs_pending: bool) bool {
         for (self.live.items) |call| {
             if (call.submitter_done) return true;
             switch (call.state) {
                 .queued => return true,
-                .running => if (jobs_pending) return true,
+                .running => {
+                    std.debug.assert(ctx.isPromise(call.promise));
+                    // The last job drain of a pump can settle the Promise after the poll of that pump.
+                    if (jobs_pending or ctx.promiseState(call.promise) != .Pending) return true;
+                },
                 .settled => {},
             }
         }

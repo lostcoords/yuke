@@ -28,7 +28,7 @@ test "a hook fault in one result does not stop later handlers" {
     try support.eval(host, "tests/native_tools/hook-fault.test.js");
 
     const call = host.calls.submitHook("input.before", "{}");
-    try support.pumpUntilSettled(host, call, null);
+    try support.pumpUntilSettled(host, call);
     try std.testing.expect(!call.is_error);
     try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"accepted\"}", call.text.?);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
@@ -46,7 +46,7 @@ test "the owner runs an async handler and answers its resolved value" {
     // A synchronous callback violates the tool contract.
     {
         const call = host.calls.submit("sync", "{\"city\":\"Tokyo\"}", "");
-        try support.pumpUntilSettled(host, call, null);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("the tool execute function must return a Promise", call.text.?);
         try support.dropCall(host, call);
@@ -54,20 +54,20 @@ test "the owner runs an async handler and answers its resolved value" {
     // A Promise settles through the job drain, so one pump is still enough.
     {
         const call = host.calls.submit("later", "{\"city\":\"Kyoto\"}", "");
-        try support.pumpUntilSettled(host, call, null);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expectEqualStrings("{\"got\":\"Kyoto\",\"async\":true}", call.text.?);
         try support.dropCall(host, call);
     }
     // A string passes through, because a text tool must not gain quotes.
     {
         const call = host.calls.submit("text", "{\"city\":\"Osaka\"}", "");
-        try support.pumpUntilSettled(host, call, null);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expectEqualStrings("just text", call.text.?);
         try support.dropCall(host, call);
     }
     {
         const call = host.calls.submit("nothing", "{\"city\":\"Nara\"}", "");
-        try support.pumpUntilSettled(host, call, null);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expectEqualStrings("", call.text.?);
         try support.dropCall(host, call);
@@ -88,7 +88,7 @@ test "a failed handler answers the model with an error it can read" {
     };
     for (cases) |case| {
         const call = host.calls.submit(case.name, "{\"city\":\"Tokyo\"}", "");
-        try support.pumpUntilSettled(host, call, null);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings(case.want, call.text.?);
         try support.dropCall(host, call);
@@ -97,14 +97,14 @@ test "a failed handler answers the model with an error it can read" {
     // A name that no tool owns, and arguments that are not JSON, are engine input, not a crash.
     {
         const call = host.calls.submit("absent", "{}", "");
-        try support.pumpUntilSettled(host, call, null);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("the tool is not registered", call.text.?);
         try support.dropCall(host, call);
     }
     {
         const call = host.calls.submit("throws", "not json", "");
-        try support.pumpUntilSettled(host, call, null);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("the arguments are not valid JSON", call.text.?);
         try support.dropCall(host, call);
@@ -132,7 +132,7 @@ test "a handler that awaits a primitive answers when the task finishes" {
     try host.pump();
     try std.testing.expectEqual(tools_table.Call.State.running, call.state);
 
-    try support.pumpUntilSettled(host, call, &host.wake);
+    try support.pumpUntilSettled(host, call);
     try std.testing.expect(!call.is_error);
     try std.testing.expectEqualStrings("{\"text\":\"from disk\"}", call.text.?);
     try support.dropCall(host, call);
@@ -246,7 +246,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
 
     {
         const call = host.calls.submit("read", "{\"path\":\"a.txt\",\"start\":2,\"end\":3}", root);
-        try support.pumpUntilSettled(host, call, &host.wake);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expectEqualStrings("2: two\n3: two", call.text.?);
         call.finish();
@@ -254,7 +254,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submit("read", "{\"path\":\"long.txt\"}", root);
-        try support.pumpUntilSettled(host, call, &host.wake);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.endsWith(u8, call.text.?, "[The tool cut 1 line(s) at 8000 bytes.]"));
         call.finish();
@@ -262,7 +262,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submit("read", "{\"path\":\"missing.txt\"}", root);
-        try support.pumpUntilSettled(host, call, &host.wake);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("read: the path does not exist", call.text.?);
         call.finish();
@@ -270,7 +270,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submit("read", "{\"path\":1}", root);
-        try support.pumpUntilSettled(host, call, &host.wake);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expectEqualStrings("read: the argument path must be a string", call.text.?);
         call.finish();
@@ -278,7 +278,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submit("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", root);
-        try support.pumpUntilSettled(host, call, &host.wake);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "more than one") != null);
         call.finish();
@@ -286,7 +286,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submit("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\",\"replace_all\":true}", root);
-        try support.pumpUntilSettled(host, call, &host.wake);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "replaced 2") != null);
         try std.testing.expect(call.view_json != null);
@@ -295,7 +295,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submit("write", "{\"path\":\"new.txt\",\"content\":\"fresh\\n\"}", root);
-        try support.pumpUntilSettled(host, call, &host.wake);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "wrote 6 bytes") != null);
         try std.testing.expect(call.view_json != null);
@@ -304,7 +304,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submit("write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", root);
-        try support.pumpUntilSettled(host, call, &host.wake);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(call.view_json == null);
         call.finish();
@@ -312,7 +312,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submit("exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", root);
-        try support.pumpUntilSettled(host, call, &host.wake);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expectEqualStrings("out\n[stderr]\nerr\n[exit code: 3]", call.text.?);
         call.finish();
@@ -320,7 +320,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     }
     {
         const call = host.calls.submit("exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", root);
-        try support.pumpUntilSettled(host, call, &host.wake);
+        try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "[The command passed its 300 ms timeout.") != null);
         call.finish();
@@ -335,7 +335,7 @@ test "a user edit tool overrides the baked edit tool" {
     try support.eval(host, "tests/native_tools/builtins.test.js");
 
     const call = host.calls.submit("edit", "{}", "");
-    try support.pumpUntilSettled(host, call, null);
+    try support.pumpUntilSettled(host, call);
     try std.testing.expect(!call.is_error);
     try std.testing.expectEqualStrings("user edit", call.text.?);
     call.finish();
