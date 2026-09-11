@@ -29,7 +29,7 @@ jobs:
       # This step also covers test-js and check-schema. See build.zig.
       # The tests write to stderr, so a pass also prints "failed command".
       - name: Test
-        run: zig build test
+        run: zig build test --test-timeout 2m --summary all
 
   # Only this job runs the macOS code. Ten files branch on the host system.
   # zio selects kqueue there, and lib/term/tty_posix.zig has a Darwin path.
@@ -41,7 +41,7 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
 
       - name: Test
-        run: zig build test
+        run: zig build test --test-timeout 2m --summary all
 
   # Debug, not ReleaseFast. This gate finds a target that does not compile.
   # The release builds the optimized binaries. Windows is not a target.
