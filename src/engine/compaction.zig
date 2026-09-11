@@ -710,35 +710,6 @@ test "the session starts the compaction it held once its run ends" {
 
 const ai = @import("ai");
 
-/// Capture model requests and return one deterministic response per request.
-const CaptureTransport = struct {
-    requests: std.ArrayList([]const u8) = .empty,
-    replies: []const []const u8,
-
-    fn deinit(self: *CaptureTransport) void {
-        for (self.requests.items) |body| testing.allocator.free(body);
-        self.requests.deinit(testing.allocator);
-    }
-
-    fn transport(self: *CaptureTransport) ai.transport.Transport {
-        return .{ .ctx = self, .vtable = &.{ .open = open } };
-    }
-
-    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: ai.transport.Request, _: *ai.transport.AttemptInfo) !ai.transport.ResponseBody {
-        const self: *CaptureTransport = @ptrCast(@alignCast(ctx));
-        const index = self.requests.items.len;
-        const body = try testing.allocator.dupe(u8, request.body);
-        self.requests.append(testing.allocator, body) catch |err| {
-            testing.allocator.free(body);
-            return err;
-        };
-        if (index >= self.replies.len) return error.UnexpectedRequest;
-        const reader = try arena.create(ai.transport.ReplayReader);
-        reader.* = .{ .bytes = self.replies[index] };
-        return reader.body();
-    }
-};
-
 fn sendAndWait(f: *TaskFixture, arena: std.mem.Allocator, text: []const u8) !void {
     var gate: ?turn.Launch = null;
     _ = try commands.sessionSendInputForRpc(&f.engine, arena, .{
@@ -761,8 +732,7 @@ test "automatic compaction preserves the exact tail and the next assistant id" {
     try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 30_000);
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 7000);
-    var capture: CaptureTransport = .{ .replies = &.{ ai.transport.canned_reply, ai.transport.canned_reply } };
-    defer capture.deinit();
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ ai.transport.canned_reply, ai.transport.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try sendAndWait(&f, a, "keep the exact tail");
     try testing.expectEqual(@as(usize, 2), capture.requests.items.len);
@@ -809,8 +779,7 @@ test "the summary call repeats the prefix of the turn and refuses a tool" {
     };
     var tool_ctx: u8 = 0;
     f.engine.installTools(.{ .ctx = &tool_ctx, .getDecls = Tools.decls });
-    var capture: CaptureTransport = .{ .replies = &.{ai.transport.canned_reply} };
-    defer capture.deinit();
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
 
     _ = try f.run(.manual);
@@ -835,8 +804,7 @@ test "the summary call reasons at the session level" {
     const a = arena.allocator();
     f.models[0].reasoning_levels = &.{.{ .named = "high" }};
     try seedCompactableHistory(&f.db, a);
-    var capture: CaptureTransport = .{ .replies = &.{ai.transport.canned_reply} };
-    defer capture.deinit();
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
 
     _ = try f.run(.manual);
@@ -856,8 +824,7 @@ test "a budget control never rides the summary call, because it would spend the 
     // This ceiling sits under the summary output limit, so a budget would take most of the answer.
     f.models[0].dialect.reasoning_budget = .{ .range = .{ .max = 2000 } };
     try seedCompactableHistory(&f.db, a);
-    var capture: CaptureTransport = .{ .replies = &.{ai.transport.canned_reply} };
-    defer capture.deinit();
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
 
     _ = try f.run(.manual);
@@ -908,8 +875,7 @@ test "oversized summary sources and tails fail before a model request" {
         try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, if (large_tail) 300 else 70_000);
         try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
         try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, if (large_tail) 70_000 else 7000);
-        var capture: CaptureTransport = .{ .replies = &.{} };
-        defer capture.deinit();
+        var capture: Resources.Capture = .{ .arena = a, .replies = &.{} };
         f.engine.deps.route_transport = capture.transport();
         const outcome = try f.run(.manual);
         try testing.expect(outcome == .failed);
@@ -943,8 +909,7 @@ test "a tool round can compact and resume within the same run" {
         "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
         "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":1}}\n\n" ++
         "data: {\"type\":\"message_stop\"}\n\n";
-    var capture: CaptureTransport = .{ .replies = &.{ tool_reply, ai.transport.canned_reply, ai.transport.canned_reply } };
-    defer capture.deinit();
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ tool_reply, ai.transport.canned_reply, ai.transport.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try sendAndWait(&f, a, "continue after the tool");
     try testing.expectEqual(@as(usize, 3), capture.requests.items.len);
@@ -1046,8 +1011,7 @@ test "repeated compaction merges the prior summary and charges only the active c
     try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
-    var capture: CaptureTransport = .{ .replies = &.{ ai.transport.canned_reply, ai.transport.canned_reply } };
-    defer capture.deinit();
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ ai.transport.canned_reply, ai.transport.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try testing.expect(try f.run(.manual) == .compacted);
     f.session = try f.engine.activate(.bytes(TaskFixture.sid));
@@ -1076,8 +1040,7 @@ test "an oversized single turn fails without a summary request or a context trim
     defer arena.deinit();
     const a = arena.allocator();
     f.models[0].limits.context_window = 20_000;
-    var capture: CaptureTransport = .{ .replies = &.{} };
-    defer capture.deinit();
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{} };
     f.engine.deps.route_transport = capture.transport();
     try sendAndWait(&f, a, "x" ** 40_000);
     try testing.expectEqual(@as(usize, 0), capture.requests.items.len);
@@ -1101,8 +1064,7 @@ test "a smaller summary that still exceeds the request budget does not commit" {
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 7000);
     const reply = try std.mem.replaceOwned(u8, a, ai.transport.canned_reply, "Hello from the yuke mock provider.", "x" ** 1800);
-    var capture: CaptureTransport = .{ .replies = &.{reply} };
-    defer capture.deinit();
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{reply} };
     f.engine.deps.route_transport = capture.transport();
     const outcome = try f.run(.manual);
     try testing.expect(outcome == .failed);
