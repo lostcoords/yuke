@@ -280,34 +280,33 @@ fn addSqlDir(b: *std.Build, run: *std.Build.Step.Run, dir_path: []const u8) void
 }
 
 fn addSourceInputs(b: *std.Build, run: *std.Build.Step.Run, dir_path: []const u8, suffix: []const u8) void {
+    for (listFiles(b, dir_path, suffix)) |name| run.addFileInput(b.path(b.fmt("{s}/{s}", .{ dir_path, name })));
+}
+
+/// The names come sorted, so an argument list and a generated file built from them stay stable.
+fn listFiles(b: *std.Build, dir_path: []const u8, suffix: []const u8) []const []const u8 {
     const io = b.graph.io;
     var dir = b.build_root.handle.openDir(io, dir_path, .{ .iterate = true }) catch |err| {
         std.debug.panic("open {s}: {s}", .{ dir_path, @errorName(err) });
     };
     defer dir.close(io);
+    var names: std.ArrayList([]const u8) = .empty;
     var it = dir.iterate();
     while (it.next(io) catch |err| std.debug.panic("iterate {s}: {s}", .{ dir_path, @errorName(err) })) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.name, suffix)) continue;
-        run.addFileInput(b.path(b.fmt("{s}/{s}", .{ dir_path, entry.name })));
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, suffix)) continue;
+        names.append(b.allocator, b.dupe(entry.name)) catch @panic("OOM");
     }
+    std.mem.sort([]const u8, names.items, {}, lessThan);
+    return names.items;
 }
 
-/// The app modules every host embeds as bytecode. `facade` answers the bare name `yuke`.
-const baked_js = [_][]const u8{
-    "facade",     "kernel",         "builtins",   "ext",         "interaction",  "tui",
-    "core",       "keys",           "text-input", "pager",       "chat-view",    "layout",
-    "md",         "ui",             "client",     "vim",         "notice",       "sessions",
-    "refresh",    "activity",       "indicator",  "queue",       "context",      "cache",
-    "command-ui", "catalog",        "agents-ui",  "agent-tools", "agents",       "auth",
-    "chat",       "fzy",            "transcript", "explorer",    "composer-vim", "transcript-vim",
-    "defaults",   "interaction-ui",
-};
+fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+    return std.mem.lessThan(u8, lhs, rhs);
+}
 
-/// The modules `src/js/native` installs in every host. The bake tool stubs these and rejects any other unknown import.
+/// The modules `src/js/native` installs in every host. The bake stubs these and rejects any other unknown import.
 const native_js = "yuke:diff,yuke:engine-native,yuke:exec,yuke:fs,yuke:hooks,yuke:interaction-native,yuke:term,yuke:tools";
 
-/// Bake the app modules to QuickJS bytecode on the build machine. The result is the `baked` import.
 fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.builtin.OptimizeMode) *std.Build.Module {
     const tool = b.addExecutable(.{
         .name = "yuke-jsbake",
@@ -321,9 +320,11 @@ fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.buil
     const run = b.addRunArtifact(tool);
     const out = run.addOutputDirectoryArg("baked");
     run.addArg(native_js);
-    for (baked_js) |file| {
-        run.addArg(if (std.mem.eql(u8, file, "facade")) "yuke" else b.fmt("yuke:{s}", .{file}));
-        run.addFileArg(b.path(b.fmt("src/js/app/{s}.js", .{file})));
+    for (listFiles(b, "src/js/app", ".js")) |file| {
+        const stem = std.fs.path.stem(file);
+        // `facade.js` is the public entry, so it answers the bare name.
+        run.addArg(if (std.mem.eql(u8, stem, "facade")) "yuke" else b.fmt("yuke:{s}", .{stem}));
+        run.addFileArg(b.path(b.fmt("src/js/app/{s}", .{file})));
     }
     return b.createModule(.{ .root_source_file = out.path(b, "baked.zig") });
 }
