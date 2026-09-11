@@ -46,18 +46,12 @@ pub const Store = struct {
     pub fn put(self: Store, io: std.Io, arena: std.mem.Allocator, path: []const u8) PutError!MediaBlob {
         std.debug.assert(self.dir.len != 0);
         if (!std.fs.path.isAbsolute(path)) return error.BlobPathNotAbsolute;
-        const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            else => return error.BlobUnreadable,
-        };
+        const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch |err| return ioFail(err, error.BlobUnreadable);
         if (stat.kind != .file) return error.BlobNotRegularFile;
         if (stat.size == 0) return error.BlobEmpty;
         if (stat.size > max_bytes) return error.BlobTooLarge;
-        const data = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(max_bytes + 1)) catch |err| switch (err) {
-            error.OutOfMemory, error.Canceled => |e| return e,
-            error.StreamTooLong => return error.BlobTooLarge,
-            else => return error.BlobUnreadable,
-        };
+        const data = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(max_bytes + 1)) catch |err|
+            return if (err == error.StreamTooLong) error.BlobTooLarge else ioFail(err, error.BlobUnreadable);
         if (data.len == 0) return error.BlobEmpty;
         const mime = sniff(data) orelse return error.BlobUnsupportedType;
 
@@ -89,40 +83,24 @@ pub const Store = struct {
     pub fn read(self: Store, io: std.Io, arena: std.mem.Allocator, hash: Hash) error{ OutOfMemory, Canceled, BlobMissing }![]const u8 {
         std.debug.assert(self.dir.len != 0);
         const target = try self.pathOf(arena, hash);
-        return std.Io.Dir.cwd().readFileAlloc(io, target, arena, .limited(max_bytes + 1)) catch |err| switch (err) {
-            error.OutOfMemory, error.Canceled => |e| return e,
-            else => return error.BlobMissing,
-        };
+        return std.Io.Dir.cwd().readFileAlloc(io, target, arena, .limited(max_bytes + 1)) catch |err| return ioFail(err, error.BlobMissing);
     }
 
     /// Delete one stored blob. An absent file is already the wanted state.
     pub fn unlink(self: Store, io: std.Io, arena: std.mem.Allocator, hash: Hash) error{ OutOfMemory, Canceled, BlobStoreFailed }!void {
         std.debug.assert(self.dir.len != 0);
         const target = try self.pathOf(arena, hash);
-        std.Io.Dir.deleteFileAbsolute(io, target) catch |err| switch (err) {
-            error.FileNotFound => {},
-            error.Canceled => return error.Canceled,
-            else => return error.BlobStoreFailed,
-        };
+        std.Io.Dir.deleteFileAbsolute(io, target) catch |err| if (err != error.FileNotFound) return ioFail(err, error.BlobStoreFailed);
     }
 
     fn verify(self: Store, io: std.Io, arena: std.mem.Allocator, blob: MediaBlob) AdmitError!void {
         const target = try self.pathOf(arena, blob.hash);
-        const file = std.Io.Dir.openFileAbsolute(io, target, .{}) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            else => return error.BlobMissing,
-        };
+        const file = std.Io.Dir.openFileAbsolute(io, target, .{}) catch |err| return ioFail(err, error.BlobMissing);
         defer file.close(io);
-        const stat = file.stat(io) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            else => return error.BlobMissing,
-        };
+        const stat = file.stat(io) catch |err| return ioFail(err, error.BlobMissing);
         if (stat.size != blob.bytes) return error.BlobMismatch;
         var head: [sniff_bytes]u8 = undefined;
-        const n = file.readPositionalAll(io, &head, 0) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            else => return error.BlobMissing,
-        };
+        const n = file.readPositionalAll(io, &head, 0) catch |err| return ioFail(err, error.BlobMissing);
         const mime = sniff(head[0..n]) orelse return error.BlobMismatch;
         if (!std.mem.eql(u8, mime, blob.mime)) return error.BlobMismatch;
     }
@@ -141,31 +119,28 @@ pub const Store = struct {
     /// Write to a temp name and rename, so a crash never leaves partial bytes under a valid hash.
     fn write(self: Store, io: std.Io, arena: std.mem.Allocator, target: []const u8, data: []const u8) PutError!void {
         std.debug.assert(data.len != 0 and data.len <= max_bytes);
-        std.Io.Dir.cwd().createDirPath(io, self.dir) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            else => return error.BlobStoreFailed,
-        };
+        std.Io.Dir.cwd().createDirPath(io, self.dir) catch |err| return ioFail(err, error.BlobStoreFailed);
         var nonce: [8]u8 = undefined;
         io.random(&nonce);
         const temp = try std.fmt.allocPrint(arena, "{s}{c}.put-{x}", .{ self.dir, std.fs.path.sep, &nonce });
-        const file = std.Io.Dir.createFileAbsolute(io, temp, .{ .exclusive = true, .permissions = .fromMode(0o600) }) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            else => return error.BlobStoreFailed,
-        };
+        const file = std.Io.Dir.createFileAbsolute(io, temp, .{ .exclusive = true, .permissions = .fromMode(0o600) }) catch |err| return ioFail(err, error.BlobStoreFailed);
         errdefer std.Io.Dir.deleteFileAbsolute(io, temp) catch {};
         {
             defer file.close(io);
-            file.writePositionalAll(io, data, 0) catch |err| switch (err) {
-                error.Canceled => return error.Canceled,
-                else => return error.BlobStoreFailed,
-            };
+            file.writePositionalAll(io, data, 0) catch |err| return ioFail(err, error.BlobStoreFailed);
         }
-        std.Io.Dir.renameAbsolute(temp, target, io) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            else => return error.BlobStoreFailed,
-        };
+        std.Io.Dir.renameAbsolute(temp, target, io) catch |err| return ioFail(err, error.BlobStoreFailed);
     }
 };
+
+/// Pass a cancel or an allocation failure through. Every other I/O error is the operating error `fallback`.
+fn ioFail(err: anyerror, comptime fallback: anytype) (error{ Canceled, OutOfMemory } || @TypeOf(fallback)) {
+    return switch (err) {
+        error.Canceled => error.Canceled,
+        error.OutOfMemory => error.OutOfMemory,
+        else => fallback,
+    };
+}
 
 /// Name the image type from the magic bytes, or null for anything the store does not accept.
 pub fn sniff(head: []const u8) ?[]const u8 {

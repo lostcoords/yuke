@@ -525,9 +525,11 @@ pub fn sessionRemove(engine: *Engine, arena: std.mem.Allocator, params: proto.se
     defer tx.deinit();
     for (doomed) |id| try session_store.remove(engine.deps.db, id);
     try tx.commit();
-    for (refs.items) |hash| if (!try blob_store.referenced(engine.deps.db, arena, hash)) {
+    for (refs.items) |hash| {
+        // The removal is durable now, so a failed count or unlink keeps an orphan file and never fails the call.
+        if (blob_store.referenced(engine.deps.db, arena, hash) catch true) continue;
         engine.deps.blobs.unlink(engine.deps.io, arena, hash) catch |err| std.log.warn("blob {x} stays on disk after removal: {t}", .{ &hash.raw, err });
-    };
+    }
 
     // Announce the deepest session first, so a client tree holds no orphan.
     var i = doomed.len;

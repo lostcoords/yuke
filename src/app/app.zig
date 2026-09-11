@@ -28,10 +28,8 @@ pub const App = struct {
     /// The HTTP client outlives the app tasks, because they read through it.
     http_transport: ai.http_transport.HttpTransport,
     db: database.Database,
-    /// The blob directory under the data directory. Every reader uses this path.
+    /// The blob directory the app owns. The engine borrows it as `deps.blobs.dir`.
     blob_dir: []const u8,
-    /// The blob directory `open` allocated, which `close` frees. A test leaves this null and borrows its path.
-    blob_dir_owned: ?[]const u8 = null,
     logins: login_runtime.Logins,
     store: provider_store,
     tasks: std.Io.Group = .init,
@@ -60,7 +58,6 @@ pub const App = struct {
             .http_transport = ai.http_transport.HttpTransport.init(gpa, io, provider_idle_timeout),
             .db = undefined,
             .blob_dir = blob_dir,
-            .blob_dir_owned = blob_dir,
             .logins = .init(gpa),
             .store = .init(gpa, io, context.env),
             .engine = undefined,
@@ -100,14 +97,14 @@ pub const App = struct {
         return self;
     }
 
-    /// Build one app around a test database. The caller closes the owned resources.
+    /// Build one app in caller memory around a test database. `deinit` closes it.
     pub fn initTest(self: *App, gpa: std.mem.Allocator, io: std.Io, db: database.Database, blob_dir: []const u8, context: execution.Context, route_transport: ai.transport.Transport) !void {
         self.* = .{
             .gpa = gpa,
             .io = io,
             .http_transport = undefined,
             .db = db,
-            .blob_dir = blob_dir,
+            .blob_dir = try gpa.dupe(u8, blob_dir),
             .logins = .init(gpa),
             .store = .init(gpa, io, context.env),
             .engine = undefined,
@@ -116,7 +113,7 @@ pub const App = struct {
             .gpa = gpa,
             .io = io,
             .db = &self.db,
-            .blobs = .{ .dir = blob_dir },
+            .blobs = .{ .dir = self.blob_dir },
             .providers = &self.store,
             .route_transport = route_transport,
             .execution = context,
@@ -186,11 +183,16 @@ pub const App = struct {
         // and it suspends, so a task that runs after it would publish through a poisoned engine.
         self.maintenance.cancel(io);
         self.tasks.cancel(io);
+        self.deinit();
+        self.http_transport.deinit();
+        gpa.destroy(self);
+    }
+
+    /// Close an app from `initTest`, which owns no tasks and no HTTP client.
+    pub fn deinit(self: *App) void {
         self.engine.close();
         self.deinitState();
-        self.http_transport.deinit();
-        if (self.blob_dir_owned) |owned| gpa.free(owned);
-        gpa.destroy(self);
+        self.gpa.free(self.blob_dir);
     }
 
     fn deinitState(self: *App) void {
@@ -270,10 +272,7 @@ test "a catalog replacement announces the merged revision" {
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
     try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&test_env), test_transport.transport());
-    defer runtime.logins.deinit();
-    defer runtime.store.deinit();
-    defer runtime.db.deinit();
-    defer runtime.engine.close();
+    defer runtime.deinit();
 
     const Seen = struct {
         var method: ?proto.enums.BroadcastName = null;

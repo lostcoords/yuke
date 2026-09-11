@@ -24,13 +24,9 @@ pub fn create(host: *Host, io: std.Io, scale: u32, native_stream: bool) !*Projec
     const self = try gpa.create(Projection);
     errdefer gpa.destroy(self);
     self.* = .{ .gpa = gpa, .app = undefined, .transport = .{ .bytes = "" }, .session = undefined, .session_id = undefined };
-    var db = try Database.openTest();
-    errdefer db.deinit();
     // The bench never puts a blob, so the host working directory stands in for the store.
-    try self.app.initTest(gpa, io, db, host.cwd, host.execution, self.transport.transport());
-    errdefer self.app.logins.deinit();
-    errdefer self.app.store.deinit();
-    errdefer self.app.engine.close();
+    try self.app.initTest(gpa, io, try Database.openTest(), host.cwd, host.execution, self.transport.transport());
+    errdefer self.app.deinit();
     const sid = proto.ids.SessionId.bytes([_]u8{7} ** 16);
     const session = try self.app.engine.sessions.getOrCreate(sid);
     self.session = session;
@@ -96,9 +92,6 @@ pub fn appendNative(self: *Projection, step: usize) !void {
 
 pub fn destroy(self: *Projection) void {
     const gpa = self.gpa;
-    self.app.engine.close();
-    self.app.db.deinit();
-    self.app.store.deinit();
-    self.app.logins.deinit();
+    self.app.deinit();
     gpa.destroy(self);
 }

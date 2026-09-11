@@ -280,12 +280,8 @@ const Probe = struct {
         try self.runtime.initTest(testing.allocator, io, try database.Database.openTest(), self.blob_dir[0..try self.blobs.dir.realPath(testing.io, &self.blob_dir)], execution.testContext(&self.env), self.transport.transport());
     }
 
-    /// The engine borrows the store, the logins, and the database, so it closes first.
     fn deinit(self: *Probe) void {
-        self.runtime.engine.close();
-        self.runtime.db.deinit();
-        self.runtime.store.deinit();
-        self.runtime.logins.deinit();
+        self.runtime.deinit();
         self.env.deinit();
         self.blobs.cleanup();
     }

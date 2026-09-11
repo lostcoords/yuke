@@ -108,10 +108,7 @@ pub const Fixture = struct {
 
     pub fn deinit(self: *Fixture) void {
         self.extensions.deinit();
-        self.app.engine.close();
-        self.app.db.deinit();
-        self.app.store.deinit();
-        self.app.logins.deinit();
+        self.app.deinit();
         self.env.deinit();
         self.reactor.deinit();
         self.tmp.cleanup();

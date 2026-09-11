@@ -151,10 +151,7 @@ test "auth.list reports the providers the environment offers, not only the file"
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
     try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), transport.transport());
-    defer runtime.logins.deinit();
-    defer runtime.store.deinit();
-    defer runtime.db.deinit();
-    defer runtime.engine.close();
+    defer runtime.deinit();
     _ = try runtime.store.rebuild();
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
@@ -193,10 +190,7 @@ test "catalog.reload reads the file again and reports whether the revision moved
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
     try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), transport.transport());
-    defer runtime.logins.deinit();
-    defer runtime.store.deinit();
-    defer runtime.db.deinit();
-    defer runtime.engine.close();
+    defer runtime.deinit();
     _ = try runtime.store.rebuild();
 
     var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;

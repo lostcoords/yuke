@@ -312,11 +312,8 @@ test "a request reaches a command and answers with its result" {
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: app.App = undefined;
     try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), canned.transport());
+    defer runtime.deinit();
     try runtime.installTestModel();
-    defer runtime.logins.deinit();
-    defer runtime.store.deinit();
-    defer runtime.db.deinit();
-    defer runtime.engine.close();
 
     const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);
