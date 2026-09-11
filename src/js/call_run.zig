@@ -297,8 +297,8 @@ fn settleTextAndView(host: *Host, call: *table.Call, text: []const u8, view_json
 }
 
 test "a settle after a spent interrupt slice still reads the answer" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     const call = host.calls.submitHook("tool.before", "{}");
     call.state = .running;
     call.promise = try host.ctx.eval(
@@ -313,3 +313,5 @@ test "a settle after a spent interrupt slice still reads the answer" {
     call.finish();
     try host.pump();
 }
+
+const support = @import("test_support.zig");

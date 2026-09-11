@@ -7,8 +7,8 @@ test "presentation moves the same composer between welcome and sidebar layouts" 
     var paint: Paint = undefined;
     try paint.setup(std.testing.allocator, 20, 60);
     defer paint.deinit();
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     paint.bind(host);
     try support.eval(host, "tests/presentation/presentation-layout.test.js");
     try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "welcome") != null);
@@ -20,26 +20,26 @@ test "presentation moves the same composer between welcome and sidebar layouts" 
 }
 
 test "presentation replacement and pane removal release resources and pointer capture" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/presentation/presentation-owner.test.js");
 }
 
 test "presentation rejects duplicate mounts and contains factory failures" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/presentation/presentation-failure.test.js");
 }
 
 test "presentation cannot retain a view after its scope closes inside a hook" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/presentation/presentation-reentrant.test.js");
 }
 
 test "presentation shares view ownership with panes and windows" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/presentation/presentation-shared-owner.test.js");
 }
 
@@ -47,8 +47,8 @@ test "default presentation shows welcome text only for an empty chat" {
     var paint: Paint = undefined;
     try paint.setup(std.testing.allocator, 12, 40);
     defer paint.deinit();
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     paint.bind(host);
     try support.eval(host, "tests/presentation/presentation-default.test.js");
 }

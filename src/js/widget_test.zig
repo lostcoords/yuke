@@ -7,8 +7,8 @@ test "text retains independent measurement and clipped visible rows" {
     var paint: Paint = undefined;
     try paint.setup(std.testing.allocator, 4, 12);
     defer paint.deinit();
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     paint.bind(host);
     try support.eval(host, "tests/widget/text-widget.test.js");
     const before = host.paint.counters;
@@ -20,7 +20,7 @@ test "text retains independent measurement and clipped visible rows" {
 }
 
 test "text updates invalidate once and clip an overwide grapheme to its bounds" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/widget/text-invalidate.test.js");
 }

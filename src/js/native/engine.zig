@@ -288,8 +288,8 @@ fn jsSetPromptConfig(ctx: Context, _: Value, args: []const Value) Value {
 const testing = std.testing;
 
 test "view integers stay within the protocol safe integer range" {
-    const host = Host.create(testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     const max = proto.meta.constants.MAX_WIRE_INTEGER;
     const accepted = host.ctx.newFloat64(@floatFromInt(max));
     defer host.ctx.freeValue(accepted);
@@ -315,8 +315,8 @@ test "a request reaches a command and answers with its result" {
     defer runtime.db.deinit();
     defer runtime.engine.close();
 
-    const host = Host.createTest(testing.allocator, rt.io(), "");
-    defer host.destroy();
+    const host = support.createHostWith(rt.io(), "");
+    defer support.destroyHost(host);
 
     // With no engine, a view read answers its empty projection and a request refuses.
     try host.evalModule(

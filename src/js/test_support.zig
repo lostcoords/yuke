@@ -10,10 +10,36 @@ const modules = host_mod.default_baked ++ [_]BakedModule{
     .{ .name = "yuke:test", .source = @embedFile("tests/assert.js") },
 };
 
+/// A test allocator that records no stack traces, because QuickJS allocates on every JavaScript step.
+pub const Pool = std.heap.DebugAllocator(.{ .stack_trace_frames = 0 });
+
+/// Allocate a host over its own pool, with the test I/O and no workspace.
+pub fn createHost() *Host {
+    return createHostWith(std.testing.io, "");
+}
+
+/// Allocate a host over its own pool. The host uses `io` and takes `cwd` as its workspace root.
+pub fn createHostWith(io: std.Io, cwd: []const u8) *Host {
+    const pool = std.testing.allocator.create(Pool) catch unreachable;
+    // The testing allocator backs the pool, so a page that a leak pins fails the test.
+    pool.* = .{ .backing_allocator = std.testing.allocator };
+    return Host.createTest(pool.allocator(), io, cwd);
+}
+
+/// Destroy a host from `createHostWith` and then its pool.
+pub fn destroyHost(host: *Host) void {
+    var probe: Pool = .init;
+    std.debug.assert(host.gpa.vtable == probe.allocator().vtable);
+    const pool: *Pool = @ptrCast(@alignCast(host.gpa.ptr));
+    host.destroy();
+    _ = pool.deinit();
+    std.testing.allocator.destroy(pool);
+}
+
 /// Each pure JS case owns a fresh host and its teardown.
 pub fn run(comptime path: [:0]const u8) !void {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = createHost();
+    defer destroyHost(host);
     try eval(host, path);
 }
 

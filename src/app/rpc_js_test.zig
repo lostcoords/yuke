@@ -10,8 +10,8 @@ const ai = @import("ai");
 const testing = std.testing;
 
 test "an interaction question and its answer share the RPC stream" {
-    const host = Host.create(testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.evalModule(rpc.boot ++
         \\
         \\import { plugins as registry } from "yuke:ext";
@@ -120,3 +120,5 @@ test "a pending input hook still accepts an interaction response" {
     }
     try testing.expect(std.mem.indexOf(u8, out.written(), "\"id\":\"input\",\"result\"") != null);
 }
+
+const support = @import("../js/test_support.zig");

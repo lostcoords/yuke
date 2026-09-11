@@ -4,68 +4,68 @@ const std = @import("std");
 const Host = @import("host.zig").Host;
 
 test "plugin scope contracts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/scope.test.js");
 }
 
 test "plugin events contracts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/events.test.js");
 }
 
 test "plugin commands contracts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/commands.test.js");
 }
 
 test "plugin keymap contracts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/keymap.test.js");
 }
 
 test "plugin advice contracts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/advice.test.js");
 }
 
 test "plugin services contracts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/services.test.js");
 }
 
 test "plugin plugins contracts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/plugins.test.js");
 }
 
 test "plugin style contracts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/style.test.js");
 }
 
 test "plugin status contracts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/status.test.js");
 }
 
 test "plugin context contracts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/context.test.js");
 }
 
 test "the yuke facade exports config, plugins, and the tool registry" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     try support.eval(host, "tests/plugins/facade-entry.test.js");
 
@@ -78,16 +78,16 @@ test "the yuke facade exports config, plugins, and the tool registry" {
 }
 
 test "the facade and its internal module share one instance" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     // A second module name must not create a second plugin registry.
     try support.eval(host, "tests/plugins/identity.test.js");
 }
 
 test "tools.define refuses a definition that is not an object" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     try support.eval(host, "tests/plugins/bad-tool.test.js");
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.refused"));
@@ -95,52 +95,52 @@ test "tools.define refuses a definition that is not an object" {
 }
 
 test "inject holds a block until every capability exists" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/inject-gate.test.js");
 }
 
 test "inject waits for every name and stops watching with its plugin" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/inject-deps.test.js");
 }
 
 test "inject refuses a bad declaration and survives a throwing block" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/inject-bad.test.js");
 }
 
 test "a disposed injection never builds from a copied watcher list" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/inject-reentrancy.test.js");
 }
 
 test "a service event always reports the live provider" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/service-event-live.test.js");
 }
 
 test "a capability binds onto the block that declared it" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/capability-binding.test.js");
 }
 
 test "a host with no renderer loads the view tier and leaves a view plugin inert" {
-    const host = host_mod.Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     // `index.js` is one file for both frontends, so a view import must load with no terminal bound.
     try support.eval(host, "tests/plugins/view-inert.test.js");
 }
 
 test "the kernel alone runs without the terminal tier" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     var loader: KernelLoader = .{ .inner = &host.loader };
     host.runtime.setModuleLoader(&loader);
     defer host.runtime.setModuleLoader(&host.loader);
@@ -148,28 +148,28 @@ test "the kernel alone runs without the terminal tier" {
 }
 
 test "a change during a build rebuilds the block instead of leaving it stale" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/inject-dirty.test.js");
 }
 
 test "a headless bus refuses a name only the view tier emits" {
-    const host = host_mod.Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     // Without the view tier nothing emits these names, so a listener would wait for ever.
     try support.eval(host, "tests/plugins/headless-bus.test.js");
 }
 
 test "an overlay survives a rebuild of the block that claimed it" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/overlay-rebuild.test.js");
 }
 
 test "a plugin owns the tools it defines and withdraws them on unload" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/own.test.js");
 
     // The plugin registered both, and the table keeps them sorted.
@@ -187,8 +187,8 @@ test "a plugin owns the tools it defines and withdraws them on unload" {
 }
 
 test "one tool leaves without moving the others" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/three.test.js");
     try std.testing.expectEqual(@as(usize, 4), host.tools.entries.items.len);
 
@@ -201,8 +201,8 @@ test "one tool leaves without moving the others" {
 }
 
 test "a listener fault reaches the shared error bus" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/bus-fault.test.js");
 }
 

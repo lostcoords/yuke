@@ -9,8 +9,8 @@ test "preview workload keeps bounded rows, full details, and source spans" {
     var paint: Paint = undefined;
     try paint.setup(std.testing.allocator, 40, 100);
     defer paint.deinit();
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     paint.bind(host);
     try support.eval(host, "tests/preview/preview.test.js");
 

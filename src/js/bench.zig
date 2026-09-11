@@ -184,18 +184,24 @@ pub const Harness = struct {
 };
 
 test "benchmark scenarios preserve the transcript across updates and cache eviction" {
-    // Scale 9 holds 18 messages, above the 16-message row cache, so eviction runs.
+    var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
+    defer _ = pool.deinit();
     for (phases) |phase| {
-        const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12, phase);
+        const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, phase);
         defer harness.destroy();
-        try harness.start(phase, 9);
+        // Scale 9 holds 18 messages, above the 16-message row cache, so eviction runs.
+        // Each native step reads the whole part again. At scale 1 the part still spans two text pages.
+        try harness.start(phase, if (phase == .stream_native) 1 else 9);
+        if (phase == .stream_native) try std.testing.expect(harness.sourceBytes().? > @import("native/engine/paging.zig").max_page_bytes);
         for (0..6) |_| _ = try harness.step();
         _ = try harness.verify();
     }
 }
 
 test "an unchanged transcript frame has stable cells and no terminal output" {
-    const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12, .paint);
+    var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
+    defer _ = pool.deinit();
+    const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, .paint);
     defer harness.destroy();
     try harness.start(.paint, 1);
     try std.testing.expect(try harness.step() > 0);
@@ -212,7 +218,9 @@ test "an unchanged transcript frame has stable cells and no terminal output" {
 }
 
 test "reused RGB and ANSI colors need no backing allocations after warmup" {
-    const harness = try Harness.create(std.testing.allocator, std.testing.io, "", 40, 12, .colors);
+    var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
+    defer _ = pool.deinit();
+    const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, .colors);
     defer harness.destroy();
     for ([_]Colors{ .ansi_raw, .rgb_raw, .ansi_group, .rgb_group }) |colors| {
         harness.colors = colors;
@@ -224,3 +232,5 @@ test "reused RGB and ANSI colors need no backing allocations after warmup" {
         _ = try harness.verify();
     }
 }
+
+const support = @import("test_support.zig");

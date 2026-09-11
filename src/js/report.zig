@@ -51,7 +51,7 @@ fn bindTestHost(
 }
 
 test "a throwing onEvent paints the message on the bottom row" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var env_map = try testing.environ.createMap(gpa.allocator());
@@ -83,7 +83,7 @@ test "a throwing onEvent paints the message on the bottom row" {
 }
 
 test "paintFault does nothing without a recorded fault" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var env_map = try testing.environ.createMap(gpa.allocator());
@@ -102,3 +102,5 @@ test "paintFault does nothing without a recorded fault" {
     paintFault(host);
     try testing.expectEqual(@as(usize, 0), out.written().len);
 }
+
+const support = @import("test_support.zig");

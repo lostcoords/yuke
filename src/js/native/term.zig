@@ -475,8 +475,8 @@ fn evalOk(host: *Host, src: [:0]const u8) !i32 {
 }
 
 test "colors accept exact hex and integer indices" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     const cases = .{
         .{ "'#000000'", term_pkg.Color{ .rgb = .{ 0, 0, 0 } } },
         .{ "'#fFfFfF'", term_pkg.Color{ .rgb = .{ 255, 255, 255 } } },
@@ -511,8 +511,8 @@ test "colors accept exact hex and integer indices" {
 }
 
 test "style colors preserve defaults and propagate property faults" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     for ([_][]const u8{ "({})", "({ fg: '#bad', bg: 256, ul: [1, 2, 3] })" }) |source| {
         const value = try host.ctx.eval(source, "color.js", .{});
         defer host.ctx.freeValue(value);
@@ -537,8 +537,8 @@ test "RGB styles reach all paint paths and preserve frame diffs" {
         paint.render.vx.sgr = if (mode == 1) .legacy else .standard;
         paint.render.vx.enable_workarounds = mode == 2;
         paint.render.vx.caps.no_color = false;
-        const host = Host.create(std.testing.allocator);
-        defer host.destroy();
+        const host = support.createHost();
+        defer support.destroyHost(host);
         paint.bind(host);
         try host.evalModule(
             \\import { term } from 'yuke:term';
@@ -603,7 +603,7 @@ test "RGB styles reach all paint paths and preserve frame diffs" {
 }
 
 test "an extra yuke:term export name fails" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -614,8 +614,8 @@ test "an extra yuke:term export name fails" {
 }
 
 test "native wrap preserves UTF-16 rows and bounds preview work" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
         \\import { term } from "yuke:term";
         \\const equal = (a, b) => JSON.stringify(Array.from(a)) === JSON.stringify(b);
@@ -653,7 +653,7 @@ test "native wrap preserves UTF-16 rows and bounds preview work" {
 }
 
 test "measure and graphemes use cell width and UTF-16 offsets" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -718,7 +718,7 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
 }
 
 test "setNeedsTick clamps and quit blocks a later arm" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -736,7 +736,7 @@ test "setNeedsTick clamps and quit blocks a later arm" {
 }
 
 test "beginFrame without a renderer throws" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -750,7 +750,7 @@ test "beginFrame without a renderer throws" {
 }
 
 test "paint copies graphemes, skips negative coords, and diffs" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var env_map = try std.testing.environ.createMap(gpa.allocator());
@@ -796,7 +796,7 @@ test "paint copies graphemes, skips negative coords, and diffs" {
 }
 
 test "a failed endFrame keeps the frame dirty and retries" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var env_map = try std.testing.environ.createMap(gpa.allocator());
@@ -832,3 +832,5 @@ test "a failed endFrame keeps the frame dirty and retries" {
     try std.testing.expectEqual(.idle, render.frame);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "A") != null);
 }
+
+const support = @import("../test_support.zig");

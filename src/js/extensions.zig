@@ -77,7 +77,7 @@ const kernel_boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";
 
 /// One headless host over a canned engine, with the user entry the test writes. It must not move after `init`.
 pub const Fixture = struct {
-    gpa: std.heap.DebugAllocator(.{}),
+    gpa: support.Pool,
     tmp: std.testing.TmpDir,
     root_buf: [std.fs.max_path_bytes]u8,
     reactor: *zio.Runtime,
@@ -471,7 +471,7 @@ fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) !
 }
 
 test "a user entry file evaluates and a missing one is not an error" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var tmp = std.testing.tmpDir(.{});
@@ -498,7 +498,7 @@ test "a user entry file evaluates and a missing one is not an error" {
 }
 
 test "a throwing user entry is a JavaScriptFault the loop absorbs" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var tmp = std.testing.tmpDir(.{});

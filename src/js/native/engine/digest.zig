@@ -409,8 +409,8 @@ test "two parts widen to their message, and two messages widen to a reload" {
 }
 
 test "an auth event reaches the sink whole, and a session event does not" {
-    const host = Host.create(testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     try host.evalModule(
         \\import { native } from "yuke:engine-native";
@@ -466,8 +466,8 @@ test "an auth event reaches the sink whole, and a session event does not" {
 }
 
 test "a burst of auth changes never pushes a login outcome out of the digest" {
-    const host = Host.create(testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.evalModule(
         \\import { native } from "yuke:engine-native";
         \\globalThis.seen = [];
@@ -494,8 +494,8 @@ test "a burst of auth changes never pushes a login outcome out of the digest" {
 }
 
 test "a notice burst stays bounded and keeps the newest bodies" {
-    const host = Host.create(testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.evalModule(
         \\import { native } from "yuke:engine-native";
         \\globalThis.seen = [];
@@ -523,8 +523,8 @@ test "a notice burst stays bounded and keeps the newest bodies" {
 }
 
 test "a throwing event sink faults once and leaves no pending exception" {
-    const host = Host.create(testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     try host.evalModule(
         \\import { native } from "yuke:engine-native";
@@ -550,3 +550,5 @@ test "a throwing event sink faults once and leaves no pending exception" {
     host.engine.markDirty(SessionId.bytes([_]u8{3} ** 16), .{ .view = .reload });
     try testing.expect(!drain(host.engine, host.ctx));
 }
+
+const support = @import("../../test_support.zig");

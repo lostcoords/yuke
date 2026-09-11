@@ -283,7 +283,7 @@ fn keyCode(cp: u21) []const u8 {
 }
 
 test "start and stepTick deliver their event type" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -295,7 +295,7 @@ test "start and stepTick deliver their event type" {
 }
 
 test "a parser key paints and a missing endFrame still commits" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var env_map = try std.testing.environ.createMap(gpa.allocator());
@@ -332,7 +332,7 @@ test "a parser key paints and a missing endFrame still commits" {
 }
 
 test "a paste arrives as one paste event with the whole text" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -345,7 +345,7 @@ test "a paste arrives as one paste event with the whole text" {
 }
 
 test "a large paste reaches JavaScript in one event" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -360,7 +360,7 @@ test "a large paste reaches JavaScript in one event" {
 }
 
 test "onEvent throw is a JavaScriptFault" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -371,7 +371,7 @@ test "onEvent throw is a JavaScriptFault" {
 }
 
 test "q with no handler requests quit" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -380,7 +380,7 @@ test "q with no handler requests quit" {
 }
 
 test "a mouse event reaches JavaScript with the cell, the button, and the modifiers" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -402,7 +402,7 @@ test "a mouse event reaches JavaScript with the cell, the button, and the modifi
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.ev.mods"));
 }
 test "focus in and focus out reach JavaScript" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -414,7 +414,7 @@ test "focus in and focus out reach JavaScript" {
 }
 
 test "a key reports the modifiers and no lock state" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = Host.create(gpa.allocator());
     defer host.destroy();
@@ -429,7 +429,7 @@ test "a key reports the modifiers and no lock state" {
 }
 
 test "resize updates term.width before JS reads ev.w" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var env_map = try std.testing.environ.createMap(gpa.allocator());
@@ -457,3 +457,5 @@ test "resize updates term.width before JS reads ev.w" {
     try std.testing.expectEqual(@as(i32, 8), try host.evalInt("globalThis.w"));
     try std.testing.expectEqual(@as(i32, 8), try host.evalInt("globalThis.tw"));
 }
+
+const support = @import("test_support.zig");

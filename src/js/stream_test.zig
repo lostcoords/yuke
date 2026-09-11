@@ -5,7 +5,7 @@ const std = @import("std");
 const Host = @import("host.zig").Host;
 
 test "yuke:transcript keeps suffix rows local across an earlier part update" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/stream/stream.test.js");
 }

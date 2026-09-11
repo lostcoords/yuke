@@ -6,40 +6,40 @@ const Host = @import("host.zig").Host;
 const proto = @import("proto");
 
 test "setup coalesces both slots and continues one atomic spawn per caller" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/coalesce.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "required slots headless setup and user cancellation have no child side effects" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/refusals.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "setup preserves concurrent slot choices and propagates a failed save" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/save-conflict.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "model repair changes a child without a new run or an implicit slot edit" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/repair.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "tool cancellation removes the setup question and rejects a late answer" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/tool.test.js");
     const call = host.calls.submit("spawn-test", "{}", "/work");
@@ -56,8 +56,8 @@ test "tool cancellation removes the setup question and rejects a late answer" {
 }
 
 test "a canceled tool cannot spawn after its pending config save succeeds" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/late-save.test.js");
     const call = host.calls.submit("spawn-test", "{}", "/work");
@@ -73,8 +73,8 @@ test "a canceled tool cannot spawn after its pending config save succeeds" {
 }
 
 test "a live setup follower resumes after the lead tool is canceled" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/follower.test.js");
     const lead = host.calls.submit("one", "{}", "/work");
@@ -103,8 +103,8 @@ test "a live setup follower resumes after the lead tool is canceled" {
 }
 
 test "cancellation watch refusal is an operating error and does not retry setup" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/invalid-signal.test.js");
     try support.expectString(host, "result", "runtime_failed");
@@ -112,24 +112,24 @@ test "cancellation watch refusal is an operating error and does not retry setup"
 }
 
 test "first use connects an API key provider with a secret prompt" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/api-key.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "shared credential repair handles a login result before the start response" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/shared-login.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "tool cancellation stops its pending device login without child admission" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/cancel-login.test.js");
     const call = host.calls.submit("spawn-test", "{}", "/work");
@@ -166,16 +166,16 @@ const tool_fixture =
 ;
 
 test "nested child spawn delegates depth and child identity to native" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/nested.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "agent tools expose explicit slots and truthful reusable child receipts" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
     for (host.tools.entries.items) |entry| if (std.mem.eql(u8, entry.decl.name, "spawn_agent")) {
@@ -219,16 +219,16 @@ test "agent tools expose explicit slots and truthful reusable child receipts" {
 }
 
 test "report previews fold independently of their stored text and queue clear preserves reports" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/report-ui.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "agent picker opens children stops one or all and retains focused interrupt scope" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
     try support.eval(host, "tests/agents/agent-picker.test.js");
@@ -236,8 +236,8 @@ test "agent picker opens children stops one or all and retains focused interrupt
 }
 
 test "TUI tool questions show their owner and device login closes on completion" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/owner-question.test.js");
     const call = host.calls.submit("question", "{}", "/work");
     defer call.finish();
@@ -256,8 +256,8 @@ test "TUI tool questions show their owner and device login closes on completion"
 }
 
 test "the top-level session picker excludes child sessions" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/finder-mocks.test.js");
     try support.eval(host, "tests/agents/finder.test.js");
@@ -268,8 +268,8 @@ test "the top-level session picker excludes child sessions" {
 }
 
 test "a user tool can replace a stock agent tool without a boot failure" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/custom-agent.test.js");
     try host.evalModule(tool_fixture, "tools.js");
@@ -280,30 +280,30 @@ test "a user tool can replace a stock agent tool without a boot failure" {
 }
 
 test "stop all distinguishes changed idle and failed children" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/stop-all.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "JavaScript leaves child prompt composition to native admission" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/child-prompt.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "setup cancellation rows are neutral and errors remain visible" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/cancellation-rows.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "explicit model edits skip onboarding and change only the selected slot" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/agents/fixture.js");
     try support.eval(host, "tests/agents/edit-slot.test.js");
     try support.expectString(host, "result", "ok");
@@ -323,16 +323,16 @@ const tree_fixture =
 ;
 
 test "agent rows resolve the real root and include siblings and descendants" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.evalModule(tree_fixture, "tree-fixture.js");
     try support.eval(host, "tests/agents/tree.test.js");
     try support.expectString(host, "result", "root:0,a:1,b:2,sibling:1");
 }
 
 test "agent rows reject cyclic ancestry" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.evalModule(tree_fixture, "tree-fixture.js");
     try support.eval(host, "tests/agents/cycle.test.js");
     try support.expectString(host, "result", "The session ancestry contains a cycle.");

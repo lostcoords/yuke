@@ -491,18 +491,18 @@ fn firstLine(text: []const u8) []const u8 {
 }
 
 test "eval returns an integer" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     try host.eval("globalThis.n = 40 + 2", "smoke.js");
     try std.testing.expectEqual(@as(i32, 42), try host.evalInt("globalThis.n"));
 }
 
 test "two hosts do not share globals" {
-    const a = Host.create(std.testing.allocator);
-    defer a.destroy();
-    const b = Host.create(std.testing.allocator);
-    defer b.destroy();
+    const a = support.createHost();
+    defer support.destroyHost(a);
+    const b = support.createHost();
+    defer support.destroyHost(b);
 
     try a.eval("globalThis.n = 1", "a.js");
     try b.eval("globalThis.n = 2", "b.js");
@@ -511,8 +511,8 @@ test "two hosts do not share globals" {
 }
 
 test "a syntax error is a JavaScriptFault" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try std.testing.expectError(error.JavaScriptFault, host.eval("this is not js", "bad.js"));
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "bad.js:1") != null);
     try host.eval("globalThis.n = 1", "after.js");
@@ -520,23 +520,23 @@ test "a syntax error is a JavaScriptFault" {
 }
 
 test "drainJobs runs a then callback" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.eval("globalThis.hit = 0; Promise.resolve().then(() => { globalThis.hit = 7; })", "job.js");
     try std.testing.expectEqual(@as(i32, 7), try host.evalInt("globalThis.hit"));
 }
 
 test "an infinite loop hits the interrupt budget" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     host.interrupt_budget = 0;
     try std.testing.expectError(error.JavaScriptFault, host.eval("while (true) {}", "spin.js"));
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "interrupted") != null);
 }
 
 test "close interrupts a leftover spinning job" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     host.budget = 0;
     try host.eval("Promise.resolve().then(() => { while (true) {} })", "spin.js");
     try std.testing.expect(host.runtime.isJobPending());
@@ -549,8 +549,8 @@ test "close interrupts a leftover spinning job" {
 }
 
 test "a job the drain budget leaves keeps the owner awake" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     host.budget = 0;
     try host.eval("Promise.resolve().then(() => {})", "left.js");
     try std.testing.expect(host.runtime.isJobPending());
@@ -561,8 +561,8 @@ test "a job the drain budget leaves keeps the owner awake" {
 }
 
 test "close drains then destroy frees the runtime" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     host.budget = 0;
     try host.eval("Promise.resolve().then(() => {})", "close.js");
     try std.testing.expect(host.runtime.isJobPending());
@@ -573,8 +573,8 @@ test "close drains then destroy frees the runtime" {
 }
 
 test "drainJobs yields when the budget is hit" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     host.budget = 1;
     try host.eval(
         \\globalThis.n = 0;
@@ -587,8 +587,8 @@ test "drainJobs yields when the budget is hit" {
 }
 
 test "a memory-limit hit is a catchable fault" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     host.runtime.setMemoryLimit(256 * 1024);
     try std.testing.expectEqual(@as(i64, 256 * 1024), host.runtime.computeMemoryUsage().malloc_limit);
     try host.eval("1", "tiny.js");
@@ -600,8 +600,8 @@ test "a memory-limit hit is a catchable fault" {
 }
 
 test "a module that never settles is a fault" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try std.testing.expectError(
         error.JavaScriptFault,
         host.evalModule("await new Promise(() => {});", "hang.js"),
@@ -610,8 +610,8 @@ test "a module that never settles is a fault" {
 }
 
 test "a rejected module reports the reason" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try std.testing.expectError(
         error.JavaScriptFault,
         host.evalModule("throw new Error('top level');", "reject.js"),
@@ -620,8 +620,8 @@ test "a rejected module reports the reason" {
 }
 
 test "fault text truncates on a UTF-8 boundary" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try std.testing.expectError(
         error.JavaScriptFault,
         host.eval("throw new Error('あ'.repeat(400));", "wide.js"),
@@ -635,8 +635,8 @@ test "fault text truncates on a UTF-8 boundary" {
 }
 
 test "a throwing toString still leaves the context clean" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try std.testing.expectError(error.JavaScriptFault, host.eval(
         "throw { toString() { throw new Error('nested'); } };",
         "nasty.js",
@@ -648,8 +648,8 @@ test "a throwing toString still leaves the context clean" {
 }
 
 test "an unknown yuke module is a JavaScriptFault" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try std.testing.expectError(
         error.JavaScriptFault,
         host.evalModule("import { n } from 'yuke:missing';", "entry.js"),
@@ -666,8 +666,8 @@ test "resize keeps unicode width after a write fail" {
     try render.resize(&sink.writer, .{ .rows = 2, .cols = 4, .x_pixel = 0, .y_pixel = 0 });
 
     var fail: std.Io.Writer = .failing;
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     host.paint.bindRender(host.ctx, &render, &fail);
     // Only `resize` can put the method back, so the assertion cannot pass on `bindRender` alone.
     render.vx.screen.width_method = .wcwidth;
@@ -691,8 +691,8 @@ test "an event asks for a frame and the flush paints it once" {
 
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     host.paint.bindRender(host.ctx, &render, &out.writer);
 
     try host.evalModule(
@@ -732,8 +732,8 @@ test "import a file beside the entry" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
@@ -755,8 +755,8 @@ test "a file outside the entry directory loads" {
     const shared_len = try outside.dir.realPathFile(std.testing.io, "shared.js", &shared_buf);
     const shared = shared_buf[0..shared_len];
 
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
     var src_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
@@ -776,7 +776,9 @@ test "an oversize module file does not load" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = Host.createWith(std.testing.allocator, std.testing.io, .{ .max_file_bytes = 8, .cwd = "", .execution = execution_mod.testContext(&test_env) });
+    var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
+    defer _ = pool.deinit();
+    const host = Host.createWith(pool.allocator(), std.testing.io, .{ .max_file_bytes = 8, .cwd = "", .execution = execution_mod.testContext(&test_env) });
     defer host.destroy();
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
@@ -805,3 +807,5 @@ test {
     _ = @import("native_tools_test.zig");
     _ = @import("interaction_test.zig");
 }
+
+const support = @import("test_support.zig");

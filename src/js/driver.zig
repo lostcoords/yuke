@@ -300,7 +300,7 @@ fn winchTask(tty: *term_pkg.Tty, ch: *Channel) !void {
 }
 
 test "serve stops when q arrives" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
@@ -318,7 +318,7 @@ test "serve stops when q arrives" {
 }
 
 test "serve folds a wheel run into one dispatch and keeps the next button" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
@@ -347,7 +347,7 @@ test "serve folds a wheel run into one dispatch and keeps the next button" {
 }
 
 test "a closed channel unblocks serve" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
@@ -369,7 +369,7 @@ test "a closed channel unblocks serve" {
 }
 
 test "serve keeps the loop after onEvent throw" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
@@ -394,7 +394,7 @@ test "serve keeps the loop after onEvent throw" {
 }
 
 test "tickTask enqueues a tick while armed" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
@@ -421,7 +421,7 @@ test "tickTask enqueues a tick while armed" {
 }
 
 test "tickTask paces engine wakes to the frame gap" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
+    var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
@@ -512,3 +512,5 @@ test "queued key text survives a later parse" {
     _ = try input.next();
     try std.testing.expectEqualStrings("a", buf.event().key_press.text.?);
 }
+
+const support = @import("test_support.zig");

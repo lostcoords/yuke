@@ -4,8 +4,8 @@ const Paint = @import("test_paint.zig").Paint;
 const Host = @import("host.zig").Host;
 
 test "RPC interaction answers correlated promises out of order" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/interaction/interaction.test.js");
 
     // The host refuses an answer to a question the frontend has not seen.
@@ -40,8 +40,8 @@ test "RPC interaction answers correlated promises out of order" {
 }
 
 test "disposing an interaction consumer cancels only its pending dialog" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/interaction/interaction-cancel.test.js");
     const interaction_id = host.interactions.takeNext().?.interaction_id;
 
@@ -58,8 +58,8 @@ test "the TUI interaction provider answers select and input dialogs" {
     var paint: Paint = undefined;
     try paint.setup(std.testing.allocator, 12, 50);
     defer paint.deinit();
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     paint.bind(host);
     try support.eval(host, "tests/interaction/interaction-tui.test.js");
 
@@ -72,15 +72,15 @@ test "the TUI interaction provider answers select and input dialogs" {
 }
 
 test "a composition with no answerer refuses every question" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/interaction/no-answerer.test.js");
     try host.pump();
     try support.expectString(host, "result", "InteractionUnavailable:InteractionUnavailable");
 }
 
 test "an install replaces the answerer and its disposer restores the last one" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try support.eval(host, "tests/interaction/install-stack.test.js");
 }

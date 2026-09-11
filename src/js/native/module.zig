@@ -90,8 +90,8 @@ pub fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
 }
 
 test "integer checks exact bounds before and after the float conversion" {
-    const host = Host.create(std.testing.allocator);
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     const cases = [_]struct { n: f64, min: u64 = 0, max: u64 = std.math.maxInt(u64), want: ?u64 = null }{
         .{ .n = 0, .want = 0 },
         .{ .n = 42, .min = 42, .max = 42, .want = 42 },
@@ -113,3 +113,5 @@ test "integer checks exact bounds before and after the float conversion" {
     defer host.ctx.freeValue(text);
     try std.testing.expectEqual(null, integer(host.ctx, text, 0, 100));
 }
+
+const support = @import("../test_support.zig");
