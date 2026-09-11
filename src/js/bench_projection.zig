@@ -26,7 +26,8 @@ pub fn create(host: *Host, io: std.Io, scale: u32, native_stream: bool) !*Projec
     self.* = .{ .gpa = gpa, .app = undefined, .transport = .{ .bytes = "" }, .session = undefined, .session_id = undefined };
     var db = try Database.openTest();
     errdefer db.deinit();
-    try self.app.initTest(gpa, io, db, host.execution, self.transport.transport());
+    // The bench never puts a blob, so the host working directory stands in for the store.
+    try self.app.initTest(gpa, io, db, host.cwd, host.execution, self.transport.transport());
     errdefer self.app.logins.deinit();
     errdefer self.app.store.deinit();
     errdefer self.app.engine.close();

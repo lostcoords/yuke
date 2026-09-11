@@ -125,6 +125,7 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "SessionConfigParams", .field = "config_rev", .alias = "ConfigRev" },
     .{ .owner = "SessionReloadContextParams", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SkillLoadParams", .field = "session_id", .alias = "SessionId" },
+    .{ .owner = "MediaBlob", .field = "hash", .alias = "BlobHash" },
     .{ .owner = "TextPart", .field = "id", .alias = "PartId" },
     .{ .owner = "ReasoningPart", .field = "id", .alias = "PartId" },
     .{ .owner = "RedactedReasoningPart", .field = "id", .alias = "PartId" },

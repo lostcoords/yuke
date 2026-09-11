@@ -98,6 +98,12 @@ function sessionQueue(sessionId) {
   return request("session.queue", { session_id: sessionId });
 }
 
+// Copy one image file into the engine blob store. The ref goes into an image content part.
+/** @param {string} path @returns {Promise<Wire.MediaBlob>} */
+function blobPut(path) {
+  return request("blob.put", { path });
+}
+
 // One page of a message's whole text. `next` is the offset to ask for, or null at the end.
 /**
  * @param {string} sessionId @param {number} messageId
@@ -333,6 +339,7 @@ export const client = {
   sessionReloadContext,
   skillLoad,
   sessionQueue,
+  blobPut,
   sessionText,
   sessionWholeText,
   sessionTextPage,

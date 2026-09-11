@@ -1,5 +1,5 @@
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "limits": {
     "default_page_size": 50,
     "default_session_list_page_size": 25,
@@ -7,8 +7,10 @@
     "max_api_key_bytes": 65536,
     "max_auth_providers": 64,
     "max_auth_user_code_bytes": 128,
+    "max_blob_bytes": 7340032,
     "max_catalog_models": 4096,
     "max_error_message_bytes": 4096,
+    "max_input_images": 8,
     "max_input_parts": 256,
     "max_message_parts": 1024,
     "max_message_string_bytes": 1048576,
@@ -27,7 +29,7 @@
     "MAX_REQUEST_ID_BYTES": 64,
     "MAX_SESSION_REVISION": 9007199254740991,
     "MAX_WIRE_INTEGER": 9007199254740991,
-    "PROTOCOL_VERSION": 1
+    "PROTOCOL_VERSION": 2
   },
   "methods": [
     {
@@ -177,6 +179,14 @@
       "doc": "Read the body of one skill from the session catalog.",
       "params": "SkillLoadParams",
       "result": "SkillLoadResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "blob.put",
+      "doc": "Copy one image file into the blob store and return its ref.",
+      "params": "BlobPutParams",
+      "result": "MediaBlob",
       "direction": "clientToServer",
       "paramsOptional": false
     },
@@ -482,27 +492,22 @@
     },
     {
       "name": "ContentImage",
-      "doc": "This part holds an image source and an optional detail hint.",
+      "doc": "This part holds an image blob.",
       "fields": [
         {
           "name": "source",
-          "type": "MediaSource",
+          "type": "MediaBlob",
           "presence": "required"
-        },
-        {
-          "name": "detail",
-          "type": "string",
-          "presence": "optional"
         }
       ]
     },
     {
       "name": "ContentAudio",
-      "doc": "This part holds an audio source and its format.",
+      "doc": "This part holds an audio blob and its format.",
       "fields": [
         {
           "name": "source",
-          "type": "MediaSource",
+          "type": "MediaBlob",
           "presence": "required"
         },
         {
@@ -514,11 +519,11 @@
     },
     {
       "name": "ContentFile",
-      "doc": "This part holds a file source and an optional file name.",
+      "doc": "This part holds a file blob and an optional file name.",
       "fields": [
         {
           "name": "source",
-          "type": "MediaSource",
+          "type": "MediaBlob",
           "presence": "required"
         },
         {
@@ -530,11 +535,11 @@
     },
     {
       "name": "MediaBlob",
-      "doc": "A content-addressed blob. No blob store exists yet, so a request that carries one is refused.",
+      "doc": "A content-addressed blob in the engine store. The `bytes` field is the size, not the payload.",
       "fields": [
         {
           "name": "hash",
-          "type": "[64]u8",
+          "type": "BlobHash",
           "presence": "required"
         },
         {
@@ -545,6 +550,18 @@
         {
           "name": "bytes",
           "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "BlobPutParams",
+      "doc": "These are the parameters for `blob.put`. The engine reads the file, so no bytes cross the wire.",
+      "fields": [
+        {
+          "name": "path",
+          "doc": "An absolute path to an image file on the engine host.",
+          "type": "string",
           "presence": "required"
         }
       ]
@@ -1987,6 +2004,12 @@
           "name": "catalog_rev",
           "type": "CatalogRev",
           "presence": "required"
+        },
+        {
+          "name": "blob_dir",
+          "doc": "The blob store directory. A client reads `<blob_dir>/<hash>` to show an image.",
+          "type": "string",
+          "presence": "required"
         }
       ]
     },
@@ -3307,7 +3330,7 @@
       "fields": [
         {
           "name": "source",
-          "type": "MediaSource",
+          "type": "MediaBlob",
           "presence": "required"
         },
         {
@@ -3377,17 +3400,6 @@
         {
           "tag": "file",
           "type": "ContentFile"
-        }
-      ]
-    },
-    {
-      "name": "MediaSource",
-      "doc": "This type identifies where media bytes live.",
-      "discriminator": "type",
-      "arms": [
-        {
-          "tag": "blob",
-          "type": "MediaBlob"
         }
       ]
     },
@@ -3788,6 +3800,9 @@
           "type": "SkillLoadParams"
         },
         {
+          "type": "BlobPutParams"
+        },
+        {
           "type": "CatalogListParams"
         },
         {
@@ -3862,6 +3877,9 @@
         },
         {
           "type": "SkillLoadResult"
+        },
+        {
+          "type": "MediaBlob"
         },
         {
           "type": "CatalogListResult"
@@ -4417,6 +4435,11 @@
           "doc": "Read the body of one skill from the session catalog."
         },
         {
+          "name": "blob.put",
+          "wire": "blob.put",
+          "doc": "Copy one image file into the blob store and return its ref."
+        },
+        {
           "name": "catalog.list",
           "wire": "catalog.list",
           "doc": "List the model catalog."
@@ -4676,6 +4699,11 @@
       "name": "InstructionHash",
       "base": "[32]u8",
       "doc": "This hash identifies the exact instruction file bytes."
+    },
+    {
+      "name": "BlobHash",
+      "base": "[32]u8",
+      "doc": "This hash is the SHA-256 of a stored blob: 32 raw bytes, 64 lowercase hexadecimal characters."
     },
     {
       "name": "CatalogRev",

@@ -106,6 +106,8 @@ pub const MethodName = enum {
     @"session.reload_context",
     /// Read the body of one skill from the session catalog.
     @"skill.load",
+    /// Copy one image file into the blob store and return its ref.
+    @"blob.put",
     /// List the model catalog.
     @"catalog.list",
     /// Read providers.json again and rebuild the catalog.

@@ -52,6 +52,8 @@ pub const LoginId = HexId(32);
 pub const AgentConfigRev = HexId(32);
 /// This hash identifies the exact instruction file bytes.
 pub const InstructionHash = HexId(32);
+/// This hash is the SHA-256 of a stored blob: 32 raw bytes, 64 lowercase hexadecimal characters.
+pub const BlobHash = HexId(32);
 /// This ID uses 64 raw bytes and 128 lowercase hexadecimal characters on the wire.
 pub const CatalogRev = HexId(64);
 

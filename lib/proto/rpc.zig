@@ -3,7 +3,9 @@
 const std = @import("std");
 const agents = @import("agents.zig");
 const auth = @import("auth.zig");
+const blob = @import("blob.zig");
 const catalog = @import("catalog.zig");
+const content = @import("content.zig");
 const enums = @import("enums.zig");
 const ids = @import("ids.zig");
 const input = @import("input.zig");
@@ -40,6 +42,7 @@ pub const RequestParams = union(enum) {
     session_config_params: session.SessionConfigParams,
     session_reload_context_params: session.SessionReloadContextParams,
     skill_load_params: skill.SkillLoadParams,
+    blob_put_params: blob.BlobPutParams,
     catalog_list_params: catalog.CatalogListParams,
     empty: misc.Empty,
     auth_set_api_key_params: auth.AuthSetApiKeyParams,
@@ -71,6 +74,7 @@ pub const ResponseResult = union(enum) {
     session_config_result: session.SessionConfigResult,
     session_reload_context_result: session.SessionReloadContextResult,
     skill_load_result: skill.SkillLoadResult,
+    media_blob: content.MediaBlob,
     catalog_list_result: catalog.CatalogListResult,
     catalog_reload_result: catalog.CatalogReloadResult,
     auth_list_result: auth.AuthListResult,
@@ -140,6 +144,7 @@ pub const methods = [_]MethodSpec{
     .{ .name = .@"session.config", .params = session.SessionConfigParams, .result = session.SessionConfigResult, .params_optional = false },
     .{ .name = .@"session.reload_context", .params = session.SessionReloadContextParams, .result = session.SessionReloadContextResult, .params_optional = false },
     .{ .name = .@"skill.load", .params = skill.SkillLoadParams, .result = skill.SkillLoadResult, .params_optional = false },
+    .{ .name = .@"blob.put", .params = blob.BlobPutParams, .result = content.MediaBlob, .params_optional = false },
     .{ .name = .@"catalog.list", .params = catalog.CatalogListParams, .result = catalog.CatalogListResult, .params_optional = true },
     .{ .name = .@"catalog.reload", .params = misc.Empty, .result = catalog.CatalogReloadResult, .params_optional = true },
     .{ .name = .@"auth.list", .params = misc.Empty, .result = auth.AuthListResult, .params_optional = true },
@@ -434,14 +439,15 @@ test "notification envelope round-trips" {
 
 test "result dispatch and response error" {
     const result_json =
-        \\{"protocol":1,"engine":{"version":"v"},"session_revision":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+        \\{"protocol":2,"engine":{"version":"v"},"session_revision":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","blob_dir":"/data/blobs"}
     ;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const result_value = try std.json.parseFromSlice(std.json.Value, arena.allocator(), result_json, parse_opts);
     const result = try resultFromValue(arena.allocator(), .initialize, result_value.value, parse_opts);
     try testing.expect(result == .initialize_result);
-    try testing.expectEqual(@as(u32, 1), result.initialize_result.protocol);
+    try testing.expectEqual(@as(u32, 2), result.initialize_result.protocol);
+    try testing.expectEqualStrings("/data/blobs", result.initialize_result.blob_dir);
 
     const auth_result = try resultFromValue(arena.allocator(), .@"auth.set_api_key", .{ .object = .empty }, parse_opts);
     try testing.expect(auth_result == .empty);

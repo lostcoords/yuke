@@ -266,6 +266,8 @@ const testing = std.testing;
 const Probe = struct {
     runtime: App = undefined,
     env: std.process.Environ.Map,
+    blobs: testing.TmpDir = undefined,
+    blob_dir: [std.fs.max_path_bytes]u8 = undefined,
     slot: *login_runtime.LoginSlot = undefined,
     canned: oauth.CannedHttp,
     transport: ai.transport.CannedTransport = .{ .bytes = ai.transport.canned_reply },
@@ -274,7 +276,8 @@ const Probe = struct {
     fn init(self: *Probe, io: std.Io, replies: []const oauth.CannedHttp.Reply) !void {
         const database = @import("../../store/store.zig");
         self.* = .{ .env = .init(testing.allocator), .canned = .{ .replies = replies } };
-        try self.runtime.initTest(testing.allocator, io, try database.Database.openTest(), execution.testContext(&self.env), self.transport.transport());
+        self.blobs = testing.tmpDir(.{});
+        try self.runtime.initTest(testing.allocator, io, try database.Database.openTest(), self.blob_dir[0..try self.blobs.dir.realPath(testing.io, &self.blob_dir)], execution.testContext(&self.env), self.transport.transport());
     }
 
     /// The engine borrows the store, the logins, and the database, so it closes first.
@@ -284,6 +287,7 @@ const Probe = struct {
         self.runtime.store.deinit();
         self.runtime.logins.deinit();
         self.env.deinit();
+        self.blobs.cleanup();
     }
 
     /// Reserve one slot. The poller floor turns the one-millisecond interval into a one-second wait.

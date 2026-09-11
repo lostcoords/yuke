@@ -6,6 +6,7 @@ const proto = @import("proto");
 const sql = @import("sql");
 const Database = @import("store.zig").Database;
 const event = @import("event.zig");
+const blob = @import("blob.zig");
 const queries_gen = @import("queries_gen.zig");
 const transcript = @import("../session/transcript.zig");
 
@@ -46,6 +47,7 @@ pub fn appendCommittedMessage(
     std.debug.assert(sql.inTransaction(db.conn)); // The event and projection must commit together.
     const payload = try std.json.Stringify.valueAlloc(arena, message, .{ .emit_null_optional_fields = false });
     const seq = try event.append(db, arena, session_id, event_id, committed_at_ms, "message.committed", payload);
+    if (message == .user) try blob.recordRefs(db, session_id, message.user.content);
 
     const m = metaOf(message);
     try db.queries.insert_message.exec(.{

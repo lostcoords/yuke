@@ -30,6 +30,8 @@ pub const Deps = struct {
     io: std.Io,
     /// The one SQLite connection. The process opens and closes it.
     db: *database.Database,
+    /// The process owns the blob directory beside the database.
+    blobs: database.blob.Store,
     /// The merged provider view. A turn resolves a model against it.
     providers: *provider_store,
     /// Every resolved route opens its response through this transport.
@@ -350,6 +352,7 @@ test "activation restores durable pending input into the runtime queue" {
 test {
     _ = @import("recovery_test.zig");
     _ = @import("admission_test.zig");
+    _ = @import("blob_test.zig");
     _ = @import("reports_test.zig");
     _ = @import("model_config_test.zig");
     _ = @import("model_call.zig");

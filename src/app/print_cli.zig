@@ -429,7 +429,7 @@ const Fixture = struct {
         self.canned = .{ .bytes = ai.transport.canned_reply };
         // One context, so a split between the two owners is a test failure and not a silent drift.
         const context = execution.testContext(&self.env);
-        try self.app.initTest(testing.allocator, self.reactor.io(), try database.Database.openTest(), context, self.canned.transport());
+        try self.app.initTest(testing.allocator, self.reactor.io(), try database.Database.openTest(), self.root, context, self.canned.transport());
         _ = try self.app.store.rebuild();
         try self.extensions.init(testing.allocator, self.reactor.io(), &self.app, .{
             .host = .{ .cwd = self.root, .execution = context },

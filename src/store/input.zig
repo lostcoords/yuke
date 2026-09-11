@@ -6,6 +6,7 @@ const proto = @import("proto");
 
 const Database = @import("store.zig").Database;
 const event = @import("event.zig");
+const blob = @import("blob.zig");
 
 pub const Entry = struct {
     input: proto.misc.QueuedInput,
@@ -34,6 +35,7 @@ pub fn enqueue(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, even
     const event_payload = try std.json.Stringify.valueAlloc(arena, data, .{ .emit_null_optional_fields = false });
     const projection_payload = try std.json.Stringify.valueAlloc(arena, queued, .{ .emit_null_optional_fields = false });
     try event.appendAt(db, session_id, seq, event_id, committed_at_ms, "input.queued", event_payload);
+    try blob.recordRefs(db, session_id, stored_content);
     try db.queries.insert_pending_input.exec(.{
         .session_id = session_id,
         .input_id = input_id,

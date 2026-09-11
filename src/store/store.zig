@@ -12,6 +12,7 @@ pub const message = @import("message.zig");
 pub const config = @import("config.zig");
 pub const run = @import("run.zig");
 pub const input = @import("input.zig");
+pub const blob = @import("blob.zig");
 
 const test_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
 
@@ -27,6 +28,7 @@ const migrations = [_]Migration{
     .{ .version = 2, .sql = @embedFile("migrations/0002_pending_inputs.sql") },
     .{ .version = 3, .sql = @embedFile("migrations/0003_child_admission.sql") },
     .{ .version = 4, .sql = @embedFile("migrations/0004_child_report_name.sql") },
+    .{ .version = 5, .sql = @embedFile("migrations/0005_blob_refs.sql") },
 };
 
 comptime {

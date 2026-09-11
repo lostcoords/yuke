@@ -93,9 +93,11 @@ pub fn prepare(
     const budget = try context.Budget.forRequest(model.limits.context_window, build.max_output_tokens, build.system, build.tools);
     try @import("compaction.zig").beforeRequest(engine, arena, slot, budget);
     const projected = try context.project(arena, engine.deps.db, slot.sessionId().raw, budget);
+    var blobs: BlobReader = .{ .arena = arena, .io = engine.deps.io, .store = engine.deps.blobs };
     const request_ir = try provider.request_builder.build(arena, projected.messages, .{
         .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
         .modalities = model.modalities,
+        .blobs = blobs.lookup(),
     });
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
@@ -261,3 +263,23 @@ test "a selected level outside the model list is unsupported" {
     const unlisted: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m" };
     try std.testing.expectError(error.UnsupportedReasoning, reasoningFor(&unlisted, "turbo", 8192));
 }
+
+/// Read admitted blobs into the round arena, so the bytes outlive serialization.
+const BlobReader = struct {
+    arena: std.mem.Allocator,
+    io: std.Io,
+    store: @import("../store/store.zig").blob.Store,
+
+    fn lookup(self: *const BlobReader) provider.request_builder.BlobLookup {
+        return .{ .context = self, .getFn = get };
+    }
+
+    fn get(ctx: *const anyopaque, hash: proto.ids.BlobHash) error{ OutOfMemory, Canceled }!?[]const u8 {
+        const self: *const BlobReader = @ptrCast(@alignCast(ctx));
+        return self.store.read(self.io, self.arena, hash) catch |err| switch (err) {
+            error.OutOfMemory, error.Canceled => |e| return e,
+            // A missing blob after admission means the store is corrupt. The builder reports an unresolved blob.
+            error.BlobMissing => null,
+        };
+    }
+};

@@ -8,6 +8,7 @@ const Engine = @import("Engine.zig");
 /// The build version. `initialize` reports one value for the whole process.
 pub const version = "0.0.1";
 const database = @import("../store/store.zig");
+const blob_store = database.blob;
 const run = @import("run.zig");
 const run_task = @import("turn.zig");
 const session_events = @import("events.zig");
@@ -245,7 +246,13 @@ pub fn initialize(engine: *Engine, _: std.mem.Allocator) !proto.misc.InitializeR
         .engine = .{ .version = version },
         .session_revision = engine.session_revision,
         .catalog_rev = engine.deps.providers.merged.revision,
+        .blob_dir = engine.deps.blobs.dir,
     };
+}
+
+/// Handle blob.put: copy one image file into the store and return the ref an input may carry.
+pub fn blobPut(engine: *Engine, arena: std.mem.Allocator, params: proto.blob.BlobPutParams) !proto.content.MediaBlob {
+    return engine.deps.blobs.put(engine.deps.io, arena, params.path);
 }
 
 /// Handle session.config: return one config revision and the session's system prompt.
@@ -324,6 +331,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
         .content => |c| c.content,
         .skill => |invocation| try skillContent(engine, arena, try session_store.skillCatalog(engine.deps.db, arena, sid), invocation, diagnostic),
     };
+    try engine.deps.blobs.admit(engine.deps.io, arena, content);
     // A skill file read can yield, so use the current config after the read.
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
     const rt = try engine.activate(params.session_id);
@@ -510,10 +518,16 @@ pub fn sessionRemove(engine: *Engine, arena: std.mem.Allocator, params: proto.se
         if (rt.active_run != null or rt.pins != 0) return error.SessionBusy;
     }
 
+    // Collect the refs before the cascade deletes them. Unlink after COMMIT, so a crash leaves only an orphan file.
+    var refs: std.ArrayList(proto.ids.BlobHash) = .empty;
+    for (doomed) |id| try refs.appendSlice(arena, try blob_store.refsOf(engine.deps.db, arena, id));
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
     for (doomed) |id| try session_store.remove(engine.deps.db, id);
     try tx.commit();
+    for (refs.items) |hash| if (!try blob_store.referenced(engine.deps.db, arena, hash)) {
+        engine.deps.blobs.unlink(engine.deps.io, arena, hash) catch |err| std.log.warn("blob {x} stays on disk after removal: {t}", .{ &hash.raw, err });
+    };
 
     // Announce the deepest session first, so a client tree holds no orphan.
     var i = doomed.len;
@@ -560,6 +574,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         .content => |c| c.content,
         .skill => |invocation| try skillContent(engine, arena, catalog.entries, invocation, diagnostic),
     } else null;
+    if (content) |parts| try engine.deps.blobs.admit(engine.deps.io, arena, parts);
     var parent_tree: ?admission.Location = null;
     var selected: ?model_config.Resolved = null;
     if (params.child) |child| {

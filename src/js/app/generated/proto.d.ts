@@ -39,29 +39,34 @@ export interface ContentText {
   readonly text: string;
 }
 
-/** This part holds an image source and an optional detail hint. */
+/** This part holds an image blob. */
 export interface ContentImage {
-  readonly source: MediaSource;
-  readonly detail?: string;
+  readonly source: MediaBlob;
 }
 
-/** This part holds an audio source and its format. */
+/** This part holds an audio blob and its format. */
 export interface ContentAudio {
-  readonly source: MediaSource;
+  readonly source: MediaBlob;
   readonly format: string;
 }
 
-/** This part holds a file source and an optional file name. */
+/** This part holds a file blob and an optional file name. */
 export interface ContentFile {
-  readonly source: MediaSource;
+  readonly source: MediaBlob;
   readonly filename?: string;
 }
 
-/** A content-addressed blob. No blob store exists yet, so a request that carries one is refused. */
+/** A content-addressed blob in the engine store. The `bytes` field is the size, not the payload. */
 export interface MediaBlob {
-  readonly hash: string;
+  readonly hash: BlobHash;
   readonly mime: string;
   readonly bytes: number;
+}
+
+/** These are the parameters for `blob.put`. The engine reads the file, so no bytes cross the wire. */
+export interface BlobPutParams {
+  /** An absolute path to an image file on the engine host. */
+  readonly path: string;
 }
 
 /** These are the parameters for `auth.cancel_login`. */
@@ -550,6 +555,8 @@ export interface InitializeResult {
   readonly engine: EngineInfo;
   readonly session_revision: SessionRevision;
   readonly catalog_rev: CatalogRev;
+  /** The blob store directory. A client reads `<blob_dir>/<hash>` to show an image. */
+  readonly blob_dir: string;
 }
 
 /** The engine broadcasts this diagnostic notice to all connections. Its fields borrow their data. */
@@ -1003,7 +1010,7 @@ export interface ViewDiff {
 
 /** This view displays an image. */
 export interface ViewImage {
-  readonly source: MediaSource;
+  readonly source: MediaBlob;
   readonly alt?: string;
 }
 
@@ -1205,6 +1212,8 @@ export type MethodName =
   | "session.reload_context"
   /** Read the body of one skill from the session catalog. */
   | "skill.load"
+  /** Copy one image file into the blob store and return its ref. */
+  | "blob.put"
   /** List the model catalog. */
   | "catalog.list"
   /** Read providers.json again and rebuild the catalog. */
@@ -1298,11 +1307,6 @@ export type ContentPart =
   | { readonly type: "image" } & ContentImage
   | { readonly type: "audio" } & ContentAudio
   | { readonly type: "file" } & ContentFile
-;
-
-/** This type identifies where media bytes live. */
-export type MediaSource =
-  | { readonly type: "blob" } & MediaBlob
 ;
 
 /** This union reports the terminal outcome of an engine-owned login attempt. */
@@ -1445,6 +1449,7 @@ export type RequestParams =
   | SessionConfigParams
   | SessionReloadContextParams
   | SkillLoadParams
+  | BlobPutParams
   | CatalogListParams
   | Empty
   | AuthSetApiKeyParams
@@ -1472,6 +1477,7 @@ export type ResponseResult =
   | SessionConfigResult
   | SessionReloadContextResult
   | SkillLoadResult
+  | MediaBlob
   | CatalogListResult
   | CatalogReloadResult
   | AuthListResult
@@ -1524,6 +1530,9 @@ export type AgentConfigRev = string;
 
 /** This hash identifies the exact instruction file bytes. */
 export type InstructionHash = string;
+
+/** This hash is the SHA-256 of a stored blob: 32 raw bytes, 64 lowercase hexadecimal characters. */
+export type BlobHash = string;
 
 /** This ID uses 64 raw bytes and 128 lowercase hexadecimal characters on the wire. */
 export type CatalogRev = string;
@@ -1601,6 +1610,8 @@ export interface Methods {
   "session.reload_context": { paramsType: [SessionReloadContextParams]; returnType: SessionReloadContextResult };
   /** Read the body of one skill from the session catalog. */
   "skill.load": { paramsType: [SkillLoadParams]; returnType: SkillLoadResult };
+  /** Copy one image file into the blob store and return its ref. */
+  "blob.put": { paramsType: [BlobPutParams]; returnType: MediaBlob };
   /** List the model catalog. */
   "catalog.list": { paramsType: [CatalogListParams?]; returnType: CatalogListResult };
   /** Read providers.json again and rebuild the catalog. */

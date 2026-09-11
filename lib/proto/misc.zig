@@ -55,6 +55,8 @@ pub const InitializeResult = struct {
     engine: EngineInfo,
     session_revision: ids.SessionRevision,
     catalog_rev: ids.CatalogRev,
+    /// The blob store directory. A client reads `<blob_dir>/<hash>` to show an image.
+    blob_dir: []const u8,
 };
 
 /// The engine broadcasts this diagnostic notice to all connections. Its fields borrow their data.

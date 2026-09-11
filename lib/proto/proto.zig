@@ -10,6 +10,7 @@ pub const meta = @import("meta.zig");
 pub const enums = @import("enums.zig");
 pub const content = @import("content.zig");
 pub const auth = @import("auth.zig");
+pub const blob = @import("blob.zig");
 pub const catalog = @import("catalog.zig");
 pub const activity = @import("activity.zig");
 pub const input = @import("input.zig");

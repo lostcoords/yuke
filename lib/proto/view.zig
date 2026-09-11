@@ -47,7 +47,7 @@ pub const ViewDiff = struct {
 
 /// This view displays an image.
 pub const ViewImage = struct {
-    source: content.MediaSource,
+    source: content.MediaBlob,
     alt: ?[]const u8 = null,
 };
 

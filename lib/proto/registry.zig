@@ -4,6 +4,7 @@ const instructions = @import("instructions.zig");
 const agents = @import("agents.zig");
 const activity = @import("activity.zig");
 const auth = @import("auth.zig");
+const blob = @import("blob.zig");
 const catalog = @import("catalog.zig");
 const content = @import("content.zig");
 const enums = @import("enums.zig");
@@ -36,6 +37,7 @@ pub const structs = [_]TypeEntry{
     .{ .name = "ContentAudio", .ty = content.ContentAudio },
     .{ .name = "ContentFile", .ty = content.ContentFile },
     .{ .name = "MediaBlob", .ty = content.MediaBlob },
+    .{ .name = "BlobPutParams", .ty = blob.BlobPutParams },
     .{ .name = "AuthCancelLoginParams", .ty = auth.AuthCancelLoginParams },
     .{ .name = "AuthChangedData", .ty = auth.AuthChangedData },
     .{ .name = "AuthListResult", .ty = auth.AuthListResult },
@@ -183,7 +185,6 @@ pub const structs = [_]TypeEntry{
 
 pub const tagged_unions = [_]TypeEntry{
     .{ .name = "ContentPart", .ty = content.ContentPart },
-    .{ .name = "MediaSource", .ty = content.MediaSource },
     .{ .name = "AuthLoginOutcome", .ty = auth.AuthLoginOutcome },
     .{ .name = "CatalogListResult", .ty = catalog.CatalogListResult },
     .{ .name = "ActivityState", .ty = activity.ActivityState },
@@ -257,6 +258,7 @@ pub const aliases = [_]AliasEntry{
     .{ .name = "ToolOutputDeltaData", .base = "PartDelta" },
     .{ .name = "AgentConfigRev", .base = "[32]u8" },
     .{ .name = "InstructionHash", .base = "[32]u8" },
+    .{ .name = "BlobHash", .base = "[32]u8" },
     .{ .name = "CatalogRev", .base = "[64]u8" },
     .{ .name = "ModelId", .base = "string" },
     .{ .name = "SessionId", .base = "[16]u8" },

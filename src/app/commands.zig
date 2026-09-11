@@ -146,8 +146,11 @@ test "auth.list reports the providers the environment offers, not only the file"
     try env.put("ANTHROPIC_API_KEY", "sk-env");
 
     var transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+    var blobs = std.testing.tmpDir(.{});
+    defer blobs.cleanup();
+    var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), execution.testContext(&env), transport.transport());
+    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), transport.transport());
     defer runtime.logins.deinit();
     defer runtime.store.deinit();
     defer runtime.db.deinit();
@@ -185,8 +188,11 @@ test "catalog.reload reads the file again and reports whether the revision moved
     var env: std.process.Environ.Map = .init(testing.allocator);
     defer env.deinit();
     var transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+    var blobs = std.testing.tmpDir(.{});
+    defer blobs.cleanup();
+    var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), execution.testContext(&env), transport.transport());
+    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), transport.transport());
     defer runtime.logins.deinit();
     defer runtime.store.deinit();
     defer runtime.db.deinit();

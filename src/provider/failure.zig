@@ -27,6 +27,7 @@ pub fn classify(err: anyerror) Detail {
         error.UnsupportedReasoning => .{ .class = .permanent, .code = .unsupported_reasoning, .message = "the model does not support this reasoning level" },
         error.PromptTooLarge => .{ .class = .permanent, .code = .runtime, .message = "the system prompt exceeds the protocol string limit" },
         error.HookBlocked => .{ .class = .permanent, .code = .runtime, .message = "an extension stopped the request" },
+        error.UnresolvedBlob => .{ .class = .permanent, .code = .runtime, .message = "an attachment names bytes the blob store does not hold" },
         else => {
             const got = ai.failure.classify(err);
             return .{ .class = got.class, .code = codeOf(got.reason), .message = got.reason.message() };
@@ -88,6 +89,12 @@ test "the library request bound reports context overflow" {
 
 test "an extension that stops a request reports a runtime failure" {
     const detail = classify(error.HookBlocked);
+    try testing.expectEqual(Class.permanent, detail.class);
+    try testing.expectEqual(proto.enums.RunErrorCode.runtime, detail.code);
+}
+
+test "a blob the store cannot resolve after admission reports a runtime failure, not a provider one" {
+    const detail = classify(error.UnresolvedBlob);
     try testing.expectEqual(Class.permanent, detail.class);
     try testing.expectEqual(proto.enums.RunErrorCode.runtime, detail.code);
 }

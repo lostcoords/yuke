@@ -12,10 +12,22 @@ const Block = ir.Block;
 pub const Options = struct {
     target: ?types.ModelIdentity = null,
     modalities: types.Modalities = .{},
+    /// The lookup that answers a blob ref with bytes. Null resolves no attachment.
+    blobs: ?BlobLookup = null,
 };
 
-/// A bad transcript degrades the turn; the engine never crashes on stored data.
-pub const Error = error{ OutOfMemory, InvalidTranscript, UnresolvedBlob };
+/// One read of stored bytes by hash. The caller keeps the bytes alive through serialization.
+pub const BlobLookup = struct {
+    context: *const anyopaque,
+    getFn: *const fn (context: *const anyopaque, hash: proto.ids.BlobHash) error{ OutOfMemory, Canceled }!?[]const u8,
+
+    pub fn get(self: BlobLookup, hash: proto.ids.BlobHash) error{ OutOfMemory, Canceled }!?[]const u8 {
+        return self.getFn(self.context, hash);
+    }
+};
+
+/// A bad transcript degrades the turn. The engine never crashes on stored data.
+pub const Error = error{ OutOfMemory, InvalidTranscript, UnresolvedBlob, Canceled };
 
 /// Build the block IR in `gpa`. Blocks borrow transcript strings.
 pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, options: Options) Error!ir.RequestIr {
@@ -60,15 +72,16 @@ fn userValue(part: proto.content.ContentPart, options: Options) Error!Block.Valu
 }
 
 /// Map one attachment against the target model, and give a note for a kind it cannot read.
-fn mediaValue(source: proto.content.MediaSource, options: Options) Error!Block.Value {
-    const blob = source.blob;
+fn mediaValue(blob: proto.content.MediaBlob, options: Options) Error!Block.Value {
     const kind = ir.modalityOf(blob.mime);
     // A model that lists nothing blocks nothing, so only a stated refusal replaces the attachment.
     if (options.modalities.takesInput(kind)) |takes| {
         if (!takes) return .{ .text = omittedNote(kind) };
     }
-    // The model reads this kind, so the bytes must arrive. No blob store exists to read them yet.
-    return error.UnresolvedBlob;
+    // The model reads the kind, so the bytes must arrive. Admission proved the store holds them.
+    const lookup = options.blobs orelse return error.UnresolvedBlob;
+    const bytes = (try lookup.get(blob.hash)) orelse return error.UnresolvedBlob;
+    return .{ .media = .{ .source = .{ .bytes = bytes }, .mime = blob.mime } };
 }
 
 fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: proto.message.AssistantMessage, options: Options) Error!void {
@@ -190,10 +203,10 @@ test "reasoning replays only when the provenance matches the target" {
 test "a model that reads no images sees a note where the attachment was" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const blob: proto.content.MediaBlob = .{ .hash = std.mem.zeroes([64]u8), .mime = "image/png", .bytes = 2 };
+    const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(0)), .mime = "image/png", .bytes = 2 };
     const parts = [_]proto.content.ContentPart{
         .{ .text = .{ .text = "look" } },
-        .{ .image = .{ .source = .{ .blob = blob } } },
+        .{ .image = .{ .source = blob } },
     };
     const messages = [_]proto.message.Message{.{ .user = .{
         .id = 1,
@@ -218,6 +231,51 @@ test "a model that reads no images sees a note where the attachment was" {
     try testing.expectError(error.UnresolvedBlob, build(arena.allocator(), &messages, .{}));
 }
 
+const SpyLookup = struct {
+    bytes: []const u8,
+    hits: usize = 0,
+    present: bool = true,
+
+    fn lookup(self: *SpyLookup) BlobLookup {
+        return .{ .context = self, .getFn = get };
+    }
+    fn get(ctx: *const anyopaque, _: proto.ids.BlobHash) error{ OutOfMemory, Canceled }!?[]const u8 {
+        const self: *SpyLookup = @ptrCast(@alignCast(@constCast(ctx)));
+        self.hits += 1;
+        return if (self.present) self.bytes else null;
+    }
+};
+
+test "a vision model resolves the blob bytes, and a text-only model never reads the store" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(7)), .mime = "image/png", .bytes = 2 };
+    const parts = [_]proto.content.ContentPart{.{ .image = .{ .source = blob } }};
+    const messages = [_]proto.message.Message{.{ .user = .{ .id = 1, .content = &parts, .input_id = 2, .time = .{ .created_at_ms = 0 } } }};
+    const reads_images: types.Modalities = .{ .input = &.{ .text, .image } };
+
+    // A supplied lookup resolves to one media block with the exact bytes and mime.
+    var spy: SpyLookup = .{ .bytes = "PNG" };
+    const built = try build(a, &messages, .{ .modalities = reads_images, .blobs = spy.lookup() });
+    try testing.expectEqual(@as(usize, 1), built.blocks.len);
+    try testing.expect(built.blocks[0].value == .media);
+    try testing.expectEqualStrings("PNG", built.blocks[0].value.media.source.bytes);
+    try testing.expectEqualStrings("image/png", built.blocks[0].value.media.mime);
+    try testing.expectEqual(@as(usize, 1), spy.hits);
+
+    // A lookup that no longer holds the hash is an unresolved blob, never a silent omission.
+    var gone: SpyLookup = .{ .bytes = "PNG", .present = false };
+    try testing.expectError(error.UnresolvedBlob, build(a, &messages, .{ .modalities = reads_images, .blobs = gone.lookup() }));
+    try testing.expectEqual(@as(usize, 1), gone.hits);
+
+    // A text-only model omits the attachment and never touches the lookup.
+    var untouched: SpyLookup = .{ .bytes = "PNG" };
+    const text_only = try build(a, &messages, .{ .modalities = .{ .input = &.{.text} }, .blobs = untouched.lookup() });
+    try testing.expectEqualStrings("[image omitted: this model reads no images]", text_only.blocks[0].value.text);
+    try testing.expectEqual(@as(usize, 0), untouched.hits);
+}
+
 test "the media type selects the omitted-attachment note" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -228,8 +286,8 @@ test "the media type selects the omitted-attachment note" {
         .{ "audio/mpeg", "[audio omitted: this model reads no audio]" },
         .{ "video/mp4", "[video omitted: this model reads no video]" },
     }) |case| {
-        const blob: proto.content.MediaBlob = .{ .hash = std.mem.zeroes([64]u8), .mime = case[0], .bytes = 2 };
-        const parts = [_]proto.content.ContentPart{.{ .file = .{ .source = .{ .blob = blob } } }};
+        const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(0)), .mime = case[0], .bytes = 2 };
+        const parts = [_]proto.content.ContentPart{.{ .file = .{ .source = blob } }};
         const messages = [_]proto.message.Message{.{ .user = .{
             .id = 1,
             .content = &parts,

@@ -307,8 +307,11 @@ test "a request reaches a command and answers with its result" {
     defer rt.deinit();
     var env: std.process.Environ.Map = .init(testing.allocator);
     var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+    var blobs = testing.tmpDir(.{});
+    defer blobs.cleanup();
+    var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: app.App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), execution.testContext(&env), canned.transport());
+    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), canned.transport());
     try runtime.installTestModel();
     defer runtime.logins.deinit();
     defer runtime.store.deinit();
