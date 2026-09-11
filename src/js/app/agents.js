@@ -194,7 +194,7 @@ async function withSlot(ctx, slot, signal, attempt) {
   }
 }
 
-const spawn_note = "Child started. A report will resume this turn. Do not redo this task.";
+const spawn_note = "Child started. The report comes later as a new message. After you start every child, end your turn and wait. Do not redo this task.";
 
 /** @param {Context} ctx @param {{ name: string, message: string, model: Wire.AgentModelSlot }} args @param {Signal} signal @param {Site} site */
 export async function spawnAgent(ctx, args, signal, site) {
