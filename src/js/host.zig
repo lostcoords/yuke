@@ -38,51 +38,9 @@ pub const Error = error{JavaScriptFault};
 
 /// Every frontend bakes every module, because `index.js` is one file that both frontends load.
 pub const default_baked = blk: {
-    const names = .{
-        "facade",
-        "kernel",
-        "builtins",
-        "ext",
-        "interaction",
-        "tui",
-        "core",
-        "keys",
-        "text-input",
-        "pager",
-        "chat-view",
-        "layout",
-        "md",
-        "ui",
-        "client",
-        "vim",
-        "notice",
-        "sessions",
-        "refresh",
-        "activity",
-        "indicator",
-        "queue",
-        "context",
-        "cache",
-        "command-ui",
-        "catalog",
-        "agents-ui",
-        "agent-tools",
-        "agents",
-        "auth",
-        "chat",
-        "fzy",
-        "transcript",
-        "explorer",
-        "composer-vim",
-        "transcript-vim",
-        "defaults",
-        "interaction-ui",
-    };
-    var modules: [names.len]loader_mod.BakedModule = undefined;
-    for (names, 0..) |name, i| modules[i] = .{
-        .name = if (std.mem.eql(u8, name, "facade")) "yuke" else "yuke:" ++ name,
-        .source = @embedFile("app/" ++ name ++ ".js"),
-    };
+    const baked = @import("baked").modules;
+    var modules: [baked.len]loader_mod.BakedModule = undefined;
+    for (baked, 0..) |m, i| modules[i] = .{ .name = m.name, .code = .{ .bytecode = m.bytecode } };
     break :blk modules;
 };
 
@@ -786,6 +744,47 @@ test "an oversize module file does not load" {
         error.JavaScriptFault,
         host.evalModule("import { n } from './big.js';", entry),
     );
+}
+
+test "every baked module reads back from its bytecode under its own name" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try std.testing.expect(default_baked.len > 0);
+    for (default_baked) |m| {
+        const value = host.ctx.readObject(m.code.bytecode, .{ .bytecode = true });
+        const module = host.ctx.moduleFromValue(value) orelse return error.UnreadableBytecode;
+        const atom = host.ctx.getModuleName(module);
+        defer host.ctx.freeAtom(atom);
+        const name = try host.ctx.atomToCStringLen(atom);
+        defer host.ctx.freeCString(name.ptr);
+        try std.testing.expectEqualStrings(m.name, name);
+    }
+}
+
+test "every native name the bake stubs is a module a host installs" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    const native = @import("baked").native;
+    try std.testing.expect(native.len > 0);
+    for (native) |name| {
+        var source: [128]u8 = undefined;
+        try host.evalModule(try std.fmt.bufPrintZ(&source, "import \"{s}\";", .{name}), "native.js");
+    }
+}
+
+test "a stack trace from a baked module keeps its line numbers" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { grow } from "yuke:layout";
+        \\try { grow(0); } catch (error) { globalThis.stack = String(error.stack); }
+    , "stack.js");
+    const value = try host.ctx.eval("globalThis.stack", "read-stack.js", .{});
+    defer host.ctx.freeValue(value);
+    const stack = try host.ctx.toCStringLen(value);
+    defer host.ctx.freeCString(stack.ptr);
+    const at = std.mem.indexOf(u8, stack, "yuke:layout:") orelse return error.MissingBakedFrame;
+    try std.testing.expect(std.ascii.isDigit(stack[at + "yuke:layout:".len]));
 }
 
 test {

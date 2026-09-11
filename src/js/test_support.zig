@@ -7,7 +7,7 @@ const tools_table = @import("tools.zig");
 const BakedModule = @import("loader.zig").BakedModule;
 
 const modules = host_mod.default_baked ++ [_]BakedModule{
-    .{ .name = "yuke:test", .source = @embedFile("tests/assert.js") },
+    .{ .name = "yuke:test", .code = .{ .source = @embedFile("tests/assert.js") } },
 };
 
 /// A test allocator that records no stack traces, because QuickJS allocates on every JavaScript step.

@@ -25,6 +25,7 @@ pub fn build(b: *std.Build) void {
     });
     const quickjs = b.dependency("quickjs", .{ .target = target, .optimize = dep_optimize });
     const quickjs_c = quickjs.module("quickjs").import_table.get("c").?;
+    const quickjs_host = b.dependency("quickjs", .{ .target = host, .optimize = dep_optimize });
     const metrics = b.addOptions();
     metrics.addOption(bool, "enabled", b.option(bool, "metrics", "Enable allocation and UI work counters") orelse false);
 
@@ -137,6 +138,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "quickjs", .module = quickjs.module("quickjs") },
         .{ .name = "quickjs_c", .module = quickjs_c },
         .{ .name = "spawn_c", .module = spawn_c.createModule() },
+        .{ .name = "baked", .module = addBakedModules(b, quickjs_host.module("quickjs"), optimize) },
         .{ .name = "metrics", .module = metrics.createModule() },
         .{ .name = "term", .module = term },
         .{ .name = "proto", .module = proto },
@@ -289,4 +291,39 @@ fn addSourceInputs(b: *std.Build, run: *std.Build.Step.Run, dir_path: []const u8
         if (!std.mem.endsWith(u8, entry.name, suffix)) continue;
         run.addFileInput(b.path(b.fmt("{s}/{s}", .{ dir_path, entry.name })));
     }
+}
+
+/// The app modules every host embeds as bytecode. `facade` answers the bare name `yuke`.
+const baked_js = [_][]const u8{
+    "facade",     "kernel",         "builtins",   "ext",         "interaction",  "tui",
+    "core",       "keys",           "text-input", "pager",       "chat-view",    "layout",
+    "md",         "ui",             "client",     "vim",         "notice",       "sessions",
+    "refresh",    "activity",       "indicator",  "queue",       "context",      "cache",
+    "command-ui", "catalog",        "agents-ui",  "agent-tools", "agents",       "auth",
+    "chat",       "fzy",            "transcript", "explorer",    "composer-vim", "transcript-vim",
+    "defaults",   "interaction-ui",
+};
+
+/// The modules `src/js/native` installs in every host. The bake tool stubs these and rejects any other unknown import.
+const native_js = "yuke:diff,yuke:engine-native,yuke:exec,yuke:fs,yuke:hooks,yuke:interaction-native,yuke:term,yuke:tools";
+
+/// Bake the app modules to QuickJS bytecode on the build machine. The result is the `baked` import.
+fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.builtin.OptimizeMode) *std.Build.Module {
+    const tool = b.addExecutable(.{
+        .name = "yuke-jsbake",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/jsbake/main.zig"),
+            .target = b.graph.host,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "quickjs", .module = quickjs }},
+        }),
+    });
+    const run = b.addRunArtifact(tool);
+    const out = run.addOutputDirectoryArg("baked");
+    run.addArg(native_js);
+    for (baked_js) |file| {
+        run.addArg(if (std.mem.eql(u8, file, "facade")) "yuke" else b.fmt("yuke:{s}", .{file}));
+        run.addFileArg(b.path(b.fmt("src/js/app/{s}.js", .{file})));
+    }
+    return b.createModule(.{ .root_source_file = out.path(b, "baked.zig") });
 }

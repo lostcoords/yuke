@@ -5,8 +5,12 @@ pub const default_max_file_bytes: usize = 256 * 1024;
 
 pub const BakedModule = struct {
     name: []const u8,
-    /// QuickJS reads the sentinel byte, so module source must be NUL-terminated.
-    source: [:0]const u8,
+    code: union(enum) {
+        /// QuickJS reads the sentinel byte, so module source must be NUL-terminated.
+        source: [:0]const u8,
+        /// `tools/jsbake` wrote these bytes from the same QuickJS sources, so the reader trusts them.
+        bytecode: []const u8,
+    },
 };
 
 pub const ResolveError = error{
@@ -54,8 +58,11 @@ pub const Loader = struct {
 
     pub fn onLoadModule(self: *Loader, ctx: quickjs.Context, name: []const u8) ?quickjs.Context.Module {
         if (isBaked(name)) {
-            const source = findBaked(self.baked, name) orelse return null;
-            return compile(ctx, source, name);
+            const module = findBaked(self.baked, name) orelse return null;
+            return switch (module.code) {
+                .source => |source| compile(ctx, source, name),
+                .bytecode => |bytecode| read(ctx, bytecode),
+            };
         }
         const source = self.readModule(name) orelse return null;
         defer self.gpa.free(source);
@@ -79,11 +86,17 @@ pub const Loader = struct {
     }
 };
 
-fn findBaked(baked: []const BakedModule, name: []const u8) ?[:0]const u8 {
+fn findBaked(baked: []const BakedModule, name: []const u8) ?BakedModule {
     for (baked) |m| {
-        if (std.mem.eql(u8, m.name, name)) return m.source;
+        if (std.mem.eql(u8, m.name, name)) return m;
     }
     return null;
+}
+
+fn read(ctx: quickjs.Context, bytecode: []const u8) ?quickjs.Context.Module {
+    const val = ctx.readObject(bytecode, .{ .bytecode = true });
+    if (ctx.isException(val)) return null;
+    return ctx.moduleFromValue(val);
 }
 
 fn compile(ctx: quickjs.Context, source: [:0]const u8, name: []const u8) ?quickjs.Context.Module {
