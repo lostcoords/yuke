@@ -75,6 +75,21 @@ pub const Render = struct {
         try self.vx.exitAltScreen(writer);
     }
 
+    /// Enter the alternate screen. Paste wrapping and mouse reports stay on for the session.
+    pub fn enableTui(self: *Render, writer: *std.Io.Writer) !void {
+        try self.enterAltScreen(writer);
+        try self.setBracketedPaste(writer, true);
+        try self.setMouseMode(writer, true);
+        std.debug.assert(self.vx.state.alt_screen);
+        std.debug.assert(self.vx.state.bracketed_paste);
+        std.debug.assert(self.vx.state.mouse);
+    }
+
+    /// Leave the alternate screen and disable mouse and paste.
+    pub fn resetState(self: *Render, writer: *std.Io.Writer) void {
+        self.vx.resetState(writer) catch {};
+    }
+
     /// Set bracketed paste; deinit resets the mode.
     pub fn setBracketedPaste(self: *Render, writer: *std.Io.Writer, enable: bool) !void {
         try self.vx.setBracketedPaste(writer, enable);
@@ -176,6 +191,36 @@ test "mouse mode sets 1002;1004;1006 and deinit resets it" {
     }
 
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "\x1b[?1002;1003;1004;1006;1016l") != null);
+}
+
+test "enableTui after resetState restores alt-screen modes" {
+    const io = std.testing.io;
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    defer r.deinit(&out.writer);
+
+    try r.enableTui(&out.writer);
+    r.resetState(&out.writer);
+    try std.testing.expect(!r.vx.state.alt_screen);
+    try std.testing.expect(!r.vx.state.mouse);
+    try std.testing.expect(!r.vx.state.bracketed_paste);
+    out.clearRetainingCapacity();
+
+    try r.enableTui(&out.writer);
+    r.queueRefresh();
+    try std.testing.expect(r.vx.state.alt_screen);
+    try std.testing.expect(r.vx.state.mouse);
+    try std.testing.expect(r.vx.state.bracketed_paste);
+    try std.testing.expect(r.vx.refresh);
+    try std.testing.expectEqualStrings(
+        "\x1b[?1049h" ++ "\x1b[?2004h" ++ "\x1b[?1002;1004;1006h",
+        out.written(),
+    );
 }
 
 test "a mouse disable stops deinit from resetting the mode twice" {

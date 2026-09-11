@@ -49,11 +49,21 @@ pub const Tty = struct {
     /// POSIX reads use zio cancellation.
     pub fn shutdownInput(_: *Tty) void {}
 
-    /// Restore termios and close the TTY.
-    pub fn deinit(self: *Tty) void {
+    /// Restore the original termios. The file stays open.
+    pub fn restore(self: *Tty) void {
         posix.tcsetattr(self.file.handle, .FLUSH, self.original) catch |err| {
             std.log.scoped(.term).err("restore terminal failed: {}", .{err});
         };
+    }
+
+    /// Apply raw-mode termios from the saved state.
+    pub fn enterRaw(self: *Tty) !void {
+        try posix.tcsetattr(self.file.handle, .FLUSH, rawTermios(self.original));
+    }
+
+    /// Restore termios and close the TTY.
+    pub fn deinit(self: *Tty) void {
+        self.restore();
         self.file.close(self.io);
     }
 

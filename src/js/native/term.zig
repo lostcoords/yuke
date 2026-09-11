@@ -1,4 +1,4 @@
-//! The native `yuke:term` module: the frame, the cells, the measurements, and the quit that the view tier draws through.
+//! The native `yuke:term` module: the frame, the cells, the measurements, and the quit and suspend the view tier draws through.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -31,6 +31,7 @@ pub const Paint = struct {
     pub const Output = struct {
         render: *term_pkg.Render,
         writer: *std.Io.Writer,
+        tty: ?*term_pkg.Tty = null,
     };
 
     counters: if (metrics_enabled) Counters else void = if (metrics_enabled) .{} else {},
@@ -40,6 +41,7 @@ pub const Paint = struct {
     needs_tick: bool = false,
     tick_period_ms: u32 = 450,
     quit_requested: bool = false,
+    suspend_requested: bool = false,
     term_obj: quickjs.Value = quickjs.UNDEFINED,
 
     /// Apply a terminal size to the renderer and cached JavaScript objects.
@@ -103,6 +105,7 @@ pub fn install(host: *Host) void {
         .{ .name = "setNeedsTick", .arity = 2, .call = jsSetNeedsTick },
         .{ .name = "copy", .arity = 1, .call = jsCopy },
         .{ .name = "quit", .arity = 0, .call = jsQuit },
+        .{ .name = "suspend", .arity = 0, .call = jsSuspend },
     }, addRoots);
 }
 
@@ -307,6 +310,12 @@ fn jsQuit(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
     host.paint.needs_tick = false;
     host.paint.quit_requested = true;
+    return quickjs.UNDEFINED;
+}
+
+fn jsSuspend(ctx: Context, _: Value, _: []const Value) Value {
+    const host = Host.fromContext(ctx);
+    host.paint.suspend_requested = true;
     return quickjs.UNDEFINED;
 }
 

@@ -48,6 +48,7 @@ declare module "yuke:term" {
     setNeedsTick(enabled: boolean, periodMs?: number): void;
     copy(text: string): number;
     quit(): void;
+    suspend(): void;
     clipboardMax: number;
     cwd: string;
     width: number;

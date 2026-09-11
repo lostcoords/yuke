@@ -37,6 +37,9 @@ test "yuke:core RootView paints and only ctrl+q quits" {
     try loop.step(host, .{ .key_press = .{ .codepoint = 'q' } });
     try std.testing.expect(!host.paint.quit_requested);
     try support.eval(host, "tests/ui/bind.test.js");
+    try loop.step(host, .{ .key_press = .{ .codepoint = 'z', .mods = .{ .ctrl = true } } });
+    try std.testing.expect(host.paint.suspend_requested);
+    try std.testing.expect(!host.paint.quit_requested);
     try loop.step(host, .{ .key_press = .{ .codepoint = 'q', .mods = .{ .ctrl = true } } });
     try std.testing.expect(host.paint.quit_requested);
 }

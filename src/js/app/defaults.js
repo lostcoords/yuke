@@ -138,6 +138,7 @@ plugins.use({
         "ctrl+f": "ui:sessions",
         "ctrl+c": "session:interrupt",
         "ctrl+q": "quit",
+        "ctrl+z": "suspend",
         "ctrl+k h": "focus:left",
         "ctrl+k j": "focus:down",
         "ctrl+k k": "focus:up",

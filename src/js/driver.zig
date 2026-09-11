@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const zio = @import("zio");
 const term_pkg = @import("term");
 const host_mod = @import("host.zig");
@@ -91,17 +92,15 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
 
     var render = try term_pkg.Render.init(io, gpa, extensions.host.execution.env, .{});
     defer render.deinit(writer);
-    try render.enterAltScreen(writer);
-    // The terminal wraps pasted text in start and end markers.
-    try render.setBracketedPaste(writer, true);
-    // Mouse reporting is always on. The in-app selection replaces the selection of the terminal.
-    try render.setMouseMode(writer, true);
+    try render.enableTui(writer);
 
     const host = extensions.host;
 
     const ws = try tty.getWinsize();
     try render.resize(writer, ws);
     host.paint.bindRender(host.ctx, &render, writer);
+    std.debug.assert(host.paint.output != null);
+    host.paint.output.?.tty = &tty;
     if (extensions.user_entry_fault) report.paintFault(host);
 
     var input: term_pkg.Input = .{ .gpa = gpa };
@@ -149,13 +148,36 @@ pub fn serve(host: *Host, ch: *Channel) !void {
         while (true) {
             try applyMsg(host, &msg, &wheel);
             applied += 1;
-            if (applied >= drain_max or host.paint.quit_requested) break;
+            if (applied >= drain_max or host.paint.quit_requested or host.paint.suspend_requested) break;
             msg = ch.tryReceive() catch break;
         }
         try absorbScriptFault(host, host.pump());
         try absorbScriptFault(host, tui_loop.flushWheel(host, &wheel));
+        try parkIfRequested(host);
         try absorbScriptFault(host, tui_loop.flushFrame(host));
     }
+}
+
+/// Leave the TUI, stop, then restore and resize after continue.
+fn parkIfRequested(host: *Host) !void {
+    if (!host.paint.suspend_requested) return;
+    host.paint.suspend_requested = false;
+    if (builtin.os.tag == .windows) return;
+    const output = host.paint.output orelse return;
+    const tty = output.tty orelse return;
+    output.render.resetState(output.writer);
+    tty.restore();
+    std.posix.raise(std.posix.SIG.TSTP) catch {};
+    try tty.enterRaw();
+    try output.render.enableTui(output.writer);
+    output.render.queueRefresh();
+    const ws = tty.getWinsize() catch term_pkg.Winsize{
+        .rows = host.paint.height,
+        .cols = host.paint.width,
+        .x_pixel = 0,
+        .y_pixel = 0,
+    };
+    try absorbScriptFault(host, tui_loop.step(host, .{ .winsize = ws }));
 }
 
 /// Apply one message; the caller owns the frame. A wheel step joins the open run, and every other message ends it.

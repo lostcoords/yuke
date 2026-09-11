@@ -13,6 +13,11 @@ if (!plugins.get("catalog")) fail.push("catalog-plugin");
 if (!plugins.get("chat")) fail.push("chat-plugin");
 if (!plugins.get("explorer")) fail.push("explorer-plugin");
 if (!command.available("catalog:reload")) fail.push("catalog-reload-command");
+if (!command.available("suspend")) fail.push("suspend-command");
+{
+  const z = keymap.describe("ctrl+z").winner;
+  if (!z || z.binding !== "suspend") fail.push("suspend-key");
+}
 
 
 // The status bar reports a pending key.
