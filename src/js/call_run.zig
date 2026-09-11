@@ -33,6 +33,13 @@ pub fn pump(host: *Host) void {
     host.calls.sweep(host.ctx);
 }
 
+/// Read each running call again. `Host.pump` calls this after its last job drain.
+pub fn pollRunning(host: *Host) void {
+    for (host.calls.live.items) |call| {
+        if (call.state == .running and !call.submitter_done) poll(host, call);
+    }
+}
+
 /// Answer every waiting call, so a turn task never sleeps past the host. `Host.close` calls this.
 pub fn abortAll(host: *Host) void {
     for (host.calls.live.items) |call| {
@@ -157,11 +164,13 @@ fn acceptPromise(host: *Host, call: *table.Call, answer: Value) void {
     poll(host, call);
 }
 
-/// Read one Promise. A pending Promise stays. `Calls.hasWork` asks for a pump after it settles.
+/// Read one Promise. A pending Promise stays.
 fn poll(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     const state = ctx.promiseState(call.promise);
     if (state == .Pending) return;
+    // A settle can run a user `toJSON` or getter, so it starts a fresh interrupt slice.
+    host.enterSlice();
     const result = ctx.promiseResult(call.promise);
     defer ctx.freeValue(result);
     settleValue(host, call, result, state == .Rejected);
@@ -285,4 +294,22 @@ fn settleText(host: *Host, call: *table.Call, text: []const u8, is_error: bool) 
 
 fn settleTextAndView(host: *Host, call: *table.Call, text: []const u8, view_json: []const u8) void {
     call.settleView(host.io, utf8.sanitize(host.gpa, text) catch unreachable, utf8.sanitize(host.gpa, view_json) catch unreachable);
+}
+
+test "a settle after a spent interrupt slice still reads the answer" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    const call = host.calls.submitHook("tool.before", "{}");
+    call.state = .running;
+    call.promise = try host.ctx.eval(
+        \\Promise.resolve({ toJSON() { let n = 0; for (let i = 0; i < 100000; i += 1) n += i; return { ok: n > 0 }; } })
+    , "answer.js", .{});
+    // The last job of a drain can spend the slice right before the poll.
+    host.interrupt_count = host.interrupt_budget;
+    pollRunning(host);
+    try std.testing.expect(call.state == .settled);
+    try std.testing.expect(!call.is_error);
+    try std.testing.expectEqualStrings("{\"ok\":true}", call.text.?);
+    call.finish();
+    try host.pump();
 }

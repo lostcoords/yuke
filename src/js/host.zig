@@ -240,6 +240,8 @@ pub const Host = struct {
         call_run.pump(self);
         if (self.ops.settle(self.ctx)) faulted = true;
         try self.drainJobs();
+        // The last drain can settle a call Promise, so this pump reads it before the owner sleeps.
+        call_run.pollRunning(self);
         // A callback can cancel a native interaction; hasPending schedules its completion for the next pass.
         if (faulted) {
             self.dropPendingException();
@@ -247,10 +249,10 @@ pub const Host = struct {
         }
     }
 
-    /// Report whether the owner has primitive work waiting. It asks before it sleeps.
+    /// Report whether the owner has work to run. The owner asks before it sleeps.
     pub fn hasPending(self: *const Host) bool {
-        return self.ops.anyDone() or self.engine.hasPending() or
-            self.calls.hasWork(self.ctx, self.runtime.isJobPending());
+        return self.runtime.isJobPending() or self.ops.anyDone() or self.engine.hasPending() or
+            self.calls.hasWork(self.ctx);
     }
 
     /// Drain jobs, release QuickJS resources, and destroy the host.
@@ -546,6 +548,18 @@ test "close interrupts a leftover spinning job" {
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "interrupted") != null);
 }
 
+test "a job the drain budget leaves keeps the owner awake" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    host.budget = 0;
+    try host.eval("Promise.resolve().then(() => {})", "left.js");
+    try std.testing.expect(host.runtime.isJobPending());
+    try std.testing.expect(host.hasPending());
+    host.budget = job_budget;
+    try host.pump();
+    try std.testing.expect(!host.hasPending());
+}
+
 test "close drains then destroy frees the runtime" {
     const host = Host.create(std.testing.allocator);
     defer host.destroy();
@@ -783,6 +797,7 @@ test {
     _ = @import("native/tools.zig");
     _ = @import("native/hooks.zig");
     _ = @import("tools.zig");
+    _ = @import("call_run.zig");
     _ = @import("hooks.zig");
     _ = @import("app_test.zig");
     _ = @import("ui_test.zig");

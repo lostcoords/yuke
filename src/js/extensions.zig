@@ -441,6 +441,25 @@ test "a turn task gets its hook answer from the owner without a second wake" {
     try std.testing.expectEqualStrings("denied bash", asker.decision.?.block);
 }
 
+test "a hook call settles in the pump that starts it" {
+    var f: Fixture = undefined;
+    try f.init(
+        \\import { plugins } from "yuke";
+        \\plugins.use({ name: "gate", apply: (ctx) => {
+        \\  ctx.hook("tool.before", () => ({ block: "denied" }));
+        \\}});
+    , kernel_boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+    const call = host.calls.submitHook("tool.before", "{\"name\":\"bash\",\"arguments\":\"{}\"}");
+    try host.pump();
+    try std.testing.expect(call.state == .settled);
+    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"denied\"}", call.text.?);
+    call.finish();
+    try host.pump();
+    try std.testing.expect(!host.hasPending());
+}
+
 /// Submit one hook call, pump the owner until it settles, and copy the answer, because the owner frees the record's text on its next sweep.
 fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) ![]u8 {
     const call = extensions.host.calls.submitHook(point, payload);

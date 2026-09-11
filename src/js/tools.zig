@@ -241,15 +241,15 @@ pub const Calls = struct {
     }
 
     /// Report whether a call needs the owner: a start, a poll, or a sweep.
-    pub fn hasWork(self: *const Calls, ctx: Context, jobs_pending: bool) bool {
+    pub fn hasWork(self: *const Calls, ctx: Context) bool {
         for (self.live.items) |call| {
             if (call.submitter_done) return true;
             switch (call.state) {
                 .queued => return true,
                 .running => {
                     std.debug.assert(ctx.isPromise(call.promise));
-                    // The last job drain of a pump can settle the Promise after the poll of that pump.
-                    if (jobs_pending or ctx.promiseState(call.promise) != .Pending) return true;
+                    // A pump that faults before its last poll can leave a settled Promise.
+                    if (ctx.promiseState(call.promise) != .Pending) return true;
                 },
                 .settled => {},
             }
@@ -307,6 +307,20 @@ const Bare = struct {
         self.runtime.deinit();
     }
 };
+
+test "a running call needs the owner after its Promise settles" {
+    var bare = try Bare.open();
+    defer bare.close();
+    var calls: Calls = .{ .gpa = testing.allocator };
+    defer calls.deinit(bare.ctx);
+    const call = calls.submitHook("tool.before", "{}");
+    call.state = .running;
+    call.promise = try bare.ctx.eval("new Promise(() => {})", "pending.js", .{});
+    try testing.expect(!calls.hasWork(bare.ctx));
+    bare.ctx.freeValue(call.promise);
+    call.promise = try bare.ctx.eval("Promise.resolve(1)", "settled.js", .{});
+    try testing.expect(calls.hasWork(bare.ctx));
+}
 
 test "the table refuses a duplicate name, a bad name, and a late registration" {
     var bare = try Bare.open();
