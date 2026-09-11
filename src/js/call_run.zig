@@ -33,7 +33,6 @@ pub fn pump(host: *Host) void {
     host.calls.sweep(host.ctx);
 }
 
-/// Read each running call again. `Host.pump` calls this after its last job drain.
 pub fn pollRunning(host: *Host) void {
     for (host.calls.live.items) |call| {
         if (call.state == .running and !call.submitter_done) poll(host, call);

@@ -13,15 +13,13 @@ const modules = host_mod.default_baked ++ [_]BakedModule{
 /// A test allocator that records no stack traces, because QuickJS allocates on every JavaScript step.
 pub const Pool = std.heap.DebugAllocator(.{ .stack_trace_frames = 0 });
 
-/// Allocate a host over its own pool, with the test I/O and no workspace.
 pub fn createHost() *Host {
     return createHostWith(std.testing.io, "");
 }
 
-/// Allocate a host over its own pool. The host uses `io` and takes `cwd` as its workspace root.
+/// The testing allocator backs the pool, so a page that a leak pins fails the test.
 pub fn createHostWith(io: std.Io, cwd: []const u8) *Host {
     const pool = std.testing.allocator.create(Pool) catch unreachable;
-    // The testing allocator backs the pool, so a page that a leak pins fails the test.
     pool.* = .{ .backing_allocator = std.testing.allocator };
     return Host.createTest(pool.allocator(), io, cwd);
 }
@@ -71,12 +69,10 @@ pub fn expectString(host: *Host, comptime property: []const u8, want: []const u8
     try std.testing.expectEqualStrings(want, text);
 }
 
-/// The longest owner sleep. A test that reaches it found work that no task announced.
+/// A test that sleeps this long found work that no task announced.
 const wake_timeout: std.Io.Clock.Duration = .{ .raw = .fromSeconds(10), .clock = .awake };
-/// The most passes for one helper. A test that reaches it found an owner that never settles.
 const max_pumps = 1024;
 
-/// Drive the owner until no primitive is in flight.
 pub fn pumpUntilIdle(host: *Host) !void {
     for (0..max_pumps) |_| {
         try host.pump();
@@ -86,7 +82,6 @@ pub fn pumpUntilIdle(host: *Host) !void {
     return error.PrimitiveNeverSettled;
 }
 
-/// Drive the owner until the call settles.
 pub fn pumpUntilSettled(host: *Host, call: *tools_table.Call) !void {
     for (0..max_pumps) |_| {
         try host.pump();
@@ -96,7 +91,7 @@ pub fn pumpUntilSettled(host: *Host, call: *tools_table.Call) !void {
     return error.CallNeverSettled;
 }
 
-/// Drive the owner until a task sets the event. The task must set `host.wake` after the event.
+/// The task must set `host.wake` after it sets the event.
 pub fn pumpUntilSet(host: *Host, event: *const std.Io.Event) !void {
     for (0..max_pumps) |_| {
         try host.pump();
@@ -106,7 +101,6 @@ pub fn pumpUntilSet(host: *Host, event: *const std.Io.Event) !void {
     return error.TaskNeverFinished;
 }
 
-/// Drive the owner until the JavaScript expression answers a nonzero integer.
 pub fn pumpUntilTrue(host: *Host, expression: [:0]const u8) !void {
     for (0..max_pumps) |_| {
         try host.pump();
@@ -116,7 +110,7 @@ pub fn pumpUntilTrue(host: *Host, expression: [:0]const u8) !void {
     return error.ConditionNeverTrue;
 }
 
-/// Sleep as the owner loops do: clear the wake, and sleep only when no work waits.
+/// Clear the wake and sleep only when no work waits, as the owner loops do.
 fn awaitWork(host: *Host) !void {
     std.debug.assert(host.phase == .open);
     host.wake.reset();
