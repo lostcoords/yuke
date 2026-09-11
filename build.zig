@@ -125,9 +125,18 @@ pub fn build(b: *std.Build) void {
     });
     const run_term_tests = addTestRun(b, "term", "Run term module tests", term, test_filters);
 
+    // The exec tool binds libc posix_spawn through this module. translate-c gives each libc its own struct layout.
+    const spawn_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c/spawn.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
     const app_imports: []const std.Build.Module.Import = &.{
         .{ .name = "quickjs", .module = quickjs.module("quickjs") },
         .{ .name = "quickjs_c", .module = quickjs_c },
+        .{ .name = "spawn_c", .module = spawn_c.createModule() },
         .{ .name = "metrics", .module = metrics.createModule() },
         .{ .name = "term", .module = term },
         .{ .name = "proto", .module = proto },

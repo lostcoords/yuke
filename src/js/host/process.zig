@@ -1,8 +1,9 @@
-//! Run one command natively over `std.Io`. The child gets its own process group. A deadline or a
-//! cancel kills that group, so a descendant of the shell does not survive the call.
+//! Run one command natively over `std.Io`. The child leads a new session with no controlling terminal.
+//! A deadline or a cancel kills its process group, so a descendant of the shell does not survive the call.
 //! A descendant that calls `setsid` leaves the group.
 
 const std = @import("std");
+const spawn_c = @import("spawn_c");
 const utf8 = @import("../../utf8.zig");
 const h = @import("operations.zig");
 const paths = @import("../../paths.zig");
@@ -51,20 +52,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     if (spec.timeout_ms == 0 or spec.max_stream_bytes == 0) return error.HostFailure;
     std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
     const cwd = try resolveCwd(scratch, root, context.env, spec.cwd);
-    // The shell reads one language string, which no direct program execution can accept.
-    const argv = [_][]const u8{ context.shell.path, "-c", spec.command };
-
-    var child = std.process.spawn(io, .{
-        .argv = &argv,
-        .cwd = .{ .path = cwd },
-        // Without this the child inherits the raw process environment and loses the recovered home.
-        .environ_map = context.env,
-        .stdin = .ignore,
-        .stdout = .pipe,
-        .stderr = .pipe,
-        // A zero makes the child its own group leader. Its process group id then equals its pid.
-        .pgid = 0,
-    }) catch return error.HostFailure;
+    var child = try spawnDetached(scratch, context, spec.command, cwd);
     const pid = child.id.?;
 
     var out: Drain = .{ .file = child.stdout.?, .limit = spec.max_stream_bytes };
@@ -95,6 +83,80 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
         .stdout_dropped = out.dropped,
         .stderr_dropped = err.dropped,
     };
+}
+
+/// Spawn `shell -c command` as the leader of a new session. A program that opens `/dev/tty` then fails at once with no terminal.
+/// TODO: use a session flag from `std.process.SpawnOptions` when Zig std gains that flag, then delete `src/c/spawn.h`.
+fn spawnDetached(scratch: std.mem.Allocator, context: execution.Context, command: []const u8, cwd: []const u8) h.HostError!std.process.Child {
+    std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
+    std.debug.assert(std.fs.path.isAbsolute(cwd));
+    // The shell reads one language string, which no direct program execution can accept.
+    const shell_z = scratch.dupeZ(u8, context.shell.path) catch return error.HostFailure;
+    const command_z = scratch.dupeZ(u8, command) catch return error.HostFailure;
+    const cwd_z = scratch.dupeZ(u8, cwd) catch return error.HostFailure;
+    const argv = [_:null]?[*:0]const u8{ shell_z.ptr, "-c", command_z.ptr };
+    // The block replaces the raw process environment, so the child sees the recovered home. It drops `ZIG_PROGRESS` as std does.
+    const envp = context.env.createPosixBlock(scratch, .{ .zig_progress_fd = -1 }) catch return error.HostFailure;
+
+    // CLOEXEC keeps the pipe ends out of a child that another thread spawns at the same time. The child `dup2` clears the flag on its copy.
+    const out = try pipeAboveStdio();
+    defer _ = std.posix.system.close(out[1]);
+    errdefer _ = std.posix.system.close(out[0]);
+    const err = try pipeAboveStdio();
+    defer _ = std.posix.system.close(err[1]);
+    errdefer _ = std.posix.system.close(err[0]);
+
+    var actions: spawn_c.posix_spawn_file_actions_t = undefined;
+    try checkSpawn(spawn_c.posix_spawn_file_actions_init(&actions));
+    defer std.debug.assert(spawn_c.posix_spawn_file_actions_destroy(&actions) == 0);
+    try checkSpawn(spawn_c.posix_spawn_file_actions_addopen(&actions, std.posix.STDIN_FILENO, "/dev/null", spawn_c.O_RDONLY, 0));
+    try checkSpawn(spawn_c.posix_spawn_file_actions_adddup2(&actions, out[1], std.posix.STDOUT_FILENO));
+    try checkSpawn(spawn_c.posix_spawn_file_actions_adddup2(&actions, err[1], std.posix.STDERR_FILENO));
+    try checkSpawn(spawn_c.posix_spawn_file_actions_addchdir_np(&actions, cwd_z.ptr));
+
+    var attr: spawn_c.posix_spawnattr_t = undefined;
+    try checkSpawn(spawn_c.posix_spawnattr_init(&attr));
+    defer std.debug.assert(spawn_c.posix_spawnattr_destroy(&attr) == 0);
+    // The empty mask keeps a signal the caller blocks from staying blocked in the shell.
+    var empty_mask: spawn_c.sigset_t = undefined;
+    try checkSpawn(spawn_c.sigemptyset(&empty_mask));
+    try checkSpawn(spawn_c.posix_spawnattr_setsigmask(&attr, &empty_mask));
+    // SETSID makes pid, pgid and sid equal, so `killGroup(pid)` reaches every process the shell starts.
+    const flags: c_short = @intCast(spawn_c.POSIX_SPAWN_SETSID | spawn_c.POSIX_SPAWN_SETSIGMASK);
+    try checkSpawn(spawn_c.posix_spawnattr_setflags(&attr, flags));
+
+    // A failed exec returns here as an error with no child left behind, so the caller has nothing to reap.
+    var pid: spawn_c.pid_t = undefined;
+    try checkSpawn(spawn_c.posix_spawn(&pid, shell_z.ptr, &actions, &attr, @ptrCast(&argv), @ptrCast(envp.slice.ptr)));
+    std.debug.assert(pid > 0);
+    return .{
+        .id = pid,
+        .thread_handle = {},
+        .stdin = null,
+        .stdout = .{ .handle = out[0], .flags = .{ .nonblocking = false } },
+        .stderr = .{ .handle = err[0], .flags = .{ .nonblocking = false } },
+        .request_resource_usage_statistics = false,
+    };
+}
+
+/// Map a libc spawn return code to the host error. Every `posix_spawn` call returns zero or an errno value.
+fn checkSpawn(rc: c_int) h.HostError!void {
+    if (rc != 0) return error.HostFailure;
+}
+
+/// Create a CLOEXEC pipe with its write end above the standard streams, so the child `dup2` never targets its own number.
+fn pipeAboveStdio() h.HostError![2]std.posix.fd_t {
+    const fds = std.Io.Threaded.pipe2(.{ .CLOEXEC = true }) catch return error.HostFailure;
+    // A launcher that closed a standard stream hands out fd 0, 1 or 2 here. The write end moves up, the read end may stay.
+    if (fds[1] > std.posix.STDERR_FILENO) return fds;
+    const raised = std.c.fcntl(fds[1], std.c.F.DUPFD_CLOEXEC, @as(c_int, std.posix.STDERR_FILENO + 1));
+    _ = std.posix.system.close(fds[1]);
+    if (raised < 0) {
+        _ = std.posix.system.close(fds[0]);
+        return error.HostFailure;
+    }
+    std.debug.assert(raised > std.posix.STDERR_FILENO);
+    return .{ fds[0], raised };
 }
 
 /// Wait for both drains and escalate over the group at the deadline; true after a deadline, while a cancel is `error.Canceled` and never a false timeout.
@@ -357,6 +419,69 @@ test "a stream one byte above the cap reports the gap" {
     const res = try runShell(arena.allocator(), "head -c 257 /dev/zero | tr '\\0' x", 20_000);
     try testing.expectEqual(@as(u64, 1), res.stdout_dropped);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "dropped 1 bytes") != null);
+}
+
+test "the child leads a new session apart from the test runner" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var env = try utilityEnv();
+    defer env.deinit();
+
+    var child = try spawnDetached(arena.allocator(), execution.testContext(&env), "exec sleep 30", "/tmp");
+    const pid = child.id.?;
+    // A group kill ends the sleep, so the wait below returns at once and the runner never inherits a stray child.
+    defer {
+        killGroup(pid, .KILL);
+        _ = child.wait(testing.io) catch {};
+    }
+    try testing.expectEqual(pid, spawn_c.getsid(pid));
+    try testing.expectEqual(pid, spawn_c.getpgid(pid));
+    // Without SETSID the child would share the session. With SETSID the shell has no controlling terminal.
+    try testing.expect(spawn_c.getsid(pid) != spawn_c.getsid(0));
+}
+
+test "a command that opens the terminal is refused" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // The runner may have no terminal. The session test above proves the detach. This test documents the command result.
+    const res = try runShell(arena.allocator(), "( : </dev/tty ) 2>/dev/null && echo opened || echo refused", 10_000);
+    try testing.expectEqualStrings("refused\n", res.stdout);
+}
+
+test "a missing shell fails the call with HostFailure" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectError(error.HostFailure, run(testing.io, "/tmp", .{ .env = &test_env, .shell = .{ .path = "/nonexistent/shell" } }, arena.allocator(), .{
+        .command = "echo ran",
+        .timeout_ms = 10_000,
+        .max_stream_bytes = 4096,
+    }));
+}
+
+test "the child starts with an empty signal mask" {
+    // `sh` (dash) clears the inherited mask on start, so only Bash can carry the mask into the proof.
+    std.Io.Dir.accessAbsolute(testing.io, "/bin/bash", .{}) catch return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var env = try utilityEnv();
+    defer env.deinit();
+
+    // `posix_spawn` runs on this thread, so the child would inherit this blocked SIGTERM without SETSIGMASK.
+    var blocked = std.posix.sigemptyset();
+    std.posix.sigaddset(&blocked, .TERM);
+    var saved: std.posix.sigset_t = undefined;
+    std.posix.sigprocmask(std.posix.SIG.BLOCK, &blocked, &saved);
+    defer std.posix.sigprocmask(std.posix.SIG.SETMASK, &saved, null);
+
+    // With an empty mask the SIGTERM ends Bash before the echo. A blocked SIGTERM stays pending and the echo runs.
+    const res = try run(testing.io, "/tmp", .{ .env = &env, .shell = .{ .path = "/bin/bash" } }, arena.allocator(), .{
+        .command = "kill -TERM $$; echo survived",
+        .timeout_ms = 10_000,
+        .max_stream_bytes = 4096,
+    });
+    try testing.expect(res.outcome == .signaled);
+    try testing.expectEqual(@as(u8, @intFromEnum(std.posix.SIG.TERM)), res.outcome.signaled);
+    try testing.expectEqualStrings("", res.stdout);
 }
 
 test "exec kills the whole process group at the deadline" {

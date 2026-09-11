@@ -200,14 +200,13 @@ function endLine(text) {
 async function exec(args, signal, context) {
   const name = "exec";
   args = objectArgs(name, args);
-  only(name, args, ["command", "cwd", "timeout_ms"]);
+  only(name, args, ["command", "timeout_ms"]);
   const command = stringArg(name, args, "command");
   if (command.trim().length === 0) invalid(name, "the argument command has the wrong type or range");
-  const cwd = args.cwd == null ? undefined : stringArg(name, args, "cwd");
   const timeoutValue = args.timeout_ms;
   const timeout = timeoutValue == null ? 120000 : timeoutValue;
   if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid(name, "the argument timeout_ms has the wrong type or range");
-  const r = await hostCall(name, runCommand(command, { ...(cwd === undefined ? {} : { cwd }), timeoutMs: timeout, signal }, context?.workspaceRoot));
+  const r = await hostCall(name, runCommand(command, { timeoutMs: timeout, signal }, context?.workspaceRoot));
   let text = r.stdout;
   if (r.stderr.length !== 0) text = `${endLine(text)}[stderr]\n${r.stderr}`;
   const empty = text.length === 0;
@@ -256,10 +255,9 @@ builtin("edit", {
   }, required: ["path", "old_string", "new_string"], additionalProperties: false }, execute: edit,
 });
 builtin("exec", {
-  description: "Run one command with the session shell and return its output. The environment block names that shell.",
+  description: "Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell.\n\n`timeout_ms` is optional (default 120000, max 600000).",
   parameters: { type: "object", properties: {
     command: { type: "string", description: "The shell command to run." },
-    cwd: { type: ["string", "null"], description: "The working directory." },
     timeout_ms: { type: ["integer", "null"], minimum: 1, maximum: 600000, description: "The timeout in milliseconds." },
   }, required: ["command"], additionalProperties: false }, execute: exec,
 });

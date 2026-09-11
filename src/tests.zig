@@ -42,6 +42,7 @@ test {
     _ = @import("provider/oauth/codex.zig");
     _ = @import("js/host/operations.zig");
     _ = @import("js/host/local.zig");
+    _ = @import("js/host/process.zig");
     _ = @import("app/app.zig");
     _ = @import("engine/context.zig");
 }

@@ -12,6 +12,9 @@ globalThis.result = "pending";
   const bad = await exec("echo oops 1>&2; exit 3");
   check("stderr", bad.stderr === "oops\n");
   check("exit-code", bad.code === 3);
+  // A stream above the host cap fills the pipe, so this proves the reactor drains a blocking pipe end to end.
+  const big = await exec("yes abcdefgh | head -c 200000");
+  check("big-completes", big.code === 0 && big.stdoutDropped > 0 && big.stdout.startsWith("abcdefgh"));
   // A command with no cwd runs in the directory the host runs in.
   check("cwd", (await exec("cat marker.txt")).stdout === "found\n");
   // A refused argument rejects; it never throws at the caller.
