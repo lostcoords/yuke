@@ -87,6 +87,11 @@ pub fn modelSpecs(arena: Allocator, models: []const FileModel) ![]const ai.model
         .limits = m.limits,
         .cost = m.cost,
         .caps = .{ .tools = m.flags.supports_tools, .vision = m.flags.supports_vision },
+        // The request builder gates each attachment on `modalities`, so the vision flag must reach it too.
+        .modalities = .{
+            .input = if (m.flags.supports_vision) &.{ .text, .image } else &.{.text},
+            .output = &.{.text},
+        },
         .reasoning_levels = try levels(arena, m.reasoning_levels),
         .dialect = .{
             .thinking_format = m.flags.thinking_format,
@@ -697,13 +702,20 @@ test "a file model decodes its flags and projects onto the library shape" {
         \\ "limits":{"context_window":65536,"max_output_tokens":8192},
         \\ "reasoning_levels":[null,"high"],
         \\ "flags":{"reasoning_replay":"reasoning_content","thinking_format":"deepseek",
-        \\ "max_tokens_field":"max_completion_tokens","supports_vision":true,"reasoning_budget_max":32000}}]}
+        \\ "max_tokens_field":"max_completion_tokens","supports_vision":true,"reasoning_budget_max":32000}},
+        \\ {"id":"plain","upstream_id":"plain"}]}
     ));
     defer loaded.deinit();
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const spec = (try modelSpecs(arena.allocator(), loaded.providers[0].models))[0];
+    const specs = try modelSpecs(arena.allocator(), loaded.providers[0].models);
+    const spec = specs[0];
+
+    // The request builder reads `modalities`, so the vision flag must reach it and not only `caps`.
+    try testing.expect(spec.modalities.takesInput(.image).?);
+    try testing.expect(!specs[1].modalities.takesInput(.image).?);
+    try testing.expect(specs[1].modalities.takesInput(.text).?);
 
     try testing.expectEqualStrings("deepseek-reasoner", spec.upstream_id);
     try testing.expectEqualStrings("r1", spec.name); // The file writes no display name.
