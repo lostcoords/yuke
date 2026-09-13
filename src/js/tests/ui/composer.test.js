@@ -38,11 +38,11 @@ check("capped", big.height(12) === big.maxRows);
 
 // Submit clears the buffer, so the composer shrinks back to one row.
 const sent = [];
-const s = new Composer({ onSubmit: (t) => { sent.push(t); } });
+const s = new Composer({ onSubmit: (content) => { sent.push(content); } });
 s.rect = { x: 0, y: 0, w: 12, h: 4 };
 s.onKey(paste("one\ntwo"));
 s.onKey(key("enter"));
-check("submitted", sent.length === 1 && sent[0] === "one\ntwo");
+check("submitted", sent.length === 1 && sent[0].length === 1 && sent[0][0].text === "one\ntwo");
 check("cleared", s.text === "" && s.height(12) === 1);
 
 // setText fires onChange, so a programmatic set never leaves a stale wrap.

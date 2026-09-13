@@ -206,7 +206,7 @@ export async function spawnAgent(ctx, args, signal, site) {
   const result = await withSlot(ctx, args.model, signal, () => client.sessionCreate({
     workspace_path: parent.session.root,
     max_rounds: config.agents.maxRounds,
-    initial_input: { type: "content", content: [{ type: "text", text: args.message }] },
+    initial_input: { type: "content", content: client.textContent(args.message) },
     child: { slot: args.model, site: { session_id: site.sessionId, message_id: site.messageId, part_id: site.partId }, name: args.name },
   }));
   if (!result.input) throw failure("runtime_failed", "The child session has no initial run.");

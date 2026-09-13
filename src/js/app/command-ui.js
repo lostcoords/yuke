@@ -2,7 +2,7 @@
 import { command, keymap, root } from "yuke:core";
 import { ui } from "yuke:ui";
 import { fuzzyRank } from "yuke:fzy";
-import { Chat, focusedChat } from "yuke:chat";
+import { Chat, focusedChat, soleText } from "yuke:chat";
 
 /** @import { Context } from "yuke:ext" */
 /** @import { Picker, Window } from "yuke:ui" */
@@ -173,10 +173,11 @@ export const commandUiPlugin = {
       ctx.on("pane.closed", sync);
 
       // A submitted slash line runs its command with the rest as the argument; any other text is a message.
-      ctx.advise(Chat.prototype, "send", "around", /** @param {(text: string) => boolean} next @param {string} text */ (next, text) => {
-        const line = parseSlash(text);
+      ctx.advise(Chat.prototype, "send", "around", /** @param {(content: readonly Wire.ContentPart[]) => boolean} next @param {readonly Wire.ContentPart[]} content */ (next, content) => {
+        const text = soleText(content);
+        const line = text === null ? null : parseSlash(text);
         const e = line ? slashEntries(entries()).find((c) => c.slash === line.word) : null;
-        if (!e || !run(e, /** @type {SlashLine} */ (line).rest)) return next(text);
+        if (!e || !run(e, /** @type {SlashLine} */ (line).rest)) return next(content);
         return true;
       }, { name: "slash" });
 

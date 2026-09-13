@@ -752,6 +752,8 @@ events.declare([
   "region.focused",
   "clipboard.copied",
   "composer.changed",
+  "composer.attached",
+  "model.changed",
   "session.changed",
   "index.changed",
   "activity.changed",

@@ -6,7 +6,7 @@ import { strokeOf } from "yuke:keys";
 import { fuzzyRank } from "yuke:fzy";
 
 /** @import { HostMouseEvent as MouseEvent, Rect, StyleGroup } from "./types/core.js" */
-/** @import { BorderSet, ComposerOptions, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PasteSpan, PickerAction, PickOptions, Projection, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */
+/** @import { BorderSet, ComposerOptions, ComposerSnapshot, ComposerSpan, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PickerAction, PickOptions, Projection, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */
 
 // The kit adds only an absent highlight group, so a theme that set one first keeps it and a re-import does not re-seed.
 const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
@@ -338,14 +338,15 @@ export class Composer {
     this.prompt = opts.prompt != null ? opts.prompt : "› ";
     this.placeholder = opts.placeholder || "";
     this.onSubmit = opts.onSubmit || null;
+    /** @type {((text: string, from: number) => boolean) | null} */
+    this.onPaste = opts.onPaste || null;
     this.maxRows = opts.maxRows || COMPOSER_ROWS_MAX;
     this.scroll = 0;
     /** @type {number | null} */
     this.goalCol = null; // the column a vertical move holds across a short row
-    // A collapsed paste where the label replaces [start, end) on the screen only, so a submit still sends the text.
-    /** @type {PasteSpan[]} */
+    // A collapsed span where the label replaces [start, end) on the screen only, so a submit still sends the buffer.
+    /** @type {ComposerSpan[]} */
     this.spans = [];
-    this.nextPaste = 1;
     /** @type {WrapRow[] | null} */
     this._rows = null;
     this._rowsW = -1;
@@ -392,13 +393,17 @@ export class Composer {
     const parts = [];
     let out = "";
     let at = 0;
+    // A label numbers by position within its kind, so a delete renumbers the spans after it.
+    let image = 0;
+    let paste = 0;
     for (const sp of spans) {
       if (sp.start < at) continue;
       out += s.slice(at, sp.start);
+      const label = "blob" in sp ? imageLabel(sp.blob, ++image) : pasteLabel(++paste, s.slice(sp.start, sp.end));
       // `delta` is what the label adds to every offset after it.
       const start = out.length;
-      parts.push({ span: sp, start, end: start + sp.label.length, delta: sp.label.length - (sp.end - sp.start) });
-      out += sp.label;
+      parts.push({ span: sp, start, end: start + label.length, delta: label.length - (sp.end - sp.start) });
+      out += label;
       at = sp.end;
     }
     this._proj = { text: out + s.slice(at), parts };
@@ -424,12 +429,12 @@ export class Composer {
     return t;
   }
 
-  /** @param {number} caret @returns {PasteSpan | null} */
+  /** @param {number} caret @returns {ComposerSpan | null} */
   _spanEndingAt(caret) {
     return this.spans.find((sp) => sp.end === caret) || null;
   }
 
-  /** @param {number} caret @returns {PasteSpan | null} */
+  /** @param {number} caret @returns {ComposerSpan | null} */
   _spanStartingAt(caret) {
     return this.spans.find((sp) => sp.start === caret) || null;
   }
@@ -478,15 +483,60 @@ export class Composer {
     this.input.setText(s);
   }
 
-  // Submit the text and not the projection, so a lost span can never send a label.
+  // The buffer as content parts: one text run between image spans, each image at its own position.
+  /** @returns {Wire.ContentPart[]} */
+  content() {
+    const s = this.input.text;
+    /** @type {Wire.ContentPart[]} */
+    const out = [];
+    let at = 0;
+    // The projection already dropped a stale span and sorted the rest, so this walk reads the same order the screen does.
+    for (const part of this._projection().parts) {
+      const sp = part.span;
+      if (!("blob" in sp)) continue;
+      pushText(out, s.slice(at, sp.start));
+      out.push({ type: "image", source: sp.blob });
+      at = sp.end;
+    }
+    pushText(out, s.slice(at));
+    // Only the edges of the whole input trim, so the space between a text run and an image stays.
+    const first = out[0];
+    if (first && first.type === "text") out[0] = { type: "text", text: first.text.trimStart() };
+    const last = out[out.length - 1];
+    if (last && last.type === "text") out[out.length - 1] = { type: "text", text: last.text.trimEnd() };
+    return out;
+  }
+
+  // Whether the buffer holds an attachment, so an owner answers for the input it is about to send.
+  /** @returns {boolean} */
+  hasImages() {
+    return this.spans.some((sp) => "blob" in sp);
+  }
+
+  // Save the buffer and its spans, so a failed send puts the images back with the text.
+  /** @returns {ComposerSnapshot} */
+  snapshot() {
+    return { text: this.input.text, spans: this.spans.map((sp) => ({ ...sp })) };
+  }
+
+  // Put a snapshot back above the text the user typed since, and move every live span past the insert.
+  /** @param {ComposerSnapshot} snap @returns {void} */
+  restore(snap) {
+    if (snap.text === "") return;
+    this.input.replace(0, 0, this.input.text === "" ? snap.text : snap.text + "\n");
+    this.spans.push(...snap.spans.map((sp) => ({ ...sp })));
+    this.input.caret = this.input.text.length;
+    this._invalidate();
+  }
+
+  // Submit the content and not the projection, so a lost span can never send a label.
   /** @returns {void} */
   submit() {
-    const t = this.input.text.trim();
-    if (t === "") return;
-    // The owner may reject synchronously (returns false): keep the text rather than blank it.
-    if (this.onSubmit && this.onSubmit(t) === false) return;
+    const content = this.content();
+    if (content.length === 0) return;
+    // The owner may reject synchronously (returns false): keep the buffer rather than blank it.
+    if (this.onSubmit && this.onSubmit(content) === false) return;
     this.spans = [];
-    this.nextPaste = 1;
     this.input.setText("");
   }
 
@@ -539,10 +589,22 @@ export class Composer {
     }
     const from = this.input.caret;
     this.input.insert(t);
+    // The owner may claim a paste, for example a path it attaches as an image. A claimed paste never collapses.
+    if (this.onPaste && this.onPaste(t, from)) return true;
     if (pasteCollapses(t)) {
-      this.spans.push({ start: from, end: from + t.length, label: pasteLabel(this.nextPaste++, t) });
+      this.spans.push({ start: from, end: from + t.length });
       this._invalidate();
     }
+    return true;
+  }
+
+  // Turn the text at `from` into an attachment. An edit that moved or changed it cancels the attach.
+  /** @param {number} from @param {string} text @param {Wire.MediaBlob} blob @returns {boolean} */
+  attach(from, text, blob) {
+    const end = from + text.length;
+    if (text === "" || this.input.text.slice(from, end) !== text) return false;
+    this.spans.push({ start: from, end, blob });
+    this._invalidate();
     return true;
   }
 
@@ -681,6 +743,19 @@ function lineCount(t) {
   let n = 1;
   for (let i = t.indexOf("\n"); i >= 0 && i < end; i = t.indexOf("\n", i + 1)) n++;
   return n;
+}
+
+// `[PNG #1]`: the type comes from the mime, because the wire carries no file name for an image.
+/** @param {Wire.MediaBlob} blob @param {number} n @returns {string} */
+function imageLabel(blob, n) {
+  const slash = blob.mime.indexOf("/");
+  return "[" + (slash < 0 ? blob.mime : blob.mime.slice(slash + 1)).toUpperCase() + " #" + n + "]";
+}
+
+// Add one text run as the user typed it. A run of whitespace alone carries nothing, so it never becomes a part.
+/** @param {Wire.ContentPart[]} out @param {string} run @returns {void} */
+function pushText(out, run) {
+  if (run.trim() !== "") out.push({ type: "text", text: run });
 }
 
 // Count lines for a multiline paste. Count characters for a single-line paste.

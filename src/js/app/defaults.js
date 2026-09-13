@@ -10,6 +10,7 @@ import { agentsUiPlugin } from "yuke:agents-ui";
 import { authPlugin } from "yuke:auth";
 import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { client } from "yuke:client";
+import { attachClipboard } from "yuke:attach";
 import { rowKey, rowLabel, activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
 import { activityOf, activityPlugin } from "yuke:activity";
 import { indicatorPlugin } from "yuke:indicator";
@@ -100,6 +101,7 @@ plugins.use({
         "window:split-down": () => splitChat("col"),
         "window:close": () => root.close(),
         "chat:new": () => withChat(c => c.newChat()),
+        "chat:paste-image": () => withChat(c => { attachClipboard(c.composer); }),
         "debug:memory": () => {
           const m = client.memoryUsage();
           const mb = (/** @type {number} */ n) => (n / 1048576).toFixed(1) + "MB";
@@ -115,6 +117,7 @@ plugins.use({
       }, {
         "ui:sessions": { title: "Sessions", description: "open a session", slash: "sessions" },
         "chat:new": { title: "New chat", description: "leave the session and start empty", slash: "new" },
+        "chat:paste-image": { title: "Paste image", description: "attach the image on the clipboard" },
       });
 
       // Global commands live on ctrl strokes and window nav behind ctrl+k, which leaves ctrl+w for the composer word-erase.
@@ -135,6 +138,7 @@ plugins.use({
 
       ctx.tui.keymap({
         "ctrl+n": "chat:new",
+        "ctrl+v": "chat:paste-image",
         "ctrl+f": "ui:sessions",
         "ctrl+c": "session:interrupt",
         "ctrl+q": "quit",

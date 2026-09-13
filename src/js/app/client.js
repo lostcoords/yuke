@@ -3,7 +3,7 @@ import { native } from "yuke:engine-native";
 import { events } from "yuke:core";
 import { sendInput, createSession } from "yuke:ext";
 
-/** @import { MemoryUsage, SessionOutline, ViewPart } from "yuke:engine-native" */
+/** @import { MemoryUsage, MessagePart, SessionOutline, ViewPart } from "yuke:engine-native" */
 
 // This table maps a native event type to its core event name.
 /** @type {Record<string, string>} */
@@ -133,15 +133,15 @@ function sessionWholeText(sessionId, messageId) {
   }
 }
 
-// The assistant parts of one message. A cut field every row reads is completed here, and a large body stays paged.
-/** @param {string} sessionId @param {number} messageId @returns {Wire.AssistantPart[]} */
+// The parts of one message. A cut field every row reads is completed here, and a large body stays paged.
+/** @param {string} sessionId @param {number} messageId @returns {MessagePart[]} */
 function sessionParts(sessionId, messageId) {
   const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionParts(sessionId, messageId)));
   return parts.map((p) => wholePart(sessionId, messageId, p));
 }
 
 // One part of a message, or null when it is gone. A delta re-reads one part, never the whole message.
-/** @param {string} sessionId @param {number} messageId @param {number} partId @returns {Wire.AssistantPart | null} */
+/** @param {string} sessionId @param {number} messageId @param {number} partId @returns {MessagePart | null} */
 function sessionPart(sessionId, messageId, partId) {
   const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId)));
   return parts.length ? wholePart(sessionId, messageId, /** @type {ViewPart} */ (parts[0])) : null;
@@ -191,10 +191,16 @@ function partTextPage(sessionId, messageId, partId, field, offset = 0, limit = 0
   return JSON.parse(native.partText(sessionId, messageId, partId, field, offset, limit));
 }
 
+// The content of one text part. Every text-only caller builds it here, so the shape is written once.
+/** @param {string} text @returns {Wire.ContentPart[]} */
+function textContent(text) {
+  return [{ type: "text", text }];
+}
+
 // Input goes through the gate in `yuke:ext`, so a plugin reads it before the engine does.
-/** @param {string} id @param {string} text @param {Wire.ToolSite} [parentTool] @returns {Promise<Wire.SessionSendInputResult>} */
-function sessionSendInput(id, text, parentTool) {
-  return sendInput({ ...(parentTool ? { parent_tool: parentTool } : {}), session_id: id, input: { type: "content", content: [{ type: "text", text }] } });
+/** @param {string} id @param {readonly Wire.ContentPart[]} content @param {Wire.ToolSite} [parentTool] @returns {Promise<Wire.SessionSendInputResult>} */
+function sessionSendInput(id, content, parentTool) {
+  return sendInput({ ...(parentTool ? { parent_tool: parentTool } : {}), session_id: id, input: { type: "content", content } });
 }
 
 // Send an explicit skill invocation. The engine loads the body and appends one user message with the arguments after it.
@@ -346,6 +352,7 @@ export const client = {
   sessionParts,
   sessionPart,
   partTextPage,
+  textContent,
   sessionSendInput,
   sessionSendSkill,
   sessionCancelRun,

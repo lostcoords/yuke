@@ -5,7 +5,7 @@ const paste = (t) => ({ type: "paste", text: t });
 const big = "one\ntwo\nthree\nfour";
 
 const sent = [];
-const c = new Composer({ onSubmit: (t) => { sent.push(t); } });
+const c = new Composer({ onSubmit: (content) => { sent.push(content); } });
 c.rect = { x: 0, y: 0, w: 40, h: 6 };
 
 // The text keeps the paste. Only the screen shows a label.
@@ -21,7 +21,7 @@ check("short-plain", c.spans.length === 1 && c.text === big + "tail");
 
 // The submit sends the paste and never the label.
 c.onKey(key("enter"));
-check("submitted-whole", sent.length === 1 && sent[0] === big + "tail");
+check("submitted-whole", sent.length === 1 && sent[0].length === 1 && sent[0][0].text === big + "tail");
 check("spans-cleared", c.spans.length === 0 && c.text === "");
 
 // A one-line paste over the character threshold counts characters.
@@ -36,14 +36,21 @@ nl.rect = { x: 0, y: 0, w: 40, h: 6 };
 nl.onKey(paste("one\ntwo\nthree\nfour\n"));
 check("trailing-newline", nl._projection().text === "[Pasted text #1 +4 lines]");
 
-// Backspace at the end drops the whole block, and the numbering keeps counting up.
+// Backspace at the end drops the whole block, and the number comes from the position, so a new paste takes #1 again.
 const del = new Composer();
 del.rect = { x: 0, y: 0, w: 40, h: 6 };
 del.onKey(paste(big));
 del.onKey(key("backspace"));
 check("atomic-delete", del.text === "" && del.spans.length === 0);
 del.onKey(paste(big));
-check("id-not-reused", del._projection().text === "[Pasted text #2 +4 lines]");
+check("number-from-position", del._projection().text === "[Pasted text #1 +4 lines]");
+
+// A restored snapshot and a new paste never share a number.
+const snap = del.snapshot();
+del.input.setText("");
+del.onKey(paste(big));
+del.restore(snap);
+check("restore-renumbers", del._projection().text === "[Pasted text #1 +4 lines]\n[Pasted text #2 +4 lines]");
 
 // The caret steps over a span instead of into it.
 const step = new Composer();

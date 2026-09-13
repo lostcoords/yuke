@@ -82,7 +82,7 @@ async function repair(ctx, child) {
   if (child.activity.state.type !== "idle" || child.activity.queued) { notice.show("stop the child's work before repair"); return; }
   await recoverAgent(ctx, child.session.id, undefined, undefined);
   const input = await ctx.interaction.input("Continue " + child.session.name, "new instruction; completed tools stay in history");
-  if (input?.trim()) await client.sessionSendInput(child.session.id, input);
+  if (input?.trim()) await client.sessionSendInput(child.session.id, client.textContent(input));
 }
 /** @param {Context} ctx @param {string} sessionId */
 export async function openAgents(ctx, sessionId) {

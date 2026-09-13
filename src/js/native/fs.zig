@@ -34,6 +34,7 @@ pub fn install(host: *Host) void {
         .{ .name = "readRange", .arity = 2, .call = jsReadRange },
         .{ .name = "writeFile", .arity = 2, .call = jsWriteFile },
         .{ .name = "stat", .arity = 1, .call = jsStat },
+        .{ .name = "removeFile", .arity = 1, .call = jsRemoveFile },
     }, null);
 }
 
@@ -57,6 +58,8 @@ fn pathArg(ctx: Context, arena: std.mem.Allocator, args: []const Value, idx: usi
     const raw = ctx.toCStringLen(args[idx]) catch return null;
     defer ctx.freeCString(raw.ptr);
     if (raw.len == 0) return root;
+    // The OS reads a path up to a NUL byte, so a path with a NUL names a different file.
+    if (std.mem.indexOfScalar(u8, raw, 0) != null) return null;
     return arena.dupe(u8, raw) catch unreachable;
 }
 
@@ -101,10 +104,10 @@ const read_limits: os.ReadLimits = .{
 fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     // The task cannot touch JavaScript, so the path is copied before it starts.
-    const root = ownedPath(ctx, host, args, 1) orelse return rejected(ctx, "the workspace root must be a string");
+    const root = ownedPath(ctx, host, args, 1) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
     const path = ownedPath(ctx, host, args, 0) orelse {
         host.gpa.free(root);
-        return rejected(ctx, "the path must be a string");
+        return rejected(ctx, "the path must be a string with no NUL byte");
     };
     return host.startTask(ReadRequest, readTask, .{ .path = path, .root = root });
 }
@@ -112,10 +115,10 @@ fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
 /// Read bounded whole lines. The task owns the path and returns a small JSON range descriptor.
 fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = ownedPath(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string");
+    const root = ownedPath(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
     const path = ownedPath(ctx, host, args, 0) orelse {
         host.gpa.free(root);
-        return rejected(ctx, "the path must be a string");
+        return rejected(ctx, "the path must be a string with no NUL byte");
     };
     const range = rangeArg(ctx, args, 1) catch {
         host.gpa.free(path);
@@ -181,19 +184,20 @@ fn ownedPath(ctx: Context, host: *Host, args: []const Value, idx: usize) ?[]u8 {
     if (!ctx.isString(args[idx])) return null;
     const raw = ctx.toCStringLen(args[idx]) catch return null;
     defer ctx.freeCString(raw.ptr);
+    if (std.mem.indexOfScalar(u8, raw, 0) != null) return null;
     return host.gpa.dupe(u8, if (raw.len == 0) host.cwd else raw) catch unreachable;
 }
 
 /// Replace a file's whole content. It answers the byte count it wrote.
 fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = ownedPath(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string");
+    const root = ownedPath(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
     defer host.gpa.free(root);
     var call = Call.open(host, root);
     defer call.close();
 
     if (args.len < 2) return rejected(ctx, "writeFile needs a path and content");
-    const path = pathArg(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string");
+    const path = pathArg(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     if (!ctx.isString(args[1])) return rejected(ctx, "the content must be a string");
     const raw = ctx.toCStringLen(args[1]) catch return rejected(ctx, "the content must be a string");
     defer ctx.freeCString(raw.ptr);
@@ -208,7 +212,7 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     var call = Call.open(host, host.cwd);
     defer call.close();
 
-    const path = pathArg(ctx, call.alloc(), args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string");
+    const path = pathArg(ctx, call.alloc(), args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     const info = call.local.stat(call.alloc(), path) catch |err| switch (err) {
         error.NotFound => return resolved(ctx, quickjs.NULL),
         else => return rejected(ctx, errorMessage(err)),
@@ -224,6 +228,21 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     return resolved(ctx, out);
 }
 
+/// Remove one regular file, and resolve false for a missing path, so a cleanup needs no `stat` first.
+fn jsRemoveFile(ctx: Context, _: Value, args: []const Value) Value {
+    const host = Host.fromContext(ctx);
+    var call = Call.open(host, host.cwd);
+    defer call.close();
+
+    if (args.len < 1 or !ctx.isString(args[0])) return rejected(ctx, "removeFile needs a path");
+    const path = pathArg(ctx, call.alloc(), args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    call.local.removeFile(call.alloc(), path) catch |err| switch (err) {
+        error.NotFound => return resolved(ctx, ctx.newBool(false)),
+        else => return rejected(ctx, errorMessage(err)),
+    };
+    return resolved(ctx, ctx.newBool(true));
+}
+
 /// List the directories inside one path as a `Page`; a null or absent path is the directory the TUI runs in, and an unreadable one rejects.
 fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
@@ -231,7 +250,7 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     defer call.close();
     const arena = call.alloc();
 
-    const requested = pathArg(ctx, arena, args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string");
+    const requested = pathArg(ctx, arena, args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     const path = paths.canonicalizeWorkspace(arena, host.execution.env, requested) catch |err| switch (err) {
         error.HomeUnavailable => return rejected(ctx, errorMessage(error.HomeUnavailable)),
         else => return rejected(ctx, "the path is not a directory this process can read"),

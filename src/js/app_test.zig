@@ -74,6 +74,14 @@ test "the palette lists only the commands that carry metadata" {
     try support.eval(host, "tests/app/meta.test.js");
 }
 
+test "an attachment warns when the model it would go to reads no images" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
+    try support.eval(host, "tests/app/boot-2.test.js");
+    try support.eval(host, "tests/app/vision.test.js");
+}
+
 test "the slash menu follows the composer, completes, runs, and leaves a message alone" {
     const host = support.createHost();
     defer support.destroyHost(host);

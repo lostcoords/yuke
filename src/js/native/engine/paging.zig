@@ -167,9 +167,13 @@ pub fn partTextOf(s: *domain_session.Session, mid: u64, part_id: u64, field: []c
             .assistant => |a| for (a.content) |p| {
                 if (assistantPartText(p, part_id, field)) |text| return text;
             },
-            .user => |u| for (u.content) |c| switch (c) {
-                .text => |t| return t.text,
-                else => {},
+            // A user part has no wire id, so `part_id` is its position, the same address the projection wrote.
+            .user => |u| {
+                if (part_id >= u.content.len or !std.mem.eql(u8, field, "text")) return null;
+                return switch (u.content[@intCast(part_id)]) {
+                    .text => |t| t.text,
+                    else => null,
+                };
             },
             .compaction => |c| return c.summary,
         }

@@ -102,7 +102,7 @@ export function rateLabelOf(cost) {
 }
 
 class CachePanel {
-  /** @param {Wire.Session} session @param {ReadonlyArray<Child>} children @param {() => void} onClose */
+  /** @param {Wire.Session} session @param {ReadonlyArray<Child> | null} children @param {() => void} onClose */
   constructor(session, children, onClose) {
     this.rows = cacheRows(session, children);
     this.onClose = onClose;
@@ -146,7 +146,7 @@ async function childrenOf(id) {
   let cursor = undefined;
   for (let page = 0; page < MAX_AGENT_PAGES; page++) {
     /** @type {Wire.SessionListResult} */
-    const result = await client.sessionList({ population: { type: "children", parent_id: id }, cursor });
+    const result = await client.sessionList({ population: { type: "children", parent_id: id }, ...(cursor ? { cursor } : {}) });
     for (const item of result.items) {
       out.push({ name: item.session.name || "agent", total: item.session.usage_total, model: item.session.model });
     }

@@ -356,7 +356,7 @@ test "a request reaches a command and answers with its result" {
     try host.evalModule(
         \\import { client } from "yuke:client";
         \\globalThis.sent = 0;
-        \\client.sessionSendInput(globalThis.sid, "probe").then(() => { globalThis.sent = 1; }, () => { globalThis.sent = 2; });
+        \\client.sessionSendInput(globalThis.sid, client.textContent("probe")).then(() => { globalThis.sent = 1; }, () => { globalThis.sent = 2; });
     , "send.js");
     try support.pumpUntilIdle(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.sent"));

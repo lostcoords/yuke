@@ -22,14 +22,29 @@ export interface ListItem {
   selGroup?: string;
 }
 
+/** A collapsed paste whose position gives its label and number, so a delete renumbers the rest. */
 export interface PasteSpan {
   start: number;
   end: number;
-  label: string;
+}
+
+/** An attached image whose position gives its label and number, so a delete renumbers the rest. */
+export interface ImageSpan {
+  start: number;
+  end: number;
+  blob: Wire.MediaBlob;
+}
+
+export type ComposerSpan = PasteSpan | ImageSpan;
+
+/** Hold the buffer and its spans, so a failed send puts the images back with the text. */
+export interface ComposerSnapshot {
+  text: string;
+  spans: ComposerSpan[];
 }
 
 export interface ProjectionPart {
-  span: PasteSpan;
+  span: ComposerSpan;
   start: number;
   end: number;
   delta: number;
@@ -49,7 +64,9 @@ export interface WrapRow {
 export interface ComposerOptions {
   prompt?: string | undefined;
   placeholder?: string | undefined;
-  onSubmit?: ((text: string) => boolean | void) | null | undefined;
+  onSubmit?: ((content: Wire.ContentPart[]) => boolean | void) | null | undefined;
+  /** Answer true to claim a paste, for example a path the owner attaches. A claimed paste never collapses. */
+  onPaste?: ((text: string, from: number) => boolean) | null | undefined;
   maxRows?: number | undefined;
 }
 

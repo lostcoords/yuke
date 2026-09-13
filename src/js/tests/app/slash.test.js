@@ -7,7 +7,8 @@ const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "
 root.focusView(chat.view);
 chat.view.focus = "composer";
 const sent = [];
-chat.startChat = (text) => { sent.push(text); return true; };
+const msg = (text) => [{ type: "text", text }];
+chat.startChat = (input) => { sent.push(input.content[0].text); return true; };
 let ran = null;
 const off = command.add(null, { "test:echo": (arg) => { ran = arg === undefined ? "" : arg; } },
   { "test:echo": { title: "Echo", description: "d", slash: "echo", args: true } });
@@ -43,10 +44,14 @@ check("esc-closes", root.overlays.length === 0 && chat.composer.text === "/ech")
 chat.composer.text = "/echo";
 check("edit-reopens", root.overlays.length === 1);
 root.onEvent(key("esc"));
-check("send-runs-known", chat.send("/echo hello world") === true && ran === "hello world");
-check("send-unknown-is-message", chat.send("/foo bar") === true && sent[sent.length - 1] === "/foo bar");
-check("double-slash-is-message", chat.send("//x") === true && sent[sent.length - 1] === "//x");
-check("path-is-message", chat.send("/tmp/x") === true && sent[sent.length - 1] === "/tmp/x");
+check("send-runs-known", chat.send(msg("/echo hello world")) === true && ran === "hello world");
+check("send-unknown-is-message", chat.send(msg("/foo bar")) === true && sent[sent.length - 1] === "/foo bar");
+check("double-slash-is-message", chat.send(msg("//x")) === true && sent[sent.length - 1] === "//x");
+check("path-is-message", chat.send(msg("/tmp/x")) === true && sent[sent.length - 1] === "/tmp/x");
+// An attachment makes the line a message, because a command takes the whole input or none of it.
+ran = null;
+const withImage = [{ type: "text", text: "/echo hello" }, { type: "image", source: { hash: "a".repeat(64), mime: "image/png", bytes: 1 } }];
+check("attachment-is-not-a-command", chat.send(withImage) === true && ran === null && sent[sent.length - 1] === "/echo hello");
 chat.composer.text = "/tmp/x";
 check("path-opens-nothing", root.overlays.length === 0);
 chat.composer.text = "/zzzz";

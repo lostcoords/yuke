@@ -10,6 +10,7 @@ import { Window, NAV_KEYS } from "yuke:ui";
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
 /** @import { ActionEntry, ActionPlan, CodeBlock, MessageDescriptor, PartCache, PartHit, PartOf, PartState, PartsOf, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions } from "./types/transcript.js" */
+/** @import { MessagePart } from "yuke:engine-native" */
 
 // Left gutter for a transcript row marker; the body indents past it.
 const TX_GUTTER = 2;
@@ -198,6 +199,35 @@ function actionHeaderAttrs(tree, expanded) {
 /** @param {number} tree @returns {{ indent: number, marker: string | null }} */
 function actionBodyAttrs(tree) {
   return { indent: tree ? ACTION_INDENT : TX_GUTTER, marker: tree && !actionLast(tree) ? ACTION_MARKER_PAD + "│" : null };
+}
+
+// Report a part that names a blob; the set is closed, so every other user part is text.
+/** @param {MessagePart} part @returns {part is Extract<MessagePart, { type: "image" | "audio" | "file" }>} */
+function isMedia(part) {
+  return part != null && (part.type === "image" || part.type === "audio" || part.type === "file");
+}
+
+// Return the cuts that the projection recorded on a part, or none for a whole part.
+/** @param {unknown} part @returns {readonly { field?: string, next?: number | null }[]} */
+function cutsOf(part) {
+  return /** @type {{ cut?: readonly { field?: string, next?: number | null }[] }} */ (part).cut || [];
+}
+
+// `[PNG #1 · 2 KiB]`: the type comes from the mime, because an image part carries no file name on the wire.
+/** @param {{ type: string, source: Wire.MediaBlob }} part @param {number} n @returns {string} */
+function mediaLabel(part, n) {
+  const mime = part.source.mime;
+  const slash = mime.indexOf("/");
+  const kind = (slash < 0 ? mime : mime.slice(slash + 1)).toUpperCase();
+  return "[" + kind + (n > 0 ? " #" + n : "") + " · " + byteLabel(part.source.bytes) + "]";
+}
+
+// A short size. The units are binary, because `max_blob_bytes` is 7 MiB and the two must agree.
+/** @param {number} n @returns {string} */
+function byteLabel(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return Math.round(n / 1024) + " KiB";
+  return (n / (1024 * 1024)).toFixed(1) + " MiB";
 }
 
 // Plain message variants share the same wrap and source-offset rules.
@@ -563,7 +593,7 @@ function toolRows(part, width, expanded, tree) {
       });
     }
   }
-  const cut = /** @type {{ cut?: readonly { field?: string, next?: number | null }[] }} */ (part).cut || [];
+  const cut = cutsOf(part);
   const field = toolStateKind(part.state) === "error" ? "error" : "output";
   if (body.rows.length > shown.length || cut.some((c) => c.field === field && c.next != null) || args.indexOf("\n") >= 0) {
     rows.push({ text: "… Enter or click to view all", group: "TxToolMeta", ...actionBodyAttrs(tree), markerGroup: "TxToolMeta", kind: "tool-detail", partId: part.id });
@@ -1125,7 +1155,10 @@ export class Transcript {
         rows = [{ text: m.skill_name ? "Skill · " + m.skill_name : inputSourceLabel(m.source), group: "TxToolMeta", marker: expanded ? "▾" : "▸", markerGroup: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id },
           ...shown.map((row) => ({ ...row, kind: "report-body", partId: -1, key: m.id })),
           ...(!expanded && body.length > shown.length ? [{ text: "… click the header to expand", group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id }] : []), { text: "", key: m.id }];
-      } else rows = messageRows(m.id, source, width, "user");
+      } else {
+        source = this._userBody(m.id, source);
+        rows = messageRows(m.id, source, width, "user");
+      }
     } else if (m.type === "compaction") {
       source = this.textOf(m.id) || "";
       rows = messageRows(m.id, source, width, "compaction");
@@ -1153,9 +1186,30 @@ export class Transcript {
     return rows;
   }
 
+  // A user message with an attachment draws each label where its part sits. The wire carries no file name.
+  /** @param {number} id @param {string} text @returns {string} */
+  _userBody(id, text) {
+    if (!this.partsOf) return text;
+    let parts = /** @type {readonly MessagePart[]} */ ([]);
+    try {
+      const read = /** @type {PartsOf} */ (this.partsOf)(id);
+      if (Array.isArray(read)) parts = read;
+    } catch (_) {}
+    if (!parts.some(isMedia)) return text;
+    // One pass builds every label, so the number counts media alone and stays the number the composer drew.
+    let image = 0;
+    const labels = parts.map((part) => (isMedia(part) ? mediaLabel(part, part.type === "image" ? ++image : 0) : ""));
+    // A text part the projection cut cannot place what follows it, so every label goes after the whole text instead.
+    if (parts.some((part) => cutsOf(part).length > 0)) {
+      const tail = labels.filter(Boolean).join(" ");
+      return text === "" ? tail : text + "\n" + tail;
+    }
+    return parts.map((part, i) => (isMedia(part) ? labels[i] : part.type === "text" ? part.text : "")).join("");
+  }
+
   /** @param {number} id @returns {Wire.AssistantPart[]} */
   _readParts(id) {
-    let list = /** @type {readonly Wire.AssistantPart[]} */ ([]);
+    let list = /** @type {readonly MessagePart[]} */ ([]);
     try {
       const parts = /** @type {PartsOf} */ (this.partsOf)(id);
       if (Array.isArray(parts)) list = parts;
@@ -1267,7 +1321,7 @@ export class Transcript {
     }
   }
 
-  /** @param {number} id @param {number} partId @returns {Wire.AssistantPart | null} */
+  /** @param {number} id @param {number} partId @returns {MessagePart | null} */
   _partOne(id, partId) {
     try {
       return /** @type {PartOf} */ (this.partOf)(id, partId);
@@ -1315,7 +1369,7 @@ export class Transcript {
   // Page the rest of a cut field from the host. A page that fails or does not advance ends the read, so a stalled host cannot spin here.
   /** @param {number} id @param {number} partId @param {Wire.AssistantPart} part @param {string} field @param {string} prefix @returns {string} */
   _wholePartField(id, partId, part, field, prefix) {
-    const cuts = /** @type {{ cut?: readonly { field?: string, next?: number | null }[] }} */ (part).cut || [];
+    const cuts = cutsOf(part);
     const cut = cuts.find((entry) => entry.field === field && entry.next != null);
     if (!cut || !this.partTextPage) return prefix;
     let text = prefix;

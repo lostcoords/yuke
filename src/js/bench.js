@@ -2,7 +2,7 @@ import { Transcript } from "yuke:transcript";
 import { term } from "yuke:term";
 import { client } from "yuke:client";
 
-/** @import { SessionOutline } from "yuke:engine-native" */
+/** @import { MessagePart, SessionOutline } from "yuke:engine-native" */
 /** @import { TranscriptRow } from "./app/types/pager.js" */
 /** @import { MessageDescriptor, TranscriptOptions } from "./app/types/transcript.js" */
 /** @typedef {{ type: MessageDescriptor["type"], text?: string, parts?: Wire.AssistantPart[] }} FixtureMessage */
@@ -32,7 +32,7 @@ let phase = "", width = 0, height = 0, iteration = 0;
 let streamSuffixOffset = 0;
 let nativeTextUnits = 0;
 let nativeInitialText = "";
-/** @type {Wire.AssistantPart | null} */
+/** @type {MessagePart | null} */
 let projected = null;
 const activeId = 0;
 

@@ -165,6 +165,24 @@ fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart) !
     }
 }
 
+/// Write one user content part. Its position names it, because a content part carries no id of its own.
+fn writeContentPart(w: *std.Io.Writer, parts: *Parts, id: u64, c: proto.content.ContentPart) !void {
+    parts.* = .{};
+    switch (c) {
+        .text => |t| try writeTextPart(w, parts, "text", id, t.text),
+        .image => |t| try writeMediaPart(w, "image", id, t.source),
+        .audio => |t| try writeMediaPart(w, "audio", id, t.source),
+        .file => |t| try writeMediaPart(w, "file", id, t.source),
+    }
+}
+
+/// Write the blob reference and its size, never the blob data.
+fn writeMediaPart(w: *std.Io.Writer, kind: []const u8, id: u64, source: proto.content.MediaBlob) !void {
+    try w.print("{{\"type\":\"{s}\",\"id\":{d},\"source\":", .{ kind, id });
+    try std.json.Stringify.value(source, .{}, w);
+    try w.writeByte('}');
+}
+
 /// Write a text-bearing part. A cut text names itself in `cut`, so a view knows to page the rest.
 fn writeTextPart(w: *std.Io.Writer, parts: *Parts, kind: []const u8, id: u64, text: []const u8) !void {
     const end = utf8.floor(text, parts.take(@min(text.len, max_page_bytes)));
@@ -352,6 +370,14 @@ pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: pro
                 if (written > 0) try w.writeByte(',');
                 written += 1;
                 try writePart(w, &parts, p);
+            },
+            // A committed message never reorders its content, so the position is a stable id.
+            .user => |u| for (u.content, 0..) |c, i| {
+                const id: u64 = @intCast(i);
+                if (only) |want| if (id != want) continue;
+                if (written > 0) try w.writeByte(',');
+                written += 1;
+                try writeContentPart(w, &parts, id, c);
             },
             else => {},
         }
@@ -650,4 +676,52 @@ test "the outline carries report and skill identity without their bodies" {
     const request = try @import("../../../provider/request_builder.zig").build(a, &.{stored}, .{});
     defer a.free(request.blocks);
     try std.testing.expectEqualStrings(body, request.blocks[0].value.text);
+}
+
+test "a user message projects its content parts, and a position names each one" {
+    const a = std.testing.allocator;
+    var session = domain_session.Session.init(a, .bytes([_]u8{4} ** 16));
+    defer session.deinit();
+    const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(0xab)), .mime = "image/png", .bytes = 2048 };
+    try session.apply(.{ .message_committed_data = .{
+        .session_id = session.id,
+        .seq = 1,
+        .message = .{ .user = .{
+            .id = 1,
+            .input_id = 1,
+            .time = .{ .created_at_ms = 1 },
+            .content = &.{
+                .{ .text = .{ .text = "before" } },
+                .{ .image = .{ .source = blob } },
+                .{ .text = .{ .text = "after" } },
+            },
+        } },
+    } });
+    var buffer: std.Io.Writer.Allocating = .init(a);
+    defer buffer.deinit();
+    try writeMessageParts(&buffer.writer, &session, 1, null);
+    const parsed = try std.json.parseFromSlice(std.json.Value, a, buffer.written(), .{});
+    defer parsed.deinit();
+    const items = parsed.value.array.items;
+    try std.testing.expectEqual(@as(usize, 3), items.len);
+    try std.testing.expectEqualStrings("before", items[0].object.get("text").?.string);
+    try std.testing.expectEqualStrings("image", items[1].object.get("type").?.string);
+    try std.testing.expectEqual(@as(i64, 1), items[1].object.get("id").?.integer);
+    try std.testing.expectEqualStrings("image/png", items[1].object.get("source").?.object.get("mime").?.string);
+    try std.testing.expectEqual(@as(i64, 2048), items[1].object.get("source").?.object.get("bytes").?.integer);
+    try std.testing.expectEqualStrings("after", items[2].object.get("text").?.string);
+
+    // A single part answers by its position, because that is the address a view holds.
+    var one: std.Io.Writer.Allocating = .init(a);
+    defer one.deinit();
+    try writeMessageParts(&one.writer, &session, 1, 1);
+    const only = try std.json.parseFromSlice(std.json.Value, a, one.written(), .{});
+    defer only.deinit();
+    try std.testing.expectEqual(@as(usize, 1), only.value.array.items.len);
+    try std.testing.expectEqualStrings("image", only.value.array.items[0].object.get("type").?.string);
+
+    // A page reads the text part at its position, never the first text part of the message.
+    try std.testing.expectEqualStrings("after", partTextOf(&session, 1, 2, "text").?);
+    try std.testing.expect(partTextOf(&session, 1, 1, "text") == null);
+    try std.testing.expect(partTextOf(&session, 1, 2, "output") == null);
 }

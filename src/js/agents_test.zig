@@ -161,7 +161,7 @@ const tool_fixture =
     \\globalThis.child = { session: { id: "02".repeat(16), name: "one", root: "/work", model: "p/family/model", origin: { type: "child", site: { session_id: "01".repeat(16), message_id: 1, part_id: 0 } } }, activity: { state: { type: "idle" }, queued: 0 }, last_run: { type: "turn" } };
     \\client.sessionList = async (params) => { return { items: params.population.parent_id === "01".repeat(16) ? [child] : [], next_cursor: null, total: 1 }; };
     \\client.sessionGet = async (id, name) => name === child.session.name || id === child.session.id ? child : { session: { id, title: "Main conversation", root: "/work", model: "parent/large", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } };
-    \\client.sessionSendInput = async (id, text, site) => { if (id !== child.session.id || site.message_id !== 2) throw new Error("instruction"); return text === "go" ? { type: "started", input_id: 3, run_id: 1 } : { type: "queued", reason: "session_busy", input_id: 2 }; };
+    \\client.sessionSendInput = async (id, content, site) => { if (id !== child.session.id || site.message_id !== 2) throw new Error("instruction"); return content[0].text === "go" ? { type: "started", input_id: 3, run_id: 1 } : { type: "queued", reason: "session_busy", input_id: 2 }; };
     \\client.sessionCancelRun = async (id, clear) => { if (id !== child.session.id || !clear) throw new Error("stop scope"); return { canceled_run: null, cleared_inputs: [2] }; };
 ;
 

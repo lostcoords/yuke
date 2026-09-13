@@ -213,6 +213,34 @@ test "yuke:ui Composer collapses a large paste and still submits the whole text"
     try support.eval(host, "tests/ui/paste.test.js");
 }
 
+test "yuke:ui Composer labels an image span by position and submits content parts" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/ui/image-span.test.js");
+}
+
+test "a pasted image path attaches, and every other paste keeps its text" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/ui/attach.test.js");
+    try support.pumpUntilIdle(host);
+    try support.eval(host, "tests/ui/attach-result.test.js");
+}
+
+test "a user message draws its image label where the part sits" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/ui/user-image.test.js");
+}
+
+test "the clipboard image attaches and its temporary file never outlives the put" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/ui/clipboard.test.js");
+    try support.pumpUntilIdle(host);
+    try support.eval(host, "tests/ui/clipboard-result.test.js");
+}
+
 test "yuke:ui Composer draws a wrapped row whole and puts the caret on it" {
     var paint: Paint = undefined;
     try paint.setup(std.testing.allocator, 4, 7);

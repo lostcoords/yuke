@@ -1,6 +1,6 @@
 // yuke:catalog — the model catalog, and the model a new chat starts with.
 import { Refresh } from "yuke:refresh";
-import { root } from "yuke:core";
+import { events, root } from "yuke:core";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { newestLocalModelSession } from "yuke:sessions";
@@ -82,6 +82,8 @@ export function chooseModel(model, reasoning, sessionId = null) {
   chatDefaults.model = model.selector;
   chatDefaults.reasoning = reasoning;
   notice.show("model · " + model.name + (reasoning ? " · " + reasoning : ""));
+  // A pane that holds an attachment may have something to say about the model it now sends to.
+  events.emit("model.changed", { model, sessionId });
   root.invalidate();
   if (!sessionId) return;
   // A run in flight keeps the settings it started with, so the move lands on the next turn.

@@ -30,6 +30,8 @@ declare module "yuke:fs" {
     writeFile(path: string, contents: string, workspaceRoot?: string): Promise<number>;
     /** Resolves null when nothing is at the path. */
     stat(path?: string | null): Promise<Stat | null>;
+    /** Removes one regular file and resolves false when nothing is there. A directory or a link rejects. */
+    removeFile(path: string): Promise<boolean>;
     /** Lists the directories of one path. */
     list(path?: string | null): Promise<Page>;
   };

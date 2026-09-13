@@ -22,8 +22,11 @@ declare module "yuke:engine-native" {
   /** One value the projection cut: `field` is the address `partText` takes, `bytes` or `total` is the whole size, and `next` is where a reader resumes. */
   export type ViewCut = { field: string; bytes?: number; total?: number; next?: number };
 
+  /** One part of a message. A user content part has no wire id, so its position is the id. */
+  export type MessagePart = Wire.AssistantPart | (Wire.ContentPart & { id: number });
+
   /** One part as the read surface returns it: the wire part plus every value the projection cut. */
-  export type ViewPart = Wire.AssistantPart & { cut?: readonly ViewCut[] };
+  export type ViewPart = MessagePart & { cut?: readonly ViewCut[] };
 
   /** The QuickJS allocation counters exclude unused memory in the backing allocator. */
   export type MemoryUsage = {
@@ -55,7 +58,7 @@ declare module "yuke:engine-native" {
     sessionOutline(sessionId: string): string;
     /** The live `SessionActivity` as JSON, or "null" when the session is not open. */
     sessionActivity(sessionId: string): string;
-    /** The assistant parts as JSON. Each part carries bounded text plus its real `bytes`. */
+    /** The parts of one message as JSON. A user part takes its position as its id. */
     sessionParts(sessionId: string, messageId: number): string;
     /** One part as a one-element JSON array, or `[]` when it is gone. */
     sessionPart(sessionId: string, messageId: number, partId: number): string;

@@ -74,6 +74,15 @@ pub const LocalHost = struct {
         return info.permissions;
     }
 
+    /// Remove one regular file, and refuse a directory, a symbolic link, or a special file.
+    pub fn removeFile(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8) h.HostError!void {
+        const full = self.resolve(scratch, path) catch |err| return mapError(err);
+        // The check does not follow a link, so a link to a file never removes the file it names.
+        const info = std.Io.Dir.cwd().statFile(self.io, full, .{ .follow_symlinks = false }) catch |err| return mapError(err);
+        if (info.kind != .file) return error.NotAFile;
+        std.Io.Dir.cwd().deleteFile(self.io, full) catch |err| return mapError(err);
+    }
+
     /// The shell arrives per call, so a file-only operation carries no shell state.
     /// The host owns the environment, so a caller cannot pair this shell with a different one.
     pub fn exec(self: *LocalHost, scratch: std.mem.Allocator, shell: execution.Shell, spec: h.ExecSpec) h.HostError!h.ExecResult {
@@ -210,7 +219,7 @@ const ExpandError = @typeInfo(@typeInfo(@TypeOf(paths.expandHome)).@"fn".return_
 const FsError = ExpandError || std.mem.Allocator.Error || std.Io.File.OpenError;
 const NativeError = FsError || std.Io.Dir.ReadFileAllocError || std.Io.Dir.StatFileError ||
     std.Io.Dir.OpenError || std.Io.Dir.CreateFileAtomicError || std.Io.File.Writer.Error ||
-    std.Io.File.SetPermissionsError || std.Io.Dir.RenameError;
+    std.Io.File.SetPermissionsError || std.Io.Dir.RenameError || std.Io.Dir.DeleteFileError;
 
 /// Map a native file-system error to `HostError`, an unlisted one to `HostFailure`. An opened directory reports on the first read.
 fn mapError(err: NativeError) h.HostError {
@@ -638,7 +647,7 @@ test "LocalHost writeFile creates a file that does not exist" {
     try testing.expectEqualStrings("hello\n", try local.readAll(a, "fresh.txt", 1024));
 }
 
-test "LocalHost writeFile refuses a target that is not a regular file" {
+test "LocalHost writeFile and removeFile refuse a target that is not a regular file" {
     var f: Fixture = undefined;
     try f.init("target\n");
     defer f.deinit();
@@ -652,6 +661,8 @@ test "LocalHost writeFile refuses a target that is not a regular file" {
     try testing.expectError(error.NotAFile, local.writeFile(a, "link.txt", "x"));
     try testing.expectError(error.NotAFile, local.writeFile(a, ".", "x"));
     try testing.expectError(error.NotAFile, local.writeFile(a, "/", "x"));
+    // removeFile refuses the link, so the file that the link names stays.
+    try testing.expectError(error.NotAFile, local.removeFile(a, "link.txt"));
     // The target keeps its content.
     try testing.expectEqualStrings("target\n", try local.readAll(a, "a.txt", 1024));
 }

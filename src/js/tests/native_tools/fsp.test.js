@@ -14,5 +14,18 @@ globalThis.done = 0;
   let message = "";
   try { await fs.readFile("nope.txt"); } catch (e) { message = e.message; }
   check("read-missing-rejects", message === "the path does not exist");
+  // removeFile takes one regular file, and a missing path resolves false.
+  check("remove", await fs.removeFile("made.txt") === true);
+  check("remove-gone", await fs.stat("made.txt") === null);
+  check("remove-missing", await fs.removeFile("made.txt") === false);
+  let directory = "";
+  try { await fs.removeFile("."); } catch (e) { directory = e.message; }
+  check("remove-directory-rejects", directory === "the path names a directory or a special file");
+  // A NUL byte would cut the path short in the OS, so every path argument rejects it.
+  const nulMessage = async (call) => { try { await call(); return ""; } catch (e) { return e.message; } };
+  check("nul-remove-rejects", await nulMessage(() => fs.removeFile("hello.txt\0.bak")) === "the path must be a string with no NUL byte");
+  check("nul-read-rejects", await nulMessage(() => fs.readFile("hello.txt\0.bak")) === "the path must be a string with no NUL byte");
+  check("nul-range-rejects", await nulMessage(() => fs.readRange("hello.txt\0.bak", { start: 1, end: 1 })) === "the path must be a string with no NUL byte");
+  check("nul-root-rejects", await nulMessage(() => fs.readFile("hello.txt", ".\0")) === "the workspace root must be a string with no NUL byte");
   globalThis.done = fail.length ? 2 : 1;
 })();

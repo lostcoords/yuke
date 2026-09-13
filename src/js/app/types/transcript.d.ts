@@ -1,5 +1,6 @@
 import type { Document } from "../md.js";
 import type { TranscriptRow } from "./pager.js";
+import type { MessagePart } from "yuke:engine-native";
 
 export interface MessageDescriptor {
   id: number;
@@ -61,8 +62,8 @@ export interface PartState {
   rows: Map<string, PartCache>;
 }
 
-export type PartsOf = (id: number) => readonly Wire.AssistantPart[];
-export type PartOf = (id: number, partId: number) => Wire.AssistantPart | null;
+export type PartsOf = (id: number) => readonly MessagePart[];
+export type PartOf = (id: number, partId: number) => MessagePart | null;
 export type PartTextPage = (id: number, partId: number, field: string, offset?: number, limit?: number) => { text: string; next: number | null };
 
 export interface CodeBlock {

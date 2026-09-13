@@ -92,7 +92,7 @@ export const agentToolsPlugin = {
                         check(signal);
                         if (definition.name === "send_agent_input") {
                             if (context.messageId == null || context.partId == null) throw failure("bad_request", "The tool has no live parent site.");
-                            const result = await client.sessionSendInput(child.session.id, required(args, "message"), { session_id: parentId, message_id: context.messageId, part_id: context.partId });
+                            const result = await client.sessionSendInput(child.session.id, client.textContent(required(args, "message")), { session_id: parentId, message_id: context.messageId, part_id: context.partId });
                             return { state: result.type };
                         }
                         return client.sessionCancelRun(child.session.id, true);

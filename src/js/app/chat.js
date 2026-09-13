@@ -9,6 +9,7 @@ import { notice } from "yuke:notice";
 import { feedItem } from "yuke:sessions";
 import { activityOf, refreshActivity } from "yuke:activity";
 import { catalogOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:catalog";
+import { pasteAttaches } from "yuke:attach";
 
 /** @import { PresentationContext } from "yuke:chat-view" */
 /** @import { InjectContext } from "./types/ext.js" */
@@ -25,9 +26,11 @@ export function parseSkillLine(text) {
   return name ? { name, args: (match[2] || "").trim() } : null;
 }
 
-/** @param {string} text @returns {Wire.Input} */
-function textInput(text) {
-  return { type: "content", content: [{ type: "text", text }] };
+// The text when the content is one text part and nothing else, so an attachment never reads as a command.
+/** @param {readonly Wire.ContentPart[]} content @returns {string | null} */
+export function soleText(content) {
+  const only = content.length === 1 ? content[0] : null;
+  return only && only.type === "text" ? only.text : null;
 }
 
 /** @param {{ name: string, args: string }} invocation @returns {Wire.Input} */
@@ -47,12 +50,14 @@ export class Chat {
       partsOf: id => (this.sessionId ? client.sessionParts(this.sessionId, id) : []),
       partOf: (id, partId) => (this.sessionId ? client.sessionPart(this.sessionId, id, partId) : null),
       partTextPage: (id, partId, field, offset, limit) => (this.sessionId ? client.partTextPage(this.sessionId, id, partId, field, offset, limit) : { text: "", next: null }),
-      onSubmit: text => this.send(text),
+      onSubmit: content => this.send(content),
       onSelect: text => {
         if (config.mouse.copyOnSelect) copy(text, "selection");
       },
       sessionId: () => this.sessionId,
     });
+    // A pasted image path attaches here instead of staying text; every other paste keeps its old behavior.
+    this.composer.onPaste = (text, from) => pasteAttaches(this.composer, text, from);
     CHAT_OF.set(this.view, this);
     chats.add(this);
   }
@@ -101,18 +106,38 @@ export class Chat {
     }).catch(() => {});
   }
 
-  // Send composer text into the open session, or return false so the composer keeps the text.
-  /** @param {string} text @returns {boolean} */
-  send(text) {
-    const invocation = parseSkillLine(text);
-    if (!this.sessionId) return this.startChat(text, invocation ? skillInput(invocation) : textInput(text));
-    const sent = invocation ? client.sessionSendSkill(this.sessionId, invocation.name, invocation.args) : client.sessionSendInput(this.sessionId, text);
+  // Send composer content into the open session, or return false so the composer keeps it.
+  /** @param {readonly Wire.ContentPart[]} content @returns {boolean} */
+  send(content) {
+    const text = soleText(content);
+    const invocation = text === null ? null : parseSkillLine(text);
+    if (!this.sessionId) return this.startChat(invocation ? skillInput(invocation) : { type: "content", content });
+    const snap = this.composer.snapshot();
+    const sent = invocation ? client.sessionSendSkill(this.sessionId, invocation.name, invocation.args) : client.sessionSendInput(this.sessionId, content);
     sent.catch((e) => {
-      this.restoreInput(text);
+      this.composer.restore(snap);
       notice.show("send failed · " + ((e && e.message) || "unknown"));
       root.invalidate();
     });
     return true;
+  }
+
+  // The model this chat's next input goes to: the open session's own, or the default a new chat takes.
+  /** @returns {string} */
+  modelSelector() {
+    const item = this.sessionId ? feedItem(this.sessionId) : null;
+    return (item && item.session.model) || defaultModel().model || "";
+  }
+
+  // Warn when the images now in the composer will not reach the model the next input goes to.
+  /** @param {string} [selector] @returns {void} */
+  checkVision(selector = this.modelSelector()) {
+    if (!this.composer.hasImages()) return;
+    const model = selector === "" ? null : catalogOf().models.find((m) => m.selector === selector);
+    // An unknown model, and one whose catalog entry says nothing, never raise a warning.
+    if (!model || model.supports_vision !== false) return;
+    notice.show(model.name + " reads no images");
+    root.invalidate();
   }
 
   // Stop the run and keep the queue, so an interrupt never drops a message the user already typed.
@@ -137,14 +162,15 @@ export class Chat {
     root.invalidate();
   }
 
-  // Accept the session and first input together, then open the accepted session. `text` returns to the composer on failure.
-  /** @param {string} text @param {Wire.Input} [input] @returns {boolean} */
-  startChat(text, input = textInput(text)) {
+  // Accept the session and first input together, then open the accepted session. The composer takes the input back on failure.
+  /** @param {Wire.Input} input @returns {boolean} */
+  startChat(input) {
     if (this.creating) return false;
     if (!term.cwd) {
       notice.show("no workspace directory");
       return false;
     }
+    const snap = this.composer.snapshot();
     const d = defaultModel();
     const params = /** @type {CreateSessionDraft} */ ({ workspace_path: term.cwd, ...(d.model ? { model: d.model } : {}), ...(d.reasoning ? { reasoning: d.reasoning } : {}), initial_input: input });
     const token = ++this.gen;
@@ -158,9 +184,9 @@ export class Chat {
         return null;
       })
       .catch((e) => {
-        // A cancelled create must not restore text into a pane the user already moved on from.
+        // A cancelled create must not restore an input into a pane the user already moved on from.
         if (token !== this.gen) return;
-        this.restoreInput(text);
+        this.composer.restore(snap);
         notice.show("new chat failed · " + ((e && e.message) || "unknown"));
         root.invalidate();
       })
@@ -205,12 +231,6 @@ export class Chat {
     this.release();
     this.sessionId = null;
     chats.delete(this);
-  }
-
-  /** @param {string} text @returns {void} */
-  restoreInput(text) {
-    const now = this.composer.text;
-    this.composer.text = now === "" ? text : text + "\n" + now;
   }
 }
 
@@ -364,6 +384,13 @@ export const chatPlugin = {
             ? child(null, grow(), { layout: column([child(title, fixed(1)), child(hint, grow())], { padding: { left: 2 } }) }) : item));
         };
       });
+      // The composer owns its own attachments, so each pane answers for the model it sends to.
+      ctx.on("composer.attached", () => { for (const c of chats) c.checkVision(); });
+      // The feed reads the patch back later, so a pane on the patched session checks the new model directly.
+      ctx.on("model.changed", /** @param {{ model: Wire.ModelInfo, sessionId: string | null }} ev */ (ev) => {
+        for (const c of chats) c.checkVision(ev.sessionId !== null && c.sessionId === ev.sessionId ? ev.model.selector : c.modelSelector());
+      });
+
       // Two panes can show one session, so the event reaches every pane that names it.
       ctx.on("session.changed", /** @param {NativeSessionEvent} ev */ (ev => {
         // A quiet digest changes only state outside the transcript.
