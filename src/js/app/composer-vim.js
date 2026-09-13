@@ -153,6 +153,13 @@ function pair(c, first, k) {
   return false;
 }
 
+/** @param {ComposerType} c @returns {true} */
+function deleteWord(c) {
+  const t = c.input;
+  const { end } = lineAt(t.text, t.caret);
+  return cut(c, t.caret, Math.min(nextWordStart(t.text, t.caret), end), false);
+}
+
 /** @param {ComposerType} c @param {string} k @returns {boolean} */
 function normalKey(c, k) {
   const t = c.input;
@@ -261,7 +268,11 @@ export const composerVim = {
       // `gg` is a chord, while `dd` and `cc` are operators that never expire.
       ctx.tui.keymap({ "g g": edit((c) => pair(c, "g", "g")) }, NORMAL_MODE);
       ctx.tui.keymap(
-        { "d d": edit((c) => pair(c, "d", "d")), "c c": edit((c) => pair(c, "c", "c")) },
+        {
+          "d d": edit((c) => pair(c, "d", "d")),
+          "d w": edit(deleteWord),
+          "c c": edit((c) => pair(c, "c", "c")),
+        },
         NORMAL_MODE,
         { pending: "operator" },
       );
