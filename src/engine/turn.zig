@@ -25,6 +25,7 @@ const event = ai.event;
 
 const agent_name = "claude";
 const round_request = @import("request.zig");
+const request_context = @import("context.zig");
 
 /// The response gate must launch a prepared run exactly once through an optional token.
 pub const Launch = union(enum) {
@@ -323,7 +324,15 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !ai.P
     // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
     const resolved = engine.deps.providers.merged.resolveModel(model) orelse return error.UnknownModel;
 
-    return round_request.prepare(arena, engine, slot, resolved);
+    const held = try round_request.snapshot(arena, engine, slot, resolved);
+    const projected = request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget) catch |err| switch (err) {
+        error.ContextHistoryTooLarge => blk: {
+            try @import("compaction.zig").compactForRequest(engine, arena, slot, held.budget);
+            break :blk try request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget);
+        },
+        else => return err,
+    };
+    return round_request.prepare(arena, engine, slot, held, projected);
 }
 
 /// Open the response and stream it into the draft, in a child so a cancel can interrupt a blocked read.
@@ -925,7 +934,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
     }
 
     const tools = engine.deps.tools;
-    if (!tools.isAllowed(tools.ctx, call.name, try round_request.selectionFor(engine, arena, slot))) {
+    if (!tools.isAllowed(tools.ctx, call.name, try @import("request_config.zig").selectionFor(engine, arena, slot))) {
         return .{ .output = "The tool is unavailable in this session.", .is_error = true };
     }
     const res = tools.run(tools.ctx, arena, call.name, call.arguments, .{
@@ -961,6 +970,11 @@ fn admitMedia(engine: *Engine, arena: std.mem.Allocator, outcome: toolset.Outcom
     if (outcome.is_error or outcome.media.len == 0) return outcome;
     engine.deps.blobs.admitBlobs(engine.deps.io, arena, outcome.media) catch |err| switch (err) {
         error.OutOfMemory, error.Canceled => |e| return e,
+        error.BlobStoreFailed => return .{
+            .output = "The engine could not persist the tool image.",
+            .is_error = true,
+            .cancellation_reason = outcome.cancellation_reason,
+        },
         error.BlobMissing, error.BlobMismatch, error.BlobTooManyImages, error.BlobUnsupportedPart => return .{
             .output = "The tool answered an image the engine does not hold.",
             .is_error = true,
@@ -1382,7 +1396,9 @@ test "a build hook can discard the live registry and tools before the request se
     f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    var prepared = try round_request.prepare(arena.allocator(), &f.engine, f.slot, .{ .provider = row, .model = model });
+    const held = try round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = row, .model = model });
+    const projected = try request_context.project(std.testing.allocator, arena.allocator(), &f.db, f.slot.sessionId().raw, held.budget);
+    var prepared = try round_request.prepare(arena.allocator(), &f.engine, f.slot, held, projected);
     defer prepared.deinit();
     try std.testing.expect(state.discarded);
     const body = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, prepared.transport_request.body, .{});
@@ -1505,12 +1521,12 @@ test "the final build hook obeys prompt and context limits without a new floor" 
     const model: registry.ModelSpec = .{ .id = "model", .upstream_id = "model", .name = "Model" };
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    try std.testing.expectError(error.PromptTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
+    try std.testing.expectError(error.PromptTooLarge, round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
     state.size = 400_000;
-    try std.testing.expectError(error.ContextTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
+    try std.testing.expectError(error.ContextTooLarge, round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
     state.size = 0;
     state.output = 128_000;
-    try std.testing.expectError(error.ContextTooLarge, round_request.prepare(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
+    try std.testing.expectError(error.ContextTooLarge, round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
 }
 
 test "a failed boundary transaction preserves the draft progress and pending input" {

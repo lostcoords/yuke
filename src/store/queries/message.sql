@@ -118,14 +118,16 @@ WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
 ORDER BY m.message_id DESC;
 
 -- name: ContextMessages :many
--- Read the selected committed suffix in transcript order.
+-- Read the selected committed range in transcript order.
 -- session_id: [16]u8!
 -- first_message_id: u64!
+-- stop_message_id: u64
 -- message_id: u64!
 -- payload: []const u8!
 SELECT m.message_id, e.payload
 FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
 WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
+AND m.message_id < COALESCE(:stop_message_id, 9223372036854775807)
 ORDER BY m.message_id ASC;
 
 -- name: NewestCompaction :optional

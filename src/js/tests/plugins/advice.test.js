@@ -78,3 +78,45 @@ import { tui } from "yuke:tui";
     obj.f() === 1 && advice.list(obj, "f").length === 0;
   check("context-surface", ok && gone);
 }
+
+// A stale handle cannot remove a replacement or a later registration.
+{
+  const obj = { f() { return 1; } };
+  const first = advice.advise(obj, "f", "filterReturn", () => 2);
+  const second = advice.advise(obj, "f", "filterReturn", () => 3);
+  first();
+  check("advice-stale-replacement", obj.f() === 3);
+  second();
+  const third = advice.advise(obj, "f", "filterReturn", () => 4);
+  first(); second();
+  check("advice-stale-reinstall", obj.f() === 4 && advice.list(obj).length === 1);
+  third(); third();
+  check("advice-repeat-dispose", obj.f() === 1 && advice.list(obj).length === 0);
+}
+
+// Disposal restores the own descriptor or exposes the prototype method again.
+{
+  const proto = { f() { return 1; } };
+  const obj = Object.create(proto);
+  const off = advice.advise(obj, "f", "filterReturn", () => 2);
+  check("advice-inherited-call", obj.f() === 2);
+  off();
+  check("advice-inherited-restore", !Object.hasOwn(obj, "f"));
+  proto.f = () => 3;
+  check("advice-prototype-update", obj.f() === 3);
+  Object.defineProperty(obj, "f", { value: () => 4, writable: true, configurable: false, enumerable: false });
+  const original = Object.getOwnPropertyDescriptor(obj, "f");
+  const ownOff = advice.advise(obj, "f", "filterReturn", () => 5);
+  ownOff();
+  const restored = Object.getOwnPropertyDescriptor(obj, "f");
+  check("advice-own-descriptor", restored.value === original.value && restored.writable === original.writable && restored.configurable === original.configurable && restored.enumerable === original.enumerable);
+}
+
+// Object prototype names are not advice kinds.
+for (const kind of ["toString", "constructor", "__proto__", "unknown"]) {
+  const obj = { f() {} };
+  const original = obj.f;
+  let rejected = false;
+  try { advice.advise(obj, "f", kind, () => {}); } catch (e) { rejected = e instanceof TypeError; }
+  check("advice-kind-" + kind, rejected && obj.f === original && advice.list(obj).length === 0);
+}

@@ -229,8 +229,7 @@ fn repair(self: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId) !voi
         resident.deinit();
         resident.* = Session.init(self.deps.gpa, id);
         resident.pins = pins;
-        try self.hydrate(resident);
-        resident.hydrated = true;
+        _ = try self.activate(id);
     }
     if (done) |data| {
         self.sinks.emit(.{ .method = .@"run.done", .params = .{ .run_done_data = data.done } });
@@ -270,21 +269,24 @@ pub fn resumeWorkspace(self: *Engine, workspace: []const u8) !void {
 pub fn activate(self: *Engine, session_id: proto.ids.SessionId) !*Session {
     const resident = try self.sessions.getOrCreate(session_id);
     if (!resident.hydrated) {
-        try self.hydrate(resident);
-        resident.hydrated = true;
+        std.debug.assert(resident.active_run == null);
+        var loaded = try self.loadSession(session_id);
+        loaded.pins = resident.pins;
+        resident.deinit();
+        resident.* = loaded;
     }
     return resident;
 }
 
-/// Hydrate one session from SQLite, and cache its recent tail as the resident transcript.
-pub fn hydrate(self: *Engine, resident: *Session) !void {
-    std.debug.assert(resident.active_run == null and resident.queueDepth() == 0);
-    std.debug.assert(resident.transcript.list.items.len == 0);
-    std.debug.assert(resident.base_seq == 0 and resident.finalized_message_id == 0);
+/// Return a complete projection; an error releases all partial state.
+fn loadSession(self: *Engine, session_id: proto.ids.SessionId) !Session {
+    var resident = Session.init(self.deps.gpa, session_id);
+    errdefer resident.deinit();
+    resident.hydrated = true;
     var scratch = std.heap.ArenaAllocator.init(self.deps.gpa);
     defer scratch.deinit();
-    const sid = resident.id.raw;
-    const hw = (try database.event.highWater(self.deps.db, scratch.allocator(), sid)) orelse return; // no session row
+    const sid = session_id.raw;
+    const hw = (try database.event.highWater(self.deps.db, scratch.allocator(), sid)) orelse return resident;
     const limit = transcript.default_max_messages;
     var history = try database.message.tail(self.deps.db, sid, limit);
     defer history.deinit();
@@ -299,6 +301,7 @@ pub fn hydrate(self: *Engine, resident: *Session) !void {
     for (pending) |entry| {
         try resident.queueOnQueued(.{ .session_id = resident.id, .seq = entry.seq, .input = entry.input });
     }
+    return resident;
 }
 
 /// Return wall-clock milliseconds since the Unix epoch. See util.nowMillis for the clock rules.
@@ -347,6 +350,69 @@ test "activation restores durable pending input into the runtime queue" {
     const rt = try engine.activate(.bytes(session_id));
     try std.testing.expectEqual(@as(usize, 1), rt.queueDepth());
     try std.testing.expectEqual(queued.input.input_id, rt.queueEntries()[0].input_id);
+}
+
+test "activation retries each allocation failure without partial resident state" {
+    const testing = std.testing;
+    var resources: @import("test_resources.zig") = undefined;
+    try resources.init();
+    defer resources.deinit();
+    var db = try database.Database.openTest();
+    defer db.deinit();
+    var scratch: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer scratch.deinit();
+    const arena = scratch.allocator();
+    const id: proto.ids.SessionId = .bytes(@splat(81));
+    try database.session.seedSession(&db, id.raw);
+    {
+        var tx = try db.begin();
+        defer tx.deinit();
+        for (1..3) |n| {
+            _ = try database.message.appendCommittedMessage(&db, arena, id.raw, @splat(@intCast(n)), n, .{ .user = .{
+                .id = n,
+                .input_id = n,
+                .content = &.{.{ .text = .{ .text = "history" } }},
+                .time = .{ .created_at_ms = n },
+            } });
+            _ = try database.input.enqueue(&db, arena, id.raw, @splat(@intCast(n + 2)), n, .{ .content = &.{.{ .text = .{ .text = "pending" } }} }, n);
+        }
+        try tx.commit();
+    }
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        var failing: testing.FailingAllocator = .init(testing.allocator, .{});
+        var deps = resources.makeEngine(&db).deps;
+        deps.gpa = failing.allocator();
+        var engine = Engine.init(deps);
+        {
+            defer engine.close();
+            const resident = try engine.sessions.getOrCreate(id);
+            resident.pin();
+            failing.fail_index = failing.alloc_index + fail_index;
+            _ = engine.activate(id) catch |err| {
+                try testing.expectEqual(error.OutOfMemory, err);
+                try testing.expect(!resident.hydrated);
+                try testing.expectEqual(@as(usize, 0), resident.transcript.list.items.len);
+                try testing.expectEqual(@as(usize, 0), resident.pending.items.len);
+                try testing.expectEqual(@as(u64, 0), resident.base_seq);
+                try testing.expectEqual(@as(u64, 0), resident.finalized_message_id);
+            };
+            failing.fail_index = std.math.maxInt(usize);
+            const loaded = try engine.activate(id);
+            try testing.expect(loaded == resident and loaded.hydrated);
+            try testing.expectEqual(@as(u32, 1), loaded.pins);
+            try testing.expectEqual(@as(usize, 2), loaded.transcript.list.items.len);
+            try testing.expectEqualStrings("history", loaded.transcript.list.items[0].message.user.content[0].text.text);
+            try testing.expectEqual(@as(usize, 2), loaded.pending.items.len);
+            try testing.expectEqualStrings("pending", loaded.pending.items[0].content[0].text.text);
+            try testing.expectEqual(@as(u64, 4), loaded.base_seq);
+            try testing.expectEqual(@as(u64, 2), loaded.finalized_message_id);
+        }
+        try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+        try testing.expectEqual(failing.allocations, failing.deallocations);
+        if (!failing.has_induced_failure) break;
+    }
+    try testing.expect(fail_index > 0);
 }
 
 test {

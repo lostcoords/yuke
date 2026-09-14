@@ -157,3 +157,34 @@ test "removing the last session that names a blob unlinks it" {
     _ = try commands.sessionRemove(&f.engine, a, .{ .session_id = other.session.id });
     try testing.expectError(error.BlobMissing, f.engine.deps.blobs.read(f.engine.deps.io, a, blob.hash));
 }
+
+test "a blob sync failure rejects input and converts tool media into an error" {
+    const Fail = struct {
+        fn sync(_: ?*anyopaque, _: std.Io.File) std.Io.File.SyncError!void {
+            return error.InputOutput;
+        }
+    };
+    var f: Fixture = undefined;
+    try f.init(.{ .replies = &.{ Resources.tool_reply, ai.transport.canned_reply } });
+    defer f.deinit();
+    const blob = try putImage(&f, "shot.png", png);
+    const original = f.engine.deps.io;
+    var vtable = original.vtable.*;
+    vtable.fileSync = Fail.sync;
+    f.engine.deps.io.vtable = &vtable;
+    defer f.engine.deps.io = original;
+    try testing.expectError(error.BlobStoreFailed, f.send(&.{.{ .image = .{ .source = blob } }}));
+    try testing.expect(f.gate == null);
+    try testing.expectEqual(@as(usize, 0), (try f.history()).len);
+    try testing.expectEqual(@as(u64, 0), try database.input.count(&f.db, f.arena.allocator(), Fixture.id.raw));
+    try testing.expect(!try blob_store.referenced(&f.db, f.arena.allocator(), blob.hash));
+    var tool: ImageTool = .{ .media = .{blob} };
+    f.engine.installTools(.{ .ctx = &tool, .run = ImageTool.run });
+    _ = try f.send(&.{.{ .text = .{ .text = "look" } }});
+    try f.finish(Fixture.id);
+    const messages = try f.history();
+    const refused = messages[1].assistant.content[0].tool;
+    try testing.expect(refused.state == .@"error");
+    try testing.expectEqualStrings("The engine could not persist the tool image.", refused.state.@"error".@"error");
+    try testing.expect(!try blob_store.referenced(&f.db, f.arena.allocator(), blob.hash));
+}

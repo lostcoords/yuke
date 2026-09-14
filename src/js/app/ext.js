@@ -127,7 +127,7 @@ function adviceRecord(obj, prop) {
     const original = /** @type {AdviceFunction} */ (properties[prop]);
     if (typeof original !== "function") throw new TypeError("advise: " + prop + " is not a method");
 
-    rec = { original, list: [] };
+    rec = { original, descriptor: Object.getOwnPropertyDescriptor(obj, prop), list: [] };
     const record = rec;
     properties[prop] = /** @this {object} @param {...unknown} args */ function (...args) {
       return applyAdvice(record, this, args);
@@ -180,7 +180,7 @@ export const advice = {
   // Install one advice, ordered by `order`; the same owner and name replaces in place, so a reload does not stack.
   /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
-    if (!WHERE[where]) throw new TypeError("advise: unknown kind " + where);
+    if (!Object.hasOwn(WHERE, where)) throw new TypeError("advise: unknown kind " + where);
     if (typeof fn !== "function") throw new TypeError("advise: fn must be a function");
 
     const owner = (opts && opts.owner) || "anon";
@@ -198,8 +198,13 @@ export const advice = {
 
     return () => {
       const i = rec.list.indexOf(entry);
-      if (i >= 0) rec.list.splice(i, 1);
-      if (rec.list.length === 0) adviceRestore(obj, prop, rec);
+      if (i < 0) return;
+      rec.list.splice(i, 1);
+      if (rec.list.length !== 0) return;
+      if (rec.descriptor) Object.defineProperty(obj, prop, rec.descriptor);
+      else delete /** @type {Record<string, unknown>} */ (obj)[prop];
+      const byProp = RECORDS.get(obj);
+      if (byProp) delete byProp[prop];
     };
   },
 
@@ -221,14 +226,6 @@ export const advice = {
     return out;
   },
 };
-
-// Put the original method back once no advice remains.
-/** @param {object} obj @param {string} prop @param {AdviceRecord} rec @returns {void} */
-function adviceRestore(obj, prop, rec) {
-  /** @type {Record<string, unknown>} */ (obj)[prop] = rec.original;
-  const byProp = RECORDS.get(obj);
-  if (byProp) delete byProp[prop];
-}
 
 // --- services: one provider per name ---
 export const services = {
@@ -559,26 +556,22 @@ const unanswered = {
   }),
 };
 
-/** @type {Answerer} */
-let answerer = unanswered;
+/** @type {{ answerer: Answerer }[]} */
+const answerers = [];
 
 /** @type {WeakMap<Context, { answerer: Answerer, surface: InteractionSurface }>} */
 const surfaces = new WeakMap();
 
 export const interaction = {
-  // Install the answerer this process uses. The disposer restores the one it replaced.
+  // The latest active registration supplies the answerer.
   /** @param {Answerer} next @returns {Disposer} */
   install(next) {
     if (next == null || typeof next.surfaceFor !== "function") throw new TypeError("an answerer needs a surfaceFor method");
-    const previous = answerer;
-    answerer = next;
-
-    let done = false;
+    const entry = { answerer: next };
+    answerers.push(entry);
     return () => {
-      if (done) return;
-      done = true;
-      // Only the live answerer steps back, so a stale handle cannot evict a later install.
-      if (answerer === next) answerer = previous;
+      const at = answerers.indexOf(entry);
+      if (at >= 0) answerers.splice(at, 1);
     };
   },
 };
@@ -586,6 +579,7 @@ export const interaction = {
 // One surface for each plugin, rebuilt after an install replaces the answerer.
 /** @param {Context} ctx @returns {InteractionSurface} */
 function boundSurface(ctx) {
+  const answerer = answerers[answerers.length - 1]?.answerer ?? unanswered;
   const held = surfaces.get(ctx);
   if (held && held.answerer === answerer) return held.surface;
   const surface = answerer.surfaceFor(ctx);

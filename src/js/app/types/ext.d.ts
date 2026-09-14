@@ -13,6 +13,7 @@ export interface AdviceOptions {
 
 export interface AdviceRecord {
   original: AdviceFunction;
+  descriptor: PropertyDescriptor | undefined;
   list: AdviceEntry[];
 }
 

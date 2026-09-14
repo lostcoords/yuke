@@ -715,9 +715,9 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
     try testing.expectEqual(@as(usize, 1), notices.count);
     try testing.expect(std.mem.indexOf(u8, notices.last(), "bad/SKILL.md") != null);
     try testing.expect(std.mem.indexOf(u8, notices.last(), "description is missing") != null);
-    const selection = try @import("request.zig").selectionFor(&f.engine, a, root_launch.?.slot);
+    const selection = try @import("request_config.zig").selectionFor(&f.engine, a, root_launch.?.slot);
     try testing.expect(selection.has_skills);
-    try testing.expect(!(try @import("request.zig").selectionFor(&f.engine, a, f.engine.sessions.get(f.parent).?.active_run.?)).has_skills);
+    try testing.expect(!(try @import("request_config.zig").selectionFor(&f.engine, a, f.engine.sessions.get(f.parent).?.active_run.?)).has_skills);
 
     const item = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id });
     try testing.expectEqual(@as(usize, 1), item.skills.?.len);

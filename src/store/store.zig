@@ -115,18 +115,21 @@ fn migrate(conn: sql.Connection) !void {
     // The file is ours or empty; now configure the connection.
     try configurePragmas(conn, fresh);
 
-    // One write transaction covers the decision and every step. Several yuke processes may open
-    // the same file, so the version is read again under the write lock: the reads above raced.
+    // Read the version under the write lock because another process may have migrated the file.
     try conn.execNoArgs("BEGIN IMMEDIATE");
     errdefer conn.execNoArgs("ROLLBACK") catch {};
     const settled = try scalarInt(conn, "PRAGMA user_version");
     std.debug.assert(settled >= applied); // a migration never moves the version back
 
-    var next: usize = @intCast(settled);
-    while (next < migrations.len) : (next += 1) try applyStep(conn, migrations[next]);
+    if (settled > migrations.len) return error.IncompatibleDatabase;
+    const applied_count: usize = @intCast(settled);
+    if (applied_count == 0) {
+        try conn.execNoArgs(migration_hash_ddl);
+    } else {
+        try checkHashes(conn, applied_count);
+    }
+    for (migrations[applied_count..]) |migration| try applyStep(conn, migration);
     try conn.execNoArgs("COMMIT");
-
-    try checkHashes(conn);
 }
 
 /// Set the durability and performance pragmas. A fresh file sets its page size before WAL.
@@ -154,7 +157,7 @@ fn configurePragmas(conn: sql.Connection, fresh: bool) !void {
 
 /// Apply one step and record its checksum. The caller holds the write transaction.
 fn applyStep(conn: sql.Connection, m: Migration) !void {
-    try conn.execNoArgs(migration_hash_ddl);
+    std.debug.assert(sql.inTransaction(conn));
     try conn.execNoArgs(m.sql);
 
     const hash = migrationHash(m.sql);
@@ -166,20 +169,21 @@ fn applyStep(conn: sql.Connection, m: Migration) !void {
 }
 
 /// Verify one checksum row for each applied step. Compare each row with the embedded text.
-fn checkHashes(conn: sql.Connection) !void {
+fn checkHashes(conn: sql.Connection, applied_count: usize) !void {
+    std.debug.assert(applied_count > 0 and applied_count <= migrations.len);
     var rows = try conn.rows("SELECT version, hash FROM migration_hash ORDER BY version", .{});
     defer rows.deinit();
 
     var expected: usize = 0;
     while (rows.next()) |row| {
-        if (expected >= migrations.len) return error.MigrationDrift;
+        if (expected >= applied_count) return error.MigrationDrift;
         const want = migrationHash(migrations[expected].sql);
         if (row.int(0) != migrations[expected].version) return error.MigrationDrift;
         if (!std.mem.eql(u8, row.text(1), &want)) return error.MigrationDrift;
         expected += 1;
     }
     if (rows.err) |err| return err;
-    if (expected != migrations.len) return error.MigrationDrift;
+    if (expected != applied_count) return error.MigrationDrift;
 }
 
 /// The 16-hex-character checksum of one migration. Big-endian, so it is host-portable.
@@ -304,4 +308,27 @@ test "migrate detects an edited migration" {
     try migrate(conn);
     try conn.execNoArgs("UPDATE migration_hash SET hash = '0000000000000000'");
     try std.testing.expectError(error.MigrationDrift, migrate(conn));
+}
+
+test "migration drift rejects an older database before any upgrade" {
+    for ([_][:0]const u8{
+        "UPDATE migration_hash SET hash = '0000000000000000'",
+        "DELETE FROM migration_hash",
+        "INSERT INTO migration_hash(version, hash) VALUES (2, '0000000000000000')",
+    }) |corrupt| {
+        const conn = try zqlite.open(":memory:", test_flags);
+        defer conn.close();
+        try conn.execNoArgs("BEGIN IMMEDIATE");
+        try conn.execNoArgs(migration_hash_ddl);
+        try applyStep(conn, migrations[0]);
+        try conn.execNoArgs("COMMIT");
+        try conn.execNoArgs(corrupt);
+        const schema_version = try scalarInt(conn, "PRAGMA schema_version");
+        const hashes = try scalarInt(conn, "SELECT count(*) FROM migration_hash");
+        try std.testing.expectError(error.MigrationDrift, migrate(conn));
+        try std.testing.expectEqual(@as(i64, 1), try scalarInt(conn, "PRAGMA user_version"));
+        try std.testing.expectEqual(schema_version, try scalarInt(conn, "PRAGMA schema_version"));
+        try std.testing.expectEqual(hashes, try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
+        try std.testing.expect(!sql.inTransaction(conn));
+    }
 }

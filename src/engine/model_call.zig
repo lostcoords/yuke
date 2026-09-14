@@ -6,7 +6,7 @@ const ai = @import("ai");
 const Engine = @import("Engine.zig");
 const registry = @import("../provider/registry.zig");
 const Cancel = @import("../cancel.zig").Cancel;
-const context = @import("context.zig");
+const request_config = @import("request_config.zig");
 
 /// What one call asks for. The caller builds the blocks, so a call can repeat the prefix of a turn.
 pub const Request = struct {
@@ -46,10 +46,7 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on this call.
     const secret = registry.credential(route.credential, engine.deps.execution.env, engine.nowMillis()) orelse return error.MissingCredential;
-    const ceiling = if (spec.limits.max_output_tokens) |limit|
-        std.math.cast(u32, limit) orelse context.default_max_output
-    else
-        context.default_max_output;
+    const ceiling = request_config.outputLimit(&spec);
     const limit = @min(request.max_output_tokens, ceiling);
     if (limit == 0) return error.ContextTooLarge;
 
@@ -61,7 +58,7 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
         .dialect = spec.dialect,
     };
 
-    const control = try @import("request.zig").reasoningFor(&spec, request.reasoning, limit);
+    const control = try request_config.reasoningFor(&spec, request.reasoning, limit);
     // A budget shares the output ceiling, and this call sets a small ceiling for its answer alone.
     const reasoning: ai.ir.ReasoningControl = if (control == .budget) .default else control;
 

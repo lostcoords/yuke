@@ -30,6 +30,7 @@ pub const PutError = error{
 };
 
 pub const AdmitError = error{
+    BlobStoreFailed,
     BlobMissing,
     BlobMismatch,
     BlobTooManyImages,
@@ -60,7 +61,7 @@ pub const Store = struct {
         const blob: MediaBlob = .{ .hash = .bytes(digest), .mime = mime, .bytes = data.len };
         const target = try self.pathOf(arena, blob.hash);
         if (self.exists(io, target)) return blob;
-        try self.write(io, arena, target, data);
+        try write(io, target, data);
         return blob;
     }
 
@@ -84,7 +85,8 @@ pub const Store = struct {
     pub fn admitBlobs(self: Store, io: std.Io, arena: std.mem.Allocator, blobs: []const MediaBlob) AdmitError!void {
         std.debug.assert(self.dir.len != 0);
         if (blobs.len > max_images_per_input) return error.BlobTooManyImages;
-        for (blobs) |blob| try self.verify(io, arena, blob);
+        for (blobs) |blob| try self.admitBlob(io, arena, blob);
+        if (blobs.len != 0) try syncDirectories(io, self.dir);
     }
 
     /// Read one stored blob. The caller admitted the ref, so an absent file is a corrupt store.
@@ -101,7 +103,7 @@ pub const Store = struct {
         std.Io.Dir.deleteFileAbsolute(io, target) catch |err| if (err != error.FileNotFound) return ioFail(err, error.BlobStoreFailed);
     }
 
-    fn verify(self: Store, io: std.Io, arena: std.mem.Allocator, blob: MediaBlob) AdmitError!void {
+    fn admitBlob(self: Store, io: std.Io, arena: std.mem.Allocator, blob: MediaBlob) AdmitError!void {
         const target = try self.pathOf(arena, blob.hash);
         const file = std.Io.Dir.openFileAbsolute(io, target, .{}) catch |err| return ioFail(err, error.BlobMissing);
         defer file.close(io);
@@ -111,6 +113,19 @@ pub const Store = struct {
         const n = file.readPositionalAll(io, &head, 0) catch |err| return ioFail(err, error.BlobMissing);
         const mime = sniff(head[0..n]) orelse return error.BlobMismatch;
         if (!std.mem.eql(u8, mime, blob.mime)) return error.BlobMismatch;
+        file.sync(io) catch |err| return ioFail(err, error.BlobStoreFailed);
+    }
+
+    /// Sync each directory entry from the blob store through its ancestors.
+    fn syncDirectories(io: std.Io, path: []const u8) AdmitError!void {
+        std.debug.assert(std.fs.path.isAbsolute(path));
+        var current: ?[]const u8 = path;
+        while (current) |name| : (current = std.fs.path.dirname(name)) {
+            const dir = std.Io.Dir.openDirAbsolute(io, name, .{}) catch |err| return ioFail(err, error.BlobStoreFailed);
+            defer dir.close(io);
+            const file: std.Io.File = .{ .handle = dir.handle, .flags = .{ .nonblocking = false } };
+            file.sync(io) catch |err| return ioFail(err, error.BlobStoreFailed);
+        }
     }
 
     fn pathOf(self: Store, arena: std.mem.Allocator, hash: Hash) error{OutOfMemory}![]const u8 {
@@ -124,20 +139,18 @@ pub const Store = struct {
         return true;
     }
 
-    /// Write to a temp name and rename, so a crash never leaves partial bytes under a valid hash.
-    fn write(self: Store, io: std.Io, arena: std.mem.Allocator, target: []const u8, data: []const u8) PutError!void {
+    /// Publish complete bytes atomically; admission syncs them before a durable reference.
+    fn write(io: std.Io, target: []const u8, data: []const u8) PutError!void {
+        std.debug.assert(std.fs.path.isAbsolute(target));
         std.debug.assert(data.len != 0 and data.len <= max_bytes);
-        std.Io.Dir.cwd().createDirPath(io, self.dir) catch |err| return ioFail(err, error.BlobStoreFailed);
-        var nonce: [8]u8 = undefined;
-        io.random(&nonce);
-        const temp = try std.fmt.allocPrint(arena, "{s}{c}.put-{x}", .{ self.dir, std.fs.path.sep, &nonce });
-        const file = std.Io.Dir.createFileAbsolute(io, temp, .{ .exclusive = true, .permissions = .fromMode(0o600) }) catch |err| return ioFail(err, error.BlobStoreFailed);
-        errdefer std.Io.Dir.deleteFileAbsolute(io, temp) catch {};
-        {
-            defer file.close(io);
-            file.writePositionalAll(io, data, 0) catch |err| return ioFail(err, error.BlobStoreFailed);
-        }
-        std.Io.Dir.renameAbsolute(temp, target, io) catch |err| return ioFail(err, error.BlobStoreFailed);
+        var atomic = std.Io.Dir.cwd().createFileAtomic(io, target, .{
+            .make_path = true,
+            .replace = true,
+            .permissions = .fromMode(0o600),
+        }) catch |err| return ioFail(err, error.BlobStoreFailed);
+        defer atomic.deinit(io);
+        atomic.file.writePositionalAll(io, data, 0) catch |err| return ioFail(err, error.BlobStoreFailed);
+        atomic.replace(io) catch |err| return ioFail(err, error.BlobStoreFailed);
     }
 };
 
@@ -339,4 +352,61 @@ test "refs count per session and answer whether a blob is still named" {
     try removal.commit();
     try testing.expect(try referenced(&db, a, shared.hash));
     try testing.expect(!try referenced(&db, a, only.hash));
+}
+
+test "admission syncs the file before directories and rejects every sync failure" {
+    const Probe = struct {
+        threadlocal var calls: usize = 0;
+        threadlocal var files: usize = 0;
+        threadlocal var directories: usize = 0;
+        threadlocal var fail_at: ?usize = null;
+
+        fn sync(_: ?*anyopaque, file: std.Io.File) std.Io.File.SyncError!void {
+            const at = calls;
+            calls += 1;
+            if (fail_at == at) return error.InputOutput;
+            const stat = file.stat(testing.io) catch return error.InputOutput;
+            switch (stat.kind) {
+                .file => {
+                    std.debug.assert(directories == 0);
+                    files += 1;
+                },
+                .directory => {
+                    std.debug.assert(files == 1);
+                    directories += 1;
+                },
+                else => unreachable,
+            }
+            try file.sync(testing.io);
+        }
+    };
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    const path = try f.file("shot.png", png_1x1);
+    const blob = try f.store.put(testing.io, a, path);
+    _ = try f.store.put(testing.io, a, path);
+    var vtable = testing.io.vtable.*;
+    vtable.fileSync = Probe.sync;
+    var io = testing.io;
+    io.vtable = &vtable;
+    Probe.calls = 0;
+    Probe.files = 0;
+    Probe.directories = 0;
+    Probe.fail_at = null;
+    try f.store.admitBlobs(io, a, &.{blob});
+    try testing.expectEqual(@as(usize, 1), Probe.files);
+    try testing.expect(Probe.directories > 0);
+    const sync_count = Probe.calls;
+    for (0..sync_count) |at| {
+        Probe.calls = 0;
+        Probe.files = 0;
+        Probe.directories = 0;
+        Probe.fail_at = at;
+        try testing.expectError(error.BlobStoreFailed, f.store.admitBlobs(io, a, &.{blob}));
+    }
+    Probe.calls = 0;
+    try f.store.admitBlobs(io, a, &.{});
+    try testing.expectEqual(@as(usize, 0), Probe.calls);
 }
