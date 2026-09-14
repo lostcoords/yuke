@@ -327,9 +327,10 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, request_
     });
     // `context.project` refuses a history above the budget, and a compaction runs only above it.
     const covered = try context.collect(arena, db, sid, head, cut.first_kept_id);
+    // The summary reads no blob, so a text-only modality set turns every attachment into its note.
     const built = try provider.request_builder.build(arena, covered, .{
         .target = .{ .protocol = live_route.route.protocol, .model = slot.config.model },
-        .modalities = match.model.modalities,
+        .modalities = .{ .input = &.{.text} },
     });
     if (built.blocks.len == 0) return .{ .skipped = .{ .reason = .nothing_to_summarize } };
 
@@ -469,10 +470,14 @@ fn seedSessionModel(db: *database.Database, id: [16]u8, model: []const u8, reaso
 fn seedMessage(db: *database.Database, arena: std.mem.Allocator, id: [16]u8, message_id: u64, role: enum { user, assistant }, bytes: usize) !void {
     const filler = try arena.alloc(u8, bytes);
     @memset(filler, 'x');
-    const message: proto.message.Message = switch (role) {
+    try seedCommitted(db, arena, id, message_id, switch (role) {
         .user => .{ .user = .{ .id = message_id, .input_id = message_id, .content = &.{.{ .text = .{ .text = filler } }}, .time = .{ .created_at_ms = message_id } } },
         .assistant => .{ .assistant = .{ .id = message_id, .run_id = 1, .config_rev = 0, .agent = "root", .time = .{ .created_at_ms = message_id }, .content = &.{.{ .text = .{ .id = 1, .text = filler } }} } },
-    };
+    });
+}
+
+/// Commit one message as its own event, so a test can seed any content shape.
+fn seedCommitted(db: *database.Database, arena: std.mem.Allocator, id: [16]u8, message_id: u64, message: proto.message.Message) !void {
     var event_id = id;
     event_id[0] = @intCast(message_id);
     var tx = try db.begin();
@@ -793,6 +798,36 @@ test "the summary call repeats the prefix of the turn and refuses a tool" {
     try testing.expect(std.mem.indexOf(u8, body, "<conversation>") == null);
     // A summary answers in text, so the call refuses every tool.
     try testing.expect(std.mem.indexOf(u8, body, "\"type\":\"none\"") != null);
+}
+
+test "the summary call omits an image on a vision model and never reads the store" {
+    var f: TaskFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    f.models[0].modalities = .{ .input = &.{ .text, .image } };
+    // The ref names bytes no store holds, so a blob read would fail the run.
+    const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(0x5a)), .mime = "image/png", .bytes = 64 };
+    try seedCommitted(&f.db, a, TaskFixture.sid, 1, .{ .user = .{
+        .id = 1,
+        .input_id = 1,
+        .content = &.{ .{ .text = .{ .text = "what is this" } }, .{ .image = .{ .source = blob } } },
+        .time = .{ .created_at_ms = 1 },
+    } });
+    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
+    try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
+    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
+    f.engine.deps.route_transport = capture.transport();
+
+    const outcome = try f.run(.manual);
+    try testing.expectEqual(@as(u64, 5), outcome.compacted.message_id);
+    try testing.expectEqual(@as(usize, 1), capture.requests.items.len);
+    const body = capture.requests.items[0];
+    try testing.expect(std.mem.indexOf(u8, body, "[image omitted: this model reads no images]") != null);
+    try testing.expect(std.mem.indexOf(u8, body, "\"type\":\"image\"") == null);
 }
 
 test "the summary call reasons at the session level" {
