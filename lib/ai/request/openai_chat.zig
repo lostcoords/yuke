@@ -113,7 +113,10 @@ fn toolRunEnd(blocks: []const ir.Block, start: usize) usize {
 }
 
 fn hasMedia(results: []const ir.Block) bool {
-    for (results) |result| if (result.value.tool_result.media.len != 0) return true;
+    for (results) |result| {
+        std.debug.assert(result.role == .user and result.value == .tool_result);
+        if (result.value.tool_result.media.len != 0) return true;
+    }
     return false;
 }
 
@@ -135,10 +138,13 @@ fn writeUserMessage(jw: *std.json.Stringify, results: []const ir.Block, blocks: 
     try json.field(jw, "role", "user");
     try jw.objectField("content");
     try jw.beginArray();
-    for (results) |result| for (result.value.tool_result.media) |media| {
-        try writeImageLabel(jw, result.value.tool_result.call_id);
-        try writeMedia(jw, media);
-    };
+    for (results) |result| {
+        std.debug.assert(result.role == .user and result.value == .tool_result);
+        for (result.value.tool_result.media) |media| {
+            try writeImageLabel(jw, result.value.tool_result.call_id);
+            try writeMedia(jw, media);
+        }
+    }
     for (blocks) |block| {
         std.debug.assert(block.role == .user);
         switch (block.value) {
@@ -562,15 +568,16 @@ test "an assistant tool call has a JSON string and its result is standalone" {
 test "tool images follow the whole run of tool messages, or join the user text that follows" {
     const image: ir.Block.Media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" };
     const request: ir.Request = .{ .model = "gpt", .max_output_tokens = 8 };
+    // The image sits on the second result, so the user message comes after both tool messages.
     const run = [_]ir.Block{
         .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_1", .name = "read", .arguments = "{}" } } },
         .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_2", .name = "read", .arguments = "{}" } } },
-        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "PNG image", .is_error = false, .media = &.{image} } } },
-        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_2", .content = "text", .is_error = false } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "text", .is_error = false } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_2", .content = "PNG image", .is_error = false, .media = &.{image} } } },
         .{ .role = .assistant, .value = .{ .text = "two files" } },
     };
     try expectJson(
-        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{}"}},{"id":"call_2","type":"function","function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"PNG image"},{"role":"tool","tool_call_id":"call_2","content":"text"},{"role":"user","content":[{"type":"text","text":"Image from tool call call_1:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,YWI="}}]},{"role":"assistant","content":[{"type":"text","text":"two files"}]}]}
+        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{}"}},{"id":"call_2","type":"function","function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"text"},{"role":"tool","tool_call_id":"call_2","content":"PNG image"},{"role":"user","content":[{"type":"text","text":"Image from tool call call_2:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,YWI="}}]},{"role":"assistant","content":[{"type":"text","text":"two files"}]}]}
     , request, .{ .blocks = &run });
 
     // A canceled turn ends on the result, so the next user text takes the image instead of a second user message.
