@@ -150,21 +150,14 @@ function sessionPart(sessionId, messageId, partId) {
 /** @param {string} sessionId @param {number} messageId @param {ViewPart} p @returns {ViewPart} */
 function wholePart(sessionId, messageId, p) {
   if (!p || !p.cut) return p;
-  // The part already carries the prefix, so a tail resumes at `next` and nothing is read twice.
-  if (p.type === "text" || p.type === "reasoning") {
-    const cut = p.cut.find((c) => c.field === "text" && c.next != null);
-    if (!cut) return p;
-    const tail = partTextFrom(sessionId, messageId, p.id, "text", /** @type {number} */ (cut.next));
-    return { ...p, text: p.text + tail, cut: p.cut.filter((c) => c !== cut) };
-  }
-  // A row parses the arguments for its header, so a cut one must be whole. The body views stay paged.
-  if (p.type === "tool") {
-    const cut = p.cut.find((c) => c.field === "arguments" && c.next != null);
-    if (!cut) return p;
-    const tail = partTextFrom(sessionId, messageId, p.id, "arguments", /** @type {number} */ (cut.next));
-    return { ...p, arguments: p.arguments + tail, cut: p.cut.filter((c) => c !== cut) };
-  }
-  return p;
+  // Complete the text or tool arguments; the tool body and views stay paged.
+  const field = p.type === "tool" ? "arguments" : "text";
+  const prefix = p.type === "tool" ? p.arguments : p.type === "text" || p.type === "reasoning" ? p.text : null;
+  if (prefix === null) return p;
+  const cut = p.cut.find((c) => c.field === field && c.next != null);
+  if (!cut) return p;
+  const tail = partTextFrom(sessionId, messageId, p.id, field, /** @type {number} */ (cut.next));
+  return { ...p, [field]: prefix + tail, cut: p.cut.filter((c) => c !== cut) };
 }
 
 // The rest of one field from `offset`. Each page echoes the next byte offset back, so no caller counts bytes of its own.
