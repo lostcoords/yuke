@@ -1,5 +1,5 @@
 import { check } from "yuke:test";
-import { events } from "yuke:core";
+import { events } from "yuke:kernel";
 import { plugins, services } from "yuke:ext";
 
 // Record whether each announced value matched the registry at the moment it arrived.

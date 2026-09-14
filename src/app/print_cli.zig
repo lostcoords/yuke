@@ -510,7 +510,7 @@ test "a print run refuses a model the catalog cannot resolve before it creates a
 test "a print run denies a plugin question and reports it as a notice" {
     var f: Fixture = undefined;
     try f.init(
-        \\import { plugins } from "yuke:ext";
+        \\import { plugins } from "yuke";
         \\plugins.use({ name: "ask", apply(ctx) {
         \\  ctx.hook("input.before", async () => {
         \\    const ok = await ctx.interaction.confirm("allow", "send it?");

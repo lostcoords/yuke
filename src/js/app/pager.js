@@ -1,6 +1,7 @@
 // Scroll and paint rows with source-coordinate maps.
 import { term } from "yuke:term";
-import { text, fill, isWheel, config } from "yuke:core";
+import { text, fill, isWheel } from "yuke:core";
+import { config } from "yuke:kernel";
 import { clip } from "yuke:text-input";
 import { isLinear } from "yuke:md";
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */

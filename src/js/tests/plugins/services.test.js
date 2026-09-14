@@ -1,5 +1,5 @@
 import { check } from "yuke:test";
-import { events } from "yuke:core";
+import { events } from "yuke:kernel";
 import { services } from "yuke:ext";
 
 // A second provider hides the first; its withdrawal reveals the one below.

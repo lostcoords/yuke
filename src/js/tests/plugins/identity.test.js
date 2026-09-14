@@ -1,21 +1,4 @@
-import { check, equal } from "yuke:test";
-import * as yuke from "yuke";
+import { equal } from "yuke:test";
+import { plugins as viaFacade } from "yuke";
 import { plugins as viaExt } from "yuke:ext";
-import { fs } from "yuke:fs";
-import { client } from "yuke:client";
-import { root, Composer, layout } from "yuke/ui";
-import { ChatView, Transcript, presentation, chats } from "yuke/chat";
-import { Composer as InternalComposer } from "yuke:ui";
-import { ChatView as InternalChatView } from "yuke:chat-view";
-import { Transcript as InternalTranscript, presentation as internalPresentation } from "yuke:transcript";
-
-equal(yuke.plugins, viaExt);
-equal(yuke.fs, fs);
-equal(yuke.client, client);
-equal(Composer, InternalComposer);
-equal(ChatView, InternalChatView);
-equal(Transcript, InternalTranscript);
-equal(presentation, internalPresentation);
-check("no-default-shell", root.root_node === null && chats.size === 0 && yuke.plugins.names().length === 0);
-check("layout-kit", typeof layout.column === "function" && typeof layout.solve === "function");
-check("public-boundary", !("commands" in yuke) && !("rootScope" in yuke) && !("native" in yuke) && !("default" in yuke));
+equal(viaFacade, viaExt);

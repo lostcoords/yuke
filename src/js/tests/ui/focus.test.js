@@ -1,4 +1,5 @@
-import { root, Node, View, events } from "yuke:core";
+import { root, Node, View } from "yuke:core";
+import { events } from "yuke:kernel";
 class A extends View { get name() { return "a"; } draw() {} }
 class B extends View { get name() { return "b"; } draw() {} }
 const a = new A();

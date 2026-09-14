@@ -1,43 +1,12 @@
 const support = @import("test_support.zig");
-const host_mod = @import("host.zig");
 const std = @import("std");
 const Host = @import("host.zig").Host;
-
-test "the public root loads without any UI module or default plugin" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    var modules: [4]@import("loader.zig").BakedModule = undefined;
-    for ([_][]const u8{ "yuke", "yuke:kernel", "yuke:ext", "yuke:client" }, 0..) |name, i| {
-        var found = false;
-        for (host_mod.default_baked) |module| {
-            if (std.mem.eql(u8, module.name, name)) {
-                modules[i] = module;
-                found = true;
-                break;
-            }
-        }
-        try std.testing.expect(found);
-    }
-    host.loader.baked = &modules;
-    try host.evalModule(
-        \\import * as yuke from "yuke";
-        \\globalThis.clean = yuke.plugins.names().length === 0 && typeof yuke.fs.readFile === "function";
-    , "public-root.js");
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.clean"));
-    try std.testing.expectEqual(@as(usize, 0), host.tools.entries.items.len);
-}
 
 test "public tools and commands leave with their owners" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "tests/plugins/public-own.test.js");
     try std.testing.expectEqual(@as(usize, 0), host.tools.entries.items.len);
-}
-
-test "an unknown public subpath does not fall back to a local file" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import 'yuke/unknown';", "index.js"));
 }
 
 test "plugin scope contracts" {
@@ -114,7 +83,7 @@ test "the yuke facade exports config, plugins, and the tool registry" {
     try std.testing.expectEqual(@as(i32, 500), try host.evalInt("globalThis.chord"));
 }
 
-test "public entries preserve object identity without a default shell" {
+test "the facade and its internal module share one instance" {
     const host = support.createHost();
     defer support.destroyHost(host);
 

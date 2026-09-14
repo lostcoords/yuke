@@ -1,5 +1,6 @@
 import { check } from "yuke:test";
-import { root, events, command, status, slot } from "yuke:core";
+import { root, command, status, slot } from "yuke:core";
+import { events } from "yuke:kernel";
 import { client } from "yuke:client";
 import { feedOf } from "yuke:sessions";
 import { loadCatalog } from "yuke:catalog";

@@ -275,9 +275,19 @@ pub const Host = struct {
         try self.drainJobs();
     }
 
-    /// Evaluate a module on the owner, then drain jobs; a top-level throw becomes a promise rejection.
+    /// Mark host-owned source so its internal imports remain valid after this call returns.
     pub fn evalModule(self: *Host, source: [:0]const u8, filename: [:0]const u8) Error!void {
         std.debug.assert(self.phase == .open);
+        std.debug.assert(filename.len > 0);
+        const name = std.fmt.allocPrintSentinel(self.gpa, "{s}{s}", .{ loader_mod.host_module_prefix, filename }, 0) catch unreachable;
+        defer self.gpa.free(name);
+        try self.evalModuleSource(source, name);
+    }
+
+    /// Evaluate a module and drain its jobs; the filename determines its import access.
+    fn evalModuleSource(self: *Host, source: [:0]const u8, filename: [:0]const u8) Error!void {
+        std.debug.assert(self.phase == .open);
+        std.debug.assert(filename.len > 0);
         self.enterSlice();
         const value = self.ctx.eval(source, filename, .{ .type = .module }) catch {
             self.noteFault();
@@ -312,7 +322,7 @@ pub const Host = struct {
         std.debug.assert(self.phase == .open);
         const source = self.loader.readModule(path) orelse return false;
         defer self.gpa.free(source);
-        try self.evalModule(source, path);
+        try self.evalModuleSource(source, path);
         return true;
     }
 
@@ -612,6 +622,42 @@ test "an unknown yuke module is a JavaScriptFault" {
         error.JavaScriptFault,
         host.evalModule("import { n } from 'yuke:missing';", "entry.js"),
     );
+}
+
+test "user files can import public entries but cannot import cached internal modules" {
+    const host = Host.create(std.testing.allocator);
+    defer host.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "public.js", .data =
+        \\import { fs, plugins } from "yuke";
+        \\import { Composer } from "yuke/ui";
+        \\import { composerVim, transcriptVim } from "yuke/chat";
+        \\globalThis.publicOK = typeof fs.readFile === "function" && typeof Composer === "function" && plugins.names().length === 0;
+    });
+    const public_path = try std.fs.path.joinZ(std.testing.allocator, &.{ root, "public.js" });
+    defer std.testing.allocator.free(public_path);
+    try std.testing.expect(try host.evalFile(public_path));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.publicOK"));
+
+    const private_path = try std.fs.path.joinZ(std.testing.allocator, &.{ root, "private.js" });
+    defer std.testing.allocator.free(private_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "private.js", .data = "export { fs } from 'yuke:fs';" });
+    try std.testing.expectError(error.JavaScriptFault, host.evalFile(private_path));
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "internal yuke module") != null);
+    try std.testing.expectError(error.JavaScriptFault, host.evalModule("import './private.js';", public_path));
+
+    const dynamic_path = try std.fs.path.joinZ(std.testing.allocator, &.{ root, "dynamic.js" });
+    defer std.testing.allocator.free(dynamic_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dynamic.js", .data =
+        \\globalThis.loadPrivate = () => import("yuke:core");
+        \\globalThis.evalPrivate = () => eval('import("yuke:core")');
+    });
+    try std.testing.expect(try host.evalFile(dynamic_path));
+    try std.testing.expectError(error.JavaScriptFault, host.evalModule("await loadPrivate();", "callback.js"));
+    try std.testing.expectError(error.JavaScriptFault, host.evalModule("await evalPrivate();", "callback-eval.js"));
 }
 
 test "resize keeps unicode width after a write fail" {

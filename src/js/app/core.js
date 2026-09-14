@@ -1,9 +1,7 @@
 import { clip } from "yuke:text-input";
 import { normalizeSeq, stripCtrl, strokeOf } from "yuke:keys";
 import { term } from "yuke:term";
-import { callHook, config, defineConfig, Emitter, events } from "yuke:kernel";
-
-export { config, defineConfig, Emitter, events };
+import { callHook, config, Emitter, events } from "yuke:kernel";
 
 /** @import { Color, Style } from "yuke:term" */
 /** @import { CommandAction, CommandEntry, CommandListing, CommandMeta, CommandPredicate, CommandRegistry, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, SlotEntry, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */

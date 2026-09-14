@@ -1,6 +1,7 @@
 import { check } from "yuke:test";
 import { term } from "yuke:term";
-import { config, defineConfig, root, Node, View, isWheel } from "yuke:core";
+import { root, Node, View, isWheel } from "yuke:core";
+import { config, defineConfig } from "yuke:kernel";
 import { List } from "yuke:ui";
 import { Pager } from "yuke:pager";
 const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };

@@ -133,7 +133,7 @@ test "headless extensions pump an async JavaScript tool" {
     try f.init(
         \\import { defineConfig, tools } from "yuke";
         \\defineConfig({ systemPrompt: "configured by JavaScript", childInstructions: "child policy" });
-        \\import { fs } from "yuke:fs";
+        \\import { fs } from "yuke";
         \\tools.define({
         \\  name: "read_note",
         \\  description: "Read the note.",
@@ -204,13 +204,13 @@ test "headless extensions pump an async JavaScript tool" {
 test "tool declarations and dispatch enforce per-session spawn visibility" {
     var f: Fixture = undefined;
     try f.init(
-        \\import { defineTool } from "yuke:tools";
+        \\import { tools } from "yuke";
         \\const parameters = { type: "object", properties: {} };
-        \\defineTool("normal_tool", { description: "normal", parameters, execute: async () => "normal" });
-        \\defineTool("spawn_alias", { description: "spawn", parameters, spawnsAgents: true, execute: async () => "spawn" });
-        \\defineTool("skill_alias", { description: "skill", parameters, needsSkills: true, execute: async () => "skill" });
+        \\tools.define({ name: "normal_tool", description: "normal", parameters, execute: async () => "normal" });
+        \\tools.define({ name: "spawn_alias", description: "spawn", parameters, spawnsAgents: true, execute: async () => "spawn" });
+        \\tools.define({ name: "skill_alias", description: "skill", parameters, needsSkills: true, execute: async () => "skill" });
         \\let malformedRejected = false;
-        \\try { defineTool("bad_metadata", { description: "bad", parameters, spawnsAgents: 1, execute: async () => "bad" }); } catch { malformedRejected = true; }
+        \\try { tools.define({ name: "bad_metadata", description: "bad", parameters, spawnsAgents: 1, execute: async () => "bad" }); } catch { malformedRejected = true; }
         \\globalThis.malformedRejected = malformedRejected ? 1 : 0;
     , kernel_boot);
     defer f.deinit();
@@ -260,12 +260,12 @@ test "tool rejection codes cross the native bridge as cancellation reasons" {
     const proto = @import("proto");
     var f: Fixture = undefined;
     try f.init(
-        \\import { defineTool } from "yuke:tools";
+        \\import { tools } from "yuke";
         \\const parameters = { type: "object", properties: {} };
-        \\defineTool("declined", { description: "declined", parameters, execute: async () => { throw Object.assign(new Error("declined"), { code: "setup_declined" }); } });
-        \\defineTool("dismissed", { description: "dismissed", parameters, execute: async () => { throw Object.assign(new Error("dismissed"), { code: "setup_canceled" }); } });
-        \\defineTool("ordinary", { description: "ordinary", parameters, execute: async () => { throw new Error("ordinary"); } });
-        \\defineTool("getter", { description: "getter", parameters, execute: async () => { const error = new Error("getter"); Object.defineProperty(error, "code", { get: () => { throw new Error("code getter"); } }); throw error; } });
+        \\tools.define({ name: "declined", description: "declined", parameters, execute: async () => { throw Object.assign(new Error("declined"), { code: "setup_declined" }); } });
+        \\tools.define({ name: "dismissed", description: "dismissed", parameters, execute: async () => { throw Object.assign(new Error("dismissed"), { code: "setup_canceled" }); } });
+        \\tools.define({ name: "ordinary", description: "ordinary", parameters, execute: async () => { throw new Error("ordinary"); } });
+        \\tools.define({ name: "getter", description: "getter", parameters, execute: async () => { const error = new Error("getter"); Object.defineProperty(error, "code", { get: () => { throw new Error("code getter"); } }); throw error; } });
     , kernel_boot);
     defer f.deinit();
     const host = f.extensions.host;
@@ -325,7 +325,7 @@ test "a plugin notice reaches every attached frontend" {
     defer app_runtime.engine.sinks.remove(@ptrCast(&capture));
 
     try extensions.host.evalModule(
-        \\import { plugins } from "yuke:ext";
+        \\import { plugins } from "yuke";
         \\plugins.use({ name: "reporter", apply(ctx) { ctx.interaction.notify("build failed", "warn"); } });
     , "notify.js");
 
@@ -518,10 +518,9 @@ test "a throwing user entry is a JavaScriptFault the loop absorbs" {
 
 const deferred_input =
     \\import { plugins } from "yuke";
-    \\import { native } from "yuke:engine-native";
-    \\import { sendInput } from "yuke:ext";
-    \\globalThis.request = (method, params = {}) => native.request(method, JSON.stringify(params)).then(JSON.parse);
-    \\globalThis.sendInput = sendInput;
+    \\import { client } from "yuke";
+    \\globalThis.request = (method, params = {}) => client.request(method, params);
+    \\globalThis.sendInput = (params) => client.sessionSendInput(params.session_id, params.input.content);
     \\plugins.use({ name: "gate", apply(ctx) {
     \\  ctx.hook("input.before", (ev) => new Promise((resolve) => {
     \\    globalThis.payload = ev;
@@ -603,7 +602,7 @@ test "a blocked input answers its code and reaches no store" {
 test "create with input shares the hook gate and a refusal leaves no session" {
     var f: Fixture = undefined;
     try f.init(
-        \\import { plugins } from "yuke:ext";
+        \\import { plugins } from "yuke";
         \\globalThis.mode = "block";
         \\plugins.use({ name: "initial", apply(ctx) {
         \\  ctx.hook("input.before", async (value) => {
@@ -678,7 +677,7 @@ test "agent config validates before it changes the native limits" {
 test "a JavaScript build hook reconstructs exact prompt components" {
     var f: Fixture = undefined;
     try f.init(
-        \\import { plugins } from "yuke:ext";
+        \\import { plugins } from "yuke";
         \\plugins.use({ name: "prompt-parts", apply(ctx) {
         \\  ctx.hook("request.build", (request) => {
         \\    const { base, instructions, skills, child_policy, environment } = request.context.prompt;

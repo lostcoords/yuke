@@ -1,5 +1,6 @@
 // yuke:chat — the chat pane, the session it drives, and the pickers that read its transcript.
-import { root, config, copy, command } from "yuke:core";
+import { root, copy, command } from "yuke:core";
+import { config } from "yuke:kernel";
 import { term } from "yuke:term";
 import { ui, Text } from "yuke:ui";
 import { column, child, fixed, grow } from "yuke:layout";

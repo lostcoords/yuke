@@ -1,6 +1,7 @@
 // Own the chat layout, composer, and presentation views.
 import { term } from "yuke:term";
-import { text, root, events, slot, claimView, releaseView } from "yuke:core";
+import { text, root, slot, claimView, releaseView } from "yuke:core";
+import { events } from "yuke:kernel";
 import { clip } from "yuke:text-input";
 import { Composer } from "yuke:ui";
 import { Transcript } from "yuke:transcript";

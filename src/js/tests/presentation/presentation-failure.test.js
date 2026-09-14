@@ -1,6 +1,6 @@
 import { equal } from "yuke:test";
 import { ChatView } from "yuke:chat-view";
-import { events } from "yuke:core";
+import { events } from "yuke:kernel";
 import { column, child, fixed } from "yuke:layout";
 import { Context, Scope } from "yuke:ext";
 import { tui } from "yuke:tui";

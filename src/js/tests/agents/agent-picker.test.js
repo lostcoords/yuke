@@ -1,4 +1,5 @@
-import { root, Node, events } from "yuke:core";
+import { root, Node } from "yuke:core";
+import { events } from "yuke:kernel";
 import { plugins } from "yuke:ext";
 import { tuiPlugin } from "yuke:tui";
 import { Chat } from "yuke:chat";

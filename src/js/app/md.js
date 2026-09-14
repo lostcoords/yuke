@@ -992,11 +992,4 @@ export class Document {
   }
 }
 
-/** @param {string} text @param {number} width @returns {Row[]} */
-export function renderRows(text, width) {
-  const doc = new Document();
-  doc.setText(text);
-  return doc.rows(width);
-}
-
 export { segment, parseInline };

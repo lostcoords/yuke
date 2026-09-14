@@ -1,5 +1,6 @@
 import { check } from "yuke:test";
-import { keymap, root, config, defineConfig, View, Node } from "yuke:core";
+import { keymap, root, View, Node } from "yuke:core";
+import { config, defineConfig } from "yuke:kernel";
 const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // keymap.add removes the bind and clears a prefix nothing uses.

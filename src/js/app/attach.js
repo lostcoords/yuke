@@ -2,7 +2,8 @@
 import { fs } from "yuke:fs";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
-import { events, root } from "yuke:core";
+import { root } from "yuke:core";
+import { events } from "yuke:kernel";
 import { clipboard } from "yuke:clipboard";
 
 /** @import { Composer } from "yuke:ui" */

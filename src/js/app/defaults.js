@@ -178,4 +178,4 @@ plugins.use(cachePlugin);
 root.setRoot(workspace);
 root.focusView(chat.view);
 
-export { workspace, chat, openSessionFinder };
+export { chat, openSessionFinder };

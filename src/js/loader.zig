@@ -2,6 +2,7 @@ const std = @import("std");
 const quickjs = @import("quickjs");
 
 pub const default_max_file_bytes: usize = 256 * 1024;
+pub const host_module_prefix = "yuke:host/";
 
 pub const BakedModule = struct {
     name: []const u8,
@@ -51,7 +52,12 @@ pub const Loader = struct {
         base: []const u8,
         name: []const u8,
     ) ?[:0]u8 {
-        const path = resolve(self.gpa, base, name) catch return null;
+        if (std.mem.startsWith(u8, name, "yuke:") and !isBaked(base)) {
+            _ = ctx.throwReferenceError("internal yuke module: use yuke, yuke/ui, or yuke/chat");
+            return null;
+        }
+        const source_base = if (std.mem.startsWith(u8, base, host_module_prefix)) base[host_module_prefix.len..] else base;
+        const path = resolve(self.gpa, source_base, name) catch return null;
         defer self.gpa.free(path);
         return dupJs(ctx, path);
     }

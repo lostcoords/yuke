@@ -1,6 +1,7 @@
 // yuke:ui — the widget kit over yuke:core: List and Window to subclass, plus the pickers on `ui`.
 import { term } from "yuke:term";
-import { text, fill, root, claimView, style, config, slot, isWheel, events } from "yuke:core";
+import { text, fill, root, claimView, style, slot, isWheel } from "yuke:core";
+import { config, events } from "yuke:kernel";
 import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, wrapPreview, nextGrapheme } from "yuke:text-input";
 import { strokeOf } from "yuke:keys";
 import { fuzzyRank } from "yuke:fzy";

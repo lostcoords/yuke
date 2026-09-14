@@ -1,5 +1,6 @@
 import { check } from "yuke:test";
-import { events, root, Emitter } from "yuke:core";
+import { root } from "yuke:core";
+import { events, Emitter } from "yuke:kernel";
 import { Scope, Context } from "yuke:ext";
 const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 

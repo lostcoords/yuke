@@ -1,5 +1,6 @@
 import { check } from "yuke:test";
-import { config, defineConfig, keymap } from "yuke:core";
+import { keymap } from "yuke:core";
+import { config, defineConfig } from "yuke:kernel";
 import { TextInput } from "yuke:text-input";
 import { strokeOf } from "yuke:keys";
 const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };

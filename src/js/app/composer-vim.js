@@ -1,5 +1,6 @@
 // yuke:composer-vim — opt-in modal keys for the chat composer.
-import { root, Emitter } from "yuke:core";
+import { root } from "yuke:core";
+import { Emitter } from "yuke:kernel";
 import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:text-input";
 import { Composer } from "yuke:ui";
 import { register } from "yuke:vim";

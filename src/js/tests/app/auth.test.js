@@ -1,5 +1,6 @@
 import { check } from "yuke:test";
-import { command, root, events } from "yuke:core";
+import { command, root } from "yuke:core";
+import { events } from "yuke:kernel";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { defaultModel } from "yuke:catalog";

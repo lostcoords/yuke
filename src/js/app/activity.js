@@ -1,5 +1,6 @@
 // yuke:activity — the live activity of every open session, read back after each activity fact.
-import { events, root } from "yuke:core";
+import { root } from "yuke:core";
+import { events } from "yuke:kernel";
 import { client } from "yuke:client";
 
 /** @import { Context } from "yuke:ext" */

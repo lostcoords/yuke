@@ -53,7 +53,10 @@ fn run(init: std.process.Init) !void {
         std.log.warn("{d} api-key providers name no key variable", .{stats.api_key_without_env});
     }
 
-    try writeAtomic(a, init.io, options.out, generated);
+    var atomic = try cwd.createFileAtomic(init.io, options.out, .{ .replace = true });
+    defer atomic.deinit(init.io);
+    try atomic.file.writeStreamingAll(init.io, generated);
+    try atomic.replace(init.io);
 
     if (!options.quiet) {
         std.log.info("{s}: {d} bytes, {d} providers, {d} models", .{
@@ -89,25 +92,6 @@ fn fetch(a: std.mem.Allocator, io: std.Io, url: []const u8, quiet: bool) ![]u8 {
         error.StreamTooLong => error.CatalogTooLarge,
         else => |e| e,
     };
-}
-
-fn writeAtomic(a: std.mem.Allocator, io: std.Io, path: []const u8, data: []const u8) !void {
-    var random_bytes: [8]u8 = undefined;
-    io.random(&random_bytes);
-    const suffix = std.fmt.bytesToHex(random_bytes, .lower);
-    const temporary_path = try std.fmt.allocPrint(a, "{s}.tmp-{s}", .{ path, suffix });
-
-    const cwd = std.Io.Dir.cwd();
-    var temporary_exists = false;
-    defer if (temporary_exists) cwd.deleteFile(io, temporary_path) catch {};
-    try cwd.writeFile(io, .{
-        .sub_path = temporary_path,
-        .data = data,
-        .flags = .{ .exclusive = true },
-    });
-    temporary_exists = true;
-    try cwd.rename(temporary_path, cwd, path, io);
-    temporary_exists = false;
 }
 
 fn parseOptions(args: []const [:0]const u8) ?Options {

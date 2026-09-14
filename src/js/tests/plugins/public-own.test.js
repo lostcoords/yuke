@@ -15,6 +15,7 @@ second();
 
 let runs = 0;
 const off = plugins.use({ name: "public-owner", apply(ctx) {
+  ctx.tools.define(definition);
   ctx.inject(["tui"], (ctx) => {
     ctx.tui.command(null, { note: () => { runs++; } });
   });
@@ -24,5 +25,7 @@ const terminal = plugins.use(tuiPlugin);
 command.perform("public-owner:note");
 equal(runs, 1);
 off();
+const afterUnload = tools.define(definition);
+afterUnload();
 check("command-leaves-with-plugin", !command.available("public-owner:note"));
 terminal();

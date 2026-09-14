@@ -1,5 +1,6 @@
 // yuke:tui — the terminal capability. A block that declares `tui` registers its view effects here.
-import { command, keymap, route, slot, context, status, style, root, events } from "yuke:core";
+import { command, keymap, route, slot, context, status, style, root } from "yuke:core";
+import { events } from "yuke:kernel";
 import { ChatView } from "yuke:chat-view";
 
 /** @import { PresentationContext, PresentationProvider } from "yuke:chat-view" */

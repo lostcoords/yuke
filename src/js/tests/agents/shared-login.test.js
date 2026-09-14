@@ -1,4 +1,4 @@
-import { events } from "yuke:core";
+import { events } from "yuke:kernel";
 (async () => {
   map.config.models = { small: { model: "p/family/model" }, medium: { model: "p/family/model" } };
   const resolve = globalThis.resolveSlot;

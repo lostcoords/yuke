@@ -1,5 +1,6 @@
 import { check } from "yuke:test";
-import { root, events } from "yuke:core";
+import { root } from "yuke:core";
+import { events } from "yuke:kernel";
 import { plugins } from "yuke:ext";
 import { client } from "yuke:client";
 import { feedOf } from "yuke:sessions";

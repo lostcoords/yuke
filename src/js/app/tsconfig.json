@@ -21,5 +21,5 @@
       "yuke:*": ["./*.js"]
     }
   },
-  "include": ["./**/*.js", "./types/**/*.d.ts", "./generated/**/*.d.ts", "../tests/public-api.ts"]
+  "include": ["./**/*.js", "./types/**/*.d.ts", "./generated/**/*.d.ts"]
 }

@@ -1,7 +1,8 @@
 import { equal } from "yuke:test";
 import { ChatView } from "yuke:chat-view";
 import { Text, Window } from "yuke:ui";
-import { RootView, events } from "yuke:core";
+import { RootView } from "yuke:core";
+import { events } from "yuke:kernel";
 import { row, child, fixed, grow } from "yuke:layout";
 import { Context, Scope } from "yuke:ext";
 import { tui } from "yuke:tui";

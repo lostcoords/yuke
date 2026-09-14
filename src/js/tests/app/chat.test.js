@@ -1,5 +1,6 @@
 import { check } from "yuke:test";
-import { command, events, root, Node } from "yuke:core";
+import { command, root, Node } from "yuke:core";
+import { events } from "yuke:kernel";
 import { plugins } from "yuke:ext";
 import { Chat, chatEntry, chatPlugin } from "yuke:chat";
 import { tuiPlugin } from "yuke:tui";

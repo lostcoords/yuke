@@ -7,6 +7,7 @@ const tools_table = @import("tools.zig");
 const BakedModule = @import("loader.zig").BakedModule;
 
 const modules = host_mod.default_baked ++ [_]BakedModule{
+    .{ .name = "yuke:test-markdown", .code = .{ .source = @embedFile("tests/markdown.js") } },
     .{ .name = "yuke:test", .code = .{ .source = @embedFile("tests/assert.js") } },
 };
 

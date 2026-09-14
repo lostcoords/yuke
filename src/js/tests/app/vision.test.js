@@ -1,5 +1,5 @@
 import { check } from "yuke:test";
-import { events } from "yuke:core";
+import { events } from "yuke:kernel";
 import { notice } from "yuke:notice";
 import { catalogOf, chooseModel } from "yuke:catalog";
 import { chat } from "yuke:defaults";

@@ -611,7 +611,6 @@ export class Context {
     return this.scope.effect(() => events.once(name, fn));
   }
 
-  // A bare name becomes "<id>:<name>". A name that already holds a ":" stays as the author wrote it.
   /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
     return this.scope.effect(() =>
@@ -633,7 +632,9 @@ export class Context {
 
   // The tools this plugin owns. A dispose withdraws them, so an unload leaves no tool behind.
   get tools() {
-    return toolRegistry(this.scope);
+    const tools = toolRegistry(this.scope);
+    Object.defineProperty(this, "tools", { value: tools });
+    return tools;
   }
 
   // Run `apply` only while every named capability exists, in a child scope a withdrawal reverts.
