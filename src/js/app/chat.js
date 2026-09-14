@@ -13,6 +13,7 @@ import { pasteAttaches } from "yuke:attach";
 
 /** @import { PresentationContext } from "yuke:chat-view" */
 /** @import { InjectContext } from "./types/ext.js" */
+/** @import { Context } from "yuke:ext" */
 /** @import { EngineEvent } from "yuke:engine-native" */
 /** @typedef {Extract<EngineEvent, { type: "session" }>} NativeSessionEvent */
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
@@ -370,7 +371,7 @@ function pickReasoning(ctx, model, sessionId) {
 // The chat's own listeners and the model command.
 export const chatPlugin = {
   name: "chat",
-  /** @param {InjectContext} ctx @returns {void} */
+  /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       ctx.tui.presentation(() => {

@@ -4,7 +4,7 @@ import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installInputGate, setPoints } from "yuke:hooks";
 import { native } from "yuke:engine-native";
 
-/** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Answerer, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, InjectApply, InteractionSurface, Plugin, ScopeEntry, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Answerer, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, InjectApply, InjectContext, InteractionSurface, Plugin, ScopeEntry, ToolDefinition } from "./types/ext.js" */
 
 const NOOP = () => {};
 
@@ -329,7 +329,7 @@ function isReserved(name) {
 
 // --- inject: hold a block for the capabilities it needs ---
 // The block owns a child scope, and a change of a named capability drops that scope and builds it again.
-/** @param {Scope} parent @param {string} id @param {string[]} names @param {InjectApply} apply @returns {Disposer} */
+/** @template {string} K @param {Scope} parent @param {string} id @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
 function injectInto(parent, id, names, apply) {
   if (!Array.isArray(names) || names.length === 0) throw new TypeError("inject needs at least one capability name");
   for (const n of names) {
@@ -369,7 +369,7 @@ function injectInto(parent, id, names, apply) {
       // Each build reads the live provider, and a later change builds the block again.
       const bound = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (ctx));
       for (const n of deps) bound[n] = bindCapability(services.get(n), ctx);
-      child.effect(() => apply(ctx));
+      child.effect(() => apply(/** @type {InjectContext<K>} */ (ctx)));
       // The block can drop its own dependency, so confirm the requirement before the block commits.
       if (satisfied() && !stopped && parent.alive) {
         // The old block leaves only after the new one holds what it registered, so a shared
@@ -612,10 +612,10 @@ export class Context {
   }
 
   // A bare name becomes "<id>:<name>". A name that already holds a ":" stays as the author wrote it.
-  /** @param {object} obj @param {string} prop @param {string} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
+  /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
     return this.scope.effect(() =>
-      advice.advise(obj, prop, /** @type {AdviceWhere} */ (where), fn, Object.assign({}, opts, { owner: this.id })),
+      advice.advise(obj, prop, where, fn, Object.assign({}, opts, { owner: this.id })),
     );
   }
 
@@ -633,24 +633,11 @@ export class Context {
 
   // The tools this plugin owns. A dispose withdraws them, so an unload leaves no tool behind.
   get tools() {
-    const owner = this;
-    return {
-      /** @param {ToolDefinition} definition @returns {Disposer} */
-      define(definition) {
-        if (definition == null || typeof definition !== "object") {
-          throw new TypeError("tools.define expects a tool definition object");
-        }
-        const name = definition.name;
-        return owner.scope.effect(() => {
-          defineTool(name, definition);
-          return () => removeTool(name);
-        });
-      },
-    };
+    return toolRegistry(this.scope);
   }
 
   // Run `apply` only while every named capability exists, in a child scope a withdrawal reverts.
-  /** @param {string[]} names @param {InjectApply} apply @returns {Disposer} */
+  /** @template {string} K @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
   inject(names, apply) {
     return injectInto(this.scope, this.id, names, apply);
   }
@@ -719,3 +706,21 @@ export const plugins = {
     return Object.keys(this._live);
   },
 };
+
+// The scope owns each tool until its disposer runs or the scope closes.
+/** @param {Scope} scope */
+export function toolRegistry(scope) {
+  return {
+    /** @param {ToolDefinition} definition @returns {Disposer} */
+    define(definition) {
+      if (definition == null || typeof definition !== "object") {
+        throw new TypeError("tools.define expects a tool definition object");
+      }
+      const name = definition.name;
+      return scope.effect(() => {
+        defineTool(name, definition);
+        return () => removeTool(name);
+      });
+    },
+  };
+}

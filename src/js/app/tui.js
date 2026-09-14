@@ -22,7 +22,7 @@ import { ChatView } from "yuke:chat-view";
 const OVERLAY_OWNER = new WeakMap();
 
 // Build the terminal surface for one block, so the disposal of that block reverts every registration.
-/** @param {Context} ctx @returns {object} */
+/** @param {Context} ctx */
 function bindTo(ctx) {
   // A bare name becomes "<id>:<name>". A name that already holds a ":" stays as the author wrote it.
   /** @param {string} name @returns {string} */

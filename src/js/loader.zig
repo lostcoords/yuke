@@ -18,9 +18,9 @@ pub const ResolveError = error{
     MissingBase,
 };
 
-/// True for the public facade name and every internal module name.
+/// True for the public entries and every internal module name.
 pub fn isBaked(name: []const u8) bool {
-    return std.mem.eql(u8, name, "yuke") or std.mem.startsWith(u8, name, "yuke:");
+    return std.mem.eql(u8, name, "yuke") or std.mem.startsWith(u8, name, "yuke/") or std.mem.startsWith(u8, name, "yuke:");
 }
 
 /// Resolve a module name against `base` and keep baked names; the user owns the config directory, so nothing contains it.
@@ -132,6 +132,13 @@ test "the facade name is reserved and never reaches the config directory" {
     const bare = try resolve(gpa, "/cfg/index.js", "yuke");
     defer gpa.free(bare);
     try std.testing.expectEqualStrings("yuke", bare);
+
+    for ([_][]const u8{ "yuke/ui", "yuke/chat", "yuke/unknown" }) |name| {
+        const public = try resolve(gpa, "/cfg/index.js", name);
+        defer gpa.free(public);
+        try std.testing.expectEqualStrings(name, public);
+        try std.testing.expectError(error.MissingBase, resolve(gpa, name, "./other.js"));
+    }
 
     // A longer name that only starts with the facade name stays an ordinary relative import.
     const other = try resolve(gpa, "/cfg/index.js", "yukebox");

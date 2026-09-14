@@ -1,6 +1,6 @@
 // yuke:client — the in-process JavaScript seam over `yuke:engine-native`.
 import { native } from "yuke:engine-native";
-import { events } from "yuke:core";
+import { events } from "yuke:kernel";
 import { sendInput, createSession } from "yuke:ext";
 
 /** @import { MemoryUsage, MessagePart, SessionOutline, ViewPart } from "yuke:engine-native" */

@@ -53,8 +53,13 @@ export interface ToolDefinition {
   needsSkills?: boolean;
 }
 
-export type InjectContext = Context & Record<string, any>;
-export type InjectApply = (context: InjectContext) => unknown;
+export interface Capabilities {
+  tui: ReturnType<typeof import("../tui.js").tui.bindTo>;
+  [name: string]: unknown;
+}
+
+export type InjectContext<K extends string = "tui"> = Context & Pick<Capabilities, K>;
+export type InjectApply<K extends string = string> = (context: InjectContext<K>) => unknown;
 
 export interface Plugin {
   name: string;

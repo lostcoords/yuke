@@ -1,47 +1,19 @@
-// yuke — the public facade. User code imports this name, so an internal `yuke:` name never becomes configuration syntax.
-import { defineConfig } from "yuke:kernel";
-import { plugins } from "yuke:ext";
-import { defineTool } from "yuke:tools";
+// The public root has no UI dependency or default plugin activation.
+export { defineConfig, config, events, Emitter } from "yuke:kernel";
+import { rootScope, toolRegistry } from "yuke:ext";
+export { plugins, Scope, Context, advice, services } from "yuke:ext";
+export { fs } from "yuke:fs";
+export { exec } from "yuke:exec";
+export { diff } from "yuke:diff";
+export { client } from "yuke:client";
 
-/** @import { Context } from "yuke:ext" */
-/** @typedef {(args: any, signal: { aborted: boolean }, context: { workspaceRoot: string }) => Promise<unknown>} ToolExecute */
-/** @typedef {{ name: string, description: string, parameters: Record<string, unknown>, execute: ToolExecute, spawnsAgents?: boolean, needsSkills?: boolean }} ToolDefinition */
-/** @typedef {{ name: string, title: string, description: string, slash?: string | null, args?: boolean, run: (arg?: string) => unknown }} CommandDefinition */
+/** @typedef {import("./types/ext.js").ToolDefinition} ToolDefinition */
+/** @typedef {import("./types/ext.js").ToolExecute} ToolExecute */
+/** @typedef {import("./types/ext.js").Plugin} Plugin */
+/** @typedef {import("./types/ext.js").Disposer} Disposer */
+/** @typedef {import("./types/ext.js").AdviceWhere} AdviceWhere */
+/** @typedef {import("./types/ext.js").AdviceOptions} AdviceOptions */
+/** @typedef {import("./types/ext.js").InteractionSurface} InteractionSurface */
+/** @typedef {import("yuke:kernel").ConfigPatch} ConfigPatch */
 
-// The tool registry. One object states the whole tool, so the name stays beside the rest of the definition.
-export const tools = {
-  /** @param {ToolDefinition} definition @returns {void} */
-  define(definition) {
-    if (definition == null || typeof definition !== "object") {
-      throw new TypeError("tools.define expects a tool definition object");
-    }
-    defineTool(definition.name, definition);
-  },
-};
-
-// The command registry. One definition is one plugin, so a redefinition replaces and the disposer removes.
-export const commands = {
-  /** @param {CommandDefinition} definition @returns {() => void} */
-  define(definition) {
-    if (definition == null || typeof definition !== "object") {
-      throw new TypeError("commands.define expects a command definition object");
-    }
-    const { name, title, description, run } = definition;
-    if (typeof name !== "string" || name === "") throw new TypeError("commands.define: name must be a non-empty string");
-    if (typeof title !== "string" || typeof description !== "string") throw new TypeError("commands.define: title and description must be strings");
-    if (typeof run !== "function") throw new TypeError("commands.define: run must be a function");
-    const id = "user:" + name;
-    const meta = { title, description, slash: definition.slash === undefined ? name : definition.slash, args: !!definition.args };
-    return plugins.use({
-      name: "command:" + name,
-      /** @param {Context} ctx */
-      apply(ctx) {
-        ctx.inject(["tui"], (ctx) => {
-          ctx.tui.command(null, { [id]: run }, { [id]: meta });
-        });
-      },
-    });
-  },
-};
-
-export { defineConfig, plugins };
+export const tools = toolRegistry(rootScope);

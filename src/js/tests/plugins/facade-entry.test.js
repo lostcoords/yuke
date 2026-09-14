@@ -1,5 +1,4 @@
-import { defineConfig, plugins, tools } from "yuke";
-import { config } from "yuke:core";
+import { defineConfig, config, plugins, tools } from "yuke";
 defineConfig({ keymap: { chordMs: 500 } });
 tools.define({
   name: "facade_tool",

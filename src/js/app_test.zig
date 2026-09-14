@@ -156,12 +156,6 @@ test "the cache window reads the session totals and the catalog prices" {
     try support.eval(host, "tests/app/cache.test.js");
 }
 
-test "commands.define registers a user command with a slash word and removes it" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/app/define.test.js");
-}
-
 test "the palette hints only the strokes that run the command here" {
     const host = support.createHost();
     defer support.destroyHost(host);

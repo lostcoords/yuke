@@ -19,6 +19,7 @@ import { contextPlugin } from "yuke:context";
 import { cachePlugin } from "yuke:cache";
 /** @import { NavTarget } from "./types/core.js" */
 /** @import { InjectContext } from "./types/ext.js" */
+/** @import { Context } from "yuke:ext" */
 
 // The first chat pane. A split adds another, and each pane drives its own session.
 const chat = new Chat();
@@ -76,7 +77,7 @@ function openSessionFinder(ctx) {
 // The stock commands and keybinds ship as a plugin, so they load and unload through the kernel.
 plugins.use({
   name: "app-keys",
-  /** @param {InjectContext} ctx */
+  /** @param {Context} ctx */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       // Vim calls this showcmd: the keys typed so far, while a chord or an operator waits.

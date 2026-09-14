@@ -327,8 +327,15 @@ fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.buil
     run.addArg(native_js);
     for (listFiles(b, "src/js/app", ".js")) |file| {
         const stem = std.fs.path.stem(file);
-        // `facade.js` is the public entry, so it answers the bare name.
-        run.addArg(if (std.mem.eql(u8, stem, "facade")) "yuke" else b.fmt("yuke:{s}", .{stem}));
+        const name = if (std.mem.eql(u8, stem, "facade"))
+            "yuke"
+        else if (std.mem.eql(u8, stem, "public-ui"))
+            "yuke/ui"
+        else if (std.mem.eql(u8, stem, "public-chat"))
+            "yuke/chat"
+        else
+            b.fmt("yuke:{s}", .{stem});
+        run.addArg(name);
         run.addFileArg(b.path(b.fmt("src/js/app/{s}", .{file})));
     }
     return b.createModule(.{ .root_source_file = out.path(b, "baked.zig") });
