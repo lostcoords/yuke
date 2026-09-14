@@ -236,6 +236,11 @@ fn writeToolState(w: *std.Io.Writer, parts: *Parts, state: proto.tool.ToolState)
                 try w.writeAll(",\"view\":");
                 try writeViews(w, parts, "view", views);
             }
+            // A media list is small and names blobs only, so it needs no cap.
+            if (c.media) |media| {
+                try w.writeAll(",\"media\":");
+                try std.json.Stringify.value(media, .{}, w);
+            }
             try w.writeByte('}');
         },
         .@"error" => |e| {
@@ -283,10 +288,6 @@ fn writeView(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, v: 
             try writeCapped(w, parts, .view_text, list, index, "text", t.text);
             try w.writeByte('}');
         },
-        // An image view names a blob; it carries no inline bytes.
-        .image => |t| try std.json.Stringify.value(v: {
-            break :v .{ .type = "image", .source = t.source, .alt = t.alt };
-        }, .{ .emit_null_optional_fields = false }, w),
         .diff => |d| try writeDiff(w, parts, list, index, d),
     }
 }

@@ -289,7 +289,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "replaced 2") != null);
-        try std.testing.expect(call.view_json != null);
+        try std.testing.expect(call.extra_json != null);
         call.finish();
         try host.pump();
     }
@@ -298,7 +298,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.indexOf(u8, call.text.?, "wrote 6 bytes") != null);
-        try std.testing.expect(call.view_json != null);
+        try std.testing.expect(call.extra_json != null);
         call.finish();
         try host.pump();
     }
@@ -306,7 +306,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         const call = host.calls.submit("write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", root);
         try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
-        try std.testing.expect(call.view_json == null);
+        try std.testing.expect(call.extra_json == null);
         call.finish();
         try host.pump();
     }

@@ -468,10 +468,6 @@ function viewRows(views, width, limit = Infinity) {
       for (const r of doc.rows(Math.max(1, width), limit - rows.length)) {
         rows.push({ segments: shiftSrc(r.segments, base), indent: TX_GUTTER });
       }
-    } else if (t === "image") {
-      const label = "(image)";
-      source += label;
-      if (rows.length < limit) rows.push({ segments: [{ text: label, group: "TxToolMeta", src: base, srcEnd: base + label.length }], indent: TX_GUTTER });
     } else {
       const view = /** @type {{ text?: string }} */ (v);
       const body = v && view.text ? view.text : "";

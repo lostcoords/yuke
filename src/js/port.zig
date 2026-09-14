@@ -48,14 +48,15 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
     defer finishCall(host, call);
     awaitCall(host, call) catch return fault(out, "cancellation stopped the tool call");
     const text = call.text orelse "the tool call did not finish";
-    const view = if (call.view_json) |json|
-        std.json.parseFromSliceLeaky([]proto.view.View, out, json, .{}) catch
-            return fault(out, "the tool answered an invalid view")
+    const extra: Extra = if (call.extra_json) |json|
+        std.json.parseFromSliceLeaky(Extra, out, json, .{ .ignore_unknown_fields = true }) catch
+            return fault(out, "the tool answered an invalid view or media list")
     else
-        null;
+        .{};
     return .{
         .output = out.dupe(u8, text) catch return fault(out, "out of memory"),
-        .view = view,
+        .view = extra.view,
+        .media = extra.media,
         .is_error = call.is_error,
         .cancellation_reason = call.cancellation_reason,
     };
@@ -112,6 +113,12 @@ fn decisionOf(out: std.mem.Allocator, point: proto.hook.Point, text: []const u8)
         .block => |blocked| .{ .block = blocked.reason },
     };
 }
+
+/// The structured part of a builtin result. The engine admits the media before it commits the part.
+const Extra = struct {
+    view: ?[]const proto.view.View = null,
+    media: []const proto.content.MediaBlob = &.{},
+};
 
 fn fault(out: std.mem.Allocator, message: []const u8) toolset.Outcome {
     return .{ .output = out.dupe(u8, message) catch message, .is_error = true };

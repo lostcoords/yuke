@@ -26,6 +26,8 @@ const Meta = struct {
     tokens_cache_write: ?u64,
     cost: ?f64,
     created_at_ms: u64,
+    /// The image count, because the context estimate charges an image by count and not by bytes.
+    images: u64,
     // Add the session usage totals. Use zero when the message carries no tokens.
     add_input: u64,
     add_output: u64,
@@ -47,7 +49,12 @@ pub fn appendCommittedMessage(
     std.debug.assert(sql.inTransaction(db.conn)); // The event and projection must commit together.
     const payload = try std.json.Stringify.valueAlloc(arena, message, .{ .emit_null_optional_fields = false });
     const seq = try event.append(db, arena, session_id, event_id, committed_at_ms, "message.committed", payload);
-    if (message == .user) try blob.recordRefs(db, session_id, message.user.content);
+    switch (message) {
+        .user => |u| try blob.recordRefs(db, session_id, u.content),
+        // A tool part names the blobs its result carries, so a removal elsewhere keeps them.
+        .assistant => |a| for (a.content) |part| if (part == .tool) try blob.recordBlobRefs(db, session_id, part.tool.state.media()),
+        .compaction => {},
+    }
 
     const m = metaOf(message);
     try db.queries.insert_message.exec(.{
@@ -67,6 +74,7 @@ pub fn appendCommittedMessage(
         .tokens_cache_write = m.tokens_cache_write,
         .cost = m.cost,
         .created_at_ms = m.created_at_ms,
+        .images = m.images,
     });
     _ = try db.queries.advance_message.one(arena, .{
         .id = session_id,
@@ -80,6 +88,20 @@ pub fn appendCommittedMessage(
         .updated_at_ms = committed_at_ms,
     });
     return seq;
+}
+
+fn imagesOf(content: []const proto.content.ContentPart) u64 {
+    var count: u64 = 0;
+    for (content) |part| count += @intFromBool(part == .image);
+    return count;
+}
+
+fn toolImagesOf(content: []const proto.message.AssistantPart) u64 {
+    var count: u64 = 0;
+    for (content) |part| if (part == .tool) {
+        count += part.tool.state.media().len;
+    };
+    return count;
 }
 
 /// Extract the projection metadata from one message. Only an assistant turn carries tokens.
@@ -100,6 +122,7 @@ fn metaOf(message: proto.message.Message) Meta {
             .tokens_cache_write = null,
             .cost = null,
             .created_at_ms = u.time.created_at_ms,
+            .images = imagesOf(u.content),
             .add_input = 0,
             .add_output = 0,
             .add_reasoning = 0,
@@ -121,6 +144,7 @@ fn metaOf(message: proto.message.Message) Meta {
             .tokens_cache_write = if (a.tokens) |t| t.cache_write else null,
             .cost = a.cost,
             .created_at_ms = a.time.created_at_ms,
+            .images = toolImagesOf(a.content),
             .add_input = if (a.tokens) |t| t.input else 0,
             .add_output = if (a.tokens) |t| t.output else 0,
             .add_reasoning = if (a.tokens) |t| t.reasoning else 0,
@@ -142,6 +166,7 @@ fn metaOf(message: proto.message.Message) Meta {
             .tokens_cache_write = null,
             .cost = null,
             .created_at_ms = c.time.created_at_ms,
+            .images = 0,
             .add_input = 0,
             .add_output = 0,
             .add_reasoning = 0,
@@ -290,6 +315,30 @@ test "a committed user then assistant message advances the summary" {
     // The id mark and projection seq track the last committed message.
     try testing.expectEqual(@as(i64, 2), try scalar(&db, "SELECT message_id_high FROM sessions"));
     try testing.expectEqual(@as(i64, 2), try scalar(&db, "SELECT projection_seq FROM sessions"));
+}
+
+test "a tool part with media records a blob ref and the image count" {
+    var db = try Database.openTest();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const sid = [_]u8{4} ** 16;
+    try session.seedSession(&db, sid);
+    const image: proto.content.MediaBlob = .{ .hash = .bytes(@splat(7)), .mime = "image/png", .bytes = 12 };
+    const message: proto.message.Message = .{ .assistant = .{
+        .id = 1,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = "claude",
+        .content = &.{.{ .tool = .{ .id = 1, .call_id = "c1", .name = "read", .arguments = "{}", .state = .{ .completed = .{ .output = "PNG", .media = &.{image}, .duration_ms = 1 } } } }},
+        .time = .{ .created_at_ms = 10 },
+    } };
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try appendCommittedMessage(&db, a, sid, [_]u8{1} ** 16, 10, message);
+    try db.conn.execNoArgs("COMMIT");
+    try testing.expect(try blob.referenced(&db, a, image.hash));
+    try testing.expectEqual(@as(i64, 1), try scalar(&db, "SELECT images FROM messages WHERE message_id = 1"));
 }
 
 /// Build one committed assistant turn for a usage test.

@@ -116,6 +116,8 @@ CREATE TABLE messages (
     tokens_cache_read  INTEGER CHECK (tokens_cache_read  IS NULL OR tokens_cache_read  BETWEEN 0 AND 9007199254740991), -- u64
     tokens_cache_write INTEGER CHECK (tokens_cache_write IS NULL OR tokens_cache_write BETWEEN 0 AND 9007199254740991), -- u64
     cost               REAL    CHECK (cost               IS NULL OR cost               >= 0),
+    -- Count the images the body names, so the context estimate can charge them without a body read.
+    images             INTEGER NOT NULL CHECK (images BETWEEN 0 AND 9007199254740991), -- u64
 
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 

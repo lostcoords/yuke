@@ -215,21 +215,22 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
                 return settleText(host, call, "the tool answered text the host cannot read", true);
             };
             defer ctx.freeCString(text.ptr);
-            const view_value = ctx.getPropertyStr(value, "view");
-            defer ctx.freeValue(view_value);
-            if (ctx.isUndefined(view_value) or ctx.isNull(view_value)) return settleText(host, call, text, false);
-            const json = ctx.jsonStringify(view_value, quickjs.UNDEFINED, quickjs.UNDEFINED);
+            // The extra object holds the view and the media, so a new member needs no host change.
+            const extra_value = ctx.getPropertyStr(value, "extra");
+            defer ctx.freeValue(extra_value);
+            if (ctx.isUndefined(extra_value) or ctx.isNull(extra_value)) return settleText(host, call, text, false);
+            const json = ctx.jsonStringify(extra_value, quickjs.UNDEFINED, quickjs.UNDEFINED);
             defer ctx.freeValue(json);
             if (!ctx.isString(json)) {
                 pending.dropException(ctx);
-                return settleText(host, call, "the tool answered a view that is not JSON", true);
+                return settleText(host, call, "the tool answered a result that is not JSON", true);
             }
-            const view_text = ctx.toCStringLen(json) catch {
+            const extra_text = ctx.toCStringLen(json) catch {
                 pending.dropException(ctx);
-                return settleText(host, call, "the tool answered a view that is not JSON", true);
+                return settleText(host, call, "the tool answered a result that is not JSON", true);
             };
-            defer ctx.freeCString(view_text.ptr);
-            return settleTextAndView(host, call, text, view_text);
+            defer ctx.freeCString(extra_text.ptr);
+            return settleTextAndExtra(host, call, text, extra_text);
         }
     }
 
@@ -291,8 +292,8 @@ fn settleText(host: *Host, call: *table.Call, text: []const u8, is_error: bool) 
     call.settle(host.io, utf8.sanitize(host.gpa, text) catch unreachable, is_error);
 }
 
-fn settleTextAndView(host: *Host, call: *table.Call, text: []const u8, view_json: []const u8) void {
-    call.settleView(host.io, utf8.sanitize(host.gpa, text) catch unreachable, utf8.sanitize(host.gpa, view_json) catch unreachable);
+fn settleTextAndExtra(host: *Host, call: *table.Call, text: []const u8, extra_json: []const u8) void {
+    call.settleExtra(host.io, utf8.sanitize(host.gpa, text) catch unreachable, utf8.sanitize(host.gpa, extra_json) catch unreachable);
 }
 
 test "a settle after a spent interrupt slice still reads the answer" {

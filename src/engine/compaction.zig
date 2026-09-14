@@ -451,6 +451,23 @@ test "a history with no earlier turn is a skip" {
     try testing.expectEqual(@as(?Cut, null), try selectCut(testing.allocator, &db, sid, 0, 1_000_000));
 }
 
+test "the estimate charges each image a fixed cost above its payload bytes" {
+    var db = try database.Database.openTest();
+    defer db.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const sid = [_]u8{10} ** 16;
+    try seedSessionModel(&db, sid, "mock", "");
+    try seedMessage(&db, a, sid, 1, .user, 300);
+    const before = try context.estimate(a, &db, sid);
+    const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(0x5a)), .mime = "image/png", .bytes = 64 };
+    const message: proto.message.Message = .{ .user = .{ .id = 2, .input_id = 2, .content = &.{ .{ .image = .{ .source = blob } }, .{ .image = .{ .source = blob } } }, .time = .{ .created_at_ms = 2 } } };
+    try seedCommitted(&db, a, sid, 2, message);
+    const payload = try std.json.Stringify.valueAlloc(a, message, .{ .emit_null_optional_fields = false });
+    try testing.expectEqual(before + context.tokensFor(payload.len) + 2 * context.image_tokens, try context.estimate(a, &db, sid));
+}
+
 fn seedSessionModel(db: *database.Database, id: [16]u8, model: []const u8, reasoning: []const u8) !void {
     try database.session.create(db, .{
         .id = id,

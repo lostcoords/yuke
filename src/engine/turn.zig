@@ -815,7 +815,7 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_roo
     else if (res.is_error)
         .{ .@"error" = .{ .@"error" = res.output, .view = res.view, .duration_ms = duration } }
     else
-        .{ .completed = .{ .output = res.output, .view = res.view, .duration_ms = duration } };
+        .{ .completed = .{ .output = res.output, .view = res.view, .media = if (res.media.len == 0) null else res.media, .duration_ms = duration } };
     try streamer.emitToolState(pt.part_id, settled);
 }
 
@@ -823,13 +823,6 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_roo
 const ToolCall = struct {
     name: []const u8,
     arguments: []const u8,
-};
-
-/// A replacement owns both the output and the view so they cannot disagree.
-const ToolResult = struct {
-    output: []const u8,
-    is_error: bool,
-    view: ?[]const proto.view.View = null,
 };
 
 test "tool rewrites obey the current depth limit before dispatch" {
@@ -876,6 +869,49 @@ test "tool rewrites obey the current depth limit before dispatch" {
     try std.testing.expectEqual(@as(usize, 1), state.calls);
 }
 
+test "a tool.after replacement is the whole result, and the engine admits the media that remains" {
+    const State = struct {
+        media: [1]proto.content.MediaBlob = .{.{ .hash = .bytes(@splat(0x5a)), .mime = "image/png", .bytes = 1 }},
+        replace: bool = true,
+
+        fn execute(raw: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            return .{ .output = "raw", .media = &self.media, .is_error = false };
+        }
+
+        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+            return point == .@"tool.after";
+        }
+
+        fn ask(raw: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, _: []const u8) @import("hookset.zig").Decision {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            std.debug.assert(point == .@"tool.after");
+            if (!self.replace) return .proceed;
+            const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"output\":\"clean\",\"is_error\":false}", .{}) catch unreachable;
+            return .{ .replace = value };
+        }
+    };
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var state: State = .{};
+    f.engine.installTools(.{ .ctx = &state, .run = State.execute });
+    f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
+    var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer scratch.deinit();
+    const pending: PendingTool = .{ .part_id = 0, .name = "read", .arguments = "{}" };
+    // The replacement omits the media, so the bad ref is gone before admission.
+    const replaced = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, "/w");
+    try std.testing.expect(!replaced.is_error);
+    try std.testing.expectEqualStrings("clean", replaced.output);
+    try std.testing.expectEqual(@as(usize, 0), replaced.media.len);
+    // Without the replacement, the ref the store lacks turns the result into an error.
+    state.replace = false;
+    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, "/w");
+    try std.testing.expect(refused.is_error);
+    try std.testing.expect(std.mem.indexOf(u8, refused.output, "does not hold") != null);
+}
+
 /// Run one tool through its hooks. A block answers the model, and the process runs nothing.
 fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: PendingTool, workspace_root: []const u8) !toolset.Outcome {
     const hooks = engine.deps.hooks;
@@ -904,16 +940,34 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
         .output = res.output,
         .is_error = res.is_error,
         .view = res.view,
+        .media = res.media,
     });
-    return switch (after) {
+    const outcome: toolset.Outcome = switch (after) {
         .proceed => res,
+        // A replacement is the whole result, so a field it omits is gone. The cancel reason is not its to change.
         .replace => |value| blk: {
-            const changed = std.json.parseFromValueLeaky(ToolResult, arena, value, .{ .ignore_unknown_fields = true }) catch break :blk res;
-            break :blk .{ .output = changed.output, .view = changed.view, .is_error = changed.is_error, .cancellation_reason = res.cancellation_reason };
+            var changed = std.json.parseFromValueLeaky(toolset.Outcome, arena, value, .{ .ignore_unknown_fields = true }) catch break :blk res;
+            changed.cancellation_reason = res.cancellation_reason;
+            break :blk changed;
         },
-        .block => |reason| .{ .output = reason, .is_error = true },
+        .block => |reason| return .{ .output = reason, .is_error = true },
         .canceled => return error.Canceled,
     };
+    return admitMedia(engine, arena, outcome);
+}
+
+/// Admit the images a tool answered. An error state carries none, and a bad blob turns the result into an error.
+fn admitMedia(engine: *Engine, arena: std.mem.Allocator, outcome: toolset.Outcome) error{ OutOfMemory, Canceled }!toolset.Outcome {
+    if (outcome.is_error or outcome.media.len == 0) return outcome;
+    engine.deps.blobs.admitBlobs(engine.deps.io, arena, outcome.media) catch |err| switch (err) {
+        error.OutOfMemory, error.Canceled => |e| return e,
+        error.BlobMissing, error.BlobMismatch, error.BlobTooManyImages, error.BlobUnsupportedPart => return .{
+            .output = "The tool answered an image the engine does not hold.",
+            .is_error = true,
+            .cancellation_reason = outcome.cancellation_reason,
+        },
+    };
+    return outcome;
 }
 
 /// Reject a provider payload that would exceed the stream cap. This is peer input. Return an error.

@@ -177,7 +177,6 @@ pub const structs = [_]TypeEntry{
     .{ .name = "DiffFile", .ty = view.DiffFile },
     .{ .name = "DiffHunk", .ty = view.DiffHunk },
     .{ .name = "ViewDiff", .ty = view.ViewDiff },
-    .{ .name = "ViewImage", .ty = view.ViewImage },
     .{ .name = "ViewJson", .ty = view.ViewJson },
     .{ .name = "ViewMarkdown", .ty = view.ViewMarkdown },
     .{ .name = "ViewText", .ty = view.ViewText },

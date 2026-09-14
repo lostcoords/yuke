@@ -25,6 +25,8 @@ pub const Context = struct {
 pub const Outcome = struct {
     output: []const u8,
     view: ?[]const proto.view.View = null,
+    /// Images beside the output. Tool output is peer input, so the engine admits each blob before it commits.
+    media: []const proto.content.MediaBlob = &.{},
     is_error: bool,
     cancellation_reason: ?proto.tool.ToolCancellationReason = null,
 };

@@ -6,7 +6,9 @@ const proto = @import("proto");
 const ai = @import("ai");
 const database = @import("../store/store.zig");
 const commands = @import("commands.zig");
-const Fixture = @import("test_resources.zig").Fixture;
+const Resources = @import("test_resources.zig");
+const Fixture = Resources.Fixture;
+const toolset = @import("toolset.zig");
 const blob_store = database.blob;
 
 const png = blob_store.png_1x1;
@@ -87,6 +89,48 @@ test "a ref the store cannot vouch for never commits" {
     const before = try database.session.count(&f.db, a, .{});
     try testing.expectError(error.BlobMissing, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "mock/m", .initial_input = .{ .content = .{ .content = &.{.{ .image = .{ .source = unknown } }} } } }));
     try testing.expectEqual(before, try database.session.count(&f.db, a, .{}));
+}
+
+/// A tool that answers one image ref, so a test can name bytes the store holds or lacks.
+const ImageTool = struct {
+    media: [1]proto.content.MediaBlob,
+
+    fn run(raw: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
+        const self: *ImageTool = @ptrCast(@alignCast(raw));
+        return .{ .output = "PNG image, 67 B", .media = &self.media, .is_error = false };
+    }
+};
+
+test "a tool image commits as media with a ref, and a ref the store lacks becomes a tool error" {
+    var f: Fixture = undefined;
+    try f.init(.{ .modalities = vision, .replies = &.{ Resources.tool_reply, ai.transport.canned_reply, Resources.tool_reply, ai.transport.canned_reply } });
+    defer f.deinit();
+    const a = f.arena.allocator();
+    const blob = try putImage(&f, "shot.png", png);
+    var tool: ImageTool = .{ .media = .{blob} };
+    f.engine.installTools(.{ .ctx = &tool, .run = ImageTool.run });
+
+    _ = try f.send(&.{.{ .text = .{ .text = "look" } }});
+    try f.finish(Fixture.id);
+    // Each round commits one assistant message: the tool round, then the answer.
+    var messages = try f.history();
+    try testing.expectEqual(@as(usize, 3), messages.len);
+    const part = messages[1].assistant.content[0].tool;
+    try testing.expectEqualSlices(u8, &blob.hash.raw, &part.state.completed.media.?[0].hash.raw);
+    // No user message names the blob, so the tool part alone keeps the ref alive.
+    try testing.expect(try blob_store.referenced(&f.db, a, blob.hash));
+
+    tool.media[0].hash = .bytes(@splat(0x5a));
+    _ = try f.send(&.{.{ .text = .{ .text = "again" } }});
+    try f.finish(Fixture.id);
+    messages = try f.history();
+    try testing.expectEqual(@as(usize, 6), messages.len);
+    const refused = messages[4].assistant.content[0].tool;
+    try testing.expect(refused.state == .@"error");
+    try testing.expect(std.mem.indexOf(u8, refused.state.@"error".@"error", "does not hold") != null);
+
+    _ = try commands.sessionRemove(&f.engine, a, .{ .session_id = Fixture.id });
+    try testing.expectError(error.BlobMissing, f.engine.deps.blobs.read(f.engine.deps.io, a, blob.hash));
 }
 
 test "removing the last session that names a blob unlinks it" {

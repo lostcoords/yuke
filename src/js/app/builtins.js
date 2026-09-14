@@ -14,11 +14,12 @@ import { client } from "yuke:client";
 /** @typedef {{ old_start: number, old_lines: number, new_start: number, new_lines: number, lines: string[] }} DiffHunk */
 /** @typedef {{ path: string, hunks: DiffHunk[] }} DiffFile */
 /** @typedef {{ type: "diff", files: DiffFile[] }} DiffView */
-/** @typedef {{ __yuke_result: true, text: string, view: DiffView[] | null }} BuiltinResult */
+/** @typedef {{ view?: DiffView[], media?: Wire.MediaBlob[] }} ResultExtra */
+/** @typedef {{ __yuke_result: true, text: string, extra: ResultExtra | null }} BuiltinResult */
 /** @typedef {{ description: string, parameters: Record<string, unknown>, execute: (args: any, signal: ToolSignal, context: ToolContext) => Promise<unknown>, needsSkills?: boolean }} ToolDefinition */
 
-/** @param {string} text @param {DiffView[] | null} view @returns {BuiltinResult} */
-const result = (text, view) => ({ __yuke_result: true, text, view });
+/** @param {string} text @param {ResultExtra | null} extra @returns {BuiltinResult} */
+const result = (text, extra) => ({ __yuke_result: true, text, extra });
 
 /** @param {string} name @param {ToolDefinition} definition @returns {void} */
 function builtin(name, definition) {
@@ -142,7 +143,7 @@ async function write(args, _signal, context) {
   const bytes = await hostCall(name, fs.writeFile(path, content, context?.workspaceRoot));
   const view = mapped == null ? null : viewOf(mapped);
   const text = view == null ? `The tool wrote ${bytes} bytes.` : `The tool wrote ${bytes} bytes and changed ${changedLines(view)} line(s).`;
-  return result(text, view);
+  return result(text, view == null ? null : { view });
 }
 
 /** @param {DiffView[]} view @returns {number} */
@@ -188,7 +189,7 @@ async function edit(args, _signal, context) {
   await hostCall(name, fs.writeFile(path, replaced.text, context?.workspaceRoot));
   const view = viewOf(mapped);
   const text = view == null ? `The tool replaced ${replaced.count} match(es).` : `The tool replaced ${replaced.count} match(es) and changed ${changedLines(view)} line(s).`;
-  return result(text, view);
+  return result(text, view == null ? null : { view });
 }
 
 /** @param {string} text @returns {string} */

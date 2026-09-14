@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const ids = @import("ids.zig");
+const content = @import("content.zig");
 const tagged = @import("tagged.zig");
 const view = @import("view.zig");
 
@@ -22,6 +23,14 @@ pub const ToolState = union(enum) {
     }
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         return tagged.stringify(@This(), self, jw);
+    }
+
+    /// The images a completed call carries. Every other state carries none.
+    pub fn media(self: ToolState) []const content.MediaBlob {
+        return switch (self) {
+            .completed => |c| c.media orelse &.{},
+            else => &.{},
+        };
     }
 };
 
@@ -57,6 +66,8 @@ pub const ToolStateChangedData = struct {
 pub const ToolStateCompleted = struct {
     output: []const u8,
     view: ?[]const view.View = null,
+    /// Images the model reads beside the output. The engine admitted each blob at the tool boundary.
+    media: ?[]const content.MediaBlob = null,
     duration_ms: u64,
 };
 
@@ -88,6 +99,23 @@ test "tool state running preserves an optional output" {
     try testing.expect(parsed.value == .running);
     try testing.expectEqualStrings("partial", parsed.value.running.output.?);
 
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try testing.expectEqualStrings(json, buf.written());
+}
+
+test "tool state completed keeps its media and omits an absent list" {
+    const plain = try std.json.parseFromSlice(ToolState, testing.allocator, "{\"type\":\"completed\",\"output\":\"ok\",\"duration_ms\":3}", opts);
+    defer plain.deinit();
+    try testing.expectEqual(null, plain.value.completed.media);
+
+    const json =
+        \\{"type":"completed","output":"PNG image, 12 B","media":[{"hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","mime":"image/png","bytes":12}],"duration_ms":3}
+    ;
+    const parsed = try std.json.parseFromSlice(ToolState, testing.allocator, json, opts);
+    defer parsed.deinit();
+    try testing.expectEqualStrings("image/png", parsed.value.completed.media.?[0].mime);
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);

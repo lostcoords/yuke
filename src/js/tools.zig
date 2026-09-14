@@ -136,8 +136,8 @@ pub const Call = struct {
     done: std.Io.Event = .unset,
     /// The answer text, from the host allocator. The submitter copies it before it leaves.
     text: ?[]u8 = null,
-    /// A structured view encoded as JSON. The submitter decodes it in its turn arena.
-    view_json: ?[]u8 = null,
+    /// The view and the media of a tool result, as one JSON object. The submitter decodes it in its turn arena.
+    extra_json: ?[]u8 = null,
     is_error: bool = false,
     cancellation_reason: ?@import("proto").tool.ToolCancellationReason = null,
     /// The handler's Promise while it runs. Only the owner touches it.
@@ -159,10 +159,10 @@ pub const Call = struct {
         self.done.set(io);
     }
 
-    pub fn settleView(self: *Call, io: std.Io, text: ?[]u8, view_json: []u8) void {
+    pub fn settleExtra(self: *Call, io: std.Io, text: ?[]u8, extra_json: []u8) void {
         std.debug.assert(self.state != .settled); // one call settles one time
         self.text = text;
-        self.view_json = view_json;
+        self.extra_json = extra_json;
         self.is_error = false;
         self.state = .settled;
         self.done.set(io);
@@ -261,7 +261,7 @@ pub const Calls = struct {
         ctx.freeValue(call.promise);
         ctx.freeValue(call.signal);
         if (call.text) |text| self.gpa.free(text);
-        if (call.view_json) |json| self.gpa.free(json);
+        if (call.extra_json) |json| self.gpa.free(json);
         self.gpa.free(call.workspace_root);
         self.gpa.destroy(call);
     }

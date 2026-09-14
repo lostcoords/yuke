@@ -292,10 +292,10 @@ pub const ProtectedInputCount = sql.OneQuery(
 pub const InsertMessage = sql.ExecQuery(
     \\INSERT INTO messages(
     \\    session_id, message_id, seq, role, run_id, config_rev, model, protocol, finish,
-    \\    tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost, created_at_ms
+    \\    tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost, created_at_ms, images
     \\) VALUES (
     \\    :session_id, :message_id, :seq, :role, :run_id, :config_rev, :model, :protocol, :finish,
-    \\    :tokens_input, :tokens_output, :tokens_reasoning, :tokens_cache_read, :tokens_cache_write, :cost, :created_at_ms
+    \\    :tokens_input, :tokens_output, :tokens_reasoning, :tokens_cache_read, :tokens_cache_write, :cost, :created_at_ms, :images
     \\);
 ,
     struct {
@@ -315,6 +315,7 @@ pub const InsertMessage = sql.ExecQuery(
         tokens_cache_write: ?u64,
         cost: ?f64,
         created_at_ms: u64,
+        images: u64,
     },
 );
 
@@ -419,7 +420,7 @@ pub const RunReportMessages = sql.ManyQuery(
 );
 
 pub const ContextSizes = sql.ManyQuery(
-    \\SELECT m.message_id, m.role, length(CAST(e.payload AS BLOB)) AS bytes
+    \\SELECT m.message_id, m.role, length(CAST(e.payload AS BLOB)) AS bytes, m.images
     \\FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
     \\WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
     \\ORDER BY m.message_id DESC;
@@ -432,6 +433,7 @@ pub const ContextSizes = sql.ManyQuery(
         message_id: u64,
         role: []const u8,
         bytes: u64,
+        images: u64,
     },
 );
 

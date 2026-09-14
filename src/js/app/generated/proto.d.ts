@@ -968,6 +968,8 @@ export interface ToolStateChangedData {
 export interface ToolStateCompleted {
   readonly output: string;
   readonly view?: ReadonlyArray<View>;
+  /** Images the model reads beside the output. The engine admitted each blob at the tool boundary. */
+  readonly media?: ReadonlyArray<MediaBlob>;
   readonly duration_ms: number;
 }
 
@@ -1006,12 +1008,6 @@ export interface DiffHunk {
 /** This view displays a unified diff. */
 export interface ViewDiff {
   readonly files: ReadonlyArray<DiffFile>;
-}
-
-/** This view displays an image. */
-export interface ViewImage {
-  readonly source: MediaBlob;
-  readonly alt?: string;
 }
 
 /** This view displays JSON text. */
@@ -1427,7 +1423,6 @@ export type View =
   | { readonly type: "markdown" } & ViewMarkdown
   | { readonly type: "json" } & ViewJson
   | { readonly type: "diff" } & ViewDiff
-  | { readonly type: "image" } & ViewImage
 ;
 
 /** This union carries client request parameters. */

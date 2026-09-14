@@ -1,7 +1,6 @@
 //! Renderable views for tool output.
 
 const std = @import("std");
-const content = @import("content.zig");
 const tagged = @import("tagged.zig");
 
 /// This type describes one file in a diff view.
@@ -26,7 +25,6 @@ pub const View = union(enum) {
     markdown: ViewMarkdown,
     json: ViewJson,
     diff: ViewDiff,
-    image: ViewImage,
 
     /// Decode a tagged wire union from JSON.
     pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
@@ -43,12 +41,6 @@ pub const View = union(enum) {
 /// This view displays a unified diff.
 pub const ViewDiff = struct {
     files: []const DiffFile,
-};
-
-/// This view displays an image.
-pub const ViewImage = struct {
-    source: content.MediaBlob,
-    alt: ?[]const u8 = null,
 };
 
 /// This view displays JSON text.

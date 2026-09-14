@@ -5,6 +5,8 @@ const proto = @import("proto");
 const database = @import("../store/store.zig");
 
 pub const default_context_window: u64 = 128_000;
+/// One image costs about this many tokens after a provider resize, whatever its byte size.
+pub const image_tokens: u64 = 1600;
 pub const default_max_output: u32 = 8192;
 
 pub const Budget = struct {
@@ -54,7 +56,7 @@ pub fn estimate(arena: std.mem.Allocator, db: *database.Database, session_id: [1
         var row = owned;
         defer row.deinit();
         if (std.mem.eql(u8, row.value.role, "compaction")) continue;
-        total += tokensFor(row.value.bytes);
+        total += tokensFor(row.value.bytes) + row.value.images * image_tokens;
     }
     return total;
 }

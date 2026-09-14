@@ -66,17 +66,20 @@ pub const Store = struct {
 
     /// Refuse an input whose media parts name bytes the store does not hold as described.
     pub fn admit(self: Store, io: std.Io, arena: std.mem.Allocator, content: []const proto.content.ContentPart) AdmitError!void {
-        std.debug.assert(self.dir.len != 0);
-        var images: usize = 0;
+        var blobs: std.ArrayList(MediaBlob) = .empty;
         for (content) |part| switch (part) {
             .text => {},
-            .image => |image| {
-                images += 1;
-                if (images > max_images_per_input) return error.BlobTooManyImages;
-                try self.verify(io, arena, image.source);
-            },
+            .image => |image| try blobs.append(arena, image.source),
             .audio, .file => return error.BlobUnsupportedPart,
         };
+        return self.admitBlobs(io, arena, blobs.items);
+    }
+
+    /// Refuse a list that is too long or names bytes the store does not hold as described.
+    pub fn admitBlobs(self: Store, io: std.Io, arena: std.mem.Allocator, blobs: []const MediaBlob) AdmitError!void {
+        std.debug.assert(self.dir.len != 0);
+        if (blobs.len > max_images_per_input) return error.BlobTooManyImages;
+        for (blobs) |blob| try self.verify(io, arena, blob);
     }
 
     /// Read one stored blob. The caller admitted the ref, so an absent file is a corrupt store.
@@ -153,16 +156,18 @@ pub fn sniff(head: []const u8) ?[]const u8 {
 
 /// Record each blob a stored input names, in the caller's transaction. A duplicate has no effect.
 pub fn recordRefs(db: *Database, session_id: [16]u8, content: []const proto.content.ContentPart) !void {
+    for (content) |part| switch (part) {
+        .text => {},
+        .image => |t| try recordBlobRefs(db, session_id, &.{t.source}),
+        .audio => |t| try recordBlobRefs(db, session_id, &.{t.source}),
+        .file => |t| try recordBlobRefs(db, session_id, &.{t.source}),
+    };
+}
+
+/// Record each blob in the list, in the caller's transaction. A duplicate has no effect.
+pub fn recordBlobRefs(db: *Database, session_id: [16]u8, blobs: []const MediaBlob) !void {
     std.debug.assert(sql.inTransaction(db.conn));
-    for (content) |part| {
-        const blob = switch (part) {
-            .text => continue,
-            .image => |t| t.source,
-            .audio => |t| t.source,
-            .file => |t| t.source,
-        };
-        try db.queries.insert_blob_ref.exec(.{ .session_id = session_id, .hash = blob.hash.raw, .bytes = blob.bytes });
-    }
+    for (blobs) |blob| try db.queries.insert_blob_ref.exec(.{ .session_id = session_id, .hash = blob.hash.raw, .bytes = blob.bytes });
 }
 
 /// List the blobs one session names. The caller reads this before it deletes the session rows.

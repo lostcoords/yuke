@@ -3213,6 +3213,12 @@
           "presence": "optional"
         },
         {
+          "name": "media",
+          "doc": "Images the model reads beside the output. The engine admitted each blob at the tool boundary.",
+          "type": "[]MediaBlob",
+          "presence": "optional"
+        },
+        {
           "name": "duration_ms",
           "type": "u64",
           "presence": "required"
@@ -3321,22 +3327,6 @@
           "name": "files",
           "type": "[]DiffFile",
           "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "ViewImage",
-      "doc": "This view displays an image.",
-      "fields": [
-        {
-          "name": "source",
-          "type": "MediaBlob",
-          "presence": "required"
-        },
-        {
-          "name": "alt",
-          "type": "string",
-          "presence": "optional"
         }
       ]
     },
@@ -3736,10 +3726,6 @@
         {
           "tag": "diff",
           "type": "ViewDiff"
-        },
-        {
-          "tag": "image",
-          "type": "ViewImage"
         }
       ]
     },
