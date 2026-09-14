@@ -6,7 +6,7 @@ const generator = @import("cataloggen");
 const usage = "usage: yuke-cataloggen [--out <file>] [--url <url> | --catalog <file>] [--quiet]";
 
 /// The control plane serves the executable variant, which omits every provider yuke cannot call.
-const default_url = "https://platform.yuke.sh/api/v1/catalog?executable=true";
+const default_url = "https://yuke.sh/api/v1/catalog?executable=true";
 
 /// The executable document is about 200 KB. This ceiling stops a runaway response.
 const max_catalog_bytes = 8 << 20;

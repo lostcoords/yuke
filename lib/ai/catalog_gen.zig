@@ -42,7 +42,7 @@ pub fn findModel(provider_id: []const u8, model_id: []const u8) ?*const model.Mo
 }
 
 /// The catalog revision these rows come from.
-pub const revision = "fd36d27887241c11c3b4c67a2d6b254914a7b67100b05f0f584089b6dd30af1fcda05fe1e66575a94a5d1ac2d203e437df719876eb20985a56547128dbc554c0";
+pub const revision = "c36cb3ed4a7c43995655a05eb78986b5c77788b8b29bd5a2c0f0f3bb8880a6db0eff6e968ee98b77cadc554602ed70059195b025e2407621e1c6f81386517b4e";
 
 pub const providers = [_]Provider{
     .{
@@ -5737,11 +5737,11 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 16384,
+                    .max_output_tokens = 235929,
                 },
                 .cost = .{
-                    .input = 0.085,
-                    .output = 0.4,
+                    .input = 0.08,
+                    .output = 0.45,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10113,12 +10113,12 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1310720,
-                    .max_output_tokens = 131072,
+                    .max_output_tokens = 393216,
                 },
                 .cost = .{
-                    .input = 0.0352,
-                    .output = 0.1056,
-                    .cache_read = 0.00112,
+                    .input = 0.04,
+                    .output = 0.1,
+                    .cache_read = 0.01,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
