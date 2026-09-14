@@ -26,10 +26,7 @@ pub fn snapshot(
     r: registry.Match,
 ) !Snapshot {
     // A provider the merge could not complete has no route, so it cannot serve a turn.
-    const live_route = switch (r.provider.availability) {
-        .ready => |ready| ready,
-        .unavailable => return error.UnknownModel,
-    };
+    const live_route = registry.routeFor(r) orelse return error.UnknownModel;
     // The registry and the tool table can rebuild while a build hook waits, so this round holds its own copies.
     const route = try proto.dupe(arena, live_route);
     const model = try proto.dupe(arena, r.model.*);

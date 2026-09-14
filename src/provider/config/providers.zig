@@ -15,7 +15,6 @@ const max_file_bytes = 1 << 20;
 const max_literal_bytes = 8 << 10;
 
 pub const Error = error{
-    BadVersion,
     DuplicateProvider,
     DuplicateModel,
     DuplicateReasoningLevel,
@@ -28,6 +27,14 @@ pub const Error = error{
     BadHeaderValue,
     BadReasoningLevel,
     HeaderConflict,
+    /// Two endpoints name one protocol, so a model could not pick one.
+    DuplicateEndpoint,
+    /// A Responses dialect on a path that is not the Responses API.
+    BadDialect,
+    /// A key header on a grant, which is always a bearer.
+    BadKeyHeader,
+    /// A model names no endpoint the entry declares, or names none while the entry declares several.
+    NoEndpoint,
     BadPath,
     AmbiguousCredential,
     /// An OAuth arm has no access token, so it cannot present a bearer.
@@ -67,6 +74,8 @@ pub const FileFlags = struct {
 pub const FileModel = struct {
     id: []const u8,
     upstream_id: []const u8,
+    /// The endpoint this model calls. Optional only while the provider serves one endpoint.
+    protocol: ?instance.Protocol = null,
     /// A limit the file omits stays unknown, and the run falls back to its own ceiling.
     limits: ai.model.Limits = .{},
     /// A price the file omits stays unknown. A local endpoint publishes none.
@@ -76,12 +85,13 @@ pub const FileModel = struct {
     flags: FileFlags = .{},
 };
 
-/// Project the file's models onto the library shape. The result borrows `arena`.
-pub fn modelSpecs(arena: Allocator, models: []const FileModel) ![]const ai.model.ModelSpec {
+/// Project the file models onto the library shape in `arena`, and fill each model protocol from `endpoints`.
+pub fn modelSpecs(arena: Allocator, models: []const FileModel, endpoints: []const instance.Endpoint) ![]const ai.model.ModelSpec {
     const out = try arena.alloc(ai.model.ModelSpec, models.len);
     for (models, 0..) |m, i| out[i] = .{
         .id = m.id,
         .upstream_id = m.upstream_id,
+        .protocol = try modelProtocol(m, endpoints),
         // The file writes no display name, so the id names the model everywhere it is shown.
         .name = m.id,
         .limits = m.limits,
@@ -104,6 +114,13 @@ pub fn modelSpecs(arena: Allocator, models: []const FileModel) ![]const ai.model
     return out;
 }
 
+/// Name the endpoint one file model calls, or fail when the entry leaves the choice open.
+fn modelProtocol(m: FileModel, endpoints: []const instance.Endpoint) error{NoEndpoint}!instance.Protocol {
+    const protocol = m.protocol orelse (if (endpoints.len == 1) endpoints[0].protocol else return error.NoEndpoint);
+    if (instance.findEndpoint(endpoints, protocol) == null) return error.NoEndpoint;
+    return protocol;
+}
+
 fn levels(arena: Allocator, patch: []const ?[]const u8) ![]const ai.model.ReasoningLevel {
     const out = try arena.alloc(ai.model.ReasoningLevel, patch.len);
     for (patch, 0..) |level, i| out[i] = .from(level);
@@ -114,20 +131,18 @@ fn levels(arena: Allocator, patch: []const ?[]const u8) ![]const ai.model.Reason
 const FileProvider = struct {
     id: []const u8,
     base_url: ?[]const u8 = null,
-    protocol: ?instance.Protocol = null,
-    /// The long form names the header and the source.
+    /// The long form names the source.
     auth: ?FileAuth = null,
-    /// The short form. It is a literal key, and the catalog names the header.
+    /// The short form. It is a literal key, and the endpoints name the header.
     api_key: ?[]const u8 = null,
-    cache: ?instance.CachePolicy = null,
-    /// A host that speaks the Codex flavor of the Responses API sets this.
-    responses_dialect: ?instance.ResponsesDialect = null,
+    session_header: ?instance.SessionHeader = null,
+    /// The paths this host serves. A list here replaces the catalog list as a whole.
+    endpoints: ?[]const instance.Endpoint = null,
     headers: ?[]const FileHeader = null,
     models: []const FileModel = &.{},
 };
 
 const FileDoc = struct {
-    version: u32,
     providers: []const FileProvider = &.{},
 };
 
@@ -135,16 +150,14 @@ const FileDoc = struct {
 const WritableProvider = struct {
     id: []const u8,
     base_url: ?[]const u8 = null,
-    protocol: ?instance.Protocol = null,
     auth: ?FileAuth = null,
-    cache: ?instance.CachePolicy = null,
-    responses_dialect: ?instance.ResponsesDialect = null,
+    session_header: ?instance.SessionHeader = null,
+    endpoints: ?[]const instance.Endpoint = null,
     headers: ?[]const FileHeader = null,
     models: ?[]const FileModel = null,
 };
 
 const WritableDoc = struct {
-    version: u32,
     providers: []const WritableProvider = &.{},
 };
 
@@ -183,8 +196,6 @@ pub fn loadBytes(gpa: Allocator, bytes: []const u8) !Loaded {
         .duplicate_field_behavior = .@"error",
     });
 
-    if (doc.version != 1) return error.BadVersion;
-
     const providers = try arena.alloc(LocalProvider, doc.providers.len);
     for (doc.providers, 0..) |fp, i| {
         for (doc.providers[0..i]) |prev| {
@@ -212,7 +223,7 @@ pub fn serialize(gpa: Allocator, providers: []const LocalProvider) ![]u8 {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
 
-    const doc: WritableDoc = .{ .version = 1, .providers = try fileProviders(arena.allocator(), providers) };
+    const doc: WritableDoc = .{ .providers = try fileProviders(arena.allocator(), providers) };
     var json: std.Io.Writer.Allocating = .init(arena.allocator());
     try std.json.Stringify.value(doc, .{ .emit_null_optional_fields = false, .whitespace = .indent_2 }, &json.writer);
     return gpa.dupe(u8, json.written());
@@ -240,10 +251,9 @@ fn fileProviders(arena: Allocator, providers: []const LocalProvider) Allocator.E
     for (providers, 0..) |p, i| out[i] = .{
         .id = p.id,
         .base_url = p.base_url,
-        .protocol = p.protocol,
         .auth = p.auth,
-        .cache = p.cache,
-        .responses_dialect = p.responses_dialect,
+        .session_header = p.session_header,
+        .endpoints = p.endpoints,
         .headers = p.headers,
         .models = if (p.models.len == 0) null else p.models,
     };
@@ -320,11 +330,17 @@ fn resolveProvider(fp: FileProvider) Error!LocalProvider {
         try checkLiteral(value);
         break :blk .{ .api_key = .{ .source = .{ .literal = value } } };
     } else null;
-    // Only an API-key route lets the file name the header. A grant always presents a bearer.
-    const header: ?instance.ApiKeyHeader = if (auth) |a| switch (a) {
-        .api_key => |key| key.header,
-        .oauth => .authorization_bearer,
-    } else null;
+
+    if (fp.endpoints) |endpoints| for (endpoints, 0..) |e, i| {
+        for (endpoints[0..i]) |prev| if (prev.protocol == e.protocol) return error.DuplicateEndpoint;
+        // The dialect is a Responses body rule, so another path cannot carry it.
+        if (e.responses_dialect != .standard and e.protocol != .openai_responses) return error.BadDialect;
+        // A grant always presents a bearer, and a key needs a header to travel in.
+        if (auth) |a| switch (a) {
+            .oauth => if (e.key_header != null) return error.BadKeyHeader,
+            .api_key => if (e.key_header == null) return error.BadKeyHeader,
+        };
+    };
 
     if (fp.headers) |file_headers| for (file_headers, 0..) |fh, i| {
         if (!instance.validHeaderName(fh.name)) return error.BadHeaderName;
@@ -332,11 +348,13 @@ fn resolveProvider(fp: FileProvider) Error!LocalProvider {
         for (file_headers[0..i]) |prev| {
             if (std.ascii.eqlIgnoreCase(prev.name, fh.name)) return error.HeaderConflict;
         }
-        // A pinned header must not collide with the header the credential generates.
-        if (header) |h| {
-            const generated = (instance.AuthMechanism{ .api_key = h }).headerName().?;
+        // A pinned header must not collide with a header the credential or the session generates.
+        if (fp.session_header) |sh| if (sh.name()) |generated| {
             if (std.ascii.eqlIgnoreCase(fh.name, generated)) return error.HeaderConflict;
-        }
+        };
+        if (fp.endpoints) |endpoints| for (endpoints) |e| if (e.mechanism().headerName()) |generated| {
+            if (std.ascii.eqlIgnoreCase(fh.name, generated)) return error.HeaderConflict;
+        };
     };
 
     for (fp.models, 0..) |fm, i| {
@@ -345,6 +363,8 @@ fn resolveProvider(fp: FileProvider) Error!LocalProvider {
         for (fp.models[0..i]) |prev| {
             if (std.mem.eql(u8, prev.id, fm.id)) return error.DuplicateModel;
         }
+        // The catalog can name the endpoints, so only a declared list is checked here; the merge checks the rest.
+        if (fp.endpoints) |endpoints| _ = try modelProtocol(fm, endpoints);
         if (fm.reasoning_levels.len > proto.meta.limits.max_reasoning_levels) return error.BadReasoningLevel;
         for (fm.reasoning_levels, 0..) |level, level_i| {
             if (level) |name| {
@@ -361,10 +381,9 @@ fn resolveProvider(fp: FileProvider) Error!LocalProvider {
     return .{
         .id = fp.id,
         .base_url = fp.base_url,
-        .protocol = fp.protocol,
         .auth = auth,
-        .cache = fp.cache,
-        .responses_dialect = fp.responses_dialect,
+        .session_header = fp.session_header,
+        .endpoints = fp.endpoints,
         .headers = fp.headers,
         .models = fp.models,
     };
@@ -394,10 +413,8 @@ fn validEnvName(name: []const u8) bool {
     return true;
 }
 
-/// A local API-key credential uses a header, or the catalog names the missing header.
+/// A local API-key credential. The endpoints name the header it travels in.
 pub const LocalApiKey = struct {
-    /// The catalog names the header when the file omits it.
-    header: ?instance.ApiKeyHeader = null,
     /// Null means the route wants an API key and the engine holds none.
     source: ?CredentialSource = null,
 };
@@ -422,11 +439,11 @@ pub const LocalAuth = union(enum) {
 pub const LocalProvider = struct {
     id: []const u8,
     base_url: ?[]const u8 = null,
-    protocol: ?instance.Protocol = null,
     /// Null means the route presents no credential at all.
     auth: ?LocalAuth = null,
-    cache: ?instance.CachePolicy = null,
-    responses_dialect: ?instance.ResponsesDialect = null,
+    session_header: ?instance.SessionHeader = null,
+    /// A list here replaces the catalog list as a whole, so the credential header follows this list.
+    endpoints: ?[]const instance.Endpoint = null,
     headers: ?[]const instance.Header = null,
     models: []const FileModel = &.{},
 };
@@ -441,8 +458,15 @@ fn tmpPath(tmp: *std.testing.TmpDir, buf: []u8) ![]const u8 {
 }
 
 fn wrapProvider(comptime provider_json: []const u8) []const u8 {
-    return "{\"version\":1,\"providers\":[" ++ provider_json ++ "]}";
+    return "{\"providers\":[" ++ provider_json ++ "]}";
 }
+
+const messages_endpoint = "\"endpoints\":[{\"protocol\":\"anthropic_messages\",\"key_header\":\"x_api_key\"}]";
+const keyed_entry = "{\"id\":\"x\",\"base_url\":\"https://x.example/v1\"," ++ messages_endpoint ++
+    ",\"auth\":{\"api_key\":{\"source\":{\"env\":\"K\"}}}";
+
+/// The one endpoint the test entries declare, so a model with no protocol has one to take.
+const one_endpoint = [_]instance.Endpoint{.{ .protocol = .openai_chat, .key_header = .authorization_bearer }};
 
 test "a grant round-trips through the writer" {
     var loaded = try loadBytes(testing.allocator, wrapProvider(
@@ -472,8 +496,9 @@ test "an oauth arm with no access token is refused" {
 
 test "load a provider with an env api key and one model" {
     const json = wrapProvider(
-        \\{"id":"minimax","base_url":"https://api.minimax.io/anthropic","protocol":"anthropic_messages",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"MINIMAX_API_KEY"}}},
+        \\{"id":"minimax","base_url":"https://api.minimax.io/anthropic",
+        \\ "endpoints":[{"protocol":"anthropic_messages","key_header":"x_api_key","cache":"anthropic_breakpoint"}],
+        \\ "auth":{"api_key":{"source":{"env":"MINIMAX_API_KEY"}}},
         \\ "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
         \\ "models":[{"id":"local","upstream_id":"MiniMax-Text","limits":{"context_window":200000,"max_output_tokens":8192},
         \\ "reasoning_levels":[null,"high"]}]}
@@ -484,7 +509,8 @@ test "load a provider with an env api key and one model" {
     try testing.expectEqual(@as(usize, 1), loaded.providers.len);
     const p = loaded.providers[0];
     try testing.expectEqualStrings("minimax", p.id);
-    try testing.expectEqual(instance.Protocol.anthropic_messages, p.protocol.?);
+    try testing.expectEqual(instance.Protocol.anthropic_messages, p.endpoints.?[0].protocol);
+    try testing.expectEqual(@as(?instance.CachePolicy, .anthropic_breakpoint), p.endpoints.?[0].cache);
     try testing.expectEqualStrings("MINIMAX_API_KEY", p.auth.?.api_key.source.?.env);
     try testing.expectEqualStrings("anthropic-version", p.headers.?[0].name);
     try testing.expectEqualStrings("local", p.models[0].id);
@@ -495,37 +521,77 @@ test "load a provider with an env api key and one model" {
 }
 
 test "the strict schema rejects an unknown field" {
+    try testing.expectError(error.UnknownField, loadBytes(testing.allocator, wrapProvider(keyed_entry ++ ",\"surprise\":true}")));
+    // The old route fields are gone, so a stale file fails instead of routing nothing.
     try testing.expectError(error.UnknownField, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
-        \\ "surprise":true,
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}
+        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages"}
+    )));
+    try testing.expectError(error.UnknownField, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"x","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}
     )));
 }
 
 test "the strict schema rejects a duplicate object key" {
     try testing.expectError(error.DuplicateField, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","id":"y","base_url":"https://x.example/v1","protocol":"anthropic_messages",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}
+        \\{"id":"x","id":"y","base_url":"https://x.example/v1"}
     )));
-}
-
-test "a bad document version is rejected" {
-    try testing.expectError(error.BadVersion, loadBytes(testing.allocator,
-        \\{"version":2,"providers":[]}
-    ));
 }
 
 test "duplicate provider and model ids are rejected" {
-    try testing.expectError(error.DuplicateProvider, loadBytes(testing.allocator,
-        \\{"version":1,"providers":[
-        \\ {"id":"dup","base_url":"https://a.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}},
-        \\ {"id":"dup","base_url":"https://b.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}]}
-    ));
-    try testing.expectError(error.DuplicateModel, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"p","base_url":"https://a.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
-        \\ "models":[{"id":"m","upstream_id":"a","limits":{"context_window":1,"max_output_tokens":1}},
+    try testing.expectError(error.DuplicateProvider, loadBytes(testing.allocator, "{\"providers\":[" ++ keyed_entry ++ "}," ++ keyed_entry ++ "}]}"));
+    try testing.expectError(error.DuplicateModel, loadBytes(testing.allocator, wrapProvider(keyed_entry ++
+        \\,"models":[{"id":"m","upstream_id":"a","limits":{"context_window":1,"max_output_tokens":1}},
         \\           {"id":"m","upstream_id":"b","limits":{"context_window":1,"max_output_tokens":1}}]}
     )));
+}
+
+test "the endpoint list names each path once, and a model must name one of them" {
+    try testing.expectError(error.DuplicateEndpoint, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"x","endpoints":[{"protocol":"openai_chat"},{"protocol":"openai_chat","key_header":"x_api_key"}]}
+    )));
+    // The dialect is a Responses body rule.
+    try testing.expectError(error.BadDialect, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"x","endpoints":[{"protocol":"openai_chat","responses_dialect":"codex"}]}
+    )));
+    // A grant is always a bearer, so a header beside it states a second scheme.
+    try testing.expectError(error.BadKeyHeader, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"x","endpoints":[{"protocol":"openai_responses","key_header":"x_api_key"}],
+        \\ "auth":{"oauth":{"access_token":"tok","expires_at_ms":1}}}
+    )));
+    // A key with no header to travel in would load an entry that can never be ready.
+    try testing.expectError(error.BadKeyHeader, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"x","endpoints":[{"protocol":"openai_chat"}],"api_key":"k"}
+    )));
+    try testing.expectError(error.BadKeyHeader, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"x","endpoints":[{"protocol":"openai_chat"}],"auth":{"api_key":{}}}
+    )));
+    // Two paths leave the choice open, so a model must state its own.
+    try testing.expectError(error.NoEndpoint, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"x","endpoints":[{"protocol":"openai_chat"},{"protocol":"anthropic_messages"}],
+        \\ "models":[{"id":"m","upstream_id":"m"}]}
+    )));
+    // A model on a path the entry does not serve could never be called.
+    try testing.expectError(error.NoEndpoint, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"x","endpoints":[{"protocol":"openai_chat"}],
+        \\ "models":[{"id":"m","upstream_id":"m","protocol":"anthropic_messages"}]}
+    )));
+
+    // One path serves a model that names none, and a stated path is kept.
+    var loaded = try loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"x","endpoints":[{"protocol":"openai_chat"},{"protocol":"anthropic_messages"}],
+        \\ "models":[{"id":"a","upstream_id":"a","protocol":"anthropic_messages"}]}
+    ));
+    defer loaded.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const specs = try modelSpecs(arena.allocator(), loaded.providers[0].models, loaded.providers[0].endpoints.?);
+    try testing.expectEqual(instance.Protocol.anthropic_messages, specs[0].protocol);
+    const filled = try modelSpecs(arena.allocator(), &.{.{ .id = "m", .upstream_id = "m" }}, &one_endpoint);
+    try testing.expectEqual(instance.Protocol.openai_chat, filled[0].protocol);
+    // The catalog can serve several paths, so the merge refuses a model that names none.
+    try testing.expectError(error.NoEndpoint, modelSpecs(arena.allocator(), &.{.{ .id = "m", .upstream_id = "m" }}, &.{
+        .{ .protocol = .openai_chat }, .{ .protocol = .anthropic_messages },
+    }));
 }
 
 test "reasoning levels use the closed effort set without duplicates" {
@@ -563,49 +629,39 @@ test "url validation rejects scheme, host, userinfo, query, and fragment" {
     };
     for (cases) |url| {
         var buf: [256]u8 = undefined;
-        const json = try std.fmt.bufPrint(
-            &buf,
-            "{{\"version\":1,\"providers\":[{{\"id\":\"x\",\"base_url\":\"{s}\",\"protocol\":\"anthropic_messages\",\"auth\":{{\"api_key\":{{\"header\":\"x_api_key\",\"source\":{{\"env\":\"K\"}}}}}}}}]}}",
-            .{url},
-        );
+        const json = try std.fmt.bufPrint(&buf, "{{\"providers\":[{{\"id\":\"x\",\"base_url\":\"{s}\"}}]}}", .{url});
         try testing.expectError(error.BadUrl, loadBytes(testing.allocator, json));
     }
 }
 
 test "a bad env name is rejected" {
     try testing.expectError(error.BadEnvName, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"9BAD-NAME"}}}}
+        \\{"id":"x","auth":{"api_key":{"source":{"env":"9BAD-NAME"}}}}
     )));
 }
 
 test "a literal with a control byte is rejected" {
     try testing.expectError(error.BadLiteral, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"line\none"}}}}
+        \\{"id":"x","auth":{"api_key":{"source":{"literal":"line\none"}}}}
     )));
 }
 
-test "bad header names, values, and auth collisions are rejected" {
-    try testing.expectError(error.BadHeaderName, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
-        \\ "headers":[{"name":"bad name","value":"v"}]}
-    )));
-    try testing.expectError(error.BadHeaderValue, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
-        \\ "headers":[{"name":"x-note","value":"a\r\nb"}]}
-    )));
+test "bad header names, values, and generated-header collisions are rejected" {
+    try testing.expectError(error.BadHeaderName, loadBytes(testing.allocator, wrapProvider(keyed_entry ++ ",\"headers\":[{\"name\":\"bad name\",\"value\":\"v\"}]}")));
+    try testing.expectError(error.BadHeaderValue, loadBytes(testing.allocator, wrapProvider(keyed_entry ++ ",\"headers\":[{\"name\":\"x-note\",\"value\":\"a\\r\\nb\"}]}")));
+    // The endpoint names the key header, so a pinned copy of it is a collision whatever its case.
+    try testing.expectError(error.HeaderConflict, loadBytes(testing.allocator, wrapProvider(keyed_entry ++ ",\"headers\":[{\"name\":\"X-Api-Key\",\"value\":\"injected\"}]}")));
+    // The engine owns the session header, so a source that pins it would send every session to one cache.
     try testing.expectError(error.HeaderConflict, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
-        \\ "headers":[{"name":"X-Api-Key","value":"injected"}]}
+        \\{"id":"x","session_header":"x_opencode_session","headers":[{"name":"X-OpenCode-Session","value":"one"}]}
     )));
 }
 
 test "a keyless entry and an empty credential write back differently" {
     var loaded = try loadBytes(testing.allocator,
-        \\{"version":1,"providers":[
-        \\ {"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat"},
-        \\ {"id":"anthropic","auth":{"api_key":{"header":"x_api_key"}}}]}
+        \\{"providers":[
+        \\ {"id":"ollama","base_url":"http://127.0.0.1:11434/v1","endpoints":[{"protocol":"openai_chat"}]},
+        \\ {"id":"anthropic","auth":{"api_key":{}}}]}
     );
     defer loaded.deinit();
 
@@ -622,12 +678,12 @@ test "a keyless entry and an empty credential write back differently" {
 test "two credential forms are ambiguous" {
     try testing.expectError(error.AmbiguousCredential, loadBytes(testing.allocator, wrapProvider(
         \\{"id":"x","api_key":"k",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}
+        \\ "auth":{"api_key":{"source":{"env":"K"}}}}
     )));
 }
 
 test "a missing providers array yields an empty layer" {
-    var loaded = try loadBytes(testing.allocator, "{\"version\":1}");
+    var loaded = try loadBytes(testing.allocator, "{}");
     defer loaded.deinit();
     try testing.expectEqual(@as(usize, 0), loaded.providers.len);
 }
@@ -646,14 +702,15 @@ test "the writer round-trips the layer through the file schema" {
     defer tmp.cleanup();
 
     var loaded = try loadBytes(testing.allocator,
-        \\{"version":1,"providers":[
-        \\ {"id":"minimax","base_url":"https://api.minimax.io/anthropic","protocol":"anthropic_messages",
-        \\  "auth":{"api_key":{"header":"x_api_key","source":{"env":"MINIMAX_API_KEY"}}},
+        \\{"providers":[
+        \\ {"id":"minimax","base_url":"https://api.minimax.io/anthropic",
+        \\  "endpoints":[{"protocol":"anthropic_messages","key_header":"x_api_key","cache":"anthropic_breakpoint"}],
+        \\  "auth":{"api_key":{"source":{"env":"MINIMAX_API_KEY"}}},
         \\  "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
         \\  "models":[{"id":"m","upstream_id":"MiniMax-Text","limits":{"context_window":200000,"max_output_tokens":8192}}]},
-        \\ {"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat"},
-        \\ {"id":"codex","base_url":"https://chatgpt.com/backend-api/codex","protocol":"openai_responses",
-        \\  "responses_dialect":"codex","api_key":"sk-literal"}]}
+        \\ {"id":"ollama","base_url":"http://127.0.0.1:11434/v1","endpoints":[{"protocol":"openai_chat"}]},
+        \\ {"id":"codex","base_url":"https://chatgpt.com/backend-api/codex","session_header":"session_id",
+        \\  "endpoints":[{"protocol":"openai_responses","key_header":"authorization_bearer","responses_dialect":"codex"}],"api_key":"sk-literal"}]}
     );
     defer loaded.deinit();
 
@@ -670,14 +727,17 @@ test "the writer round-trips the layer through the file schema" {
 
     try testing.expectEqual(loaded.providers.len, again.providers.len);
     try testing.expectEqualStrings("MINIMAX_API_KEY", again.providers[0].auth.?.api_key.source.?.env);
-    try testing.expectEqual(instance.ApiKeyHeader.x_api_key, again.providers[0].auth.?.api_key.header.?);
+    try testing.expectEqual(@as(?instance.ApiKeyHeader, .x_api_key), again.providers[0].endpoints.?[0].key_header);
+    try testing.expectEqual(@as(?instance.CachePolicy, .anthropic_breakpoint), again.providers[0].endpoints.?[0].cache);
     try testing.expectEqualStrings("anthropic-version", again.providers[0].headers.?[0].name);
     try testing.expectEqualStrings("m", again.providers[0].models[0].id);
     // A keyless entry survives the round trip, so the writer never invents a credential.
     try testing.expect(again.providers[1].auth == null);
+    try testing.expect(again.providers[1].endpoints.?[0].key_header == null);
     // The short form is read once and written back in the long form.
     try testing.expectEqualStrings("sk-literal", again.providers[2].auth.?.api_key.source.?.literal);
-    try testing.expectEqual(instance.ResponsesDialect.codex, again.providers[2].responses_dialect.?);
+    try testing.expectEqual(instance.ResponsesDialect.codex, again.providers[2].endpoints.?[0].responses_dialect);
+    try testing.expectEqual(@as(?instance.SessionHeader, .session_id), again.providers[2].session_header);
 }
 
 test "the written file is private" {
@@ -697,7 +757,7 @@ test "the written file is private" {
 
 test "a file model decodes its flags and projects onto the library shape" {
     var loaded = try loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"deepseek","base_url":"https://api.deepseek.com/v1","protocol":"openai_chat",
+        \\{"id":"deepseek","base_url":"https://api.deepseek.com/v1","endpoints":[{"protocol":"openai_chat","key_header":"authorization_bearer"}],
         \\ "models":[{"id":"r1","upstream_id":"deepseek-reasoner",
         \\ "limits":{"context_window":65536,"max_output_tokens":8192},
         \\ "reasoning_levels":[null,"high"],
@@ -709,7 +769,7 @@ test "a file model decodes its flags and projects onto the library shape" {
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const specs = try modelSpecs(arena.allocator(), loaded.providers[0].models);
+    const specs = try modelSpecs(arena.allocator(), loaded.providers[0].models, loaded.providers[0].endpoints.?);
     const spec = specs[0];
 
     // The request builder reads `modalities`, so the vision flag must reach it and not only `caps`.
@@ -719,6 +779,7 @@ test "a file model decodes its flags and projects onto the library shape" {
 
     try testing.expectEqualStrings("deepseek-reasoner", spec.upstream_id);
     try testing.expectEqualStrings("r1", spec.name); // The file writes no display name.
+    try testing.expectEqual(instance.Protocol.openai_chat, spec.protocol); // The sole endpoint names the path.
     try testing.expectEqual(@as(?u64, 65536), spec.limits.context_window);
     try testing.expectEqual(request_ir.ThinkingFormat.deepseek, spec.dialect.thinking_format);
     try testing.expectEqual(request_ir.ReasoningReplay.reasoning_content, spec.dialect.reasoning_replay);
@@ -734,14 +795,14 @@ test "a file model decodes its flags and projects onto the library shape" {
 
 test "a file model may omit its limits entirely" {
     var loaded = try loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat",
+        \\{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","endpoints":[{"protocol":"openai_chat"}],
         \\ "models":[{"id":"qwen3","upstream_id":"qwen3:8b"}]}
     ));
     defer loaded.deinit();
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const spec = (try modelSpecs(arena.allocator(), loaded.providers[0].models))[0];
+    const spec = (try modelSpecs(arena.allocator(), loaded.providers[0].models, loaded.providers[0].endpoints.?))[0];
     // The run falls back to its own ceiling, so a local endpoint needs no invented number.
     try testing.expect(spec.limits.max_output_tokens == null);
 }
@@ -750,8 +811,11 @@ test "the shipped sample document still loads" {
     // The sample is documentation, so a schema change must not leave it silently unparseable.
     var loaded = try loadBytes(testing.allocator, @embedFile("providers.sample.json"));
     defer loaded.deinit();
-    try testing.expectEqual(@as(usize, 2), loaded.providers.len);
+    try testing.expectEqual(@as(usize, 3), loaded.providers.len);
     try testing.expectEqualStrings("minimax", loaded.providers[0].id);
     try testing.expect(loaded.providers[0].models[0].flags.anthropic_adaptive);
     try testing.expect(loaded.providers[1].auth == null); // The local server needs no key.
+    // A gateway entry states its own paths, and its models name theirs.
+    try testing.expectEqual(@as(usize, 3), loaded.providers[2].endpoints.?.len);
+    try testing.expectEqual(@as(?instance.Protocol, .anthropic_messages), loaded.providers[2].models[0].protocol);
 }

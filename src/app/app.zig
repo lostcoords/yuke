@@ -18,6 +18,8 @@ const execution = @import("../execution.zig");
 
 // The timeout wakes a stalled provider read. Cancellation also interrupts the read.
 const provider_idle_timeout = std.Io.Duration.fromMilliseconds(60_000);
+/// The name every provider request carries. A gateway wants an agent name, not a library name.
+const user_agent = "yuke/" ++ @import("build_info").version;
 
 const open_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
 
@@ -55,7 +57,7 @@ pub const App = struct {
         self.* = .{
             .gpa = gpa,
             .io = io,
-            .http_transport = ai.http_transport.HttpTransport.init(gpa, io, provider_idle_timeout),
+            .http_transport = ai.http_transport.HttpTransport.init(gpa, io, provider_idle_timeout, user_agent),
             .db = undefined,
             .blob_dir = blob_dir,
             .logins = .init(gpa),
@@ -124,7 +126,7 @@ pub const App = struct {
     pub fn installTestModel(self: *App) !void {
         std.debug.assert(builtin.is_test);
         var local = try provider.config.loadBytes(self.gpa,
-            \\{"version":1,"providers":[{"id":"test","base_url":"http://localhost:1/v1","protocol":"openai_chat","models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}}]}]}
+            \\{"providers":[{"id":"test","base_url":"http://localhost:1/v1","endpoints":[{"protocol":"openai_chat"}],"models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}}]}]}
         );
         _ = self.store.installLocal(&local) catch |err| {
             local.deinit();

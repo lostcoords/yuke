@@ -1,4 +1,5 @@
 const std = @import("std");
+const zon = @import("build.zig.zon");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -28,6 +29,9 @@ pub fn build(b: *std.Build) void {
     const quickjs_host = b.dependency("quickjs", .{ .target = host, .optimize = dep_optimize });
     const metrics = b.addOptions();
     metrics.addOption(bool, "enabled", b.option(bool, "metrics", "Enable allocation and UI work counters") orelse false);
+    // Pass the package version to the binary, so it names itself on the wire from one copy of the number.
+    const build_info = b.addOptions();
+    build_info.addOption([]const u8, "version", zon.version);
 
     const sql = b.addModule("sql", .{
         .root_source_file = b.path("lib/sql/sql.zig"),
@@ -140,6 +144,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "spawn_c", .module = spawn_c.createModule() },
         .{ .name = "baked", .module = addBakedModules(b, quickjs_host.module("quickjs"), optimize) },
         .{ .name = "metrics", .module = metrics.createModule() },
+        .{ .name = "build_info", .module = build_info.createModule() },
         .{ .name = "term", .module = term },
         .{ .name = "proto", .module = proto },
         .{ .name = "sql", .module = sql },

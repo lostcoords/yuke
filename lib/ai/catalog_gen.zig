@@ -11,8 +11,12 @@ pub const Provider = struct {
     name: []const u8,
     /// How this provider authenticates. The scheme never carries the secret.
     auth: Auth,
-    /// The route, less the identity headers that only a live grant carries.
-    route: instance.Route,
+    base_url: []const u8,
+    /// The pinned headers. A live grant adds its identity headers at run time.
+    headers: []const instance.Header = &.{},
+    session_header: instance.SessionHeader = .none,
+    /// One entry per protocol the host serves. Every model names one of them.
+    endpoints: []const instance.Endpoint,
     models: []const model.ModelSpec,
 };
 
@@ -38,26 +42,25 @@ pub fn findModel(provider_id: []const u8, model_id: []const u8) ?*const model.Mo
 }
 
 /// The catalog revision these rows come from.
-pub const revision = "9c319ae864ba95b34ba5273f4f0705a49395b5d94a93b2b683c097c27b779f781c54030093cbb66ca9910e02dac8fe6f6d6b8071b475a70206ffa7eb3d1210bb";
+pub const revision = "fd36d27887241c11c3b4c67a2d6b254914a7b67100b05f0f584089b6dd30af1fcda05fe1e66575a94a5d1ac2d203e437df719876eb20985a56547128dbc554c0";
 
 pub const providers = [_]Provider{
     .{
         .id = "anthropic",
         .name = "Anthropic",
         .auth = .{ .api_key = "ANTHROPIC_API_KEY" },
-        .route = .{
-            .base_url = "https://api.anthropic.com/v1",
-            .protocol = .anthropic_messages,
-            .auth = .{ .api_key = .x_api_key },
-            .cache = .anthropic_breakpoint,
-            .responses_dialect = .standard,
-            .headers = &.{.{ .name = "anthropic-version", .value = "2023-06-01" }},
+        .base_url = "https://api.anthropic.com/v1",
+        .session_header = .none,
+        .headers = &.{.{ .name = "anthropic-version", .value = "2023-06-01" }},
+        .endpoints = &.{
+            .{ .protocol = .anthropic_messages, .key_header = .x_api_key, .responses_dialect = .standard, .cache = .anthropic_breakpoint },
         },
         .models = &.{
             .{
                 .id = "claude-fable-5",
                 .upstream_id = "claude-fable-5",
                 .name = "Claude Fable 5",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -80,6 +83,7 @@ pub const providers = [_]Provider{
                 .id = "claude-fable-5-1",
                 .upstream_id = "claude-fable-5-1",
                 .name = "Claude Fable 5.1",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -102,6 +106,7 @@ pub const providers = [_]Provider{
                 .id = "claude-haiku-4-5",
                 .upstream_id = "claude-haiku-4-5",
                 .name = "Claude Haiku 4.5 (latest)",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
@@ -128,6 +133,7 @@ pub const providers = [_]Provider{
                 .id = "claude-haiku-4-5-20251001",
                 .upstream_id = "claude-haiku-4-5-20251001",
                 .name = "Claude Haiku 4.5",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
@@ -154,6 +160,7 @@ pub const providers = [_]Provider{
                 .id = "claude-opus-4-5",
                 .upstream_id = "claude-opus-4-5",
                 .name = "Claude Opus 4.5 (latest)",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
@@ -176,6 +183,7 @@ pub const providers = [_]Provider{
                 .id = "claude-opus-4-5-20251101",
                 .upstream_id = "claude-opus-4-5-20251101",
                 .name = "Claude Opus 4.5",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
@@ -198,6 +206,7 @@ pub const providers = [_]Provider{
                 .id = "claude-opus-4-6",
                 .upstream_id = "claude-opus-4-6",
                 .name = "Claude Opus 4.6",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -220,6 +229,7 @@ pub const providers = [_]Provider{
                 .id = "claude-opus-4-7",
                 .upstream_id = "claude-opus-4-7",
                 .name = "Claude Opus 4.7",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -242,6 +252,7 @@ pub const providers = [_]Provider{
                 .id = "claude-opus-4-8",
                 .upstream_id = "claude-opus-4-8",
                 .name = "Claude Opus 4.8",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -264,6 +275,7 @@ pub const providers = [_]Provider{
                 .id = "claude-opus-5",
                 .upstream_id = "claude-opus-5",
                 .name = "Claude Opus 5",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -286,6 +298,7 @@ pub const providers = [_]Provider{
                 .id = "claude-sonnet-4-5",
                 .upstream_id = "claude-sonnet-4-5",
                 .name = "Claude Sonnet 4.5 (latest)",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 64000,
@@ -312,6 +325,7 @@ pub const providers = [_]Provider{
                 .id = "claude-sonnet-4-5-20250929",
                 .upstream_id = "claude-sonnet-4-5-20250929",
                 .name = "Claude Sonnet 4.5",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 64000,
@@ -338,6 +352,7 @@ pub const providers = [_]Provider{
                 .id = "claude-sonnet-4-6",
                 .upstream_id = "claude-sonnet-4-6",
                 .name = "Claude Sonnet 4.6",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -360,6 +375,7 @@ pub const providers = [_]Provider{
                 .id = "claude-sonnet-5",
                 .upstream_id = "claude-sonnet-5",
                 .name = "Claude Sonnet 5",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -384,19 +400,18 @@ pub const providers = [_]Provider{
         .id = "openai",
         .name = "OpenAI",
         .auth = .{ .api_key = "OPENAI_API_KEY" },
-        .route = .{
-            .base_url = "https://api.openai.com/v1",
-            .protocol = .openai_responses,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = .openai_breakpoint,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://api.openai.com/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .openai_responses, .key_header = .authorization_bearer, .responses_dialect = .standard, .cache = .openai_breakpoint },
         },
         .models = &.{
             .{
                 .id = "chatgpt-image-latest",
                 .upstream_id = "chatgpt-image-latest",
                 .name = "chatgpt-image-latest",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -414,6 +429,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4.1",
                 .upstream_id = "gpt-4.1",
                 .name = "GPT-4.1",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
@@ -435,6 +451,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4.1-mini",
                 .upstream_id = "gpt-4.1-mini",
                 .name = "GPT-4.1 mini",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
@@ -456,6 +473,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4o",
                 .upstream_id = "gpt-4o",
                 .name = "GPT-4o",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -477,6 +495,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4o-2024-08-06",
                 .upstream_id = "gpt-4o-2024-08-06",
                 .name = "GPT-4o (2024-08-06)",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -498,6 +517,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4o-2024-11-20",
                 .upstream_id = "gpt-4o-2024-11-20",
                 .name = "GPT-4o (2024-11-20)",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -519,6 +539,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4o-mini",
                 .upstream_id = "gpt-4o-mini",
                 .name = "GPT-4o mini",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -540,6 +561,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5",
                 .upstream_id = "gpt-5",
                 .name = "GPT-5",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -561,6 +583,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5-mini",
                 .upstream_id = "gpt-5-mini",
                 .name = "GPT-5 Mini",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -582,6 +605,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5-nano",
                 .upstream_id = "gpt-5-nano",
                 .name = "GPT-5 Nano",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -603,6 +627,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5-pro",
                 .upstream_id = "gpt-5-pro",
                 .name = "GPT-5 Pro",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 272000,
@@ -623,6 +648,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.1",
                 .upstream_id = "gpt-5.1",
                 .name = "GPT-5.1",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -644,6 +670,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.2",
                 .upstream_id = "gpt-5.2",
                 .name = "GPT-5.2",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -665,6 +692,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.2-pro",
                 .upstream_id = "gpt-5.2-pro",
                 .name = "GPT-5.2 Pro",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -685,6 +713,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.3-codex",
                 .upstream_id = "gpt-5.3-codex",
                 .name = "GPT-5.3 Codex",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -706,6 +735,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.3-codex-spark",
                 .upstream_id = "gpt-5.3-codex-spark",
                 .name = "GPT-5.3 Codex Spark",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 32000,
@@ -727,6 +757,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.4",
                 .upstream_id = "gpt-5.4",
                 .name = "GPT-5.4",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -748,6 +779,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.4-mini",
                 .upstream_id = "gpt-5.4-mini",
                 .name = "GPT-5.4 mini",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -769,6 +801,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.4-nano",
                 .upstream_id = "gpt-5.4-nano",
                 .name = "GPT-5.4 nano",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -790,6 +823,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.4-pro",
                 .upstream_id = "gpt-5.4-pro",
                 .name = "GPT-5.4 Pro",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -810,6 +844,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.5",
                 .upstream_id = "gpt-5.5",
                 .name = "GPT-5.5",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -831,6 +866,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.5-pro",
                 .upstream_id = "gpt-5.5-pro",
                 .name = "GPT-5.5 Pro",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -851,6 +887,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.6",
                 .upstream_id = "gpt-5.6",
                 .name = "GPT-5.6",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -873,6 +910,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.6-luna",
                 .upstream_id = "gpt-5.6-luna",
                 .name = "GPT-5.6 Luna",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -895,6 +933,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.6-sol",
                 .upstream_id = "gpt-5.6-sol",
                 .name = "GPT-5.6 Sol",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -917,6 +956,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.6-terra",
                 .upstream_id = "gpt-5.6-terra",
                 .name = "GPT-5.6 Terra",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -936,9 +976,33 @@ pub const providers = [_]Provider{
                 .dialect = .{},
             },
             .{
+                .id = "gpt-6-astra",
+                .upstream_id = "gpt-6-astra",
+                .name = "GPT-6 Astra",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 10,
+                    .output = 50,
+                    .cache_read = 1,
+                    .cache_write = 12.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
                 .id = "gpt-image-1-mini",
                 .upstream_id = "gpt-image-1-mini",
                 .name = "gpt-image-1-mini",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -956,6 +1020,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-image-1.5",
                 .upstream_id = "gpt-image-1.5",
                 .name = "gpt-image-1.5",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -973,6 +1038,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-image-2",
                 .upstream_id = "gpt-image-2",
                 .name = "gpt-image-2",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -994,6 +1060,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-realtime-2.1",
                 .upstream_id = "gpt-realtime-2.1",
                 .name = "GPT-Realtime-2.1",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 32000,
@@ -1015,6 +1082,7 @@ pub const providers = [_]Provider{
                 .id = "o3",
                 .upstream_id = "o3",
                 .name = "o3",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -1036,6 +1104,7 @@ pub const providers = [_]Provider{
                 .id = "o3-pro",
                 .upstream_id = "o3-pro",
                 .name = "o3-pro",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -1056,6 +1125,7 @@ pub const providers = [_]Provider{
                 .id = "text-embedding-3-large",
                 .upstream_id = "text-embedding-3-large",
                 .name = "text-embedding-3-large",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 8191,
                     .max_output_tokens = 3072,
@@ -1076,6 +1146,7 @@ pub const providers = [_]Provider{
                 .id = "text-embedding-3-small",
                 .upstream_id = "text-embedding-3-small",
                 .name = "text-embedding-3-small",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 8191,
                     .max_output_tokens = 1536,
@@ -1096,6 +1167,7 @@ pub const providers = [_]Provider{
                 .id = "text-embedding-ada-002",
                 .upstream_id = "text-embedding-ada-002",
                 .name = "text-embedding-ada-002",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 8192,
                     .max_output_tokens = 1536,
@@ -1118,19 +1190,18 @@ pub const providers = [_]Provider{
         .id = "openai-codex",
         .name = "OpenAI",
         .auth = .{ .oauth = "codex" },
-        .route = .{
-            .base_url = "https://chatgpt.com/backend-api/codex",
-            .protocol = .openai_responses,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = null,
-            .responses_dialect = .codex,
-            .headers = &.{.{ .name = "originator", .value = "codex_cli_rs" }},
+        .base_url = "https://chatgpt.com/backend-api/codex",
+        .session_header = .session_id,
+        .headers = &.{.{ .name = "originator", .value = "codex_cli_rs" }},
+        .endpoints = &.{
+            .{ .protocol = .openai_responses, .key_header = .authorization_bearer, .responses_dialect = .codex },
         },
         .models = &.{
             .{
                 .id = "chatgpt-image-latest",
                 .upstream_id = "chatgpt-image-latest",
                 .name = "chatgpt-image-latest",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -1148,6 +1219,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4.1",
                 .upstream_id = "gpt-4.1",
                 .name = "GPT-4.1",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
@@ -1169,6 +1241,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4.1-mini",
                 .upstream_id = "gpt-4.1-mini",
                 .name = "GPT-4.1 mini",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
@@ -1190,6 +1263,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4o",
                 .upstream_id = "gpt-4o",
                 .name = "GPT-4o",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -1211,6 +1285,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4o-2024-08-06",
                 .upstream_id = "gpt-4o-2024-08-06",
                 .name = "GPT-4o (2024-08-06)",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -1232,6 +1307,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4o-2024-11-20",
                 .upstream_id = "gpt-4o-2024-11-20",
                 .name = "GPT-4o (2024-11-20)",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -1253,6 +1329,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-4o-mini",
                 .upstream_id = "gpt-4o-mini",
                 .name = "GPT-4o mini",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -1274,6 +1351,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5",
                 .upstream_id = "gpt-5",
                 .name = "GPT-5",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -1295,6 +1373,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5-mini",
                 .upstream_id = "gpt-5-mini",
                 .name = "GPT-5 Mini",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -1316,6 +1395,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5-nano",
                 .upstream_id = "gpt-5-nano",
                 .name = "GPT-5 Nano",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -1337,6 +1417,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5-pro",
                 .upstream_id = "gpt-5-pro",
                 .name = "GPT-5 Pro",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 272000,
@@ -1357,6 +1438,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.1",
                 .upstream_id = "gpt-5.1",
                 .name = "GPT-5.1",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -1378,6 +1460,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.2",
                 .upstream_id = "gpt-5.2",
                 .name = "GPT-5.2",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -1399,6 +1482,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.2-pro",
                 .upstream_id = "gpt-5.2-pro",
                 .name = "GPT-5.2 Pro",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -1419,6 +1503,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.3-codex",
                 .upstream_id = "gpt-5.3-codex",
                 .name = "GPT-5.3 Codex",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -1440,6 +1525,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.3-codex-spark",
                 .upstream_id = "gpt-5.3-codex-spark",
                 .name = "GPT-5.3 Codex Spark",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 32000,
@@ -1461,6 +1547,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.4",
                 .upstream_id = "gpt-5.4",
                 .name = "GPT-5.4",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -1482,6 +1569,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.4-mini",
                 .upstream_id = "gpt-5.4-mini",
                 .name = "GPT-5.4 mini",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -1503,6 +1591,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.4-nano",
                 .upstream_id = "gpt-5.4-nano",
                 .name = "GPT-5.4 nano",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -1524,6 +1613,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.4-pro",
                 .upstream_id = "gpt-5.4-pro",
                 .name = "GPT-5.4 Pro",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -1544,6 +1634,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.5",
                 .upstream_id = "gpt-5.5",
                 .name = "GPT-5.5",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -1565,6 +1656,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.5-pro",
                 .upstream_id = "gpt-5.5-pro",
                 .name = "GPT-5.5 Pro",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -1585,6 +1677,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.6",
                 .upstream_id = "gpt-5.6",
                 .name = "GPT-5.6",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -1607,6 +1700,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.6-luna",
                 .upstream_id = "gpt-5.6-luna",
                 .name = "GPT-5.6 Luna",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -1629,6 +1723,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.6-sol",
                 .upstream_id = "gpt-5.6-sol",
                 .name = "GPT-5.6 Sol",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -1651,6 +1746,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-5.6-terra",
                 .upstream_id = "gpt-5.6-terra",
                 .name = "GPT-5.6 Terra",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -1670,9 +1766,33 @@ pub const providers = [_]Provider{
                 .dialect = .{},
             },
             .{
+                .id = "gpt-6-astra",
+                .upstream_id = "gpt-6-astra",
+                .name = "GPT-6 Astra",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 10,
+                    .output = 50,
+                    .cache_read = 1,
+                    .cache_write = 12.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
                 .id = "gpt-image-1-mini",
                 .upstream_id = "gpt-image-1-mini",
                 .name = "gpt-image-1-mini",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -1690,6 +1810,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-image-1.5",
                 .upstream_id = "gpt-image-1.5",
                 .name = "gpt-image-1.5",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -1707,6 +1828,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-image-2",
                 .upstream_id = "gpt-image-2",
                 .name = "gpt-image-2",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -1728,6 +1850,7 @@ pub const providers = [_]Provider{
                 .id = "gpt-realtime-2.1",
                 .upstream_id = "gpt-realtime-2.1",
                 .name = "GPT-Realtime-2.1",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 32000,
@@ -1749,6 +1872,7 @@ pub const providers = [_]Provider{
                 .id = "o3",
                 .upstream_id = "o3",
                 .name = "o3",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -1770,6 +1894,7 @@ pub const providers = [_]Provider{
                 .id = "o3-pro",
                 .upstream_id = "o3-pro",
                 .name = "o3-pro",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -1790,6 +1915,7 @@ pub const providers = [_]Provider{
                 .id = "text-embedding-3-large",
                 .upstream_id = "text-embedding-3-large",
                 .name = "text-embedding-3-large",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 8191,
                     .max_output_tokens = 3072,
@@ -1810,6 +1936,7 @@ pub const providers = [_]Provider{
                 .id = "text-embedding-3-small",
                 .upstream_id = "text-embedding-3-small",
                 .name = "text-embedding-3-small",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 8191,
                     .max_output_tokens = 1536,
@@ -1830,6 +1957,7 @@ pub const providers = [_]Provider{
                 .id = "text-embedding-ada-002",
                 .upstream_id = "text-embedding-ada-002",
                 .name = "text-embedding-ada-002",
+                .protocol = .openai_responses,
                 .limits = .{
                     .context_window = 8192,
                     .max_output_tokens = 1536,
@@ -1852,19 +1980,18 @@ pub const providers = [_]Provider{
         .id = "openrouter",
         .name = "OpenRouter",
         .auth = .{ .api_key = "OPENROUTER_API_KEY" },
-        .route = .{
-            .base_url = "https://openrouter.ai/api/v1",
-            .protocol = .openai_chat,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = null,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://openrouter.ai/api/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard },
         },
         .models = &.{
             .{
                 .id = "aion-labs/aion-2.0",
                 .upstream_id = "aion-labs/aion-2.0",
                 .name = "Aion-2.0",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -1886,6 +2013,7 @@ pub const providers = [_]Provider{
                 .id = "aion-labs/aion-3.0",
                 .upstream_id = "aion-labs/aion-3.0",
                 .name = "Aion-3.0",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -1907,6 +2035,7 @@ pub const providers = [_]Provider{
                 .id = "aion-labs/aion-3.0-mini",
                 .upstream_id = "aion-labs/aion-3.0-mini",
                 .name = "Aion-3.0-Mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -1928,6 +2057,7 @@ pub const providers = [_]Provider{
                 .id = "aion-labs/aion-rp-llama-3.1-8b",
                 .upstream_id = "aion-labs/aion-rp-llama-3.1-8b",
                 .name = "Aion-RP 1.0 (8B)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 29491,
@@ -1948,6 +2078,7 @@ pub const providers = [_]Provider{
                 .id = "amazon/nova-2-lite-v1",
                 .upstream_id = "amazon/nova-2-lite-v1",
                 .name = "Nova 2 Lite",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65535,
@@ -1970,6 +2101,7 @@ pub const providers = [_]Provider{
                 .id = "amazon/nova-lite-v1",
                 .upstream_id = "amazon/nova-lite-v1",
                 .name = "Nova Lite 1.0",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 300000,
                     .max_output_tokens = 5120,
@@ -1990,6 +2122,7 @@ pub const providers = [_]Provider{
                 .id = "amazon/nova-micro-v1",
                 .upstream_id = "amazon/nova-micro-v1",
                 .name = "Nova Micro 1.0",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 5120,
@@ -2010,6 +2143,7 @@ pub const providers = [_]Provider{
                 .id = "amazon/nova-premier-v1",
                 .upstream_id = "amazon/nova-premier-v1",
                 .name = "Nova Premier 1.0",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 32000,
@@ -2031,6 +2165,7 @@ pub const providers = [_]Provider{
                 .id = "amazon/nova-pro-v1",
                 .upstream_id = "amazon/nova-pro-v1",
                 .name = "Nova Pro 1.0",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 300000,
                     .max_output_tokens = 5120,
@@ -2051,6 +2186,7 @@ pub const providers = [_]Provider{
                 .id = "anthracite-org/magnum-v4-72b",
                 .upstream_id = "anthracite-org/magnum-v4-72b",
                 .name = "Magnum v4 72B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 4096,
@@ -2071,6 +2207,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-3-haiku",
                 .upstream_id = "anthropic/claude-3-haiku",
                 .name = "Claude 3 Haiku",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 4096,
@@ -2093,6 +2230,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-fable-5",
                 .upstream_id = "anthropic/claude-fable-5",
                 .name = "Claude Fable 5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -2117,6 +2255,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-fable-5.1",
                 .upstream_id = "anthropic/claude-fable-5.1",
                 .name = "Claude Fable 5.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -2141,6 +2280,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-haiku-4.5",
                 .upstream_id = "anthropic/claude-haiku-4.5",
                 .name = "Claude Haiku 4.5 (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
@@ -2165,6 +2305,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-opus-4",
                 .upstream_id = "anthropic/claude-opus-4",
                 .name = "Claude Opus 4",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 32000,
@@ -2189,6 +2330,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-opus-4.1",
                 .upstream_id = "anthropic/claude-opus-4.1",
                 .name = "Claude Opus 4.1 (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 32000,
@@ -2213,6 +2355,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-opus-4.5",
                 .upstream_id = "anthropic/claude-opus-4.5",
                 .name = "Claude Opus 4.5 (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
@@ -2237,6 +2380,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-opus-4.6",
                 .upstream_id = "anthropic/claude-opus-4.6",
                 .name = "Claude Opus 4.6",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -2261,6 +2405,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-opus-4.7",
                 .upstream_id = "anthropic/claude-opus-4.7",
                 .name = "Claude Opus 4.7",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -2285,6 +2430,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-opus-4.8",
                 .upstream_id = "anthropic/claude-opus-4.8",
                 .name = "Claude Opus 4.8",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -2309,6 +2455,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-opus-5",
                 .upstream_id = "anthropic/claude-opus-5",
                 .name = "Claude Opus 5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -2333,6 +2480,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-sonnet-4",
                 .upstream_id = "anthropic/claude-sonnet-4",
                 .name = "Claude Sonnet 4",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 64000,
@@ -2357,6 +2505,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-sonnet-4.5",
                 .upstream_id = "anthropic/claude-sonnet-4.5",
                 .name = "Claude Sonnet 4.5 (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 64000,
@@ -2381,6 +2530,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-sonnet-4.6",
                 .upstream_id = "anthropic/claude-sonnet-4.6",
                 .name = "Claude Sonnet 4.6",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -2405,6 +2555,7 @@ pub const providers = [_]Provider{
                 .id = "anthropic/claude-sonnet-5",
                 .upstream_id = "anthropic/claude-sonnet-5",
                 .name = "Claude Sonnet 5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -2429,6 +2580,7 @@ pub const providers = [_]Provider{
                 .id = "arcee-ai/trinity-large-thinking",
                 .upstream_id = "arcee-ai/trinity-large-thinking",
                 .name = "Trinity Large Thinking",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 80000,
@@ -2450,6 +2602,7 @@ pub const providers = [_]Provider{
                 .id = "baidu/ernie-4.5-vl-424b-a47b",
                 .upstream_id = "baidu/ernie-4.5-vl-424b-a47b",
                 .name = "ERNIE 4.5 VL 424B A47B ",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 123000,
                     .max_output_tokens = 16000,
@@ -2472,6 +2625,7 @@ pub const providers = [_]Provider{
                 .id = "bytedance-seed/seed-1.6",
                 .upstream_id = "bytedance-seed/seed-1.6",
                 .name = "Seed 1.6",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -2494,6 +2648,7 @@ pub const providers = [_]Provider{
                 .id = "bytedance-seed/seed-1.6-flash",
                 .upstream_id = "bytedance-seed/seed-1.6-flash",
                 .name = "Seed 1.6 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -2516,6 +2671,7 @@ pub const providers = [_]Provider{
                 .id = "bytedance-seed/seed-2-1-turbo",
                 .upstream_id = "bytedance-seed/seed-2-1-turbo",
                 .name = "Seed 2.1 Turbo",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -2538,6 +2694,7 @@ pub const providers = [_]Provider{
                 .id = "bytedance-seed/seed-2.0-code",
                 .upstream_id = "bytedance-seed/seed-2.0-code",
                 .name = "Seed 2.0 Code",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
@@ -2560,6 +2717,7 @@ pub const providers = [_]Provider{
                 .id = "bytedance-seed/seed-2.0-lite",
                 .upstream_id = "bytedance-seed/seed-2.0-lite",
                 .name = "Seed 2.0 Lite",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
@@ -2582,6 +2740,7 @@ pub const providers = [_]Provider{
                 .id = "bytedance-seed/seed-2.0-mini",
                 .upstream_id = "bytedance-seed/seed-2.0-mini",
                 .name = "Seed 2.0 Mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
@@ -2604,6 +2763,7 @@ pub const providers = [_]Provider{
                 .id = "bytedance/ui-tars-1.5-7b",
                 .upstream_id = "bytedance/ui-tars-1.5-7b",
                 .name = "UI-TARS 7B ",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 2048,
@@ -2625,6 +2785,7 @@ pub const providers = [_]Provider{
                 .id = "cognitivecomputations/dolphin-mistral-24b-venice-edition",
                 .upstream_id = "cognitivecomputations/dolphin-mistral-24b-venice-edition",
                 .name = "Uncensored",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 8192,
@@ -2645,6 +2806,7 @@ pub const providers = [_]Provider{
                 .id = "cohere/command-a",
                 .upstream_id = "cohere/command-a",
                 .name = "Command A",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 8192,
@@ -2665,6 +2827,7 @@ pub const providers = [_]Provider{
                 .id = "cohere/command-r-08-2024",
                 .upstream_id = "cohere/command-r-08-2024",
                 .name = "Command R",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 4000,
@@ -2685,6 +2848,7 @@ pub const providers = [_]Provider{
                 .id = "cohere/command-r-plus-08-2024",
                 .upstream_id = "cohere/command-r-plus-08-2024",
                 .name = "Command R+",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 4000,
@@ -2705,6 +2869,7 @@ pub const providers = [_]Provider{
                 .id = "cohere/command-r7b-12-2024",
                 .upstream_id = "cohere/command-r7b-12-2024",
                 .name = "Command R7B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 4000,
@@ -2725,6 +2890,7 @@ pub const providers = [_]Provider{
                 .id = "cohere/north-mini-code:free",
                 .upstream_id = "cohere/north-mini-code:free",
                 .name = "North Mini Code (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 64000,
@@ -2747,13 +2913,14 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-chat",
                 .upstream_id = "deepseek/deepseek-chat",
                 .name = "DeepSeek Chat",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 163840,
-                    .max_output_tokens = 16384,
+                    .max_output_tokens = 16000,
                 },
                 .cost = .{
-                    .input = 0.32,
-                    .output = 0.89,
+                    .input = 0.2574,
+                    .output = 1.0287,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true },
                 .modalities = .{
@@ -2767,6 +2934,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-chat-v3-0324",
                 .upstream_id = "deepseek/deepseek-chat-v3-0324",
                 .name = "DeepSeek V3 0324",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 163840,
                     .max_output_tokens = 147456,
@@ -2787,14 +2955,15 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-chat-v3.1",
                 .upstream_id = "deepseek/deepseek-chat-v3.1",
                 .name = "DeepSeek V3.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 163840,
-                    .max_output_tokens = 144900,
+                    .max_output_tokens = 32768,
                 },
                 .cost = .{
-                    .input = 0.55,
-                    .output = 1.65,
-                    .cache_read = 0.55,
+                    .input = 0.25,
+                    .output = 0.95,
+                    .cache_read = 0.13,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -2810,6 +2979,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-r1",
                 .upstream_id = "deepseek/deepseek-r1",
                 .name = "DeepSeek-R1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 64000,
                     .max_output_tokens = 16000,
@@ -2818,7 +2988,7 @@ pub const providers = [_]Provider{
                     .input = 0.7,
                     .output = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false, .structured_output = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2830,6 +3000,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-r1-0528",
                 .upstream_id = "deepseek/deepseek-r1-0528",
                 .name = "R1 0528",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 163840,
                     .max_output_tokens = 32768,
@@ -2851,6 +3022,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-r1-distill-llama-70b",
                 .upstream_id = "deepseek/deepseek-r1-distill-llama-70b",
                 .name = "R1 Distill Llama 70B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8192,
                     .max_output_tokens = 7372,
@@ -2873,6 +3045,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-v3.1-terminus",
                 .upstream_id = "deepseek/deepseek-v3.1-terminus",
                 .name = "DeepSeek V3.1 Terminus",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 163840,
                     .max_output_tokens = 32768,
@@ -2896,6 +3069,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-v3.2",
                 .upstream_id = "deepseek/deepseek-v3.2",
                 .name = "DeepSeek V3.2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 163840,
                     .max_output_tokens = 65536,
@@ -2919,6 +3093,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-v3.2-exp",
                 .upstream_id = "deepseek/deepseek-v3.2-exp",
                 .name = "DeepSeek V3.2 Exp",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 163840,
                     .max_output_tokens = 65536,
@@ -2941,6 +3116,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-v4-flash",
                 .upstream_id = "deepseek/deepseek-v4-flash",
                 .name = "DeepSeek V4 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 384000,
@@ -2965,14 +3141,15 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-v4-flash-0731",
                 .upstream_id = "deepseek/deepseek-v4-flash-0731",
                 .name = "DeepSeek V4 Flash 0731",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1310720,
                     .max_output_tokens = 943718,
                 },
                 .cost = .{
-                    .input = 0.065,
-                    .output = 0.18,
-                    .cache_read = 0.016,
+                    .input = 0.06,
+                    .output = 0.12,
+                    .cache_read = 0.012,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -2988,14 +3165,15 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-v4-flash-vision-exp",
                 .upstream_id = "deepseek/deepseek-v4-flash-vision-exp",
                 .name = "DeepSeek V4 Flash Vision Exp",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
-                    .max_output_tokens = 384000,
+                    .max_output_tokens = 943718,
                 },
                 .cost = .{
-                    .input = 0.44,
-                    .output = 1.32,
-                    .cache_read = 0.014,
+                    .input = 0.22,
+                    .output = 0.66,
+                    .cache_read = 0.007,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -3011,14 +3189,15 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-v4-pro",
                 .upstream_id = "deepseek/deepseek-v4-pro",
                 .name = "DeepSeek V4 Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
-                    .max_output_tokens = 384000,
+                    .max_output_tokens = 393216,
                 },
                 .cost = .{
-                    .input = 1.04226,
-                    .output = 2.08452,
-                    .cache_read = 0.086855,
+                    .input = 1.6,
+                    .output = 3.2,
+                    .cache_read = 0.135,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -3035,14 +3214,15 @@ pub const providers = [_]Provider{
                 .id = "deepseek/deepseek-v4-pro-0813",
                 .upstream_id = "deepseek/deepseek-v4-pro-0813",
                 .name = "DeepSeek V4 Pro 0813",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 384000,
                 },
                 .cost = .{
-                    .input = 1.1154,
-                    .output = 3.3462,
-                    .cache_read = 0.03718,
+                    .input = 0.9834,
+                    .output = 2.9502,
+                    .cache_read = 0.03278,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -3055,9 +3235,34 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "deepseek/deepseek-v4.1-flash",
+                .upstream_id = "deepseek/deepseek-v4.1-flash",
+                .name = "DeepSeek V4.1 Flash",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.6,
+                    .cache_read = 0.003,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
                 .id = "dots-studio/dots-3-note-preview:free",
                 .upstream_id = "dots-studio/dots-3-note-preview:free",
                 .name = "Dots3-Note Preview (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 512000,
                     .max_output_tokens = 460800,
@@ -3080,6 +3285,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-2.5-flash",
                 .upstream_id = "google/gemini-2.5-flash",
                 .name = "Gemini 2.5 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65535,
@@ -3104,6 +3310,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-2.5-flash-image",
                 .upstream_id = "google/gemini-2.5-flash-image",
                 .name = "Nano Banana",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 8192,
@@ -3126,6 +3333,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-2.5-flash-lite",
                 .upstream_id = "google/gemini-2.5-flash-lite",
                 .name = "Gemini 2.5 Flash-Lite",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65535,
@@ -3150,6 +3358,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-2.5-pro",
                 .upstream_id = "google/gemini-2.5-pro",
                 .name = "Gemini 2.5 Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3172,6 +3381,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-2.5-pro-preview",
                 .upstream_id = "google/gemini-2.5-pro-preview",
                 .name = "Gemini 2.5 Pro Preview 06-05",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3194,6 +3404,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-2.5-pro-preview-05-06",
                 .upstream_id = "google/gemini-2.5-pro-preview-05-06",
                 .name = "Gemini 2.5 Pro Preview 05-06",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65535,
@@ -3216,6 +3427,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3-flash-preview",
                 .upstream_id = "google/gemini-3-flash-preview",
                 .name = "Gemini 3 Flash Preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3241,6 +3453,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3-pro-image",
                 .upstream_id = "google/gemini-3-pro-image",
                 .name = "Nano Banana Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -3262,7 +3475,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "google/gemini-3-pro-image-preview",
                 .upstream_id = "google/gemini-3-pro-image-preview",
-                .name = "Nano Banana Pro",
+                .name = "Nano Banana Pro Preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 65536,
                     .max_output_tokens = 32768,
@@ -3285,6 +3499,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.1-flash-image",
                 .upstream_id = "google/gemini-3.1-flash-image",
                 .name = "Nano Banana 2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -3306,7 +3521,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "google/gemini-3.1-flash-image-preview",
                 .upstream_id = "google/gemini-3.1-flash-image-preview",
-                .name = "Nano Banana 2",
+                .name = "Nano Banana 2 Preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 65536,
                     .max_output_tokens = 58982,
@@ -3329,6 +3545,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.1-flash-lite",
                 .upstream_id = "google/gemini-3.1-flash-lite",
                 .name = "Gemini 3.1 Flash Lite",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3353,6 +3570,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.1-flash-lite-image",
                 .upstream_id = "google/gemini-3.1-flash-lite-image",
                 .name = "Nano Banana 2 Lite",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 65536,
                     .max_output_tokens = 58982,
@@ -3375,6 +3593,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.1-flash-lite-preview",
                 .upstream_id = "google/gemini-3.1-flash-lite-preview",
                 .name = "Gemini 3.1 Flash Lite Preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3399,6 +3618,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.1-pro-preview",
                 .upstream_id = "google/gemini-3.1-pro-preview",
                 .name = "Gemini 3.1 Pro Preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3424,6 +3644,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.1-pro-preview-customtools",
                 .upstream_id = "google/gemini-3.1-pro-preview-customtools",
                 .name = "Gemini 3.1 Pro Preview Custom Tools",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3449,6 +3670,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.5-flash",
                 .upstream_id = "google/gemini-3.5-flash",
                 .name = "Gemini 3.5 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3473,6 +3695,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.5-flash-lite",
                 .upstream_id = "google/gemini-3.5-flash-lite",
                 .name = "Gemini 3.5 Flash Lite",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3497,6 +3720,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.6-flash",
                 .upstream_id = "google/gemini-3.6-flash",
                 .name = "Gemini 3.6 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3521,6 +3745,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.7-flash",
                 .upstream_id = "google/gemini-3.7-flash",
                 .name = "Gemini 3.7 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3545,6 +3770,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemini-3.8-flash",
                 .upstream_id = "google/gemini-3.8-flash",
                 .name = "Gemini 3.8 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3569,6 +3795,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemma-2-27b-it",
                 .upstream_id = "google/gemma-2-27b-it",
                 .name = "Gemma 2 27B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8192,
                     .max_output_tokens = 2048,
@@ -3588,7 +3815,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "google/gemma-3-12b-it",
                 .upstream_id = "google/gemma-3-12b-it",
-                .name = "Gemma 3 12B",
+                .name = "Gemma 3 12B IT",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -3608,7 +3836,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "google/gemma-3-27b-it",
                 .upstream_id = "google/gemma-3-27b-it",
-                .name = "Gemma 3 27B",
+                .name = "Gemma 3 27B IT",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -3629,7 +3858,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "google/gemma-3-4b-it",
                 .upstream_id = "google/gemma-3-4b-it",
-                .name = "Gemma 3 4B",
+                .name = "Gemma 3 4B IT",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -3650,15 +3880,17 @@ pub const providers = [_]Provider{
                 .id = "google/gemma-4-26b-a4b-it",
                 .upstream_id = "google/gemma-4-26b-a4b-it",
                 .name = "Gemma 4 26B A4B IT",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 16384,
+                    .max_output_tokens = 235929,
                 },
                 .cost = .{
-                    .input = 0.07,
-                    .output = 0.34,
+                    .input = 0.09,
+                    .output = 0.3,
+                    .cache_read = 0.05,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -3672,6 +3904,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemma-4-26b-a4b-it:free",
                 .upstream_id = "google/gemma-4-26b-a4b-it:free",
                 .name = "Gemma 4 26B A4B  (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -3694,6 +3927,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemma-4-31b-it",
                 .upstream_id = "google/gemma-4-31b-it",
                 .name = "Gemma 4 31B IT",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 16384,
@@ -3717,6 +3951,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemma-4-31b-it:free",
                 .upstream_id = "google/gemma-4-31b-it:free",
                 .name = "Gemma 4 31B (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -3739,6 +3974,7 @@ pub const providers = [_]Provider{
                 .id = "google/lyria-3-clip-preview",
                 .upstream_id = "google/lyria-3-clip-preview",
                 .name = "Lyria 3 Clip Preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3759,6 +3995,7 @@ pub const providers = [_]Provider{
                 .id = "google/lyria-3-pro-preview",
                 .upstream_id = "google/lyria-3-pro-preview",
                 .name = "Lyria 3 Pro Preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -3779,6 +4016,7 @@ pub const providers = [_]Provider{
                 .id = "gryphe/mythomax-l2-13b",
                 .upstream_id = "gryphe/mythomax-l2-13b",
                 .name = "MythoMax 13B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8192,
                     .max_output_tokens = 3686,
@@ -3799,6 +4037,7 @@ pub const providers = [_]Provider{
                 .id = "ibm-granite/granite-4.0-h-micro",
                 .upstream_id = "ibm-granite/granite-4.0-h-micro",
                 .name = "Granite 4.0 Micro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131000,
                     .max_output_tokens = 117900,
@@ -3816,38 +4055,18 @@ pub const providers = [_]Provider{
                 .dialect = .{},
             },
             .{
-                .id = "ibm-granite/granite-4.1-8b",
-                .upstream_id = "ibm-granite/granite-4.1-8b",
-                .name = "Granite 4.1 8B",
-                .limits = .{
-                    .context_window = 131072,
-                    .max_output_tokens = 117964,
-                },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.1,
-                    .cache_read = 0.05,
-                },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
-                .modalities = .{
-                    .input = &.{.text},
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
                 .id = "ibm-granite/granite-4.2-8b",
                 .upstream_id = "ibm-granite/granite-4.2-8b",
                 .name = "Granite 4.2 8B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
                 .cost = .{
-                    .input = 0.1,
-                    .output = 0.15,
-                    .cache_read = 0.05,
+                    .input = 0.06,
+                    .output = 0.25,
+                    .cache_read = 0.015,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -3863,6 +4082,7 @@ pub const providers = [_]Provider{
                 .id = "inception/mercury-2",
                 .upstream_id = "inception/mercury-2",
                 .name = "Mercury 2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 50000,
@@ -3883,9 +4103,10 @@ pub const providers = [_]Provider{
                 },
             },
             .{
-                .id = "inception/mercury-2.5-preview",
-                .upstream_id = "inception/mercury-2.5-preview",
-                .name = "Mercury 2.5 Preview",
+                .id = "inception/mercury-2.5",
+                .upstream_id = "inception/mercury-2.5",
+                .name = "Mercury 2.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 260000,
                     .max_output_tokens = 65536,
@@ -3908,7 +4129,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "inclusionai/ling-3.0-flash",
                 .upstream_id = "inclusionai/ling-3.0-flash",
-                .name = "Ling-3.0-flash",
+                .name = "Ling 3.0 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -3932,6 +4154,7 @@ pub const providers = [_]Provider{
                 .id = "inclusionai/ling-3.0-flash-fin",
                 .upstream_id = "inclusionai/ling-3.0-flash-fin",
                 .name = "Ling 3.0 Flash Fin",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -3955,6 +4178,7 @@ pub const providers = [_]Provider{
                 .id = "inclusionai/ling-3.0-flash-fin:free",
                 .upstream_id = "inclusionai/ling-3.0-flash-fin:free",
                 .name = "Ling 3.0 Flash Fin (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -3974,9 +4198,124 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "inclusionai/ling-3.0-flash-sante:free",
+                .upstream_id = "inclusionai/ling-3.0-flash-sante:free",
+                .name = "Ling 3.0 Flash Sante (free)",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 32768,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
+                .id = "inclusionai/ling-3.0-flash-vl",
+                .upstream_id = "inclusionai/ling-3.0-flash-vl",
+                .name = "Ling 3.0 Flash VL",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 131072,
+                    .max_output_tokens = 32768,
+                },
+                .cost = .{
+                    .input = 0.06,
+                    .output = 0.18,
+                    .cache_read = 0.012,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
+                .id = "inclusionai/ling-3.0-flash-vl:free",
+                .upstream_id = "inclusionai/ling-3.0-flash-vl:free",
+                .name = "Ling 3.0 Flash VL (free)",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 32768,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
+                .id = "inference-net/schematron-v2-small",
+                .upstream_id = "inference-net/schematron-v2-small",
+                .name = "Schematron V2 Small",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 128000,
+                    .max_output_tokens = 4096,
+                },
+                .cost = .{
+                    .input = 0.05,
+                    .output = 0.23,
+                    .cache_read = 0.05,
+                },
+                .caps = .{ .tools = false, .vision = false, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "inference-net/schematron-v2-turbo",
+                .upstream_id = "inference-net/schematron-v2-turbo",
+                .name = "Schematron V2 Turbo",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 128000,
+                    .max_output_tokens = 8192,
+                },
+                .cost = .{
+                    .input = 0.03,
+                    .output = 0.15,
+                    .cache_read = 0.03,
+                },
+                .caps = .{ .tools = false, .vision = false, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
                 .id = "kwaipilot/kat-coder-pro-v2",
                 .upstream_id = "kwaipilot/kat-coder-pro-v2",
                 .name = "KAT-Coder-Pro V2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 144000,
@@ -3998,6 +4337,7 @@ pub const providers = [_]Provider{
                 .id = "kwaipilot/kat-coder-pro-v2.5",
                 .upstream_id = "kwaipilot/kat-coder-pro-v2.5",
                 .name = "KAT-Coder-Pro V2.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -4019,6 +4359,7 @@ pub const providers = [_]Provider{
                 .id = "liquid/lfm-2.5-2.6b:free",
                 .upstream_id = "liquid/lfm-2.5-2.6b:free",
                 .name = "LFM2.5-2.6B (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 65536,
                     .max_output_tokens = 8192,
@@ -4039,6 +4380,7 @@ pub const providers = [_]Provider{
                 .id = "mancer/weaver",
                 .upstream_id = "mancer/weaver",
                 .name = "Weaver (alpha)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8000,
                     .max_output_tokens = 6000,
@@ -4059,6 +4401,7 @@ pub const providers = [_]Provider{
                 .id = "meituan/longcat-2.0",
                 .upstream_id = "meituan/longcat-2.0",
                 .name = "LongCat 2.0",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048756,
                     .max_output_tokens = 262144,
@@ -4081,7 +4424,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "meta-llama/llama-3.1-70b-instruct",
                 .upstream_id = "meta-llama/llama-3.1-70b-instruct",
-                .name = "Llama 3.1 70B Instruct",
+                .name = "Llama-3.1-70B-Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -4102,6 +4446,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/llama-3.1-8b-instruct",
                 .upstream_id = "meta-llama/llama-3.1-8b-instruct",
                 .name = "Llama-3.1-8B-Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -4123,6 +4468,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/llama-3.2-1b-instruct",
                 .upstream_id = "meta-llama/llama-3.2-1b-instruct",
                 .name = "Llama 3.2 1B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 60000,
                     .max_output_tokens = 54000,
@@ -4143,6 +4489,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/llama-3.2-3b-instruct",
                 .upstream_id = "meta-llama/llama-3.2-3b-instruct",
                 .name = "Llama 3.2 3B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -4163,6 +4510,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/llama-3.3-70b-instruct",
                 .upstream_id = "meta-llama/llama-3.3-70b-instruct",
                 .name = "Llama-3.3-70B-Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -4183,6 +4531,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/llama-4-maverick",
                 .upstream_id = "meta-llama/llama-4-maverick",
                 .name = "Llama 4 Maverick",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 115200,
@@ -4203,6 +4552,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/llama-4-scout",
                 .upstream_id = "meta-llama/llama-4-scout",
                 .name = "Llama 4 Scout",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1310720,
                     .max_output_tokens = 16384,
@@ -4223,6 +4573,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/llama-guard-4-12b",
                 .upstream_id = "meta-llama/llama-guard-4-12b",
                 .name = "Llama Guard 4 12B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 163840,
                     .max_output_tokens = 16384,
@@ -4243,13 +4594,14 @@ pub const providers = [_]Provider{
                 .id = "meta/muse-glimmer-30b",
                 .upstream_id = "meta/muse-glimmer-30b",
                 .name = "Muse Glimmer 30B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
                 .cost = .{
-                    .input = 0.3,
-                    .output = 1.1,
+                    .input = 0.35,
+                    .output = 1.5,
                     .cache_read = 0.04,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
@@ -4266,6 +4618,7 @@ pub const providers = [_]Provider{
                 .id = "meta/muse-spark-1.1",
                 .upstream_id = "meta/muse-spark-1.1",
                 .name = "Muse Spark 1.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
@@ -4289,6 +4642,7 @@ pub const providers = [_]Provider{
                 .id = "meta/muse-spark-1.2",
                 .upstream_id = "meta/muse-spark-1.2",
                 .name = "Muse Spark 1.2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
@@ -4312,6 +4666,7 @@ pub const providers = [_]Provider{
                 .id = "meta/muse-spark-1.2-contributor",
                 .upstream_id = "meta/muse-spark-1.2-contributor",
                 .name = "Muse Spark 1.2 Contributor",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
@@ -4335,6 +4690,7 @@ pub const providers = [_]Provider{
                 .id = "meta/muse-spark-1.3",
                 .upstream_id = "meta/muse-spark-1.3",
                 .name = "Muse Spark 1.3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
@@ -4349,7 +4705,7 @@ pub const providers = [_]Provider{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
                 },
-                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4358,6 +4714,7 @@ pub const providers = [_]Provider{
                 .id = "meta/muse-spark-1.3-contributor",
                 .upstream_id = "meta/muse-spark-1.3-contributor",
                 .name = "Muse Spark 1.3 Contributor",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
@@ -4372,7 +4729,7 @@ pub const providers = [_]Provider{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
                 },
-                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -4381,6 +4738,7 @@ pub const providers = [_]Provider{
                 .id = "microsoft/phi-4",
                 .upstream_id = "microsoft/phi-4",
                 .name = "Phi 4",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 16384,
                     .max_output_tokens = 14745,
@@ -4401,6 +4759,7 @@ pub const providers = [_]Provider{
                 .id = "microsoft/wizardlm-2-8x22b",
                 .upstream_id = "microsoft/wizardlm-2-8x22b",
                 .name = "WizardLM-2 8x22B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 65535,
                     .max_output_tokens = 8000,
@@ -4421,6 +4780,7 @@ pub const providers = [_]Provider{
                 .id = "minimax/minimax-01",
                 .upstream_id = "minimax/minimax-01",
                 .name = "MiniMax-01",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000192,
                     .max_output_tokens = 900172,
@@ -4441,6 +4801,7 @@ pub const providers = [_]Provider{
                 .id = "minimax/minimax-m1",
                 .upstream_id = "minimax/minimax-m1",
                 .name = "MiniMax M1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 40000,
@@ -4463,6 +4824,7 @@ pub const providers = [_]Provider{
                 .id = "minimax/minimax-m2",
                 .upstream_id = "minimax/minimax-m2",
                 .name = "MiniMax-M2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
@@ -4483,6 +4845,7 @@ pub const providers = [_]Provider{
                 .id = "minimax/minimax-m2-her",
                 .upstream_id = "minimax/minimax-m2-her",
                 .name = "MiniMax-M2 Her",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 65536,
                     .max_output_tokens = 2048,
@@ -4504,6 +4867,7 @@ pub const providers = [_]Provider{
                 .id = "minimax/minimax-m2.1",
                 .upstream_id = "minimax/minimax-m2.1",
                 .name = "MiniMax-M2.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
@@ -4525,6 +4889,7 @@ pub const providers = [_]Provider{
                 .id = "minimax/minimax-m2.5",
                 .upstream_id = "minimax/minimax-m2.5",
                 .name = "MiniMax-M2.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 128000,
@@ -4546,6 +4911,7 @@ pub const providers = [_]Provider{
                 .id = "minimax/minimax-m2.7",
                 .upstream_id = "minimax/minimax-m2.7",
                 .name = "MiniMax-M2.7",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
@@ -4564,29 +4930,10 @@ pub const providers = [_]Provider{
                 .dialect = .{},
             },
             .{
-                .id = "minimax/minimax-m2.7:free",
-                .upstream_id = "minimax/minimax-m2.7:free",
-                .name = "MiniMax M2.7 (free)",
-                .limits = .{
-                    .context_window = 196608,
-                    .max_output_tokens = 176947,
-                },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false },
-                .modalities = .{
-                    .input = &.{.text},
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
                 .id = "minimax/minimax-m3",
                 .upstream_id = "minimax/minimax-m3",
                 .name = "MiniMax-M3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 512000,
@@ -4607,31 +4954,10 @@ pub const providers = [_]Provider{
                 },
             },
             .{
-                .id = "minimax/minimax-m3:free",
-                .upstream_id = "minimax/minimax-m3:free",
-                .name = "MiniMax M3 (free)",
-                .limits = .{
-                    .context_window = 1048576,
-                    .max_output_tokens = 943718,
-                },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .text, .video },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{.{ .named = "high" }},
-                .dialect = .{
-                    .thinking_format = .openrouter,
-                },
-            },
-            .{
                 .id = "mistralai/codestral-2508",
                 .upstream_id = "mistralai/codestral-2508",
                 .name = "Codestral 2508",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 204800,
@@ -4653,6 +4979,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/devstral-2512",
                 .upstream_id = "mistralai/devstral-2512",
                 .name = "Devstral 2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
@@ -4674,6 +5001,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/ministral-14b-2512",
                 .upstream_id = "mistralai/ministral-14b-2512",
                 .name = "Ministral 3 14B 2512",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
@@ -4695,6 +5023,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/ministral-3b-2512",
                 .upstream_id = "mistralai/ministral-3b-2512",
                 .name = "Ministral 3 3B 2512",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 104857,
@@ -4716,6 +5045,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/ministral-8b-2512",
                 .upstream_id = "mistralai/ministral-8b-2512",
                 .name = "Ministral 3 8B 2512",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
@@ -4737,6 +5067,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-large",
                 .upstream_id = "mistralai/mistral-large",
                 .name = "Mistral Large",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 102400,
@@ -4758,6 +5089,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-large-2407",
                 .upstream_id = "mistralai/mistral-large-2407",
                 .name = "Mistral Large 2407",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 104857,
@@ -4779,6 +5111,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-large-2512",
                 .upstream_id = "mistralai/mistral-large-2512",
                 .name = "Mistral Large 3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
@@ -4800,6 +5133,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-medium-3",
                 .upstream_id = "mistralai/mistral-medium-3",
                 .name = "Mistral Medium 3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 104857,
@@ -4821,6 +5155,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-medium-3-5",
                 .upstream_id = "mistralai/mistral-medium-3-5",
                 .name = "Mistral Medium 3.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
@@ -4843,6 +5178,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-medium-3.1",
                 .upstream_id = "mistralai/mistral-medium-3.1",
                 .name = "Mistral Medium 3.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 104857,
@@ -4864,6 +5200,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-nemo",
                 .upstream_id = "mistralai/mistral-nemo",
                 .name = "Mistral Nemo",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -4884,6 +5221,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-saba",
                 .upstream_id = "mistralai/mistral-saba",
                 .name = "Saba",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 26214,
@@ -4905,6 +5243,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-small-24b-instruct-2501",
                 .upstream_id = "mistralai/mistral-small-24b-instruct-2501",
                 .name = "Mistral Small 3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 16384,
@@ -4925,6 +5264,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-small-2603",
                 .upstream_id = "mistralai/mistral-small-2603",
                 .name = "Mistral Small 4",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
@@ -4948,6 +5288,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-small-3.1-24b-instruct",
                 .upstream_id = "mistralai/mistral-small-3.1-24b-instruct",
                 .name = "Mistral Small 3.1 24B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 102400,
@@ -4968,8 +5309,9 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mistral-small-3.2-24b-instruct",
                 .upstream_id = "mistralai/mistral-small-3.2-24b-instruct",
                 .name = "Mistral Small 3.2 24B",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 131072,
+                    .context_window = 256000,
                     .max_output_tokens = 16384,
                 },
                 .cost = .{
@@ -4988,6 +5330,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/mixtral-8x22b-instruct",
                 .upstream_id = "mistralai/mixtral-8x22b-instruct",
                 .name = "Mixtral 8x22B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 65536,
                     .max_output_tokens = 52428,
@@ -5009,6 +5352,7 @@ pub const providers = [_]Provider{
                 .id = "mistralai/voxtral-small-24b-2507",
                 .upstream_id = "mistralai/voxtral-small-24b-2507",
                 .name = "Voxtral Small 24B 2507",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 26214,
@@ -5030,9 +5374,10 @@ pub const providers = [_]Provider{
                 .id = "moonshotai/kimi-k2",
                 .upstream_id = "moonshotai/kimi-k2",
                 .name = "Kimi K2 0711",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
-                    .max_output_tokens = 100352,
+                    .max_output_tokens = 98304,
                 },
                 .cost = .{
                     .input = 0.57,
@@ -5050,9 +5395,10 @@ pub const providers = [_]Provider{
                 .id = "moonshotai/kimi-k2-0905",
                 .upstream_id = "moonshotai/kimi-k2-0905",
                 .name = "Kimi K2 0905",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 100352,
+                    .max_output_tokens = 98304,
                 },
                 .cost = .{
                     .input = 0.6,
@@ -5070,9 +5416,10 @@ pub const providers = [_]Provider{
                 .id = "moonshotai/kimi-k2-thinking",
                 .upstream_id = "moonshotai/kimi-k2-thinking",
                 .name = "Kimi K2 Thinking",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 100352,
+                    .max_output_tokens = 98304,
                 },
                 .cost = .{
                     .input = 0.6,
@@ -5091,6 +5438,7 @@ pub const providers = [_]Provider{
                 .id = "moonshotai/kimi-k2.5",
                 .upstream_id = "moonshotai/kimi-k2.5",
                 .name = "Kimi K2.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -5115,6 +5463,7 @@ pub const providers = [_]Provider{
                 .id = "moonshotai/kimi-k2.6",
                 .upstream_id = "moonshotai/kimi-k2.6",
                 .name = "Kimi K2.6",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -5139,14 +5488,15 @@ pub const providers = [_]Provider{
                 .id = "moonshotai/kimi-k2.7-code",
                 .upstream_id = "moonshotai/kimi-k2.7-code",
                 .name = "Kimi K2.7 Code",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
                 .cost = .{
-                    .input = 0.66,
-                    .output = 3.4,
-                    .cache_read = 0.18,
+                    .input = 0.71,
+                    .output = 3.5,
+                    .cache_read = 0.15,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
                 .modalities = .{
@@ -5160,14 +5510,15 @@ pub const providers = [_]Provider{
                 .id = "moonshotai/kimi-k3",
                 .upstream_id = "moonshotai/kimi-k3",
                 .name = "Kimi K3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
                 .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
+                    .input = 2.648138,
+                    .output = 13.282724,
+                    .cache_read = 0.302644,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -5183,6 +5534,7 @@ pub const providers = [_]Provider{
                 .id = "morph/morph-v3-fast",
                 .upstream_id = "morph/morph-v3-fast",
                 .name = "Morph V3 Fast",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 81920,
                     .max_output_tokens = 38000,
@@ -5203,6 +5555,7 @@ pub const providers = [_]Provider{
                 .id = "morph/morph-v3-large",
                 .upstream_id = "morph/morph-v3-large",
                 .name = "Morph V3 Large",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
@@ -5220,47 +5573,47 @@ pub const providers = [_]Provider{
                 .dialect = .{},
             },
             .{
-                .id = "nex-agi/nex-n2-mini",
-                .upstream_id = "nex-agi/nex-n2-mini",
-                .name = "Nex-N2-Mini",
+                .id = "nex-agi/nex-n2.5-mini:free",
+                .upstream_id = "nex-agi/nex-n2.5-mini:free",
+                .name = "Nex-N2.5-Mini (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
                 .cost = .{
-                    .input = 0.025,
-                    .output = 0.1,
-                    .cache_read = 0.0025,
+                    .input = 0,
+                    .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
                 },
-                .reasoning_levels = &.{.{ .named = "high" }},
+                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
             },
             .{
-                .id = "nex-agi/nex-n2-pro",
-                .upstream_id = "nex-agi/nex-n2-pro",
-                .name = "Nex-N2-Pro",
+                .id = "nex-agi/nex-n2.5-pro:free",
+                .upstream_id = "nex-agi/nex-n2.5-pro:free",
+                .name = "Nex-N2.5-Pro (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
                 .cost = .{
-                    .input = 0.25,
-                    .output = 1,
-                    .cache_read = 0.025,
+                    .input = 0,
+                    .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
                 },
-                .reasoning_levels = &.{.{ .named = "high" }},
+                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -5269,6 +5622,7 @@ pub const providers = [_]Provider{
                 .id = "nousresearch/hermes-3-llama-3.1-405b",
                 .upstream_id = "nousresearch/hermes-3-llama-3.1-405b",
                 .name = "Hermes 3 405B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -5289,6 +5643,7 @@ pub const providers = [_]Provider{
                 .id = "nousresearch/hermes-3-llama-3.1-70b",
                 .upstream_id = "nousresearch/hermes-3-llama-3.1-70b",
                 .name = "Hermes 3 70B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -5309,6 +5664,7 @@ pub const providers = [_]Provider{
                 .id = "nousresearch/hermes-4-405b",
                 .upstream_id = "nousresearch/hermes-4-405b",
                 .name = "Hermes 4 405B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -5328,31 +5684,10 @@ pub const providers = [_]Provider{
                 },
             },
             .{
-                .id = "nousresearch/hermes-4-70b",
-                .upstream_id = "nousresearch/hermes-4-70b",
-                .name = "Hermes 4 70B",
-                .limits = .{
-                    .context_window = 131072,
-                    .max_output_tokens = 117964,
-                },
-                .cost = .{
-                    .input = 0.13,
-                    .output = 0.4,
-                },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{.text},
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{.{ .named = "high" }},
-                .dialect = .{
-                    .thinking_format = .openrouter,
-                },
-            },
-            .{
                 .id = "nvidia/nemotron-3-nano-30b-a3b",
                 .upstream_id = "nvidia/nemotron-3-nano-30b-a3b",
                 .name = "Nemotron 3 Nano 30B A3B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -5376,6 +5711,7 @@ pub const providers = [_]Provider{
                 .id = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
                 .upstream_id = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
                 .name = "Nemotron 3 Nano Omni (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 65536,
@@ -5398,8 +5734,9 @@ pub const providers = [_]Provider{
                 .id = "nvidia/nemotron-3-super-120b-a12b",
                 .upstream_id = "nvidia/nemotron-3-super-120b-a12b",
                 .name = "Nemotron 3 Super 120B A12B",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 1000000,
+                    .context_window = 262144,
                     .max_output_tokens = 16384,
                 },
                 .cost = .{
@@ -5420,6 +5757,7 @@ pub const providers = [_]Provider{
                 .id = "nvidia/nemotron-3-super-120b-a12b:free",
                 .upstream_id = "nvidia/nemotron-3-super-120b-a12b:free",
                 .name = "Nemotron 3 Super (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -5442,14 +5780,15 @@ pub const providers = [_]Provider{
                 .id = "nvidia/nemotron-3-ultra-550b-a55b",
                 .upstream_id = "nvidia/nemotron-3-ultra-550b-a55b",
                 .name = "Nemotron 3 Ultra 550B A55B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 32768,
+                    .max_output_tokens = 182520,
                 },
                 .cost = .{
-                    .input = 0.625,
-                    .output = 3.125,
-                    .cache_read = 0.1875,
+                    .input = 0.6,
+                    .output = 2.4,
+                    .cache_read = 0.12,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -5465,6 +5804,7 @@ pub const providers = [_]Provider{
                 .id = "nvidia/nemotron-3-ultra-550b-a55b:free",
                 .upstream_id = "nvidia/nemotron-3-ultra-550b-a55b:free",
                 .name = "Nemotron 3 Ultra (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
@@ -5487,6 +5827,7 @@ pub const providers = [_]Provider{
                 .id = "nvidia/nemotron-3.5-content-safety",
                 .upstream_id = "nvidia/nemotron-3.5-content-safety",
                 .name = "Nemotron 3.5 Content Safety",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -5509,6 +5850,7 @@ pub const providers = [_]Provider{
                 .id = "nvidia/nemotron-3.5-content-safety:free",
                 .upstream_id = "nvidia/nemotron-3.5-content-safety:free",
                 .name = "Nemotron 3.5 Content Safety (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 8192,
@@ -5531,6 +5873,7 @@ pub const providers = [_]Provider{
                 .id = "nvidia/nemotron-3.5-lightning",
                 .upstream_id = "nvidia/nemotron-3.5-lightning",
                 .name = "Nemotron 3.5 Lightning 30B A3B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
@@ -5554,6 +5897,7 @@ pub const providers = [_]Provider{
                 .id = "nvidia/nemotron-3.5-lightning:free",
                 .upstream_id = "nvidia/nemotron-3.5-lightning:free",
                 .name = "Nemotron 3.5 Lightning (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
@@ -5576,6 +5920,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-3.5-turbo",
                 .upstream_id = "openai/gpt-3.5-turbo",
                 .name = "GPT-3.5-turbo",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 16385,
                     .max_output_tokens = 4096,
@@ -5596,6 +5941,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-3.5-turbo-0613",
                 .upstream_id = "openai/gpt-3.5-turbo-0613",
                 .name = "GPT-3.5 Turbo (older v0613)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 4095,
                     .max_output_tokens = 3685,
@@ -5616,6 +5962,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-3.5-turbo-16k",
                 .upstream_id = "openai/gpt-3.5-turbo-16k",
                 .name = "GPT-3.5 Turbo 16k",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 16385,
                     .max_output_tokens = 4096,
@@ -5636,6 +5983,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-3.5-turbo-instruct",
                 .upstream_id = "openai/gpt-3.5-turbo-instruct",
                 .name = "GPT-3.5 Turbo Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 4095,
                     .max_output_tokens = 3685,
@@ -5656,6 +6004,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4",
                 .upstream_id = "openai/gpt-4",
                 .name = "GPT-4",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8191,
                     .max_output_tokens = 4096,
@@ -5676,6 +6025,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4-turbo",
                 .upstream_id = "openai/gpt-4-turbo",
                 .name = "GPT-4 Turbo",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 4096,
@@ -5696,6 +6046,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4-turbo-preview",
                 .upstream_id = "openai/gpt-4-turbo-preview",
                 .name = "GPT-4 Turbo Preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 4096,
@@ -5716,6 +6067,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4.1",
                 .upstream_id = "openai/gpt-4.1",
                 .name = "GPT-4.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
@@ -5737,6 +6089,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4.1-mini",
                 .upstream_id = "openai/gpt-4.1-mini",
                 .name = "GPT-4.1 mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
@@ -5758,6 +6111,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4.1-nano",
                 .upstream_id = "openai/gpt-4.1-nano",
                 .name = "GPT-4.1 nano",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
@@ -5779,6 +6133,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4o",
                 .upstream_id = "openai/gpt-4o",
                 .name = "GPT-4o",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -5800,6 +6155,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4o-2024-05-13",
                 .upstream_id = "openai/gpt-4o-2024-05-13",
                 .name = "GPT-4o (2024-05-13)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 4096,
@@ -5820,6 +6176,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4o-2024-08-06",
                 .upstream_id = "openai/gpt-4o-2024-08-06",
                 .name = "GPT-4o (2024-08-06)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -5841,6 +6198,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4o-2024-11-20",
                 .upstream_id = "openai/gpt-4o-2024-11-20",
                 .name = "GPT-4o (2024-11-20)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -5862,6 +6220,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4o-mini",
                 .upstream_id = "openai/gpt-4o-mini",
                 .name = "GPT-4o mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -5883,6 +6242,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-4o-mini-2024-07-18",
                 .upstream_id = "openai/gpt-4o-mini-2024-07-18",
                 .name = "GPT-4o-mini (2024-07-18)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -5904,6 +6264,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5",
                 .upstream_id = "openai/gpt-5",
                 .name = "GPT-5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -5927,6 +6288,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5-image",
                 .upstream_id = "openai/gpt-5-image",
                 .name = "GPT-5 Image",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -5948,6 +6310,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5-image-mini",
                 .upstream_id = "openai/gpt-5-image-mini",
                 .name = "GPT-5 Image Mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -5969,6 +6332,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5-mini",
                 .upstream_id = "openai/gpt-5-mini",
                 .name = "GPT-5 Mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -5992,6 +6356,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5-nano",
                 .upstream_id = "openai/gpt-5-nano",
                 .name = "GPT-5 Nano",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6015,6 +6380,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5-pro",
                 .upstream_id = "openai/gpt-5-pro",
                 .name = "GPT-5 Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6037,6 +6403,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.1",
                 .upstream_id = "openai/gpt-5.1",
                 .name = "GPT-5.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6060,6 +6427,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.1-codex",
                 .upstream_id = "openai/gpt-5.1-codex",
                 .name = "GPT-5.1 Codex",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6083,6 +6451,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.1-codex-max",
                 .upstream_id = "openai/gpt-5.1-codex-max",
                 .name = "GPT-5.1 Codex Max",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6106,6 +6475,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.1-codex-mini",
                 .upstream_id = "openai/gpt-5.1-codex-mini",
                 .name = "GPT-5.1 Codex mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6129,6 +6499,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.2",
                 .upstream_id = "openai/gpt-5.2",
                 .name = "GPT-5.2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6152,6 +6523,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.2-chat",
                 .upstream_id = "openai/gpt-5.2-chat",
                 .name = "GPT-5.2 Chat",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 32000,
@@ -6173,6 +6545,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.2-codex",
                 .upstream_id = "openai/gpt-5.2-codex",
                 .name = "GPT-5.2 Codex",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6196,6 +6569,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.2-pro",
                 .upstream_id = "openai/gpt-5.2-pro",
                 .name = "GPT-5.2 Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6218,6 +6592,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.3-codex",
                 .upstream_id = "openai/gpt-5.3-codex",
                 .name = "GPT-5.3 Codex",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6241,6 +6616,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.4",
                 .upstream_id = "openai/gpt-5.4",
                 .name = "GPT-5.4",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -6264,6 +6640,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.4-image-2",
                 .upstream_id = "openai/gpt-5.4-image-2",
                 .name = "GPT-5.4 Image 2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 272000,
                     .max_output_tokens = 128000,
@@ -6287,6 +6664,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.4-mini",
                 .upstream_id = "openai/gpt-5.4-mini",
                 .name = "GPT-5.4 mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6310,6 +6688,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.4-nano",
                 .upstream_id = "openai/gpt-5.4-nano",
                 .name = "GPT-5.4 nano",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6333,6 +6712,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.4-pro",
                 .upstream_id = "openai/gpt-5.4-pro",
                 .name = "GPT-5.4 Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -6355,6 +6735,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.5",
                 .upstream_id = "openai/gpt-5.5",
                 .name = "GPT-5.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -6378,6 +6759,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.5-pro",
                 .upstream_id = "openai/gpt-5.5-pro",
                 .name = "GPT-5.5 Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -6400,6 +6782,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.6-luna",
                 .upstream_id = "openai/gpt-5.6-luna",
                 .name = "GPT-5.6 Luna",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -6424,6 +6807,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.6-luna-pro",
                 .upstream_id = "openai/gpt-5.6-luna-pro",
                 .name = "GPT-5.6 Luna Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -6448,6 +6832,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.6-sol",
                 .upstream_id = "openai/gpt-5.6-sol",
                 .name = "GPT-5.6 Sol",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -6472,6 +6857,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.6-sol-pro",
                 .upstream_id = "openai/gpt-5.6-sol-pro",
                 .name = "GPT-5.6 Sol Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -6496,6 +6882,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.6-terra",
                 .upstream_id = "openai/gpt-5.6-terra",
                 .name = "GPT-5.6 Terra",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -6520,6 +6907,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-5.6-terra-pro",
                 .upstream_id = "openai/gpt-5.6-terra-pro",
                 .name = "GPT-5.6 Terra Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -6541,9 +6929,60 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "openai/gpt-6-astra",
+                .upstream_id = "openai/gpt-6-astra",
+                .name = "GPT-6 Astra",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 10,
+                    .output = 50,
+                    .cache_read = 1,
+                    .cache_write = 12.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
+                .id = "openai/gpt-6-astra-pro",
+                .upstream_id = "openai/gpt-6-astra-pro",
+                .name = "GPT-6 Astra Pro",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 10,
+                    .output = 50,
+                    .cache_read = 1,
+                    .cache_write = 12.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
                 .id = "openai/gpt-audio",
                 .upstream_id = "openai/gpt-audio",
                 .name = "GPT Audio",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -6564,6 +7003,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-audio-mini",
                 .upstream_id = "openai/gpt-audio-mini",
                 .name = "GPT Audio Mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -6584,6 +7024,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-chat-latest",
                 .upstream_id = "openai/gpt-chat-latest",
                 .name = "GPT Chat Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
@@ -6605,6 +7046,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-oss-120b",
                 .upstream_id = "openai/gpt-oss-120b",
                 .name = "GPT OSS 120B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -6627,6 +7069,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-oss-20b",
                 .upstream_id = "openai/gpt-oss-20b",
                 .name = "GPT OSS 20B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -6649,7 +7092,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "openai/gpt-oss-safeguard-20b",
                 .upstream_id = "openai/gpt-oss-safeguard-20b",
-                .name = "gpt-oss-safeguard-20b",
+                .name = "GPT OSS Safeguard 20B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 65536,
@@ -6673,6 +7117,7 @@ pub const providers = [_]Provider{
                 .id = "openai/o1",
                 .upstream_id = "openai/o1",
                 .name = "o1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -6696,6 +7141,7 @@ pub const providers = [_]Provider{
                 .id = "openai/o1-pro",
                 .upstream_id = "openai/o1-pro",
                 .name = "o1-pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -6718,6 +7164,7 @@ pub const providers = [_]Provider{
                 .id = "openai/o3",
                 .upstream_id = "openai/o3",
                 .name = "o3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -6741,6 +7188,7 @@ pub const providers = [_]Provider{
                 .id = "openai/o3-mini",
                 .upstream_id = "openai/o3-mini",
                 .name = "o3-mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -6764,6 +7212,7 @@ pub const providers = [_]Provider{
                 .id = "openai/o3-mini-high",
                 .upstream_id = "openai/o3-mini-high",
                 .name = "o3 Mini High",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -6787,6 +7236,7 @@ pub const providers = [_]Provider{
                 .id = "openai/o3-pro",
                 .upstream_id = "openai/o3-pro",
                 .name = "o3-pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -6809,6 +7259,7 @@ pub const providers = [_]Provider{
                 .id = "openai/o4-mini",
                 .upstream_id = "openai/o4-mini",
                 .name = "o4-mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -6832,6 +7283,7 @@ pub const providers = [_]Provider{
                 .id = "openai/o4-mini-high",
                 .upstream_id = "openai/o4-mini-high",
                 .name = "o4 Mini High",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
@@ -6855,6 +7307,7 @@ pub const providers = [_]Provider{
                 .id = "openrouter/auto",
                 .upstream_id = "openrouter/auto",
                 .name = "Auto Router",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 2000000,
                     .max_output_tokens = 2000000,
@@ -6872,6 +7325,7 @@ pub const providers = [_]Provider{
                 .id = "openrouter/bodybuilder",
                 .upstream_id = "openrouter/bodybuilder",
                 .name = "Body Builder (beta)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
@@ -6889,6 +7343,7 @@ pub const providers = [_]Provider{
                 .id = "openrouter/free",
                 .upstream_id = "openrouter/free",
                 .name = "Free Models Router",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 8000,
@@ -6909,6 +7364,7 @@ pub const providers = [_]Provider{
                 .id = "openrouter/fusion",
                 .upstream_id = "openrouter/fusion",
                 .name = "Fusion",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -6926,6 +7382,7 @@ pub const providers = [_]Provider{
                 .id = "openrouter/pareto-code",
                 .upstream_id = "openrouter/pareto-code",
                 .name = "Pareto Code Router",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 2000000,
                     .max_output_tokens = 200000,
@@ -6943,6 +7400,7 @@ pub const providers = [_]Provider{
                 .id = "perceptron/perceptron-mk1",
                 .upstream_id = "perceptron/perceptron-mk1",
                 .name = "Perceptron Mk1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 8192,
@@ -6965,6 +7423,7 @@ pub const providers = [_]Provider{
                 .id = "perplexity/sonar",
                 .upstream_id = "perplexity/sonar",
                 .name = "Sonar",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 127072,
                     .max_output_tokens = 114364,
@@ -6985,6 +7444,7 @@ pub const providers = [_]Provider{
                 .id = "perplexity/sonar-deep-research",
                 .upstream_id = "perplexity/sonar-deep-research",
                 .name = "Sonar Deep Research",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 115200,
@@ -7007,6 +7467,7 @@ pub const providers = [_]Provider{
                 .id = "perplexity/sonar-pro",
                 .upstream_id = "perplexity/sonar-pro",
                 .name = "Sonar Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 8000,
@@ -7027,6 +7488,7 @@ pub const providers = [_]Provider{
                 .id = "perplexity/sonar-pro-search",
                 .upstream_id = "perplexity/sonar-pro-search",
                 .name = "Sonar Pro Search",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 8000,
@@ -7047,6 +7509,7 @@ pub const providers = [_]Provider{
                 .id = "perplexity/sonar-reasoning-pro",
                 .upstream_id = "perplexity/sonar-reasoning-pro",
                 .name = "Sonar Reasoning Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 115200,
@@ -7069,6 +7532,7 @@ pub const providers = [_]Provider{
                 .id = "poolside/laguna-s-2.1",
                 .upstream_id = "poolside/laguna-s-2.1",
                 .name = "Laguna S 2.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
@@ -7092,6 +7556,7 @@ pub const providers = [_]Provider{
                 .id = "poolside/laguna-s-2.1:free",
                 .upstream_id = "poolside/laguna-s-2.1:free",
                 .name = "Laguna S 2.1 (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -7114,6 +7579,7 @@ pub const providers = [_]Provider{
                 .id = "poolside/laguna-xs-2.1",
                 .upstream_id = "poolside/laguna-xs-2.1",
                 .name = "Laguna XS 2.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -7137,6 +7603,7 @@ pub const providers = [_]Provider{
                 .id = "poolside/laguna-xs-2.1:free",
                 .upstream_id = "poolside/laguna-xs-2.1:free",
                 .name = "Laguna XS 2.1 (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -7159,6 +7626,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen-2.5-72b-instruct",
                 .upstream_id = "qwen/qwen-2.5-72b-instruct",
                 .name = "Qwen2.5 72B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 16384,
@@ -7179,6 +7647,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen-2.5-7b-instruct",
                 .upstream_id = "qwen/qwen-2.5-7b-instruct",
                 .name = "Qwen2.5 7B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 29491,
@@ -7199,6 +7668,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen-2.5-coder-32b-instruct",
                 .upstream_id = "qwen/qwen-2.5-coder-32b-instruct",
                 .name = "Qwen2.5 Coder 32B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 29491,
@@ -7219,6 +7689,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen-plus",
                 .upstream_id = "qwen/qwen-plus",
                 .name = "Qwen Plus",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 32768,
@@ -7241,6 +7712,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen-plus-2025-07-28",
                 .upstream_id = "qwen/qwen-plus-2025-07-28",
                 .name = "Qwen Plus 0728",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 32768,
@@ -7261,6 +7733,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen2.5-vl-72b-instruct",
                 .upstream_id = "qwen/qwen2.5-vl-72b-instruct",
                 .name = "Qwen2.5 VL 72B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 115200,
@@ -7282,6 +7755,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-14b",
                 .upstream_id = "qwen/qwen3-14b",
                 .name = "Qwen3 14B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -7304,6 +7778,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-235b-a22b",
                 .upstream_id = "qwen/qwen3-235b-a22b",
                 .name = "Qwen3 235B-A22B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 8192,
@@ -7326,6 +7801,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-235b-a22b-2507",
                 .upstream_id = "qwen/qwen3-235b-a22b-2507",
                 .name = "Qwen3 235B A22B Instruct 2507",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -7347,6 +7823,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-235b-a22b-thinking-2507",
                 .upstream_id = "qwen/qwen3-235b-a22b-thinking-2507",
                 .name = "Qwen3 235B A22B Thinking 2507",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -7367,6 +7844,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-30b-a3b",
                 .upstream_id = "qwen/qwen3-30b-a3b",
                 .name = "Qwen3 30B A3B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -7375,7 +7853,7 @@ pub const providers = [_]Provider{
                     .input = 0.12,
                     .output = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7389,6 +7867,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-30b-a3b-instruct-2507",
                 .upstream_id = "qwen/qwen3-30b-a3b-instruct-2507",
                 .name = "Qwen3 30B A3B Instruct 2507",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32000,
@@ -7409,6 +7888,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-30b-a3b-thinking-2507",
                 .upstream_id = "qwen/qwen3-30b-a3b-thinking-2507",
                 .name = "Qwen3 30B A3B Thinking 2507",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 81920,
                     .max_output_tokens = 32768,
@@ -7429,6 +7909,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-32b",
                 .upstream_id = "qwen/qwen3-32b",
                 .name = "Qwen3 32B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -7451,6 +7932,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-8b",
                 .upstream_id = "qwen/qwen3-8b",
                 .name = "Qwen3 8B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 8192,
@@ -7473,6 +7955,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-coder",
                 .upstream_id = "qwen/qwen3-coder",
                 .name = "Qwen3 Coder 480B A35B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
@@ -7494,6 +7977,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-coder-30b-a3b-instruct",
                 .upstream_id = "qwen/qwen3-coder-30b-a3b-instruct",
                 .name = "Qwen3-Coder 30B-A3B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -7514,6 +7998,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-coder-flash",
                 .upstream_id = "qwen/qwen3-coder-flash",
                 .name = "Qwen3 Coder Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
@@ -7536,6 +8021,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-coder-next",
                 .upstream_id = "qwen/qwen3-coder-next",
                 .name = "Qwen3 Coder Next",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -7557,6 +8043,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-coder-plus",
                 .upstream_id = "qwen/qwen3-coder-plus",
                 .name = "Qwen3 Coder Plus",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
@@ -7579,6 +8066,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-max",
                 .upstream_id = "qwen/qwen3-max",
                 .name = "Qwen3 Max",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
@@ -7601,6 +8089,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-max-thinking",
                 .upstream_id = "qwen/qwen3-max-thinking",
                 .name = "Qwen3 Max Thinking",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
@@ -7623,16 +8112,16 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-next-80b-a3b-instruct",
                 .upstream_id = "qwen/qwen3-next-80b-a3b-instruct",
                 .name = "Qwen3-Next 80B-A3B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 235929,
+                    .max_output_tokens = 16384,
                 },
                 .cost = .{
-                    .input = 0.1,
+                    .input = 0.09,
                     .output = 1.1,
-                    .cache_read = 0.07,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7644,9 +8133,10 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-next-80b-a3b-thinking",
                 .upstream_id = "qwen/qwen3-next-80b-a3b-thinking",
                 .name = "Qwen3-Next 80B-A3B (Thinking)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 32768,
+                    .max_output_tokens = 235929,
                 },
                 .cost = .{
                     .input = 0.15,
@@ -7664,6 +8154,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-vl-235b-a22b-instruct",
                 .upstream_id = "qwen/qwen3-vl-235b-a22b-instruct",
                 .name = "Qwen3 VL 235B A22B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -7685,6 +8176,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-vl-235b-a22b-thinking",
                 .upstream_id = "qwen/qwen3-vl-235b-a22b-thinking",
                 .name = "Qwen3 VL 235B A22B Thinking",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -7705,6 +8197,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-vl-30b-a3b-instruct",
                 .upstream_id = "qwen/qwen3-vl-30b-a3b-instruct",
                 .name = "Qwen3 VL 30B A3B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 16384,
@@ -7725,6 +8218,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-vl-30b-a3b-thinking",
                 .upstream_id = "qwen/qwen3-vl-30b-a3b-thinking",
                 .name = "Qwen3 VL 30B A3B Thinking",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -7745,6 +8239,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-vl-32b-instruct",
                 .upstream_id = "qwen/qwen3-vl-32b-instruct",
                 .name = "Qwen3 VL 32B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -7765,6 +8260,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-vl-8b-instruct",
                 .upstream_id = "qwen/qwen3-vl-8b-instruct",
                 .name = "Qwen3 VL 8B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
@@ -7785,6 +8281,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3-vl-8b-thinking",
                 .upstream_id = "qwen/qwen3-vl-8b-thinking",
                 .name = "Qwen3 VL 8B Thinking",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -7805,13 +8302,14 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.5-122b-a10b",
                 .upstream_id = "qwen/qwen3.5-122b-a10b",
                 .name = "Qwen3.5 122B-A10B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 81920,
+                    .max_output_tokens = 65536,
                 },
                 .cost = .{
-                    .input = 0.29,
-                    .output = 2.4,
+                    .input = 0.26,
+                    .output = 2.08,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
                 .modalities = .{
@@ -7827,6 +8325,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.5-27b",
                 .upstream_id = "qwen/qwen3.5-27b",
                 .name = "Qwen3.5 27B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
@@ -7849,14 +8348,15 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.5-35b-a3b",
                 .upstream_id = "qwen/qwen3.5-35b-a3b",
                 .name = "Qwen3.5 35B-A3B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 235929,
+                    .max_output_tokens = 16384,
                 },
                 .cost = .{
-                    .input = 0.25,
+                    .input = 0.3125,
                     .output = 1.25,
-                    .cache_read = 0.25,
+                    .cache_read = 0.15625,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -7872,6 +8372,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.5-397b-a17b",
                 .upstream_id = "qwen/qwen3.5-397b-a17b",
                 .name = "Qwen3.5 397B-A17B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -7895,6 +8396,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.5-9b",
                 .upstream_id = "qwen/qwen3.5-9b",
                 .name = "Qwen3.5 9B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -7917,6 +8419,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.5-flash-02-23",
                 .upstream_id = "qwen/qwen3.5-flash-02-23",
                 .name = "Qwen3.5-Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
@@ -7939,6 +8442,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.5-plus-02-15",
                 .upstream_id = "qwen/qwen3.5-plus-02-15",
                 .name = "Qwen3.5 Plus 2026-02-15",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
@@ -7961,6 +8465,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.5-plus-20260420",
                 .upstream_id = "qwen/qwen3.5-plus-20260420",
                 .name = "Qwen3.5 Plus 2026-04-20",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
@@ -7984,14 +8489,15 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.6-27b",
                 .upstream_id = "qwen/qwen3.6-27b",
                 .name = "Qwen3.6 27B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 235929,
+                    .max_output_tokens = 65536,
                 },
                 .cost = .{
-                    .input = 0.6,
-                    .output = 3.6,
-                    .cache_read = 0.12,
+                    .input = 0.3,
+                    .output = 2,
+                    .cache_read = 0.03,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -8007,6 +8513,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.6-35b-a3b",
                 .upstream_id = "qwen/qwen3.6-35b-a3b",
                 .name = "Qwen3.6 35B-A3B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -8030,6 +8537,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.6-flash",
                 .upstream_id = "qwen/qwen3.6-flash",
                 .name = "Qwen3.6 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
@@ -8053,6 +8561,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.6-max-preview",
                 .upstream_id = "qwen/qwen3.6-max-preview",
                 .name = "Qwen3.6 Max Preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
@@ -8076,6 +8585,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.6-plus",
                 .upstream_id = "qwen/qwen3.6-plus",
                 .name = "Qwen3.6 Plus",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
@@ -8099,6 +8609,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.7-flash",
                 .upstream_id = "qwen/qwen3.7-flash",
                 .name = "Qwen3.7 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
@@ -8123,6 +8634,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.7-max",
                 .upstream_id = "qwen/qwen3.7-max",
                 .name = "Qwen3.7 Max",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
@@ -8147,6 +8659,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.7-plus",
                 .upstream_id = "qwen/qwen3.7-plus",
                 .name = "Qwen3.7 Plus",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
@@ -8171,9 +8684,10 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.8-2.4t-a95b",
                 .upstream_id = "qwen/qwen3.8-2.4t-a95b",
                 .name = "Qwen3.8 2.4T A95B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
-                    .max_output_tokens = 262144,
+                    .max_output_tokens = 131072,
                 },
                 .cost = .{
                     .input = 2,
@@ -8194,14 +8708,15 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.8-27b",
                 .upstream_id = "qwen/qwen3.8-27b",
                 .name = "Qwen3.8 27B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
                 .cost = .{
-                    .input = 0.42,
-                    .output = 3,
-                    .cache_read = 0.085,
+                    .input = 0.214,
+                    .output = 2.55,
+                    .cache_read = 0.15,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -8217,6 +8732,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.8-flash",
                 .upstream_id = "qwen/qwen3.8-flash",
                 .name = "Qwen3.8 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
@@ -8238,9 +8754,10 @@ pub const providers = [_]Provider{
                 },
             },
             .{
-                .id = "qwen/qwen3.8-max",
-                .upstream_id = "qwen/qwen3.8-max",
-                .name = "Qwen3.8 Max",
+                .id = "qwen/qwen3.8-max-0902",
+                .upstream_id = "qwen/qwen3.8-max-0902",
+                .name = "Qwen3.8 Max 0902",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
@@ -8265,6 +8782,7 @@ pub const providers = [_]Provider{
                 .id = "rekaai/reka-edge",
                 .upstream_id = "rekaai/reka-edge",
                 .name = "Reka Edge",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 16384,
                     .max_output_tokens = 14745,
@@ -8285,6 +8803,7 @@ pub const providers = [_]Provider{
                 .id = "rekaai/reka-flash-3",
                 .upstream_id = "rekaai/reka-flash-3",
                 .name = "Reka Flash 3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 65536,
                     .max_output_tokens = 58982,
@@ -8305,6 +8824,7 @@ pub const providers = [_]Provider{
                 .id = "relace/relace-apply-3",
                 .upstream_id = "relace/relace-apply-3",
                 .name = "Relace Apply 3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 128000,
@@ -8325,6 +8845,7 @@ pub const providers = [_]Provider{
                 .id = "relace/relace-search",
                 .upstream_id = "relace/relace-search",
                 .name = "Relace Search",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 128000,
@@ -8342,9 +8863,34 @@ pub const providers = [_]Provider{
                 .dialect = .{},
             },
             .{
+                .id = "sakana/fugu-max",
+                .upstream_id = "sakana/fugu-max",
+                .name = "Fugu Max",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 6,
+                    .cache_read = 0.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
                 .id = "sakana/fugu-ultra",
                 .upstream_id = "sakana/fugu-ultra",
                 .name = "Fugu Ultra",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -8365,9 +8911,34 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "sakana/fugu-ultra-v2",
+                .upstream_id = "sakana/fugu-ultra-v2",
+                .name = "Fugu Ultra v2",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 5,
+                    .output = 30,
+                    .cache_read = 0.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
                 .id = "sakana/sakana-namazu",
                 .upstream_id = "sakana/sakana-namazu",
                 .name = "Sakana Namazu",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
@@ -8391,6 +8962,7 @@ pub const providers = [_]Provider{
                 .id = "sao10k/l3-lunaris-8b",
                 .upstream_id = "sao10k/l3-lunaris-8b",
                 .name = "Llama 3 8B Lunaris",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8192,
                     .max_output_tokens = 7372,
@@ -8411,6 +8983,7 @@ pub const providers = [_]Provider{
                 .id = "sao10k/l3.1-euryale-70b",
                 .upstream_id = "sao10k/l3.1-euryale-70b",
                 .name = "Llama 3.1 Euryale 70B v2.2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -8431,6 +9004,7 @@ pub const providers = [_]Provider{
                 .id = "sao10k/l3.3-euryale-70b",
                 .upstream_id = "sao10k/l3.3-euryale-70b",
                 .name = "Llama 3.3 Euryale 70B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -8451,6 +9025,7 @@ pub const providers = [_]Provider{
                 .id = "stepfun/step-3.5-flash",
                 .upstream_id = "stepfun/step-3.5-flash",
                 .name = "Step 3.5 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
@@ -8471,6 +9046,7 @@ pub const providers = [_]Provider{
                 .id = "stepfun/step-3.7-flash",
                 .upstream_id = "stepfun/step-3.7-flash",
                 .name = "Step 3.7 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 230400,
@@ -8494,6 +9070,7 @@ pub const providers = [_]Provider{
                 .id = "tencent/hunyuan-a13b-instruct",
                 .upstream_id = "tencent/hunyuan-a13b-instruct",
                 .name = "Hunyuan A13B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -8516,6 +9093,7 @@ pub const providers = [_]Provider{
                 .id = "tencent/hy-mt2-1.8b",
                 .upstream_id = "tencent/hy-mt2-1.8b",
                 .name = "Hy-MT2-1.8B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8192,
                     .max_output_tokens = 4096,
@@ -8536,6 +9114,7 @@ pub const providers = [_]Provider{
                 .id = "tencent/hy-mt2-30b-a3b",
                 .upstream_id = "tencent/hy-mt2-30b-a3b",
                 .name = "Hy-MT2-30B-A3B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8192,
                     .max_output_tokens = 4096,
@@ -8556,6 +9135,7 @@ pub const providers = [_]Provider{
                 .id = "tencent/hy-mt2-7b",
                 .upstream_id = "tencent/hy-mt2-7b",
                 .name = "Hy-MT2-7B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8192,
                     .max_output_tokens = 4096,
@@ -8576,6 +9156,7 @@ pub const providers = [_]Provider{
                 .id = "tencent/hy3",
                 .upstream_id = "tencent/hy3",
                 .name = "Hy3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 128000,
@@ -8599,6 +9180,7 @@ pub const providers = [_]Provider{
                 .id = "tencent/hy3-preview",
                 .upstream_id = "tencent/hy3-preview",
                 .name = "Hy3 preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
@@ -8622,6 +9204,7 @@ pub const providers = [_]Provider{
                 .id = "tencent/hy4-preview",
                 .upstream_id = "tencent/hy4-preview",
                 .name = "Hy4 preview",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 64000,
@@ -8645,6 +9228,7 @@ pub const providers = [_]Provider{
                 .id = "thedrummer/cydonia-24b-v4.1",
                 .upstream_id = "thedrummer/cydonia-24b-v4.1",
                 .name = "Cydonia 24B V4.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -8666,6 +9250,7 @@ pub const providers = [_]Provider{
                 .id = "thedrummer/skyfall-36b-v2",
                 .upstream_id = "thedrummer/skyfall-36b-v2",
                 .name = "Skyfall 36B V2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 29491,
@@ -8687,9 +9272,10 @@ pub const providers = [_]Provider{
                 .id = "thedrummer/unslopnemo-12b",
                 .upstream_id = "thedrummer/unslopnemo-12b",
                 .name = "UnslopNemo 12B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1024000,
-                    .max_output_tokens = 26214,
+                    .max_output_tokens = 819200,
                 },
                 .cost = .{
                     .input = 0.4,
@@ -8707,6 +9293,7 @@ pub const providers = [_]Provider{
                 .id = "thinkingmachines/inkling",
                 .upstream_id = "thinkingmachines/inkling",
                 .name = "Inkling",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 471859,
@@ -8730,6 +9317,7 @@ pub const providers = [_]Provider{
                 .id = "thinkingmachines/inkling-small",
                 .upstream_id = "thinkingmachines/inkling-small",
                 .name = "Inkling Small",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 262144,
@@ -8753,6 +9341,7 @@ pub const providers = [_]Provider{
                 .id = "thinkingmachines/inkling-small:free",
                 .upstream_id = "thinkingmachines/inkling-small:free",
                 .name = "Inkling Small (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 262144,
@@ -8775,6 +9364,7 @@ pub const providers = [_]Provider{
                 .id = "thinkingmachines/inkling:free",
                 .upstream_id = "thinkingmachines/inkling:free",
                 .name = "Inkling (free)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 262144,
@@ -8797,6 +9387,7 @@ pub const providers = [_]Provider{
                 .id = "undi95/remm-slerp-l2-13b",
                 .upstream_id = "undi95/remm-slerp-l2-13b",
                 .name = "ReMM SLERP 13B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 6144,
                     .max_output_tokens = 5529,
@@ -8817,6 +9408,7 @@ pub const providers = [_]Provider{
                 .id = "upstage/solar-pro-3",
                 .upstream_id = "upstage/solar-pro-3",
                 .name = "Solar Pro 3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
@@ -8840,14 +9432,15 @@ pub const providers = [_]Provider{
                 .id = "upstage/solar-pro4",
                 .upstream_id = "upstage/solar-pro4",
                 .name = "Solar Pro 4",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 524288,
                     .max_output_tokens = 131072,
                 },
                 .cost = .{
-                    .input = 0.03,
-                    .output = 0.12,
-                    .cache_read = 0.006,
+                    .input = 0.09,
+                    .output = 0.36,
+                    .cache_read = 0.018,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -8863,6 +9456,7 @@ pub const providers = [_]Provider{
                 .id = "writer/palmyra-x5",
                 .upstream_id = "writer/palmyra-x5",
                 .name = "Palmyra X5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1040000,
                     .max_output_tokens = 8192,
@@ -8883,6 +9477,7 @@ pub const providers = [_]Provider{
                 .id = "x-ai/grok-4.20",
                 .upstream_id = "x-ai/grok-4.20",
                 .name = "Grok 4.20",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 2000000,
                     .max_output_tokens = 1800000,
@@ -8906,6 +9501,7 @@ pub const providers = [_]Provider{
                 .id = "x-ai/grok-4.20-multi-agent",
                 .upstream_id = "x-ai/grok-4.20-multi-agent",
                 .name = "Grok 4.20 Multi-Agent",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 2000000,
                     .max_output_tokens = 1800000,
@@ -8929,6 +9525,7 @@ pub const providers = [_]Provider{
                 .id = "x-ai/grok-4.3",
                 .upstream_id = "x-ai/grok-4.3",
                 .name = "Grok 4.3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 900000,
@@ -8952,6 +9549,7 @@ pub const providers = [_]Provider{
                 .id = "x-ai/grok-4.5",
                 .upstream_id = "x-ai/grok-4.5",
                 .name = "Grok 4.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 500000,
                     .max_output_tokens = 450000,
@@ -8975,6 +9573,7 @@ pub const providers = [_]Provider{
                 .id = "x-ai/grok-4.6",
                 .upstream_id = "x-ai/grok-4.6",
                 .name = "Grok 4.6",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 500000,
                     .max_output_tokens = 450000,
@@ -8998,6 +9597,7 @@ pub const providers = [_]Provider{
                 .id = "x-ai/grok-build-0.1",
                 .upstream_id = "x-ai/grok-build-0.1",
                 .name = "Grok Build 0.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 230400,
@@ -9019,6 +9619,7 @@ pub const providers = [_]Provider{
                 .id = "xiaomi/mimo-v2.5",
                 .upstream_id = "xiaomi/mimo-v2.5",
                 .name = "MiMo-V2.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 131072,
@@ -9043,6 +9644,7 @@ pub const providers = [_]Provider{
                 .id = "xiaomi/mimo-v2.5-pro",
                 .upstream_id = "xiaomi/mimo-v2.5-pro",
                 .name = "MiMo-V2.5-Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 131072,
@@ -9067,6 +9669,7 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-4.5",
                 .upstream_id = "z-ai/glm-4.5",
                 .name = "GLM-4.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 98304,
@@ -9090,6 +9693,7 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-4.5-air",
                 .upstream_id = "z-ai/glm-4.5-air",
                 .name = "GLM-4.5-Air",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 98304,
@@ -9113,6 +9717,7 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-4.5v",
                 .upstream_id = "z-ai/glm-4.5v",
                 .name = "GLM-4.5V",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 65536,
                     .max_output_tokens = 16384,
@@ -9136,14 +9741,15 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-4.6",
                 .upstream_id = "z-ai/glm-4.6",
                 .name = "GLM-4.6",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 204800,
-                    .max_output_tokens = 131072,
+                    .max_output_tokens = 16384,
                 },
                 .cost = .{
-                    .input = 0.55,
-                    .output = 2.2,
-                    .cache_read = 0.11,
+                    .input = 0.43,
+                    .output = 1.75,
+                    .cache_read = 0.08,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -9159,6 +9765,7 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-4.6v",
                 .upstream_id = "z-ai/glm-4.6v",
                 .name = "GLM-4.6V",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -9182,6 +9789,7 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-4.7",
                 .upstream_id = "z-ai/glm-4.7",
                 .name = "GLM-4.7",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
@@ -9206,16 +9814,16 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-4.7-flash",
                 .upstream_id = "z-ai/glm-4.7-flash",
                 .name = "GLM-4.7-Flash",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 202752,
-                    .max_output_tokens = 16384,
+                    .context_window = 200000,
+                    .max_output_tokens = 117964,
                 },
                 .cost = .{
-                    .input = 0.06,
+                    .input = 0.0605,
                     .output = 0.4,
-                    .cache_read = 0.01,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9230,6 +9838,7 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-5",
                 .upstream_id = "z-ai/glm-5",
                 .name = "GLM-5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 128000,
@@ -9254,6 +9863,7 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-5-turbo",
                 .upstream_id = "z-ai/glm-5-turbo",
                 .name = "GLM-5-Turbo",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 202752,
                     .max_output_tokens = 131072,
@@ -9278,6 +9888,7 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-5.1",
                 .upstream_id = "z-ai/glm-5.1",
                 .name = "GLM-5.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 128000,
@@ -9302,14 +9913,15 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-5.2",
                 .upstream_id = "z-ai/glm-5.2",
                 .name = "GLM-5.2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
                 .cost = .{
-                    .input = 0.966,
-                    .output = 3.036,
-                    .cache_read = 0.1932,
+                    .input = 0.6832,
+                    .output = 2.1472,
+                    .cache_read = 0.12688,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -9323,39 +9935,18 @@ pub const providers = [_]Provider{
                 },
             },
             .{
-                .id = "z-ai/glm-5.2:free",
-                .upstream_id = "z-ai/glm-5.2:free",
-                .name = "GLM 5.2 (free)",
-                .limits = .{
-                    .context_window = 256000,
-                    .max_output_tokens = 230400,
-                },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{.text},
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{
-                    .thinking_format = .openrouter,
-                },
-            },
-            .{
                 .id = "z-ai/glm-5.3",
                 .upstream_id = "z-ai/glm-5.3",
                 .name = "GLM-5.3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1310720,
-                    .max_output_tokens = 262144,
+                    .max_output_tokens = 943717,
                 },
                 .cost = .{
                     .input = 1.4,
                     .output = 4.4,
-                    .cache_read = 0.14,
+                    .cache_read = 0.26,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
                 .modalities = .{
@@ -9371,14 +9962,15 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-5.3-flash",
                 .upstream_id = "z-ai/glm-5.3-flash",
                 .name = "GLM-5.3-Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1310720,
                     .max_output_tokens = 131072,
                 },
                 .cost = .{
-                    .input = 0.075,
-                    .output = 0.25,
-                    .cache_read = 0.015,
+                    .input = 0.15,
+                    .output = 0.5,
+                    .cache_read = 0.03,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
                 .modalities = .{
@@ -9394,6 +9986,7 @@ pub const providers = [_]Provider{
                 .id = "z-ai/glm-5v-turbo",
                 .upstream_id = "z-ai/glm-5v-turbo",
                 .name = "GLM-5V-Turbo",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 202752,
                     .max_output_tokens = 131072,
@@ -9417,6 +10010,7 @@ pub const providers = [_]Provider{
                 .id = "~anthropic/claude-fable-latest",
                 .upstream_id = "~anthropic/claude-fable-latest",
                 .name = "Claude Fable Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -9440,7 +10034,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "~anthropic/claude-haiku-latest",
                 .upstream_id = "~anthropic/claude-haiku-latest",
-                .name = "Anthropic Claude Haiku Latest",
+                .name = "Claude Haiku Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
@@ -9465,6 +10060,7 @@ pub const providers = [_]Provider{
                 .id = "~anthropic/claude-opus-latest",
                 .upstream_id = "~anthropic/claude-opus-latest",
                 .name = "Claude Opus Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -9488,7 +10084,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "~anthropic/claude-sonnet-latest",
                 .upstream_id = "~anthropic/claude-sonnet-latest",
-                .name = "Anthropic Claude Sonnet Latest",
+                .name = "Claude Sonnet Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
@@ -9513,14 +10110,15 @@ pub const providers = [_]Provider{
                 .id = "~deepseek/deepseek-v4-flash-latest",
                 .upstream_id = "~deepseek/deepseek-v4-flash-latest",
                 .name = "DeepSeek V4 Flash Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1310720,
-                    .max_output_tokens = 393216,
+                    .max_output_tokens = 131072,
                 },
                 .cost = .{
-                    .input = 0.05,
-                    .output = 0.16,
-                    .cache_read = 0.013,
+                    .input = 0.0352,
+                    .output = 0.1056,
+                    .cache_read = 0.00112,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -9535,7 +10133,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "~google/gemini-flash-latest",
                 .upstream_id = "~google/gemini-flash-latest",
-                .name = "Google Gemini Flash Latest",
+                .name = "Gemini Flash Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -9559,7 +10158,8 @@ pub const providers = [_]Provider{
             .{
                 .id = "~google/gemini-pro-latest",
                 .upstream_id = "~google/gemini-pro-latest",
-                .name = "Google Gemini Pro Latest",
+                .name = "Gemini Pro Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
@@ -9583,15 +10183,16 @@ pub const providers = [_]Provider{
             .{
                 .id = "~moonshotai/kimi-latest",
                 .upstream_id = "~moonshotai/kimi-latest",
-                .name = "MoonshotAI Kimi Latest",
+                .name = "Kimi Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
                 .cost = .{
-                    .input = 2.5,
-                    .output = 14,
-                    .cache_read = 0.29,
+                    .input = 2.1,
+                    .output = 10.95,
+                    .cache_read = 0.23,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
@@ -9604,9 +10205,84 @@ pub const providers = [_]Provider{
                 },
             },
             .{
-                .id = "~openai/gpt-latest",
-                .upstream_id = "~openai/gpt-latest",
-                .name = "OpenAI GPT Latest",
+                .id = "~openai/gpt-astra-latest",
+                .upstream_id = "~openai/gpt-astra-latest",
+                .name = "GPT Astra Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 10,
+                    .output = 50,
+                    .cache_read = 1,
+                    .cache_write = 12.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
+                .id = "~openai/gpt-luna-latest",
+                .upstream_id = "~openai/gpt-luna-latest",
+                .name = "GPT Luna Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.2,
+                    .output = 1.2,
+                    .cache_read = 0.02,
+                    .cache_write = 0.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
+                .id = "~openai/gpt-mini-latest",
+                .upstream_id = "~openai/gpt-mini-latest",
+                .name = "GPT Mini Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.75,
+                    .output = 4.5,
+                    .cache_read = 0.075,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
+                .id = "~openai/gpt-sol-latest",
+                .upstream_id = "~openai/gpt-sol-latest",
+                .name = "GPT Sol Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
@@ -9628,24 +10304,26 @@ pub const providers = [_]Provider{
                 },
             },
             .{
-                .id = "~openai/gpt-mini-latest",
-                .upstream_id = "~openai/gpt-mini-latest",
-                .name = "OpenAI GPT Mini Latest",
+                .id = "~openai/gpt-terra-latest",
+                .upstream_id = "~openai/gpt-terra-latest",
+                .name = "GPT Terra Latest",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 400000,
+                    .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
                 .cost = .{
-                    .input = 0.75,
-                    .output = 4.5,
-                    .cache_read = 0.075,
+                    .input = 2,
+                    .output = 12,
+                    .cache_read = 0.2,
+                    .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openrouter,
                 },
@@ -9654,6 +10332,7 @@ pub const providers = [_]Provider{
                 .id = "~x-ai/grok-latest",
                 .upstream_id = "~x-ai/grok-latest",
                 .name = "Grok Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 500000,
                     .max_output_tokens = 450000,
@@ -9677,9 +10356,10 @@ pub const providers = [_]Provider{
                 .id = "~z-ai/glm-flash-latest",
                 .upstream_id = "~z-ai/glm-flash-latest",
                 .name = "GLM Flash Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1310720,
-                    .max_output_tokens = 943718,
+                    .max_output_tokens = 131072,
                 },
                 .cost = .{
                     .input = 0.075,
@@ -9700,14 +10380,15 @@ pub const providers = [_]Provider{
                 .id = "~z-ai/glm-latest",
                 .upstream_id = "~z-ai/glm-latest",
                 .name = "GLM Latest",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1310720,
-                    .max_output_tokens = 235929,
+                    .max_output_tokens = 943718,
                 },
                 .cost = .{
-                    .input = 1.15,
-                    .output = 3.5,
-                    .cache_read = 0.1,
+                    .input = 0.92,
+                    .output = 3.1372,
+                    .cache_read = 0.184,
                 },
                 .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
                 .modalities = .{
@@ -9725,31 +10406,55 @@ pub const providers = [_]Provider{
         .id = "deepseek",
         .name = "DeepSeek",
         .auth = .{ .api_key = "DEEPSEEK_API_KEY" },
-        .route = .{
-            .base_url = "https://api.deepseek.com/v1",
-            .protocol = .openai_chat,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = .automatic,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://api.deepseek.com/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard, .cache = .automatic },
         },
         .models = &.{
             .{
-                .id = "deepseek-v4-flash",
-                .upstream_id = "deepseek-v4-flash",
-                .name = "DeepSeek V4 Flash",
+                .id = "deepseek-flash",
+                .upstream_id = "deepseek-flash",
+                .name = "DeepSeek V4.1 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
                 .cost = .{
-                    .input = 0.14,
-                    .output = 0.28,
-                    .cache_read = 0.0028,
+                    .input = 0.15,
+                    .output = 0.6,
+                    .cache_read = 0.003,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
-                    .input = &.{.text},
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .deepseek,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "deepseek-v4-flash",
+                .upstream_id = "deepseek-v4-flash",
+                .name = "DeepSeek V4 Flash",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.6,
+                    .cache_read = 0.003,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
@@ -9762,21 +10467,21 @@ pub const providers = [_]Provider{
                 .id = "deepseek-v4-flash-vision-exp",
                 .upstream_id = "deepseek-v4-flash-vision-exp",
                 .name = "DeepSeek V4 Flash Vision Exp",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
                 .cost = .{
-                    .input = 0.14,
-                    .output = 0.28,
-                    .cache_read = 0.0028,
+                    .input = 0.15,
+                    .output = 0.6,
+                    .cache_read = 0.003,
                 },
                 .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
                 },
-                .status = "beta",
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .deepseek,
@@ -9787,6 +10492,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek-v4-pro",
                 .upstream_id = "deepseek-v4-pro",
                 .name = "DeepSeek V4 Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
@@ -9813,19 +10519,18 @@ pub const providers = [_]Provider{
         .id = "groq",
         .name = "Groq",
         .auth = .{ .api_key = "GROQ_API_KEY" },
-        .route = .{
-            .base_url = "https://api.groq.com/openai/v1",
-            .protocol = .openai_chat,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = null,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://api.groq.com/openai/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard },
         },
         .models = &.{
             .{
                 .id = "allam-2-7b",
                 .upstream_id = "allam-2-7b",
                 .name = "ALLaM-2-7b",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 4096,
                     .max_output_tokens = 4096,
@@ -9846,6 +10551,7 @@ pub const providers = [_]Provider{
                 .id = "canopylabs/orpheus-arabic-saudi",
                 .upstream_id = "canopylabs/orpheus-arabic-saudi",
                 .name = "Canopy Labs Orpheus Arabic Saudi",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 4000,
                     .max_output_tokens = 50000,
@@ -9864,6 +10570,7 @@ pub const providers = [_]Provider{
                 .id = "canopylabs/orpheus-v1-english",
                 .upstream_id = "canopylabs/orpheus-v1-english",
                 .name = "Canopy Labs Orpheus V1 English",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 4000,
                     .max_output_tokens = 50000,
@@ -9882,6 +10589,7 @@ pub const providers = [_]Provider{
                 .id = "groq/compound",
                 .upstream_id = "groq/compound",
                 .name = "Compound",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 8192,
@@ -9899,6 +10607,7 @@ pub const providers = [_]Provider{
                 .id = "groq/compound-mini",
                 .upstream_id = "groq/compound-mini",
                 .name = "Compound Mini",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 8192,
@@ -9916,6 +10625,7 @@ pub const providers = [_]Provider{
                 .id = "llama-3.1-8b-instant",
                 .upstream_id = "llama-3.1-8b-instant",
                 .name = "Llama 3.1 8B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
@@ -9936,6 +10646,7 @@ pub const providers = [_]Provider{
                 .id = "llama-3.3-70b-versatile",
                 .upstream_id = "llama-3.3-70b-versatile",
                 .name = "Llama 3.3 70B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -9956,6 +10667,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/llama-prompt-guard-2-22m",
                 .upstream_id = "meta-llama/llama-prompt-guard-2-22m",
                 .name = "Llama Prompt Guard 2 22M",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 512,
                     .max_output_tokens = 512,
@@ -9977,6 +10689,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/llama-prompt-guard-2-86m",
                 .upstream_id = "meta-llama/llama-prompt-guard-2-86m",
                 .name = "Prompt Guard 2 86M",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 512,
                     .max_output_tokens = 512,
@@ -9998,6 +10711,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-oss-120b",
                 .upstream_id = "openai/gpt-oss-120b",
                 .name = "GPT OSS 120B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 65536,
@@ -10021,6 +10735,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-oss-20b",
                 .upstream_id = "openai/gpt-oss-20b",
                 .name = "GPT OSS 20B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 65536,
@@ -10044,6 +10759,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-oss-safeguard-20b",
                 .upstream_id = "openai/gpt-oss-safeguard-20b",
                 .name = "Safety GPT OSS 20B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 65536,
@@ -10067,6 +10783,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.6-27b",
                 .upstream_id = "qwen/qwen3.6-27b",
                 .name = "Qwen3.6 27B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -10090,6 +10807,7 @@ pub const providers = [_]Provider{
                 .id = "qwen/qwen3.8-27b",
                 .upstream_id = "qwen/qwen3.8-27b",
                 .name = "Qwen3.8 27B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131042,
                     .max_output_tokens = 16384,
@@ -10112,6 +10830,7 @@ pub const providers = [_]Provider{
                 .id = "whisper-large-v3",
                 .upstream_id = "whisper-large-v3",
                 .name = "Whisper",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -10129,6 +10848,7 @@ pub const providers = [_]Provider{
                 .id = "whisper-large-v3-turbo",
                 .upstream_id = "whisper-large-v3-turbo",
                 .name = "Whisper Large V3 Turbo",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -10148,19 +10868,18 @@ pub const providers = [_]Provider{
         .id = "xai",
         .name = "xAI",
         .auth = .{ .api_key = "XAI_API_KEY" },
-        .route = .{
-            .base_url = "https://api.x.ai/v1",
-            .protocol = .openai_chat,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = null,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://api.x.ai/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard },
         },
         .models = &.{
             .{
                 .id = "grok-4.20-0309-non-reasoning",
                 .upstream_id = "grok-4.20-0309-non-reasoning",
                 .name = "Grok 4.20 (Non-Reasoning)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
@@ -10182,6 +10901,7 @@ pub const providers = [_]Provider{
                 .id = "grok-4.20-0309-reasoning",
                 .upstream_id = "grok-4.20-0309-reasoning",
                 .name = "Grok 4.20 (Reasoning)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
@@ -10203,6 +10923,7 @@ pub const providers = [_]Provider{
                 .id = "grok-4.20-multi-agent-0309",
                 .upstream_id = "grok-4.20-multi-agent-0309",
                 .name = "Grok 4.20 Multi-Agent",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
@@ -10226,6 +10947,7 @@ pub const providers = [_]Provider{
                 .id = "grok-4.3",
                 .upstream_id = "grok-4.3",
                 .name = "Grok 4.3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
@@ -10249,6 +10971,7 @@ pub const providers = [_]Provider{
                 .id = "grok-4.5",
                 .upstream_id = "grok-4.5",
                 .name = "Grok 4.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
@@ -10272,6 +10995,7 @@ pub const providers = [_]Provider{
                 .id = "grok-4.6",
                 .upstream_id = "grok-4.6",
                 .name = "Grok 4.6",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
@@ -10295,6 +11019,7 @@ pub const providers = [_]Provider{
                 .id = "grok-build-0.1",
                 .upstream_id = "grok-build-0.1",
                 .name = "Grok Build 0.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 256000,
@@ -10316,8 +11041,9 @@ pub const providers = [_]Provider{
                 .id = "grok-imagine-image",
                 .upstream_id = "grok-imagine-image",
                 .name = "Grok Imagine Image",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 8000,
+                    .context_window = 16000,
                     .max_output_tokens = 0,
                 },
                 .cost = .{},
@@ -10333,8 +11059,9 @@ pub const providers = [_]Provider{
                 .id = "grok-imagine-image-2.0",
                 .upstream_id = "grok-imagine-image-2.0",
                 .name = "Grok Imagine Image 2.0",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 8000,
+                    .context_window = 64000,
                     .max_output_tokens = 0,
                 },
                 .cost = .{},
@@ -10350,8 +11077,9 @@ pub const providers = [_]Provider{
                 .id = "grok-imagine-image-quality",
                 .upstream_id = "grok-imagine-image-quality",
                 .name = "Grok Imagine Image Quality",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 8000,
+                    .context_window = 16000,
                     .max_output_tokens = 0,
                 },
                 .cost = .{},
@@ -10367,6 +11095,7 @@ pub const providers = [_]Provider{
                 .id = "grok-imagine-video",
                 .upstream_id = "grok-imagine-video",
                 .name = "Grok Imagine Video",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1024,
                     .max_output_tokens = 0,
@@ -10384,6 +11113,7 @@ pub const providers = [_]Provider{
                 .id = "grok-imagine-video-1.5",
                 .upstream_id = "grok-imagine-video-1.5",
                 .name = "Grok Imagine Video 1.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1024,
                     .max_output_tokens = 0,
@@ -10403,19 +11133,18 @@ pub const providers = [_]Provider{
         .id = "xai-grok",
         .name = "xAI",
         .auth = .{ .oauth = "xai" },
-        .route = .{
-            .base_url = "https://api.x.ai/v1",
-            .protocol = .openai_chat,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = null,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://api.x.ai/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard },
         },
         .models = &.{
             .{
                 .id = "grok-4.20-0309-non-reasoning",
                 .upstream_id = "grok-4.20-0309-non-reasoning",
                 .name = "Grok 4.20 (Non-Reasoning)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
@@ -10437,6 +11166,7 @@ pub const providers = [_]Provider{
                 .id = "grok-4.20-0309-reasoning",
                 .upstream_id = "grok-4.20-0309-reasoning",
                 .name = "Grok 4.20 (Reasoning)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
@@ -10458,6 +11188,7 @@ pub const providers = [_]Provider{
                 .id = "grok-4.20-multi-agent-0309",
                 .upstream_id = "grok-4.20-multi-agent-0309",
                 .name = "Grok 4.20 Multi-Agent",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
@@ -10481,6 +11212,7 @@ pub const providers = [_]Provider{
                 .id = "grok-4.3",
                 .upstream_id = "grok-4.3",
                 .name = "Grok 4.3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
@@ -10504,6 +11236,7 @@ pub const providers = [_]Provider{
                 .id = "grok-4.5",
                 .upstream_id = "grok-4.5",
                 .name = "Grok 4.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
@@ -10527,6 +11260,7 @@ pub const providers = [_]Provider{
                 .id = "grok-4.6",
                 .upstream_id = "grok-4.6",
                 .name = "Grok 4.6",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
@@ -10550,6 +11284,7 @@ pub const providers = [_]Provider{
                 .id = "grok-build-0.1",
                 .upstream_id = "grok-build-0.1",
                 .name = "Grok Build 0.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 256000,
@@ -10571,8 +11306,9 @@ pub const providers = [_]Provider{
                 .id = "grok-imagine-image",
                 .upstream_id = "grok-imagine-image",
                 .name = "Grok Imagine Image",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 8000,
+                    .context_window = 16000,
                     .max_output_tokens = 0,
                 },
                 .cost = .{},
@@ -10588,8 +11324,9 @@ pub const providers = [_]Provider{
                 .id = "grok-imagine-image-2.0",
                 .upstream_id = "grok-imagine-image-2.0",
                 .name = "Grok Imagine Image 2.0",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 8000,
+                    .context_window = 64000,
                     .max_output_tokens = 0,
                 },
                 .cost = .{},
@@ -10605,8 +11342,9 @@ pub const providers = [_]Provider{
                 .id = "grok-imagine-image-quality",
                 .upstream_id = "grok-imagine-image-quality",
                 .name = "Grok Imagine Image Quality",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 8000,
+                    .context_window = 16000,
                     .max_output_tokens = 0,
                 },
                 .cost = .{},
@@ -10622,6 +11360,7 @@ pub const providers = [_]Provider{
                 .id = "grok-imagine-video",
                 .upstream_id = "grok-imagine-video",
                 .name = "Grok Imagine Video",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1024,
                     .max_output_tokens = 0,
@@ -10639,6 +11378,7 @@ pub const providers = [_]Provider{
                 .id = "grok-imagine-video-1.5",
                 .upstream_id = "grok-imagine-video-1.5",
                 .name = "Grok Imagine Video 1.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1024,
                     .max_output_tokens = 0,
@@ -10658,19 +11398,18 @@ pub const providers = [_]Provider{
         .id = "mistral",
         .name = "Mistral",
         .auth = .{ .api_key = "MISTRAL_API_KEY" },
-        .route = .{
-            .base_url = "https://api.mistral.ai/v1",
-            .protocol = .openai_chat,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = null,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://api.mistral.ai/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard },
         },
         .models = &.{
             .{
                 .id = "codestral-latest",
                 .upstream_id = "codestral-latest",
                 .name = "Codestral (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 4096,
@@ -10691,6 +11430,7 @@ pub const providers = [_]Provider{
                 .id = "magistral-medium-latest",
                 .upstream_id = "magistral-medium-latest",
                 .name = "Magistral Medium (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -10711,6 +11451,7 @@ pub const providers = [_]Provider{
                 .id = "magistral-small",
                 .upstream_id = "magistral-small",
                 .name = "Magistral Small",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
@@ -10731,6 +11472,7 @@ pub const providers = [_]Provider{
                 .id = "ministral-3b-latest",
                 .upstream_id = "ministral-3b-latest",
                 .name = "Ministral 3B (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
@@ -10751,6 +11493,7 @@ pub const providers = [_]Provider{
                 .id = "ministral-8b-latest",
                 .upstream_id = "ministral-8b-latest",
                 .name = "Ministral 8B (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
@@ -10771,6 +11514,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-embed",
                 .upstream_id = "mistral-embed",
                 .name = "Mistral Embed",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8000,
                     .max_output_tokens = 3072,
@@ -10791,6 +11535,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-large-2411",
                 .upstream_id = "mistral-large-2411",
                 .name = "Mistral Large 2.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
@@ -10811,6 +11556,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-large-2512",
                 .upstream_id = "mistral-large-2512",
                 .name = "Mistral Large 3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
@@ -10831,6 +11577,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-large-latest",
                 .upstream_id = "mistral-large-latest",
                 .name = "Mistral Large (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
@@ -10851,6 +11598,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-medium-2505",
                 .upstream_id = "mistral-medium-2505",
                 .name = "Mistral Medium 3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
@@ -10871,6 +11619,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-medium-2508",
                 .upstream_id = "mistral-medium-2508",
                 .name = "Mistral Medium 3.1",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
@@ -10891,6 +11640,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-medium-2604",
                 .upstream_id = "mistral-medium-2604",
                 .name = "Mistral Medium 3.5",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
@@ -10913,6 +11663,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-medium-latest",
                 .upstream_id = "mistral-medium-latest",
                 .name = "Mistral Medium (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
@@ -10935,6 +11686,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-nemo",
                 .upstream_id = "mistral-nemo",
                 .name = "Mistral Nemo",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
@@ -10955,6 +11707,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-small-2506",
                 .upstream_id = "mistral-small-2506",
                 .name = "Mistral Small 3.2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
@@ -10975,6 +11728,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-small-2603",
                 .upstream_id = "mistral-small-2603",
                 .name = "Mistral Small 4",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 256000,
@@ -10997,6 +11751,7 @@ pub const providers = [_]Provider{
                 .id = "mistral-small-latest",
                 .upstream_id = "mistral-small-latest",
                 .name = "Mistral Small (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 256000,
                     .max_output_tokens = 256000,
@@ -11019,6 +11774,7 @@ pub const providers = [_]Provider{
                 .id = "open-mistral-7b",
                 .upstream_id = "open-mistral-7b",
                 .name = "Mistral 7B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8000,
                     .max_output_tokens = 8000,
@@ -11039,6 +11795,7 @@ pub const providers = [_]Provider{
                 .id = "open-mixtral-8x22b",
                 .upstream_id = "open-mixtral-8x22b",
                 .name = "Mixtral 8x22B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 64000,
                     .max_output_tokens = 64000,
@@ -11059,6 +11816,7 @@ pub const providers = [_]Provider{
                 .id = "open-mixtral-8x7b",
                 .upstream_id = "open-mixtral-8x7b",
                 .name = "Mixtral 8x7B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32000,
                     .max_output_tokens = 32000,
@@ -11079,6 +11837,7 @@ pub const providers = [_]Provider{
                 .id = "pixtral-12b",
                 .upstream_id = "pixtral-12b",
                 .name = "Pixtral 12B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
@@ -11099,6 +11858,7 @@ pub const providers = [_]Provider{
                 .id = "pixtral-large-latest",
                 .upstream_id = "pixtral-large-latest",
                 .name = "Pixtral Large (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
@@ -11119,6 +11879,7 @@ pub const providers = [_]Provider{
                 .id = "voxtral-mini-latest",
                 .upstream_id = "voxtral-mini-latest",
                 .name = "Voxtral Mini (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -11136,6 +11897,7 @@ pub const providers = [_]Provider{
                 .id = "voxtral-mini-tts-latest",
                 .upstream_id = "voxtral-mini-tts-latest",
                 .name = "Voxtral Mini TTS (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 0,
                     .max_output_tokens = 0,
@@ -11153,6 +11915,7 @@ pub const providers = [_]Provider{
                 .id = "voxtral-small-latest",
                 .upstream_id = "voxtral-small-latest",
                 .name = "Voxtral Small (latest)",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32000,
                     .max_output_tokens = 32000,
@@ -11173,6 +11936,7 @@ pub const providers = [_]Provider{
                 .id = "zai-glm-5-2",
                 .upstream_id = "zai-glm-5-2",
                 .name = "GLM-5.2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
@@ -11199,19 +11963,18 @@ pub const providers = [_]Provider{
         .id = "togetherai",
         .name = "Together AI",
         .auth = .{ .api_key = "TOGETHER_API_KEY" },
-        .route = .{
-            .base_url = "https://api.together.ai/v1",
-            .protocol = .openai_chat,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = null,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://api.together.ai/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard },
         },
         .models = &.{
             .{
                 .id = "LiquidAI/LFM2-24B-A2B",
                 .upstream_id = "LiquidAI/LFM2-24B-A2B",
                 .name = "LFM2-24B-A2B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 32768,
@@ -11232,6 +11995,7 @@ pub const providers = [_]Provider{
                 .id = "MiniMaxAI/MiniMax-M2.7",
                 .upstream_id = "MiniMaxAI/MiniMax-M2.7",
                 .name = "MiniMax-M2.7",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 202752,
                     .max_output_tokens = 131072,
@@ -11253,6 +12017,7 @@ pub const providers = [_]Provider{
                 .id = "MiniMaxAI/MiniMax-M3",
                 .upstream_id = "MiniMaxAI/MiniMax-M3",
                 .name = "MiniMax-M3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 524288,
                     .max_output_tokens = 250000,
@@ -11274,6 +12039,7 @@ pub const providers = [_]Provider{
                 .id = "Qwen/Qwen2.5-7B-Instruct-Turbo",
                 .upstream_id = "Qwen/Qwen2.5-7B-Instruct-Turbo",
                 .name = "Qwen 2.5 7B Instruct Turbo",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 32768,
@@ -11294,6 +12060,7 @@ pub const providers = [_]Provider{
                 .id = "Qwen/Qwen3.5-9B",
                 .upstream_id = "Qwen/Qwen3.5-9B",
                 .name = "Qwen3.5 9B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
@@ -11316,6 +12083,7 @@ pub const providers = [_]Provider{
                 .id = "Qwen/Qwen3.6-Plus",
                 .upstream_id = "Qwen/Qwen3.6-Plus",
                 .name = "Qwen3.6 Plus",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 500000,
@@ -11338,6 +12106,7 @@ pub const providers = [_]Provider{
                 .id = "Qwen/Qwen3.7-Max",
                 .upstream_id = "Qwen/Qwen3.7-Max",
                 .name = "Qwen3.7 Max",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 500000,
@@ -11359,6 +12128,7 @@ pub const providers = [_]Provider{
                 .id = "deepcogito/cogito-v2-1-671b",
                 .upstream_id = "deepcogito/cogito-v2-1-671b",
                 .name = "Cogito v2.1 671B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 163840,
                     .max_output_tokens = 163840,
@@ -11381,6 +12151,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek-ai/DeepSeek-V4-Flash-0731",
                 .upstream_id = "deepseek-ai/DeepSeek-V4-Flash-0731",
                 .name = "DeepSeek V4 Flash 0731",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
@@ -11405,6 +12176,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek-ai/DeepSeek-V4-Pro",
                 .upstream_id = "deepseek-ai/DeepSeek-V4-Pro",
                 .name = "DeepSeek V4 Pro",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 512000,
                     .max_output_tokens = 384000,
@@ -11429,6 +12201,7 @@ pub const providers = [_]Provider{
                 .id = "deepseek-ai/DeepSeek-V4-Pro-0813",
                 .upstream_id = "deepseek-ai/DeepSeek-V4-Pro-0813",
                 .name = "DeepSeek V4 Pro 0813",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 384000,
@@ -11450,9 +12223,35 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "deepseek-ai/DeepSeek-V4.1-Flash",
+                .upstream_id = "deepseek-ai/DeepSeek-V4.1-Flash",
+                .name = "DeepSeek V4.1 Flash",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.3,
+                    .output = 1.2,
+                    .cache_read = 0.006,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
                 .id = "google/gemma-3n-E4B-it",
                 .upstream_id = "google/gemma-3n-E4B-it",
                 .name = "Gemma 3N E4B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32768,
                     .max_output_tokens = 32768,
@@ -11473,6 +12272,7 @@ pub const providers = [_]Provider{
                 .id = "google/gemma-4-31B-it",
                 .upstream_id = "google/gemma-4-31B-it",
                 .name = "Gemma 4 31B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
@@ -11493,6 +12293,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/Llama-3.3-70B-Instruct-Turbo",
                 .upstream_id = "meta-llama/Llama-3.3-70B-Instruct-Turbo",
                 .name = "Llama 3.3 70B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
@@ -11513,6 +12314,7 @@ pub const providers = [_]Provider{
                 .id = "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
                 .upstream_id = "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
                 .name = "Meta Llama 3 8B Instruct Lite",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 8192,
                     .max_output_tokens = 8192,
@@ -11533,6 +12335,7 @@ pub const providers = [_]Provider{
                 .id = "moonshotai/Kimi-K2.6",
                 .upstream_id = "moonshotai/Kimi-K2.6",
                 .name = "Kimi K2.6",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 131000,
@@ -11556,6 +12359,7 @@ pub const providers = [_]Provider{
                 .id = "moonshotai/Kimi-K2.7-Code",
                 .upstream_id = "moonshotai/Kimi-K2.7-Code",
                 .name = "Kimi K2.7 Code",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
@@ -11577,6 +12381,7 @@ pub const providers = [_]Provider{
                 .id = "moonshotai/Kimi-K3",
                 .upstream_id = "moonshotai/Kimi-K3",
                 .name = "Kimi K3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
@@ -11601,6 +12406,7 @@ pub const providers = [_]Provider{
                 .id = "nvidia/nemotron-3-ultra-550b-a55b",
                 .upstream_id = "nvidia/nemotron-3-ultra-550b-a55b",
                 .name = "Nemotron 3 Ultra 550B A55B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 512300,
                     .max_output_tokens = 512300,
@@ -11624,6 +12430,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-oss-120b",
                 .upstream_id = "openai/gpt-oss-120b",
                 .name = "GPT OSS 120B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
@@ -11646,6 +12453,7 @@ pub const providers = [_]Provider{
                 .id = "openai/gpt-oss-20b",
                 .upstream_id = "openai/gpt-oss-20b",
                 .name = "GPT OSS 20B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
@@ -11668,6 +12476,7 @@ pub const providers = [_]Provider{
                 .id = "pearl-ai/gemma-4-31b-it",
                 .upstream_id = "pearl-ai/gemma-4-31b-it",
                 .name = "Pearl AI Gemma 4 31B Instruct",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 32000,
                     .max_output_tokens = 32000,
@@ -11688,6 +12497,7 @@ pub const providers = [_]Provider{
                 .id = "thinkingmachines/Inkling",
                 .upstream_id = "thinkingmachines/Inkling",
                 .name = "Inkling",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 524288,
                     .max_output_tokens = 131072,
@@ -11711,6 +12521,7 @@ pub const providers = [_]Provider{
                 .id = "zai-org/GLM-5.2",
                 .upstream_id = "zai-org/GLM-5.2",
                 .name = "GLM-5.2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 512000,
                     .max_output_tokens = 164000,
@@ -11735,6 +12546,7 @@ pub const providers = [_]Provider{
                 .id = "zai-org/GLM-5.3",
                 .upstream_id = "zai-org/GLM-5.3",
                 .name = "GLM-5.3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 262144,
@@ -11759,6 +12571,7 @@ pub const providers = [_]Provider{
                 .id = "zai-org/GLM-5.3-Flash",
                 .upstream_id = "zai-org/GLM-5.3-Flash",
                 .name = "GLM-5.3-Flash",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048575,
                     .max_output_tokens = 400000,
@@ -11785,42 +12598,18 @@ pub const providers = [_]Provider{
         .id = "cerebras",
         .name = "Cerebras",
         .auth = .{ .api_key = "CEREBRAS_API_KEY" },
-        .route = .{
-            .base_url = "https://api.cerebras.ai/v1",
-            .protocol = .openai_chat,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = null,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://api.cerebras.ai/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard },
         },
         .models = &.{
-            .{
-                .id = "gemma-4-31b",
-                .upstream_id = "gemma-4-31b",
-                .name = "Gemma 4 31B IT",
-                .limits = .{
-                    .context_window = 131072,
-                    .max_output_tokens = 40960,
-                },
-                .cost = .{
-                    .input = 0.99,
-                    .output = 1.49,
-                },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .status = "beta",
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
-                .dialect = .{
-                    .thinking_format = .openai,
-                },
-            },
             .{
                 .id = "gpt-oss-120b",
                 .upstream_id = "gpt-oss-120b",
                 .name = "GPT OSS 120B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 40960,
@@ -11839,25 +12628,47 @@ pub const providers = [_]Provider{
                     .thinking_format = .openai,
                 },
             },
+            .{
+                .id = "qwen-3.8-27b",
+                .upstream_id = "qwen-3.8-27b",
+                .name = "Qwen3.8 27B",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 65536,
+                    .max_output_tokens = 32768,
+                },
+                .cost = .{
+                    .input = 0.99,
+                    .output = 1.49,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                },
+            },
         },
     },
     .{
         .id = "fireworks-ai",
         .name = "Fireworks AI",
         .auth = .{ .api_key = "FIREWORKS_API_KEY" },
-        .route = .{
-            .base_url = "https://api.fireworks.ai/inference/v1",
-            .protocol = .openai_chat,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = null,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://api.fireworks.ai/inference/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard },
         },
         .models = &.{
             .{
                 .id = "accounts/fireworks/models/deepseek-v4-flash-0731",
                 .upstream_id = "accounts/fireworks/models/deepseek-v4-flash-0731",
                 .name = "DeepSeek V4 Flash 0731",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
@@ -11882,6 +12693,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/deepseek-v4-flash-vision-exp",
                 .upstream_id = "accounts/fireworks/models/deepseek-v4-flash-vision-exp",
                 .name = "DeepSeek V4 Flash Vision Exp",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
@@ -11906,6 +12718,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/deepseek-v4-pro-0813",
                 .upstream_id = "accounts/fireworks/models/deepseek-v4-pro-0813",
                 .name = "DeepSeek V4 Pro 0813",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
@@ -11927,9 +12740,35 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "accounts/fireworks/models/deepseek-v4p1-flash",
+                .upstream_id = "accounts/fireworks/models/deepseek-v4p1-flash",
+                .name = "DeepSeek V4.1 Flash",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.22,
+                    .output = 0.66,
+                    .cache_read = 0.007,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
                 .id = "accounts/fireworks/models/glm-5p2",
                 .upstream_id = "accounts/fireworks/models/glm-5p2",
                 .name = "GLM 5.2",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048575,
                     .max_output_tokens = 131072,
@@ -11954,9 +12793,10 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/glm-5p3",
                 .upstream_id = "accounts/fireworks/models/glm-5p3",
                 .name = "GLM 5.3",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 1000000,
-                    .max_output_tokens = 131072,
+                    .context_window = 1048573,
+                    .max_output_tokens = 262144,
                 },
                 .cost = .{
                     .input = 1.4,
@@ -11968,7 +12808,7 @@ pub const providers = [_]Provider{
                     .input = &.{.text},
                     .output = &.{.text},
                 },
-                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
@@ -11978,8 +12818,9 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/glm-5p3-flash",
                 .upstream_id = "accounts/fireworks/models/glm-5p3-flash",
                 .name = "GLM 5.3 Flash",
+                .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 1000000,
+                    .context_window = 1048573,
                     .max_output_tokens = 131072,
                 },
                 .cost = .{
@@ -11992,7 +12833,7 @@ pub const providers = [_]Provider{
                     .input = &.{ .image, .pdf, .text, .video },
                     .output = &.{.text},
                 },
-                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
@@ -12002,6 +12843,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/gpt-oss-120b",
                 .upstream_id = "accounts/fireworks/models/gpt-oss-120b",
                 .name = "GPT OSS 120B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
@@ -12025,6 +12867,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/inkling",
                 .upstream_id = "accounts/fireworks/models/inkling",
                 .name = "Inkling",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 1048576,
@@ -12046,6 +12889,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/kimi-k2p6",
                 .upstream_id = "accounts/fireworks/models/kimi-k2p6",
                 .name = "Kimi K2.6",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262000,
                     .max_output_tokens = 262000,
@@ -12070,6 +12914,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/kimi-k2p7-code",
                 .upstream_id = "accounts/fireworks/models/kimi-k2p7-code",
                 .name = "Kimi K2.7 Code",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262000,
                     .max_output_tokens = 262000,
@@ -12094,6 +12939,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/kimi-k3",
                 .upstream_id = "accounts/fireworks/models/kimi-k3",
                 .name = "Kimi K3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
@@ -12118,6 +12964,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/minimax-m3",
                 .upstream_id = "accounts/fireworks/models/minimax-m3",
                 .name = "MiniMax-M3",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 512000,
                     .max_output_tokens = 512000,
@@ -12139,9 +12986,28 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "accounts/fireworks/models/mistral-large-3-fp8",
+                .upstream_id = "accounts/fireworks/models/mistral-large-3-fp8",
+                .name = "Mistral Large 3 675B Instruct 2512",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 262144,
+                },
+                .cost = .{},
+                .caps = .{ .tools = true, .vision = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
                 .id = "accounts/fireworks/models/muse-glimmer-30b",
                 .upstream_id = "accounts/fireworks/models/muse-glimmer-30b",
                 .name = "Muse Glimmer 30B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
@@ -12165,6 +13031,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
                 .upstream_id = "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
                 .name = "Nemotron 3 Ultra 550B A55B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 128000,
@@ -12188,6 +13055,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
                 .upstream_id = "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
                 .name = "Nemotron 3.5 Lightning 30B A3B",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
@@ -12211,6 +13079,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/models/qwen3p7-plus",
                 .upstream_id = "accounts/fireworks/models/qwen3p7-plus",
                 .name = "Qwen 3.7 Plus",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
@@ -12231,9 +13100,35 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "accounts/fireworks/models/qwen3p8-2p4t-a95b",
+                .upstream_id = "accounts/fireworks/models/qwen3p8-2p4t-a95b",
+                .name = "Qwen3.8 2.4T A95B",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 6,
+                    .cache_read = 0.25,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "xhigh" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
                 .id = "accounts/fireworks/models/qwen3p8-max",
                 .upstream_id = "accounts/fireworks/models/qwen3p8-max",
                 .name = "Qwen3.8 Max",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
@@ -12257,6 +13152,7 @@ pub const providers = [_]Provider{
                 .id = "accounts/fireworks/routers/glm-5p2-fast",
                 .upstream_id = "accounts/fireworks/routers/glm-5p2-fast",
                 .name = "GLM 5.2 Fast",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048575,
                     .max_output_tokens = 131072,
@@ -12278,9 +13174,35 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "accounts/fireworks/routers/glm-5p3-fast",
+                .upstream_id = "accounts/fireworks/routers/glm-5p3-fast",
+                .name = "GLM 5.3 Fast",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048572,
+                    .max_output_tokens = 262144,
+                },
+                .cost = .{
+                    .input = 2.1,
+                    .output = 6.6,
+                    .cache_read = 0.39,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
                 .id = "accounts/fireworks/routers/kimi-k3-fast",
                 .upstream_id = "accounts/fireworks/routers/kimi-k3-fast",
                 .name = "Kimi K3 Fast",
+                .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
@@ -12307,19 +13229,18 @@ pub const providers = [_]Provider{
         .id = "minimax",
         .name = "MiniMax (minimax.io)",
         .auth = .{ .api_key = "MINIMAX_API_KEY" },
-        .route = .{
-            .base_url = "https://api.minimax.io/anthropic/v1",
-            .protocol = .anthropic_messages,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = .anthropic_breakpoint,
-            .responses_dialect = .standard,
-            .headers = &.{},
+        .base_url = "https://api.minimax.io/anthropic/v1",
+        .session_header = .none,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .anthropic_messages, .key_header = .authorization_bearer, .responses_dialect = .standard, .cache = .anthropic_breakpoint },
         },
         .models = &.{
             .{
                 .id = "MiniMax-M2",
                 .upstream_id = "MiniMax-M2",
                 .name = "MiniMax-M2",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
@@ -12340,6 +13261,7 @@ pub const providers = [_]Provider{
                 .id = "MiniMax-M2.1",
                 .upstream_id = "MiniMax-M2.1",
                 .name = "MiniMax-M2.1",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
@@ -12362,6 +13284,7 @@ pub const providers = [_]Provider{
                 .id = "MiniMax-M2.5",
                 .upstream_id = "MiniMax-M2.5",
                 .name = "MiniMax-M2.5",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
@@ -12384,6 +13307,7 @@ pub const providers = [_]Provider{
                 .id = "MiniMax-M2.5-highspeed",
                 .upstream_id = "MiniMax-M2.5-highspeed",
                 .name = "MiniMax-M2.5-highspeed",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
@@ -12406,6 +13330,7 @@ pub const providers = [_]Provider{
                 .id = "MiniMax-M2.7",
                 .upstream_id = "MiniMax-M2.7",
                 .name = "MiniMax-M2.7",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
@@ -12428,6 +13353,7 @@ pub const providers = [_]Provider{
                 .id = "MiniMax-M2.7-highspeed",
                 .upstream_id = "MiniMax-M2.7-highspeed",
                 .name = "MiniMax-M2.7-highspeed",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
@@ -12450,6 +13376,7 @@ pub const providers = [_]Provider{
                 .id = "MiniMax-M3",
                 .upstream_id = "MiniMax-M3",
                 .name = "MiniMax-M3",
+                .protocol = .anthropic_messages,
                 .limits = .{
                     .context_window = 1048576,
                     .max_output_tokens = 512000,
@@ -12468,6 +13395,2083 @@ pub const providers = [_]Provider{
                 .dialect = .{
                     .anthropic_adaptive = true,
                 },
+            },
+        },
+    },
+    .{
+        .id = "opencode",
+        .name = "OpenCode Zen",
+        .auth = .{ .api_key = "OPENCODE_API_KEY" },
+        .base_url = "https://opencode.ai/zen/v1",
+        .session_header = .x_opencode_session,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .anthropic_messages, .key_header = .x_api_key, .responses_dialect = .standard, .cache = .anthropic_breakpoint },
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard, .cache = .automatic },
+            .{ .protocol = .openai_responses, .key_header = .authorization_bearer, .responses_dialect = .standard },
+        },
+        .models = &.{
+            .{
+                .id = "big-pickle",
+                .upstream_id = "big-pickle",
+                .name = "Big Pickle",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 200000,
+                    .max_output_tokens = 32000,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                    .cache_read = 0,
+                    .cache_write = 0,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "claude-fable-5",
+                .upstream_id = "claude-fable-5",
+                .name = "Claude Fable 5",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 10,
+                    .output = 50,
+                    .cache_read = 1,
+                    .cache_write = 12.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "claude-fable-5-1",
+                .upstream_id = "claude-fable-5-1",
+                .name = "Claude Fable 5.1",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 10,
+                    .output = 50,
+                    .cache_read = 0.25,
+                    .cache_write = 12.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "claude-haiku-4-5",
+                .upstream_id = "claude-haiku-4-5",
+                .name = "Claude Haiku 4.5",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 200000,
+                    .max_output_tokens = 64000,
+                },
+                .cost = .{
+                    .input = 1,
+                    .output = 5,
+                    .cache_read = 0.1,
+                    .cache_write = 1.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_budget = .{ .range = .{
+                        .min = 1024,
+                    } },
+                },
+            },
+            .{
+                .id = "claude-opus-4-5",
+                .upstream_id = "claude-opus-4-5",
+                .name = "Claude Opus 4.5",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 200000,
+                    .max_output_tokens = 64000,
+                },
+                .cost = .{
+                    .input = 5,
+                    .output = 25,
+                    .cache_read = 0.5,
+                    .cache_write = 6.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "claude-opus-4-6",
+                .upstream_id = "claude-opus-4-6",
+                .name = "Claude Opus 4.6",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 5,
+                    .output = 25,
+                    .cache_read = 0.5,
+                    .cache_write = 6.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "claude-opus-4-7",
+                .upstream_id = "claude-opus-4-7",
+                .name = "Claude Opus 4.7",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 5,
+                    .output = 25,
+                    .cache_read = 0.5,
+                    .cache_write = 6.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "claude-opus-4-8",
+                .upstream_id = "claude-opus-4-8",
+                .name = "Claude Opus 4.8",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 5,
+                    .output = 25,
+                    .cache_read = 0.5,
+                    .cache_write = 6.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "claude-opus-5",
+                .upstream_id = "claude-opus-5",
+                .name = "Claude Opus 5",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 5,
+                    .output = 25,
+                    .cache_read = 0.5,
+                    .cache_write = 6.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "claude-sonnet-4",
+                .upstream_id = "claude-sonnet-4",
+                .name = "Claude Sonnet 4",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 64000,
+                },
+                .cost = .{
+                    .input = 3,
+                    .output = 15,
+                    .cache_read = 0.3,
+                    .cache_write = 3.75,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_budget = .{ .range = .{
+                        .min = 1024,
+                    } },
+                },
+            },
+            .{
+                .id = "claude-sonnet-4-5",
+                .upstream_id = "claude-sonnet-4-5",
+                .name = "Claude Sonnet 4.5",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 64000,
+                },
+                .cost = .{
+                    .input = 3,
+                    .output = 15,
+                    .cache_read = 0.3,
+                    .cache_write = 3.75,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_budget = .{ .range = .{
+                        .min = 1024,
+                    } },
+                },
+            },
+            .{
+                .id = "claude-sonnet-4-6",
+                .upstream_id = "claude-sonnet-4-6",
+                .name = "Claude Sonnet 4.6",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 64000,
+                },
+                .cost = .{
+                    .input = 3,
+                    .output = 15,
+                    .cache_read = 0.3,
+                    .cache_write = 3.75,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "claude-sonnet-5",
+                .upstream_id = "claude-sonnet-5",
+                .name = "Claude Sonnet 5",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 10,
+                    .cache_read = 0.2,
+                    .cache_write = 2.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "deepseek-v4-flash",
+                .upstream_id = "deepseek-v4-flash",
+                .name = "DeepSeek V4 Flash",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.14,
+                    .output = 0.28,
+                    .cache_read = 0.028,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "deepseek-v4-flash-vision-exp",
+                .upstream_id = "deepseek-v4-flash-vision-exp",
+                .name = "DeepSeek V4 Flash Vision Exp",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.14,
+                    .output = 0.28,
+                    .cache_read = 0.028,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "deepseek-v4-pro",
+                .upstream_id = "deepseek-v4-pro",
+                .name = "DeepSeek V4 Pro",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 1.74,
+                    .output = 3.84,
+                    .cache_read = 0.145,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "glm-5",
+                .upstream_id = "glm-5",
+                .name = "GLM-5",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 204800,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 1,
+                    .output = 3.2,
+                    .cache_read = 0.2,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "glm-5.1",
+                .upstream_id = "glm-5.1",
+                .name = "GLM-5.1",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 204800,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 1.4,
+                    .output = 4.4,
+                    .cache_read = 0.26,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "glm-5.2",
+                .upstream_id = "glm-5.2",
+                .name = "GLM-5.2",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 1.4,
+                    .output = 4.4,
+                    .cache_read = 0.26,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "glm-5.3",
+                .upstream_id = "glm-5.3",
+                .name = "GLM-5.3",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 1.4,
+                    .output = 4.4,
+                    .cache_read = 0.26,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "glm-5.3-flash",
+                .upstream_id = "glm-5.3-flash",
+                .name = "GLM-5.3-Flash",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.5,
+                    .cache_read = 0.03,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "gpt-5",
+                .upstream_id = "gpt-5",
+                .name = "GPT-5",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.07,
+                    .output = 8.5,
+                    .cache_read = 0.107,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5-codex",
+                .upstream_id = "gpt-5-codex",
+                .name = "GPT-5 Codex",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.07,
+                    .output = 8.5,
+                    .cache_read = 0.107,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5-nano",
+                .upstream_id = "gpt-5-nano",
+                .name = "GPT-5 Nano",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.05,
+                    .output = 0.4,
+                    .cache_read = 0.005,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.1",
+                .upstream_id = "gpt-5.1",
+                .name = "GPT-5.1",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.07,
+                    .output = 8.5,
+                    .cache_read = 0.107,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.1-codex",
+                .upstream_id = "gpt-5.1-codex",
+                .name = "GPT-5.1 Codex",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.07,
+                    .output = 8.5,
+                    .cache_read = 0.107,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.1-codex-max",
+                .upstream_id = "gpt-5.1-codex-max",
+                .name = "GPT-5.1 Codex Max",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.25,
+                    .output = 10,
+                    .cache_read = 0.125,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.1-codex-mini",
+                .upstream_id = "gpt-5.1-codex-mini",
+                .name = "GPT-5.1 Codex Mini",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.25,
+                    .output = 2,
+                    .cache_read = 0.025,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.2",
+                .upstream_id = "gpt-5.2",
+                .name = "GPT-5.2",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.75,
+                    .output = 14,
+                    .cache_read = 0.175,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.2-codex",
+                .upstream_id = "gpt-5.2-codex",
+                .name = "GPT-5.2 Codex",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.75,
+                    .output = 14,
+                    .cache_read = 0.175,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.3-codex",
+                .upstream_id = "gpt-5.3-codex",
+                .name = "GPT-5.3 Codex",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.75,
+                    .output = 14,
+                    .cache_read = 0.175,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.3-codex-spark",
+                .upstream_id = "gpt-5.3-codex-spark",
+                .name = "GPT-5.3 Codex Spark",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 128000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 1.75,
+                    .output = 14,
+                    .cache_read = 0.175,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.4",
+                .upstream_id = "gpt-5.4",
+                .name = "GPT-5.4",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 2.5,
+                    .output = 15,
+                    .cache_read = 0.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.4-mini",
+                .upstream_id = "gpt-5.4-mini",
+                .name = "GPT-5.4 Mini",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.75,
+                    .output = 4.5,
+                    .cache_read = 0.075,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.4-nano",
+                .upstream_id = "gpt-5.4-nano",
+                .name = "GPT-5.4 Nano",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 400000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.2,
+                    .output = 1.25,
+                    .cache_read = 0.02,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.4-pro",
+                .upstream_id = "gpt-5.4-pro",
+                .name = "GPT-5.4 Pro",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 30,
+                    .output = 180,
+                    .cache_read = 30,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.5",
+                .upstream_id = "gpt-5.5",
+                .name = "GPT-5.5",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 5,
+                    .output = 30,
+                    .cache_read = 0.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.5-pro",
+                .upstream_id = "gpt-5.5-pro",
+                .name = "GPT-5.5 Pro",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 30,
+                    .output = 180,
+                    .cache_read = 30,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.6-luna",
+                .upstream_id = "gpt-5.6-luna",
+                .name = "GPT-5.6 Luna",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.2,
+                    .output = 1.2,
+                    .cache_read = 0.02,
+                    .cache_write = 0.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.6-sol",
+                .upstream_id = "gpt-5.6-sol",
+                .name = "GPT-5.6 Sol (50% Off)",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 10,
+                    .cache_read = 0.2,
+                    .cache_write = 2.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-5.6-terra",
+                .upstream_id = "gpt-5.6-terra",
+                .name = "GPT-5.6 Terra",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 2.5,
+                    .output = 15,
+                    .cache_read = 0.25,
+                    .cache_write = 3.125,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "gpt-6-astra",
+                .upstream_id = "gpt-6-astra",
+                .name = "GPT-6 Astra",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 10,
+                    .output = 50,
+                    .cache_read = 1,
+                    .cache_write = 12.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "grok-4.5",
+                .upstream_id = "grok-4.5",
+                .name = "Grok 4.5",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 500000,
+                    .max_output_tokens = 500000,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 6,
+                    .cache_read = 0.3,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "grok-4.6",
+                .upstream_id = "grok-4.6",
+                .name = "Grok 4.6",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 500000,
+                    .max_output_tokens = 500000,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 6,
+                    .cache_read = 0.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "grok-build-0.1",
+                .upstream_id = "grok-build-0.1",
+                .name = "Grok Build 0.1",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 256000,
+                    .max_output_tokens = 256000,
+                },
+                .cost = .{
+                    .input = 1,
+                    .output = 2,
+                    .cache_read = 0.2,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "kimi-k2.5",
+                .upstream_id = "kimi-k2.5",
+                .name = "Kimi K2.5",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 65536,
+                },
+                .cost = .{
+                    .input = 0.6,
+                    .output = 3,
+                    .cache_read = 0.08,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "kimi-k2.6",
+                .upstream_id = "kimi-k2.6",
+                .name = "Kimi K2.6",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 65536,
+                },
+                .cost = .{
+                    .input = 0.95,
+                    .output = 4,
+                    .cache_read = 0.16,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "kimi-k2.7-code",
+                .upstream_id = "kimi-k2.7-code",
+                .name = "Kimi K2.7 Code",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 262144,
+                },
+                .cost = .{
+                    .input = 0.95,
+                    .output = 4,
+                    .cache_read = 0.19,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "kimi-k3",
+                .upstream_id = "kimi-k3",
+                .name = "Kimi K3",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 3,
+                    .output = 15,
+                    .cache_read = 0.3,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "max" }},
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "ling-3.0-flash-fin-free",
+                .upstream_id = "ling-3.0-flash-fin-free",
+                .name = "Ling 3.0 Flash Fin Free",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 32768,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                    .cache_read = 0,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{},
+            },
+            .{
+                .id = "mimo-v2.5-free",
+                .upstream_id = "mimo-v2.5-free",
+                .name = "MiMo V2.5 Free",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 200000,
+                    .max_output_tokens = 32000,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                    .cache_read = 0,
+                },
+                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .audio, .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "minimax-m2.5",
+                .upstream_id = "minimax-m2.5",
+                .name = "MiniMax-M2.5",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 204800,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.3,
+                    .output = 1.2,
+                    .cache_read = 0.06,
+                },
+                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "minimax-m2.7",
+                .upstream_id = "minimax-m2.7",
+                .name = "MiniMax-M2.7",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 204800,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.3,
+                    .output = 1.2,
+                    .cache_read = 0.06,
+                },
+                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "minimax-m3",
+                .upstream_id = "minimax-m3",
+                .name = "MiniMax-M3",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 512000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.3,
+                    .output = 1.2,
+                    .cache_read = 0.06,
+                },
+                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "muse-spark-1.2",
+                .upstream_id = "muse-spark-1.2",
+                .name = "Muse Spark 1.2",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 1.25,
+                    .output = 4.25,
+                    .cache_read = 0.15,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .audio, .image, .pdf, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "muse-spark-1.2-contributor-free",
+                .upstream_id = "muse-spark-1.2-contributor-free",
+                .name = "Muse Spark 1.2 Free",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                    .cache_read = 0,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .audio, .image, .pdf, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "muse-spark-1.3",
+                .upstream_id = "muse-spark-1.3",
+                .name = "Muse Spark 1.3",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 1.25,
+                    .output = 4.25,
+                    .cache_read = 0.15,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .audio, .image, .pdf, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "muse-spark-1.3-contributor-free",
+                .upstream_id = "muse-spark-1.3-contributor-free",
+                .name = "Muse Spark 1.3 Free",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                    .cache_read = 0,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .audio, .image, .pdf, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "nemotron-3-ultra-free",
+                .upstream_id = "nemotron-3-ultra-free",
+                .name = "Nemotron 3 Ultra Free",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                    .cache_read = 0,
+                },
+                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "nemotron-3.5-lightning-free",
+                .upstream_id = "nemotron-3.5-lightning-free",
+                .name = "Nemotron 3.5 Lightning Free",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 262144,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                    .cache_read = 0,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "qwen3.5-plus",
+                .upstream_id = "qwen3.5-plus",
+                .name = "Qwen3.5 Plus",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 65536,
+                },
+                .cost = .{
+                    .input = 0.2,
+                    .output = 1.2,
+                    .cache_read = 0.02,
+                    .cache_write = 0.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .anthropic_adaptive = true,
+                },
+            },
+            .{
+                .id = "qwen3.6-plus",
+                .upstream_id = "qwen3.6-plus",
+                .name = "Qwen3.6 Plus",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 65536,
+                },
+                .cost = .{
+                    .input = 0.5,
+                    .output = 3,
+                    .cache_read = 0.05,
+                    .cache_write = 0.625,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .anthropic_adaptive = true,
+                },
+            },
+        },
+    },
+    .{
+        .id = "opencode-go",
+        .name = "OpenCode Go",
+        .auth = .{ .api_key = "OPENCODE_API_KEY" },
+        .base_url = "https://opencode.ai/zen/go/v1",
+        .session_header = .x_opencode_session,
+        .headers = &.{},
+        .endpoints = &.{
+            .{ .protocol = .anthropic_messages, .key_header = .x_api_key, .responses_dialect = .standard, .cache = .anthropic_breakpoint },
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard },
+            .{ .protocol = .openai_responses, .key_header = .authorization_bearer, .responses_dialect = .standard },
+        },
+        .models = &.{
+            .{
+                .id = "deepseek-v4-flash",
+                .upstream_id = "deepseek-v4-flash",
+                .name = "DeepSeek V4 Flash",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.6,
+                    .cache_read = 0.003,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "deepseek-v4-flash-vision-exp",
+                .upstream_id = "deepseek-v4-flash-vision-exp",
+                .name = "DeepSeek V4 Flash Vision Exp",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.6,
+                    .cache_read = 0.003,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "deepseek-v4-pro",
+                .upstream_id = "deepseek-v4-pro",
+                .name = "DeepSeek V4 Pro (New)",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.66,
+                    .output = 1.98,
+                    .cache_read = 0.022,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "deepseek-v4.1-flash",
+                .upstream_id = "deepseek-v4.1-flash",
+                .name = "DeepSeek V4.1 Flash",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.6,
+                    .cache_read = 0.003,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "glm-5.1",
+                .upstream_id = "glm-5.1",
+                .name = "GLM-5.1",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 202752,
+                    .max_output_tokens = 32768,
+                },
+                .cost = .{
+                    .input = 1.4,
+                    .output = 4.4,
+                    .cache_read = 0.26,
+                },
+                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "glm-5.2",
+                .upstream_id = "glm-5.2",
+                .name = "GLM-5.2",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 1.4,
+                    .output = 4.4,
+                    .cache_read = 0.26,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "glm-5.3",
+                .upstream_id = "glm-5.3",
+                .name = "GLM-5.3",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 1.4,
+                    .output = 4.4,
+                    .cache_read = 0.26,
+                },
+                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "glm-5.3-flash",
+                .upstream_id = "glm-5.3-flash",
+                .name = "GLM-5.3-Flash",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.5,
+                    .cache_read = 0.03,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "gpt-5.6-luna",
+                .upstream_id = "gpt-5.6-luna",
+                .name = "GPT-5.6 Luna",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1050000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.2,
+                    .output = 1.2,
+                    .cache_read = 0.02,
+                    .cache_write = 0.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .pdf, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "grok-4.6",
+                .upstream_id = "grok-4.6",
+                .name = "Grok 4.6",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 500000,
+                    .max_output_tokens = 500000,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 6,
+                    .cache_read = 0.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "hy3",
+                .upstream_id = "hy3",
+                .name = "Hy3",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 256000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.14,
+                    .output = 0.58,
+                    .cache_read = 0.035,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "hy4-preview",
+                .upstream_id = "hy4-preview",
+                .name = "Hy4 preview",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1024000,
+                    .max_output_tokens = 64000,
+                },
+                .cost = .{
+                    .input = 0.834,
+                    .output = 2.501,
+                    .cache_read = 0.042,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{},
+            },
+            .{
+                .id = "kimi-k2.6",
+                .upstream_id = "kimi-k2.6",
+                .name = "Kimi K2.6",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 65536,
+                },
+                .cost = .{
+                    .input = 0.95,
+                    .output = 4,
+                    .cache_read = 0.16,
+                },
+                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "kimi-k2.7-code",
+                .upstream_id = "kimi-k2.7-code",
+                .name = "Kimi K2.7 Code",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 262144,
+                },
+                .cost = .{
+                    .input = 0.95,
+                    .output = 4,
+                    .cache_read = 0.19,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "kimi-k3",
+                .upstream_id = "kimi-k3",
+                .name = "Kimi K3",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 3,
+                    .output = 15,
+                    .cache_read = 0.3,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "max" }},
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "longcat-2.0",
+                .upstream_id = "longcat-2.0",
+                .name = "LongCat-2.0",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.3,
+                    .output = 1.2,
+                    .cache_read = 0.006,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "mimo-v2.5",
+                .upstream_id = "mimo-v2.5",
+                .name = "MiMo V2.5",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.14,
+                    .output = 0.28,
+                    .cache_read = 0.0028,
+                },
+                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .audio, .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "mimo-v2.5-pro",
+                .upstream_id = "mimo-v2.5-pro",
+                .name = "MiMo V2.5 Pro",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 128000,
+                },
+                .cost = .{
+                    .input = 0.435,
+                    .output = 0.87,
+                    .cache_read = 0.003625,
+                },
+                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "minimax-m2.7",
+                .upstream_id = "minimax-m2.7",
+                .name = "MiniMax-M2.7",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 204800,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.3,
+                    .output = 1.2,
+                    .cache_read = 0.06,
+                },
+                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
+                .id = "minimax-m3",
+                .upstream_id = "minimax-m3",
+                .name = "MiniMax-M3",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.3,
+                    .output = 1.2,
+                    .cache_read = 0.06,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .anthropic_adaptive = true,
+                },
+            },
+            .{
+                .id = "muse-spark-1.2-contributor",
+                .upstream_id = "muse-spark-1.2-contributor",
+                .name = "Muse Spark 1.2 Contributor",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.1,
+                    .output = 0.2,
+                    .cache_read = 0.002,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .audio, .image, .pdf, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "muse-spark-1.3-contributor",
+                .upstream_id = "muse-spark-1.3-contributor",
+                .name = "Muse Spark 1.3 Contributor",
+                .protocol = .openai_responses,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.1,
+                    .output = 0.2,
+                    .cache_read = 0.002,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .modalities = .{
+                    .input = &.{ .audio, .image, .pdf, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "qwen3.6-plus",
+                .upstream_id = "qwen3.6-plus",
+                .name = "Qwen3.6 Plus",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 65536,
+                },
+                .cost = .{
+                    .input = 0.5,
+                    .output = 3,
+                    .cache_read = 0.05,
+                    .cache_write = 0.625,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .anthropic_adaptive = true,
+                },
+            },
+            .{
+                .id = "qwen3.7-max",
+                .upstream_id = "qwen3.7-max",
+                .name = "Qwen3.7 Max",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 65536,
+                },
+                .cost = .{
+                    .input = 2.5,
+                    .output = 7.5,
+                    .cache_read = 0.5,
+                    .cache_write = 3.125,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .anthropic_adaptive = true,
+                },
+            },
+            .{
+                .id = "qwen3.7-plus",
+                .upstream_id = "qwen3.7-plus",
+                .name = "Qwen3.7 Plus",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 65536,
+                },
+                .cost = .{
+                    .input = 0.4,
+                    .output = 1.6,
+                    .cache_read = 0.04,
+                    .cache_write = 0.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .anthropic_adaptive = true,
+                },
+            },
+            .{
+                .id = "qwen3.8-flash",
+                .upstream_id = "qwen3.8-flash",
+                .name = "Qwen3.8 Flash",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.47,
+                    .cache_read = 0.016,
+                    .cache_write = 0.2,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "qwen3.8-max",
+                .upstream_id = "qwen3.8-max",
+                .name = "Qwen3.8 Max",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 6,
+                    .cache_read = 0.25,
+                    .cache_write = 2.5,
+                },
+                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .modalities = .{
+                    .input = &.{ .image, .text, .video },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "xhigh" } },
+                .dialect = .{},
             },
         },
     },

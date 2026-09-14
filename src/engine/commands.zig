@@ -814,7 +814,7 @@ test "a new session takes the catalog default level, and a stated level stays" {
     const arena = arena_state.allocator();
 
     var loaded = try provider.config.loadBytes(std.testing.allocator,
-        \\{"version":1,"providers":[{"id":"minimax","api_key":"k"}]}
+        \\{"providers":[{"id":"minimax","api_key":"k"}]}
     );
     _ = try resources.providers.installLocal(&loaded);
     var engine = resources.makeEngine(&db);

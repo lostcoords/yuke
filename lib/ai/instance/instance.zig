@@ -93,6 +93,57 @@ pub fn validHeaders(headers: []const Header) bool {
 /// Select the Responses flavor an endpoint speaks. The route owns it, because it follows the host.
 pub const ResponsesDialect = @import("../request/ir.zig").ResponsesDialect;
 
+/// Select the header that carries the session id. Each value names one header, so a second host can reuse it.
+pub const SessionHeader = enum {
+    none,
+    /// The ChatGPT backend routes a repeated prefix to one prompt cache by this header.
+    session_id,
+    /// OpenCode Zen and Go route one conversation to one upstream by this header, and refuse a request without it.
+    x_opencode_session,
+
+    /// Return the header name, or null when the route carries the session id in no header.
+    pub fn name(self: SessionHeader) ?[]const u8 {
+        return switch (self) {
+            .none => null,
+            .session_id => "session-id",
+            .x_opencode_session => "x-opencode-session",
+        };
+    }
+};
+
+/// One protocol a host serves. The key header lives here because one host can read a different header per path.
+pub const Endpoint = struct {
+    protocol: Protocol,
+    /// The header that carries the credential on this path. Null means that the path takes no credential.
+    key_header: ?ApiKeyHeader = null,
+    cache: ?CachePolicy = null,
+    responses_dialect: ResponsesDialect = .standard,
+
+    /// Return the mechanism this endpoint presents a credential with.
+    pub fn mechanism(self: Endpoint) AuthMechanism {
+        return if (self.key_header) |header| .{ .api_key = header } else .none;
+    }
+
+    /// Compose the route one model calls: the host fields, and the path fields of this endpoint.
+    pub fn route(self: Endpoint, base_url: []const u8, headers: []const Header, session_header: SessionHeader) Route {
+        return .{
+            .base_url = base_url,
+            .protocol = self.protocol,
+            .auth = self.mechanism(),
+            .headers = headers,
+            .cache = self.cache,
+            .responses_dialect = self.responses_dialect,
+            .session_header = session_header,
+        };
+    }
+};
+
+/// Find the endpoint that serves `protocol`, or null. A list holds each protocol at most once.
+pub fn findEndpoint(endpoints: []const Endpoint, protocol: Protocol) ?*const Endpoint {
+    for (endpoints) |*e| if (e.protocol == protocol) return e;
+    return null;
+}
+
 /// Define how one request reaches a provider. The protocol selects a closed request dialect.
 pub const Route = struct {
     base_url: []const u8,
@@ -101,6 +152,7 @@ pub const Route = struct {
     headers: []const Header = &.{},
     cache: ?CachePolicy = null,
     responses_dialect: ResponsesDialect = .standard,
+    session_header: SessionHeader = .none,
 };
 
 const testing = std.testing;
@@ -126,6 +178,17 @@ test "header validation rejects what std.http asserts on" {
     try testing.expect(!validHeaders(&.{.{ .name = "bad name", .value = "x" }}));
     try testing.expect(!validHeaders(&.{.{ .name = "x-note", .value = "a\r\nb" }}));
     try testing.expect(validHeaders(&.{.{ .name = "x-note", .value = "a\tb" }})); // A tab is legal.
+}
+
+test "an endpoint names the header its key travels in, or none" {
+    const keyed: Endpoint = .{ .protocol = .anthropic_messages, .key_header = .x_api_key };
+    try testing.expectEqual(ApiKeyHeader.x_api_key, keyed.mechanism().api_key);
+    const open: Endpoint = .{ .protocol = .openai_chat };
+    try testing.expect(open.mechanism() == .none);
+
+    const both = [_]Endpoint{ keyed, open };
+    try testing.expectEqual(&both[1], findEndpoint(&both, .openai_chat).?);
+    try testing.expect(findEndpoint(&both, .openai_responses) == null);
 }
 
 test "a repeated header name is rejected whatever its case" {

@@ -6,9 +6,6 @@ const vocab = @import("ai_vocab");
 
 pub const Error = error{InvalidDocument};
 
-/// The document version this generator accepts.
-pub const version = 1;
-
 /// What one run produced. The driver reports these numbers.
 pub const Stats = struct {
     providers: usize = 0,
@@ -33,8 +30,12 @@ const preamble =
     \\    name: []const u8,
     \\    /// How this provider authenticates. The scheme never carries the secret.
     \\    auth: Auth,
-    \\    /// The route, less the identity headers that only a live grant carries.
-    \\    route: instance.Route,
+    \\    base_url: []const u8,
+    \\    /// The pinned headers. A live grant adds its identity headers at run time.
+    \\    headers: []const instance.Header = &.{},
+    \\    session_header: instance.SessionHeader = .none,
+    \\    /// One entry per protocol the host serves. Every model names one of them.
+    \\    endpoints: []const instance.Endpoint,
     \\    models: []const model.ModelSpec,
     \\};
     \\
@@ -93,7 +94,6 @@ pub fn emit(arena: std.mem.Allocator, w: *std.Io.Writer, source: []const u8) !St
 fn build(arena: std.mem.Allocator, w: *std.Io.Writer, source: []const u8) !Stats {
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, source, .{}) catch return Error.InvalidDocument;
     const root = try object(parsed);
-    if (try number(try member(root, "version")) != version) return Error.InvalidDocument;
 
     var run: Run = .{ .arena = arena, .w = w };
     try w.writeAll(preamble);
@@ -115,8 +115,6 @@ fn build(arena: std.mem.Allocator, w: *std.Io.Writer, source: []const u8) !Stats
 
 fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
     const w = run.w;
-    // An executable provider states every routing field. A null here is a document this tool cannot use.
-    const protocol = try routingName(vocab.types.Protocol, try string(provider, "protocol"));
     const auth = try object(try member(provider, "auth"));
     const scheme = std.meta.stringToEnum(vocab.model.AuthKind, try string(auth, "kind")) orelse return Error.InvalidDocument;
 
@@ -137,28 +135,12 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
             try w.writeAll("        .auth = .{ .api_key = null },\n");
         },
     }
-    try w.writeAll("        .route = .{\n");
-    try w.print("            .base_url = \"{f}\",\n", .{std.zig.fmtString(try string(provider, "base_url"))});
-    try w.print("            .protocol = .{s},\n", .{protocol});
-    // Every grant presents a bearer, so an OAuth flow selects only the response dialect.
-    try w.print("            .auth = .{{ .api_key = .{s} }},\n", .{
-        switch (scheme) {
-            .oauth => "authorization_bearer",
-            .api_key => try routingName(vocab.instance.ApiKeyHeader, try string(auth, "header")),
-        },
-    });
-    // A null policy means the control plane has not verified this host, so the route marks nothing.
-    const cache = try member(provider, "cache");
-    if (cache == .null) {
-        try w.writeAll("            .cache = null,\n");
-    } else {
-        try w.print("            .cache = .{s},\n", .{try routingName(vocab.instance.CachePolicy, try text(cache))});
-    }
-    try w.print("            .responses_dialect = .{s},\n", .{
-        try routingName(vocab.ir.ResponsesDialect, try string(provider, "responses_dialect")),
+    try w.print("        .base_url = \"{f}\",\n", .{std.zig.fmtString(try string(provider, "base_url"))});
+    try w.print("        .session_header = .{s},\n", .{
+        try routingName(vocab.instance.SessionHeader, try string(provider, "session_header")),
     });
 
-    try w.writeAll("            .headers = &.{");
+    try w.writeAll("        .headers = &.{");
     const headers = try array(provider, "headers");
     for (headers, 0..) |item, i| {
         const header = try object(item);
@@ -169,13 +151,53 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
         });
     }
     try w.writeAll(if (headers.len == 0) "},\n" else " },\n");
+
+    // An executable provider states at least one path, and a model can only name a path stated here.
+    const endpoints = try array(provider, "endpoints");
+    if (endpoints.len == 0) return Error.InvalidDocument;
+    var served: std.enums.EnumSet(vocab.types.Protocol) = .initEmpty();
+    try w.writeAll("        .endpoints = &.{\n");
+    for (endpoints) |item| {
+        const protocol = try emitEndpoint(run, try object(item), scheme);
+        if (served.contains(protocol)) return Error.InvalidDocument;
+        served.insert(protocol);
+    }
     try w.writeAll("        },\n        .models = &.{\n");
 
     for (try array(provider, "models")) |item| {
-        try emitModel(run, try object(item), protocol);
+        const spec = try object(item);
+        // A model on a path the host does not serve could never be called, so the table refuses it.
+        const protocol = std.meta.stringToEnum(vocab.types.Protocol, try string(spec, "protocol")) orelse return Error.InvalidDocument;
+        if (!served.contains(protocol)) return Error.InvalidDocument;
+        try emitModel(run, spec, @tagName(protocol));
         run.stats.models += 1;
     }
     try w.writeAll("        },\n    },\n");
+}
+
+/// Write one endpoint and return its protocol. The key header must match the credential scheme.
+fn emitEndpoint(run: *Run, endpoint: std.json.ObjectMap, scheme: vocab.model.AuthKind) !vocab.types.Protocol {
+    const w = run.w;
+    const tag = std.meta.stringToEnum(vocab.types.Protocol, try string(endpoint, "protocol")) orelse return Error.InvalidDocument;
+    const protocol = @tagName(tag);
+    const key_header = try member(endpoint, "key_header");
+    // Every grant presents a bearer, so an OAuth path names no header and an API-key path must name one.
+    const header = switch (scheme) {
+        .oauth => if (key_header == .null) "authorization_bearer" else return Error.InvalidDocument,
+        .api_key => try routingName(vocab.instance.ApiKeyHeader, try text(key_header)),
+    };
+    const dialect = try routingName(vocab.ir.ResponsesDialect, try string(endpoint, "responses_dialect"));
+    // The dialect is a Responses body rule, so another path cannot carry it.
+    if (!std.mem.eql(u8, dialect, "standard") and !std.mem.eql(u8, protocol, "openai_responses")) return Error.InvalidDocument;
+
+    try w.print("            .{{ .protocol = .{s}, .key_header = .{s}, .responses_dialect = .{s}", .{ protocol, header, dialect });
+    // A null policy means the control plane has not verified this path, so the route marks nothing.
+    const cache = try member(endpoint, "cache");
+    if (cache != .null) {
+        try w.print(", .cache = .{s}", .{try routingName(vocab.instance.CachePolicy, try text(cache))});
+    }
+    try w.writeAll(" },\n");
+    return tag;
 }
 
 fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
@@ -184,10 +206,11 @@ fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
     const limits = try object(try member(spec, "limits"));
     const cost = try object(try member(spec, "cost"));
 
-    try w.print("            .{{\n                .id = \"{f}\",\n                .upstream_id = \"{f}\",\n                .name = \"{f}\",\n", .{
+    try w.print("            .{{\n                .id = \"{f}\",\n                .upstream_id = \"{f}\",\n                .name = \"{f}\",\n                .protocol = .{s},\n", .{
         std.zig.fmtString(try string(spec, "id")),
         std.zig.fmtString(try string(spec, "upstream_id")),
         std.zig.fmtString(try string(spec, "name")),
+        protocol,
     });
 
     try w.writeAll("                .limits = .{");
@@ -231,10 +254,9 @@ fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
 /// Write the dialect members this model states. An unknown name is reported and left out.
 fn emitDialect(run: *Run, flags: std.json.ObjectMap, protocol: []const u8) !void {
     const w = run.w;
-    // Only an OpenAI-chat host reads a thinking format, so another protocol would reject it.
     if (flags.get("thinking_format")) |value| {
         const name = try text(value);
-        // Only an OpenAI-chat host reads a thinking format, so another protocol would reject it.
+        // Only an OpenAI-chat path reads a thinking format, so a model on another path would reject it.
         if (!std.mem.eql(u8, protocol, "openai_chat")) {
             try run.degrade("thinking_format outside openai_chat", name);
         } else try emitDialectMember(run, vocab.ir.ThinkingFormat, "thinking_format", name);
@@ -355,18 +377,36 @@ fn array(map: std.json.ObjectMap, key: []const u8) ![]const std.json.Value {
 const testing = std.testing;
 
 const one_provider =
-    \\{"version":1,"catalog_rev":"abc","providers":[
+    \\{"catalog_rev":"abc","providers":[
     \\ {"id":"anthropic","name":"Anthropic",
-    \\  "base_url":"https://api.anthropic.com/v1","protocol":"anthropic_messages",
-    \\  "auth":{"kind":"api_key","header":"x_api_key","env":"ANTHROPIC_API_KEY"},
-    \\  "cache":"anthropic_breakpoint","responses_dialect":"standard",
+    \\  "base_url":"https://api.anthropic.com/v1",
+    \\  "auth":{"kind":"api_key","env":"ANTHROPIC_API_KEY"},"session_header":"none",
+    \\  "endpoints":[{"protocol":"anthropic_messages","key_header":"x_api_key","cache":"anthropic_breakpoint","responses_dialect":"standard"}],
     \\  "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
-    \\  "models":[{"id":"claude","upstream_id":"claude","name":"Claude",
+    \\  "models":[{"id":"claude","upstream_id":"claude","name":"Claude","protocol":"anthropic_messages",
     \\   "limits":{"context_window":200000,"max_output_tokens":64000},
     \\   "cost":{"input":3,"output":15,"cache_read":0.3,"cache_write":null},
     \\   "flags":{"supports_tools":true,"supports_vision":true,"reasoning_budget_min":1024},
     \\   "modalities":{"input":["text","image"],"output":["text"]},
     \\   "reasoning":true,"reasoning_levels":["low","high"],"status":"beta"}]}]}
+;
+
+/// A gateway that serves three paths, with the key header following the path.
+const gateway =
+    \\{"catalog_rev":"g","providers":[
+    \\ {"id":"opencode","name":"OpenCode","base_url":"https://opencode.ai/zen/v1",
+    \\  "auth":{"kind":"api_key","env":"OPENCODE_API_KEY"},"session_header":"x_opencode_session","headers":[],
+    \\  "endpoints":[
+    \\   {"protocol":"anthropic_messages","key_header":"x_api_key","cache":"anthropic_breakpoint","responses_dialect":"standard"},
+    \\   {"protocol":"openai_chat","key_header":"authorization_bearer","cache":"automatic","responses_dialect":"standard"},
+    \\   {"protocol":"openai_responses","key_header":"authorization_bearer","cache":null,"responses_dialect":"standard"}],
+    \\  "models":[
+    \\   {"id":"qwen","upstream_id":"qwen","name":"Qwen","protocol":"anthropic_messages","limits":{"context_window":1,"max_output_tokens":1},
+    \\    "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null},"flags":{"supports_tools":true,"supports_vision":false},
+    \\    "modalities":{"input":["text"],"output":["text"]},"reasoning":false,"reasoning_levels":[],"status":null},
+    \\   {"id":"glm","upstream_id":"glm","name":"GLM","protocol":"openai_chat","limits":{"context_window":1,"max_output_tokens":1},
+    \\    "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null},"flags":{"supports_tools":true,"supports_vision":false,"thinking_format":"deepseek"},
+    \\    "modalities":{"input":["text"],"output":["text"]},"reasoning":false,"reasoning_levels":[],"status":null}]}]}
 ;
 
 fn generate(a: std.mem.Allocator, source: []const u8) ![]const u8 {
@@ -382,10 +422,11 @@ test "a provider and its model reach the generated table" {
 
     try testing.expect(std.mem.indexOf(u8, out, "pub const revision = \"abc\";") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".auth = .{ .api_key = \"ANTHROPIC_API_KEY\" }") != null);
-    try testing.expect(std.mem.indexOf(u8, out, ".protocol = .anthropic_messages") != null);
-    try testing.expect(std.mem.indexOf(u8, out, ".auth = .{ .api_key = .x_api_key }") != null);
-    try testing.expect(std.mem.indexOf(u8, out, ".cache = .anthropic_breakpoint") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".base_url = \"https://api.anthropic.com/v1\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".session_header = .none") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".{ .protocol = .anthropic_messages, .key_header = .x_api_key, .responses_dialect = .standard, .cache = .anthropic_breakpoint }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".{ .name = \"anthropic-version\", .value = \"2023-06-01\" }") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".protocol = .anthropic_messages,\n") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".reasoning_levels = &.{ .{ .named = \"low\" }, .{ .named = \"high\" } }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".min = 1024,") != null);
     // The kinds a model reads decide whether a request may carry an attachment at all.
@@ -398,20 +439,42 @@ test "a provider and its model reach the generated table" {
     try testing.expect(std.mem.indexOf(u8, out, ".cache_read = 0.3,") != null);
 }
 
+test "a gateway keeps one endpoint per path and each model names its own" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var out: std.Io.Writer.Allocating = .init(a);
+    const stats = try emit(a, &out.writer, gateway);
+    const text_out = out.written();
+
+    try testing.expect(std.mem.indexOf(u8, text_out, ".session_header = .x_opencode_session") != null);
+    try testing.expect(std.mem.indexOf(u8, text_out, ".{ .protocol = .anthropic_messages, .key_header = .x_api_key, .responses_dialect = .standard, .cache = .anthropic_breakpoint }") != null);
+    try testing.expect(std.mem.indexOf(u8, text_out, ".{ .protocol = .openai_chat, .key_header = .authorization_bearer, .responses_dialect = .standard, .cache = .automatic }") != null);
+    // An unverified path states no cache, so the field keeps its null default.
+    try testing.expect(std.mem.indexOf(u8, text_out, ".{ .protocol = .openai_responses, .key_header = .authorization_bearer, .responses_dialect = .standard }") != null);
+    try testing.expect(std.mem.indexOf(u8, text_out, ".id = \"qwen\",\n                .upstream_id = \"qwen\",\n                .name = \"Qwen\",\n                .protocol = .anthropic_messages,") != null);
+    try testing.expect(std.mem.indexOf(u8, text_out, ".id = \"glm\",\n                .upstream_id = \"glm\",\n                .name = \"GLM\",\n                .protocol = .openai_chat,") != null);
+    // The thinking format check reads the model's own path, so a chat model on a mixed host keeps it.
+    try testing.expectEqual(@as(usize, 0), stats.unknown.len);
+    try testing.expect(std.mem.indexOf(u8, text_out, ".thinking_format = .deepseek,") != null);
+    try testing.expectEqual(@as(usize, 2), stats.models);
+}
+
 test "an oauth provider routes as a bearer and keeps its dialect" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const source =
-        \\{"version":1,"catalog_rev":"r","providers":[
+        \\{"catalog_rev":"r","providers":[
         \\ {"id":"openai-codex","name":"Codex",
-        \\  "base_url":"https://chatgpt.com/backend-api/codex","protocol":"openai_responses",
-        \\  "auth":{"kind":"oauth","flow":"codex"},"cache":"unsupported",
-        \\  "responses_dialect":"codex","headers":[],"models":[]}]}
+        \\  "base_url":"https://chatgpt.com/backend-api/codex",
+        \\  "auth":{"kind":"oauth","flow":"codex"},"session_header":"session_id",
+        \\  "endpoints":[{"protocol":"openai_responses","key_header":null,"cache":"unsupported","responses_dialect":"codex"}],
+        \\  "headers":[],"models":[]}]}
     ;
     const out = try generate(arena.allocator(), source);
     try testing.expect(std.mem.indexOf(u8, out, ".auth = .{ .oauth = \"codex\" }") != null);
-    try testing.expect(std.mem.indexOf(u8, out, ".auth = .{ .api_key = .authorization_bearer }") != null);
-    try testing.expect(std.mem.indexOf(u8, out, ".responses_dialect = .codex") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".session_header = .session_id") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".{ .protocol = .openai_responses, .key_header = .authorization_bearer, .responses_dialect = .codex, .cache = .unsupported }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".headers = &.{}") != null);
 }
 
@@ -421,9 +484,9 @@ test "a grant with no flow fails the run" {
 
     // The engine selects the login by this name, so an unnamed grant can never reach a request.
     try testing.expectError(Error.InvalidDocument, generate(arena.allocator(),
-        \\{"version":1,"catalog_rev":"r","providers":[
-        \\ {"id":"codex","name":"Codex","base_url":"https://x","protocol":"openai_responses",
-        \\  "auth":{"kind":"oauth"},"cache":"unsupported","responses_dialect":"codex",
+        \\{"catalog_rev":"r","providers":[
+        \\ {"id":"codex","name":"Codex","base_url":"https://x","auth":{"kind":"oauth"},"session_header":"none",
+        \\  "endpoints":[{"protocol":"openai_responses","key_header":null,"cache":null,"responses_dialect":"codex"}],
         \\  "headers":[],"models":[]}]}
     ));
 }
@@ -435,14 +498,41 @@ test "an unknown routing name fails the run" {
 
     // A request cannot be built without these, so a wrong name must never reach the table.
     inline for (.{
-        .{ "\"protocol\":\"anthropic_messages\"", "\"protocol\":\"gemini\"" },
-        .{ "\"kind\":\"api_key\",\"header\":\"x_api_key\"", "\"kind\":\"api_key\",\"header\":\"x-api-key\"" },
+        .{ "\"protocol\":\"anthropic_messages\",\"key_header\"", "\"protocol\":\"gemini\",\"key_header\"" },
+        .{ "\"key_header\":\"x_api_key\"", "\"key_header\":\"x-api-key\"" },
         .{ "\"cache\":\"anthropic_breakpoint\"", "\"cache\":\"eternal\"" },
-        .{ "\"version\":1", "\"version\":2" },
+        .{ "\"session_header\":\"none\"", "\"session_header\":\"x-session\"" },
+        .{ "\"responses_dialect\":\"standard\"", "\"responses_dialect\":\"chatgpt\"" },
     }) |case| {
         const broken = try std.mem.replaceOwned(u8, a, one_provider, case[0], case[1]);
         try testing.expectError(Error.InvalidDocument, generate(a, broken));
     }
+}
+
+test "the endpoint list must be consistent with the credential scheme and the models" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // An API key needs a header to travel in.
+    const no_header = try std.mem.replaceOwned(u8, a, one_provider, "\"key_header\":\"x_api_key\"", "\"key_header\":null");
+    try testing.expectError(Error.InvalidDocument, generate(a, no_header));
+    // A grant is always a bearer, so a header beside it states a second scheme.
+    const grant_header = try std.mem.replaceOwned(u8, a, one_provider, "\"kind\":\"api_key\",\"env\":\"ANTHROPIC_API_KEY\"", "\"kind\":\"oauth\",\"flow\":\"codex\"");
+    try testing.expectError(Error.InvalidDocument, generate(a, grant_header));
+    // The dialect is a Responses body rule.
+    const chat_codex = try std.mem.replaceOwned(u8, a, one_provider, "\"responses_dialect\":\"standard\"", "\"responses_dialect\":\"codex\"");
+    try testing.expectError(Error.InvalidDocument, generate(a, chat_codex));
+    // A repeated path would leave a model with two routes.
+    const twice = try std.mem.replaceOwned(u8, a, gateway, "{\"protocol\":\"openai_chat\",\"key_header\":\"authorization_bearer\",\"cache\":\"automatic\",\"responses_dialect\":\"standard\"},", "{\"protocol\":\"openai_chat\",\"key_header\":\"authorization_bearer\",\"cache\":\"automatic\",\"responses_dialect\":\"standard\"},{\"protocol\":\"openai_chat\",\"key_header\":\"x_api_key\",\"cache\":null,\"responses_dialect\":\"standard\"},");
+    try testing.expectError(Error.InvalidDocument, generate(a, twice));
+    // A model on a path the host does not serve could never be called.
+    const stray = try std.mem.replaceOwned(u8, a, one_provider, "\"name\":\"Claude\",\"protocol\":\"anthropic_messages\"", "\"name\":\"Claude\",\"protocol\":\"openai_chat\"");
+    try testing.expectError(Error.InvalidDocument, generate(a, stray));
+    // No path at all is a provider this build cannot call.
+    const bare = try std.mem.replaceOwned(u8, a, one_provider, "\"models\":[{", "\"models\":[],\"unused\":[{");
+    const none = try std.mem.replaceOwned(u8, a, bare, "\"endpoints\":[{\"protocol\":\"anthropic_messages\",\"key_header\":\"x_api_key\",\"cache\":\"anthropic_breakpoint\",\"responses_dialect\":\"standard\"}]", "\"endpoints\":[]");
+    try testing.expectError(Error.InvalidDocument, generate(a, none));
 }
 
 const Run_ = struct { stats: Stats, text: []const u8 };
@@ -466,7 +556,7 @@ test "an unknown dialect name keeps the default and is reported" {
     // The name must stay out of the table, or the generated file names an enum tag that does not exist.
     try testing.expect(std.mem.indexOf(u8, unknown.text, "reasoning_blocks") == null);
 
-    // A thinking format belongs to OpenAI-chat alone, so another protocol reports it and drops it.
+    // A thinking format belongs to an OpenAI-chat path alone, so a model on another path reports it and drops it.
     const wrong = try withFlags(a, "\"supports_vision\":true,\"thinking_format\":\"deepseek\"");
     try testing.expectEqual(@as(usize, 1), wrong.stats.unknown.len);
     try testing.expectEqualStrings("thinking_format outside openai_chat=deepseek", wrong.stats.unknown[0]);
@@ -539,6 +629,6 @@ test "a document with no provider is rejected" {
     defer arena.deinit();
     try testing.expectError(
         Error.InvalidDocument,
-        generate(arena.allocator(), "{\"version\":1,\"catalog_rev\":\"r\",\"providers\":[]}"),
+        generate(arena.allocator(), "{\"catalog_rev\":\"r\",\"providers\":[]}"),
     );
 }

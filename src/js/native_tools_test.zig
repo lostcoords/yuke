@@ -479,8 +479,8 @@ test "session cancel reaches the builtin exec process group" {
     defer arena.deinit();
     const a = arena.allocator();
     var models = try provider.config.loadBytes(f.gpa.allocator(),
-        \\{"version":1,"providers":[{"id":"test-exec","base_url":"https://test.invalid",
-        \\"protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"literal":"test-key"}}},"models":[{"id":"model","upstream_id":"model"}]}]}
+        \\{"providers":[{"id":"test-exec","base_url":"https://test.invalid",
+        \\"endpoints":[{"protocol":"anthropic_messages","key_header":"x_api_key"}],"auth":{"api_key":{"source":{"literal":"test-key"}}},"models":[{"id":"model","upstream_id":"model"}]}]}
     );
     _ = try f.app.store.installLocal(&models);
     const model = f.app.store.merged.resolveModel("test-exec/model").?;

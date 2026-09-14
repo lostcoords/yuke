@@ -1,37 +1,106 @@
 {
-  "version": 1,
   "providers": [
     {
       "id": "minimax",
       "base_url": "https://api.minimax.io/anthropic/v1",
-      "protocol": "anthropic_messages",
+      "endpoints": [
+        {
+          "protocol": "anthropic_messages",
+          "key_header": "authorization_bearer",
+          "cache": "anthropic_breakpoint"
+        }
+      ],
       "auth": {
         "api_key": {
-          "header": "authorization_bearer",
-          "source": { "env": "MINIMAX_API_KEY" }
+          "source": {
+            "env": "MINIMAX_API_KEY"
+          }
         }
       },
       "models": [
         {
           "id": "minimax-m3",
           "upstream_id": "MiniMax-M3",
-          "limits": { "context_window": 200000, "max_output_tokens": 131072 },
-          "reasoning_levels": ["low", "medium", "high"],
-          "flags": { "anthropic_adaptive": true }
+          "limits": {
+            "context_window": 200000,
+            "max_output_tokens": 131072
+          },
+          "reasoning_levels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "flags": {
+            "anthropic_adaptive": true
+          }
         }
       ]
     },
     {
       "id": "ollama",
       "base_url": "http://127.0.0.1:11434/v1",
-      "protocol": "openai_chat",
+      "endpoints": [
+        {
+          "protocol": "openai_chat"
+        }
+      ],
       "models": [
         {
           "id": "qwen3",
           "upstream_id": "qwen3:8b",
-          "limits": { "context_window": 40960, "max_output_tokens": 8192 },
-          "reasoning_levels": ["low", "medium", "high", "max"],
-          "flags": { "thinking_format": "openai" }
+          "limits": {
+            "context_window": 40960,
+            "max_output_tokens": 8192
+          },
+          "reasoning_levels": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "flags": {
+            "thinking_format": "openai"
+          }
+        }
+      ]
+    },
+    {
+      "id": "opencode-proxy",
+      "base_url": "http://127.0.0.1:8787/zen/v1",
+      "session_header": "x_opencode_session",
+      "endpoints": [
+        {
+          "protocol": "anthropic_messages",
+          "key_header": "x_api_key",
+          "cache": "anthropic_breakpoint"
+        },
+        {
+          "protocol": "openai_chat",
+          "key_header": "authorization_bearer",
+          "cache": "automatic"
+        },
+        {
+          "protocol": "openai_responses",
+          "key_header": "authorization_bearer"
+        }
+      ],
+      "auth": {
+        "api_key": {
+          "source": {
+            "env": "OPENCODE_API_KEY"
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "qwen3.7-max",
+          "upstream_id": "qwen3.7-max",
+          "protocol": "anthropic_messages"
+        },
+        {
+          "id": "glm-5.3",
+          "upstream_id": "glm-5.3",
+          "protocol": "openai_chat"
         }
       ]
     }

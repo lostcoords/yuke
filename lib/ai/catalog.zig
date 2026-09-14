@@ -4,6 +4,8 @@ const std = @import("std");
 const generated = @import("catalog_gen.zig");
 const call = @import("call.zig");
 const credentials = @import("instance/resolve.zig");
+const instance = @import("instance/instance.zig");
+const model = @import("model.zig");
 
 pub const Provider = generated.Provider;
 pub const Auth = generated.Auth;
@@ -37,13 +39,20 @@ pub fn resolve(selector: []const u8, credential: credentials.Credential) Error!c
         // A gateway may rename a model, so the request sends the upstream id.
         return .{
             .id = spec.upstream_id,
-            .route = provider.route,
+            .route = routeFor(provider, spec),
             .credential = credential,
             .caps = spec.caps,
             .dialect = spec.dialect,
         };
     }
     return Error.UnknownModel;
+}
+
+/// Compose the route one model calls. The generator proves that each baked model names a declared endpoint with a credential.
+pub fn routeFor(provider: *const Provider, spec: *const model.ModelSpec) instance.Route {
+    const endpoint = instance.findEndpoint(provider.endpoints, spec.protocol).?;
+    std.debug.assert(endpoint.key_header != null);
+    return endpoint.route(provider.base_url, provider.headers, provider.session_header);
 }
 
 /// Bind this provider's key from the variable the catalog names, or answer null when it names none.
@@ -85,17 +94,57 @@ test "a selector splits on the first slash" {
 }
 
 test "a selector resolves against the baked table" {
-    const row = providers[0];
+    const row = &providers[0];
     var buf: [128]u8 = undefined;
     const selector = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ row.id, row.models[0].id });
 
     const resolved = try resolve(selector, .{ .api_key = "sk-test" });
     // The whole route reaches the call, so a dropped protocol or header fails here.
-    try testing.expectEqualDeep(row.route, resolved.route);
+    try testing.expectEqualDeep(routeFor(row, &row.models[0]), resolved.route);
     try testing.expectEqualStrings("sk-test", resolved.credential.api_key);
 
     try testing.expectError(Error.UnknownProvider, resolve("nope/model", .none));
     try testing.expectError(Error.UnknownModel, resolve("anthropic/nope", .none));
+}
+
+test "a route takes the host fields from the provider and the path fields from the model's endpoint" {
+    const gateway: Provider = .{
+        .id = "gateway",
+        .name = "Gateway",
+        .auth = .{ .api_key = "GATEWAY_API_KEY" },
+        .base_url = "https://gateway.test/v1",
+        .session_header = .x_opencode_session,
+        .headers = &.{.{ .name = "x-pinned", .value = "1" }},
+        .endpoints = &.{
+            .{ .protocol = .anthropic_messages, .key_header = .x_api_key, .cache = .anthropic_breakpoint },
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .cache = .automatic },
+        },
+        .models = &.{
+            .{ .id = "a", .upstream_id = "a", .name = "A", .protocol = .anthropic_messages },
+            .{ .id = "c", .upstream_id = "c", .name = "C", .protocol = .openai_chat },
+        },
+    };
+
+    // Two models on one host reach two paths, and the key header follows the path.
+    const messages = routeFor(&gateway, &gateway.models[0]);
+    try testing.expectEqual(instance.Protocol.anthropic_messages, messages.protocol);
+    try testing.expectEqual(instance.ApiKeyHeader.x_api_key, messages.auth.api_key);
+    try testing.expectEqual(@as(?instance.CachePolicy, .anthropic_breakpoint), messages.cache);
+    const chat = routeFor(&gateway, &gateway.models[1]);
+    try testing.expectEqual(instance.Protocol.openai_chat, chat.protocol);
+    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, chat.auth.api_key);
+    try testing.expectEqual(@as(?instance.CachePolicy, .automatic), chat.cache);
+
+    for ([_]instance.Route{ messages, chat }) |route| {
+        try testing.expectEqualStrings("https://gateway.test/v1", route.base_url);
+        try testing.expectEqual(instance.SessionHeader.x_opencode_session, route.session_header);
+        try testing.expectEqualStrings("x-pinned", route.headers[0].name);
+    }
+
+    // Every baked provider composes without a gap, so a table with a model on no endpoint cannot ship.
+    for (&providers) |*row| for (row.models) |*spec| {
+        try testing.expectEqual(spec.protocol, routeFor(row, spec).protocol);
+    };
 }
 
 test "catalog errors have a permanent user-facing classification" {
@@ -119,7 +168,8 @@ test "the credential comes from the variable the catalog names" {
         .id = "acme",
         .name = "Acme",
         .auth = .{ .api_key = "ACME_API_KEY" },
-        .route = .{ .base_url = "https://acme.test/v1", .protocol = .openai_chat, .auth = .{ .api_key = .authorization_bearer } },
+        .base_url = "https://acme.test/v1",
+        .endpoints = &.{.{ .protocol = .openai_chat, .key_header = .authorization_bearer }},
         .models = &.{},
     };
     try testing.expectEqualStrings("sk-real", envCredential(&lone, &env).?.api_key);

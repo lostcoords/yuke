@@ -1,6 +1,7 @@
 //! One type owns the local `providers.json` file and the merged view it produces.
 
 const std = @import("std");
+const ai = @import("ai");
 const provider = @import("provider.zig");
 const provider_registry = @import("registry.zig");
 
@@ -64,22 +65,14 @@ pub fn edit(self: *@This(), arena: std.mem.Allocator, provider_id: []const u8, c
 fn applyTo(p: provider.config.LocalProvider, change: Edit) ?provider.config.LocalProvider {
     var out = p;
     switch (change) {
-        .set_api_key => |key| out.auth = .{
-            .api_key = .{
-                // A grant names no header, so only an API-key entry keeps the one the user wrote.
-                .header = if (p.auth) |a| switch (a) {
-                    .api_key => |existing| existing.header,
-                    .oauth => null,
-                } else null,
-                .source = .{ .literal = key },
-            },
-        },
+        .set_api_key => |key| out.auth = .{ .api_key = .{ .source = .{ .literal = key } } },
         .set_grant => |grant| out.auth = .{ .oauth = grant },
         .remove_credential => {
             // The entry holds nothing else, so it goes with its credential.
             if (onlyCredential(p)) return null;
+            // An API-key entry still states that the route wants a key; a grant leaves nothing to state.
             out.auth = if (p.auth) |a| switch (a) {
-                .api_key => |key| .{ .api_key = .{ .header = key.header } },
+                .api_key => .{ .api_key = .{} },
                 .oauth => null,
             } else null;
         },
@@ -89,13 +82,37 @@ fn applyTo(p: provider.config.LocalProvider, change: Edit) ?provider.config.Loca
 
 /// Report whether an entry carries only its credential, so removing that leaves nothing to keep.
 fn onlyCredential(p: provider.config.LocalProvider) bool {
-    if (p.base_url != null or p.protocol != null or p.cache != null) return false;
-    if (p.responses_dialect != null or p.headers != null or p.models.len != 0) return false;
+    if (p.base_url != null or p.session_header != null or p.endpoints != null) return false;
+    if (p.headers != null or p.models.len != 0) return false;
     // A keyless entry states that the route needs nothing, so it is configuration.
     return switch (p.auth orelse return false) {
-        .api_key => |key| key.header == null and key.source != null,
+        .api_key => |key| key.source != null,
         .oauth => true,
     };
+}
+
+test "removing a credential keeps every route field and drops an entry that held nothing else" {
+    const key: provider.config.LocalAuth = .{ .api_key = .{ .source = .{ .literal = "k" } } };
+    // An entry that holds only its credential goes with it.
+    try std.testing.expect(applyTo(.{ .id = "p", .auth = key }, .remove_credential) == null);
+    try std.testing.expect(applyTo(.{ .id = "p", .auth = .{ .oauth = .{ .access_token = "t", .expires_at_ms = 1 } } }, .remove_credential) == null);
+
+    // Each route field is configuration the user wrote, so the entry stays and only the value goes.
+    const endpoints = [_]ai.instance.Endpoint{.{ .protocol = .openai_chat }};
+    const kept = [_]provider.config.LocalProvider{
+        .{ .id = "p", .auth = key, .base_url = "https://p.example/v1" },
+        .{ .id = "p", .auth = key, .session_header = .x_opencode_session },
+        .{ .id = "p", .auth = key, .endpoints = &endpoints },
+        .{ .id = "p", .auth = key, .endpoints = &.{} },
+        .{ .id = "p", .auth = key, .headers = &.{} },
+    };
+    for (kept) |entry| {
+        const out = applyTo(entry, .remove_credential).?;
+        try std.testing.expect(out.auth.?.api_key.source == null); // The route still wants a key.
+    }
+    // A key that replaces a grant keeps the entry shape the user wrote.
+    const swapped = applyTo(.{ .id = "p", .auth = key, .base_url = "https://p.example/v1" }, .{ .set_api_key = "k2" }).?;
+    try std.testing.expectEqualStrings("k2", swapped.auth.?.api_key.source.?.literal);
 }
 
 /// Drop one grant from the layer in memory, without a write. A rotation whose result cannot land on

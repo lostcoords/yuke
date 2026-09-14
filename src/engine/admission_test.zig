@@ -35,7 +35,7 @@ const Fixture = struct {
         try self.resources.env.put("XDG_CONFIG_HOME", path[0..try self.tmp.dir.realPath(testing.io, &path)]);
         try self.resources.env.put("YUKE_APPNAME", "agents-test");
         var local = try @import("../provider/provider.zig").config.loadBytes(testing.allocator,
-            \\{"version":1,"providers":[{"id":"test","base_url":"http://localhost:1/v1","protocol":"openai_chat","models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}}]}]}
+            \\{"providers":[{"id":"test","base_url":"http://localhost:1/v1","endpoints":[{"protocol":"openai_chat"}],"models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}}]}]}
         );
         _ = self.resources.providers.installLocal(&local) catch |err| {
             local.deinit();

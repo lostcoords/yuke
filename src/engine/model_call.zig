@@ -19,6 +19,8 @@ pub const Request = struct {
     max_output_tokens: u32,
     /// The session reasoning level. An empty level leaves the provider default.
     reasoning: []const u8 = "",
+    /// The session id as hex. A gateway that routes by session refuses a call without it.
+    session_id: []const u8 = "",
 };
 
 /// What one call returned. The text lives in the arena the caller passed.
@@ -34,10 +36,7 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
     try cancel.check(engine.deps.io); // A cancel that already landed reports no other refusal.
 
     // A provider the merge could not complete has no route, so it cannot serve a call.
-    const live_route = switch (match.provider.availability) {
-        .ready => |ready| ready,
-        .unavailable => return error.UnknownModel,
-    };
+    const live_route = registry.routeFor(match) orelse return error.UnknownModel;
     // The registry can rebuild while this call runs, so the call holds its own copies.
     var route = try proto.dupe(arena, live_route);
     const spec = try proto.dupe(arena, match.model.*);
@@ -72,6 +71,9 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
             // A call answers on the session model, so it must reason at the session level too.
             .reasoning = reasoning,
             .tool_choice = request.tool_choice,
+            // A call repeats the turn prefix, so it stays on the cache and the upstream of its session.
+            .cache_key = request.session_id,
+            .session_id = request.session_id,
         },
     });
     defer result.deinit();
@@ -87,10 +89,13 @@ const Resources = @import("test_resources.zig");
 /// One ready provider with an Anthropic route, so the canned reply parses.
 fn mockMatch(arena: std.mem.Allocator, credential: registry.CredentialSource) !registry.Match {
     const spec = try arena.create(registry.ModelSpec);
-    spec.* = .{ .id = "mock", .upstream_id = "mock-1", .name = "Mock", .caps = .{ .tools = true } };
+    spec.* = .{ .id = "mock", .upstream_id = "mock-1", .name = "Mock", .protocol = .anthropic_messages, .caps = .{ .tools = true } };
     const row = try arena.create(registry.Provider);
     row.* = .{ .id = "mock", .name = "Mock", .models = &.{}, .availability = .{ .ready = .{
-        .route = .{ .base_url = "https://example.test/v1", .protocol = .anthropic_messages, .auth = .{ .api_key = .x_api_key } },
+        .base_url = "https://example.test/v1",
+        .headers = &.{},
+        .session_header = .none,
+        .endpoints = &.{.{ .protocol = .anthropic_messages, .key_header = .x_api_key }},
         .credential = credential,
     } } };
     return .{ .provider = row, .model = spec };
@@ -182,6 +187,29 @@ test "a call reasons at the session level, and a level the model lacks never rea
         .reasoning = "low",
     });
     try testing.expectEqualStrings("Hello from the yuke mock provider.", answer.text);
+}
+
+test "a call carries the session id in the header the host names" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
+    f.engine.deps.route_transport = capture.transport();
+
+    var match = try mockMatch(a, .{ .literal = "secret" });
+    const row = try a.create(registry.Provider);
+    row.* = match.provider.*;
+    row.availability.ready.session_header = .x_opencode_session;
+    match.provider = row;
+
+    var cancel: Cancel = .{};
+    _ = try f.callWith(&cancel, match, .{ .blocks = &test_blocks, .max_output_tokens = 512, .session_id = "0123456789abcdef" });
+    const sent = capture.headers.items[0];
+    const session = for (sent) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "x-opencode-session")) break h.value;
+    } else return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("0123456789abcdef", session);
 }
 
 test "a provider the merge could not complete serves no call" {

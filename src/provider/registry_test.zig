@@ -21,13 +21,9 @@ fn catalogRow(id: []const u8, name: []const u8, models: []const registry.ModelSp
         .id = id,
         .name = name,
         .auth = .{ .api_key = null },
-        .route = .{
-            .base_url = "https://api.example/v1",
-            .protocol = .openai_chat,
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = .unsupported,
-            .headers = &.{.{ .name = "x-catalog-version", .value = "1" }},
-        },
+        .base_url = "https://api.example/v1",
+        .headers = &.{.{ .name = "x-catalog-version", .value = "1" }},
+        .endpoints = &.{.{ .protocol = .openai_chat, .key_header = .authorization_bearer, .cache = .unsupported }},
         .models = models,
     };
 }
@@ -36,10 +32,16 @@ const catalog_model: registry.ModelSpec = .{
     .id = "cm",
     .upstream_id = "cm",
     .name = "Catalog Model",
+    .protocol = .openai_chat,
     .limits = .{ .context_window = 1000, .max_output_tokens = 100 },
     .cost = .{ .input = 1, .output = 2 },
     .caps = .{ .tools = true, .vision = false },
 };
+
+/// The route of the first model of a row. Every row under test serves at least one.
+fn routeOf(row: *const registry.Provider) registry.Route {
+    return registry.routeFor(.{ .provider = row, .model = &row.models[0] }).?;
+}
 
 test "a local provider with an absent environment key reports that it needs one" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
@@ -47,8 +49,8 @@ test "a local provider with an absent environment key reports that it needs one"
     const a = arena.allocator();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"acme","base_url":"https://local.example/v1",
-        \\ "protocol":"openai_chat","auth":{"api_key":{"header":"x_api_key","source":{"env":"ABSENT_KEY"}}}}]}
+        \\{"providers":[{"id":"acme","base_url":"https://local.example/v1",
+        \\ "endpoints":[{"protocol":"openai_chat","key_header":"x_api_key"}],"auth":{"api_key":{"source":{"env":"ABSENT_KEY"}}}}]}
     );
     defer loaded.deinit();
 
@@ -66,9 +68,9 @@ test "an id and a key alone resolve a full route from the catalog" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    // This is the whole entry: no base_url, no protocol, no header, no models.
+    // This is the whole entry: no base_url, no endpoints, no header, no models.
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"acme","api_key":"sk-minimal"}]}
+        \\{"providers":[{"id":"acme","api_key":"sk-minimal"}]}
     );
     defer loaded.deinit();
 
@@ -76,7 +78,7 @@ test "an id and a key alone resolve a full route from the catalog" {
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expectEqualStrings("Acme", rows[0].name); // The catalog names it.
 
-    const route = rows[0].availability.ready;
+    const route = routeOf(&rows[0]);
     try testing.expectEqualStrings("https://api.example/v1", route.route.base_url);
     try testing.expectEqual(instance.Protocol.openai_chat, route.route.protocol);
     try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
@@ -95,12 +97,12 @@ test "a local field beats the catalog field by field" {
 
     // The file pins the base URL and clears the headers. Other route fields come from the catalog.
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"acme","base_url":"https://pinned.example/v1","api_key":"k","headers":[]}]}
+        \\{"providers":[{"id":"acme","base_url":"https://pinned.example/v1","api_key":"k","headers":[]}]}
     );
     defer loaded.deinit();
 
-    const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{})}, .env = &no_env });
-    const route = rows[0].availability.ready;
+    const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})}, .env = &no_env });
+    const route = routeOf(&rows[0]);
     try testing.expectEqualStrings("https://pinned.example/v1", route.route.base_url);
     try testing.expectEqual(instance.Protocol.openai_chat, route.route.protocol);
     try testing.expectEqual(@as(usize, 0), route.route.headers.len);
@@ -111,7 +113,7 @@ test "local model reasoning levels reach the registry" {
     defer arena.deinit();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat",
+        \\{"providers":[{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","endpoints":[{"protocol":"openai_chat"}],
         \\ "models":[{"id":"qwen3","upstream_id":"qwen3:8b","limits":{"context_window":40960,"max_output_tokens":8192},
         \\ "reasoning_levels":[null,"high"],"flags":{"thinking_format":"qwen"}}]}]}
     );
@@ -130,7 +132,7 @@ test "a minimal entry with no catalog row is offered but not routable" {
     const a = arena.allocator();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"unknown","api_key":"k"}]}
+        \\{"providers":[{"id":"unknown","api_key":"k"}]}
     );
     defer loaded.deinit();
 
@@ -146,16 +148,17 @@ test "a local codex grant routes with a bearer and its account header" {
     defer arena.deinit();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"codex",
+        \\{"providers":[{"id":"codex",
         \\ "auth":{"oauth":{"access_token":"tok","account_id":"acct","expires_at_ms":9000000000000}}}]}
     );
     defer loaded.deinit();
 
     const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")}, .env = &no_env });
-    const route = rows[0].availability.ready;
+    const route = routeOf(&rows[0]);
     // The file stores only the grant, so the catalog row is what selects this shape.
     try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
     try testing.expectEqual(instance.ResponsesDialect.codex, route.route.responses_dialect);
+    try testing.expectEqual(instance.SessionHeader.session_id, route.route.session_header);
     try testing.expectEqualStrings("tok", route.credential.oauth.grant.access_token);
     try testing.expectEqualStrings("ChatGPT-Account-ID", route.credential.oauth.grant.headers[0].name);
     try testing.expectEqualStrings("acct", route.credential.oauth.grant.headers[0].value);
@@ -166,7 +169,7 @@ test "a grant whose pinned header the file also names is never ready" {
     defer arena.deinit();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"codex",
+        \\{"providers":[{"id":"codex",
         \\ "headers":[{"name":"chatgpt-account-id","value":"mine"}],
         \\ "auth":{"oauth":{"access_token":"tok","account_id":"acct","expires_at_ms":9000000000000}}}]}
     );
@@ -182,7 +185,7 @@ test "a catalog row the engine cannot build leaves the grant unroutable" {
     defer arena.deinit();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"other","auth":{"oauth":{"access_token":"tok","expires_at_ms":9000000000000}}}]}
+        \\{"providers":[{"id":"other","auth":{"oauth":{"access_token":"tok","expires_at_ms":9000000000000}}}]}
     );
     defer loaded.deinit();
 
@@ -195,7 +198,7 @@ test "a lapsed grant presents no credential to a run" {
     defer arena.deinit();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"xai",
+        \\{"providers":[{"id":"xai",
         \\ "auth":{"oauth":{"access_token":"tok","expires_at_ms":1000}}}]}
     );
     defer loaded.deinit();
@@ -203,7 +206,7 @@ test "a lapsed grant presents no credential to a run" {
     var env = EnvMap.init(testing.allocator);
     defer env.deinit();
     const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("xai", "xai")}, .env = &env });
-    const route = rows[0].availability.ready;
+    const route = routeOf(&rows[0]);
 
     // The run reads the clock, so a grant that lapses needs no catalog rebuild.
     try testing.expect(credential(route.credential, &env, 999) != null);
@@ -215,8 +218,8 @@ test "an entry that names a key and holds none needs a credential" {
     defer arena.deinit();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"acme","base_url":"https://acme.example/v1","protocol":"openai_chat",
-        \\ "auth":{"api_key":{"header":"x_api_key"}}}]}
+        \\{"providers":[{"id":"acme","base_url":"https://acme.example/v1",
+        \\ "endpoints":[{"protocol":"openai_chat","key_header":"x_api_key"}],"auth":{"api_key":{}}}]}
     );
     defer loaded.deinit();
 
@@ -230,14 +233,85 @@ test "a keyless entry routes with no credential" {
     defer arena.deinit();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat"}]}
+        \\{"providers":[{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","endpoints":[{"protocol":"openai_chat"}],
+        \\ "models":[{"id":"qwen3","upstream_id":"qwen3:8b"}]}]}
     );
     defer loaded.deinit();
 
     const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &no_env });
-    const route = rows[0].availability.ready;
+    const route = routeOf(&rows[0]);
     try testing.expect(route.route.auth == .none);
     try testing.expect(route.credential == .none);
+}
+
+test "a gateway routes each model to the path it names, and the key header follows the path" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    // The file adds a chat model and a Responses model to a host the catalog serves on three paths.
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"providers":[{"id":"gateway","api_key":"sk-gw",
+        \\ "models":[{"id":"chat","upstream_id":"chat","protocol":"openai_chat"},
+        \\           {"id":"resp","upstream_id":"resp","protocol":"openai_responses"}]}]}
+    );
+    defer loaded.deinit();
+
+    const gateway: catalog.Provider = .{
+        .id = "gateway",
+        .name = "Gateway",
+        .auth = .{ .api_key = null },
+        .base_url = "https://gateway.example/v1",
+        .session_header = .x_opencode_session,
+        .endpoints = &.{
+            .{ .protocol = .anthropic_messages, .key_header = .x_api_key, .cache = .anthropic_breakpoint },
+            .{ .protocol = .openai_chat, .key_header = .authorization_bearer, .cache = .automatic },
+            .{ .protocol = .openai_responses, .key_header = .authorization_bearer },
+        },
+        .models = &.{.{ .id = "msg", .upstream_id = "msg", .name = "Messages", .protocol = .anthropic_messages }},
+    };
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{gateway}, .env = &no_env });
+    const row = &rows[0];
+    try testing.expectEqual(@as(usize, 3), row.models.len);
+
+    const expected = [_]struct { id: []const u8, protocol: instance.Protocol, header: instance.ApiKeyHeader, cache: ?instance.CachePolicy }{
+        .{ .id = "msg", .protocol = .anthropic_messages, .header = .x_api_key, .cache = .anthropic_breakpoint },
+        .{ .id = "chat", .protocol = .openai_chat, .header = .authorization_bearer, .cache = .automatic },
+        .{ .id = "resp", .protocol = .openai_responses, .header = .authorization_bearer, .cache = null },
+    };
+    for (expected) |want| {
+        const match = registry.findModel(rows, try registry.selectorOf(arena.allocator(), "gateway", want.id)).?;
+        const route = registry.routeFor(match).?;
+        try testing.expectEqual(want.protocol, route.route.protocol);
+        try testing.expectEqual(want.header, route.route.auth.api_key);
+        try testing.expectEqual(want.cache, route.route.cache);
+        // The host fields are the same on every path.
+        try testing.expectEqual(instance.SessionHeader.x_opencode_session, route.route.session_header);
+        try testing.expectEqualStrings("https://gateway.example/v1", route.route.base_url);
+        try testing.expectEqualStrings("sk-gw", route.credential.literal);
+    }
+}
+
+test "a file model on no declared path leaves the provider unroutable" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    // The catalog serves chat only, so a Responses model has no path, and a model that names none has no sole path to take.
+    var loaded = try provider.config.loadBytes(testing.allocator,
+        \\{"providers":[{"id":"acme","api_key":"k","models":[{"id":"resp","upstream_id":"resp","protocol":"openai_responses"}]}]}
+    );
+    defer loaded.deinit();
+    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})}, .env = &no_env });
+    try testing.expectEqual(registry.Reason.needs_route, rows[0].availability.unavailable);
+    // The baked models still show, so the picker explains which provider is broken and why.
+    try testing.expectEqual(@as(usize, 1), rows[0].models.len);
+
+    // A file list that drops the path a baked model needs is the same fault from the other side.
+    var replaced = try provider.config.loadBytes(testing.allocator,
+        \\{"providers":[{"id":"acme","api_key":"k","endpoints":[{"protocol":"anthropic_messages","key_header":"x_api_key"}]}]}
+    );
+    defer replaced.deinit();
+    const dropped = try resolve(arena.allocator(), .{ .local = &replaced, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})}, .env = &no_env });
+    try testing.expectEqual(registry.Reason.needs_route, dropped[0].availability.unavailable);
 }
 
 test "a local entry with no credential never routes a catalog provider that needs one" {
@@ -246,7 +320,7 @@ test "a local entry with no credential never routes a catalog provider that need
 
     // The file names only the id. The catalog supplies a complete API-key route.
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"acme"}]}
+        \\{"providers":[{"id":"acme"}]}
     );
     defer loaded.deinit();
 
@@ -261,7 +335,7 @@ test "a pinned header that shadows the catalog credential header is not ready" {
 
     // The file pins Authorization, and the catalog names authorization_bearer for the credential.
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"acme","api_key":"k","headers":[{"name":"Authorization","value":"other"}]}]}
+        \\{"providers":[{"id":"acme","api_key":"k","headers":[{"name":"Authorization","value":"other"}]}]}
     );
     defer loaded.deinit();
 
@@ -275,8 +349,8 @@ test "an empty environment value is no credential" {
     defer arena.deinit();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"acme","base_url":"https://acme.example/v1","protocol":"openai_chat",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"EMPTY_KEY"}}}}]}
+        \\{"providers":[{"id":"acme","base_url":"https://acme.example/v1",
+        \\ "endpoints":[{"protocol":"openai_chat","key_header":"x_api_key"}],"auth":{"api_key":{"source":{"env":"EMPTY_KEY"}}}}]}
     );
     defer loaded.deinit();
 
@@ -294,8 +368,9 @@ test "an environment credential resolves through the production path" {
     defer arena.deinit();
 
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"acme","base_url":"https://acme.example/v1","protocol":"openai_chat",
-        \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"ACME_KEY"}}}}]}
+        \\{"providers":[{"id":"acme","base_url":"https://acme.example/v1",
+        \\ "endpoints":[{"protocol":"openai_chat","key_header":"x_api_key"}],"auth":{"api_key":{"source":{"env":"ACME_KEY"}}},
+        \\ "models":[{"id":"m","upstream_id":"m"}]}]}
     );
     defer loaded.deinit();
 
@@ -304,7 +379,7 @@ test "an environment credential resolves through the production path" {
     try env.put("ACME_KEY", "sk-from-env");
 
     const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &env });
-    const route = rows[0].availability.ready;
+    const route = routeOf(&rows[0]);
     // The row names the variable, and the run reads it again when it starts.
     try testing.expectEqualStrings("ACME_KEY", route.credential.env);
     try testing.expectEqualStrings("sk-from-env", credential(route.credential, &env, 0).?.api_key);
@@ -314,21 +389,18 @@ fn oauthCatalogRow(id: []const u8, flow: []const u8) catalog.Provider {
         .id = id,
         .name = id,
         .auth = .{ .oauth = flow },
-        .route = .{
-            .base_url = "https://api.example/v1",
-            .protocol = .openai_responses,
-            // Every grant presents a bearer, so the baked route names that header.
-            .auth = .{ .api_key = .authorization_bearer },
-            .cache = .unsupported,
-        },
-        .models = &.{},
+        .base_url = "https://api.example/v1",
+        // The catalog states the dialect and the session header; the flow only selects the identity headers.
+        .session_header = .session_id,
+        .endpoints = &.{.{ .protocol = .openai_responses, .key_header = .authorization_bearer, .cache = .unsupported, .responses_dialect = .codex }},
+        .models = &.{.{ .id = "om", .upstream_id = "om", .name = "OAuth Model", .protocol = .openai_responses }},
     };
 }
 
 test "load composes the file over the real baked table" {
     // Every merge rule above is fixed on a hand-made row. This fixes only that `load` reads the real one.
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"anthropic","api_key":"sk-baked"},
+        \\{"providers":[{"id":"anthropic","api_key":"sk-baked"},
         \\ {"id":"openai-codex","auth":{"oauth":{"access_token":"tok","expires_at_ms":9000000000000}}}]}
     );
     defer loaded.deinit();
@@ -338,7 +410,7 @@ test "load composes the file over the real baked table" {
 
     // A synthetic row could never produce this URL, so the route demonstrably came from the table.
     const keyed = registry.find(snapshot.rows, "anthropic").?;
-    try testing.expectEqualStrings("https://api.anthropic.com/v1", keyed.availability.ready.route.base_url);
+    try testing.expectEqualStrings("https://api.anthropic.com/v1", keyed.availability.ready.base_url);
     try testing.expect(keyed.models.len != 0); // The baked models reach the picker with no copy.
 
     // Stage 1 bakes this name. Without it the engine cannot start the login at all.
@@ -347,8 +419,8 @@ test "load composes the file over the real baked table" {
 
 test "a model that can stop its reasoning offers off after its efforts, and the default skips it" {
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"minimax","api_key":"k"},
-        \\ {"id":"ollama","base_url":"http://127.0.0.1:11434/v1","protocol":"openai_chat",
+        \\{"providers":[{"id":"minimax","api_key":"k"},
+        \\ {"id":"ollama","base_url":"http://127.0.0.1:11434/v1","endpoints":[{"protocol":"openai_chat"}],
         \\  "models":[{"id":"qwen3","upstream_id":"qwen3:8b","reasoning_levels":[null,"high"],"flags":{"thinking_format":"qwen"}}]}]}
     );
     defer loaded.deinit();
@@ -370,7 +442,7 @@ test "a model that can stop its reasoning offers off after its efforts, and the 
 
 test "the registry emits a bare selector and resolves it back" {
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"openrouter","api_key":"sk-x"}]}
+        \\{"providers":[{"id":"openrouter","api_key":"sk-x"}]}
     );
     defer loaded.deinit();
 
@@ -401,7 +473,7 @@ test "the environment alone offers a provider the file never names" {
     defer snapshot.deinit();
 
     const row = registry.find(snapshot.rows, "anthropic").?;
-    const route = row.availability.ready;
+    const route = routeOf(row);
     // The row names the variable, so a rotated key reaches the next run with no rebuild.
     try testing.expectEqualStrings("ANTHROPIC_API_KEY", route.credential.env);
     try testing.expectEqualStrings("https://api.anthropic.com/v1", route.route.base_url);
@@ -442,7 +514,7 @@ test "the file beats the environment and extends the baked model list" {
     const baked = ai.catalog.find("anthropic").?;
     var buf: [512]u8 = undefined;
     const doc = try std.fmt.bufPrint(&buf,
-        \\{{"version":1,"providers":[{{"id":"anthropic","api_key":"sk-file","models":[
+        \\{{"providers":[{{"id":"anthropic","api_key":"sk-file","models":[
         \\ {{"id":"{s}","upstream_id":"pinned","limits":{{"context_window":1,"max_output_tokens":1}}}},
         \\ {{"id":"private","upstream_id":"private-1","limits":{{"context_window":1,"max_output_tokens":1}}}}]}}]}}
     , .{baked.models[0].id});

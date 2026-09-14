@@ -18,6 +18,16 @@ pub const Route = struct {
     credential: CredentialSource,
 };
 
+/// The host fields one ready provider holds. A route composes from these and the endpoint a model names.
+pub const Host = struct {
+    base_url: []const u8,
+    headers: []const instance.Header,
+    session_header: instance.SessionHeader,
+    /// Every entry presents the credential the source names, and every model of the row names one entry.
+    endpoints: []const instance.Endpoint,
+    credential: CredentialSource,
+};
+
 /// A run reads the stored grant and its expiry, so it needs no catalog rebuild.
 pub const OAuthSource = struct {
     grant: ai.resolve.Credential.OAuth,
@@ -61,9 +71,9 @@ pub const Reason = enum {
     expired,
 };
 
-/// A ready provider carries its route, so a state and a route can never disagree.
+/// A ready provider carries its host fields, so a state and a route can never disagree.
 pub const Availability = union(enum) {
-    ready: Route,
+    ready: Host,
     unavailable: Reason,
 
     /// Project onto the wire, which reports the same reason under its own name.
@@ -94,6 +104,17 @@ pub const Match = struct {
     provider: *const Provider,
     model: *const ModelSpec,
 };
+
+/// Compose the route one model calls, or null when its provider cannot serve a turn.
+pub fn routeFor(match: Match) ?Route {
+    const host = switch (match.provider.availability) {
+        .ready => |host| host,
+        .unavailable => return null,
+    };
+    // A ready row proves that each of its models names one of its endpoints.
+    const endpoint = instance.findEndpoint(host.endpoints, match.model.protocol).?;
+    return .{ .route = endpoint.route(host.base_url, host.headers, host.session_header), .credential = host.credential };
+}
 
 /// The sources one merge reads. Each one is absent when its layer is not configured.
 pub const Sources = struct {
@@ -197,12 +218,23 @@ fn providerRow(
     from_catalog: ?*const catalog.Provider,
     env: *const EnvMap,
 ) !Provider {
+    // A file list replaces the catalog list as a whole, so a model names a path from one list only.
+    const endpoints: []const instance.Endpoint = p.endpoints orelse (if (from_catalog) |c| c.endpoints else &.{});
+    const baked: []const ModelSpec = if (from_catalog) |c| c.models else &.{};
+    // A file model on no declared path cannot be shaped, so the row keeps the baked list and cannot serve a turn.
+    const merged = mergedModels(arena, p, baked, endpoints) catch |err| switch (err) {
+        error.NoEndpoint => null,
+        error.OutOfMemory => |e| return e,
+    };
     return .{
         .id = p.id,
         .login_flow = if (from_catalog) |c| loginFlow(c.auth) else null,
         .name = if (from_catalog) |c| c.name else p.id,
-        .models = try mergedModels(arena, p, from_catalog),
-        .availability = localAvailability(arena, p, from_catalog, env),
+        .models = merged orelse baked,
+        .availability = if (merged) |models|
+            try localAvailability(arena, p, from_catalog, env, endpoints, models)
+        else
+            .{ .unavailable = .needs_route },
     };
 }
 
@@ -216,12 +248,12 @@ fn findLocal(local: ?*const provider.config.Loaded, id: []const u8) ?provider.co
 fn mergedModels(
     arena: std.mem.Allocator,
     p: provider.config.LocalProvider,
-    from_catalog: ?*const catalog.Provider,
+    baked: []const ModelSpec,
+    endpoints: []const instance.Endpoint,
 ) ![]const ModelSpec {
-    const baked: []const ModelSpec = if (from_catalog) |c| c.models else &.{};
     // The baked models already hold the effective shape, so only a file entry allocates.
     if (p.models.len == 0) return baked;
-    const extra = try provider.config.modelSpecs(arena, p.models);
+    const extra = try provider.config.modelSpecs(arena, p.models, endpoints);
     if (baked.len == 0) return extra;
 
     var out: std.ArrayList(ModelSpec) = .empty;
@@ -236,30 +268,23 @@ fn findSpec(specs: []const ModelSpec, id: []const u8) ?ModelSpec {
     return null;
 }
 
-/// Resolve the local credential, then complete the route from the catalog template.
+/// Resolve the credential and complete the host from the catalog. The credential selects the key header on every endpoint.
 fn localAvailability(
     arena: std.mem.Allocator,
     p: provider.config.LocalProvider,
     from_catalog: ?*const catalog.Provider,
     env: *const EnvMap,
-) Availability {
-    const template: ?*const instance.Route = if (from_catalog) |c| &c.route else null;
-    const base_url = p.base_url orelse (if (template) |t| t.base_url else null) orelse return .{ .unavailable = .needs_route };
-    const protocol = p.protocol orelse (if (template) |t| t.protocol else null) orelse return .{ .unavailable = .needs_route };
-    // Every baked row states an api-key header, and a grant presents a bearer under the same member.
-    const catalog_header: ?instance.ApiKeyHeader = if (template) |t| switch (t.auth) {
-        .api_key => |header| header,
-        .none => null,
-    } else null;
-    const headers = p.headers orelse (if (template) |t| t.headers else &.{});
+    declared: []const instance.Endpoint,
+    models: []const ModelSpec,
+) !Availability {
+    const base_url = p.base_url orelse (if (from_catalog) |c| c.base_url else null) orelse return .{ .unavailable = .needs_route };
+    if (declared.len == 0) return .{ .unavailable = .needs_route };
+    const headers = p.headers orelse (if (from_catalog) |c| c.headers else &.{});
+    const session_header = p.session_header orelse (if (from_catalog) |c| c.session_header else .none);
 
-    var mechanism: instance.AuthMechanism = .none;
     var source: CredentialSource = .none;
-    var dialect = p.responses_dialect orelse .standard;
     if (p.auth) |auth| switch (auth) {
         .api_key => |key| {
-            const header = key.header orelse catalog_header orelse return .{ .unavailable = .needs_route };
-            mechanism = .{ .api_key = header };
             // The entry names an API-key route and holds no value, so the user must supply one.
             const from_file = key.source orelse return .{ .unavailable = .needs_credential };
             switch (from_file) {
@@ -274,13 +299,9 @@ fn localAvailability(
         .oauth => |grant| {
             // The catalog states how a provider authenticates. The file only stores the grant.
             const flow = (if (from_catalog) |c| loginFlow(c.auth) else null) orelse return .{ .unavailable = .needs_route };
-            switch (oauthRoute(arena, flow, grant.access_token, grant.account_id, grant.expires_at_ms)) {
+            switch (try oauthSource(arena, flow, grant.access_token, grant.account_id, grant.expires_at_ms)) {
                 .unavailable => |reason| return .{ .unavailable = reason },
-                .ready => |route| {
-                    mechanism = route.mechanism;
-                    dialect = route.dialect;
-                    source = route.source;
-                },
+                .ready => |stored| source = stored,
             }
         },
     } else if (from_catalog) |c| switch (c.auth) {
@@ -289,71 +310,67 @@ fn localAvailability(
             const name = named orelse return .{ .unavailable = .needs_credential };
             const value = envValue(env, name) orelse return .{ .unavailable = .needs_credential };
             std.debug.assert(value.len != 0); // `envValue` rejects a blank variable.
-            mechanism = .{ .api_key = catalog_header orelse return .{ .unavailable = .needs_route } };
             source = .{ .env = name };
         },
         // No variable can hold a grant, so this provider waits for a login.
         .oauth => return .{ .unavailable = .needs_credential },
     };
 
-    // The catalog can name the header, so check the composed set that the loader could not.
     // A grant pins its own identity header, and a run refuses the whole request when one collides.
     const pinned: []const instance.Header = switch (source) {
         .oauth => |stored| stored.grant.headers,
         else => &.{},
     };
-    if (ai.resolve.headerConflict(mechanism.headerName(), pinned, headers)) {
-        return .{ .unavailable = .needs_route };
+    // The catalog can name the header, so check the composed set that the loader could not.
+    const endpoints = try arena.alloc(instance.Endpoint, declared.len);
+    for (declared, 0..) |e, i| {
+        endpoints[i] = e;
+        endpoints[i].key_header = switch (source) {
+            .none => null,
+            // A key needs a header to travel in.
+            .env, .literal => e.key_header orelse return .{ .unavailable = .needs_route },
+            // Every grant presents a bearer, whatever header a key would take on this path.
+            .oauth => .authorization_bearer,
+        };
+        if (ai.resolve.headerConflict(endpoints[i].mechanism().headerName(), pinned, headers)) {
+            return .{ .unavailable = .needs_route };
+        }
     }
+    if (ai.resolve.headerConflict(session_header.name(), pinned, headers)) return .{ .unavailable = .needs_route };
+    // A baked model always names a baked path, but a file list can drop the path a baked model needs.
+    for (models) |m| if (instance.findEndpoint(endpoints, m.protocol) == null) return .{ .unavailable = .needs_route };
 
     return .{ .ready = .{
-        .route = .{
-            .base_url = base_url,
-            .protocol = protocol,
-            .auth = mechanism,
-            .headers = headers,
-            .cache = p.cache orelse (if (template) |t| t.cache else null),
-            .responses_dialect = dialect,
-        },
+        .base_url = base_url,
+        .headers = headers,
+        .session_header = session_header,
+        .endpoints = endpoints,
         .credential = source,
     } };
 }
 
-/// One grant becomes one route the same way from either origin. Every grant is a bearer, so the
-/// flow selects only the identity header and the response dialect.
-const OAuthRoute = union(enum) {
-    ready: struct {
-        mechanism: instance.AuthMechanism,
-        dialect: instance.ResponsesDialect,
-        source: CredentialSource,
-    },
+/// One grant becomes one credential source the same way from either origin. The flow selects only the identity headers.
+const GrantSource = union(enum) {
+    ready: CredentialSource,
     unavailable: Reason,
 };
 
-fn oauthRoute(
+fn oauthSource(
     arena: std.mem.Allocator,
     flow: []const u8,
     access_token: []const u8,
     account_id: ?[]const u8,
     expires_at_ms: ?u64,
-) OAuthRoute {
-    const bearer: instance.AuthMechanism = .{ .api_key = .authorization_bearer };
+) !GrantSource {
     if (std.mem.eql(u8, flow, "codex")) {
         // Codex names the account on every request, so a grant without one is half a credential.
         const account = account_id orelse return .{ .unavailable = .needs_credential };
-        const headers = arena.dupe(instance.Header, &.{.{ .name = "ChatGPT-Account-ID", .value = account }}) catch
-            return .{ .unavailable = .needs_route };
-        return .{ .ready = .{
-            .mechanism = bearer,
-            .dialect = .codex,
-            .source = .{ .oauth = .{ .grant = .{ .access_token = access_token, .headers = headers }, .expires_at_ms = expires_at_ms } },
-        } };
+        const headers = try arena.dupe(instance.Header, &.{.{ .name = "ChatGPT-Account-ID", .value = account }});
+        return .{ .ready = .{ .oauth = .{ .grant = .{ .access_token = access_token, .headers = headers }, .expires_at_ms = expires_at_ms } } };
     }
-    if (std.mem.eql(u8, flow, "xai")) return .{ .ready = .{
-        .mechanism = bearer,
-        .dialect = .standard,
-        .source = .{ .oauth = .{ .grant = .{ .access_token = access_token }, .expires_at_ms = expires_at_ms } },
-    } };
+    if (std.mem.eql(u8, flow, "xai")) {
+        return .{ .ready = .{ .oauth = .{ .grant = .{ .access_token = access_token }, .expires_at_ms = expires_at_ms } } };
+    }
     return .{ .unavailable = .needs_route }; // The engine cannot build this flow.
 }
 
@@ -494,16 +511,16 @@ test "off is offered after the efforts only while the model can stop, and the de
     const null_high = [_]ai.model.ReasoningLevel{ .none, .{ .named = "high" } };
 
     // A stated capability adds the sentinel behind the efforts.
-    const stated: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .caps = .{ .disable_reasoning = true }, .reasoning_levels = &high };
+    const stated: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat, .caps = .{ .disable_reasoning = true }, .reasoning_levels = &high };
     try std.testing.expectEqualDeep(&[_][]const u8{ "high", "off" }, try levelNames(a, stated));
     try std.testing.expectEqualStrings("high", try defaultLevel(a, stated));
     // A null source level means the same, and a stated refusal beats it.
-    const by_null: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &null_high };
+    const by_null: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat, .reasoning_levels = &null_high };
     try std.testing.expectEqualDeep(&[_][]const u8{ "high", "off" }, try levelNames(a, by_null));
-    const refused: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .caps = .{ .disable_reasoning = false }, .reasoning_levels = &null_high };
+    const refused: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat, .caps = .{ .disable_reasoning = false }, .reasoning_levels = &null_high };
     try std.testing.expectEqualDeep(&[_][]const u8{"high"}, try levelNames(a, refused));
     // A model with no effort keeps the vendor default, so `off` alone names no default.
-    const only_off: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .caps = .{ .disable_reasoning = true } };
+    const only_off: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat, .caps = .{ .disable_reasoning = true } };
     try std.testing.expectEqualDeep(&[_][]const u8{"off"}, try levelNames(a, only_off));
     try std.testing.expectEqualStrings("", try defaultLevel(a, only_off));
 }

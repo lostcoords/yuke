@@ -98,11 +98,13 @@ pub const Client = struct {
 
     pub const InitOptions = struct {
         idle_timeout: ?std.Io.Duration = null,
+        /// The name every request carries. A gateway wants an agent name, not a library name.
+        user_agent: []const u8,
     };
 
     /// Use `gpa` for HTTP state until `deinit` runs after every response body closes.
     pub fn init(gpa: std.mem.Allocator, io: std.Io, options: InitOptions) Client {
-        return .{ .http = .init(gpa, io, options.idle_timeout) };
+        return .{ .http = .init(gpa, io, options.idle_timeout, options.user_agent) };
     }
 
     pub fn deinit(self: *Client) void {
@@ -492,6 +494,12 @@ test "prepare and consume split request lifecycle" {
     };
     try consume(std.testing.allocator, body, prepared.protocol, &event_count, Counter.onEvent);
     try std.testing.expect(event_count > 0);
+}
+
+test "a client names its user agent at init" {
+    var client = Client.init(std.testing.allocator, std.testing.io, .{ .user_agent = "acme/1.0" });
+    defer client.deinit();
+    try std.testing.expectEqualStrings("acme/1.0", client.http.user_agent);
 }
 
 test "prepare owns route and credential strings" {

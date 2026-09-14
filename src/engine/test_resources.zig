@@ -64,11 +64,12 @@ pub const tool_reply =
     "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":1}}\n\n" ++
     "data: {\"type\":\"message_stop\"}\n\n";
 
-/// Record every request body, and answer each with the next reply. A request past the list fails.
+/// Record every request body and header set, and answer each with the next reply. A request past the list fails.
 pub const Capture = struct {
     arena: std.mem.Allocator,
     replies: []const []const u8,
     requests: std.ArrayList([]const u8) = .empty,
+    headers: std.ArrayList([]const ai.transport.Header) = .empty,
 
     pub fn transport(self: *Capture) ai.transport.Transport {
         return .{ .ctx = self, .vtable = &.{ .open = open } };
@@ -78,6 +79,9 @@ pub const Capture = struct {
         const self: *Capture = @ptrCast(@alignCast(ctx));
         const index = self.requests.items.len;
         try self.requests.append(self.arena, try self.arena.dupe(u8, request.body));
+        const copied = try self.arena.alloc(ai.transport.Header, request.headers.len);
+        for (request.headers, 0..) |h, i| copied[i] = try h.cloneLeaky(self.arena);
+        try self.headers.append(self.arena, copied);
         if (index >= self.replies.len) return error.UnexpectedRequest;
         const reader = try arena.create(ai.transport.ReplayReader);
         reader.* = .{ .bytes = self.replies[index] };
@@ -108,9 +112,12 @@ pub const Fixture = struct {
         try self.resources.init();
         self.db = try Database.openTest();
         self.engine = self.resources.makeEngine(&self.db);
-        self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .caps = .{ .tools = true }, .modalities = options.modalities }};
+        self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tools = true }, .modalities = options.modalities }};
         self.rows = .{.{ .id = "mock", .name = "Mock", .models = &self.models, .availability = .{ .ready = .{
-            .route = .{ .base_url = "https://example.test", .protocol = .anthropic_messages, .auth = .none },
+            .base_url = "https://example.test",
+            .headers = &.{},
+            .session_header = .none,
+            .endpoints = &.{.{ .protocol = .anthropic_messages }},
             .credential = .none,
         } } }};
         self.resources.providers.merged.rows = &self.rows;

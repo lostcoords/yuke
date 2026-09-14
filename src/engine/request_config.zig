@@ -133,13 +133,13 @@ pub const RequestBuild = struct {
 };
 
 test "an unset level omits the control and off disables it" {
-    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m" };
+    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat };
     try std.testing.expectEqual(ai.ir.ReasoningControl.default, try reasoningFor(&model, "", 8192));
     try std.testing.expectEqual(ai.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
 }
 
 test "an adaptive row resolves to adaptive for every level that is not off" {
-    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .anthropic_adaptive = true } };
+    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat, .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .anthropic_adaptive = true } };
     try std.testing.expectEqual(ai.ir.ReasoningControl.adaptive, try reasoningFor(&model, "high", 8192));
     try std.testing.expectEqual(ai.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
 }
@@ -149,6 +149,7 @@ test "a budget row states one budget, whatever effort the caller names" {
         .id = "m",
         .upstream_id = "m",
         .name = "m",
+        .protocol = .anthropic_messages,
         .reasoning_levels = &.{ .{ .named = "max" }, .{ .named = "high" } },
         .dialect = .{ .reasoning_budget = .from(1024, 32000) },
     };
@@ -158,11 +159,11 @@ test "a budget row states one budget, whatever effort the caller names" {
 }
 
 test "a budget is clamped by the feed bounds and refused when it reaches the ceiling" {
-    const capped: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .reasoning_budget = .from(null, 2000) } };
+    const capped: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat, .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .reasoning_budget = .from(null, 2000) } };
     try std.testing.expectEqual(@as(u64, 2000), (try reasoningFor(&capped, "high", 8192)).budget);
 
     // A budget that reaches the ceiling falls back to the effort control.
-    const tiny: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .reasoning_budget = .from(1024, null) } };
+    const tiny: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat, .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .reasoning_budget = .from(1024, null) } };
     try std.testing.expectEqual(ai.ir.Effort.high, (try reasoningFor(&tiny, "high", 1024)).effort);
 
     // The published maximum still wins, so a model that caps itself below the default is honoured.
@@ -170,10 +171,10 @@ test "a budget is clamped by the feed bounds and refused when it reaches the cei
 }
 
 test "a selected level outside the model list is unsupported" {
-    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_levels = &.{.{ .named = "high" }} };
+    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat, .reasoning_levels = &.{.{ .named = "high" }} };
     try std.testing.expectError(error.UnsupportedReasoning, reasoningFor(&model, "turbo", 8192));
     try std.testing.expectEqual(ai.ir.Effort.high, (try reasoningFor(&model, "high", 8192)).effort);
 
-    const unlisted: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m" };
+    const unlisted: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat };
     try std.testing.expectError(error.UnsupportedReasoning, reasoningFor(&unlisted, "turbo", 8192));
 }

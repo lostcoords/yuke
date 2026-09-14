@@ -38,9 +38,12 @@ const Fixture = struct {
         try self.resources.init();
         self.db = try database.Database.openTest();
         self.engine = self.resources.makeEngine(&self.db);
-        self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .caps = .{ .tools = true } }};
+        self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tools = true } }};
         self.rows = .{.{ .id = "mock", .name = "Mock", .models = &self.models, .availability = .{ .ready = .{
-            .route = .{ .base_url = "https://example.test", .protocol = .anthropic_messages, .auth = .none },
+            .base_url = "https://example.test",
+            .headers = &.{},
+            .session_header = .none,
+            .endpoints = &.{.{ .protocol = .anthropic_messages }},
             .credential = .none,
         } } }};
         self.resources.providers.merged.rows = &self.rows;

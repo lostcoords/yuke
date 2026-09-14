@@ -206,7 +206,7 @@ test "catalog.reload reads the file again and reports whether the revision moved
 
     // Another process wrote a provider the running engine never saw.
     try provider_config.writeFileBytes(rt.io(), path,
-        \\{"version":1,"providers":[{"id":"local","base_url":"http://127.0.0.1:1/v1","protocol":"openai_chat",
+        \\{"providers":[{"id":"local","base_url":"http://127.0.0.1:1/v1","endpoints":[{"protocol":"openai_chat"}],
         \\ "models":[{"id":"m","upstream_id":"m","reasoning_levels":[]}]}]}
     );
     const first = try catalogReload(&runtime, a, .{});

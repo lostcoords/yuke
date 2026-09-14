@@ -1196,9 +1196,12 @@ test "a capped tool round reloads with an assistant error and failed outcome" {
     fixture.resources.providers.merged.rows = &.{.{
         .id = "mock",
         .name = "Mock",
-        .models = &.{.{ .id = "model", .upstream_id = "model", .name = "Model", .caps = .{ .tools = true } }},
+        .models = &.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .anthropic_messages, .caps = .{ .tools = true } }},
         .availability = .{ .ready = .{
-            .route = .{ .base_url = "https://example.test", .protocol = .anthropic_messages, .auth = .none },
+            .base_url = "https://example.test",
+            .headers = &.{},
+            .session_header = .none,
+            .endpoints = &.{.{ .protocol = .anthropic_messages }},
             .credential = .none,
         } },
     }};
@@ -1369,6 +1372,7 @@ test "a build hook can discard the live registry and tools before the request se
         .id = "mock",
         .upstream_id = "model-before",
         .name = "Before",
+        .protocol = .openai_chat,
         .caps = .{ .tools = true },
         .cost = .{ .input = 1.5 },
     });
@@ -1378,12 +1382,10 @@ test "a build hook can discard the live registry and tools before the request se
         .name = "Before",
         .models = &.{},
         .availability = .{ .ready = .{
-            .route = .{
-                .base_url = "https://example.test/v1",
-                .protocol = .openai_chat,
-                .auth = .{ .api_key = .authorization_bearer },
-                .headers = &.{.{ .name = "X-Source", .value = "before" }},
-            },
+            .base_url = "https://example.test/v1",
+            .headers = &.{.{ .name = "X-Source", .value = "before" }},
+            .session_header = .none,
+            .endpoints = &.{.{ .protocol = .openai_chat, .key_header = .authorization_bearer }},
             .credential = .{ .literal = "secret-before" },
         } },
     });
@@ -1466,9 +1468,12 @@ test "a run cancel interrupts either request hook before it settles" {
         f.resources.providers.merged.rows = &.{.{
             .id = "mock",
             .name = "Mock",
-            .models = &.{.{ .id = "model", .upstream_id = "model", .name = "Model" }},
+            .models = &.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .openai_chat }},
             .availability = .{ .ready = .{
-                .route = .{ .base_url = "https://example.test", .protocol = .openai_chat, .auth = .none },
+                .base_url = "https://example.test",
+                .headers = &.{},
+                .session_header = .none,
+                .endpoints = &.{.{ .protocol = .openai_chat }},
                 .credential = .none,
             } },
         }};
@@ -1514,11 +1519,14 @@ test "the final build hook obeys prompt and context limits without a new floor" 
         .name = "Mock",
         .models = &.{},
         .availability = .{ .ready = .{
-            .route = .{ .base_url = "https://example.test", .protocol = .openai_chat, .auth = .none },
+            .base_url = "https://example.test",
+            .headers = &.{},
+            .session_header = .none,
+            .endpoints = &.{.{ .protocol = .openai_chat }},
             .credential = .none,
         } },
     };
-    const model: registry.ModelSpec = .{ .id = "model", .upstream_id = "model", .name = "Model" };
+    const model: registry.ModelSpec = .{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .openai_chat };
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     try std.testing.expectError(error.PromptTooLarge, round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));

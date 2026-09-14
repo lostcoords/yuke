@@ -82,11 +82,13 @@ pub const Dialect = struct {
     reasoning_budget: ReasoningBudget = .unsupported,
 };
 
-/// One model in the shape every source shares. It holds no route and no secret.
+/// One model in the shape every source shares. It holds no URL and no secret.
 pub const ModelSpec = struct {
     id: []const u8,
     upstream_id: []const u8,
     name: []const u8,
+    /// Name the endpoint that serves this model. A host can serve several endpoints.
+    protocol: types.Protocol,
     limits: Limits = .{},
     cost: Cost = .{},
     caps: Caps = .{},

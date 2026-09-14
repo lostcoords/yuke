@@ -314,10 +314,7 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, request_
     if (cut.tokens_kept >= request_budget.input_ceiling) return error.TurnTooLarge;
     // The merged registry can rebuild, so the resolve and the call stay in one step.
     const match = engine.deps.providers.merged.resolveModel(slot.config.model) orelse return error.UnknownModel;
-    const live_route = switch (match.provider.availability) {
-        .ready => |ready| ready,
-        .unavailable => return error.UnknownModel,
-    };
+    const live_route = registry.routeFor(match) orelse return error.UnknownModel;
     // The summary repeats the system prompt and the tools of the turn, so it reuses the cached prefix.
     const tools = try engine.deps.tools.getDecls(engine.deps.tools.ctx, arena, try request_config.selectionFor(engine, arena, slot));
     // `context.project` refuses a history above the budget, and a compaction runs only above it.
@@ -338,12 +335,14 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, request_
     @memcpy(blocks[0..built.blocks.len], built.blocks);
     blocks[built.blocks.len] = .{ .role = .user, .value = .{ .text = try summaryInstruction(arena, head != null) } };
 
+    const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
     const answer = try model_call.generateWith(engine, arena, &slot.cancel, match, .{
         .system = slot.config.system_prompt,
         .blocks = blocks,
         .tools = tools,
         .max_output_tokens = summary_output_tokens,
         .reasoning = slot.config.reasoning,
+        .session_id = &session_hex,
     });
     if (answer.finish_reason != .stop) return error.IncompleteSummary;
     if (std.mem.trim(u8, answer.text, " \t\r\n").len == 0) return error.EmptySummary;
@@ -532,9 +531,12 @@ const TaskFixture = struct {
         try self.resources.init();
         self.db = try database.Database.openTest();
         self.engine = self.resources.makeEngine(&self.db);
-        self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .caps = .{ .tools = true }, .limits = .{ .context_window = 200_000 } }};
+        self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tools = true }, .limits = .{ .context_window = 200_000 } }};
         self.rows = .{.{ .id = "mock", .name = "Mock", .models = &self.models, .availability = .{ .ready = .{
-            .route = .{ .base_url = "https://example.test/v1", .protocol = .anthropic_messages, .auth = .{ .api_key = .x_api_key } },
+            .base_url = "https://example.test/v1",
+            .headers = &.{},
+            .session_header = .none,
+            .endpoints = &.{.{ .protocol = .anthropic_messages, .key_header = .x_api_key }},
             .credential = .{ .literal = "secret" },
         } } }};
         // The test owns this snapshot, so no reload can free it under a run.

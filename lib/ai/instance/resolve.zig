@@ -96,16 +96,6 @@ pub fn authHeaders(
     for (p.headers) |h| try out.append(arena, try h.cloneLeaky(arena));
 }
 
-/// Name the header that carries the session id, or null when the route reads no such header.
-/// The ChatGPT backend routes a repeated prefix to one prompt cache by this header, not by a body field.
-fn sessionHeaderName(p: *const Route) ?[]const u8 {
-    if (p.protocol != .openai_responses) return null;
-    return switch (p.responses_dialect) {
-        .codex => "session-id",
-        .standard => null,
-    };
-}
-
 /// Build the request one route sends, and copy its URL and headers into `arena`.
 pub fn request(
     arena: std.mem.Allocator,
@@ -116,7 +106,7 @@ pub fn request(
 ) Error!transport.Request {
     var headers: std.ArrayList(Header) = .empty;
     try authHeaders(arena, p, credential, &headers);
-    if (session_id.len != 0) if (sessionHeaderName(p)) |name| {
+    if (session_id.len != 0) if (p.session_header.name()) |name| {
         // The engine owns this value, so a source that pins its own would send every session to one cache.
         if (header(headers.items, name) != null) return error.HeaderConflict;
         try headers.append(arena, .{ .name = name, .value = try arena.dupe(u8, session_id) });
@@ -246,7 +236,7 @@ test "a credential must match the authentication mechanism" {
     try testing.expectEqual(@as(usize, 0), out.items.len);
 }
 
-test "only the codex responses route carries the session id as a header" {
+test "the route names the header that carries the session id, and a plain route names none" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -257,24 +247,34 @@ test "only the codex responses route carries the session id as a header" {
         .protocol = .openai_responses,
         .auth = .none,
         .responses_dialect = .codex,
+        .session_header = .session_id,
     };
     const carried = try request(a, &codex, .none, "0123456789abcdef", &body);
     try testing.expectEqualStrings("0123456789abcdef", header(carried.headers, "session-id").?);
+    try testing.expect(header(carried.headers, "x-opencode-session") == null);
+
+    // The header follows the host, not the protocol: OpenCode reads it on every path it serves.
+    for ([_]instance.Protocol{ .anthropic_messages, .openai_chat, .openai_responses }) |protocol| {
+        const opencode: Route = .{
+            .base_url = "https://opencode.ai/zen/v1",
+            .protocol = protocol,
+            .auth = .none,
+            .session_header = .x_opencode_session,
+        };
+        const sent = try request(a, &opencode, .none, "0123456789abcdef", &body);
+        try testing.expectEqualStrings("0123456789abcdef", header(sent.headers, "x-opencode-session").?);
+        try testing.expect(header(sent.headers, "session-id") == null);
+    }
 
     // The public Responses endpoint routes on the body key, so a header there would be dead weight.
-    var standard = codex;
-    standard.responses_dialect = .standard;
-    const plain = try request(a, &standard, .none, "0123456789abcdef", &body);
-    try testing.expect(header(plain.headers, "session-id") == null);
-
-    // No other protocol reads this header.
-    const anthropic: Route = .{
-        .base_url = "https://api.anthropic.com/v1",
-        .protocol = .anthropic_messages,
+    const standard: Route = .{
+        .base_url = "https://api.openai.com/v1",
+        .protocol = .openai_responses,
         .auth = .none,
     };
-    const other = try request(a, &anthropic, .none, "0123456789abcdef", &body);
-    try testing.expect(header(other.headers, "session-id") == null);
+    const plain = try request(a, &standard, .none, "0123456789abcdef", &body);
+    try testing.expect(header(plain.headers, "session-id") == null);
+    try testing.expect(header(plain.headers, "x-opencode-session") == null);
 
     // A caller that names no session leaves the header off rather than sending an empty one.
     const absent = try request(a, &codex, .none, "", &body);
@@ -290,6 +290,7 @@ test "a source that pins the session header is a conflict, not a silent override
         .protocol = .openai_responses,
         .auth = .none,
         .responses_dialect = .codex,
+        .session_header = .session_id,
         // A header name is case-insensitive, so a different spelling is the same header.
         .headers = &.{.{ .name = "Session-ID", .value = "from-the-route" }},
     };

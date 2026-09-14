@@ -26,10 +26,13 @@ pub const Error = error{
 pub const HttpTransport = struct {
     client: std.http.Client,
     idle_timeout: ?std.Io.Duration,
+    /// The client sends this value on every request, so a gateway can identify the agent.
+    user_agent: []const u8,
 
     /// The client dials and reads through `io`, which controls cancellation and concurrency.
-    pub fn init(gpa: Allocator, io: std.Io, idle_timeout: ?std.Io.Duration) HttpTransport {
-        return .{ .client = .{ .allocator = gpa, .io = io }, .idle_timeout = idle_timeout };
+    pub fn init(gpa: Allocator, io: std.Io, idle_timeout: ?std.Io.Duration, user_agent: []const u8) HttpTransport {
+        std.debug.assert(transport.headersValid(&.{.{ .name = "user-agent", .value = user_agent }}));
+        return .{ .client = .{ .allocator = gpa, .io = io }, .idle_timeout = idle_timeout, .user_agent = user_agent };
     }
 
     /// Deinitialize the client. Every response body must deinit first.
@@ -48,12 +51,12 @@ pub const HttpTransport = struct {
         if (!transport.headersValid(request.headers)) return Error.InvalidHeaders;
         const uri = std.Uri.parse(request.url) catch return Error.BadUrl;
 
-        // The provider sends SSE, so request it. This Accept header overrides a caller Accept header.
+        // The provider sends SSE, so request it. The transport owns Accept and User-Agent, so a route copy is dropped.
         const extra = try arena.alloc(std.http.Header, request.headers.len + 1);
         extra[0] = .{ .name = "accept", .value = "text/event-stream" };
         var extra_len: usize = 1;
         for (request.headers) |h| {
-            if (std.ascii.eqlIgnoreCase(h.name, "accept")) continue;
+            if (std.ascii.eqlIgnoreCase(h.name, "accept") or std.ascii.eqlIgnoreCase(h.name, "user-agent")) continue;
             extra[extra_len] = .{ .name = h.name, .value = h.value };
             extra_len += 1;
         }
@@ -76,7 +79,11 @@ pub const HttpTransport = struct {
         hb.request = try self.client.request(.POST, uri, .{
             .redirect_behavior = .not_allowed, // Never resend the key to another origin.
             .keep_alive = false, // The client sends one request. A mid-stream connection never returns to the pool.
-            .headers = .{ .content_type = .{ .override = "application/json" }, .accept_encoding = .omit },
+            .headers = .{
+                .content_type = .{ .override = "application/json" },
+                .accept_encoding = .omit,
+                .user_agent = .{ .override = self.user_agent },
+            },
             .extra_headers = extra[0..extra_len],
         });
         // A failed send or read leaves a partial exchange. Close the connection so the pool never reuses it.
@@ -277,6 +284,8 @@ fn isQuotaCode(code: []const u8) bool {
 
 const testing = std.testing;
 
+const test_user_agent = "yuke/0.0.0-test";
+
 const canned_sse =
     "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n" ++
     "data: {\"type\":\"message_stop\"}\n\n";
@@ -290,6 +299,9 @@ const Server = struct {
     stall: bool = false, // Send the body, then wait on `release`. Keep the stream open.
     release: ?*std.Io.Event = null,
     err: ?anyerror = null,
+    user_agent: ?[]const u8 = null, // The last User-Agent value the client sent, stored in `user_agent_buf`.
+    user_agent_buf: [64]u8 = undefined,
+    user_agent_count: usize = 0,
 };
 
 /// Accept one connection and stream `body` with `status`. A test drives this on the run's executor.
@@ -308,6 +320,12 @@ fn serveOnceInner(s: *Server) !void {
     var writer = stream.writer(s.io, &write_buf);
     var server = std.http.Server.init(&reader.interface, &writer.interface);
     var request = try server.receiveHead();
+    var it = request.iterateHeaders();
+    while (it.next()) |h| if (std.ascii.eqlIgnoreCase(h.name, "user-agent")) {
+        s.user_agent = s.user_agent_buf[0..h.value.len];
+        @memcpy(s.user_agent_buf[0..h.value.len], h.value);
+        s.user_agent_count += 1;
+    };
 
     var header_storage: [2]std.http.Header = .{
         .{ .name = "content-type", .value = "text/event-stream" },
@@ -351,13 +369,17 @@ fn clientTask(out: *ClientOut) void {
 }
 
 fn runClient(out: *ClientOut) !void {
-    var http = HttpTransport.init(out.gpa, out.io, out.idle);
+    var http = HttpTransport.init(out.gpa, out.io, out.idle, test_user_agent);
     defer http.deinit();
     var arena = std.heap.ArenaAllocator.init(out.gpa);
     defer arena.deinit();
     var url_buf: [64]u8 = undefined;
     const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/messages", .{out.port});
-    const headers = [_]transport.Header{.{ .name = "x-api-key", .value = "test-key" }};
+    // A route that pins its own User-Agent must not produce a second header line.
+    const headers = [_]transport.Header{
+        .{ .name = "x-api-key", .value = "test-key" },
+        .{ .name = "User-Agent", .value = "pinned/9" },
+    };
     var request_body: [0]u8 = .{};
     var info: transport.AttemptInfo = .{};
     const body = try http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = &request_body }, &info);
@@ -397,6 +419,9 @@ test "streams an SSE response body over http" {
     if (srv.err) |err| return err;
     if (out.err) |err| return err;
     try testing.expectEqualStrings(canned_sse, out.bytes.items);
+    // The transport names the agent once, whatever the route pins, so a gateway does not read the traffic as a script.
+    try testing.expectEqualStrings(test_user_agent, srv.user_agent.?);
+    try testing.expectEqual(@as(usize, 1), srv.user_agent_count);
 }
 
 test "a non-200 status maps to a transport error" {
@@ -433,7 +458,7 @@ test "a redirect is rejected without following it" {
 }
 
 test "invalid headers return an error before std HTTP sees them" {
-    var client = HttpTransport.init(testing.allocator, testing.io, null);
+    var client = HttpTransport.init(testing.allocator, testing.io, null, test_user_agent);
     defer client.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
