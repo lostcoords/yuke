@@ -1,5 +1,7 @@
 declare module "yuke:fs" {
   interface Stat {
+    /** The anchored absolute path, so a caller can hand the same file to the engine. */
+    path: string;
     isDirectory: boolean;
     /** The last modification time, in epoch milliseconds. */
     lastModifiedMs: number;
@@ -28,8 +30,8 @@ declare module "yuke:fs" {
     readRange(path: string, range?: { start?: number | null; end?: number | null }, workspaceRoot?: string): Promise<RangeRead>;
     /** Replaces the whole file and resolves the byte count. */
     writeFile(path: string, contents: string, workspaceRoot?: string): Promise<number>;
-    /** Resolves null when nothing is at the path. */
-    stat(path?: string | null): Promise<Stat | null>;
+    /** Resolves null when nothing is at the path. A relative path anchors at the workspace root, or at the cwd. */
+    stat(path?: string | null, workspaceRoot?: string): Promise<Stat | null>;
     /** Removes one regular file and resolves false when nothing is there. A directory or a link rejects. */
     removeFile(path: string): Promise<boolean>;
     /** Lists the directories of one path. */

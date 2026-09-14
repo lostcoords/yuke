@@ -4,17 +4,17 @@ import { fs } from "yuke:fs";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { term } from "yuke:term";
-import { resolvePath, looksLikeImagePath, pasteAttaches } from "yuke:attach";
+import { cleanPath, looksLikeImagePath, pasteAttaches } from "yuke:attach";
 const paste = (t) => ({ type: "paste", text: t });
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };
 
 // One quote pair comes off, a drag escape comes out, and the surrounding space goes.
-check("plain", resolvePath("/tmp/a.png") === "/tmp/a.png");
-check("quoted", resolvePath("'/tmp/a b.png'") === "/tmp/a b.png");
-check("escaped", resolvePath("/tmp/a\\ b.png") === "/tmp/a b.png");
-check("trimmed", resolvePath("  /tmp/a.png  ") === "/tmp/a.png");
-// A relative path anchors at the workspace, whatever the workspace is under test.
-check("relative", resolvePath("a.png") === (term.cwd ? term.cwd.replace(/\/+$/, "") + "/a.png" : "a.png"));
+check("plain", cleanPath("/tmp/a.png") === "/tmp/a.png");
+check("quoted", cleanPath("'/tmp/a b.png'") === "/tmp/a b.png");
+check("escaped", cleanPath("/tmp/a\\ b.png") === "/tmp/a b.png");
+check("trimmed", cleanPath("  /tmp/a.png  ") === "/tmp/a.png");
+// The host anchors a relative path, so the cleaner leaves it alone.
+check("relative", cleanPath("a.png") === "a.png");
 
 // The gate reads the extension and nothing else, so it never touches the disk.
 check("gate-png", looksLikeImagePath("/tmp/a.png"));
@@ -27,9 +27,11 @@ check("gate-bare-extension", looksLikeImagePath(".png") === false);
 globalThis.puts = [];
 globalThis.notices = [];
 notice.show = (message) => { globalThis.notices.push(message); };
+// The host anchors a relative path at the cwd and answers the whole path.
 fs.stat = async (path) => {
-  if (path.endsWith("/dir.png")) return { isDirectory: true, lastModifiedMs: 0 };
-  return path.indexOf("missing") < 0 ? { isDirectory: false, lastModifiedMs: 0 } : null;
+  const full = path[0] === "/" ? path : (term.cwd || "/cwd").replace(/\/+$/, "") + "/" + path;
+  if (path.endsWith("/dir.png")) return { path: full, isDirectory: true, lastModifiedMs: 0 };
+  return path.indexOf("missing") < 0 ? { path: full, isDirectory: false, lastModifiedMs: 0 } : null;
 };
 client.blobPut = async (path) => {
   globalThis.puts.push(path);

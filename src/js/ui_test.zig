@@ -9,6 +9,16 @@ test "yuke:core clip and style.resolve" {
     try support.eval(host, "tests/ui/core.test.js");
 }
 
+test "a tool image shows one label row per blob after the output" {
+    var paint: Paint = undefined;
+    try paint.setup(std.testing.allocator, 12, 60);
+    defer paint.deinit();
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    paint.bind(host);
+    try support.eval(host, "tests/ui/tool-media.test.js");
+}
+
 test "skill messages fold by native identity and preserve their exact text" {
     try support.run("tests/ui/skill-message.test.js");
 }

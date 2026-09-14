@@ -206,18 +206,21 @@ fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
     return resolved(ctx, ctx.newInt64(@intCast(raw.len)));
 }
 
-/// Describe one path, or answer null when nothing is there.
+/// Describe one path, or answer null when nothing is there. The answer names the anchored path.
 fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    var call = Call.open(host, host.cwd);
+    const root = ownedPath(ctx, host, args, 1) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    defer host.gpa.free(root);
+    var call = Call.open(host, root);
     defer call.close();
 
-    const path = pathArg(ctx, call.alloc(), args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const path = pathArg(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     const info = call.local.stat(call.alloc(), path) catch |err| switch (err) {
         error.NotFound => return resolved(ctx, quickjs.NULL),
         else => return rejected(ctx, errorMessage(err)),
     };
     const out = ctx.newObject();
+    ctx.setPropertyStr(out, "path", ctx.newString(info.path)) catch {};
     ctx.setPropertyStr(out, "isDirectory", ctx.newBool(info.is_dir)) catch {};
     ctx.setPropertyStr(out, "lastModifiedMs", ctx.newInt64(@intCast(info.last_modified_ms))) catch {};
     // A full QuickJS heap throws at the caller, because no promise can be built for it either.

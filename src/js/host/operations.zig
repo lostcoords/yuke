@@ -35,6 +35,8 @@ pub const RangeRead = struct {
 
 /// Metadata for one filesystem path. The local host follows a symbolic link.
 pub const Stat = struct {
+    /// The anchored absolute path, so a caller can hand the same file to the engine.
+    path: []const u8,
     is_dir: bool,
     /// The last modification time in epoch milliseconds.
     last_modified_ms: u64,

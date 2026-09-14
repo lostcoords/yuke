@@ -1,5 +1,4 @@
 // yuke:attach — a pasted path to an image becomes an attachment on the composer.
-import { term } from "yuke:term";
 import { fs } from "yuke:fs";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
@@ -11,21 +10,19 @@ import { clipboard } from "yuke:clipboard";
 // The engine sniffs the magic bytes, so this list decides one thing only: whether a paste is an attach at all.
 const IMAGE_EXT = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
 
-// Strip one quote pair and the escapes a drag adds, then anchor a relative path at the workspace.
+// Strip one quote pair and the escapes a drag adds. The host anchors a relative path at the cwd.
 /** @param {string} raw @returns {string} */
-export function resolvePath(raw) {
+export function cleanPath(raw) {
   let path = raw.trim();
   const quote = path[0];
   if (path.length > 1 && (quote === '"' || quote === "'") && path[path.length - 1] === quote) path = path.slice(1, -1);
-  path = path.replace(/\\([ "'\\])/g, "$1");
-  if (path === "" || path[0] === "/" || !term.cwd) return path;
-  return term.cwd.replace(/\/+$/, "") + "/" + path;
+  return path.replace(/\\([ "'\\])/g, "$1");
 }
 
 // A path the user meant as prose must stay prose, so this test never speaks and never reads the disk.
 /** @param {string} text @returns {boolean} */
 export function looksLikeImagePath(text) {
-  const path = resolvePath(text).toLowerCase();
+  const path = cleanPath(text).toLowerCase();
   return path.indexOf("\n") < 0 && IMAGE_EXT.some((ext) => path.length > ext.length && path.endsWith(ext));
 }
 
@@ -41,11 +38,10 @@ async function putImage(path) {
 // Copy the image into the blob store and hang it on the composer at `from`, over the text the caller inserted.
 /** @param {Composer} composer @param {string} text @param {number} from @returns {Promise<boolean>} */
 export async function attachPath(composer, text, from) {
-  const path = resolvePath(text);
   // The gate decides "attach or text", so a path that names no file falls back without a word.
-  const stat = await fs.stat(path).catch(() => null);
+  const stat = await fs.stat(cleanPath(text)).catch(() => null);
   if (!stat || stat.isDirectory) return false;
-  const blob = await putImage(path);
+  const blob = await putImage(stat.path);
   return blob !== null && attached(composer, from, text, blob);
 }
 

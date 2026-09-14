@@ -92,7 +92,7 @@ pub const LocalHost = struct {
     pub fn stat(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8) h.HostError!h.Stat {
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         const info = std.Io.Dir.cwd().statFile(self.io, full, .{}) catch |err| return mapError(err);
-        return .{ .is_dir = info.kind == .directory, .last_modified_ms = millisOf(info.mtime) };
+        return .{ .path = full, .is_dir = info.kind == .directory, .last_modified_ms = millisOf(info.mtime) };
     }
 
     pub fn listDir(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, options: h.ListOptions) h.HostError!h.DirPage {

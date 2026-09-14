@@ -235,6 +235,8 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     defer std.testing.allocator.free(long_line);
     @memset(long_line, 'x');
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "long.txt", .data = long_line });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "shot.png", .data = "\x89PNG\r\n\x1a\n" ++ "x" ** 59 });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "blob.bin", .data = "\xff\xfe\x00\x01" });
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
 
@@ -257,6 +259,26 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);
         try std.testing.expect(std.mem.endsWith(u8, call.text.?, "[The tool cut 1 line(s) at 8000 bytes.]"));
+        call.finish();
+        try host.pump();
+    }
+    // An image reads as one media ref. The host anchors the relative path before the engine reads the file.
+    {
+        const call = host.calls.submit("read", "{\"path\":\"shot.png\"}", root);
+        try support.pumpUntilSettled(host, call);
+        try std.testing.expect(!call.is_error);
+        try std.testing.expectEqualStrings("PNG image, 67 B", call.text.?);
+        try std.testing.expect(std.mem.indexOf(u8, call.extra_json.?, "\"media\":[{\"hash\":\"aaaa") != null);
+        try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.putPath.startsWith(\"/\") && globalThis.putPath.endsWith(\"/shot.png\") ? 1 : 0"));
+        call.finish();
+        try host.pump();
+    }
+    // A binary file that is no image keeps the text error and states the refusal.
+    {
+        const call = host.calls.submit("read", "{\"path\":\"blob.bin\"}", root);
+        try support.pumpUntilSettled(host, call);
+        try std.testing.expect(call.is_error);
+        try std.testing.expectEqualStrings("read: the file holds invalid UTF-8, and it is not an image the tool can attach: the blob file is not a PNG, JPEG, GIF, or WebP image", call.text.?);
         call.finish();
         try host.pump();
     }

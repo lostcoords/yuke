@@ -481,7 +481,22 @@ function viewRows(views, width, limit = Infinity) {
 /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {number} [limit] @returns {{ rows: TranscriptRow[], source: string }} */
 function toolBody(part, width, limit = Infinity) {
   const views = part.state && /** @type {{ view?: readonly Wire.View[] }} */ (part.state).view;
-  if (views && views.length) return viewRows(views, width, limit);
+  const body = views && views.length ? viewRows(views, width, limit) : textBody(part, width, limit);
+  const media = part.state && part.state.type === "completed" ? part.state.media : undefined;
+  if (!media || media.length === 0) return body;
+  // An image has no text, so one label per image follows the output, numbered like a user attachment.
+  media.forEach((blob, i) => {
+    const label = mediaLabel({ type: "image", source: blob }, i + 1);
+    if (body.source) body.source += "\n";
+    const base = body.source.length;
+    body.source += label;
+    if (body.rows.length < limit) body.rows.push({ segments: [{ text: label, group: "TxToolMeta", src: base, srcEnd: base + label.length }], indent: TX_GUTTER });
+  });
+  return body;
+}
+
+/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {number} limit @returns {{ rows: TranscriptRow[], source: string }} */
+function textBody(part, width, limit) {
   const text = toolBodyText(part);
   const kind = toolStateKind(part.state);
   const group = kind === "error" ? "TxToolError" : "TxToolBody";
