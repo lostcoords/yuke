@@ -167,13 +167,16 @@ fn boundArg(ctx: Context, obj: Value, name: [:0]const u8) error{InvalidOption}!?
     return @intCast(module.integer(ctx, value, 1, std.math.maxInt(u32)) orelse return error.InvalidOption);
 }
 
-fn encodeRange(gpa: std.mem.Allocator, got: os.RangeRead) [:0]u8 {
+fn encodeRange(gpa: std.mem.Allocator, got: os.FileRead) [:0]u8 {
     var aw: std.Io.Writer.Allocating = .init(gpa);
-    std.json.Stringify.value(.{
-        .text = got.text,
-        .next = got.next_line,
-        .longLines = got.long_lines,
-    }, .{ .emit_null_optional_fields = true }, &aw.writer) catch unreachable;
+    switch (got) {
+        .text => |range| std.json.Stringify.value(.{
+            .text = range.text,
+            .next = range.next_line,
+            .longLines = range.long_lines,
+        }, .{ .emit_null_optional_fields = true }, &aw.writer) catch unreachable,
+        .image => |path| std.json.Stringify.value(.{ .imagePath = path }, .{}, &aw.writer) catch unreachable,
+    }
     var list = aw.toArrayList();
     return list.toOwnedSliceSentinel(gpa, 0) catch unreachable;
 }

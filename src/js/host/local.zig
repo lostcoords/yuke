@@ -6,6 +6,7 @@ const h = @import("operations.zig");
 const paths = @import("../../paths.zig");
 const process = @import("process.zig");
 const execution = @import("../../execution.zig");
+const blob = @import("../../store/blob.zig");
 
 const Map = std.process.Environ.Map;
 
@@ -14,20 +15,27 @@ pub const LocalHost = struct {
     root: []const u8, // The canonical workspace root, the base for a relative path.
     env: *const Map, // The environment expands an initial `~`.
 
-    pub fn readRange(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, range: h.Range, limits: h.ReadLimits) h.HostError!h.RangeRead {
+    pub fn readRange(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, range: h.Range, limits: h.ReadLimits) h.HostError!h.FileRead {
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         try requireRegularFile(self.io, full);
         var file = std.Io.Dir.cwd().openFile(self.io, full, .{}) catch |err| return mapError(err);
         defer file.close(self.io);
         // One buffered line at a time. The scan never holds the whole file, whatever its size.
-        const buffer = scratch.alloc(u8, limits.max_line_bytes) catch unreachable;
-        // One byte more than the limit. A line AT the limit then finds its delimiter and stays whole.
-        const line_buf = scratch.alloc(u8, limits.max_line_bytes + 1) catch unreachable;
+        const buffer = scratch.alloc(u8, @max(blob.sniff_bytes, limits.max_line_bytes)) catch unreachable;
         var reader = file.reader(self.io, buffer);
-        return scan(scratch, &reader.interface, line_buf, range, limits) catch |err| switch (err) {
-            error.InvalidUtf8 => |e| e,
-            // The open call accepts a directory on POSIX. The first read reports this case.
-            error.ReadFailed => if (reader.err) |e| mapError(e) else error.HostFailure,
+        const head = reader.interface.peek(blob.sniff_bytes) catch |err| switch (err) {
+            error.EndOfStream => reader.interface.buffered(),
+            error.ReadFailed => return if (reader.err) |e| mapError(e) else error.HostFailure,
+        };
+        if (blob.sniff(head) != null) return .{ .image = full };
+        // One byte more than the limit lets a line at the limit find its delimiter.
+        const line_buf = scratch.alloc(u8, limits.max_line_bytes + 1) catch unreachable;
+        return .{
+            .text = scan(scratch, &reader.interface, line_buf, range, limits) catch |err| switch (err) {
+                error.InvalidUtf8 => return error.InvalidUtf8,
+                // The open call accepts a directory on POSIX. The first read reports this case.
+                error.ReadFailed => return if (reader.err) |e| mapError(e) else error.HostFailure,
+            },
         };
     }
 
@@ -368,9 +376,22 @@ const Fixture = struct {
     /// Build the host per call. A stored root slice would dangle if the fixture moved.
     fn read(self: *Fixture, a: std.mem.Allocator, range: h.Range, limits: h.ReadLimits) h.HostError!h.RangeRead {
         var local: LocalHost = .{ .io = testing.io, .root = self.root_buf[0..self.root_len], .env = &test_env };
-        return local.readRange(a, "a.txt", range, limits);
+        return (try local.readRange(a, "a.txt", range, limits)).text;
     }
 };
+
+test "LocalHost detects image headers before a range and without a file extension" {
+    for ([_][]const u8{ blob.png_1x1, "GIF89a", "\xff\xd8\xff", "RIFF\x04\x00\x00\x00WEBP" }) |data| {
+        var f: Fixture = undefined;
+        try f.init(data);
+        defer f.deinit();
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
+        const got = try local.readRange(arena.allocator(), "a.txt", .{ .start = 2, .end = 2 }, test_limits);
+        try testing.expectEqualStrings(try std.fs.path.join(arena.allocator(), &.{ local.root, "a.txt" }), got.image);
+    }
+}
 
 test "LocalHost reads a whole file and a line range" {
     var f: Fixture = undefined;
@@ -543,7 +564,7 @@ test "LocalHost expands a leading tilde against HOME" {
     defer arena.deinit();
     var local: LocalHost = .{ .io = testing.io, .root = "/unused", .env = &env };
     const got = try local.readRange(arena.allocator(), "~/a.txt", .{}, test_limits);
-    try testing.expectEqualStrings("hi\n", got.text);
+    try testing.expectEqualStrings("hi\n", got.text.text);
 }
 
 test "LocalHost refuses a tilde path when the environment names no home directory" {
@@ -580,7 +601,7 @@ test "LocalHost does not confine reads to the workspace" {
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
     // An absolute path outside the workspace reads freely (no confinement).
     const got = try local.readRange(a, outside, .{}, test_limits);
-    try testing.expectEqualStrings("secret\n", got.text);
+    try testing.expectEqualStrings("secret\n", got.text.text);
 }
 
 test "LocalHost readAll returns exact bytes and reports the size limit" {

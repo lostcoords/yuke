@@ -317,30 +317,6 @@ test "a committed user then assistant message advances the summary" {
     try testing.expectEqual(@as(i64, 2), try scalar(&db, "SELECT projection_seq FROM sessions"));
 }
 
-test "a tool part with media records a blob ref and the image count" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const sid = [_]u8{4} ** 16;
-    try session.seedSession(&db, sid);
-    const image: proto.content.MediaBlob = .{ .hash = .bytes(@splat(7)), .mime = "image/png", .bytes = 12 };
-    const message: proto.message.Message = .{ .assistant = .{
-        .id = 1,
-        .run_id = 1,
-        .config_rev = 0,
-        .agent = "claude",
-        .content = &.{.{ .tool = .{ .id = 1, .call_id = "c1", .name = "read", .arguments = "{}", .state = .{ .completed = .{ .output = "PNG", .media = &.{image}, .duration_ms = 1 } } } }},
-        .time = .{ .created_at_ms = 10 },
-    } };
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try appendCommittedMessage(&db, a, sid, [_]u8{1} ** 16, 10, message);
-    try db.conn.execNoArgs("COMMIT");
-    try testing.expect(try blob.referenced(&db, a, image.hash));
-    try testing.expectEqual(@as(i64, 1), try scalar(&db, "SELECT images FROM messages WHERE message_id = 1"));
-}
-
 /// Build one committed assistant turn for a usage test.
 fn assistantTurn(id: u64, created_at_ms: u64, tokens: ?proto.message.TokenUsage) proto.message.Message {
     return .{ .assistant = .{

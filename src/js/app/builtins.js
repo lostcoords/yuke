@@ -5,6 +5,7 @@ import { exec as runCommand } from "yuke:exec";
 import { diff } from "yuke:diff";
 import { defineTool } from "yuke:tools";
 import { client } from "yuke:client";
+import { byteLabel } from "yuke:format";
 
 /** @import { DiffFile as ParsedDiffFile } from "yuke:diff" */
 /** @import { RangeRead } from "yuke:fs" */
@@ -116,8 +117,6 @@ function renderRead(got, first) {
   return text;
 }
 
-const NOT_TEXT = "the file holds invalid UTF-8";
-
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | BuiltinResult>} */
 async function read(args, _signal, context) {
   const name = "read";
@@ -126,31 +125,13 @@ async function read(args, _signal, context) {
   const path = stringArg(name, args, "path");
   const start = lineArg(name, args, "start");
   const end = lineArg(name, args, "end");
-  let got;
-  try { got = await fs.readRange(path, { start, end }, context?.workspaceRoot); }
-  catch (e) {
-    if (messageOf(e) !== NOT_TEXT) invalid(name, messageOf(e));
-    return readImage(name, path, context);
+  const got = await hostCall(name, fs.readRange(path, { start, end }, context?.workspaceRoot));
+  if ("imagePath" in got) {
+    const blob = await hostCall(name, client.blobPut(got.imagePath));
+    const kind = blob.mime.slice(blob.mime.indexOf("/") + 1).toUpperCase();
+    return result(`${kind} image, ${byteLabel(blob.bytes)}`, { media: [blob] });
   }
   return renderRead(got, start ?? 1);
-}
-
-// A file that is not text may be an image. The engine sniffs the bytes, so a refusal names the reason.
-/** @param {string} name @param {string} path @param {ToolContext} context @returns {Promise<BuiltinResult>} */
-async function readImage(name, path, context) {
-  const stat = await hostCall(name, fs.stat(path, context?.workspaceRoot));
-  if (stat === null) invalid(name, NOT_TEXT);
-  let blob;
-  try { blob = await client.blobPut(stat.path); }
-  catch (e) { invalid(name, `${NOT_TEXT}, and it is not an image the tool can attach: ${messageOf(e)}`); }
-  const kind = blob.mime.slice(blob.mime.indexOf("/") + 1).toUpperCase();
-  return result(`${kind} image, ${byteLabel(blob.bytes)}`, { media: [blob] });
-}
-
-/** @param {number} n @returns {string} */
-function byteLabel(n) {
-  if (n < 1024) return `${n} B`;
-  return n < 1024 * 1024 ? `${Math.round(n / 1024)} KiB` : `${(n / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<BuiltinResult>} */

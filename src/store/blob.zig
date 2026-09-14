@@ -15,7 +15,7 @@ pub const max_bytes: u64 = proto.meta.limits.max_blob_bytes;
 /// One input carries at most this many image parts.
 pub const max_images_per_input: usize = proto.meta.limits.max_input_images;
 /// A sniff reads 12 bytes, because the WebP magic number is the longest.
-const sniff_bytes = 12;
+pub const sniff_bytes = 12;
 
 pub const PutError = error{
     BlobPathNotAbsolute,
@@ -66,13 +66,18 @@ pub const Store = struct {
 
     /// Refuse an input whose media parts name bytes the store does not hold as described.
     pub fn admit(self: Store, io: std.Io, arena: std.mem.Allocator, content: []const proto.content.ContentPart) AdmitError!void {
-        var blobs: std.ArrayList(MediaBlob) = .empty;
+        var blobs: [max_images_per_input]MediaBlob = undefined;
+        var count: usize = 0;
         for (content) |part| switch (part) {
             .text => {},
-            .image => |image| try blobs.append(arena, image.source),
+            .image => |image| {
+                if (count == blobs.len) return error.BlobTooManyImages;
+                blobs[count] = image.source;
+                count += 1;
+            },
             .audio, .file => return error.BlobUnsupportedPart,
         };
-        return self.admitBlobs(io, arena, blobs.items);
+        return self.admitBlobs(io, arena, blobs[0..count]);
     }
 
     /// Refuse a list that is too long or names bytes the store does not hold as described.
@@ -158,9 +163,7 @@ pub fn sniff(head: []const u8) ?[]const u8 {
 pub fn recordRefs(db: *Database, session_id: [16]u8, content: []const proto.content.ContentPart) !void {
     for (content) |part| switch (part) {
         .text => {},
-        .image => |t| try recordBlobRefs(db, session_id, &.{t.source}),
-        .audio => |t| try recordBlobRefs(db, session_id, &.{t.source}),
-        .file => |t| try recordBlobRefs(db, session_id, &.{t.source}),
+        inline .image, .audio, .file => |t| try recordBlobRefs(db, session_id, &.{t.source}),
     };
 }
 

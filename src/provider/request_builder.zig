@@ -9,6 +9,25 @@ const types = ai.types;
 
 const Block = ir.Block;
 
+/// Reserve half of the local request limit for text, tool arguments, and metadata.
+const max_image_bytes = types.limits.max_request_bytes / 2;
+const image_budget_note = "[image omitted: request image budget exceeded]";
+
+/// Drop an oldest prefix of images until the newest suffix fits the request budget.
+const ImageBudget = struct {
+    bytes: u64 = 0,
+
+    fn add(self: *ImageBudget, blob: proto.content.MediaBlob) void {
+        if (ir.modalityOf(blob.mime) == .image) self.bytes +|= blob.bytes;
+    }
+
+    fn take(self: *ImageBudget, blob: proto.content.MediaBlob) bool {
+        const fits = self.bytes <= max_image_bytes;
+        self.bytes -|= blob.bytes;
+        return fits;
+    }
+};
+
 pub const Options = struct {
     target: ?types.ModelIdentity = null,
     modalities: types.Modalities = .{},
@@ -34,12 +53,24 @@ pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, op
     var blocks: std.ArrayList(Block) = .empty;
     errdefer blocks.deinit(gpa);
 
+    var images: ImageBudget = .{};
+    for (messages) |message| switch (message) {
+        .user => |user| for (user.content) |part| switch (part) {
+            .text => {},
+            inline else => |media| images.add(media.source),
+        },
+        .assistant => |assistant| for (assistant.content) |part| {
+            if (part == .tool) for (part.tool.state.media()) |blob| images.add(blob);
+        },
+        .compaction => {},
+    };
+
     for (messages) |message| switch (message) {
         .user => |user| for (user.content) |part| {
             if (part == .text and part.text.text.len == 0) continue; // Skip empty user text, as the assistant fold does.
-            try blocks.append(gpa, .{ .role = .user, .value = try userValue(part, options) });
+            try blocks.append(gpa, .{ .role = .user, .value = try userValue(part, options, &images) });
         },
-        .assistant => |assistant| try foldAssistant(gpa, &blocks, assistant, options),
+        .assistant => |assistant| try foldAssistant(gpa, &blocks, assistant, options, &images),
         .compaction => |compaction| if (compaction.summary.len != 0) {
             try blocks.append(gpa, .{ .role = .user, .value = .{ .text = try summaryBlock(gpa, compaction.summary) } });
         },
@@ -62,29 +93,28 @@ fn summaryBlock(gpa: std.mem.Allocator, summary: []const u8) Error![]const u8 {
 }
 
 /// Map one user part from its media type, because the part name does not classify a file.
-fn userValue(part: proto.content.ContentPart, options: Options) Error!Block.Value {
+fn userValue(part: proto.content.ContentPart, options: Options, images: *ImageBudget) Error!Block.Value {
     return switch (part) {
         .text => |t| .{ .text = t.text },
-        .image => |t| mediaValue(t.source, options),
-        .audio => |t| mediaValue(t.source, options),
-        .file => |t| mediaValue(t.source, options),
+        inline .image, .audio, .file => |t| mediaValue(t.source, options, images),
     };
 }
 
 /// Map one attachment against the target model, and give a note for a kind it cannot read.
-fn mediaValue(blob: proto.content.MediaBlob, options: Options) Error!Block.Value {
+fn mediaValue(blob: proto.content.MediaBlob, options: Options, images: *ImageBudget) Error!Block.Value {
     const kind = ir.modalityOf(blob.mime);
     // A model that lists nothing blocks nothing, so only a stated refusal replaces the attachment.
     if (options.modalities.takesInput(kind)) |takes| {
         if (!takes) return .{ .text = omittedNote(kind) };
     }
+    if (kind == .image and !images.take(blob)) return .{ .text = image_budget_note };
     // The model reads the kind, so the bytes must arrive. Admission proved the store holds them.
     const lookup = options.blobs orelse return error.UnresolvedBlob;
     const bytes = (try lookup.get(blob.hash)) orelse return error.UnresolvedBlob;
     return .{ .media = .{ .source = .{ .bytes = bytes }, .mime = blob.mime } };
 }
 
-fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: proto.message.AssistantMessage, options: Options) Error!void {
+fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: proto.message.AssistantMessage, options: Options, images: *ImageBudget) Error!void {
     const replay = if (options.target) |target| provenanceMatches(msg.provenance, target) else false;
 
     for (msg.content) |part| switch (part) {
@@ -105,7 +135,7 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: pro
     for (msg.content) |part| switch (part) {
         .tool => |t| {
             const call_id = t.call_id orelse return error.InvalidTranscript;
-            try blocks.append(gpa, .{ .role = .user, .value = .{ .tool_result = try terminalToolResult(gpa, call_id, t.state, options) } });
+            try blocks.append(gpa, .{ .role = .user, .value = .{ .tool_result = try terminalToolResult(gpa, call_id, t.state, options, images) } });
         },
         else => {},
     };
@@ -126,9 +156,9 @@ fn omittedNote(kind: types.Modality) []const u8 {
     };
 }
 
-fn terminalToolResult(gpa: std.mem.Allocator, call_id: []const u8, state: proto.tool.ToolState, options: Options) Error!Block.ToolResult {
+fn terminalToolResult(gpa: std.mem.Allocator, call_id: []const u8, state: proto.tool.ToolState, options: Options, images: *ImageBudget) Error!Block.ToolResult {
     return switch (state) {
-        .completed => |c| completedResult(gpa, call_id, c, options),
+        .completed => |c| completedResult(gpa, call_id, c, options, images),
         .@"error" => |e| .{ .call_id = call_id, .content = e.@"error", .is_error = true },
         .canceled => |c| .{ .call_id = call_id, .content = if (c.reason) |reason| reason.modelText() else "The tool call was canceled. It may have produced side effects before it stopped.", .is_error = c.reason == null },
         // A committed transcript holds only terminal tools.
@@ -137,21 +167,21 @@ fn terminalToolResult(gpa: std.mem.Allocator, call_id: []const u8, state: proto.
 }
 
 /// Resolve the images of a completed call. An image the model cannot read becomes a note after the text.
-fn completedResult(gpa: std.mem.Allocator, call_id: []const u8, c: proto.tool.ToolStateCompleted, options: Options) Error!Block.ToolResult {
+fn completedResult(gpa: std.mem.Allocator, call_id: []const u8, c: proto.tool.ToolStateCompleted, options: Options, images: *ImageBudget) Error!Block.ToolResult {
     var result: Block.ToolResult = .{ .call_id = call_id, .content = c.output, .is_error = false };
     const blobs = c.media orelse return result;
     var media: std.ArrayList(Block.Media) = .empty;
     var text: std.ArrayList(u8) = .empty;
-    try text.appendSlice(gpa, c.output);
-    for (blobs) |blob| switch (try mediaValue(blob, options)) {
+    for (blobs) |blob| switch (try mediaValue(blob, options, images)) {
         .media => |value| try media.append(gpa, value),
         .text => |note| {
+            if (text.items.len == 0) try text.appendSlice(gpa, c.output);
             if (text.items.len != 0) try text.append(gpa, '\n');
             try text.appendSlice(gpa, note);
         },
         else => unreachable,
     };
-    result.content = try text.toOwnedSlice(gpa);
+    if (text.items.len != 0) result.content = try text.toOwnedSlice(gpa);
     result.media = try media.toOwnedSlice(gpa);
     return result;
 }
@@ -266,6 +296,49 @@ test "a tool image resolves to result media, and a text-only model gets the note
     try testing.expectEqualStrings("PNG image, 3 B\n[image omitted: this model reads no images]", noted.blocks[1].value.tool_result.content);
     try testing.expectEqual(@as(usize, 0), noted.blocks[1].value.tool_result.media.len);
     try testing.expectEqual(@as(usize, 1), spy.hits);
+}
+
+test "the request shares an image byte budget and reads only the newest images" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const image_bytes = 7 << 20;
+    var blobs: [10]proto.content.MediaBlob = undefined;
+    for (&blobs, 0..) |*blob, i| blob.* = .{ .hash = .bytes(@splat(@intCast(i))), .mime = "image/png", .bytes = image_bytes };
+    const messages = [_]proto.message.Message{
+        .{ .user = .{ .id = 1, .input_id = 1, .content = &.{ .{ .image = .{ .source = blobs[0] } }, .{ .image = .{ .source = blobs[1] } } }, .time = .{ .created_at_ms = 1 } } },
+        .{ .assistant = .{
+            .id = 2,
+            .run_id = 1,
+            .config_rev = 0,
+            .agent = "main",
+            .content = &.{.{ .tool = .{ .id = 1, .call_id = "read", .name = "read", .arguments = "{}", .state = .{ .completed = .{ .output = "images", .media = blobs[2..9], .duration_ms = 1 } } } }},
+            .time = .{ .created_at_ms = 2 },
+        } },
+        .{ .user = .{ .id = 3, .input_id = 2, .content = &.{.{ .image = .{ .source = blobs[9] } }}, .time = .{ .created_at_ms = 3 } } },
+    };
+    const Lookup = struct {
+        bytes: []const u8,
+        hits: usize = 0,
+
+        fn get(raw: *const anyopaque, hash: proto.ids.BlobHash) error{ OutOfMemory, Canceled }!?[]const u8 {
+            const self: *@This() = @ptrCast(@alignCast(@constCast(raw)));
+            if (hash.raw[0] < 6) return null;
+            self.hits += 1;
+            return self.bytes;
+        }
+    };
+    const bytes = try a.alloc(u8, image_bytes);
+    @memset(bytes, 0);
+    var lookup: Lookup = .{ .bytes = bytes };
+    const built = try build(a, &messages, .{ .blobs = .{ .context = &lookup, .getFn = Lookup.get } });
+    try testing.expectEqual(@as(usize, 4), lookup.hits);
+    try testing.expectEqualStrings(image_budget_note, built.blocks[0].value.text);
+    const result = built.blocks[3].value.tool_result;
+    try testing.expectEqual(@as(usize, 3), result.media.len);
+    try testing.expectEqualStrings("images\n" ++ image_budget_note ++ "\n" ++ image_budget_note ++ "\n" ++ image_budget_note ++ "\n" ++ image_budget_note, result.content);
+    try testing.expect(built.blocks[4].value == .media);
+    try ir.validate(a, .{ .model = "vision", .max_output_tokens = 8 }, built);
 }
 
 const SpyLookup = struct {

@@ -6,6 +6,7 @@ import { clip, caretAtCol, wrapOffsets, wrapPreview, nextGrapheme } from "yuke:t
 import { strokeOf } from "yuke:keys";
 import { Document, isLinear, normalizeSource } from "yuke:md";
 import { Window, NAV_KEYS } from "yuke:ui";
+import { byteLabel } from "yuke:format";
 
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
@@ -214,20 +215,12 @@ function cutsOf(part) {
 }
 
 // `[PNG #1 · 2 KiB]`: the type comes from the mime, because an image part carries no file name on the wire.
-/** @param {{ type: string, source: Wire.MediaBlob }} part @param {number} n @returns {string} */
-function mediaLabel(part, n) {
-  const mime = part.source.mime;
+/** @param {Wire.MediaBlob} blob @param {number} n @returns {string} */
+function mediaLabel(blob, n) {
+  const mime = blob.mime;
   const slash = mime.indexOf("/");
   const kind = (slash < 0 ? mime : mime.slice(slash + 1)).toUpperCase();
-  return "[" + kind + (n > 0 ? " #" + n : "") + " · " + byteLabel(part.source.bytes) + "]";
-}
-
-// A short size. The units are binary, because `max_blob_bytes` is 7 MiB and the two must agree.
-/** @param {number} n @returns {string} */
-function byteLabel(n) {
-  if (n < 1024) return n + " B";
-  if (n < 1024 * 1024) return Math.round(n / 1024) + " KiB";
-  return (n / (1024 * 1024)).toFixed(1) + " MiB";
+  return "[" + kind + (n > 0 ? " #" + n : "") + " · " + byteLabel(blob.bytes) + "]";
 }
 
 // Plain message variants share the same wrap and source-offset rules.
@@ -486,7 +479,7 @@ function toolBody(part, width, limit = Infinity) {
   if (!media || media.length === 0) return body;
   // An image has no text, so one label per image follows the output, numbered like a user attachment.
   media.forEach((blob, i) => {
-    const label = mediaLabel({ type: "image", source: blob }, i + 1);
+    const label = mediaLabel(blob, i + 1);
     if (body.source) body.source += "\n";
     const base = body.source.length;
     body.source += label;
@@ -1209,7 +1202,7 @@ export class Transcript {
     if (!parts.some(isMedia)) return text;
     // One pass builds every label, so the number counts media alone and stays the number the composer drew.
     let image = 0;
-    const labels = parts.map((part) => (isMedia(part) ? mediaLabel(part, part.type === "image" ? ++image : 0) : ""));
+    const labels = parts.map((part) => (isMedia(part) ? mediaLabel(part.source, part.type === "image" ? ++image : 0) : ""));
     // A text part the projection cut cannot place what follows it, so every label goes after the whole text instead.
     if (parts.some((part) => cutsOf(part).length > 0)) {
       const tail = labels.filter(Boolean).join(" ");

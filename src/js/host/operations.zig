@@ -33,6 +33,12 @@ pub const RangeRead = struct {
     long_lines: u32 = 0,
 };
 
+/// A file read returns bounded text or the anchored path of an image.
+pub const FileRead = union(enum) {
+    text: RangeRead,
+    image: []const u8,
+};
+
 /// Metadata for one filesystem path. The local host follows a symbolic link.
 pub const Stat = struct {
     /// The anchored absolute path, so a caller can hand the same file to the engine.

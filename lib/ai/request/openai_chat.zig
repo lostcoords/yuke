@@ -66,9 +66,15 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             .tool_result => {
                 // A tool message holds text only, so the images of a run of results follow the run in one user message.
                 const results = request_ir.blocks[block_index..toolRunEnd(request_ir.blocks, block_index)];
-                for (results) |result| try writeToolResult(&jw, result.value.tool_result);
+                var has_media = false;
+                for (results) |result| {
+                    std.debug.assert(result.role == .user and result.value == .tool_result);
+                    const tool_result = result.value.tool_result;
+                    try writeToolResult(&jw, tool_result);
+                    has_media = has_media or tool_result.media.len != 0;
+                }
                 block_index += results.len;
-                if (!hasMedia(results)) continue;
+                if (!has_media) continue;
                 // A strict host refuses two user messages in a row, so the images join the user text that follows.
                 const user_end = if (block_index < request_ir.blocks.len and request_ir.blocks[block_index].role == .user) userMessageEnd(request_ir.blocks, block_index) else block_index;
                 try writeUserMessage(&jw, results, request_ir.blocks[block_index..user_end]);
@@ -110,14 +116,6 @@ fn toolRunEnd(blocks: []const ir.Block, start: usize) usize {
     var end = start + 1;
     while (end < blocks.len and blocks[end].value == .tool_result) : (end += 1) {}
     return end;
-}
-
-fn hasMedia(results: []const ir.Block) bool {
-    for (results) |result| {
-        std.debug.assert(result.role == .user and result.value == .tool_result);
-        if (result.value.tool_result.media.len != 0) return true;
-    }
-    return false;
 }
 
 fn assistantMessageEnd(blocks: []const ir.Block, start: usize) usize {
@@ -568,16 +566,18 @@ test "an assistant tool call has a JSON string and its result is standalone" {
 test "tool images follow the whole run of tool messages, or join the user text that follows" {
     const image: ir.Block.Media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" };
     const request: ir.Request = .{ .model = "gpt", .max_output_tokens = 8 };
-    // The image sits on the second result, so the user message comes after both tool messages.
+    // A middle image tests both the media scan and the order of all three results.
     const run = [_]ir.Block{
         .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_1", .name = "read", .arguments = "{}" } } },
         .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_2", .name = "read", .arguments = "{}" } } },
+        .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_3", .name = "read", .arguments = "{}" } } },
         .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "text", .is_error = false } } },
         .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_2", .content = "PNG image", .is_error = false, .media = &.{image} } } },
-        .{ .role = .assistant, .value = .{ .text = "two files" } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_3", .content = "text", .is_error = false } } },
+        .{ .role = .assistant, .value = .{ .text = "three files" } },
     };
     try expectJson(
-        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{}"}},{"id":"call_2","type":"function","function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"text"},{"role":"tool","tool_call_id":"call_2","content":"PNG image"},{"role":"user","content":[{"type":"text","text":"Image from tool call call_2:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,YWI="}}]},{"role":"assistant","content":[{"type":"text","text":"two files"}]}]}
+        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{}"}},{"id":"call_2","type":"function","function":{"name":"read","arguments":"{}"}},{"id":"call_3","type":"function","function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"text"},{"role":"tool","tool_call_id":"call_2","content":"PNG image"},{"role":"tool","tool_call_id":"call_3","content":"text"},{"role":"user","content":[{"type":"text","text":"Image from tool call call_2:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,YWI="}}]},{"role":"assistant","content":[{"type":"text","text":"three files"}]}]}
     , request, .{ .blocks = &run });
 
     // A canceled turn ends on the result, so the next user text takes the image instead of a second user message.

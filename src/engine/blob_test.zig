@@ -119,6 +119,11 @@ test "a tool image commits as media with a ref, and a ref the store lacks become
     try testing.expectEqualSlices(u8, &blob.hash.raw, &part.state.completed.media.?[0].hash.raw);
     // No user message names the blob, so the tool part alone keeps the ref alive.
     try testing.expect(try blob_store.referenced(&f.db, a, blob.hash));
+    {
+        const row = (try f.db.conn.row("SELECT images FROM messages WHERE message_id = 2", .{})).?;
+        defer row.deinit();
+        try testing.expectEqual(@as(i64, 1), row.int(0));
+    }
 
     tool.media[0].hash = .bytes(@splat(0x5a));
     _ = try f.send(&.{.{ .text = .{ .text = "again" } }});
