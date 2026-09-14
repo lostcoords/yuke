@@ -141,10 +141,17 @@ function sessionParts(sessionId, messageId) {
 }
 
 // One part of a message, or null when it is gone. A delta re-reads one part, never the whole message.
-/** @param {string} sessionId @param {number} messageId @param {number} partId @returns {MessagePart | null} */
-function sessionPart(sessionId, messageId, partId) {
-  const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId)));
-  return parts.length ? wholePart(sessionId, messageId, /** @type {ViewPart} */ (parts[0])) : null;
+/** @param {string} sessionId @param {number} messageId @param {number} partId @param {MessagePart} [previous] @returns {MessagePart | null} */
+function sessionPart(sessionId, messageId, partId, previous) {
+  const prefix = previous?.type === "text" || previous?.type === "reasoning" ? previous.text : undefined;
+  const parts = /** @type {(ViewPart & { text_prefix?: boolean })[]} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId, prefix)));
+  const part = parts[0];
+  if (!part) return null;
+  if (part.text_prefix && (part.type === "text" || part.type === "reasoning")) {
+    delete part.text_prefix;
+    return wholePart(sessionId, messageId, { ...part, text: prefix + part.text });
+  }
+  return wholePart(sessionId, messageId, part);
 }
 
 /** @param {string} sessionId @param {number} messageId @param {ViewPart} p @returns {ViewPart} */

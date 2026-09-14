@@ -926,7 +926,7 @@ export class Transcript {
     const state = this._parts.get(String(id));
     if (!state || !state.list) return { groupingChanged: true, rowsChanged: true };
     const at = partId == null ? -1 : state.list.findIndex((part) => part && sameId(part.id, partId));
-    const fresh = at < 0 || !this.partOf ? null : this._partOne(id, /** @type {number} */ (partId));
+    const fresh = at < 0 || !this.partOf ? null : this._partOne(id, /** @type {number} */ (partId), state.list[at]);
     if (fresh && (fresh.type === "text" || fresh.type === "tool" || fresh.type === "reasoning")) {
       const before = /** @type {Wire.AssistantPart} */ (state.list[at]);
       state.list[at] = fresh;
@@ -1325,10 +1325,10 @@ export class Transcript {
     }
   }
 
-  /** @param {number} id @param {number} partId @returns {MessagePart | null} */
-  _partOne(id, partId) {
+  /** @param {number} id @param {number} partId @param {MessagePart} [previous] @returns {MessagePart | null} */
+  _partOne(id, partId, previous) {
     try {
-      return /** @type {PartOf} */ (this.partOf)(id, partId);
+      return /** @type {PartOf} */ (this.partOf)(id, partId, previous);
     } catch (_) {
       return null;
     }

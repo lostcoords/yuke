@@ -191,7 +191,7 @@ test "benchmark scenarios preserve the transcript across updates and cache evict
         defer harness.destroy();
         // Scale 9 holds 18 messages, above the 16-message row cache, so eviction runs.
         try harness.start(phase, if (phase == .stream_native) 1 else 9);
-        // A native step rereads the whole part, so scale 1 keeps it small but above one text page.
+        // The initial native text exceeds one page, so the client must complete it before the first update.
         if (phase == .stream_native) try std.testing.expect(harness.sourceBytes().? > paging.max_page_bytes);
         for (0..6) |_| _ = try harness.step();
         _ = try harness.verify();
@@ -235,3 +235,32 @@ test "reused RGB and ANSI colors need no backing allocations after warmup" {
 
 const support = @import("test_support.zig");
 const paging = @import("native/engine/paging.zig");
+
+test "native part refresh validates the held prefix across replacement and removal" {
+    var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
+    defer _ = pool.deinit();
+    const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, .stream_native);
+    defer harness.destroy();
+    try harness.start(.stream_native, 1);
+    const session = harness.projection.?.session;
+    try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .reasoning = .{ .id = 1, .text = "why 世界", .signature = "" } } });
+    try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .tool = .{ .id = 2, .name = "exec", .arguments = "{}", .state = .pending } } });
+    try support.eval(harness.host, "tests/app/part-refresh.test.js");
+    const text = &session.draft.?.parts.items[0].text.text;
+    text.clearRetainingCapacity();
+    try text.appendSlice(harness.host.gpa, "changed 世界 👩‍💻");
+    try harness.host.evalModule(
+        \\import { client } from "yuke:client";
+        \\import { equal } from "yuke:test";
+        \\const fresh = client.sessionPart(globalThis.PROJECTION_SESSION, 2, 0, globalThis.previousPart);
+        \\equal(fresh.text, "changed 世界 👩‍💻");
+        \\equal(globalThis.previousPart.text, globalThis.PROJECTION_TEXT);
+    , "replacement.js");
+    session.draft.?.deinit();
+    session.draft = null;
+    try harness.host.evalModule(
+        \\import { client } from "yuke:client";
+        \\import { equal } from "yuke:test";
+        \\equal(client.sessionPart(globalThis.PROJECTION_SESSION, 2, 0, globalThis.previousPart), null);
+    , "removal.js");
+}

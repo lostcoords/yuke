@@ -63,7 +63,7 @@ export interface PartState {
 }
 
 export type PartsOf = (id: number) => readonly MessagePart[];
-export type PartOf = (id: number, partId: number) => MessagePart | null;
+export type PartOf = (id: number, partId: number, previous?: MessagePart) => MessagePart | null;
 export type PartTextPage = (id: number, partId: number, field: string, offset?: number, limit?: number) => { text: string; next: number | null };
 
 export interface CodeBlock {

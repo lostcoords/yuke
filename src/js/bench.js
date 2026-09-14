@@ -183,7 +183,7 @@ function step() {
   }
   if (phase === "stream_native") {
     const delta = nativeDeltas[i % nativeDeltas.length] || "";
-    const part = client.sessionPart(globalThis.PROJECTION_SESSION, NATIVE_STREAM_MESSAGE_ID, NATIVE_STREAM_PART_ID);
+    const part = client.sessionPart(globalThis.PROJECTION_SESSION, NATIVE_STREAM_MESSAGE_ID, NATIVE_STREAM_PART_ID, nativeLive[0]);
     if (!part || part.type !== "text") throw new Error("native stream part missing");
     nativeTextUnits += delta.length;
     nativeLive = [part];

@@ -60,8 +60,8 @@ declare module "yuke:engine-native" {
     sessionActivity(sessionId: string): string;
     /** The parts of one message as JSON. A user part takes its position as its id. */
     sessionParts(sessionId: string, messageId: number): string;
-    /** One part as a one-element JSON array, or `[]` when it is gone. */
-    sessionPart(sessionId: string, messageId: number, partId: number): string;
+    /** One part as JSON; a matched prefix sets `text_prefix` and leaves only the suffix in `text`. */
+    sessionPart(sessionId: string, messageId: number, partId: number, prefix?: string): string;
     /** One page of a message's whole text, as JSON `TextPage`. */
     sessionText(sessionId: string, messageId: number, offset: number, limit: number): string;
     /** One page of one field of a part, as JSON `TextPage`. `field` is the address a `ViewCut` names. */

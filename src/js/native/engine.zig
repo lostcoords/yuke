@@ -172,7 +172,7 @@ fn jsSessionParts(ctx: Context, _: Value, args: []const Value) Value {
     const mid = u64Arg(ctx, args, 1) orelse return ctx.newString("[]");
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer aw.deinit();
-    project.writeMessageParts(&aw.writer, rt, mid, null) catch return ctx.newString("[]");
+    project.writeMessageParts(&aw.writer, rt, mid, null, null) catch return ctx.newString("[]");
     return ctx.newString(aw.written());
 }
 
@@ -184,7 +184,9 @@ fn jsSessionPart(ctx: Context, _: Value, args: []const Value) Value {
     const pid = u64Arg(ctx, args, 2) orelse return ctx.newString("[]");
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer aw.deinit();
-    project.writeMessageParts(&aw.writer, rt, mid, pid) catch return ctx.newString("[]");
+    const prefix = if (args.len > 3) module.string(ctx, args[3]) else null;
+    defer if (prefix) |held| ctx.freeCString(held.ptr);
+    project.writeMessageParts(&aw.writer, rt, mid, pid, prefix) catch return ctx.newString("[]");
     return ctx.newString(aw.written());
 }
 

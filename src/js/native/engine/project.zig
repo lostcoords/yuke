@@ -155,11 +155,11 @@ fn writeCapped(w: *std.Io.Writer, parts: *Parts, field: Cut.Field, list: []const
 }
 
 /// Write one part. Every string it holds is bounded, whatever the tool produced.
-fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart) !void {
+fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart, prefix: ?[]const u8) !void {
     parts.* = .{};
     switch (p) {
-        .text => |t| try writeTextPart(w, parts, "text", t.id, t.text),
-        .reasoning => |r| try writeTextPart(w, parts, "reasoning", r.id, r.text),
+        .text => |t| try writeTextPart(w, parts, "text", t.id, t.text, prefix),
+        .reasoning => |r| try writeTextPart(w, parts, "reasoning", r.id, r.text, prefix),
         .redacted_reasoning => |r| try w.print("{{\"type\":\"redacted_reasoning\",\"id\":{d}}}", .{r.id}),
         .tool => |t| try writeToolPart(w, parts, t),
     }
@@ -169,7 +169,7 @@ fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart) !
 fn writeContentPart(w: *std.Io.Writer, parts: *Parts, id: u64, c: proto.content.ContentPart) !void {
     parts.* = .{};
     switch (c) {
-        .text => |t| try writeTextPart(w, parts, "text", id, t.text),
+        .text => |t| try writeTextPart(w, parts, "text", id, t.text, null),
         .image => |t| try writeMediaPart(w, "image", id, t.source),
         .audio => |t| try writeMediaPart(w, "audio", id, t.source),
         .file => |t| try writeMediaPart(w, "file", id, t.source),
@@ -184,11 +184,14 @@ fn writeMediaPart(w: *std.Io.Writer, kind: []const u8, id: u64, source: proto.co
 }
 
 /// Write a text-bearing part. A cut text names itself in `cut`, so a view knows to page the rest.
-fn writeTextPart(w: *std.Io.Writer, parts: *Parts, kind: []const u8, id: u64, text: []const u8) !void {
-    const end = utf8.floor(text, parts.take(@min(text.len, max_page_bytes)));
+fn writeTextPart(w: *std.Io.Writer, parts: *Parts, kind: []const u8, id: u64, text: []const u8, prefix: ?[]const u8) !void {
+    const start = if (prefix) |held| (if (std.mem.startsWith(u8, text, held)) held.len else 0) else 0;
+    std.debug.assert(start <= text.len);
+    const end = start + utf8.floor(text[start..], parts.take(@min(text.len - start, max_page_bytes)));
     try w.print("{{\"type\":\"{s}\",\"id\":{d},\"text\":", .{ kind, id });
-    try std.json.Stringify.encodeJsonString(text[0..end], .{}, w);
+    try std.json.Stringify.encodeJsonString(text[start..end], .{}, w);
     if (end < text.len) parts.cuts.add(.{ .field = .text, .size = text.len, .next = end });
+    if (start != 0) try w.writeAll(",\"text_prefix\":true");
     try parts.cuts.write(w);
     try w.writeByte('}');
 }
@@ -349,7 +352,8 @@ fn writeFloor(w: *std.Io.Writer, parts: *Parts, text: []const u8) !bool {
 }
 
 /// Write the parts of one message as a JSON array. With `only`, write just that part, so a delta reads one part.
-pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: proto.ids.MessageId, only: ?proto.ids.PartId) !void {
+pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: proto.ids.MessageId, only: ?proto.ids.PartId, prefix: ?[]const u8) !void {
+    std.debug.assert(only != null or prefix == null);
     var parts: Parts = .{};
     var written: usize = 0;
     try w.writeByte('[');
@@ -359,7 +363,7 @@ pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: pro
             if (only) |want| if (wire.id() != want) continue;
             if (written > 0) try w.writeByte(',');
             written += 1;
-            try writePart(w, &parts, wire);
+            try writePart(w, &parts, wire, prefix);
         }
         return w.writeByte(']');
     };
@@ -370,7 +374,7 @@ pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: pro
                 if (only) |want| if (p.id() != want) continue;
                 if (written > 0) try w.writeByte(',');
                 written += 1;
-                try writePart(w, &parts, p);
+                try writePart(w, &parts, p, prefix);
             },
             // A committed message never reorders its content, so the position is a stable id.
             .user => |u| for (u.content, 0..) |c, i| {
@@ -436,7 +440,7 @@ test "a huge tool result projects into a bounded parts response" {
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
-    try writeMessageParts(&aw.writer, &sess, 1, null);
+    try writeMessageParts(&aw.writer, &sess, 1, null, null);
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
 
@@ -486,7 +490,7 @@ test "a diff of many files stays inside the response budget" {
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
-    try writeMessageParts(&aw.writer, &sess, 1, null);
+    try writeMessageParts(&aw.writer, &sess, 1, null, null);
 
     try testing.expect(aw.written().len < 2 * max_part_bytes);
     // The diff says how many lines the whole patch holds, so a row can mark what it hides.
@@ -529,7 +533,7 @@ test "many huge parts each stay inside the part budget and none is dropped" {
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
-    try writeMessageParts(&aw.writer, &sess, 1, null);
+    try writeMessageParts(&aw.writer, &sess, 1, null, null);
 
     // 128 megabytes of source project into the budget and its own structure, never into a copy.
     try testing.expect(aw.written().len < (part_count + 1) * max_part_bytes);
@@ -608,7 +612,7 @@ test "a text part over the inline bound reports more and pages back whole" {
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
-    try writeMessageParts(&aw.writer, &sess, 1, null);
+    try writeMessageParts(&aw.writer, &sess, 1, null, null);
 
     // The cut names the field, the whole size, and where a reader resumes on a character boundary.
     var arena: std.heap.ArenaAllocator = .init(gpa);
@@ -700,7 +704,7 @@ test "a user message projects its content parts, and a position names each one" 
     } });
     var buffer: std.Io.Writer.Allocating = .init(a);
     defer buffer.deinit();
-    try writeMessageParts(&buffer.writer, &session, 1, null);
+    try writeMessageParts(&buffer.writer, &session, 1, null, null);
     const parsed = try std.json.parseFromSlice(std.json.Value, a, buffer.written(), .{});
     defer parsed.deinit();
     const items = parsed.value.array.items;
@@ -715,7 +719,7 @@ test "a user message projects its content parts, and a position names each one" 
     // A single part answers by its position, because that is the address a view holds.
     var one: std.Io.Writer.Allocating = .init(a);
     defer one.deinit();
-    try writeMessageParts(&one.writer, &session, 1, 1);
+    try writeMessageParts(&one.writer, &session, 1, 1, null);
     const only = try std.json.parseFromSlice(std.json.Value, a, one.written(), .{});
     defer only.deinit();
     try std.testing.expectEqual(@as(usize, 1), only.value.array.items.len);
