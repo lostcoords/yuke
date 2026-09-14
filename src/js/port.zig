@@ -48,11 +48,10 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
     defer finishCall(host, call);
     awaitCall(host, call) catch return fault(out, "cancellation stopped the tool call");
     const text = call.text orelse "the tool call did not finish";
-    const extra: Extra = if (call.extra_json) |json|
-        std.json.parseFromSliceLeaky(Extra, out, json, .{ .ignore_unknown_fields = true }) catch
-            return fault(out, "the tool answered an invalid view or media list")
+    const extra = if (call.extra_json) |json|
+        extraOf(out, json) orelse return fault(out, "the tool answered an invalid view or media list")
     else
-        .{};
+        Extra{};
     return .{
         .output = out.dupe(u8, text) catch return fault(out, "out of memory"),
         .view = extra.view,
@@ -120,8 +119,26 @@ const Extra = struct {
     media: []const proto.content.MediaBlob = &.{},
 };
 
+/// Copy every string into `out`, because the owner frees the call JSON on its next sweep.
+fn extraOf(out: std.mem.Allocator, json: []const u8) ?Extra {
+    return std.json.parseFromSliceLeaky(Extra, out, json, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch null;
+}
+
 fn fault(out: std.mem.Allocator, message: []const u8) toolset.Outcome {
     return .{ .output = out.dupe(u8, message) catch message, .is_error = true };
+}
+
+test "a tool result owns its view and media after the call answer leaves" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const json = try std.testing.allocator.dupe(u8, "{\"view\":[{\"type\":\"text\",\"text\":\"body\"}],\"media\":[{\"hash\":\"" ++ "ab" ** 32 ++ "\",\"mime\":\"image/png\",\"bytes\":3}]}");
+    const extra = extraOf(arena.allocator(), json).?;
+    @memset(json, 'x');
+    std.testing.allocator.free(json);
+    try std.testing.expectEqualStrings("body", extra.view.?[0].text.text);
+    try std.testing.expectEqualStrings("image/png", extra.media[0].mime);
+    try std.testing.expectEqual(@as(u64, 3), extra.media[0].bytes);
+    try std.testing.expect(extraOf(arena.allocator(), "{\"media\":[{\"hash\":\"zz\"}]}") == null);
 }
 
 test "hook decisions own text after the call answer leaves" {
