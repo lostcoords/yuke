@@ -121,7 +121,8 @@ pub const Store = struct {
         std.debug.assert(std.fs.path.isAbsolute(path));
         var current: ?[]const u8 = path;
         while (current) |name| : (current = std.fs.path.dirname(name)) {
-            const dir = std.Io.Dir.openDirAbsolute(io, name, .{}) catch |err| return ioFail(err, error.BlobStoreFailed);
+            // Linux opens a plain directory handle with O_PATH, which fsync refuses, so ask for an iterable one.
+            const dir = std.Io.Dir.openDirAbsolute(io, name, .{ .iterate = true }) catch |err| return ioFail(err, error.BlobStoreFailed);
             defer dir.close(io);
             const file: std.Io.File = .{ .handle = dir.handle, .flags = .{ .nonblocking = false } };
             file.sync(io) catch |err| return ioFail(err, error.BlobStoreFailed);
