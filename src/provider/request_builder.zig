@@ -105,12 +105,7 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: pro
     for (msg.content) |part| switch (part) {
         .tool => |t| {
             const call_id = t.call_id orelse return error.InvalidTranscript;
-            const result = try terminalToolResult(t.state);
-            try blocks.append(gpa, .{ .role = .user, .value = .{ .tool_result = .{
-                .call_id = call_id,
-                .content = result.content,
-                .is_error = result.is_error,
-            } } });
+            try blocks.append(gpa, .{ .role = .user, .value = .{ .tool_result = try terminalToolResult(gpa, call_id, t.state, options) } });
         },
         else => {},
     };
@@ -131,16 +126,34 @@ fn omittedNote(kind: types.Modality) []const u8 {
     };
 }
 
-const ToolOutcome = struct { content: []const u8, is_error: bool };
-
-fn terminalToolResult(state: proto.tool.ToolState) Error!ToolOutcome {
+fn terminalToolResult(gpa: std.mem.Allocator, call_id: []const u8, state: proto.tool.ToolState, options: Options) Error!Block.ToolResult {
     return switch (state) {
-        .completed => |c| .{ .content = c.output, .is_error = false },
-        .@"error" => |e| .{ .content = e.@"error", .is_error = true },
-        .canceled => |c| .{ .content = if (c.reason) |reason| reason.modelText() else "The tool call was canceled. It may have produced side effects before it stopped.", .is_error = c.reason == null },
+        .completed => |c| completedResult(gpa, call_id, c, options),
+        .@"error" => |e| .{ .call_id = call_id, .content = e.@"error", .is_error = true },
+        .canceled => |c| .{ .call_id = call_id, .content = if (c.reason) |reason| reason.modelText() else "The tool call was canceled. It may have produced side effects before it stopped.", .is_error = c.reason == null },
         // A committed transcript holds only terminal tools.
         .pending, .running => error.InvalidTranscript,
     };
+}
+
+/// Resolve the images of a completed call. An image the model cannot read becomes a note after the text.
+fn completedResult(gpa: std.mem.Allocator, call_id: []const u8, c: proto.tool.ToolStateCompleted, options: Options) Error!Block.ToolResult {
+    var result: Block.ToolResult = .{ .call_id = call_id, .content = c.output, .is_error = false };
+    const blobs = c.media orelse return result;
+    var media: std.ArrayList(Block.Media) = .empty;
+    var text: std.ArrayList(u8) = .empty;
+    try text.appendSlice(gpa, c.output);
+    for (blobs) |blob| switch (try mediaValue(blob, options)) {
+        .media => |value| try media.append(gpa, value),
+        .text => |note| {
+            if (text.items.len != 0) try text.append(gpa, '\n');
+            try text.appendSlice(gpa, note);
+        },
+        else => unreachable,
+    };
+    result.content = try text.toOwnedSlice(gpa);
+    result.media = try media.toOwnedSlice(gpa);
+    return result;
 }
 
 const testing = std.testing;
@@ -229,6 +242,30 @@ test "a model that reads no images sees a note where the attachment was" {
 
     // A model that lists nothing states no refusal, so the attachment is still owed its bytes.
     try testing.expectError(error.UnresolvedBlob, build(arena.allocator(), &messages, .{}));
+}
+
+test "a tool image resolves to result media, and a text-only model gets the note after the text" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(7)), .mime = "image/png", .bytes = 3 };
+    const content = [_]proto.message.AssistantPart{
+        .{ .tool = .{ .id = 1, .call_id = "call_1", .name = "read", .arguments = "{}", .state = .{ .completed = .{ .output = "PNG image, 3 B", .media = &.{blob}, .duration_ms = 1 } } } },
+    };
+    const messages = [_]proto.message.Message{.{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 1, .agent = "main", .content = &content, .time = .{ .created_at_ms = 0 } } }};
+
+    var spy: SpyLookup = .{ .bytes = "PNG" };
+    const seen = try build(a, &messages, .{ .modalities = .{ .input = &.{ .text, .image } }, .blobs = spy.lookup() });
+    const result = seen.blocks[1].value.tool_result;
+    try testing.expectEqualStrings("PNG image, 3 B", result.content);
+    try testing.expectEqual(@as(usize, 1), result.media.len);
+    try testing.expectEqualStrings("PNG", result.media[0].source.bytes);
+    try testing.expectEqual(@as(usize, 1), spy.hits);
+
+    const noted = try build(a, &messages, .{ .modalities = .{ .input = &.{.text} } });
+    try testing.expectEqualStrings("PNG image, 3 B\n[image omitted: this model reads no images]", noted.blocks[1].value.tool_result.content);
+    try testing.expectEqual(@as(usize, 0), noted.blocks[1].value.tool_result.media.len);
+    try testing.expectEqual(@as(usize, 1), spy.hits);
 }
 
 const SpyLookup = struct {

@@ -49,6 +49,8 @@ pub const Block = struct {
         call_id: []const u8,
         content: []const u8,
         is_error: bool,
+        /// Images beside the text. Each protocol places them where its result shape allows.
+        media: []const Media = &.{},
     };
 };
 
@@ -192,13 +194,30 @@ pub fn validate(arena: std.mem.Allocator, request: Request, request_ir: RequestI
 fn blockBytes(block: Block) usize {
     return switch (block.value) {
         .text, .redacted_reasoning => |value| value.len,
-        .media => |media| media.mime.len +| media.filename.len +| switch (media.source) {
-            .bytes, .url, .file_id => |value| value.len,
-        },
+        .media => |media| mediaBytes(media),
         .reasoning => |value| value.text.len +| value.signature.len,
         .tool_use => |value| value.call_id.len +| value.name.len +| value.arguments.len,
-        .tool_result => |value| value.call_id.len +| value.content.len,
+        .tool_result => |value| blk: {
+            var total = value.call_id.len +| value.content.len;
+            for (value.media) |media| total +|= mediaBytes(media);
+            break :blk total;
+        },
     };
+}
+
+fn mediaBytes(media: Block.Media) usize {
+    return media.mime.len +| media.filename.len +| switch (media.source) {
+        .bytes, .url, .file_id => |value| value.len,
+    };
+}
+
+fn validateMedia(media: Block.Media) !void {
+    if (media.mime.len == 0 or !stringValid(media.mime)) return error.InvalidRequest;
+    if (!stringValid(media.filename)) return error.InvalidRequest;
+    switch (media.source) {
+        .bytes => |data| if (data.len == 0 or data.len > types.limits.max_media_bytes) return error.InvalidRequest,
+        .url, .file_id => |value| if (value.len == 0 or !stringValid(value)) return error.InvalidRequest,
+    }
 }
 
 fn validateBlock(arena: std.mem.Allocator, block: Block) !void {
@@ -206,12 +225,7 @@ fn validateBlock(arena: std.mem.Allocator, block: Block) !void {
         .text => |value| if (!stringValid(value)) return error.InvalidRequest,
         .media => |media| {
             if (block.role != .user) return error.InvalidRequest;
-            if (media.mime.len == 0 or !stringValid(media.mime)) return error.InvalidRequest;
-            if (!stringValid(media.filename)) return error.InvalidRequest;
-            switch (media.source) {
-                .bytes => |data| if (data.len == 0 or data.len > types.limits.max_media_bytes) return error.InvalidRequest,
-                .url, .file_id => |value| if (value.len == 0 or !stringValid(value)) return error.InvalidRequest,
-            }
+            try validateMedia(media);
         },
         .reasoning => |value| {
             if (block.role != .assistant) return error.InvalidRequest;
@@ -228,6 +242,7 @@ fn validateBlock(arena: std.mem.Allocator, block: Block) !void {
         .tool_result => |value| {
             if (block.role != .user or value.call_id.len == 0) return error.InvalidRequest;
             if (!stringValid(value.call_id) or !stringValid(value.content)) return error.InvalidRequest;
+            for (value.media) |media| try validateMedia(media);
         },
     }
 }
@@ -257,6 +272,9 @@ test "request validation rejects role mismatches and malformed raw JSON" {
 
     const bad_json = [_]Block{.{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call", .name = "tool", .arguments = "[1]" } } }};
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &bad_json }));
+
+    const empty_image = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call", .content = "", .is_error = false, .media = &.{.{ .source = .{ .bytes = "" }, .mime = "image/png" }} } } }};
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &empty_image }));
 
     const bad_result_role = [_]Block{.{ .role = .assistant, .value = .{ .tool_result = .{ .call_id = "call", .content = "ok", .is_error = false } } }};
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &bad_result_role }));

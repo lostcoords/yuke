@@ -135,7 +135,20 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                 try jw.beginObject();
                 try json.field(&jw, "type", "function_call_output");
                 try json.field(&jw, "call_id", tool_result.call_id);
-                try json.field(&jw, "output", tool_result.content);
+                if (tool_result.media.len == 0) {
+                    try json.field(&jw, "output", tool_result.content);
+                } else {
+                    try jw.objectField("output");
+                    try jw.beginArray();
+                    if (tool_result.content.len != 0) {
+                        try jw.beginObject();
+                        try json.field(&jw, "type", "input_text");
+                        try json.field(&jw, "text", tool_result.content);
+                        try jw.endObject();
+                    }
+                    for (tool_result.media) |media| try writeMedia(&jw, media);
+                    try jw.endArray();
+                }
                 try jw.endObject();
             },
         }
@@ -337,6 +350,17 @@ test "assistant reasoning text and tool call precede a tool result" {
         .{ .model = "gpt-5", .max_output_tokens = 64 },
         .{ .blocks = &blocks },
     );
+}
+
+test "a tool result with an image writes an output array" {
+    const image: ir.Block.Media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" };
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_1", .name = "read", .arguments = "{}" } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "PNG image", .is_error = false, .media = &.{image} } } },
+    };
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"PNG image"},{"type":"input_image","image_url":"data:image/png;base64,YWI=","detail":"auto"}]}]}
+    , .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks });
 }
 
 test "a reasoning block with no signature is omitted" {
