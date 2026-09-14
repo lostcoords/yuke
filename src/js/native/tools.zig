@@ -17,6 +17,7 @@ pub fn install(host: *Host) void {
     module.installFunctions(host, "yuke:tools", &.{
         .{ .name = "defineTool", .arity = 2, .call = jsDefineTool },
         .{ .name = "removeTool", .arity = 1, .call = jsRemoveTool },
+        .{ .name = "hasTool", .arity = 1, .call = jsHasTool },
     });
 }
 
@@ -88,6 +89,15 @@ fn jsRemoveTool(ctx: Context, _: Value, args: []const Value) Value {
     const name = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
     defer ctx.freeCString(name.ptr);
     return ctx.newBool(host.tools.remove(ctx, name));
+}
+
+/// `hasTool(name)` answers true when a tool holds that name.
+fn jsHasTool(ctx: Context, _: Value, args: []const Value) Value {
+    const host = Host.fromContext(ctx);
+    if (args.len < 1 or !ctx.isString(args[0])) return ctx.throwTypeError("hasTool needs a name string");
+    const name = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
+    defer ctx.freeCString(name.ptr);
+    return ctx.newBool(host.tools.find(name) != null);
 }
 
 /// Report why the schema is refused, or null when it is usable. The provider needs an object schema with a `properties` object.

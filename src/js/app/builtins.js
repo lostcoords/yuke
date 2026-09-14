@@ -3,7 +3,7 @@
 import { fs } from "yuke:fs";
 import { exec as runCommand } from "yuke:exec";
 import { diff } from "yuke:diff";
-import { defineTool } from "yuke:tools";
+import { defineTool, hasTool } from "yuke:tools";
 import { client } from "yuke:client";
 import { byteLabel } from "yuke:format";
 
@@ -17,15 +17,15 @@ import { byteLabel } from "yuke:format";
 /** @typedef {{ type: "diff", files: DiffFile[] }} DiffView */
 /** @typedef {{ view?: DiffView[], media?: Wire.MediaBlob[] }} ResultExtra */
 /** @typedef {{ __yuke_result: true, text: string, extra: ResultExtra | null }} BuiltinResult */
-/** @typedef {{ description: string, parameters: Record<string, unknown>, execute: (args: any, signal: ToolSignal, context: ToolContext) => Promise<unknown>, needsSkills?: boolean }} ToolDefinition */
+/** @typedef {Omit<import("./types/ext.js").ToolDefinition, "name">} ToolDefinition */
 
 /** @param {string} text @param {ResultExtra | null} extra @returns {BuiltinResult} */
 const result = (text, extra) => ({ __yuke_result: true, text, extra });
 
+// A user tool with the same name wins, so the built-in steps aside.
 /** @param {string} name @param {ToolDefinition} definition @returns {void} */
 function builtin(name, definition) {
-  try { defineTool(name, definition); }
-  catch (e) { if (messageOf(e) !== "another tool already has this name") throw e; }
+  if (!hasTool(name)) defineTool(name, definition);
 }
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;

@@ -1,4 +1,6 @@
+import { check } from "yuke:test";
 import { plugins } from "yuke:ext";
+import { hasTool } from "yuke:tools";
 const params = { type: "object", properties: {} };
 
 plugins.use({
@@ -8,3 +10,5 @@ plugins.use({
     ctx.tools.define({ name: "alpha", description: "d", parameters: params, execute: async () => ({ text: "a" }) });
   },
 });
+
+check("has-tool", hasTool("alpha") && !hasTool("missing"));

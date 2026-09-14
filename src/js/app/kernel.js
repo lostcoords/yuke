@@ -203,12 +203,17 @@ export class Emitter {
       try {
         fn(...args);
       } catch (e) {
-        // If `onError` throws, the remaining listeners still run.
-        try {
-          callHook(this, "onError", e, name);
-        } catch (_ignored) {}
+        this._fault(e, name);
       }
     }
+  }
+
+  // Report one listener fault. If `onError` throws, the remaining listeners still run.
+  /** @param {unknown} error @param {string} name @returns {void} */
+  _fault(error, name) {
+    try {
+      callHook(this, "onError", error, name);
+    } catch (_ignored) {}
   }
 
   /** @param {string} name @param {...any} args @returns {unknown} */
@@ -217,7 +222,14 @@ export class Emitter {
     const list = this._hooks[name];
     if (!list) return undefined;
     for (const fn of list.slice()) {
-      const r = fn(...args);
+      let r;
+      // A listener that throws claims nothing, so the next listener gets the event.
+      try {
+        r = fn(...args);
+      } catch (e) {
+        this._fault(e, name);
+        continue;
+      }
       if (r != null && r !== false) return r;
     }
     return undefined;

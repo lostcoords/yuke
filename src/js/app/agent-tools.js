@@ -1,5 +1,6 @@
 // yuke:agent-tools — thin tools over stored child sessions.
 import { client } from "yuke:client";
+import { hasTool } from "yuke:tools";
 import { NAME, check, failure, spawnAgent } from "yuke:agents";
 
 /** @import { Context } from "yuke:ext" */
@@ -68,39 +69,36 @@ export const agentToolsPlugin = {
     /** @param {Context} ctx */
     apply(ctx) {
         for (const definition of definitions) {
-            try {
-                ctx.tools.define({
-                    name: definition.name, description: definition.description,
-                    spawnsAgents: definition.name === "spawn_agent",
-                    parameters: { type: "object", properties: definition.fields, required: definition.required, additionalProperties: false },
-                    execute: async (raw, signal, context) => {
-                        const args = argsOf(raw, Object.keys(definition.fields));
-                        const parentId = context.sessionId;
-                        if (!parentId) throw failure("bad_request", "The tool has no parent session.");
-                        check(signal);
-                        if (definition.name === "spawn_agent") {
-                            if (context.messageId == null || context.partId == null) throw failure("bad_request", "The tool has no live parent site.");
-                            return spawnAgent(ctx, { name: required(args, "name"), message: required(args, "message"), model: args.model }, signal, { sessionId: parentId, messageId: context.messageId, partId: context.partId });
-                        }
-                        if (definition.name === "list_agents") {
-                            const limit = integer(args.limit, 25, 1, 50);
-                            const cursor = args.cursor === undefined ? undefined : required(args, "cursor");
-                            const page = await client.sessionList({ population: { type: "children", parent_id: parentId }, limit, ...(cursor ? { cursor } : {}) });
-                            return { items: page.items.map(agentRow), next_cursor: page.next_cursor ?? null, total: page.total };
-                        }
-                        const child = await ownedChild(parentId, required(args, "child"));
-                        check(signal);
-                        if (definition.name === "send_agent_input") {
-                            if (context.messageId == null || context.partId == null) throw failure("bad_request", "The tool has no live parent site.");
-                            const result = await client.sessionSendInput(child.session.id, client.textContent(required(args, "message")), { session_id: parentId, message_id: context.messageId, part_id: context.partId });
-                            return { state: result.type };
-                        }
-                        return client.sessionCancelRun(child.session.id, true);
-                    },
-                });
-            } catch (error) {
-                if (/** @type {Error} */ (error).message !== "another tool already has this name") throw error;
-            }
+            if (hasTool(definition.name)) continue;
+            ctx.tools.define({
+                name: definition.name, description: definition.description,
+                spawnsAgents: definition.name === "spawn_agent",
+                parameters: { type: "object", properties: definition.fields, required: definition.required, additionalProperties: false },
+                execute: async (raw, signal, context) => {
+                    const args = argsOf(raw, Object.keys(definition.fields));
+                    const parentId = context.sessionId;
+                    if (!parentId) throw failure("bad_request", "The tool has no parent session.");
+                    check(signal);
+                    if (definition.name === "spawn_agent") {
+                        if (context.messageId == null || context.partId == null) throw failure("bad_request", "The tool has no live parent site.");
+                        return spawnAgent(ctx, { name: required(args, "name"), message: required(args, "message"), model: args.model }, signal, { sessionId: parentId, messageId: context.messageId, partId: context.partId });
+                    }
+                    if (definition.name === "list_agents") {
+                        const limit = integer(args.limit, 25, 1, 50);
+                        const cursor = args.cursor === undefined ? undefined : required(args, "cursor");
+                        const page = await client.sessionList({ population: { type: "children", parent_id: parentId }, limit, ...(cursor ? { cursor } : {}) });
+                        return { items: page.items.map(agentRow), next_cursor: page.next_cursor ?? null, total: page.total };
+                    }
+                    const child = await ownedChild(parentId, required(args, "child"));
+                    check(signal);
+                    if (definition.name === "send_agent_input") {
+                        if (context.messageId == null || context.partId == null) throw failure("bad_request", "The tool has no live parent site.");
+                        const result = await client.sessionSendInput(child.session.id, client.textContent(required(args, "message")), { session_id: parentId, message_id: context.messageId, part_id: context.partId });
+                        return { state: result.type };
+                    }
+                    return client.sessionCancelRun(child.session.id, true);
+                },
+            });
         }
     },
 };

@@ -37,6 +37,16 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   check("bail", em.bail("k") === "claimed" && seen.join(",") === "1,2");
 }
 
+// bail reports a listener that throws and asks the next one.
+{
+  const em = new Emitter();
+  const faults = [];
+  em.onError = (e, name) => faults.push(name);
+  em.on("k", () => { throw new Error("boom"); });
+  em.on("k", () => "claimed");
+  check("bail-isolate", em.bail("k") === "claimed" && faults.join(",") === "k");
+}
+
 // Context.on subscribes on the shared bus and goes away with its scope.
 {
   const s = new Scope("t5");

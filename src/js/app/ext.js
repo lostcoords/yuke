@@ -170,14 +170,18 @@ function applyAdvice(rec, self, args) {
 
   let result = call(...args);
 
-  for (const a of list) if (a.where === "filterReturn") result = Reflect.apply(a.fn, self, [result]);
+  for (const a of list) {
+    if (a.where !== "filterReturn") continue;
+    const next = Reflect.apply(a.fn, self, [result]);
+    if (next !== undefined) result = next;
+  }
   for (const a of list) if (a.where === "after") Reflect.apply(a.fn, self, args);
 
   return result;
 }
 
 export const advice = {
-  // Install one advice, ordered by `order`; the same owner and name replaces in place, so a reload does not stack.
+  // Install one advice, ordered by `order`. The disposer removes only this advice.
   /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
     if (!Object.hasOwn(WHERE, where)) throw new TypeError("advise: unknown kind " + where);
@@ -186,14 +190,11 @@ export const advice = {
     const owner = (opts && opts.owner) || "anon";
     const name = (opts && opts.name) || fn.name || "advice";
     const order = opts && typeof opts.order === "number" ? opts.order : 0;
-    const key = owner + "\x00" + name;
 
     // Build the entry before the record, so a throwing option getter installs no wrapper.
-    const entry = { owner, name, key, where, fn, order };
+    const entry = { owner, name, where, fn, order };
     const rec = adviceRecord(obj, prop);
-    const at = rec.list.findIndex((a) => a.key === key);
-    if (at >= 0) rec.list[at] = entry;
-    else rec.list.push(entry);
+    rec.list.push(entry);
     rec.list.sort((a, b) => a.order - b.order);
 
     return () => {
@@ -668,7 +669,8 @@ export const plugins = {
   use(plugin, config) {
     checkPlugin(plugin);
     const name = plugin.name;
-    if (this._live[name]) this.dispose(name);
+    // A live plugin keeps its name, so a reload must dispose the old plugin first.
+    if (this._live[name]) throw new TypeError("plugin `" + name + "` is already in use");
 
     const scope = rootScope.child("plugin:" + name);
     const ctx = new Context(scope, name);

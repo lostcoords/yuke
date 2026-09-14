@@ -20,7 +20,6 @@ export interface AdviceRecord {
 export interface AdviceEntry {
   owner: string;
   name: string;
-  key: string;
   where: AdviceWhere;
   fn: AdviceFunction;
   order: number;

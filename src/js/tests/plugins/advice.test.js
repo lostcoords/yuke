@@ -27,15 +27,27 @@ import { tui } from "yuke:tui";
   off();
 }
 
-// The same owner and name replaces in place rather than stacking.
+// Each call adds one advice, so two anonymous advices from one plugin both run.
 {
+  const s = new Scope("stack");
+  const ctx = new Context(s, "stack");
   const obj = { log: [], f() { this.log.push("orig"); } };
-  advice.advise(obj, "f", "before", function () { this.log.push("v1"); }, { owner: "o", name: "n" });
-  const off2 = advice.advise(obj, "f", "before", function () { this.log.push("v2"); }, { owner: "o", name: "n" });
-  const replaced = advice.list(obj, "f").length === 1;
+  const off = ctx.advise(obj, "f", "before", () => obj.log.push("before"));
+  ctx.advise(obj, "f", "after", () => obj.log.push("after"));
   obj.f();
-  off2();
-  check("advice-replace", replaced && obj.log.join(",") === "v2,orig" && advice.list(obj, "f").length === 0);
+  const both = obj.log.join(",") === "before,orig,after";
+  off();
+  const one = advice.list(obj, "f").length === 1;
+  s.dispose();
+  check("advice-stack", both && one && advice.list(obj, "f").length === 0);
+}
+
+// A filterReturn advice that returns undefined keeps the result.
+{
+  const obj = { f() { return 1; } };
+  const off = advice.advise(obj, "f", "filterReturn", () => {});
+  check("advice-filter-return-undefined", obj.f() === 1);
+  off();
 }
 
 // filterArgs rewrites the arguments that the original and `after` both see.
@@ -79,13 +91,13 @@ import { tui } from "yuke:tui";
   check("context-surface", ok && gone);
 }
 
-// A stale handle cannot remove a replacement or a later registration.
+// A stale handle cannot remove a later registration.
 {
   const obj = { f() { return 1; } };
   const first = advice.advise(obj, "f", "filterReturn", () => 2);
   const second = advice.advise(obj, "f", "filterReturn", () => 3);
   first();
-  check("advice-stale-replacement", obj.f() === 3);
+  check("advice-stale-handle", obj.f() === 3);
   second();
   const third = advice.advise(obj, "f", "filterReturn", () => 4);
   first(); second();

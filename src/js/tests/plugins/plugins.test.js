@@ -26,15 +26,16 @@ import { tui } from "yuke:tui";
   check("plugin-root-entry-released", rootScope._disposers.length === held);
 }
 
-// A second use of a live name disposes the first, so nothing stacks on reload.
+// A second use of a live name throws and leaves the first plugin live.
 {
   let disposals = 0;
   const p = { name: "dup", apply(ctx) { ctx.effect(() => () => disposals++); } };
   plugins.use(p);
-  plugins.use(p);
-  const once = disposals === 1;
+  let threw = false;
+  try { plugins.use(p); } catch (e) { threw = e instanceof TypeError; }
+  const kept = disposals === 0 && !!plugins.get("dup");
   plugins.dispose("dup");
-  check("plugin-reload-disposes", once && disposals === 2 && plugins.names().indexOf("dup") < 0);
+  check("plugin-duplicate-rejected", threw && kept && disposals === 1 && plugins.names().indexOf("dup") < 0);
 }
 
 // A throwing apply reverts what it already registered and leaves no live plugin.
