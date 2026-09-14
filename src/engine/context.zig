@@ -56,7 +56,7 @@ pub fn estimate(arena: std.mem.Allocator, db: *database.Database, session_id: [1
         var row = owned;
         defer row.deinit();
         if (std.mem.eql(u8, row.value.role, "compaction")) continue;
-        total += tokensFor(row.value.bytes) + row.value.images * image_tokens;
+        total += messageTokens(row.value.bytes, row.value.images);
     }
     return total;
 }
@@ -92,6 +92,11 @@ pub fn collect(
         try messages.append(arena, msg);
     }
     return messages.items;
+}
+
+/// Charge one committed message from its size row: the payload bytes and a fixed cost per image.
+pub fn messageTokens(bytes: u64, images: u64) u64 {
+    return tokensFor(bytes) + images * image_tokens;
 }
 
 /// JSON byte counts are an estimate and do not replace a provider tokenizer.

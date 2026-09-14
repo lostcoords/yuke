@@ -109,6 +109,10 @@ test "tool state completed keeps its media and omits an absent list" {
     const plain = try std.json.parseFromSlice(ToolState, testing.allocator, "{\"type\":\"completed\",\"output\":\"ok\",\"duration_ms\":3}", opts);
     defer plain.deinit();
     try testing.expectEqual(null, plain.value.completed.media);
+    var plain_buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer plain_buf.deinit();
+    try std.json.Stringify.value(plain.value, .{ .emit_null_optional_fields = false }, &plain_buf.writer);
+    try testing.expect(std.mem.indexOf(u8, plain_buf.written(), "media") == null);
 
     const json =
         \\{"type":"completed","output":"PNG image, 12 B","media":[{"hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","mime":"image/png","bytes":12}],"duration_ms":3}

@@ -43,7 +43,7 @@ pub fn selectCut(gpa: std.mem.Allocator, db: *database.Database, session_id: [16
             var row = owned;
             defer row.deinit();
             if (std.mem.eql(u8, row.value.role, "compaction")) continue;
-            const tokens = context.tokensFor(row.value.bytes);
+            const tokens = context.messageTokens(row.value.bytes, row.value.images);
             total += tokens;
             if (cut == null) {
                 tail += tokens;
@@ -465,7 +465,16 @@ test "the estimate charges each image a fixed cost above its payload bytes" {
     const message: proto.message.Message = .{ .user = .{ .id = 2, .input_id = 2, .content = &.{ .{ .image = .{ .source = blob } }, .{ .image = .{ .source = blob } } }, .time = .{ .created_at_ms = 2 } } };
     try seedCommitted(&db, a, sid, 2, message);
     const payload = try std.json.Stringify.valueAlloc(a, message, .{ .emit_null_optional_fields = false });
-    try testing.expectEqual(before + context.tokensFor(payload.len) + 2 * context.image_tokens, try context.estimate(a, &db, sid));
+    const after = try context.estimate(a, &db, sid);
+    try testing.expectEqual(before + context.tokensFor(payload.len) + 2 * context.image_tokens, after);
+    // The cut charges the same rows the same way, so the covered range carries the image cost.
+    try seedMessage(&db, a, sid, 3, .assistant, 300);
+    try seedMessage(&db, a, sid, 4, .user, 300);
+    try seedMessage(&db, a, sid, 5, .assistant, 3000);
+    const cut = (try selectCut(testing.allocator, &db, sid, 0, 100)).?;
+    try testing.expectEqual(@as(u64, 4), cut.first_kept_id);
+    try testing.expectEqual(try context.estimate(a, &db, sid), cut.tokens_before);
+    try testing.expect(cut.tokens_before - cut.tokens_kept >= after);
 }
 
 fn seedSessionModel(db: *database.Database, id: [16]u8, model: []const u8, reasoning: []const u8) !void {

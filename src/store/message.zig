@@ -26,7 +26,7 @@ const Meta = struct {
     tokens_cache_write: ?u64,
     cost: ?f64,
     created_at_ms: u64,
-    /// The image count, because the context estimate charges an image by count and not by bytes.
+    /// The context estimate charges an image by count and not by bytes, so the row keeps the count.
     images: u64,
     // Add the session usage totals. Use zero when the message carries no tokens.
     add_input: u64,

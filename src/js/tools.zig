@@ -136,7 +136,7 @@ pub const Call = struct {
     done: std.Io.Event = .unset,
     /// The answer text, from the host allocator. The submitter copies it before it leaves.
     text: ?[]u8 = null,
-    /// The view and the media of a tool result, as one JSON object. The submitter decodes it in its turn arena.
+    /// One JSON object holds the view and the media of a tool result. The submitter decodes it in its turn arena.
     extra_json: ?[]u8 = null,
     is_error: bool = false,
     cancellation_reason: ?@import("proto").tool.ToolCancellationReason = null,
