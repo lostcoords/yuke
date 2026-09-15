@@ -1,0 +1,17 @@
+#!/bin/sh
+# Build this checkout incrementally, then run it. Resolve the symlink first so
+# this works when invoked as ~/.local/bin/yuke.
+set -eu
+
+script_path=$0
+while [ -L "$script_path" ]; do
+    link=$(readlink "$script_path")
+    case "$link" in
+        /*) script_path=$link ;;
+        *) script_path=$(dirname "$script_path")/$link ;;
+    esac
+done
+
+repo_root=$(CDPATH= cd "$(dirname "$script_path")/.." && pwd)
+(cd "$repo_root" && zig build --prefix "$repo_root/zig-out")
+exec "$repo_root/zig-out/bin/yuke" "$@"

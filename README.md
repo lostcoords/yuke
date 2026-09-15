@@ -9,7 +9,14 @@ Unleash you harness.
 ```sh
 mise install
 git config core.hooksPath .githooks
+mise run install-local
 ```
+
+`install-local` builds this checkout and links `~/.local/bin/yuke` to a local
+launcher, replacing any previous local installation. The launcher runs Zig's
+incremental build before every `yuke` invocation, so after editing this
+checkout, running `yuke` uses those changes automatically. Run `zig build`
+directly when you only want to compile without starting Yuke.
 
 ## Commands
 
