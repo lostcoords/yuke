@@ -19,7 +19,8 @@ export function childState(child) {
   const queued = child.activity.queued;
   let label = state.type === "idle" ? child.last_run?.type === "turn" ? "completed" : child.last_run?.type ?? "idle" : state.type;
   if (state.type === "running_tool") label = "tool · " + state.tool_name;
-  if (state.type === "running") label = "working";
+  if (state.type === "waiting") label = "waiting";
+  if (state.type === "streaming") label = "working";
   if (state.type === "building") label = "starting";
   if (state.type === "retrying") label = "retry " + state.attempt + "/" + state.max_attempts;
   return label + (queued ? " · " + queued + " queued" : "");

@@ -29,8 +29,12 @@ const Fixture = struct {
     run_done: std.ArrayList(proto.run.RunDoneData) = .empty,
     activity: ?proto.session.SessionActivity = null,
     build_activity: ?proto.session.SessionActivity = null,
+    /// Every activity state the engine announced, in order.
+    phases: std.ArrayList(Phase) = .empty,
+    /// At the first `open` of the retry stage: the draft was open and the activity still said `waiting`.
+    waiting_with_draft: bool = false,
 
-    const Stage = enum { stream, build, send, tool, retry };
+    const Stage = enum { stream, build, send, tool, retry, retry_stream };
     const id: proto.ids.SessionId = .bytes([_]u8{73} ** 16);
 
     fn init(self: *Fixture) !void {
@@ -97,7 +101,11 @@ const Fixture = struct {
         switch (note.method) {
             .@"run.started" => self.run_starts += 1,
             .@"run.done" => self.run_done.append(a, proto.dupe(a, note.params.run_done_data) catch @panic("out of memory")) catch @panic("out of memory"),
-            .@"session.activity_changed" => self.activity = proto.dupe(a, note.params.session_activity_changed_data.activity) catch @panic("out of memory"),
+            .@"session.activity_changed" => {
+                const activity = note.params.session_activity_changed_data.activity;
+                self.activity = proto.dupe(a, activity) catch @panic("out of memory");
+                self.phases.append(a, activity.state) catch @panic("out of memory");
+            },
             else => {},
         }
     }
@@ -125,11 +133,17 @@ const Fixture = struct {
         try self.requests.append(self.arena.allocator(), try self.arena.allocator().dupe(u8, request.body));
         if (index > 5) return error.UnexpectedRequest;
         if (self.stage == .retry and index == 0) {
+            self.waiting_with_draft = self.activity.?.state == .waiting and self.engine.sessions.get(id).?.draft != null;
             try self.pause();
             return error.ConnectionRefused;
         }
         const body = try arena.create(Body);
-        body.* = .{ .fixture = self, .bytes = if (self.stage == .tool and index == 0) tool_reply else ai.transport.canned_reply, .gated = self.stage == .stream and index == 0 };
+        body.* = .{
+            .fixture = self,
+            .bytes = if (self.stage == .tool and index == 0) tool_reply else ai.transport.canned_reply,
+            .gated = self.stage == .stream and index == 0,
+            .cut = self.stage == .retry_stream and index == 0,
+        };
         return .{ .ctx = body, .vtable = &.{ .peek = Body.peek, .toss = Body.toss, .deinit = Body.close } };
     }
 
@@ -138,10 +152,16 @@ const Fixture = struct {
         bytes: []const u8,
         pos: usize = 0,
         gated: bool,
+        /// The body fails at the first read, after the provider accepted the request.
+        cut: bool = false,
 
         /// Deliver the whole gate prefix, then pause one time before the rest of the reply.
         fn peek(ctx: *anyopaque) anyerror![]const u8 {
             const self: *Body = @ptrCast(@alignCast(ctx));
+            if (self.cut) {
+                try self.fixture.pause();
+                return error.ConnectionResetByPeer;
+            }
             const gate = if (self.gated)
                 std.mem.indexOf(u8, self.bytes, "data: {\"type\":\"message_delta\"") orelse self.bytes.len / 2
             else
@@ -159,12 +179,19 @@ const Fixture = struct {
         fn close(_: *anyopaque) void {}
     };
 
+    /// Return the phases from the first `waiting` state. Ignore the earlier `building` state.
+    fn roundPhases(self: *const Fixture) []const Phase {
+        const first = std.mem.indexOfScalar(Phase, self.phases.items, .waiting) orelse return &.{};
+        return self.phases.items[first..];
+    }
+
     fn history(self: *Fixture) ![]const proto.message.Message {
         return (try database.message.historyPage(&self.db, self.arena.allocator(), id.raw, 0, 100)).messages;
     }
 };
 
 const tool_reply = Resources.tool_reply;
+const Phase = std.meta.Tag(proto.activity.ActivityState);
 
 test "input during a response or hook joins the next round in FIFO order" {
     for ([_]Fixture.Stage{ .stream, .build, .send, .tool }) |stage| {
@@ -373,4 +400,51 @@ test "input during automatic compaction waits for the next round and keeps messa
     try testing.expect(messages[7] == .user);
     try testing.expectEqual(messages[5].compaction.run_id, messages[8].assistant.run_id);
     try testing.expectEqual(@as(usize, 1), f.run_done.items.len);
+}
+
+test "the activity says waiting from the send until the provider answers, and a retry returns to waiting" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    f.stage = .retry;
+    try f.start();
+    try f.finish();
+    // The draft is open before the send, so the draft alone must not read as `streaming`.
+    try testing.expect(f.waiting_with_draft);
+    // No `retrying` follows the hold. The text block repeats `streaming`, as in a round with no retry.
+    try testing.expectEqualSlices(Phase, &.{ .waiting, .retrying, .waiting, .streaming, .streaming, .idle }, f.roundPhases());
+}
+
+test "a body that fails before any output moves from streaming to retrying" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    f.stage = .retry_stream;
+    try f.start();
+    try f.finish();
+    try testing.expectEqual(@as(usize, 2), f.requests.items.len);
+    try testing.expectEqualSlices(Phase, &.{ .waiting, .streaming, .retrying, .waiting, .streaming, .streaming, .idle }, f.roundPhases());
+}
+
+test "a cancel while the provider has not answered ends the run without a retry" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    f.stage = .retry;
+    try f.start();
+    _ = try commands.sessionCancelRun(&f.engine, f.arena.allocator(), .{ .session_id = Fixture.id });
+    try f.finish();
+    try testing.expect(f.run_done.items[0].outcome == .canceled);
+    try testing.expectEqualSlices(Phase, &.{ .waiting, .idle }, f.roundPhases());
+}
+
+test "a text-only round costs three activity updates" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    f.stage = .stream;
+    try f.start();
+    try f.finish();
+    // `waiting` at the send, `streaming` at the response head, `streaming` again at the text block.
+    try testing.expectEqualSlices(Phase, &.{ .waiting, .streaming, .streaming, .idle }, f.roundPhases());
 }

@@ -209,7 +209,7 @@ pub const Draft = struct {
             .part_id = part_id,
         } };
 
-        return .{ .running = .{
+        return .{ .streaming = .{
             .run_id = self.run_id,
             .started_at_ms = run_started_at_ms,
         } };
@@ -492,11 +492,11 @@ test "streaming state: running tool outranks a trailing reasoning part" {
     try testing.expectEqualStrings("bash", s.running_tool.tool_name);
 }
 
-test "streaming state: trailing reasoning, else plain running" {
+test "streaming state: trailing reasoning, else plain streaming" {
     var d = try Draft.init(testing.allocator, started("a"));
     defer d.deinit();
     try d.addPart(addText(0, "hi"));
-    try testing.expectEqual(@as(u64, 42), d.deriveStreamingState(42).running.started_at_ms);
+    try testing.expectEqual(@as(u64, 42), d.deriveStreamingState(42).streaming.started_at_ms);
 
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 1, .text = "", .signature = "" } } });
     try testing.expect(d.deriveStreamingState(42) == .reasoning);

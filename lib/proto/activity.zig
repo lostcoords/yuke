@@ -9,7 +9,8 @@ const tagged = @import("tagged.zig");
 pub const ActivityState = union(enum) {
     idle: ActivityStateIdle,
     building: ActivityStateBuilding,
-    running: ActivityStateRunning,
+    waiting: ActivityStateWaiting,
+    streaming: ActivityStateStreaming,
     reasoning: ActivityStateReasoning,
     running_tool: ActivityStateRunningTool,
     retrying: ActivityStateRetrying,
@@ -60,18 +61,24 @@ pub const ActivityStateRetrying = struct {
     message: []const u8,
 };
 
-/// This state marks an active run.
-pub const ActivityStateRunning = struct {
-    run_id: ids.RunId,
-    started_at_ms: u64,
-};
-
 /// This state marks an active tool call.
 pub const ActivityStateRunningTool = struct {
     run_id: ids.RunId,
     message_id: ids.MessageId,
     part_id: ids.PartId,
     tool_name: []const u8,
+    started_at_ms: u64,
+};
+
+/// The provider accepted the request in this state.
+pub const ActivityStateStreaming = struct {
+    run_id: ids.RunId,
+    started_at_ms: u64,
+};
+
+/// The request is out and the provider has not answered in this state.
+pub const ActivityStateWaiting = struct {
+    run_id: ids.RunId,
     started_at_ms: u64,
 };
 
@@ -91,4 +98,24 @@ test "activity state running_tool round-trips" {
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(json, buf.written());
+}
+
+test "activity state waiting round-trips and the removed running tag is rejected" {
+    const json =
+        \\{"type":"waiting","run_id":7,"started_at_ms":100}
+    ;
+    const parsed = try std.json.parseFromSlice(ActivityState, testing.allocator, json, opts);
+    defer parsed.deinit();
+    try testing.expect(parsed.value == .waiting);
+    try testing.expectEqual(@as(u64, 100), parsed.value.waiting.started_at_ms);
+
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try testing.expectEqualStrings(json, buf.written());
+
+    const removed =
+        \\{"type":"running","run_id":7,"started_at_ms":100}
+    ;
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(ActivityState, testing.allocator, removed, opts));
 }

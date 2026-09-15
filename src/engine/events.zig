@@ -4,6 +4,7 @@ const std = @import("std");
 const proto = @import("proto");
 const Engine = @import("Engine.zig");
 const Session = @import("../session/session.zig").Session;
+const RunSlot = @import("../session/session.zig").RunSlot;
 const database = @import("../store/store.zig");
 
 const message_store = database.message;
@@ -101,7 +102,7 @@ pub const RunInfo = struct {
     reason: ?proto.enums.CompactionReason = null,
     /// The run pins one config revision, so the activity reads it here and never queries.
     config: proto.run.RunConfig,
-    retry: ?proto.activity.ActivityStateRetrying = null,
+    round: RunSlot.Round = .none,
     compacting: bool = false,
 };
 
@@ -120,26 +121,31 @@ fn sessionActivity(
         .pending_compaction = if (session.pending_compaction) |pending| pending.run_id else null,
     };
 
-    const waiting: ?proto.activity.ActivityStateRetrying = if (run_info) |run| run.retry else null;
-    if (run_info != null and run_info.?.compacting) {
-        const run = run_info.?;
+    const run = run_info orelse {
+        std.debug.assert(session.draft == null); // A live draft belongs to an active run.
+        return activity;
+    };
+    activity.config = try proto.dupe(arena, run.config);
+    if (session.draft) |*draft| std.debug.assert(draft.config_rev == run.config.config_rev); // one run pins one revision
+    if (run.compacting) {
+        std.debug.assert(run.round == .none); // compaction runs before the round opens
         activity.state = .{ .compacting = .{ .run_id = run.run_id, .reason = .auto, .started_at_ms = run.started_at_ms } };
-        activity.config = try proto.dupe(arena, run.config);
-    } else if (waiting) |retry| {
-        activity.state = try proto.dupe(arena, proto.activity.ActivityState{ .retrying = retry });
-        if (session.active_run != null) activity.config = try proto.dupe(arena, run_info.?.config);
-    } else if (session.draft) |*draft| {
-        std.debug.assert(run_info != null); // A live draft belongs to an active run.
-        std.debug.assert(draft.config_rev == run_info.?.config.config_rev); // one run pins one revision
-        activity.state = try proto.dupe(arena, draft.deriveStreamingState(run_info.?.started_at_ms));
-        activity.config = try proto.dupe(arena, run_info.?.config);
-    } else if (run_info) |run| switch (run.kind) {
-        .turn => activity.state = .{ .building = .{ .run_id = run.run_id, .started_at_ms = run.started_at_ms } },
-        .compaction => {
-            std.debug.assert(run.reason != null); // the engine sets the reason at every compaction start
-            activity.state = .{ .compacting = .{ .run_id = run.run_id, .reason = run.reason.?, .started_at_ms = run.started_at_ms } };
+        return activity;
+    }
+    activity.state = switch (run.round) {
+        .retrying => |retry| try proto.dupe(arena, proto.activity.ActivityState{ .retrying = retry }),
+        // The draft is open before the send, so the draft alone does not mean the provider answered.
+        .waiting => .{ .waiting = .{ .run_id = run.run_id, .started_at_ms = run.started_at_ms } },
+        // A draft with no open round runs its tools between two rounds.
+        .streaming, .none => if (session.draft) |*draft| try proto.dupe(arena, draft.deriveStreamingState(run.started_at_ms)) else switch (run.kind) {
+            .turn => .{ .building = .{ .run_id = run.run_id, .started_at_ms = run.started_at_ms } },
+            .compaction => blk: {
+                std.debug.assert(run.reason != null); // the engine sets the reason at every compaction start
+                break :blk .{ .compacting = .{ .run_id = run.run_id, .reason = run.reason.?, .started_at_ms = run.started_at_ms } };
+            },
         },
     };
+    std.debug.assert(run.round != .streaming or session.draft != null); // a stream writes into an open draft
     return activity;
 }
 
@@ -156,7 +162,7 @@ pub fn residentActivity(engine: *Engine, arena: std.mem.Allocator, rt: *Session)
             .model = slot.config.model,
             .reasoning = slot.config.reasoning,
         },
-        .retry = slot.retry_state,
+        .round = slot.round,
         .compacting = slot.compacting,
     } else null;
     // Only a committed message moves the gauge, and nothing commits inside a round.

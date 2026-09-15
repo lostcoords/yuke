@@ -29,10 +29,12 @@ export function elapsedLabel(ms) {
 export function phaseLabel(state, now) {
   switch (state.type) {
     case "building": return "starting";
-    case "running": return "thinking";
+    case "waiting": return "waiting for response";
+    case "streaming": return "responding";
     case "reasoning": return "reasoning";
     case "running_tool": return state.tool_name;
-    case "retrying": return "retry " + state.attempt + "/" + state.max_attempts + " in " + elapsedLabel(state.next_at_ms - now) + " · " + state.code;
+    // The 999 ms rounds the countdown up, so a short wait never reads "in 0s" while the run still holds.
+    case "retrying": return "retry " + state.attempt + "/" + state.max_attempts + " in " + elapsedLabel(state.next_at_ms - now + 999) + " · " + state.code;
     case "compacting": return "compacting";
     default: return "";
   }

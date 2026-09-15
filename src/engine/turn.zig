@@ -231,6 +231,9 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
         return .{ .failed = failure(err) };
     };
     engine.sinks.emit(started_note);
+    std.debug.assert(slot.round == .none); // the last round closed before this one opened
+    slot.round = .waiting;
+    defer slot.round = .none; // every exit closes the round, so a phase cannot outlive it
     session_events.announceActivity(engine, rt); // `run.started` says a run exists, not what it does.
 
     var number: u8 = 1;
@@ -257,9 +260,12 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
 
             std.debug.assert(slot.retry_budget > 0); // the classifier refuses a retry at zero
             slot.retry_budget -= 1;
-            publishRetrying(engine, slot, number, err, delay_ms);
-            defer slot.retry_state = null;
+            publishRetrying(engine, rt, slot, number, err, delay_ms);
             if (slot.cancel.holdFor(engine.deps.io, delay_ms) catch true) return .canceled;
+            // The hold is over. The label must say `waiting` again, not the old countdown.
+            std.debug.assert(slot.round == .retrying);
+            slot.round = .waiting;
+            session_events.announceActivity(engine, rt);
             continue;
         };
         return terminal;
@@ -267,22 +273,21 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
 }
 
 /// Record the wait on the slot, then publish it, so the wait shows as a retry and not a silent pause.
-fn publishRetrying(engine: *Engine, slot: *RunSlot, number: u8, err: anyerror, delay_ms: u64) void {
+fn publishRetrying(engine: *Engine, rt: *Session, slot: *RunSlot, number: u8, err: anyerror, delay_ms: u64) void {
     // @todo(xyaman): log one line per attempt. Record the attempt number, provider, model, status, the
     // normalized code, the provider request id, the delivery engine, the delay source, and the budget
     // left. Never log the API key. A user report of odd retry behavior has nothing to read today.
     const detail = failure(err);
-    slot.retry_state = .{
+    std.debug.assert(slot.round == .waiting or slot.round == .streaming); // only a live attempt can fail
+    slot.round = .{ .retrying = .{
         .run_id = slot.runId(),
         .attempt = number,
         .max_attempts = engine.deps.retry_policy.max_attempts,
         .next_at_ms = engine.nowMillis() + delay_ms,
         .code = detail.code,
         .message = detail.message,
-    };
+    } };
     // Announce the whole activity, so the context gauge, the config and the queue stay true.
-    // `residentActivity` reads the retry engine that this function just set.
-    const rt = engine.sessions.get(slot.sessionId()) orelse return;
     session_events.announceActivity(engine, rt);
 }
 
@@ -342,6 +347,10 @@ fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, stream
     const body = try engine.deps.route_transport.open(arena, request.transport_request, info);
     std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
+    // The transport returns after the response head, so the provider accepted this attempt.
+    std.debug.assert(slot.round == .waiting);
+    slot.round = .streaming;
+    session_events.announceActivity(engine, streamer.session);
     defer {
         slot.body = null;
         body.deinit();

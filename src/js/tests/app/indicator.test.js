@@ -75,6 +75,9 @@ check("context-closed", root.overlays.length === 0);
 // The pure helpers.
 check("elapsed", elapsedLabel(12000) === "12s" && elapsedLabel(65000) === "1m05s" && elapsedLabel(-5) === "0s");
 check("phase", phaseLabel({ type: "retrying", run_id: 1, attempt: 2, max_attempts: 5, next_at_ms: 4000, code: "rate_limited", message: "" }, 0) === "retry 2/5 in 4s · rate_limited");
+// The countdown rounds up, so a short wait never reads "in 0s" while the run still holds.
+check("phase-countdown-up", phaseLabel({ type: "retrying", run_id: 1, attempt: 2, max_attempts: 5, next_at_ms: 500, code: "rate_limited", message: "" }, 0) === "retry 2/5 in 1s · rate_limited");
+check("phase-waiting", phaseLabel({ type: "waiting", run_id: 1, started_at_ms: 0 }, 0) === "waiting for response" && phaseLabel({ type: "streaming", run_id: 1, started_at_ms: 0 }, 0) === "responding");
 check("bar", contextBar(0, 1000) === "[░░░░░░]" && contextBar(1, 1000) === "[░░░░░░]" && contextBar(500, 1000) === "[███░░░]" && contextBar(1000, 1000) === "[██████]" && contextBar(5, 0) === "[░░░░░░]");
 check("cost", sessionCost({ input: 1000000, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, { input: 10 }) === 10 && sessionCost(usage, {}) === 0);
 // The input total holds the cached subsets, so a cached token pays the cache price alone, never both prices.
@@ -88,7 +91,7 @@ check("empty-reading", status.side("right").indexOf("[░░░░░░] 0% con
 check("queued-text", queuedText(items[1]) === "[image] look");
 // A new run restarts the elapsed time, and the same run keeps its start across a state with no start time.
 check("run-change", indicatorLine("s1", { ...tool, state: { type: "reasoning", run_id: 1, message_id: 1, part_id: 1 } }, Date.now()).indexOf("1m05s") > 0
-  && indicatorLine("s1", { ...tool, state: { type: "running", run_id: 2, started_at_ms: Date.now() } }, Date.now()).indexOf("thinking · 0s") > 0);
+  && indicatorLine("s1", { ...tool, state: { type: "streaming", run_id: 2, started_at_ms: Date.now() } }, Date.now()).indexOf("responding · 0s") > 0);
 // A queue read that lands after the pane let the session go stays out, and the close clears both slots.
 let land = null;
 client.sessionQueue = () => new Promise((resolve) => { land = resolve; });

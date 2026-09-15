@@ -249,18 +249,24 @@ export interface ActivityStateRetrying {
   readonly message: string;
 }
 
-/** This state marks an active run. */
-export interface ActivityStateRunning {
-  readonly run_id: RunId;
-  readonly started_at_ms: number;
-}
-
 /** This state marks an active tool call. */
 export interface ActivityStateRunningTool {
   readonly run_id: RunId;
   readonly message_id: MessageId;
   readonly part_id: PartId;
   readonly tool_name: string;
+  readonly started_at_ms: number;
+}
+
+/** The provider accepted the request in this state. */
+export interface ActivityStateStreaming {
+  readonly run_id: RunId;
+  readonly started_at_ms: number;
+}
+
+/** The request is out and the provider has not answered in this state. */
+export interface ActivityStateWaiting {
+  readonly run_id: RunId;
   readonly started_at_ms: number;
 }
 
@@ -1322,7 +1328,8 @@ export type CatalogListResult =
 export type ActivityState =
   | { readonly type: "idle" }
   | { readonly type: "building" } & ActivityStateBuilding
-  | { readonly type: "running" } & ActivityStateRunning
+  | { readonly type: "waiting" } & ActivityStateWaiting
+  | { readonly type: "streaming" } & ActivityStateStreaming
   | { readonly type: "reasoning" } & ActivityStateReasoning
   | { readonly type: "running_tool" } & ActivityStateRunningTool
   | { readonly type: "retrying" } & ActivityStateRetrying

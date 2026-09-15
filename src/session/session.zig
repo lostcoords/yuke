@@ -48,7 +48,7 @@ pub const RunSlot = struct {
     cancel: cancelmod.Cancel = .{},
     compacting: bool = false,
     retry_budget: u8 = 8,
-    retry_state: ?proto.activity.ActivityStateRetrying = null,
+    round: Round = .none,
     body: ?transport.ResponseBody = null,
     parent_id: ?ids.SessionId = null,
     tree_root: ids.SessionId,
@@ -58,6 +58,18 @@ pub const RunSlot = struct {
     has_skills: ?bool = null,
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
+
+    /// The phase of the open round. One field holds it, so a stale retry cannot sit next to a live attempt.
+    pub const Round = union(enum) {
+        /// No round is open. The run builds its request or runs its tools.
+        none,
+        /// The request is out. The provider has not answered.
+        waiting,
+        /// The provider accepted the request.
+        streaming,
+        /// The attempt failed. The run holds until `next_at_ms`.
+        retrying: proto.activity.ActivityStateRetrying,
+    };
 
     pub const Prepared = struct {
         gpa: std.mem.Allocator,
@@ -115,6 +127,7 @@ pub const RunSlot = struct {
 
     pub fn destroy(self: *RunSlot) void {
         std.debug.assert(self.body == null);
+        std.debug.assert(self.round == .none); // every round closes before the run ends
         std.debug.assert(self.work.pending == 0);
         self.gpa.free(self.config.model);
         self.gpa.free(self.config.reasoning);
