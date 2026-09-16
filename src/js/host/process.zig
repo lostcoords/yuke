@@ -41,6 +41,9 @@ pub const Result = struct {
 /// The wait between SIGTERM and SIGKILL. A shell runs its SIGTERM trap in this time. A test waits less.
 const grace_ns: u64 = if (@import("builtin").is_test) 100 * std.time.ns_per_ms else 2 * std.time.ns_per_s;
 
+/// The probe period while a group ends.
+const poll_ms = 10;
+
 /// One drain leg: it reads one stream to its end and keeps its head and its tail, because a build prints its error last.
 const Drain = struct {
     file: std.Io.File,
@@ -76,30 +79,52 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     if (spec.timeout_ms == 0 or spec.max_stream_bytes == 0) return error.HostFailure;
     std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
     const cwd = try resolveCwd(scratch, root, context.env, spec.cwd);
-    var child = try spawnDetached(scratch, context, spec.command, cwd);
+    const spawned = try spawnDetached(scratch, context, spec.command, cwd);
+    var child = spawned.child;
     const pid = child.id.?;
 
-    var out: Drain = .{ .file = child.stdout.?, .limit = spec.max_stream_bytes };
-    var err: Drain = .{ .file = child.stderr.?, .limit = spec.max_stream_bytes };
-    var group: std.Io.Group = .init;
-    // Every error path below must end the group and reap the child, because `child.wait` owns the pipe cleanup.
-    errdefer terminate(io, &group, &child, pid);
+    // The drains own the read ends, so the reap never closes a pipe that a drain still reads.
+    var out: Drain = .{ .file = spawned.stdout, .limit = spec.max_stream_bytes };
+    var err: Drain = .{ .file = spawned.stderr, .limit = spec.max_stream_bytes };
+    defer out.file.close(io);
+    defer err.file.close(io);
 
-    group.concurrent(io, drain, .{ io, scratch, &out }) catch return error.HostFailure;
-    group.concurrent(io, drain, .{ io, scratch, &err }) catch return error.HostFailure;
+    var term: ?std.process.Child.Term = null;
+    var exited: std.Io.Event = .unset;
+    var reaper = io.concurrent(reap, .{ io, &child, &term, &exited }) catch {
+        killGroup(pid, .KILL);
+        reap(io, &child, &term, &exited);
+        return error.HostFailure;
+    };
+    // `Future.await` is uncancelable and the reaper returns only after the shell dies, so every error path below kills first.
+    defer _ = reaper.await(io);
+    var drains: std.Io.Group = .init;
+    errdefer {
+        escalate(io, pid);
+        const old = io.swapCancelProtection(.blocked);
+        defer _ = io.swapCancelProtection(old);
+        drains.cancel(io);
+    }
 
-    // A process exits while its pipes still hold output, so both drains must reach the end before the reap.
-    const timed_out = try awaitDrains(io, &group, pid, spec.timeout_ms);
-    if (out.err) |e| return mapDrainError(e);
-    if (err.err) |e| return mapDrainError(e);
+    drains.concurrent(io, drain, .{ io, scratch, &out }) catch return error.HostFailure;
+    drains.concurrent(io, drain, .{ io, scratch, &err }) catch return error.HostFailure;
 
-    const term = child.wait(io) catch return error.HostFailure;
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{ .raw = .fromMilliseconds(spec.timeout_ms), .clock = .awake });
+    const timed_out = !try waitUntil(io, &exited, deadline);
+    if (timed_out) {
+        escalate(io, pid);
+        exited.waitUncancelable(io);
+    }
+    // The shell is reaped, and a process it left holds the group id, so this kill reaches no other group.
+    if (groupAlive(pid)) escalate(io, pid);
+    const cut = try awaitDrains(io, &drains);
+    if (out.err) |e| if (!cut) return mapDrainError(e);
+    if (err.err) |e| if (!cut) return mapDrainError(e);
+
     return .{
         .stdout = out.text(scratch),
         .stderr = err.text(scratch),
-        .outcome = if (timed_out)
-            .timed_out
-        else switch (term) {
+        .outcome = if (timed_out) .timed_out else switch (term orelse return error.HostFailure) {
             .exited => |code| .{ .exited = code },
             .signal => |sig| .{ .signaled = std.math.cast(u8, @intFromEnum(sig)) orelse 0 },
             else => .{ .exited = 0 },
@@ -111,7 +136,9 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
 
 /// Spawn `shell -c command` as the leader of a new session. A program that opens `/dev/tty` then fails at once with no terminal.
 /// TODO: use a session flag from `std.process.SpawnOptions` when Zig std gains that flag, then delete `src/c/spawn.h`.
-fn spawnDetached(scratch: std.mem.Allocator, context: execution.Context, command: []const u8, cwd: []const u8) h.HostError!std.process.Child {
+const Spawned = struct { child: std.process.Child, stdout: std.Io.File, stderr: std.Io.File };
+
+fn spawnDetached(scratch: std.mem.Allocator, context: execution.Context, command: []const u8, cwd: []const u8) h.HostError!Spawned {
     std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
     std.debug.assert(std.fs.path.isAbsolute(cwd));
     // The shell reads one language string, which no direct program execution can accept.
@@ -153,13 +180,11 @@ fn spawnDetached(scratch: std.mem.Allocator, context: execution.Context, command
     var pid: spawn_c.pid_t = undefined;
     try checkSpawn(spawn_c.posix_spawn(&pid, shell_z.ptr, &actions, &attr, @ptrCast(&argv), @ptrCast(envp.slice.ptr)));
     std.debug.assert(pid > 0);
+    // The child holds no stream, so `wait` closes nothing and the caller owns both read ends.
     return .{
-        .id = pid,
-        .thread_handle = {},
-        .stdin = null,
+        .child = .{ .id = pid, .thread_handle = {}, .stdin = null, .stdout = null, .stderr = null, .request_resource_usage_statistics = false },
         .stdout = .{ .handle = out[0], .flags = .{ .nonblocking = false } },
         .stderr = .{ .handle = err[0], .flags = .{ .nonblocking = false } },
-        .request_resource_usage_statistics = false,
     };
 }
 
@@ -183,42 +208,63 @@ fn pipeAboveStdio() h.HostError![2]std.posix.fd_t {
     return .{ fds[0], raised };
 }
 
-/// Wait for both drains and escalate over the group at the deadline; true after a deadline, while a cancel is `error.Canceled` and never a false timeout.
-fn awaitDrains(io: std.Io, group: *std.Io.Group, pid: std.posix.pid_t, timeout_ms: u32) h.HostError!bool {
-    var done: std.Io.Event = .unset;
-    var waiter = io.concurrent(joinGroup, .{ io, group, &done }) catch return error.HostFailure;
-    const deadline: std.Io.Clock.Duration = .{ .raw = .fromMilliseconds(timeout_ms), .clock = .awake };
-    done.waitTimeout(io, .{ .duration = deadline }) catch |wait_err| {
-        if (wait_err == error.Canceled) {
-            _ = waiter.cancel(io);
-            return error.Canceled;
-        }
-        escalate(io, pid);
-        done.wait(io) catch {}; // The drains end when the group dies.
-        // `Future.await` is uncancelable, so the waiter always joins before the group is cleaned up.
-        _ = waiter.await(io);
+/// Wait for `event` until `deadline`, and answer false at the deadline. A spurious wake also returns `error.Timeout`, so the loop reads the clock.
+fn waitUntil(io: std.Io, event: *std.Io.Event, deadline: std.Io.Clock.Timestamp) error{Canceled}!bool {
+    while (true) {
+        event.waitTimeout(io, .{ .deadline = deadline }) catch |wait_err| switch (wait_err) {
+            error.Canceled => return error.Canceled,
+            error.Timeout => {
+                if (std.Io.Clock.Timestamp.now(io, .awake).durationTo(deadline).raw.nanoseconds > 0) continue;
+                return event.isSet();
+            },
+        };
         return true;
-    };
-    _ = waiter.await(io);
-    return false;
+    }
 }
 
-/// Kill the whole process group. The grace period blocks cancelation, so a canceled run still gives the shell its SIGTERM trap time.
+/// Give the drains one grace period after the group ends, and answer true when they were cut. A descendant that left the session can hold a pipe open forever.
+fn awaitDrains(io: std.Io, drains: *std.Io.Group) h.HostError!bool {
+    var done: std.Io.Event = .unset;
+    var joiner = io.concurrent(joinGroup, .{ io, drains, &done }) catch return error.HostFailure;
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{ .raw = .fromNanoseconds(grace_ns), .clock = .awake });
+    const joined = waitUntil(io, &done, deadline) catch {
+        _ = joiner.cancel(io);
+        return error.Canceled;
+    };
+    if (!joined) {
+        const old = io.swapCancelProtection(.blocked);
+        defer _ = io.swapCancelProtection(old);
+        drains.cancel(io);
+    }
+    _ = joiner.await(io);
+    return !joined;
+}
+
+/// Reap the shell with cancelation blocked, because a canceled wait leaves a zombie. It returns only after the shell dies.
+fn reap(io: std.Io, child: *std.process.Child, term: *?std.process.Child.Term, exited: *std.Io.Event) void {
+    const old = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(old);
+    term.* = child.wait(io) catch null;
+    exited.set(io);
+}
+
+/// End the whole process group: TERM, then KILL after the grace period. It returns early when the group is gone, and it blocks cancelation, so a shell always gets its SIGTERM trap time.
 fn escalate(io: std.Io, pid: std.posix.pid_t) void {
     const old = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(old);
     killGroup(pid, .TERM);
-    std.Io.sleep(io, .fromNanoseconds(grace_ns), .awake) catch {};
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{ .raw = .fromNanoseconds(grace_ns), .clock = .awake });
+    while (std.Io.Clock.Timestamp.now(io, .awake).durationTo(deadline).raw.nanoseconds > 0) {
+        if (!groupAlive(pid)) return;
+        std.Io.sleep(io, .fromMilliseconds(poll_ms), .awake) catch {};
+    }
     killGroup(pid, .KILL);
 }
 
-/// End the command and release every resource it holds. It blocks cancelation, because a missed reap leaks a process and two pipes.
-fn terminate(io: std.Io, group: *std.Io.Group, child: *std.process.Child, pid: std.posix.pid_t) void {
-    escalate(io, pid);
-    const old = io.swapCancelProtection(.blocked);
-    defer _ = io.swapCancelProtection(old);
-    group.cancel(io);
-    _ = child.wait(io) catch {}; // `wait` closes the pipe descriptors.
+/// Answer whether any process of the group lives. An unreaped zombie leader still counts.
+fn groupAlive(pid: std.posix.pid_t) bool {
+    std.posix.kill(-pid, @enumFromInt(0)) catch |err| return err != error.ProcessNotFound;
+    return true;
 }
 
 /// Signal a whole process group. A negative pid names the group, so every member receives it.
@@ -448,12 +494,14 @@ test "the child leads a new session apart from the test runner" {
     var env = try utilityEnv();
     defer env.deinit();
 
-    var child = try spawnDetached(arena.allocator(), execution.testContext(&env), "exec sleep 30", "/tmp");
-    const pid = child.id.?;
+    var spawned = try spawnDetached(arena.allocator(), execution.testContext(&env), "exec sleep 30", "/tmp");
+    const pid = spawned.child.id.?;
     // A group kill ends the sleep, so the wait below returns at once and the runner never inherits a stray child.
     defer {
         killGroup(pid, .KILL);
-        _ = child.wait(testing.io) catch {};
+        _ = spawned.child.wait(testing.io) catch {};
+        spawned.stdout.close(testing.io);
+        spawned.stderr.close(testing.io);
     }
     try testing.expectEqual(pid, spawn_c.getsid(pid));
     try testing.expectEqual(pid, spawn_c.getpgid(pid));
@@ -509,9 +557,9 @@ test "exec kills the whole process group at the deadline" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    // The shell exits at once, but the grandchild holds the pipe open, so only a group kill lets the drain reach the end.
+    // The shell waits for its child, so only a group kill at the deadline ends both.
     const started: std.Io.Timestamp = .now(testing.io, .awake);
-    const res = try runShell(arena.allocator(), "sleep 30 & echo started; exit 0", 400);
+    const res = try runShell(arena.allocator(), "sleep 30 & echo started; wait", 400);
     // A failed group kill waits for the full sleep, so this bound is what proves the kill.
     try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 10 * std.time.ns_per_s);
     try testing.expect(res.outcome == .timed_out);
@@ -565,4 +613,54 @@ test "exec expands a leading tilde in cwd like the file tools" {
         .max_stream_bytes = 4096,
     });
     try testing.expectEqualStrings("found\n", res.stdout);
+}
+
+test "exec returns when the shell exits and ends the processes it left" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // The background sleep holds the pipe, so a run that waits for EOF would last until the deadline.
+    const started: std.Io.Timestamp = .now(testing.io, .awake);
+    const res = try runShell(arena.allocator(), "sleep 30 & echo $! ; echo started", 20_000);
+    try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 5 * std.time.ns_per_s);
+    try testing.expect(res.outcome == .exited and res.outcome.exited == 0);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "started") != null);
+    const left = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, res.stdout[0..std.mem.indexOfScalar(u8, res.stdout, '\n').?], " "), 10);
+    // The sleep was reparented, so only a failed group kill leaves it alive.
+    try testing.expectError(error.ProcessNotFound, std.posix.kill(left, @enumFromInt(0)));
+}
+
+test "exec ends a detached process that redirected its output" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // This is the `nohup server >log &` shape: the pipes close at exit, but the server must not survive.
+    const res = try runShell(arena.allocator(), "sleep 30 >/dev/null 2>&1 & echo $!", 20_000);
+    try testing.expect(res.outcome == .exited);
+    const left = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, res.stdout, " \n"), 10);
+    try testing.expectError(error.ProcessNotFound, std.posix.kill(left, @enumFromInt(0)));
+}
+
+test "a command that leaves nothing behind gains no grace delay" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const started: std.Io.Timestamp = .now(testing.io, .awake);
+    for (0..5) |_| _ = try runShell(arena.allocator(), "echo fast", 10_000);
+    // Five runs with a full grace period each would take at least 500 ms in tests.
+    try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 400 * std.time.ns_per_ms);
+}
+
+test "exec ends a process that left the session after one grace period" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var env = try utilityEnv();
+    defer env.deinit();
+    // `setsid` leaves the group, so no kill reaches it, and the run must still return.
+    const setsid = "/usr/bin/setsid";
+    std.Io.Dir.accessAbsolute(testing.io, setsid, .{}) catch return error.SkipZigTest;
+    const started: std.Io.Timestamp = .now(testing.io, .awake);
+    const res = try runShell(arena.allocator(), setsid ++ " sleep 2 & echo started", 20_000);
+    try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 1500 * std.time.ns_per_ms);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "started") != null);
 }
