@@ -53,6 +53,8 @@ const Proc = struct {
     on_output: Value,
     resolve: Value,
     reject: Value,
+    /// The log path of a logged child, owned by the process. The waiter appends the exit line to it.
+    log: ?[]u8,
     /// Guards `writes`, `stdin`, `writing`, and `close_after`.
     writes_lock: std.Io.Mutex = .init,
     writes: std.ArrayList(Write) = .empty,
@@ -138,6 +140,7 @@ fn idle(io: std.Io, proc: *Proc) bool {
 }
 
 fn free(host: *Host, proc: *Proc) void {
+    if (proc.log) |path| host.gpa.free(path);
     host.ctx.freeValue(proc.on_output);
     host.ctx.freeValue(proc.resolve);
     host.ctx.freeValue(proc.reject);
@@ -246,6 +249,7 @@ fn procTask(host: *Host, proc: *Proc) void {
     }
     proc.outcome = runner.reapGroup(host.io, &proc.child);
     proc.reaped.store(true, .release);
+    if (proc.log) |path| appendExit(host.io, path, proc.outcome);
     _ = runner.awaitDrains(host.io, &readers) catch {
         const old = host.io.swapCancelProtection(.blocked);
         defer _ = host.io.swapCancelProtection(old);
@@ -254,6 +258,20 @@ fn procTask(host: *Host, proc: *Proc) void {
     for (&proc.streams) |*stream| if (stream.file) |file| file.close(host.io);
     proc.done.store(true, .release);
     host.wake.set(host.io);
+}
+
+/// Append how the child ended to its log, so a read of the log shows the end. The group is dead, so no child writes after this line.
+fn appendExit(io: std.Io, path: []const u8, outcome: ?runner.Outcome) void {
+    var buffer: [48]u8 = undefined;
+    const line = if (outcome) |o| switch (o) {
+        .exited => |code| std.fmt.bufPrint(&buffer, "[exited with code {d}]\n", .{code}) catch unreachable,
+        .signaled => |sig| std.fmt.bufPrint(&buffer, "[ended by signal {d}]\n", .{sig}) catch unreachable,
+        .timed_out => unreachable, // A process has no deadline.
+    } else "[the host could not read the exit]\n";
+    const file = std.Io.Dir.openFileAbsolute(io, path, .{ .mode = .write_only }) catch return;
+    defer file.close(io);
+    const end = (file.stat(io) catch return).size;
+    file.writePositionalAll(io, line, end) catch {};
 }
 
 /// Write queued input in order. One writer runs for each process, because two writers interleave a write above `PIPE_BUF`.
@@ -332,13 +350,14 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     // `Logs` keeps its directory in the host allocator, so the path comes from there too.
     const log: ?[]u8 = if (logged) host.logs.next(host.gpa, host.io, host.execution.env, "job") catch
         return failStart(ctx, handle, &funcs, "the host could not create the log directory") else null;
-    defer if (log) |path| host.gpa.free(path);
-    const program = runner.startProgram(host.io, root, &env, a, argv, cwd, if (log) |path| .{ .log = path } else .pipes) catch |err|
+    const program = runner.startProgram(host.io, root, &env, a, argv, cwd, if (log) |path| .{ .log = path } else .pipes) catch |err| {
+        if (log) |path| host.gpa.free(path);
         return failStart(ctx, handle, &funcs, switch (err) {
             error.NotFound => "the program does not exist",
             error.HomeUnavailable => "the environment names no home directory, so a ~ working directory has no meaning",
             else => "the host could not start the program",
         });
+    };
 
     host.procs.last_id += 1;
     const proc = host.gpa.create(Proc) catch unreachable;
@@ -351,6 +370,7 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
         .resolve = funcs[0],
         .reject = funcs[1],
         .stdin = program.stdin,
+        .log = log,
     };
     for (&proc.streams) |*stream| stream.ready.store(stream.ended, .release);
     host.procs.live.append(host.gpa, proc) catch unreachable;

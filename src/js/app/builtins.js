@@ -275,27 +275,17 @@ async function startBackground(command, context) {
   const job = /** @type {Job} */ ({ id: `j${++jobCount}`, native: child.id, command, root, sessionId, log: child.log, state: "running", code: null, signal: null });
   job.ended = child.exited.then(exit => endJob(job, exit), () => endJob(job, null));
   jobs.set(job.id, job);
-  return `[job ${job.id} started: ${shortCommand(command)}. Log: ${job.log}. A message arrives when it exits by itself. Use the job tool to read or stop it.]`;
+  return `[job ${job.id} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use job_stop to stop it.]`;
 }
 
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
-async function job(args, _signal, context) {
-  const name = "job";
+async function jobStop(args, _signal, context) {
+  const name = "job_stop";
   args = objectArgs(name, args);
-  only(name, args, ["id", "stop"]);
-  const sessionId = context?.sessionId;
-  const id = args.id ?? null;
-  const stop = args.stop ?? false;
-  if (id !== null && typeof id !== "string") invalid(name, "the argument id must be a string");
-  if (typeof stop !== "boolean") invalid(name, "the argument stop must be a boolean");
-  if (id === null) {
-    if (stop) invalid(name, `stop needs an id. ${jobIds(sessionId)}`);
-    const list = sessionJobs(sessionId);
-    return list.length === 0 ? "[no jobs]" : list.map(j => `${jobState(j)}. Log: ${j.log}`).join("\n");
-  }
-  const entry = jobs.get(/** @type {string} */ (id));
-  if (!entry || entry.sessionId !== sessionId) return invalid(name, `the job ${id} does not exist. ${jobIds(sessionId)}`);
-  if (!stop) return `[${jobState(entry)}. Log: ${entry.log}]\n${await jobTail(entry)}`;
+  only(name, args, ["id"]);
+  const id = stringArg(name, args, "id");
+  const entry = jobs.get(id);
+  if (!entry || entry.sessionId !== context?.sessionId) return invalid(name, `the job ${id} does not exist. ${jobIds(context?.sessionId)}`);
   if (entry.state === "running") {
     // A child that exited before the kill reports its real exit instead.
     if (killChild(entry.native)) {
@@ -374,19 +364,18 @@ builtin("edit", {
   }, required: ["path", "old_string", "new_string"], additionalProperties: false }, execute: edit,
 });
 builtin("exec", {
-  description: "Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell. No process outlives the call unless background is true.\n\n`timeout_ms` is optional (default 120000, max 600000).",
+  description: "Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell and ends every process it started. For a server or watcher, set background: true; never use &, nohup, or setsid.\n\n`timeout_ms` is optional (default 120000, max 600000).",
   parameters: { type: "object", properties: {
     command: { type: "string", description: "The shell command to run." },
     timeout_ms: { type: ["integer", "null"], minimum: 1, maximum: 600000, description: "The timeout in milliseconds." },
     background: { type: "boolean", description: "Run a server or watcher as a job and return at once." },
   }, required: ["command"], additionalProperties: false }, execute: exec,
 });
-builtin("job", {
-  description: "Manage background jobs. No id lists them. An id shows the state and the last 20 log lines. An id with stop: true stops the job.",
+builtin("job_stop", {
+  description: "Stop a background job and every process it started. A stopped job sends no exit message.",
   parameters: { type: "object", properties: {
     id: { type: "string", description: "The job id, for example j1." },
-    stop: { type: "boolean", description: "Stop the job." },
-  }, additionalProperties: false }, execute: job,
+  }, required: ["id"], additionalProperties: false }, execute: jobStop,
 });
 builtin("skill", {
   description: "Load the full instructions for a skill listed in the system prompt. Use this tool when the task matches the skill description.",

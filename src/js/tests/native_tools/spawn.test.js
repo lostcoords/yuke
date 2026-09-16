@@ -70,7 +70,7 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   // A string runs through the host shell, and a logged child writes both streams to its log.
   const logged = spawnNative("echo out; echo bad 1>&2", { log: true }, undefined, "/tmp");
   check("logged-exit", (await logged.exited).code === 0);
-  check("logged-content", (await exec(`cat '${logged.log}'`)).stdout === "out\nbad\n");
+  check("logged-content", (await exec(`cat '${logged.log}'`)).stdout === "out\nbad\n[exited with code 0]\n");
 
   const refusals = [
     () => spawn([]),
