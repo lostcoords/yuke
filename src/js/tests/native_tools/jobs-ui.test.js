@@ -1,0 +1,28 @@
+import { status } from "yuke:core";
+import { plugins } from "yuke:ext";
+import { tuiPlugin } from "yuke:tui";
+import { jobsUiPlugin } from "yuke:jobs-ui";
+import { start, jobs } from "yuke:jobs";
+const fail = [];
+const check = (name, cond) => { if (!cond) fail.push(name); };
+const until = async (ready) => { for (let i = 0; i < 1000 && !ready(); i++) await new Promise((resolve) => setTimeout(resolve, 5)); };
+globalThis.result = "pending";
+plugins.use(tuiPlugin);
+plugins.use(jobsUiPlugin);
+(async () => {
+  check("hidden-when-idle", !status.side("right").includes("jobs"));
+  const one = await start("sleep 30", { root: "/tmp" });
+  const two = await start("sleep 30", { root: "/tmp" });
+  check("counts-running", status.side("right").includes("jobs 2"));
+  await jobs.stop(one.id);
+  check("drops-stopped", status.side("right").includes("jobs 1"));
+  await jobs.stop(two.id);
+  check("hidden-after-stop", !status.side("right").includes("jobs"));
+  const quick = await start("exit 0", { root: "/tmp" });
+  await until(() => jobs.get(quick.id)?.state === "exited");
+  check("hidden-after-exit", !status.side("right").includes("jobs"));
+  plugins.dispose("jobs-ui");
+  await start("sleep 30", { root: "/tmp" });
+  check("unload-drops-segment", !status.side("right").includes("jobs"));
+  globalThis.result = fail.length ? fail.join(",") : "ok";
+})().catch((e) => { globalThis.result = "threw: " + e.message; });

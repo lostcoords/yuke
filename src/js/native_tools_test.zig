@@ -786,6 +786,16 @@ test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves it
     try support.expectString(host, "result", "ok");
 }
 
+test "the jobs status segment counts running jobs and leaves with its plugin" {
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = support.createHostWith(rt.io(), "/tmp");
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/native_tools/jobs-ui.test.js");
+    try support.pumpUntilTrue(host, "globalThis.result !== \"pending\"");
+    try support.expectString(host, "result", "ok");
+}
+
 test "a yuke:spawn reader stops at the buffer cap until the owner drains it" {
     const process_module = @import("native/process.zig");
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
