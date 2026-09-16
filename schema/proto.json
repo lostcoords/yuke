@@ -1328,7 +1328,7 @@
       "fields": [
         {
           "name": "id",
-          "type": "u32",
+          "type": "JobId",
           "presence": "required"
         },
         {
@@ -1412,7 +1412,7 @@
       "fields": [
         {
           "name": "id",
-          "type": "u32",
+          "type": "JobId",
           "presence": "required"
         },
         {
@@ -1450,10 +1450,11 @@
     },
     {
       "name": "JobStopParams",
+      "doc": "These are the parameters for `job.stop`.",
       "fields": [
         {
           "name": "id",
-          "type": "u32",
+          "type": "JobId",
           "presence": "required"
         }
       ]
@@ -5015,6 +5016,11 @@
       "name": "InteractionId",
       "base": "u64",
       "doc": "This numeric ID correlates a frontend interaction with its answer."
+    },
+    {
+      "name": "JobId",
+      "base": "u32",
+      "doc": "This numeric ID identifies a background job for the life of one host."
     }
   ]
 }

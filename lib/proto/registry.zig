@@ -282,4 +282,5 @@ pub const aliases = [_]AliasEntry{
     .{ .name = "SessionRevision", .base = "u64" },
     .{ .name = "ConfigRev", .base = "u64" },
     .{ .name = "InteractionId", .base = "u64" },
+    .{ .name = "JobId", .base = "u32" },
 };

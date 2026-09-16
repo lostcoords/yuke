@@ -423,7 +423,7 @@ fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
         serveInteraction(arena, rpc, request);
         return;
     }
-    if (std.mem.eql(u8, request.method, "job.list") or std.mem.eql(u8, request.method, "job.stop") or std.mem.eql(u8, request.method, "job.read")) {
+    if (jobs_native.isMethod(request.method)) {
         serveJob(arena, rpc, request);
         return;
     }

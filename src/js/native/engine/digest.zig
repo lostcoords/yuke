@@ -86,6 +86,8 @@ pub const Engine = struct {
     /// Mark the event's session dirty. This runs on an engine task, so it must not enter JavaScript.
     fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
         const self: *Engine = @ptrCast(@alignCast(ctx));
+        // A job change names no session and moves no view, so it must not mark the index dirty.
+        if (note.method == .@"job.changed") return;
         if (note.params == .session_removed_data) self.removed.append(self.gpa, note.params.session_removed_data.session_id) catch unreachable;
         const id = sessionOf(note) orelse {
             self.index_dirty = true;

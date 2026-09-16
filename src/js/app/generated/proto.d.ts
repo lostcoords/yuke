@@ -328,7 +328,7 @@ export interface InteractionValue {
 
 /** One background job. `exit_code` and `signal` stay null while it runs, and at most one of them is set after the end. */
 export interface Job {
-  readonly id: number;
+  readonly id: JobId;
   readonly session_id?: SessionId;
   readonly command: string;
   readonly cwd: string;
@@ -356,7 +356,7 @@ export interface JobListResult {
 
 /** These parameters read the job output from a byte offset. `max_bytes` is at most 262144. */
 export interface JobReadParams {
-  readonly id: number;
+  readonly id: JobId;
   readonly offset: number;
   readonly max_bytes: number;
 }
@@ -368,8 +368,9 @@ export interface JobReadResult {
   readonly size: number;
 }
 
+/** These are the parameters for `job.stop`. */
 export interface JobStopParams {
-  readonly id: number;
+  readonly id: JobId;
 }
 
 /** The job as it is when the stop starts. Its end arrives as `job.changed`. */
@@ -1648,6 +1649,9 @@ export type ConfigRev = number;
 
 /** This numeric ID correlates a frontend interaction with its answer. */
 export type InteractionId = number;
+
+/** This numeric ID identifies a background job for the life of one host. */
+export type JobId = number;
 
 export interface Methods {
   "agents.get": { paramsType: [Empty?]; returnType: AgentsGetResult };

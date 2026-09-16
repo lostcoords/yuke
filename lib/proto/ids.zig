@@ -74,6 +74,8 @@ pub const SessionRevision = u64;
 pub const ConfigRev = u64;
 /// This numeric ID correlates a frontend interaction with its answer.
 pub const InteractionId = u64;
+/// This numeric ID identifies a background job for the life of one host.
+pub const JobId = u32;
 
 // String IDs use plain slices.
 /// This string identifies a provider.

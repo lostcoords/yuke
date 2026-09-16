@@ -6,7 +6,7 @@ pub const JobState = enum { running, exited, stopped };
 
 /// One background job. `exit_code` and `signal` stay null while it runs, and at most one of them is set after the end.
 pub const Job = struct {
-    id: u32,
+    id: ids.JobId,
     session_id: ?ids.SessionId = null,
     command: []const u8,
     cwd: []const u8,
@@ -27,8 +27,9 @@ pub const JobListResult = struct {
     jobs: []const Job,
 };
 
+/// These are the parameters for `job.stop`.
 pub const JobStopParams = struct {
-    id: u32,
+    id: ids.JobId,
 };
 
 /// The job as it is when the stop starts. Its end arrives as `job.changed`.
@@ -38,7 +39,7 @@ pub const JobStopResult = struct {
 
 /// These parameters read the job output from a byte offset. `max_bytes` is at most 262144.
 pub const JobReadParams = struct {
-    id: u32,
+    id: ids.JobId,
     offset: u64,
     max_bytes: u32,
 };

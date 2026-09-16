@@ -6,7 +6,7 @@ const Host = @import("../js/host.zig").Host;
 const extensions_mod = @import("../js/extensions.zig");
 const App = @import("app.zig").App;
 const ai = @import("ai");
-const jobs_native = @import("../js/native/jobs.zig");
+const proto = @import("proto");
 
 const testing = std.testing;
 
@@ -132,10 +132,15 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
 
     try host.evalModule(
         \\import { start } from "yuke:jobs";
+        \\import { events } from "yuke:kernel";
         \\globalThis.started = 0;
+        \\globalThis.indexDigests = 0;
+        \\events.on("engine.drained", (ev) => { if (ev.type === "index") indexDigests++; });
         \\start("echo hello; sleep 30", { root: "/tmp", sessionId: "01010101010101010101010101010101" }).then(() => { started = 1; });
     , "rpc-job.js");
     try support.pumpUntilTrue(host, "globalThis.started === 1");
+    // A job change moves no view, so the digest delivers no index change for it.
+    try testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.indexDigests"));
     stream.flushNotifications();
     try testing.expect(std.mem.indexOf(u8, out.written(), "{\"method\":\"job.changed\",\"params\":{\"job\":{\"id\":1,\"session_id\":\"01010101010101010101010101010101\",\"command\":\"echo hello; sleep 30\",\"cwd\":\"/tmp\",\"state\":\"running\"") != null);
 
@@ -215,8 +220,8 @@ test "a removed session stops its running jobs" {
     try testing.expect(std.mem.indexOf(u8, out.written(), "{\"id\":\"r\",\"result\":{}}") != null);
     try support.pumpUntilTrue(host, "globalThis.state === \"stopped\"");
     // The job of another session keeps running.
-    try testing.expectEqual(jobs_native.State.running, host.jobs.find(2).?.state);
-    try testing.expectEqual(jobs_native.State.stopped, host.jobs.find(1).?.state);
+    try testing.expectEqual(proto.job.JobState.running, host.jobs.find(2).?.state);
+    try testing.expectEqual(proto.job.JobState.stopped, host.jobs.find(1).?.state);
 }
 
 const support = @import("../js/test_support.zig");

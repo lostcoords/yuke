@@ -20,8 +20,6 @@ pub const max_ended = 32;
 /// The largest job read, so one read keeps the owner loop short.
 pub const max_read_bytes: u32 = 256 * 1024;
 
-pub const State = enum { running, exited, stopped };
-
 /// One job. The table owns every string, and a record outlives its process.
 pub const Job = struct {
     id: u32,
@@ -29,7 +27,7 @@ pub const Job = struct {
     command: []u8,
     cwd: []u8,
     log: []u8,
-    state: State = .running,
+    state: proto.job.JobState = .running,
     /// A stop reached the live child, so its end reads as `stopped`.
     stopping: bool = false,
     code: ?u8 = null,
@@ -111,11 +109,7 @@ pub fn wire(job: *const Job) proto.job.Job {
         .session_id = job.session_id,
         .command = job.command,
         .cwd = job.cwd,
-        .state = switch (job.state) {
-            .running => .running,
-            .exited => .exited,
-            .stopped => .stopped,
-        },
+        .state = job.state,
         .exit_code = job.code,
         .signal = job.signal,
         .started_at_ms = job.started_at_ms,
@@ -145,7 +139,12 @@ pub fn stopSession(host: *Host, session_id: SessionId) void {
 
 pub const Failure = struct { code: proto.enums.ErrorCode, message: []const u8 };
 
-/// Answer one `job.*` RPC method from the table and write its result JSON to `out`. `call.zig` cannot reach the host, so `rpc.zig` calls this.
+/// Answer whether `method` is a job method, which `rpc.zig` answers here because `call.zig` cannot reach the host.
+pub fn isMethod(method: []const u8) bool {
+    return std.mem.startsWith(u8, method, "job.");
+}
+
+/// Answer one `job.*` RPC method from the table and write its result JSON to `out`.
 pub fn answer(a: std.mem.Allocator, host: *Host, method: []const u8, params: []const u8, out: *std.Io.Writer) ?Failure {
     const bad: Failure = .{ .code = .bad_request, .message = "bad parameters" };
     const unknown: Failure = .{ .code = .unknown_job, .message = "unknown job" };
@@ -172,7 +171,7 @@ pub fn answer(a: std.mem.Allocator, host: *Host, method: []const u8, params: []c
         var local: LocalHost = .{ .io = host.io, .root = "/", .env = host.execution.env };
         const got = local.readFrom(a, job.log, p.offset, p.max_bytes) catch return .{ .code = .internal, .message = "the host could not read the job log" };
         write(out, proto.job.JobReadResult{ .text = got.text, .next = got.next, .size = got.size });
-    } else unreachable; // `rpc.zig` sends only `job.` methods here, and the protocol names exactly three.
+    } else return .{ .code = .unknown_method, .message = "unknown method" };
     return null;
 }
 
