@@ -5,6 +5,7 @@ export { plugins, Scope, Context, advice, services } from "yuke:ext";
 export { fs } from "yuke:fs";
 export { exec } from "yuke:exec";
 export { spawn, lines } from "yuke:spawn";
+export { jobs } from "yuke:jobs";
 export { diff } from "yuke:diff";
 export { client } from "yuke:client";
 
@@ -16,5 +17,6 @@ export { client } from "yuke:client";
 /** @typedef {import("./types/ext.js").AdviceOptions} AdviceOptions */
 /** @typedef {import("./types/ext.js").InteractionSurface} InteractionSurface */
 /** @typedef {import("yuke:kernel").ConfigPatch} ConfigPatch */
+/** @typedef {import("yuke:jobs").Job} Job */
 
 export const tools = toolRegistry(rootScope);

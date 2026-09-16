@@ -120,7 +120,7 @@ function applyConfigPatch(section, fields, src, label) {
 
 // The kernel declares only what neutral code emits, so each tier declares its own names.
 // `engine.drained` carries one whole digest; the engine names the rest, so no list can drift.
-const CORE_EVENTS = new Set(["ext.error", "engine.drained", ...native.factNames()]);
+const CORE_EVENTS = new Set(["ext.error", "engine.drained", "jobs.changed", ...native.factNames()]);
 
 // True for an `owner:event` name. A plugin owns such a name, so no declaration can enumerate it.
 /** @param {string} name @returns {boolean} */

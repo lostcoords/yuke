@@ -72,6 +72,20 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   check("logged-exit", (await logged.exited).code === 0);
   check("logged-content", (await exec(`cat '${logged.log}'`)).stdout === "out\nbad\n[exited with code 0]\n");
 
+  // The job table emits a copy of each change, and a stop of an exited job keeps its real end.
+  const { start: startJob, jobs } = await import("yuke:jobs");
+  const { events } = await import("yuke:kernel");
+  const changes = [];
+  const off = events.on("jobs.changed", (job) => changes.push(`${job.id} ${job.state}`));
+  const long = await startJob("sleep 30", { root: "/tmp", sessionId: "s1" });
+  const quick = await startJob("exit 3", { root: "/tmp" });
+  await until(() => jobs.get(quick.id)?.state === "exited");
+  check("job-exit", jobs.get(quick.id)?.code === 3 && (await jobs.stop(quick.id))?.state === "exited");
+  check("job-stop", (await jobs.stop(long.id))?.state === "stopped" && jobs.list().some((j) => j.id === long.id && j.sessionId === "s1"));
+  check("job-events", changes.join(",") === `${long.id} running,${quick.id} running,${quick.id} exited,${long.id} stopped`);
+  check("job-public", !("start" in jobs) && jobs.get("j999") === null);
+  off();
+
   const refusals = [
     () => spawn([]),
     () => spawn(["echo", "ok\0cut"]),

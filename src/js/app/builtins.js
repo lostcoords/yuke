@@ -2,7 +2,8 @@
 
 import { fs } from "yuke:fs";
 import { exec as runCommand } from "yuke:exec";
-import { spawn as spawnChild, kill as killChild } from "yuke:process";
+import { start as startJob, stop as stopJob, list as listJobs, get as getJob } from "yuke:jobs";
+import { events } from "yuke:kernel";
 import { diff } from "yuke:diff";
 import { defineTool, hasTool } from "yuke:tools";
 import { client } from "yuke:client";
@@ -206,12 +207,7 @@ function endLine(text) {
   return text.length === 0 || text.endsWith("\n") ? text : `${text}\n`;
 }
 
-// Background jobs, in start order. An ended job keeps its entry, so the model can read its final state.
-/** @typedef {{ id: string, native: number, command: string, root: string | undefined, sessionId: string | undefined, log: string, state: "running" | "exited" | "stopped", code: number | null, signal: number | null, ended: Promise<void> }} Job */
-/** @type {Map<string, Job>} */
-const jobs = new Map();
-let jobCount = 0;
-const MAX_ENDED_JOBS = 32;
+/** @typedef {import("yuke:jobs").Job} Job */
 
 /** @param {string} command @returns {string} */
 function shortCommand(command) {
@@ -223,7 +219,7 @@ function shortCommand(command) {
 
 /** @param {string | undefined} sessionId @returns {Job[]} */
 function sessionJobs(sessionId) {
-  return [...jobs.values()].filter(j => j.sessionId === sessionId);
+  return listJobs().filter(j => j.sessionId === sessionId);
 }
 
 /** @param {Job} job @returns {string} */
@@ -233,48 +229,23 @@ function jobState(job) {
   return `${job.id} exited (${end}): ${shortCommand(job.command)}`;
 }
 
-/** @param {Job} job @returns {Promise<string>} */
-async function jobTail(job) {
-  const quoted = "'" + job.log.replace(/'/g, "'\\''") + "'";
-  const r = await runCommand(`tail -n 20 ${quoted}`, { maxBytes: 4096 }).catch(() => null);
-  return r === null || r.stdout.length === 0 ? "[no output yet]" : endLine(r.stdout).slice(0, -1);
-}
-
-// Keep the newest ended jobs only, so the table stays bounded.
-function pruneJobs() {
-  const ended = [...jobs.values()].filter(j => j.state !== "running");
-  for (const old of ended.slice(0, Math.max(0, ended.length - MAX_ENDED_JOBS))) jobs.delete(old.id);
-}
-
-/** @param {Job} job @param {{ code: number | null, signal: number | null } | null} exit @returns {void} */
-function endJob(job, exit) {
-  if (job.state !== "running") return; // A stopped job sends no message.
-  Object.assign(job, { state: "exited", code: exit?.code ?? null, signal: exit?.signal ?? null });
-  pruneJobs();
+// A job that exits by itself tells its session once; a stop sends nothing.
+events.on("jobs.changed", (/** @type {Job} */ job) => {
   const sessionId = job.sessionId;
-  if (!sessionId) return;
-  jobTail(job)
-    .then(tail => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${tail}`)))
+  if (job.state !== "exited" || !sessionId) return;
+  const quoted = "'" + job.log.replace(/'/g, "'\\''") + "'";
+  runCommand(`tail -n 20 ${quoted}`, { maxBytes: 4096 })
+    .then(r => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${endLine(r.stdout).slice(0, -1)}`)))
     .catch(() => {});
-}
-
-/** @param {string | undefined} sessionId @returns {string} */
-function jobIds(sessionId) {
-  const ids = sessionJobs(sessionId).map(j => j.id);
-  return ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`;
-}
+});
 
 /** @param {string} command @param {ToolContext} context @returns {Promise<string>} */
 async function startBackground(command, context) {
   const root = context?.workspaceRoot;
   const sessionId = context?.sessionId;
-  const same = [...jobs.values()].find(j => j.state === "running" && j.command === command && j.root === root && j.sessionId === sessionId);
+  const same = listJobs().find(j => j.state === "running" && j.command === command && j.root === root && j.sessionId === sessionId);
   if (same) return `[job ${same.id} already runs this command. Log: ${same.log}]`;
-  const child = spawnChild(command, { log: true }, undefined, root);
-  if (child.id === 0) await hostCall("exec", child.exited);
-  const job = /** @type {Job} */ ({ id: `j${++jobCount}`, native: child.id, command, root, sessionId, log: child.log, state: "running", code: null, signal: null });
-  job.ended = child.exited.then(exit => endJob(job, exit), () => endJob(job, null));
-  jobs.set(job.id, job);
+  const job = await hostCall("exec", startJob(command, { ...(root !== undefined ? { root } : {}), ...(sessionId !== undefined ? { sessionId } : {}) }));
   return `[job ${job.id} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use job_stop to stop it.]`;
 }
 
@@ -284,16 +255,13 @@ async function jobStop(args, _signal, context) {
   args = objectArgs(name, args);
   only(name, args, ["id"]);
   const id = stringArg(name, args, "id");
-  const entry = jobs.get(id);
-  if (!entry || entry.sessionId !== context?.sessionId) return invalid(name, `the job ${id} does not exist. ${jobIds(context?.sessionId)}`);
-  if (entry.state === "running") {
-    // A child that exited before the kill reports its real exit instead.
-    if (killChild(entry.native)) {
-      entry.state = "stopped";
-      pruneJobs();
-    } else await entry.ended;
+  const sessionId = context?.sessionId;
+  const job = getJob(id);
+  if (!job || job.sessionId !== sessionId) {
+    const ids = sessionJobs(sessionId).map(j => j.id);
+    return invalid(name, `the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
   }
-  return `[${jobState(entry)}]`;
+  return `[${jobState(/** @type {Job} */ (await stopJob(id)))}]`;
 }
 
 /** @param {ToolArgs} args @param {ToolSignal} signal @param {ToolContext} context @returns {Promise<string>} */
