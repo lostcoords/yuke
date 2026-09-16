@@ -7,6 +7,7 @@ const term = @import("term");
 const Host = @import("host.zig").Host;
 const Allocations = @import("../allocations.zig");
 const native_term = @import("native/term.zig");
+const Commit = @import("bench_commit.zig");
 const Projection = @import("bench_projection.zig");
 pub const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
@@ -23,6 +24,9 @@ pub const Phase = enum {
     projection,
     gc,
     boot,
+    commit,
+    commit_serialize,
+    commit_size,
     advice_direct,
     advice_before,
     advice_around,
@@ -52,6 +56,7 @@ pub const Harness = struct {
     api: quickjs.Value,
     step_fn: quickjs.Value,
     projection: ?*Projection = null,
+    commit: ?*Commit = null,
     phase: ?Phase = null,
     native_step: usize = 0,
     colors: Colors = .ansi_raw,
@@ -106,6 +111,7 @@ pub const Harness = struct {
     pub fn destroy(self: *Harness) void {
         const gpa = self.gpa;
         self.host.engine.detach();
+        if (self.commit) |commit| commit.destroy();
         if (self.projection) |projection| projection.destroy();
         self.host.ctx.freeValue(self.step_fn);
         self.host.ctx.freeValue(self.api);
@@ -124,8 +130,18 @@ pub const Harness = struct {
         self.phase = null;
         self.native_step = 0;
         self.host.engine.detach();
+        if (self.commit) |commit| commit.destroy();
         if (self.projection) |projection| projection.destroy();
         self.projection = null;
+        self.commit = null;
+        if (std.meta.stringToEnum(Commit.Mode, @tagName(phase))) |mode| {
+            self.commit = try Commit.create(self.host.gpa, scale);
+            try self.commit.?.step(mode);
+            self.allocations.resetPeak();
+            if (metrics_enabled) self.host.paint.counters = .{};
+            self.phase = phase;
+            return;
+        }
         if (phase == .projection or phase == .stream_native)
             self.projection = try Projection.create(self.host, self.host.io, scale, phase == .stream_native);
         const ctx = self.host.ctx;
@@ -166,7 +182,9 @@ pub const Harness = struct {
     pub fn step(self: *Harness) !u64 {
         const phase = self.phase orelse unreachable;
         self.output.clearRetainingCapacity();
-        if (phase == .gc) {
+        if (self.commit) |commit| {
+            try commit.step(std.meta.stringToEnum(Commit.Mode, @tagName(phase)).?);
+        } else if (phase == .gc) {
             self.host.runtime.runGC();
         } else if (phase == .boot) {
             try self.bootOnce();
@@ -183,6 +201,7 @@ pub const Harness = struct {
 
     pub fn verify(self: *Harness) !i32 {
         std.debug.assert(self.phase != null);
+        if (self.commit) |commit| return commit.verify(std.meta.stringToEnum(Commit.Mode, @tagName(self.phase.?)).?);
         self.output.clearRetainingCapacity();
         const ctx = self.host.ctx;
         const function = ctx.getPropertyStr(self.api, "verify");
@@ -197,6 +216,7 @@ pub const Harness = struct {
     }
 
     pub fn sourceBytes(self: *const Harness) ?u64 {
+        if (self.commit) |commit| return commit.source_bytes;
         return if (self.projection) |projection| projection.sourceBytes() else null;
     }
 
