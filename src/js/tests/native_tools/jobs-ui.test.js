@@ -3,7 +3,6 @@ import { plugins } from "yuke:ext";
 import { tuiPlugin } from "yuke:tui";
 import { notice } from "yuke:notice";
 import { jobsUiPlugin, openJobs, openOutput, JobOutput } from "yuke:jobs-ui";
-import { fs } from "yuke:fs";
 import { start, jobs } from "yuke:jobs";
 const fail = [];
 const check = (name, cond) => { if (!cond) fail.push(name); };
@@ -57,7 +56,7 @@ plugins.use({ name: "jobs-ui-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { 
 
   // A long log opens at a whole line near its end, and `x` stops the job from the view.
   const long = await start("head -c 396000 /dev/zero | tr '\\0' a | fold -w 99; echo; echo last; sleep 30", { root: "/tmp" });
-  for (let i = 0; i < 60 && (await fs.readFrom(long.log, Number.MAX_SAFE_INTEGER, 1)).size < 400005; i++) await new Promise((resolve) => setTimeout(resolve, 50));
+  for (let i = 0; i < 60 && (await jobs.read(long.id, Number.MAX_SAFE_INTEGER, 1)).size < 400005; i++) await new Promise((resolve) => setTimeout(resolve, 50));
   const tailView = openOutput(tui, long);
   for (let i = 0; i < 60 && !texts(tailView).includes("last"); i++) { tailView.tick(); await new Promise((resolve) => setTimeout(resolve, 50)); }
   const shown = texts(tailView);
@@ -76,8 +75,8 @@ plugins.use({ name: "jobs-ui-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { 
   lines.append(" still\n\x1b[31mred\x1b[0m\tend\n" + "x".repeat(5000));
   check("output-lines", texts(lines).join("|") === "red    end|" + "x".repeat(4096));
 
-  const refusals = await Promise.all([fs.readFrom(long.log, -1, 1), fs.readFrom(long.log, 0, 0), fs.readFrom("/tmp/yuke-no-such-log", 0, 1)].map((p) => p.then(() => "", (e) => e.message)));
-  check("read-from-refusals", refusals.join("|") === "readFrom needs a byte offset and a byte count from 1 to 1048576|readFrom needs a byte offset and a byte count from 1 to 1048576|the path does not exist");
+  const refusals = await Promise.all([jobs.read(long.id, -1, 1), jobs.read(long.id, 0, 262145), jobs.read(999, 0, 1)].map((p) => p.then(() => "", (e) => e.message)));
+  check("read-refusals", refusals.join("|") === "read needs a byte offset and a byte count from 1 to 262144|read needs a byte offset and a byte count from 1 to 262144|the job does not exist");
 
   plugins.dispose("jobs-ui");
   await start("sleep 30", { root: "/tmp" });

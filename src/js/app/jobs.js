@@ -1,68 +1,64 @@
-// Background jobs: shell lines whose output goes to a private log. Every start, exit, and stop emits `jobs.changed` with a copy of the job.
+// yuke:jobs — background jobs over the native table: every start and end emits `jobs.changed` with a fresh copy of the job.
 
-import { spawn, kill } from "yuke:process";
+import * as native from "yuke:jobs-native";
 import { events } from "yuke:kernel";
 
-/** @typedef {{ id: string, command: string, root: string | undefined, sessionId: string | undefined, log: string, state: "running" | "exited" | "stopped", code: number | null, signal: number | null, startedAt: number, endedAt: number | null }} Job */
-/** @typedef {{ job: Job, native: number, ended: Promise<void>, stopping: boolean, end: number }} Entry */
+/** @typedef {import("yuke:jobs-native").Job} Job */
 
-/** @type {Map<string, Entry>} */
-const table = new Map();
-let count = 0;
-let ends = 0;
-const MAX_ENDED = 32;
-
-// Keep the jobs that ended last, so the table stays bounded; a long job that ends late stays even when it started first.
-function prune() {
-  const ended = [...table.values()].filter((e) => e.job.state !== "running").sort((a, b) => a.end - b.end);
-  for (const old of ended.slice(0, Math.max(0, ended.length - MAX_ENDED))) table.delete(old.job.id);
-}
-
-/** @param {Entry} entry @param {"exited" | "stopped"} state @param {{ code: number | null, signal: number | null } | null} exit @returns {void} */
-function finish(entry, state, exit) {
-  if (entry.job.state !== "running") return;
-  Object.assign(entry.job, { state, code: exit?.code ?? null, signal: exit?.signal ?? null, endedAt: Date.now() });
-  entry.end = ++ends;
-  prune();
-  events.emit("jobs.changed", { ...entry.job });
-}
+export const { list, get, read } = native;
 
 /** @param {string} command @param {{ root?: string, sessionId?: string }} [options] @returns {Promise<Job>} */
 export async function start(command, options = {}) {
-  const child = spawn(command, { log: true }, undefined, options.root);
-  // A failed start rejects `exited`, so this await throws the reason.
-  if (child.id === 0) await child.exited;
-  /** @type {Job} */
-  const job = { id: `j${++count}`, command, root: options.root, sessionId: options.sessionId, log: child.log ?? "", state: "running", code: null, signal: null, startedAt: Date.now(), endedAt: null };
-  /** @type {Entry} */
-  const entry = { job, native: child.id, ended: Promise.resolve(), stopping: false, end: 0 };
-  // A stop settles when the child ends, so the log already holds its exit line.
-  entry.ended = child.exited.then((exit) => finish(entry, entry.stopping ? "stopped" : "exited", exit), () => finish(entry, entry.stopping ? "stopped" : "exited", null));
-  table.set(job.id, entry);
-  events.emit("jobs.changed", { ...job });
-  return { ...job };
+  const { job, ended } = await native.start(command, options.sessionId ?? null, options.root);
+  events.emit("jobs.changed", job);
+  ended.then((done) => events.emit("jobs.changed", done));
+  return job;
 }
 
-/** @returns {Job[]} */
-export function list() {
-  return [...table.values()].map((e) => ({ ...e.job }));
+// The answer is the final job, so a job that exited before the stop keeps its real end.
+/** @param {number} id @returns {Promise<Job | null>} */
+export function stop(id) {
+  const job = native.stop(id);
+  if (job === null || job.state !== "running") return Promise.resolve(job);
+  return new Promise((resolve) => {
+    const off = events.on("jobs.changed", (/** @type {Job} */ changed) => {
+      if (changed.id !== id || changed.state === "running") return;
+      off();
+      // Every listener shares the event object, so the answer is a fresh copy from the table.
+      resolve(native.get(id) ?? changed);
+    });
+  });
 }
 
-/** @param {string} id @returns {Job | null} */
-export function get(id) {
-  const entry = table.get(id);
-  return entry ? { ...entry.job } : null;
+// One line of at most 60 characters, so a multi-line command never breaks a row or a title.
+/** @param {string} command @returns {string} */
+export function shortCommand(command) {
+  const text = command.trim();
+  const end = text.indexOf("\n");
+  const line = end < 0 ? text : text.slice(0, end);
+  return line.length > 60 || end >= 0 ? `${line.slice(0, 57)}...` : line;
 }
 
-// A job that exited before the kill keeps its real end, so the answer is always the final state.
-/** @param {string} id @returns {Promise<Job | null>} */
-export async function stop(id) {
-  const entry = table.get(id);
-  if (!entry) return null;
-  if (entry.job.state === "running" && kill(entry.native)) entry.stopping = true;
-  await entry.ended;
-  return { ...entry.job };
+/** @param {Job} job @returns {string} */
+export function name(job) {
+  return "j" + job.id;
+}
+
+// The end of a job in words, shared by the tool text and the TUI list.
+/** @param {Job} job @returns {string} */
+export function endLabel(job) {
+  if (job.state === "running") return "running";
+  if (job.state === "stopped") return "stopped";
+  return job.signal !== null ? "signal " + job.signal : "exit code " + job.code;
+}
+
+// The last lines of a job log; the read covers the last 8 KiB.
+/** @param {number} id @param {number} count @returns {Promise<string>} */
+export async function tail(id, count) {
+  const { size } = await read(id, Number.MAX_SAFE_INTEGER, 1);
+  const { text } = await read(id, Math.max(0, size - 8192), 8192);
+  return text.split("\n").filter((line, i, all) => line !== "" || i < all.length - 1).slice(-count).join("\n");
 }
 
 // The public surface: a plugin reads and stops jobs, and only the exec tool starts them.
-export const jobs = { list, get, stop };
+export const jobs = { list, get, stop, read };

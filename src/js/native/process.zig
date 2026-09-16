@@ -7,6 +7,7 @@ const module = @import("module.zig");
 const pending = @import("../pending.zig");
 const runner = @import("../host/process.zig");
 const utf8 = @import("../../utf8.zig");
+const Job = @import("jobs.zig").Job;
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -49,12 +50,14 @@ const Proc = struct {
     pid: std.posix.pid_t,
     child: std.process.Child,
     streams: [2]Stream,
-    /// The output callback, or undefined for a logged child. It and the `exited` resolvers are roots until the owner frees the process.
+    /// The output callback, or undefined for a job. It and the `exited` resolvers are roots until the owner frees the process.
     on_output: Value,
     resolve: Value,
     reject: Value,
-    /// The log path of a logged child, owned by the process. The waiter appends the exit line to it.
+    /// The log path of a job, owned by the process. The waiter appends the exit line to it.
     log: ?[]u8,
+    /// The job record of a job child. The settle ends it, and `exited` resolves with it.
+    job: ?*Job,
     /// Guards `writes`, `stdin`, `writing`, and `close_after`.
     writes_lock: std.Io.Mutex = .init,
     writes: std.ArrayList(Write) = .empty,
@@ -175,11 +178,16 @@ fn deliver(host: *Host, proc: *Proc, stream: *Stream, number: i32) bool {
     return call(host, proc.on_output, &argv);
 }
 
-/// Resolve `exited` with `{ code, signal }`, where exactly one of the two is null.
+/// Resolve `exited` with `{ code, signal }`, where exactly one of the two is null. A job resolves with its ended record instead.
 fn settle(host: *Host, proc: *Proc) bool {
     const ctx = host.ctx;
     var argv = [_]Value{undefined};
     defer ctx.freeValue(argv[0]);
+    if (proc.job) |job| {
+        host.jobs.end(host, job, proc.outcome);
+        argv[0] = @import("jobs.zig").toValue(ctx, job);
+        return call(host, proc.resolve, &argv);
+    }
     const outcome = proc.outcome orelse {
         argv[0] = ctx.newString("the host could not reap the process");
         return call(host, proc.reject, &argv);
@@ -306,7 +314,7 @@ fn killTask(host: *Host, pid: std.posix.pid_t) void {
     runner.endGroups(host.io, &.{pid});
 }
 
-/// Start a child. A string runs through the host shell and an array runs with no shell. Argument errors throw; an operating error rejects `exited`.
+/// Start `argv` with no shell over pipes. Argument errors throw; an operating error rejects `exited`.
 fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (host.phase != .open) return ctx.throwTypeError("the host is closed");
@@ -315,22 +323,17 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    const command: Value = if (args.len > 0) args[0] else quickjs.UNDEFINED;
-    const argv: []const []const u8 = if (ctx.isString(command))
-        a.dupe([]const u8, &.{ host.execution.shell.path, "-c", module.owned(ctx, a, command).? }) catch unreachable
-    else
-        stringList(ctx, a, command) orelse &.{};
-    if (argv.len == 0) return ctx.throwTypeError("the command must be a string or a non-empty array of strings");
+    const argv = if (args.len > 0) stringList(ctx, a, args[0]) orelse &.{} else &.{};
+    if (argv.len == 0) return ctx.throwTypeError("argv must be a non-empty array of strings");
     const options: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;
     const cwd = module.optionalString(ctx, a, options, "cwd") catch return ctx.throwTypeError("cwd must be a string");
-    const logged = module.optionalBool(ctx, options, "log") catch return ctx.throwTypeError("log must be a boolean");
     const env_value: Value = if (ctx.isObject(options)) ctx.getPropertyStr(options, "env") else quickjs.UNDEFINED;
     defer ctx.freeValue(env_value);
     const pairs = if (ctx.isUndefined(env_value)) &.{} else stringList(ctx, a, env_value) orelse
         return ctx.throwTypeError("env must be an array of key and value strings");
     if (pairs.len % 2 != 0) return ctx.throwTypeError("env must be an array of key and value strings");
     const on_output: Value = if (args.len > 2) args[2] else quickjs.UNDEFINED;
-    if (!logged and !ctx.isFunction(on_output)) return ctx.throwTypeError("a child with pipes needs an output callback");
+    if (!ctx.isFunction(on_output)) return ctx.throwTypeError("spawn needs an output callback");
     const root = module.rootArg(ctx, a, if (args.len > 3) args[3] else quickjs.UNDEFINED, host.cwd) orelse
         return ctx.throwTypeError("the workspace root must be an absolute path");
     var env = host.execution.env.clone(a) catch unreachable;
@@ -346,19 +349,25 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     if (ctx.isException(exited)) return exited;
     const handle = ctx.newObject();
     module.set(ctx, handle, "exited", exited);
+    const program = runner.startProgram(host.io, root, &env, a, argv, cwd, .pipes) catch |err|
+        return failStart(ctx, handle, &funcs, startMessage(err));
+    const proc = launch(host, program, on_output, funcs, null, null);
+    module.set(ctx, handle, "id", ctx.newInt32(@intCast(proc.id)));
+    return handle;
+}
 
-    // `Logs` keeps its directory in the host allocator, so the path comes from there too.
-    const log: ?[]u8 = if (logged) host.logs.next(host.gpa, host.io, host.execution.env, "job") catch
-        return failStart(ctx, handle, &funcs, "the host could not create the log directory") else null;
-    const program = runner.startProgram(host.io, root, &env, a, argv, cwd, if (log) |path| .{ .log = path } else .pipes) catch |err| {
-        if (log) |path| host.gpa.free(path);
-        return failStart(ctx, handle, &funcs, switch (err) {
-            error.NotFound => "the program does not exist",
-            error.HomeUnavailable => "the environment names no home directory, so a ~ working directory has no meaning",
-            else => "the host could not start the program",
-        });
+/// The sentence a script reads for a child that could not start.
+pub fn startMessage(err: anyerror) []const u8 {
+    return switch (err) {
+        error.NotFound => "the program does not exist",
+        error.HomeUnavailable => "the environment names no home directory, so a ~ working directory has no meaning",
+        else => "the host could not start the program",
     };
+}
 
+/// Take a started program into the table and start its waiter. The process owns `funcs`, `log`, and a copy of `on_output`.
+pub fn launch(host: *Host, program: runner.Program, on_output: Value, funcs: [2]Value, log: ?[]u8, job: ?*Job) *Proc {
+    std.debug.assert(host.procs.live.items.len < max_processes);
     host.procs.last_id += 1;
     const proc = host.gpa.create(Proc) catch unreachable;
     proc.* = .{
@@ -366,16 +375,17 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
         .pid = program.child.id.?,
         .child = program.child,
         .streams = .{ .{ .file = program.stdout, .ended = program.stdout == null }, .{ .file = program.stderr, .ended = program.stderr == null } },
-        .on_output = ctx.dupValue(on_output),
+        .on_output = host.ctx.dupValue(on_output),
         .resolve = funcs[0],
         .reject = funcs[1],
         .stdin = program.stdin,
         .log = log,
+        .job = job,
     };
     for (&proc.streams) |*stream| stream.ready.store(stream.ended, .release);
     host.procs.live.append(host.gpa, proc) catch unreachable;
     host.tasks.concurrent(host.io, procTask, .{ host, proc }) catch {
-        // No waiter can run, so the owner ends and reaps the child, and the next drain rejects `exited`.
+        // No waiter can run, so the owner ends and reaps the child, and the next drain settles it.
         runner.endGroups(host.io, &.{proc.pid});
         _ = runner.reapGroup(host.io, &proc.child);
         for (&proc.streams) |*stream| {
@@ -385,9 +395,7 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
         }
         proc.done.store(true, .release);
     };
-    module.set(ctx, handle, "id", ctx.newInt32(@intCast(proc.id)));
-    module.set(ctx, handle, "log", if (log) |path| ctx.newString(path) else quickjs.NULL);
-    return handle;
+    return proc;
 }
 
 /// Reject `exited` of a handle whose child never started.
@@ -396,7 +404,6 @@ fn failStart(ctx: Context, handle: Value, funcs: *[2]Value, message: []const u8)
     ctx.freeValue(funcs[1]);
     module.set(ctx, handle, "exited", rejected(ctx, message));
     module.set(ctx, handle, "id", ctx.newInt32(0));
-    module.set(ctx, handle, "log", quickjs.NULL);
     return handle;
 }
 
@@ -440,11 +447,17 @@ fn jsCloseStdin(ctx: Context, _: Value, args: []const Value) Value {
 fn jsKill(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (host.phase != .open) return quickjs.FALSE;
-    const proc = procOf(ctx, host, args) orelse return quickjs.FALSE;
-    // A reaped child already has its real exit, so a kill must not report a stop.
-    if (proc.reaped.load(.acquire)) return quickjs.FALSE;
+    if (args.len == 0) return quickjs.FALSE;
+    const id = module.integer(ctx, args[0], 1, std.math.maxInt(u32)) orelse return quickjs.FALSE;
+    return ctx.newBool(kill(host, @intCast(id)));
+}
+
+/// End the group of child `id` on a task, and answer whether the child was still unreaped. A reaped child already has its real exit.
+pub fn kill(host: *Host, id: u32) bool {
+    const proc = host.procs.find(id) orelse return false;
+    if (proc.reaped.load(.acquire)) return false;
     host.tasks.concurrent(host.io, killTask, .{ host, proc.pid }) catch runner.endGroups(host.io, &.{proc.pid});
-    return quickjs.TRUE;
+    return true;
 }
 
 fn procOf(ctx: Context, host: *Host, args: []const Value) ?*Proc {

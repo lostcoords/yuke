@@ -2,7 +2,7 @@
 
 import { fs } from "yuke:fs";
 import { exec as runCommand } from "yuke:exec";
-import { start as startJob, stop as stopJob, list as listJobs, get as getJob } from "yuke:jobs";
+import { start as startJob, stop as stopJob, list as listJobs, get as getJob, name as jobName, endLabel, tail as jobTail, shortCommand } from "yuke:jobs";
 import { events } from "yuke:kernel";
 import { diff } from "yuke:diff";
 import { defineTool, hasTool } from "yuke:tools";
@@ -209,24 +209,14 @@ function endLine(text) {
 
 /** @typedef {import("yuke:jobs").Job} Job */
 
-/** @param {string} command @returns {string} */
-function shortCommand(command) {
-  const text = command.trim();
-  const end = text.indexOf("\n");
-  const line = end < 0 ? text : text.slice(0, end);
-  return line.length > 60 || end >= 0 ? `${line.slice(0, 57)}...` : line;
-}
-
 /** @param {string | undefined} sessionId @returns {Job[]} */
 function sessionJobs(sessionId) {
-  return listJobs().filter(j => j.sessionId === sessionId);
+  return listJobs().filter(j => j.sessionId === (sessionId ?? null));
 }
 
 /** @param {Job} job @returns {string} */
 function jobState(job) {
-  if (job.state !== "exited") return `${job.id} ${job.state}: ${shortCommand(job.command)}`;
-  const end = job.signal !== null ? `signal ${job.signal}` : `exit code ${job.code}`;
-  return `${job.id} exited (${end}): ${shortCommand(job.command)}`;
+  return job.state === "exited" ? `${jobName(job)} exited (${endLabel(job)}): ${shortCommand(job.command)}` : `${jobName(job)} ${job.state}: ${shortCommand(job.command)}`;
 }
 
 // A job that exits by itself tells its session once, in exit order, even when its log cannot be read; a stop sends nothing.
@@ -234,12 +224,11 @@ function jobState(job) {
 let exitMessages = Promise.resolve();
 events.on("jobs.changed", (/** @type {Job} */ job) => {
   const sessionId = job.sessionId;
-  if (job.state !== "exited" || !sessionId) return;
-  const quoted = "'" + job.log.replace(/'/g, "'\\''") + "'";
-  const tail = runCommand(`tail -n 20 ${quoted}`, { maxBytes: 4096 }).then(r => r.stdout, () => "");
+  if (job.state !== "exited" || sessionId === null) return;
+  const tail = jobTail(job.id, 20).catch(() => "");
   exitMessages = exitMessages
     .then(() => tail)
-    .then(out => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${out === "" ? "[no output]" : endLine(out).slice(0, -1)}`)))
+    .then(out => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${out === "" ? "[no output]" : out}`)))
     .catch(() => {});
 });
 
@@ -247,10 +236,10 @@ events.on("jobs.changed", (/** @type {Job} */ job) => {
 async function startBackground(command, context) {
   const root = context?.workspaceRoot;
   const sessionId = context?.sessionId;
-  const same = listJobs().find(j => j.state === "running" && j.command === command && j.root === root && j.sessionId === sessionId);
-  if (same) return `[job ${same.id} already runs this command. Log: ${same.log}]`;
+  const same = sessionJobs(sessionId).find(j => j.state === "running" && j.command === command && (root === undefined || j.cwd === root));
+  if (same) return `[job ${jobName(same)} already runs this command. Log: ${same.log}]`;
   const job = await hostCall("exec", startJob(command, { ...(root !== undefined ? { root } : {}), ...(sessionId !== undefined ? { sessionId } : {}) }));
-  return `[job ${job.id} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use job_stop to stop it.]`;
+  return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use job_stop to stop it.]`;
 }
 
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
@@ -259,13 +248,12 @@ async function jobStop(args, _signal, context) {
   args = objectArgs(name, args);
   only(name, args, ["id"]);
   const id = stringArg(name, args, "id");
-  const sessionId = context?.sessionId;
-  const job = getJob(id);
-  if (!job || job.sessionId !== sessionId) {
-    const ids = sessionJobs(sessionId).map(j => j.id);
+  const job = /^j[1-9][0-9]*$/.test(id) ? getJob(Number(id.slice(1))) : null;
+  if (!job || job.sessionId !== (context?.sessionId ?? null)) {
+    const ids = sessionJobs(context?.sessionId).map(jobName);
     return invalid(name, `the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
   }
-  return `[${jobState(/** @type {Job} */ (await stopJob(id)))}]`;
+  return `[${jobState(/** @type {Job} */ (await stopJob(job.id)))}]`;
 }
 
 /** @param {ToolArgs} args @param {ToolSignal} signal @param {ToolContext} context @returns {Promise<string>} */
@@ -295,7 +283,7 @@ async function exec(args, signal, context) {
   else text += `[exit code: ${r.code}]`;
   if (r.log !== null) text += `\n[The tool cut the output. Full log: ${r.log}. Use grep or read on it.]`;
   const running = sessionJobs(context?.sessionId).filter(j => j.state === "running");
-  if (running.length !== 0) text += `\n[running jobs: ${running.map(j => `${j.id} ${shortCommand(j.command)}`).join(", ")}]`;
+  if (running.length !== 0) text += `\n[running jobs: ${running.map(j => `${jobName(j)} ${shortCommand(j.command)}`).join(", ")}]`;
   return text;
 }
 

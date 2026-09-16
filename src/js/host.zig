@@ -10,6 +10,7 @@ const engine_module = @import("native/engine.zig");
 const fs_module = @import("native/fs.zig");
 const exec_module = @import("native/exec.zig");
 const process_module = @import("native/process.zig");
+const jobs_module = @import("native/jobs.zig");
 const diff_module = @import("native/diff.zig");
 const tools_module = @import("native/tools.zig");
 const hooks_module = @import("native/hooks.zig");
@@ -97,6 +98,8 @@ pub const Host = struct {
     timers: timers_mod.Timers = .{},
     /// The `yuke:process` children. `close` ends them before it cancels their tasks.
     procs: process_module.Procs = .{},
+    /// The background job table. A record outlives its process, and `close` frees it after the processes.
+    jobs: jobs_module.Jobs = .{},
 
     pub const Phase = enum { open, closing, drained };
 
@@ -151,6 +154,7 @@ pub const Host = struct {
         exec_module.install(self);
         timers_mod.install(self);
         process_module.install(self);
+        jobs_module.install(self);
         diff_module.install(self);
         tools_module.install(self);
         hooks_module.install(self);
@@ -259,6 +263,7 @@ pub const Host = struct {
         self.tasks.cancel(self.io);
         self.timers.deinit(self.ctx, self.gpa);
         self.procs.deinit(self);
+        self.jobs.deinit(self.gpa);
         self.interactions.close();
         if (self.ops.settle(self.ctx)) {
             self.dropPendingException();
@@ -861,6 +866,7 @@ test {
     _ = @import("plugins_test.zig");
     _ = @import("native_tools_test.zig");
     _ = @import("timers.zig");
+    _ = @import("native/jobs.zig");
     _ = @import("interaction_test.zig");
 }
 

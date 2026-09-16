@@ -28,8 +28,6 @@ declare module "yuke:fs" {
     readFile(path: string, workspaceRoot?: string): Promise<string>;
     /** Returns an image path or bounded text with the next line after a cut. */
     readRange(path: string, range?: { start?: number | null; end?: number | null }, workspaceRoot?: string): Promise<RangeRead | { imagePath: string }>;
-    /** Reads at most `maxBytes` bytes from `offset` as text, cut at a character boundary; read again from `next` to follow a growing file. */
-    readFrom(path: string, offset: number, maxBytes: number, workspaceRoot?: string): Promise<{ text: string; next: number; size: number }>;
     /** Replaces the whole file and resolves the byte count. */
     writeFile(path: string, contents: string, workspaceRoot?: string): Promise<number>;
     /** Resolves null when nothing is at the path. A relative path anchors at the workspace root, or at the cwd. */

@@ -67,23 +67,19 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
     check("path-from-env", (await fixture.exited).code === 0 && hello === "fixture\n");
   }
 
-  // A string runs through the host shell, and a logged child writes both streams to its log.
-  const logged = spawnNative("echo out; echo bad 1>&2", { log: true }, undefined, "/tmp");
-  check("logged-exit", (await logged.exited).code === 0);
-  check("logged-content", (await exec(`cat '${logged.log}'`)).stdout === "out\nbad\n[exited with code 0]\n");
-
-  // The job table emits a copy of each change, and a stop of an exited job keeps its real end.
+  // The job table emits a fresh copy of each change, a stop of an exited job keeps its real end, and the log ends with the exit line.
   const { start: startJob, jobs } = await import("yuke:jobs");
   const { events } = await import("yuke:kernel");
   const changes = [];
   const off = events.on("jobs.changed", (job) => { changes.push(`${job.id} ${job.state}`); job.state = "mutated"; });
-  const long = await startJob("sleep 30", { root: "/tmp", sessionId: "s1" });
-  const quick = await startJob("exit 3", { root: "/tmp" });
+  const long = await startJob("sleep 30", { root: "/tmp", sessionId: "01010101010101010101010101010101" });
+  const quick = await startJob("echo out; echo bad 1>&2; echo \"$PYTHONUNBUFFERED\"; exit 3", { root: "/tmp" });
   await until(() => jobs.get(quick.id)?.state === "exited");
   check("job-exit", jobs.get(quick.id)?.code === 3 && (await jobs.stop(quick.id))?.state === "exited");
-  check("job-stop", (await jobs.stop(long.id))?.state === "stopped" && jobs.list().some((j) => j.id === long.id && j.sessionId === "s1"));
+  check("job-log", (await jobs.read(quick.id, 0, 4096)).text === "out\nbad\n1\n[exited with code 3]\n");
+  check("job-stop", (await jobs.stop(long.id))?.state === "stopped" && jobs.list().some((j) => j.id === long.id && j.sessionId === "01010101010101010101010101010101" && j.cwd === "/tmp"));
   check("job-events", changes.join(",") === `${long.id} running,${quick.id} running,${quick.id} exited,${long.id} stopped`);
-  check("job-public", !("start" in jobs) && jobs.get("j999") === null && jobs.list().every((j) => j.state !== "mutated"));
+  check("job-public", !("start" in jobs) && jobs.get(999) === null && jobs.list()[0]?.id === quick.id && jobs.list().every((j) => j.state !== "mutated"));
   off();
 
   const refusals = [

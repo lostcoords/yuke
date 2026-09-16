@@ -2,9 +2,8 @@
 import { root } from "yuke:core";
 import { ui, Window, NAV_KEYS } from "yuke:ui";
 import { Pager } from "yuke:pager";
-import { fs } from "yuke:fs";
 import { strokeOf } from "yuke:keys";
-import { list, get, stop } from "yuke:jobs";
+import { list, get, stop, read, name, endLabel, shortCommand } from "yuke:jobs";
 import { focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
 import { elapsedLabel } from "yuke:indicator";
@@ -19,9 +18,7 @@ function failed(error) { notice.show("jobs · " + (/** @type {Error} */ (error)?
 
 /** @param {Job} job @param {number} now @returns {string} */
 export function jobState(job, now) {
-  if (job.state === "running") return "running " + elapsedLabel(now - job.startedAt);
-  if (job.state === "stopped") return "stopped";
-  return job.signal !== null ? "signal " + job.signal : "exit " + job.code;
+  return job.state === "running" ? "running " + elapsedLabel(now - job.startedAt) : endLabel(job);
 }
 
 /** @param {Job[]} jobs @returns {string} */
@@ -65,11 +62,11 @@ export class JobOutput {
       do {
         this.again = false;
         if (this.offset === null) {
-          const { size } = await fs.readFrom(this.job.log, Number.MAX_SAFE_INTEGER, 1);
+          const { size } = await read(this.job.id, Number.MAX_SAFE_INTEGER, 1);
           this.offset = Math.max(0, size - OUTPUT_BYTES);
           if (this.offset > 0) this.partial = null;
         }
-        const got = await fs.readFrom(this.job.log, this.offset, OUTPUT_BYTES);
+        const got = await read(this.job.id, this.offset, OUTPUT_BYTES);
         this.offset = got.next;
         this.append(got.text);
         if (this.job.state !== "running" && got.next < got.size && got.text !== "") this.again = true;
@@ -132,7 +129,7 @@ export function openOutput(ctx, job) {
   let release = () => {};
   const view = new JobOutput(job, () => close());
   const win = new Window({
-    title: () => view.job.id + " · " + jobState(view.job, Date.now()) + " · " + view.job.command, footer: "x stop · esc close",
+    title: () => name(view.job) + " · " + jobState(view.job, Date.now()) + " · " + shortCommand(view.job.command), footer: "x stop · esc close",
     border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.8), content: view,
   });
   root.pushOverlay(win);
@@ -158,13 +155,13 @@ export function openOutput(ctx, job) {
 /** @param {Context} ctx */
 export function openJobs(ctx) {
   const current = focusedChat()?.sessionId;
-  const rows = () => list().reverse();
+  const rows = () => list();
   let items = rows();
   const picker = ui.select(items, {
     title: summary(items), footer: "↵ output · x stop · X stop all · esc close",
     border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.6),
     key: (job) => job.id,
-    format: (job) => ({ marker: job.state === "running" ? "•" : "·", indent: 2, text: job.id + "  " + job.command, detail: job.sessionId === current ? "this session" : "", right: jobState(job, Date.now()) }),
+    format: (job) => ({ marker: job.state === "running" ? "•" : "·", indent: 2, text: name(job) + "  " + shortCommand(job.command) + "  ", detail: job.sessionId === (current ?? null) ? "this session" : "", right: jobState(job, Date.now()) }),
     onAccept: (job) => { close(); openOutput(ctx, get(job.id) ?? job); },
     onCancel: () => close(),
     keymap: {
@@ -200,13 +197,14 @@ export const jobsUiPlugin = {
   /** @param {PluginContext} ctx */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      // The count changes only on `jobs.changed`, so a paint reads a number and copies no job.
-      let running = list().filter((j) => j.state === "running").length;
-      ctx.on("jobs.changed", () => {
-        running = list().filter((j) => j.state === "running").length;
+      // The event carries the job, so the count follows it and a paint copies no table.
+      const running = new Set(list().filter((j) => j.state === "running").map((j) => j.id));
+      ctx.on("jobs.changed", (/** @type {Job} */ job) => {
+        if (job.state === "running") running.add(job.id);
+        else running.delete(job.id);
         root.invalidate();
       });
-      ctx.tui.status({ side: "right", order: 1, render: () => (running === 0 ? "" : "jobs " + running) });
+      ctx.tui.status({ side: "right", order: 1, render: () => (running.size === 0 ? "" : "jobs " + running.size) });
       ctx.tui.command(null, {
         "jobs:open": () => openJobs(ctx),
       }, { "jobs:open": { title: "Jobs", description: "see or stop background jobs", slash: "jobs" } });

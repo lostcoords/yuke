@@ -310,7 +310,7 @@ fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
 }
 
 /// The modules `src/js/native` installs in every host. The bake stubs these and rejects any other unknown import.
-const native_js = "yuke:diff,yuke:engine-native,yuke:exec,yuke:fs,yuke:hooks,yuke:interaction-native,yuke:process,yuke:term,yuke:tools";
+const native_js = "yuke:diff,yuke:engine-native,yuke:exec,yuke:fs,yuke:hooks,yuke:interaction-native,yuke:jobs-native,yuke:process,yuke:term,yuke:tools";
 
 fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.builtin.OptimizeMode) *std.Build.Module {
     const tool = b.addExecutable(.{
