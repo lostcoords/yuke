@@ -106,3 +106,75 @@ The benchmark verifies method results, receiver use, call counts, handler counts
 Raw files: `/tmp/yuke-advice_<direct|before|around|mixed|churn>-<1|4|16>-<metrics|latency>.jsonl`.
 Counters cover native and QuickJS backing allocations through the harness allocator.
 They exclude the benchmark output buffer and do not count every JS object.
+
+## No-around fast path
+
+The dispatch now creates the original-call wrapper only if an around handler exists.
+The five passes and live list mutation rules remain intact. No cache state is added.
+The direct path retains an argument copy to preserve a custom filterArgs iterator.
+The production diff adds one net line. Three focused contract checks add 35 test lines.
+
+The fresh comparison uses `ac12982` as the baseline, on the same machine and configuration.
+Each value below is microseconds per call, except churn, which is per lifecycle cycle.
+Scale 4 and 16 use the saved baseline above and new after runs.
+
+| Scenario | Scale | Before | After |
+| --- | ---: | ---: | ---: |
+| direct | 1 | 0.0588 | 0.0570 |
+| before | 1 | 1.1790 | 0.9575 |
+| before | 4 | 1.8652 | 1.6373 |
+| before | 16 | 4.2729 | 3.9490 |
+| around | 1 | 1.5975 | 1.5514 |
+| around | 4 | 3.4236 | 3.3647 |
+| around | 16 | 10.9144 | 10.8069 |
+| mixed | 1 | 2.6485 | 2.6256 |
+| mixed | 4 | 7.5874 | 7.4250 |
+| mixed | 16 | 27.4541 | 27.2070 |
+| churn | 1 | 2.3504 | 2.4241 |
+| churn | 4 | 6.8589 | 6.7458 |
+| churn | 16 | 31.8635 | 31.5376 |
+
+The one-before case improves about 19%; the larger before lists improve about 12% and 8%.
+The direct control also improves about 3%, so some latency shift is unrelated to this path.
+No speed gain is claimed for around, mixed, churn, boot, or UI phases.
+
+All advice allocation/free counts and byte totals match the baseline in every repeat.
+Resize attempts, remap attempts, and allocation failures remain zero for advice.
+Warm calls still have zero measured backing allocations; this does not count every JS object.
+Live and peak advice bytes rise by 34, except mixed scale 16, where both fall by 3,982.
+These totals include harness and arena state; the cause of the mixed-scale difference is not isolated.
+
+The full benchmark covers all 17 phases, with five repeats in each metrics and latency run.
+All full-run result checksums, source/output byte counts, and UI counters match before and after.
+At repeat 2, live and peak bytes rise by 34 in every phase except colors and boot.
+Colors is unchanged. Boot live bytes rise by 34 and peak bytes rise by 68.
+Boot allocates and frees 3,400 more bytes per 100 boots in every repeat.
+Its 82,900 allocations, 82,900 frees, and 1,800 remap attempts remain unchanged.
+Boot resize attempts and allocation failures remain zero.
+Build repeats 0, 3, and 4 have small counter differences:
+
+| Repeat | Allocation delta | Free delta | Allocated byte delta | Freed byte delta |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 0 | 0 | -32 | -32 |
+| 3 | -4 | -1 | -15,976 | -3,712 |
+| 4 | 4 | 16 | 16,448 | 56,148 |
+
+All other full-run allocation fields match for every repeat.
+These build differences do not establish a gain or regression from advice dispatch.
+The earlier boot allocation fix remains effective; this change adds 34 bytes per boot.
+
+Commands for the full comparison:
+
+```sh
+zig build bench -Doptimize=ReleaseFast -Dmetrics=true
+zig build bench -Doptimize=ReleaseFast
+```
+
+The scale 4 and 16 runs use the phase-specific commands above.
+Raw full-run files are `/tmp/yuke-advice-fast-{before,after}-{metrics,latency}.jsonl`.
+Raw scaled after files are `/tmp/yuke-advice-fast-advice_<before|around|mixed|churn>-<4|16>-<metrics|latency>.jsonl`.
+
+The full test suite passes all 42 steps and 783 source tests.
+The new checks cover argument iteration, current-call around registration/removal, and retained next receivers.
+`mise run check-ts` and `zig build` pass. No Zig source changes are present.
+Further scan consolidation requires a separate decision about live mutation semantics.

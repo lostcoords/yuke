@@ -158,17 +158,18 @@ function applyAdvice(rec, self, args) {
   for (const a of list) if (a.where === "filterArgs") args = Reflect.apply(a.fn, self, [args]) || args;
   for (const a of list) if (a.where === "before") Reflect.apply(a.fn, self, args);
 
-  let call = /** @type {AdviceFunction} */ ((...as) => Reflect.apply(rec.original, self, as));
+  let call = /** @type {AdviceFunction | null} */ (null);
   for (let i = list.length - 1; i >= 0; i--) {
     const entry = /** @type {AdviceEntry} */ (list[i]);
     if (entry.where !== "around") continue;
 
-    const inner = call;
+    const inner = call || /** @type {AdviceFunction} */ ((...as) => Reflect.apply(rec.original, self, as));
     const fn = entry.fn;
     call = (...as) => Reflect.apply(fn, self, [inner, ...as]);
   }
 
-  let result = call(...args);
+  // Preserve the argument iterator that a filter can supply.
+  let result = call ? call(...args) : Reflect.apply(rec.original, self, [...args]);
 
   for (const a of list) {
     if (a.where !== "filterReturn") continue;

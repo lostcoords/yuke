@@ -132,3 +132,38 @@ for (const kind of ["toString", "constructor", "__proto__", "unknown"]) {
   try { advice.advise(obj, "f", kind, () => {}); } catch (e) { rejected = e instanceof TypeError; }
   check("advice-kind-" + kind, rejected && obj.f === original && advice.list(obj).length === 0);
 }
+
+// The original call preserves argument iteration and its receiver without around advice.
+{
+  const obj = { bias: 10, f(a, b) { return this.bias + a + b; } };
+  const args = [1, 2];
+  args[Symbol.iterator] = function* () { yield 3; yield 4; };
+  const off = advice.advise(obj, "f", "filterArgs", () => args);
+  check("advice-argument-iterator", obj.f(0, 0) === 17);
+  off();
+}
+
+// A before handler can change the around chain for the current call.
+{
+  const obj = { bias: 10, f(n) { return this.bias + n; } };
+  let enabled = true, offAround = null;
+  const offBefore = advice.advise(obj, "f", "before", () => {
+    if (enabled && !offAround) offAround = advice.advise(obj, "f", "around", next => next(4) * 2);
+    else if (!enabled && offAround) { offAround(); offAround = null; }
+  });
+  check("advice-add-around-during-call", obj.f(3) === 28);
+  enabled = false;
+  check("advice-remove-around-during-call", obj.f(3) === 13);
+  offBefore();
+}
+
+// Retained next callbacks keep their call receiver after disposal.
+{
+  const saved = [];
+  const obj = { name: "first", f() { return this.name; } };
+  const off = advice.advise(obj, "f", "around", next => { saved.push(next); return next(); });
+  obj.f();
+  obj.f.call({ name: "second" });
+  off();
+  check("advice-retained-next", saved[0]() === "first" && saved[1]() === "second");
+}
