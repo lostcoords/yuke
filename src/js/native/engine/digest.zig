@@ -7,6 +7,7 @@ const host_mod = @import("../../host.zig");
 const module = @import("../module.zig");
 const App = @import("../../../app/app.zig").App;
 const Sink = @import("../../../engine/sink.zig").Sink;
+const jobs = @import("../jobs.zig");
 
 const Host = host_mod.Host;
 const Context = quickjs.Context;
@@ -37,6 +38,8 @@ pub const Engine = struct {
     index_auth: std.ArrayListUnmanaged(AuthNote) = .empty,
     /// The notices since the last drain, as JSON. A fact name alone cannot carry the message.
     index_notices: std.ArrayListUnmanaged(NoticeNote) = .empty,
+    /// Every session removed since the last drain. The dirty set can overflow, but a removal must still stop the jobs of its session.
+    removed: std.ArrayListUnmanaged(SessionId) = .empty,
     /// Set when the dirty set overflowed; `drain` then reports an index change, so no lost event leaves a stale view.
     dirty_overflow: bool = false,
     /// The owner sleeps until this fires. An engine task sets it so a change reaches the next frame.
@@ -55,6 +58,7 @@ pub const Engine = struct {
         std.debug.assert(self.runtime == null); // detach must run before the context closes
         self.ctx.freeValue(self.sink);
         self.dirty.deinit(self.gpa);
+        self.removed.deinit(self.gpa);
         freeNotes(AuthNote, self.gpa, &self.index_auth);
         freeNotes(NoticeNote, self.gpa, &self.index_notices);
         self.gpa.destroy(self);
@@ -82,6 +86,7 @@ pub const Engine = struct {
     /// Mark the event's session dirty. This runs on an engine task, so it must not enter JavaScript.
     fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
         const self: *Engine = @ptrCast(@alignCast(ctx));
+        if (note.params == .session_removed_data) self.removed.append(self.gpa, note.params.session_removed_data.session_id) catch unreachable;
         const id = sessionOf(note) orelse {
             self.index_dirty = true;
             self.index_facts.insert(note.method);
@@ -96,7 +101,7 @@ pub const Engine = struct {
 
     /// Report whether `drain` has anything to deliver. The owner asks before it sleeps.
     pub fn hasPending(self: *const Engine) bool {
-        return self.index_dirty or self.dirty_overflow or self.dirty.count() != 0;
+        return self.index_dirty or self.dirty_overflow or self.dirty.count() != 0 or self.removed.items.len != 0;
     }
 
     /// Wake the owner so it drains this event on the next frame, not on the next keystroke.
@@ -271,6 +276,12 @@ pub fn drain(engine: *Engine, ctx: Context) bool {
     engine.index_auth = .empty;
     engine.index_notices = .empty;
     engine.dirty_overflow = false;
+
+    // A removed session ends its jobs before any sink runs, and with no sink at all.
+    var removed = engine.removed;
+    engine.removed = .empty;
+    defer removed.deinit(engine.gpa);
+    for (removed.items) |id| jobs.stopSession(Host.fromContext(ctx), id);
 
     // A dropped event must not leave a stale view, so an unset sink clears the batch and stops.
     if (ctx.isUndefined(engine.sink)) return false;

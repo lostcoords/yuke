@@ -134,6 +134,15 @@ pub fn stop(host: *Host, job: *Job) void {
     if (job.state == .running and !job.stopping and process.kill(host, job.proc.?)) job.stopping = true;
 }
 
+/// Stop every running job of a removed session.
+pub fn stopSession(host: *Host, session_id: SessionId) void {
+    std.debug.assert(host.phase == .open);
+    for (host.jobs.list.items) |job| {
+        const owner = job.session_id orelse continue;
+        if (std.mem.eql(u8, &owner.raw, &session_id.raw)) stop(host, job);
+    }
+}
+
 pub const Failure = struct { code: proto.enums.ErrorCode, message: []const u8 };
 
 /// Answer one `job.*` RPC method from the table and write its result JSON to `out`. `call.zig` cannot reach the host, so `rpc.zig` calls this.

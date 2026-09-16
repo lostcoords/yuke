@@ -6,6 +6,7 @@ const Host = @import("../js/host.zig").Host;
 const extensions_mod = @import("../js/extensions.zig");
 const App = @import("app.zig").App;
 const ai = @import("ai");
+const jobs_native = @import("../js/native/jobs.zig");
 
 const testing = std.testing;
 
@@ -172,6 +173,50 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
     try support.pumpUntilTrue(host, "globalThis.ended === 1");
     stream.flushNotifications();
     try testing.expect(std.mem.indexOf(u8, out.written(), "\"state\":\"stopped\",\"signal\":15,") != null);
+}
+
+test "a removed session stops its running jobs" {
+    var f: extensions_mod.Fixture = undefined;
+    try f.init("", rpc.boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var notifications = rpc.NotificationQueue{};
+    defer rpc.drainNotifications(testing.allocator, &notifications);
+    var stream: rpc.Rpc = .{ .app = &f.app, .out = &out.writer, .gpa = testing.allocator, .notifications = &notifications, .host = host };
+    defer stream.deinit();
+
+    rpc.serve(testing.allocator, &stream,
+        \\{"id":"c","method":"session.create","params":{"workspace_path":"/tmp/yuke-rpc-jobs","model":"test/model"}}
+    );
+    const Created = struct { result: struct { session: struct { id: []const u8 } } };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const created = try std.json.parseFromSliceLeaky(Created, a, out.written(), .{ .ignore_unknown_fields = true });
+    const id = created.result.session.id;
+
+    const source = try std.fmt.allocPrintSentinel(a,
+        \\import {{ start }} from "yuke:jobs";
+        \\import {{ events }} from "yuke:kernel";
+        \\globalThis.state = "";
+        \\events.on("jobs.changed", (job) => {{ state = job.state; }});
+        \\start("sleep 30", {{ root: "/tmp", sessionId: "{s}" }});
+        \\start("sleep 30", {{ root: "/tmp", sessionId: "{s}" }});
+    , .{ id, "01010101010101010101010101010101" }, 0);
+    try host.evalModule(source, "rpc-remove-jobs.js");
+    try support.pumpUntilTrue(host, "globalThis.state === \"running\"");
+
+    const remove = try std.fmt.allocPrint(a,
+        \\{{"id":"r","method":"session.remove","params":{{"session_id":"{s}"}}}}
+    , .{id});
+    rpc.serve(testing.allocator, &stream, remove);
+    try testing.expect(std.mem.indexOf(u8, out.written(), "{\"id\":\"r\",\"result\":{}}") != null);
+    try support.pumpUntilTrue(host, "globalThis.state === \"stopped\"");
+    // The job of another session keeps running.
+    try testing.expectEqual(jobs_native.State.running, host.jobs.find(2).?.state);
+    try testing.expectEqual(jobs_native.State.stopped, host.jobs.find(1).?.state);
 }
 
 const support = @import("../js/test_support.zig");
