@@ -433,7 +433,7 @@ fn commitRound(
     };
     // The committed content borrows the draft. The commit fold frees the draft, so own a copy first.
     const owned = try proto.dupe(arena, committed);
-    const seq = try message_store.appendCommittedMessage(engine.deps.db, arena, session_id.raw, engine.newId(), ended_at, owned);
+    const commit = try message_store.appendCommittedMessage(engine.deps.db, arena, session_id.raw, engine.newId(), ended_at, owned);
     const done: ?reports.Terminal = if (final) try reports.append(engine, arena, .{
         .session_id = session_id,
         .seq = 0,
@@ -449,15 +449,13 @@ fn commitRound(
     if (final) slot.phase = .terminalized;
 
     const rt = engine.sessions.get(session_id) orelse unreachable;
-    session_events.emitDurable(engine, rt, .{ .method = .@"message.committed", .params = .{
-        .message_committed_data = .{ .session_id = session_id, .seq = seq, .message = owned },
-    } });
+    session_events.emitCommitted(engine, rt, commit);
     session_events.publishUserCommits(engine, rt, inputs);
     if (inputs.len == 0) session_events.announceSummary(engine, session_id);
     if (!final) session_events.announceActivity(engine, rt);
     if (done) |terminal_result| {
         session_events.emitDurable(engine, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = terminal_result.done } });
-        if (terminal_result.notice) |notice| session_events.emitDurable(engine, rt, .{ .method = .@"message.committed", .params = .{ .message_committed_data = notice } });
+        if (terminal_result.notice) |notice| session_events.emitCommitted(engine, rt, notice);
         if (terminal_result.report) |report| reports.publishReport(engine, report, true);
     }
 }
@@ -486,7 +484,7 @@ pub fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, 
 
     const rt = engine.sessions.get(session_id) orelse unreachable;
     session_events.emitDurable(engine, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = done.done } });
-    if (done.notice) |notice| session_events.emitDurable(engine, rt, .{ .method = .@"message.committed", .params = .{ .message_committed_data = notice } });
+    if (done.notice) |notice| session_events.emitCommitted(engine, rt, notice);
     if (done.report) |report| reports.publishReport(engine, report, true);
 }
 

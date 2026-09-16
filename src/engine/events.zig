@@ -176,6 +176,7 @@ pub fn residentActivity(engine: *Engine, arena: std.mem.Allocator, rt: *Session)
 
 /// Fold a durable engine event into the session, then publish the same value.
 pub fn emitDurable(engine: *Engine, rt: *Session, note: proto.rpc.Notification) void {
+    std.debug.assert(note.method != .@"message.committed");
     // A durable event can move the committed set, so the gauge is re-read on the next activity.
     rt.context_usage = null;
     // The engine produced this event against its own engine, so a rejection here is a bug.
@@ -184,12 +185,17 @@ pub fn emitDurable(engine: *Engine, rt: *Session, note: proto.rpc.Notification) 
     engine.sinks.emit(note);
 }
 
+/// Fold the known stored size and publish only the public event data.
+pub fn emitCommitted(engine: *Engine, rt: *Session, commit: message_store.Commit) void {
+    rt.context_usage = null;
+    rt.commit(commit.data, commit.bytes) catch |err|
+        std.debug.panic("cannot fold the committed message: {t}", .{err});
+    engine.sinks.emit(.{ .method = .@"message.committed", .params = .{ .message_committed_data = commit.data } });
+}
+
 /// Fold and publish committed user messages, then announce the moved summary.
-pub fn publishUserCommits(engine: *Engine, rt: *Session, commits: []const proto.message.MessageCommittedData) void {
-    for (commits) |commit| emitDurable(engine, rt, .{
-        .method = .@"message.committed",
-        .params = .{ .message_committed_data = commit },
-    });
+pub fn publishUserCommits(engine: *Engine, rt: *Session, commits: []const message_store.Commit) void {
+    for (commits) |commit| emitCommitted(engine, rt, commit);
     if (commits.len > 0) announceSummary(engine, rt.id);
 }
 

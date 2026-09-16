@@ -242,7 +242,7 @@ pub const Session = struct {
             .message_part_finalized_data => |d| self.onFinalized(d),
             .tool_state_changed_data => |d| self.onToolState(d),
             .message_discarded_data => |d| self.onDiscarded(d),
-            .message_committed_data => |d| self.onCommitted(d),
+            .message_committed_data => |d| self.commit(d, try transcriptmod.messageBytes(d.message)),
             .input_queued_data => |d| self.onQueued(d),
             .input_canceled_data => |d| self.onCanceled(d),
             .transcript_truncated_data => |d| self.onTruncated(d),
@@ -309,10 +309,12 @@ pub const Session = struct {
         self.raiseFinalized(d.message_id);
     }
 
-    fn onCommitted(self: *Session, d: message.MessageCommittedData) Error!void {
+    pub fn commit(self: *Session, d: message.MessageCommittedData, bytes: usize) Error!void {
+        std.debug.assert(std.meta.eql(d.session_id, self.id));
+        std.debug.assert(bytes > 0);
         // The engine commits ids in order, which keeps the transcript oldest-first for the trim.
         std.debug.assert(d.message.id() > self.finalized_message_id);
-        try self.transcript.append(d.message); // cache before the draft or queue mutates, so an OOM is clean
+        try self.transcript.appendSized(d.message, bytes); // cache before the draft or queue mutates, so an OOM is clean
         switch (d.message) {
             .user => |u| self.queueRetire(u.input_id),
             .assistant => |a| if (self.draft) |*dr| {

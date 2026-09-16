@@ -75,7 +75,7 @@ The benchmark harness does not cover JSONL dispatch, so this change has no measu
 3. Exact panel and native-setter duplicates: consolidated.
 4. One child-page policy: implemented with explicit failure on incomplete results.
 5. Advice dispatch: measured; no-around wrapper removed with contract checks.
-6. Commit serialization: baseline measured; optimization awaits discussion. Large agent-tree refreshes: benchmark pending.
+6. Commit serialization: stored size reused and measured. Large agent-tree refreshes: benchmark pending.
 
 ## Transcript and boot performance
 
@@ -89,7 +89,8 @@ The [evidence report](transcript-performance-evidence.md) records the tradeoffs,
 ## Performance next
 
 - The [advice report](advice-dispatch-baseline.md) records the fast path and its measured costs.
-- Review the [commit baseline](commit-serialization-baseline.md), then carry known message sizes and audit clone lifetimes.
+- Stored message sizes now avoid a second serialization; the [evidence](commit-size-performance.md) records the result.
+- Examine temporary JSON buffer growth next; preserve the current clone lifetimes until a separate review.
 - Measure large agent trees and avoid full-tree reads for activity-only changes.
 - Audit paint-only invalidation and selection allocation costs.
 

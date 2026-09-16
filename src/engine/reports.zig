@@ -12,7 +12,7 @@ pub const max_output_bytes = 64 * 1024;
 pub const Terminal = struct {
     done: proto.run.RunDoneData,
     report: ?proto.input.InputQueuedData = null,
-    notice: ?proto.message.MessageCommittedData = null,
+    notice: ?store.message.Commit = null,
 };
 
 /// Lower limits preserve old reservations and refuse new work until space returns.
@@ -61,8 +61,7 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
             .content = &.{.{ .text = .{ .text = try std.fmt.allocPrint(arena, "The previous engine stopped before run {d} ended. Its committed output remains in the transcript. Tool calls may have produced side effects before the stop.", .{data.run_id}) } }},
             .time = .{ .created_at_ms = ended },
         } };
-        const seq = try store.message.appendCommittedMessage(db, arena, data.session_id.raw, engine.newId(), ended, message);
-        result.notice = .{ .session_id = data.session_id, .seq = seq, .message = message };
+        result.notice = try store.message.appendCommittedMessage(db, arena, data.session_id.raw, engine.newId(), ended, message);
     }
     return result;
 }

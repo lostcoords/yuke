@@ -233,7 +233,7 @@ fn repair(self: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId) !voi
     }
     if (done) |data| {
         self.sinks.emit(.{ .method = .@"run.done", .params = .{ .run_done_data = data.done } });
-        if (data.notice) |notice| self.sinks.emit(.{ .method = .@"message.committed", .params = .{ .message_committed_data = notice } });
+        if (data.notice) |notice| self.sinks.emit(.{ .method = .@"message.committed", .params = .{ .message_committed_data = notice.data } });
         if (data.report) |report| reports.publishReport(self, report, false);
         session_events.announceSummary(self, id);
     }

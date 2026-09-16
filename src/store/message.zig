@@ -36,6 +36,12 @@ const Meta = struct {
     add_cache_write: u64,
 };
 
+/// The event borrows the input message; bytes is the exact stored JSON size.
+pub const Commit = struct {
+    data: proto.message.MessageCommittedData,
+    bytes: usize,
+};
+
 /// Append a committed message, store its body and metadata, and advance the session summary.
 /// Run inside a write transaction. The caller mints event_id.
 pub fn appendCommittedMessage(
@@ -45,7 +51,7 @@ pub fn appendCommittedMessage(
     event_id: [16]u8,
     committed_at_ms: u64,
     message: proto.message.Message,
-) !u64 {
+) !Commit {
     std.debug.assert(sql.inTransaction(db.conn)); // The event and projection must commit together.
     const payload = try std.json.Stringify.valueAlloc(arena, message, .{ .emit_null_optional_fields = false });
     const seq = try event.append(db, arena, session_id, event_id, committed_at_ms, "message.committed", payload);
@@ -87,7 +93,7 @@ pub fn appendCommittedMessage(
         .add_cache_write = m.add_cache_write,
         .updated_at_ms = committed_at_ms,
     });
-    return seq;
+    return .{ .data = .{ .session_id = .bytes(session_id), .seq = seq, .message = message }, .bytes = payload.len };
 }
 
 fn imagesOf(content: []const proto.content.ContentPart) u64 {
@@ -278,7 +284,7 @@ test "a committed user then assistant message advances the summary" {
 
     const user: proto.message.Message = .{ .user = .{
         .id = 1,
-        .content = &.{},
+        .content = &.{.{ .text = .{ .text = "世界 \"quoted\"\n" } }},
         .input_id = 1,
         .time = .{ .created_at_ms = 150 },
     } };
@@ -295,12 +301,28 @@ test "a committed user then assistant message advances the summary" {
     } };
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    try testing.expectEqual(@as(u64, 1), try appendCommittedMessage(&db, a, sid, [_]u8{1} ** 16, 150, user));
-    try testing.expectEqual(@as(u64, 2), try appendCommittedMessage(&db, a, sid, [_]u8{2} ** 16, 160, assistant));
+    const user_commit = try appendCommittedMessage(&db, a, sid, [_]u8{1} ** 16, 150, user);
+    const assistant_commit = try appendCommittedMessage(&db, a, sid, [_]u8{2} ** 16, 160, assistant);
+    try testing.expectEqual(@as(u64, 1), user_commit.data.seq);
+    try testing.expectEqual(@as(u64, 2), assistant_commit.data.seq);
     try db.conn.execNoArgs("COMMIT");
 
     try testing.expectEqual(@as(i64, 2), try scalar(&db, "SELECT count(*) FROM messages"));
     try testing.expectEqual(@as(i64, 1), try scalar(&db, "SELECT count(*) FROM messages WHERE role = 'assistant'"));
+
+    var stored = try tail(&db, sid, 2);
+    defer stored.deinit();
+    var resident = @import("../session/session.zig").Session.init(testing.allocator, .bytes(sid));
+    defer resident.deinit();
+    resident.transcript.max_bytes = user_commit.bytes + assistant_commit.bytes - 1;
+    for ([_]Commit{ user_commit, assistant_commit }) |item| {
+        try testing.expectEqual(try transcript.messageBytes(item.data.message), item.bytes);
+        try testing.expectEqual((try stored.next(a)).?.bytes, item.bytes);
+        try resident.commit(item.data, item.bytes);
+    }
+    try testing.expectEqual(assistant_commit.bytes, resident.transcript.total_bytes);
+    try testing.expect(resident.transcript.has_more);
+    try testing.expectEqual(assistant_commit.data.message.id(), resident.finalized_message_id);
 
     const snap = (try session.snapshot(&db, a, sid)).?;
     try testing.expectEqual(@as(u64, 2), snap.message_count);

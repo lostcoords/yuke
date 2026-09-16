@@ -381,12 +381,10 @@ fn commit(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, cut: Cut, s
         .tokens_after = cut.tokens_kept + context.summaryTokens(summary),
         .time = .{ .created_at_ms = now },
     } };
-    const seq = try database.message.appendCommittedMessage(engine.deps.db, arena, session_id.raw, engine.newId(), now, message);
+    const stored = try database.message.appendCommittedMessage(engine.deps.db, arena, session_id.raw, engine.newId(), now, message);
     try tx.commit();
 
-    session_events.emitDurable(engine, rt, .{ .method = .@"message.committed", .params = .{
-        .message_committed_data = .{ .session_id = session_id, .seq = seq, .message = message },
-    } });
+    session_events.emitCommitted(engine, rt, stored);
     session_events.announceSummary(engine, session_id); // the commit moved the message count
     return .{ .compacted = .{ .message_id = message_id } };
 }

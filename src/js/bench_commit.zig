@@ -70,10 +70,10 @@ pub fn step(self: *Commit, mode: Mode) !void {
             const owned = try proto.dupe(a, message);
             var tx = try self.db.begin();
             defer tx.deinit();
-            const seq = try store.message.appendCommittedMessage(&self.db, a, sid.raw, std.mem.toBytes(@as(u128, m.id)), 1, owned);
-            if (seq != self.steps + 1) return error.SequenceMismatch;
+            const commit = try store.message.appendCommittedMessage(&self.db, a, sid.raw, std.mem.toBytes(@as(u128, m.id)), 1, owned);
+            if (commit.data.seq != self.steps + 1) return error.SequenceMismatch;
             try tx.commit();
-            try self.resident.append(owned);
+            try self.resident.appendSized(commit.data.message, commit.bytes);
         },
     }
     self.steps += 1;

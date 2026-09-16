@@ -277,7 +277,7 @@ test "recovery preserves promoted steering and leaves later input pending" {
         defer tx.deinit();
         const messages = try run.consumeQueued(&f.db, f.resources.runtime.io(), a, sid);
         try tx.commit();
-        break :blk messages[0].message.user.input_id;
+        break :blk messages[0].data.message.user.input_id;
     };
     try queued(&f.db, a, sid);
     f.engine.close();
