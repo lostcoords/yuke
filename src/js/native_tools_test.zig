@@ -786,7 +786,7 @@ test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves it
     try support.expectString(host, "result", "ok");
 }
 
-test "the jobs status segment counts running jobs and leaves with its plugin" {
+test "the jobs status segment and the /jobs list show, refresh, and stop background jobs" {
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const host = support.createHostWith(rt.io(), "/tmp");
