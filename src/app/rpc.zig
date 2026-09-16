@@ -6,6 +6,7 @@ const app = @import("app.zig");
 const call = @import("call.zig");
 const extensions_mod = @import("../js/extensions.zig");
 const tools_table = @import("../js/tools.zig");
+const jobs_native = @import("../js/native/jobs.zig");
 const Host = extensions_mod.Host;
 const zio = @import("zio");
 
@@ -147,7 +148,7 @@ pub const Rpc = struct {
     }
 
     /// Queue one engine event without entering the owner or waiting on stdout.
-    fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
+    pub fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
         const self: *Rpc = @ptrCast(@alignCast(ctx));
         const owned = OwnedNotification.create(self.gpa, note) orelse {
             self.fail("out of memory while queueing a notification");
@@ -422,6 +423,10 @@ fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
         serveInteraction(arena, rpc, request);
         return;
     }
+    if (std.mem.eql(u8, request.method, "job.list") or std.mem.eql(u8, request.method, "job.stop") or std.mem.eql(u8, request.method, "job.read")) {
+        serveJob(arena, rpc, request);
+        return;
+    }
     // A hooked input waits on JavaScript, so it leaves the owner and answers later.
     const needs_gate = if (std.mem.eql(u8, request.method, "session.send_input")) true else if (std.mem.eql(u8, request.method, "session.create")) blk: {
         const params = std.json.parseFromSliceLeaky(proto.misc.CreateSession, arena, request.params, .{ .ignore_unknown_fields = true }) catch break :blk false;
@@ -448,6 +453,19 @@ fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
         return;
     }
     if (request.id) |id| {
+        rpc.writeResult(id, body.written()) catch |err| rpc.failWrite(err);
+    }
+}
+
+/// Answer a job method from the host job table. It reads at most 262144 bytes, so the owner loop stays short.
+fn serveJob(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
+    var body: std.Io.Writer.Allocating = .init(arena);
+    const failure = jobs_native.answer(arena, rpc.host, request.method, request.params, &body.writer);
+    rpc.flushNotifications();
+    const id = request.id orelse return;
+    if (failure) |f| {
+        rpc.writeFailure(id, f.code, f.message) catch |err| rpc.failWrite(err);
+    } else {
         rpc.writeResult(id, body.written()) catch |err| rpc.failWrite(err);
     }
 }

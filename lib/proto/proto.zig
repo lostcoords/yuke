@@ -15,6 +15,7 @@ pub const catalog = @import("catalog.zig");
 pub const activity = @import("activity.zig");
 pub const input = @import("input.zig");
 pub const interaction = @import("interaction.zig");
+pub const job = @import("job.zig");
 pub const hook = @import("hook.zig");
 pub const message = @import("message.zig");
 pub const skill = @import("skill.zig");

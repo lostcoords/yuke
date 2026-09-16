@@ -10,6 +10,7 @@ const enums = @import("enums.zig");
 const ids = @import("ids.zig");
 const input = @import("input.zig");
 const interaction = @import("interaction.zig");
+const job = @import("job.zig");
 const message = @import("message.zig");
 const misc = @import("misc.zig");
 const run = @import("run.zig");
@@ -50,6 +51,9 @@ pub const RequestParams = union(enum) {
     auth_cancel_login_params: auth.AuthCancelLoginParams,
     auth_remove_params: auth.AuthRemoveParams,
     interaction_respond_params: interaction.InteractionRespondParams,
+    job_list_params: job.JobListParams,
+    job_stop_params: job.JobStopParams,
+    job_read_params: job.JobReadParams,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         try stringifyPayload(self, jw);
@@ -79,6 +83,9 @@ pub const ResponseResult = union(enum) {
     catalog_reload_result: catalog.CatalogReloadResult,
     auth_list_result: auth.AuthListResult,
     auth_login_result: auth.AuthLoginResult,
+    job_list_result: job.JobListResult,
+    job_stop_result: job.JobStopResult,
+    job_read_result: job.JobReadResult,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         try stringifyPayload(self, jw);
@@ -109,6 +116,7 @@ pub const BroadcastData = union(enum) {
     input_queued_data: input.InputQueuedData,
     input_canceled_data: input.InputCanceledData,
     interaction_requested_data: interaction.InteractionRequestedData,
+    job_changed_data: job.JobChangedData,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         try stringifyPayload(self, jw);
@@ -153,6 +161,9 @@ pub const methods = [_]MethodSpec{
     .{ .name = .@"auth.cancel_login", .params = auth.AuthCancelLoginParams, .result = misc.Empty, .params_optional = false },
     .{ .name = .@"auth.remove", .params = auth.AuthRemoveParams, .result = misc.Empty, .params_optional = false },
     .{ .name = .@"interaction.respond", .params = interaction.InteractionRespondParams, .result = misc.Empty, .params_optional = false },
+    .{ .name = .@"job.list", .params = job.JobListParams, .result = job.JobListResult, .params_optional = true },
+    .{ .name = .@"job.stop", .params = job.JobStopParams, .result = job.JobStopResult, .params_optional = false },
+    .{ .name = .@"job.read", .params = job.JobReadParams, .result = job.JobReadResult, .params_optional = false },
 };
 
 /// Maps a broadcast name to its data type.
@@ -185,6 +196,7 @@ pub const broadcasts = [_]BroadcastSpec{
     .{ .name = .@"input.queued", .data = input.InputQueuedData },
     .{ .name = .@"input.canceled", .data = input.InputCanceledData },
     .{ .name = .@"interaction.requested", .data = interaction.InteractionRequestedData },
+    .{ .name = .@"job.changed", .data = job.JobChangedData },
 };
 
 fn validateTable(comptime Name: type, comptime table: anytype) void {

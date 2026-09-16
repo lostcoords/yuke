@@ -326,6 +326,57 @@ export interface InteractionValue {
   readonly value: string;
 }
 
+/** One background job. `exit_code` and `signal` stay null while it runs, and at most one of them is set after the end. */
+export interface Job {
+  readonly id: number;
+  readonly session_id?: SessionId;
+  readonly command: string;
+  readonly cwd: string;
+  readonly state: JobState;
+  readonly exit_code?: number;
+  readonly signal?: number;
+  readonly started_at_ms: number;
+  readonly ended_at_ms?: number;
+}
+
+/** This payload describes `job.changed`: a job started or ended. */
+export interface JobChangedData {
+  readonly job: Job;
+}
+
+/** These parameters filter the job list to one session. */
+export interface JobListParams {
+  readonly session_id?: SessionId;
+}
+
+/** The jobs, newest first. The host keeps every running job and the 32 jobs that ended last. */
+export interface JobListResult {
+  readonly jobs: ReadonlyArray<Job>;
+}
+
+/** These parameters read the job output from a byte offset. `max_bytes` is at most 262144. */
+export interface JobReadParams {
+  readonly id: number;
+  readonly offset: number;
+  readonly max_bytes: number;
+}
+
+/** The output text, cut at a character boundary. Read again from `next` to follow a running job; `size` is the log size now. */
+export interface JobReadResult {
+  readonly text: string;
+  readonly next: number;
+  readonly size: number;
+}
+
+export interface JobStopParams {
+  readonly id: number;
+}
+
+/** The job as it is when the stop starts. Its end arrives as `job.changed`. */
+export interface JobStopResult {
+  readonly job: Job;
+}
+
 /** This input names a skill. The engine loads the body and appends one user message. */
 export interface InputSkill {
   readonly name: string;
@@ -1088,6 +1139,8 @@ export type ErrorCode =
   | -31023
   /** unknown_interaction */
   | -31024
+  /** unknown_job */
+  | -31029
   /** config_conflict */
   | -31025
   /** setup_required */
@@ -1129,6 +1182,8 @@ export type BroadcastName =
   | "notice"
   /** An extension asks the connected frontend to interact with the user. */
   | "interaction.requested"
+  /** A background job started or ended. */
+  | "job.changed"
   /** The engine committed a message to a session transcript. */
   | "message.committed"
   /** A run started. */
@@ -1232,6 +1287,12 @@ export type MethodName =
   | "auth.remove"
   /** Answer one pending extension interaction. */
   | "interaction.respond"
+  /** List the background jobs, newest first. */
+  | "job.list"
+  /** Stop a running background job; the end arrives as `job.changed`. */
+  | "job.stop"
+  /** Read background job output from a byte offset. */
+  | "job.read"
 ;
 
 /** Notice severity level. */
@@ -1301,6 +1362,12 @@ export type ProviderState =
 export type ToolCancellationReason =
   | "setup_declined"
   | "setup_dismissed"
+;
+
+export type JobState =
+  | "running"
+  | "exited"
+  | "stopped"
 ;
 
 /** This type describes one part of a message's content. */
@@ -1459,6 +1526,9 @@ export type RequestParams =
   | AuthCancelLoginParams
   | AuthRemoveParams
   | InteractionRespondParams
+  | JobListParams
+  | JobStopParams
+  | JobReadParams
 ;
 
 /** This union carries server response results. */
@@ -1484,6 +1554,9 @@ export type ResponseResult =
   | CatalogReloadResult
   | AuthListResult
   | AuthLoginResult
+  | JobListResult
+  | JobStopResult
+  | JobReadResult
 ;
 
 /** This union carries server broadcast data. */
@@ -1510,6 +1583,7 @@ export type BroadcastData =
   | InputQueuedData
   | InputCanceledData
   | InteractionRequestedData
+  | JobChangedData
 ;
 
 /** This union carries an RPC response. */
@@ -1630,6 +1704,12 @@ export interface Methods {
   "auth.remove": { paramsType: [AuthRemoveParams]; returnType: Empty };
   /** Answer one pending extension interaction. */
   "interaction.respond": { paramsType: [InteractionRespondParams]; returnType: Empty };
+  /** List the background jobs, newest first. */
+  "job.list": { paramsType: [JobListParams?]; returnType: JobListResult };
+  /** Stop a running background job; the end arrives as `job.changed`. */
+  "job.stop": { paramsType: [JobStopParams]; returnType: JobStopResult };
+  /** Read background job output from a byte offset. */
+  "job.read": { paramsType: [JobReadParams]; returnType: JobReadResult };
 }
 
 export interface Broadcasts {
@@ -1677,6 +1757,8 @@ export interface Broadcasts {
   "input.canceled": InputCanceledData;
   /** An extension asks the connected frontend to interact with the user. */
   "interaction.requested": InteractionRequestedData;
+  /** A background job started or ended. */
+  "job.changed": JobChangedData;
 }
 
 }

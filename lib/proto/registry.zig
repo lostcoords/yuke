@@ -11,6 +11,7 @@ const enums = @import("enums.zig");
 const initialize = @import("initialize.zig");
 const input = @import("input.zig");
 const interaction = @import("interaction.zig");
+const job = @import("job.zig");
 const skill = @import("skill.zig");
 const message = @import("message.zig");
 const misc = @import("misc.zig");
@@ -80,6 +81,14 @@ pub const structs = [_]TypeEntry{
     .{ .name = "InteractionRespondParams", .ty = interaction.InteractionRespondParams },
     .{ .name = "InteractionConfirmed", .ty = interaction.InteractionConfirmed },
     .{ .name = "InteractionValue", .ty = interaction.InteractionValue },
+    .{ .name = "Job", .ty = job.Job },
+    .{ .name = "JobChangedData", .ty = job.JobChangedData },
+    .{ .name = "JobListParams", .ty = job.JobListParams },
+    .{ .name = "JobListResult", .ty = job.JobListResult },
+    .{ .name = "JobReadParams", .ty = job.JobReadParams },
+    .{ .name = "JobReadResult", .ty = job.JobReadResult },
+    .{ .name = "JobStopParams", .ty = job.JobStopParams },
+    .{ .name = "JobStopResult", .ty = job.JobStopResult },
     .{ .name = "InputSkill", .ty = input.InputSkill },
     .{ .name = "SkillInfo", .ty = skill.SkillInfo },
     .{ .name = "SkillLoadParams", .ty = skill.SkillLoadParams },
@@ -228,6 +237,7 @@ pub const string_enums = [_]EnumEntry{
     .{ .name = "ProviderProtocol", .ty = enums.ProviderProtocol },
     .{ .name = "ProviderState", .ty = enums.ProviderState },
     .{ .name = "ToolCancellationReason", .ty = tool.ToolCancellationReason },
+    .{ .name = "JobState", .ty = job.JobState },
 };
 
 pub const numeric_enums = [_]EnumEntry{

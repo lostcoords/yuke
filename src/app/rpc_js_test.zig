@@ -115,4 +115,63 @@ test "a pending input hook still accepts an interaction response" {
     try testing.expect(std.mem.indexOf(u8, out.written(), "\"id\":\"input\",\"result\"") != null);
 }
 
+test "RPC lists, reads, and stops a background job, and hears its start and its end" {
+    var f: extensions_mod.Fixture = undefined;
+    try f.init("", rpc.boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var notifications = rpc.NotificationQueue{};
+    defer rpc.drainNotifications(testing.allocator, &notifications);
+    var stream: rpc.Rpc = .{ .app = &f.app, .out = &out.writer, .gpa = testing.allocator, .notifications = &notifications, .host = host };
+    defer stream.deinit();
+    f.app.engine.sinks.add(.{ .ctx = @ptrCast(&stream), .on_event = rpc.Rpc.onEvent });
+    defer f.app.engine.sinks.remove(@ptrCast(&stream));
+
+    try host.evalModule(
+        \\import { start } from "yuke:jobs";
+        \\globalThis.started = 0;
+        \\start("echo hello; sleep 30", { root: "/tmp", sessionId: "01010101010101010101010101010101" }).then(() => { started = 1; });
+    , "rpc-job.js");
+    try support.pumpUntilTrue(host, "globalThis.started === 1");
+    stream.flushNotifications();
+    try testing.expect(std.mem.indexOf(u8, out.written(), "{\"method\":\"job.changed\",\"params\":{\"job\":{\"id\":1,\"session_id\":\"01010101010101010101010101010101\",\"command\":\"echo hello; sleep 30\",\"cwd\":\"/tmp\",\"state\":\"running\"") != null);
+
+    rpc.serve(testing.allocator, &stream,
+        \\{"id":"list","method":"job.list","params":{"session_id":"01010101010101010101010101010101"}}
+    );
+    try testing.expect(std.mem.indexOf(u8, out.written(), "{\"id\":\"list\",\"result\":{\"jobs\":[{\"id\":1,") != null);
+    rpc.serve(testing.allocator, &stream,
+        \\{"id":"other","method":"job.list","params":{"session_id":"02020202020202020202020202020202"}}
+    );
+    try testing.expect(std.mem.indexOf(u8, out.written(), "{\"id\":\"other\",\"result\":{\"jobs\":[]}}") != null);
+
+    // The shell writes before the read sees it, so the read retries until the line arrives.
+    for (0..100) |_| {
+        rpc.serve(testing.allocator, &stream,
+            \\{"id":"read","method":"job.read","params":{"id":1,"offset":0,"max_bytes":1024}}
+        );
+        if (std.mem.indexOf(u8, out.written(), "{\"id\":\"read\",\"result\":{\"text\":\"hello\\n\",\"next\":6,\"size\":6}}") != null) break;
+        try f.reactor.io().sleep(.fromMilliseconds(20), .awake);
+    } else return error.TestUnexpectedResult;
+    rpc.serve(testing.allocator, &stream,
+        \\{"id":"big","method":"job.read","params":{"id":1,"offset":0,"max_bytes":262145}}
+    );
+    try testing.expect(std.mem.endsWith(u8, out.written(), "{\"id\":\"big\",\"error\":{\"code\":-32602,\"message\":\"bad parameters\"}}\n"));
+    rpc.serve(testing.allocator, &stream,
+        \\{"id":"gone","method":"job.stop","params":{"id":9}}
+    );
+    try testing.expect(std.mem.endsWith(u8, out.written(), "{\"id\":\"gone\",\"error\":{\"code\":-31029,\"message\":\"unknown job\"}}\n"));
+
+    rpc.serve(testing.allocator, &stream,
+        \\{"id":"stop","method":"job.stop","params":{"id":1}}
+    );
+    try testing.expect(std.mem.indexOf(u8, out.written(), "{\"id\":\"stop\",\"result\":{\"job\":{\"id\":1,") != null);
+    try host.evalModule("import { events } from \"yuke:kernel\"; globalThis.ended = 0; events.on(\"jobs.changed\", (job) => { if (job.state === \"stopped\") ended = 1; });", "rpc-job-end.js");
+    try support.pumpUntilTrue(host, "globalThis.ended === 1");
+    stream.flushNotifications();
+    try testing.expect(std.mem.indexOf(u8, out.written(), "\"state\":\"stopped\",\"signal\":15,") != null);
+}
+
 const support = @import("../js/test_support.zig");

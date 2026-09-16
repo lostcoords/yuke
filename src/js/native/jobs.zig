@@ -34,8 +34,8 @@ pub const Job = struct {
     stopping: bool = false,
     code: ?u8 = null,
     signal: ?u8 = null,
-    started_at_ms: i64,
-    ended_at_ms: ?i64 = null,
+    started_at_ms: u64,
+    ended_at_ms: ?u64 = null,
     /// The end order, so the prune keeps the jobs that ended last.
     end_seq: u64 = 0,
     /// The live process id, or null after the end.
@@ -68,6 +68,7 @@ pub const Jobs = struct {
         job.proc = null;
         self.prune(host.gpa);
         std.debug.assert(self.find(job.id) == job);
+        emitChanged(host, job);
     }
 
     fn prune(self: *Jobs, gpa: std.mem.Allocator) void {
@@ -99,8 +100,75 @@ fn free(gpa: std.mem.Allocator, job: *Job) void {
     gpa.destroy(job);
 }
 
-fn nowMs(io: std.Io) i64 {
+fn nowMs(io: std.Io) u64 {
     return @intCast(std.Io.Timestamp.now(io, .real).toMilliseconds());
+}
+
+/// The wire view of a job. It borrows the record strings.
+pub fn wire(job: *const Job) proto.job.Job {
+    return .{
+        .id = job.id,
+        .session_id = job.session_id,
+        .command = job.command,
+        .cwd = job.cwd,
+        .state = switch (job.state) {
+            .running => .running,
+            .exited => .exited,
+            .stopped => .stopped,
+        },
+        .exit_code = job.code,
+        .signal = job.signal,
+        .started_at_ms = job.started_at_ms,
+        .ended_at_ms = job.ended_at_ms,
+    };
+}
+
+/// Tell every frontend that a job started or ended. The RPC sink copies the payload, and the digest ignores it.
+fn emitChanged(host: *Host, job: *const Job) void {
+    const runtime = host.engine.runtime orelse return;
+    runtime.engine.sinks.emit(.{ .method = .@"job.changed", .params = .{ .job_changed_data = .{ .job = wire(job) } } });
+}
+
+/// Stop a running job. A job reaped before the stop keeps its real exit, and the end arrives when the process settles.
+pub fn stop(host: *Host, job: *Job) void {
+    if (job.state == .running and !job.stopping and process.kill(host, job.proc.?)) job.stopping = true;
+}
+
+pub const Failure = struct { code: proto.enums.ErrorCode, message: []const u8 };
+
+/// Answer one `job.*` RPC method from the table and write its result JSON to `out`. `call.zig` cannot reach the host, so `rpc.zig` calls this.
+pub fn answer(a: std.mem.Allocator, host: *Host, method: []const u8, params: []const u8, out: *std.Io.Writer) ?Failure {
+    const bad: Failure = .{ .code = .bad_request, .message = "bad parameters" };
+    const unknown: Failure = .{ .code = .unknown_job, .message = "unknown job" };
+    const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+    if (std.mem.eql(u8, method, "job.list")) {
+        const p = if (std.mem.eql(u8, params, "null")) proto.job.JobListParams{} else std.json.parseFromSliceLeaky(proto.job.JobListParams, a, params, opts) catch return bad;
+        var jobs: std.ArrayList(proto.job.Job) = .empty;
+        const items = host.jobs.list.items;
+        for (0..items.len) |i| {
+            const job = items[items.len - 1 - i];
+            if (p.session_id) |id| if (job.session_id == null or !std.mem.eql(u8, &job.session_id.?.raw, &id.raw)) continue;
+            jobs.append(a, wire(job)) catch unreachable;
+        }
+        write(out, proto.job.JobListResult{ .jobs = jobs.items });
+    } else if (std.mem.eql(u8, method, "job.stop")) {
+        const p = std.json.parseFromSliceLeaky(proto.job.JobStopParams, a, params, opts) catch return bad;
+        const job = host.jobs.find(p.id) orelse return unknown;
+        stop(host, job);
+        write(out, proto.job.JobStopResult{ .job = wire(job) });
+    } else if (std.mem.eql(u8, method, "job.read")) {
+        const p = std.json.parseFromSliceLeaky(proto.job.JobReadParams, a, params, opts) catch return bad;
+        if (p.max_bytes == 0 or p.max_bytes > max_read_bytes or p.offset > proto.meta.constants.MAX_WIRE_INTEGER) return bad;
+        const job = host.jobs.find(p.id) orelse return unknown;
+        var local: LocalHost = .{ .io = host.io, .root = "/", .env = host.execution.env };
+        const got = local.readFrom(a, job.log, p.offset, p.max_bytes) catch return .{ .code = .internal, .message = "the host could not read the job log" };
+        write(out, proto.job.JobReadResult{ .text = got.text, .next = got.next, .size = got.size });
+    } else unreachable; // `rpc.zig` sends only `job.` methods here, and the protocol names exactly three.
+    return null;
+}
+
+fn write(out: *std.Io.Writer, value: anytype) void {
+    std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, out) catch unreachable;
 }
 
 pub fn install(host: *Host) void {
@@ -179,6 +247,7 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     };
     jobs.list.append(host.gpa, job) catch unreachable;
     job.proc = process.launch(host, program, quickjs.UNDEFINED, funcs, log, job).id;
+    emitChanged(host, job);
 
     const result = ctx.newObject();
     module.set(ctx, result, "job", toValue(ctx, job));
@@ -204,7 +273,7 @@ fn jsGet(ctx: Context, _: Value, args: []const Value) Value {
 fn jsStop(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const job = jobOf(ctx, args) orelse return quickjs.NULL;
-    if (host.phase == .open and job.state == .running and !job.stopping and process.kill(host, job.proc.?)) job.stopping = true;
+    if (host.phase == .open) stop(host, job);
     return toValue(ctx, job);
 }
 

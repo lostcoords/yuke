@@ -21,6 +21,8 @@ pub const BroadcastName = enum {
     notice,
     /// An extension asks the connected frontend to interact with the user.
     @"interaction.requested",
+    /// A background job started or ended.
+    @"job.changed",
     /// The engine committed a message to a session transcript.
     @"message.committed",
     /// A run started.
@@ -124,6 +126,12 @@ pub const MethodName = enum {
     @"auth.remove",
     /// Answer one pending extension interaction.
     @"interaction.respond",
+    /// List the background jobs, newest first.
+    @"job.list",
+    /// Stop a running background job; the end arrives as `job.changed`.
+    @"job.stop",
+    /// Read background job output from a byte offset.
+    @"job.read",
 };
 
 /// Notice severity level.
@@ -183,6 +191,7 @@ pub const ErrorCode = enum(i32) {
     not_implemented = -31022,
     unknown_provider = -31023,
     unknown_interaction = -31024,
+    unknown_job = -31029,
     config_conflict = -31025,
     setup_required = -31026,
     setup_canceled = -31027,

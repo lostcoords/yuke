@@ -253,6 +253,30 @@
       "result": "Empty",
       "direction": "clientToServer",
       "paramsOptional": false
+    },
+    {
+      "name": "job.list",
+      "doc": "List the background jobs, newest first.",
+      "params": "JobListParams",
+      "result": "JobListResult",
+      "direction": "clientToServer",
+      "paramsOptional": true
+    },
+    {
+      "name": "job.stop",
+      "doc": "Stop a running background job; the end arrives as `job.changed`.",
+      "params": "JobStopParams",
+      "result": "JobStopResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
+      "name": "job.read",
+      "doc": "Read background job output from a byte offset.",
+      "params": "JobReadParams",
+      "result": "JobReadResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
     }
   ],
   "broadcasts": [
@@ -386,6 +410,12 @@
       "name": "interaction.requested",
       "doc": "An extension asks the connected frontend to interact with the user.",
       "params": "InteractionRequestedData",
+      "direction": "serverToClient"
+    },
+    {
+      "name": "job.changed",
+      "doc": "A background job started or ended.",
+      "params": "JobChangedData",
       "direction": "serverToClient"
     }
   ],
@@ -1288,6 +1318,153 @@
         {
           "name": "value",
           "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Job",
+      "doc": "One background job. `exit_code` and `signal` stay null while it runs, and at most one of them is set after the end.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "u32",
+          "presence": "required"
+        },
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "optional"
+        },
+        {
+          "name": "command",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "cwd",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "state",
+          "type": "JobState",
+          "presence": "required"
+        },
+        {
+          "name": "exit_code",
+          "type": "u8",
+          "presence": "optional"
+        },
+        {
+          "name": "signal",
+          "type": "u8",
+          "presence": "optional"
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "ended_at_ms",
+          "type": "u64",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "JobChangedData",
+      "doc": "This payload describes `job.changed`: a job started or ended.",
+      "fields": [
+        {
+          "name": "job",
+          "type": "Job",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "JobListParams",
+      "doc": "These parameters filter the job list to one session.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "JobListResult",
+      "doc": "The jobs, newest first. The host keeps every running job and the 32 jobs that ended last.",
+      "fields": [
+        {
+          "name": "jobs",
+          "type": "[]Job",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "JobReadParams",
+      "doc": "These parameters read the job output from a byte offset. `max_bytes` is at most 262144.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "u32",
+          "presence": "required"
+        },
+        {
+          "name": "offset",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "max_bytes",
+          "type": "u32",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "JobReadResult",
+      "doc": "The output text, cut at a character boundary. Read again from `next` to follow a running job; `size` is the log size now.",
+      "fields": [
+        {
+          "name": "text",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "next",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "size",
+          "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "JobStopParams",
+      "fields": [
+        {
+          "name": "id",
+          "type": "u32",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "JobStopResult",
+      "doc": "The job as it is when the stop starts. Its end arrives as `job.changed`.",
+      "fields": [
+        {
+          "name": "job",
+          "type": "Job",
           "presence": "required"
         }
       ]
@@ -3828,6 +4005,15 @@
         },
         {
           "type": "InteractionRespondParams"
+        },
+        {
+          "type": "JobListParams"
+        },
+        {
+          "type": "JobStopParams"
+        },
+        {
+          "type": "JobReadParams"
         }
       ]
     },
@@ -3898,6 +4084,15 @@
         },
         {
           "type": "AuthLoginResult"
+        },
+        {
+          "type": "JobListResult"
+        },
+        {
+          "type": "JobStopResult"
+        },
+        {
+          "type": "JobReadResult"
         }
       ]
     },
@@ -3971,6 +4166,9 @@
         },
         {
           "type": "InteractionRequestedData"
+        },
+        {
+          "type": "JobChangedData"
         }
       ]
     },
@@ -4111,6 +4309,10 @@
           "wire": "-31024"
         },
         {
+          "name": "unknown_job",
+          "wire": "-31029"
+        },
+        {
           "name": "config_conflict",
           "wire": "-31025"
         },
@@ -4207,6 +4409,11 @@
           "name": "interaction.requested",
           "wire": "interaction.requested",
           "doc": "An extension asks the connected frontend to interact with the user."
+        },
+        {
+          "name": "job.changed",
+          "wire": "job.changed",
+          "doc": "A background job started or ended."
         },
         {
           "name": "message.committed",
@@ -4484,6 +4691,21 @@
           "name": "interaction.respond",
           "wire": "interaction.respond",
           "doc": "Answer one pending extension interaction."
+        },
+        {
+          "name": "job.list",
+          "wire": "job.list",
+          "doc": "List the background jobs, newest first."
+        },
+        {
+          "name": "job.stop",
+          "wire": "job.stop",
+          "doc": "Stop a running background job; the end arrives as `job.changed`."
+        },
+        {
+          "name": "job.read",
+          "wire": "job.read",
+          "doc": "Read background job output from a byte offset."
         }
       ]
     },
@@ -4676,6 +4898,24 @@
         {
           "name": "setup_dismissed",
           "wire": "setup_dismissed"
+        }
+      ]
+    },
+    {
+      "name": "JobState",
+      "numeric": false,
+      "values": [
+        {
+          "name": "running",
+          "wire": "running"
+        },
+        {
+          "name": "exited",
+          "wire": "exited"
+        },
+        {
+          "name": "stopped",
+          "wire": "stopped"
         }
       ]
     }

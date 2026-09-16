@@ -26,6 +26,8 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "SessionActivityChangedData", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionRemovedData", .field = "revision", .alias = "SessionRevision" },
     .{ .owner = "SessionRemovedData", .field = "session_id", .alias = "SessionId" },
+    .{ .owner = "Job", .field = "session_id", .alias = "SessionId" },
+    .{ .owner = "JobListParams", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "CatalogChangedData", .field = "catalog_rev", .alias = "CatalogRev" },
     .{ .owner = "MessageCommittedData", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "MessageCommittedData", .field = "seq", .alias = "Seq" },

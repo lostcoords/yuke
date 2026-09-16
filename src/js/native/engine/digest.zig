@@ -204,6 +204,7 @@ pub const Change = struct {
             .auth_changed_data,
             .notice,
             .interaction_requested_data,
+            .job_changed_data,
             .run_started_data,
             .run_done_data,
             .config_changed_data,
