@@ -29,9 +29,8 @@ pub const Timers = struct {
     entries: std.ArrayList(Timer) = .empty,
     last_id: u64 = 0,
     last_seq: u64 = 0,
-    /// The interval that runs its callback now, so a `clearInterval` inside the callback stops the re-arm.
-    firing: ?u64 = null,
-    firing_cleared: bool = false,
+    /// The timer whose callback runs now, so a clear inside the callback stops its re-arm and the limit still counts it.
+    firing: ?*Timer = null,
 
     /// Answer the first due time, or null with no timer.
     pub fn nextDeadline(self: *const Timers) ?std.Io.Timestamp {
@@ -64,7 +63,9 @@ pub const Timers = struct {
 
     /// Remove the timer with `id`. An unknown or fired id does nothing.
     fn clear(self: *Timers, ctx: Context, gpa: std.mem.Allocator, id: u64) void {
-        if (self.firing == id) self.firing_cleared = true;
+        if (self.firing) |timer| if (timer.id == id) {
+            timer.interval_ms = null;
+        };
         for (self.entries.items, 0..) |timer, i| if (timer.id == id) {
             _ = self.entries.orderedRemove(i);
             free(ctx, gpa, timer);
@@ -72,7 +73,7 @@ pub const Timers = struct {
         };
     }
 
-    /// Run the timers that were due and set before this call, and answer whether a callback threw. A callback that sets a zero delay runs in the next pump, so one pump never loops.
+    /// Run the timers that were due and set before this call, and answer whether a callback threw. A timer set in a callback waits for the next pump.
     pub fn fire(self: *Timers, host: *Host, now: std.Io.Timestamp) bool {
         std.debug.assert(host.phase == .open);
         std.debug.assert(self.firing == null);
@@ -81,9 +82,8 @@ pub const Timers = struct {
         while (self.entries.items.len > 0) {
             const first = self.entries.items[0];
             if (first.due.nanoseconds > now.nanoseconds or first.seq > last_seq) break;
-            const timer = self.entries.orderedRemove(0);
-            self.firing = timer.id;
-            self.firing_cleared = false;
+            var timer = self.entries.orderedRemove(0);
+            self.firing = &timer;
             host.enterSlice();
             const answer = host.ctx.call(timer.callback, quickjs.UNDEFINED, timer.args);
             if (host.ctx.isException(answer)) {
@@ -92,14 +92,13 @@ pub const Timers = struct {
             }
             host.ctx.freeValue(answer);
             self.firing = null;
-            if (timer.interval_ms) |ms| if (!self.firing_cleared) {
-                var again = timer;
+            if (timer.interval_ms) |ms| {
                 self.last_seq += 1;
-                again.seq = self.last_seq;
-                again.due = now.addDuration(.fromMilliseconds(@intCast(ms)));
-                self.insert(host.gpa, again);
+                timer.seq = self.last_seq;
+                timer.due = now.addDuration(.fromMilliseconds(@intCast(ms)));
+                self.insert(host.gpa, timer);
                 continue;
-            };
+            }
             free(host.ctx, host.gpa, timer);
         }
         return faulted;
@@ -138,7 +137,9 @@ fn set(ctx: Context, args: []const Value, repeat: bool) Value {
     const host = Host.fromContext(ctx);
     if (host.phase != .open) return ctx.throwTypeError("the host is closed");
     if (args.len == 0 or !ctx.isFunction(args[0])) return ctx.throwTypeError("the timer callback must be a function");
-    if (host.timers.entries.items.len >= max_timers) return ctx.throwRangeError("the host holds 4096 timers");
+    // A firing interval left the table but re-arms after its callback, so it still counts.
+    const firing: usize = if (host.timers.firing) |timer| @intFromBool(timer.interval_ms != null) else 0;
+    if (host.timers.entries.items.len + firing >= max_timers) return ctx.throwRangeError("the host holds 4096 timers");
     const delay_ms = delayOf(ctx, if (args.len > 1) args[1] else quickjs.UNDEFINED) orelse return ctx.throw(ctx.getException());
 
     const extra = if (args.len > 2) args[2..] else &.{};
@@ -162,10 +163,9 @@ fn set(ctx: Context, args: []const Value, repeat: bool) Value {
 
 /// Convert a delay as the web does: a missing, non-finite, or negative delay is zero, and a fraction rounds down. Null means a conversion threw.
 fn delayOf(ctx: Context, value: Value) ?u64 {
-    if (ctx.isUndefined(value)) return 0;
     const ms = ctx.toFloat64(value) catch return null;
     if (!std.math.isFinite(ms) or ms <= 0) return 0;
-    return @min(@as(u64, @intFromFloat(@floor(@min(ms, @as(f64, @floatFromInt(max_delay_ms)))))), max_delay_ms);
+    return @intFromFloat(@floor(@min(ms, @as(f64, @floatFromInt(max_delay_ms)))));
 }
 
 fn jsClear(ctx: Context, _: Value, args: []const Value) Value {
@@ -180,86 +180,54 @@ fn jsClear(ctx: Context, _: Value, args: []const Value) Value {
 const testing = std.testing;
 const support = @import("test_support.zig");
 
-test "timers fire in due order, keep creation order, pass their arguments, and never fire inside the call" {
+test "timers fire in order on a later pump, a zero delay set in a callback waits a pump, and a clear stops a timer" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try host.eval(
         \\globalThis.log = [];
-        \\setTimeout((a, b) => log.push("late" + a + b), 30, 1, 2);
-        \\setTimeout(() => log.push("first"), 0);
+        \\setTimeout(() => log.push("late"), 60000);
+        \\setTimeout((a, b) => log.push("first" + a + b), 0, 1, 2);
         \\setTimeout(() => log.push("second"));
-        \\setTimeout(() => log.push("third"), -5);
-        \\globalThis.sync = log.length;
-    , "order.js");
-    try testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.sync"));
-    try host.pump();
-    try support.expectString(host, "log.join()", "first,second,third");
-    try support.pumpUntilTrue(host, "log.length === 4");
-    try support.expectString(host, "log.join()", "first,second,third,late12");
-}
-
-test "a zero-delay timer set inside a callback waits for the next pump, and clearTimeout stops a timer" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try host.eval(
-        \\globalThis.count = 0;
-        \\const again = () => { count++; setTimeout(again, 0); };
+        \\const again = () => { log.push("again"); setTimeout(again, -5); };
         \\setTimeout(again, 0);
-        \\const gone = setTimeout(() => { count = 1000; }, 0);
-        \\clearTimeout(gone);
-        \\clearTimeout(gone);
+        \\clearTimeout(setTimeout(() => log.push("cleared"), 0));
         \\clearTimeout("x");
-    , "loop.js");
+        \\new Promise((resolve) => setTimeout(resolve, 0)).then(() => log.push("reaction"));
+        \\log.push("sync");
+    , "order.js");
     try host.pump();
-    try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.count"));
+    try support.expectString(host, "log.join()", "sync,first12,second,again,reaction");
     try host.pump();
-    try testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.count"));
+    try support.expectString(host, "log.join()", "sync,first12,second,again,reaction,again");
 }
 
-test "setInterval repeats until clearInterval, also from inside its own callback" {
+test "setInterval repeats until clearInterval from inside its own callback" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try host.eval(
-        \\globalThis.ticks = 0;
-        \\const id = setInterval(() => { if (++ticks === 3) clearInterval(id); }, 1);
-    , "interval.js");
+    try host.eval("globalThis.ticks = 0; const id = setInterval(() => { if (++ticks === 3) clearInterval(id); }, 1);", "interval.js");
     try support.pumpUntilTrue(host, "ticks === 3");
     try testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
-}
-
-test "a promise that a timer resolves runs its reactions in the same pump" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try host.eval(
-        \\globalThis.done = 0;
-        \\new Promise(resolve => setTimeout(resolve, 0)).then(() => { done = 1; });
-    , "promise.js");
-    try host.pump();
-    try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.done"));
 }
 
 test "a timer callback that throws faults the pump, and later timers still run" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try host.eval(
-        \\globalThis.after = 0;
-        \\setTimeout(() => { throw new Error("boom"); }, 0);
-        \\setTimeout(() => { after = 1; }, 0);
-    , "throw.js");
+    try host.eval("globalThis.after = 0; setTimeout(() => { throw new Error(\"boom\"); }, 0); setTimeout(() => { after = 1; }, 0);", "throw.js");
     try testing.expectError(error.JavaScriptFault, host.pump());
     try testing.expect(std.mem.indexOf(u8, host.faultText(), "boom") != null);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.after"));
 }
 
-test "timer arguments are checked and the table has a limit" {
+test "timer arguments are checked, and a firing interval counts toward the limit" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try host.eval(
         \\globalThis.errors = [];
         \\try { setTimeout(42, 0); } catch (e) { errors.push(e.name); }
-        \\for (let i = 0; i < 4096; i++) setTimeout(() => {}, 100000);
-        \\try { setTimeout(() => {}, 0); } catch (e) { errors.push(e.name); }
+        \\for (let i = 0; i < 4095; i++) setTimeout(() => {}, 100000);
+        \\const id = setInterval(() => { try { setTimeout(() => {}, 0); } catch (e) { errors.push(e.name); clearInterval(id); } }, 0);
     , "limit.js");
+    try host.pump();
     try support.expectString(host, "errors.join()", "TypeError,RangeError");
 }
 

@@ -27,9 +27,6 @@ declare module "yuke:exec" {
     log: string | null;
   }
 
-  /**
-   * Runs one shell line in a fresh shell. Nothing carries to the next call, and stdin is closed.
-   * The call ends the process group when the shell exits or the deadline passes; a process that calls `setsid` leaves the group.
-   */
+  /** Runs one shell line with stdin closed, and ends its process group at shell exit or the deadline. */
   export function exec(command: string, options?: ExecOptions, workspaceRoot?: string): Promise<ExecResult>;
 }

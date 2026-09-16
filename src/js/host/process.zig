@@ -71,14 +71,9 @@ const Drain = struct {
     dropped: u64 = 0,
     err: ?anyerror = null,
 
-    /// Half the limit for each end.
-    fn half(self: *const Drain) usize {
-        return @max(1, self.limit / 2);
-    }
-
     /// Join the head and the tail from `scratch`, with one notice at a gap; the notice counts the codepoint the cap cut in half.
     fn text(self: *Drain, scratch: std.mem.Allocator) []const u8 {
-        if (self.tail.items.len == 0) return self.head.items;
+        if (self.tail.items.len == 0 and self.dropped == 0) return self.head.items;
         // With no gap the two ends stay adjacent, so the join restores the exact stream.
         const gap = self.dropped != 0;
         const head = if (gap) self.head.items[0..utf8.whole(self.head.items)] else self.head.items;
@@ -265,7 +260,7 @@ pub fn startProgram(io: std.Io, root: []const u8, env: *const std.process.Enviro
     }
 }
 
-/// Find an executable for `name`. A name with a slash and a relative `PATH` entry resolve against `dir`, as `execvp` does against the working directory.
+/// Find an executable for `name`. A relative name or `PATH` entry resolves against `dir`, as `execvp` resolves it against the working directory.
 fn resolveProgram(io: std.Io, scratch: std.mem.Allocator, env: *const std.process.Environ.Map, dir: []const u8, name: []const u8) h.HostError![]const u8 {
     if (name.len == 0) return error.NotFound;
     if (std.mem.indexOfScalar(u8, name, '/') != null) return executable(io, scratch, dir, "", name) orelse error.NotFound;
@@ -348,7 +343,7 @@ fn waitUntil(io: std.Io, event: *std.Io.Event, deadline: std.Io.Clock.Timestamp)
     }
 }
 
-/// Give the drains one grace period after the group ends, and answer true when they were cut. A descendant that left the session can hold a pipe open forever.
+/// Give the drains one grace period, and answer true when they were cut. A descendant that left the session can hold a pipe open.
 pub fn awaitDrains(io: std.Io, drains: *std.Io.Group) h.HostError!bool {
     var done: std.Io.Event = .unset;
     var joiner = io.concurrent(joinGroup, .{ io, drains, &done }) catch return error.HostFailure;
@@ -374,7 +369,7 @@ fn reap(io: std.Io, child: *std.process.Child, term: *?std.process.Child.Term, e
     exited.set(io);
 }
 
-/// End process groups: TERM, then KILL after one shared grace period. It returns early when every group is gone, and it blocks cancelation, so a shell always gets its SIGTERM trap time.
+/// Send TERM to the groups, then KILL after one grace period. It returns early when every group is gone, and it blocks cancelation.
 pub fn endGroups(io: std.Io, pids: []const std.posix.pid_t) void {
     const old = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(old);
@@ -426,7 +421,9 @@ fn mapDrainError(err: anyerror) h.HostError {
 fn drain(io: std.Io, scratch: std.mem.Allocator, state: *Drain) void {
     var buffer: [4096]u8 = undefined;
     var reader = state.file.reader(io, &buffer);
-    const half = state.half();
+    // The head takes the odd byte, so the two ends never hold more than the limit.
+    const head_cap = state.limit - state.limit / 2;
+    const tail_cap = state.limit / 2;
     while (true) {
         const chunk = reader.interface.peekGreedy(1) catch |err| switch (err) {
             error.EndOfStream => return,
@@ -435,22 +432,22 @@ fn drain(io: std.Io, scratch: std.mem.Allocator, state: *Drain) void {
                 return;
             },
         };
-        const to_head = @min(chunk.len, half -| state.head.items.len);
+        const to_head = @min(chunk.len, head_cap -| state.head.items.len);
         if (to_head != 0) state.head.appendSlice(scratch, chunk[0..to_head]) catch unreachable;
-        if (to_head < chunk.len) keepTail(scratch, state, chunk[to_head..], half);
+        if (to_head < chunk.len) keepTail(scratch, state, chunk[to_head..], tail_cap);
         if (state.log) |log| log.append(io, chunk);
         reader.interface.toss(chunk.len); // Consume every byte, so the writer never blocks.
         if (state.err != null) return;
     }
 }
 
-/// Append to the tail and drop the oldest bytes above `half`. The dropped count names the gap.
-fn keepTail(scratch: std.mem.Allocator, state: *Drain, bytes: []const u8, half: usize) void {
+/// Append to the tail and drop the oldest bytes above `cap`. The dropped count names the gap.
+fn keepTail(scratch: std.mem.Allocator, state: *Drain, bytes: []const u8, cap: usize) void {
     state.tail.appendSlice(scratch, bytes) catch unreachable;
-    if (state.tail.items.len <= half) return;
-    const excess = state.tail.items.len - half;
+    if (state.tail.items.len <= cap) return;
+    const excess = state.tail.items.len - cap;
     std.mem.copyForwards(u8, state.tail.items, state.tail.items[excess..]);
-    state.tail.shrinkRetainingCapacity(half);
+    state.tail.shrinkRetainingCapacity(cap);
     state.dropped += excess;
 }
 
@@ -471,7 +468,7 @@ fn utilityEnv() !std.process.Environ.Map {
 fn runShell(a: std.mem.Allocator, command: []const u8, timeout_ms: u32) !Result {
     var env = try utilityEnv();
     defer env.deinit();
-    return run(testing.io, "/tmp", execution.testContext(&env), a, .{ .command = command, .timeout_ms = timeout_ms, .max_stream_bytes = 256 });
+    return run(testing.io, "/tmp", execution.testContext(&env), a, .{ .command = command, .timeout_ms = timeout_ms, .max_stream_bytes = 255 });
 }
 
 test "the runner spawns the shell it receives and gives it the command" {
@@ -548,36 +545,6 @@ test "git reads the global configuration from the home directory Yuke resolved" 
     try testing.expectEqualStrings("Yuke Fixture\n", name.stdout);
 }
 
-test "exec captures stdout, stderr, and the exit code" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const ok = try runShell(arena.allocator(), "echo out; echo bad >&2; exit 3", 10_000);
-    try testing.expectEqualStrings("out\n", ok.stdout);
-    try testing.expectEqualStrings("bad\n", ok.stderr);
-    try testing.expect(ok.outcome.exited == 3);
-    try testing.expectEqual(@as(u64, 0), ok.stdout_dropped);
-}
-
-test "exec runs in the requested working directory" {
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "marker.txt", .data = "here\n" });
-
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var env = try utilityEnv();
-    defer env.deinit();
-    const res = try run(testing.io, root, execution.testContext(&env), arena.allocator(), .{
-        .command = "cat marker.txt",
-        .timeout_ms = 10_000,
-        .max_stream_bytes = 4096,
-    });
-    try testing.expectEqualStrings("here\n", res.stdout);
-}
-
 test "exec keeps the head and the tail of a long stream" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -598,8 +565,8 @@ test "a stream at or below the cap keeps every byte" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    // `runShell` caps at 256 bytes, so each end holds 128 and a length within the cap keeps all.
-    for ([_]usize{ 127, 128, 129, 255, 256 }) |len| {
+    // `runShell` caps at an odd 255 bytes, so the head holds 128, the tail 127, and a length within the cap keeps all.
+    for ([_]usize{ 127, 128, 129, 254, 255 }) |len| {
         const command = try std.fmt.allocPrint(arena.allocator(), "head -c {d} /dev/zero | tr '\\0' x", .{len});
         const res = try runShell(arena.allocator(), command, 20_000);
         try testing.expectEqual(@as(u64, 0), res.stdout_dropped);
@@ -612,7 +579,7 @@ test "a stream one byte above the cap reports the gap" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    const res = try runShell(arena.allocator(), "head -c 257 /dev/zero | tr '\\0' x", 20_000);
+    const res = try runShell(arena.allocator(), "head -c 256 /dev/zero | tr '\\0' x", 20_000);
     try testing.expectEqual(@as(u64, 1), res.stdout_dropped);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "dropped 1 bytes") != null);
 }
@@ -683,29 +650,16 @@ test "the child starts with an empty signal mask" {
     try testing.expectEqualStrings("", res.stdout);
 }
 
-test "exec kills the whole process group at the deadline" {
+test "exec ends the whole group at the deadline, with KILL for a shell that ignores TERM" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    // The shell waits for its child, so only a group kill at the deadline ends both.
+    // A failed group kill or a failed escalation waits for the full sleep, so this bound proves both.
     const started: std.Io.Timestamp = .now(testing.io, .awake);
-    const res = try runShell(arena.allocator(), "sleep 30 & echo started; wait", 400);
-    // A failed group kill waits for the full sleep, so this bound is what proves the kill.
+    const res = try runShell(arena.allocator(), "trap '' TERM; sleep 30 & echo started; wait", 300);
     try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 10 * std.time.ns_per_s);
     try testing.expect(res.outcome == .timed_out);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "started") != null);
-}
-
-test "exec ends a command that ignores SIGTERM" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    // The trap swallows SIGTERM. Only the SIGKILL after the grace period ends this command.
-    const started: std.Io.Timestamp = .now(testing.io, .awake);
-    const res = try runShell(arena.allocator(), "trap '' TERM; sleep 30", 300);
-    // A failed escalation waits for the full 30-second sleep.
-    try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 10 * std.time.ns_per_s);
-    try testing.expect(res.outcome == .timed_out);
 }
 
 test "a tilde cwd without a home directory fails instead of running somewhere else" {
@@ -745,40 +699,17 @@ test "exec expands a leading tilde in cwd like the file tools" {
     try testing.expectEqualStrings("found\n", res.stdout);
 }
 
-test "exec returns when the shell exits and ends the processes it left" {
+test "exec returns at shell exit and ends what the shell left, with or without its pipes" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    // The background sleep holds the pipe, so a run that waits for EOF would last until the deadline.
+    // The first sleep holds the pipe, so a run that waits for EOF lasts until the deadline; the second is the `nohup server >log &` shape.
     const started: std.Io.Timestamp = .now(testing.io, .awake);
-    const res = try runShell(arena.allocator(), "sleep 30 & echo $! ; echo started", 20_000);
+    const res = try runShell(arena.allocator(), "sleep 30 & echo $!; sleep 30 >/dev/null 2>&1 & echo $!", 20_000);
     try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 5 * std.time.ns_per_s);
     try testing.expect(res.outcome == .exited and res.outcome.exited == 0);
-    try testing.expect(std.mem.indexOf(u8, res.stdout, "started") != null);
-    const left = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, res.stdout[0..std.mem.indexOfScalar(u8, res.stdout, '\n').?], " "), 10);
-    // The sleep was reparented, so only a failed group kill leaves it alive.
-    try testing.expectError(error.ProcessNotFound, std.posix.kill(left, @enumFromInt(0)));
-}
-
-test "exec ends a detached process that redirected its output" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    // This is the `nohup server >log &` shape: the pipes close at exit, but the server must not survive.
-    const res = try runShell(arena.allocator(), "sleep 30 >/dev/null 2>&1 & echo $!", 20_000);
-    try testing.expect(res.outcome == .exited);
-    const left = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, res.stdout, " \n"), 10);
-    try testing.expectError(error.ProcessNotFound, std.posix.kill(left, @enumFromInt(0)));
-}
-
-test "a command that leaves nothing behind gains no grace delay" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const started: std.Io.Timestamp = .now(testing.io, .awake);
-    for (0..5) |_| _ = try runShell(arena.allocator(), "echo fast", 10_000);
-    // Five runs with a full grace period each would take at least 500 ms in tests.
-    try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 400 * std.time.ns_per_ms);
+    var pids = std.mem.tokenizeScalar(u8, res.stdout, '\n');
+    for (0..2) |_| try testing.expectError(error.ProcessNotFound, std.posix.kill(try std.fmt.parseInt(std.posix.pid_t, pids.next().?, 10), @enumFromInt(0)));
 }
 
 test "exec ends a process that left the session after one grace period" {

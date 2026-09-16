@@ -102,7 +102,7 @@ pub fn optionalBool(ctx: Context, options: Value, name: [:0]const u8) error{Inva
     return ctx.toBool(value) catch error.InvalidOption;
 }
 
-/// Copy a workspace root argument, or `default` when it is absent. A root that is not an absolute path answers null, because the spawn asserts an absolute directory.
+/// Copy a workspace root argument, or `default` when it is absent. A relative root answers null, because a spawn asserts an absolute directory.
 pub fn rootArg(ctx: Context, gpa: std.mem.Allocator, value: Value, default: []const u8) ?[]u8 {
     if (ctx.isUndefined(value) or ctx.isNull(value)) return gpa.dupe(u8, default) catch unreachable;
     const root = owned(ctx, gpa, value) orelse return null;

@@ -46,7 +46,7 @@ pub const Extensions = struct {
     }
 
     pub fn deinit(self: *Extensions) void {
-        // A command must leave before the last turn stops, or it could start another run; a child must end before the cancel, or its waiter never returns.
+        // A child waiter reaps with cancelation blocked, so children end first; a command leaves before the last turn stops.
         self.host.endChildren();
         self.host.tasks.cancel(self.host.io);
         self.app.engine.stopTurns();

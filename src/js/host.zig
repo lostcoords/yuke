@@ -215,7 +215,7 @@ pub const Host = struct {
             self.calls.hasWork(self.ctx) or self.procs.hasWork() or self.timers.isDue(std.Io.Timestamp.now(self.io, .awake));
     }
 
-    /// Sleep until a task sets the wake or the next timer is due. The caller resets the wake before its last pump and reads its own condition again first.
+    /// Sleep until a task sets the wake or the next timer is due. The caller resets the wake before its last pump.
     pub fn waitForWork(self: *Host) error{Canceled}!void {
         if (self.hasPending()) return;
         const due = self.timers.nextDeadline() orelse return self.wake.wait(self.io);
@@ -274,7 +274,7 @@ pub const Host = struct {
         self.phase = .drained;
     }
 
-    /// End every running child in one grace period. A child waiter reaps with cancelation blocked, so this runs before any cancel of `tasks`.
+    /// End every running child in one grace period. A waiter reaps with cancelation blocked, so call this before `tasks.cancel`.
     pub fn endChildren(self: *Host) void {
         var pids: [process_module.max_processes]std.posix.pid_t = undefined;
         const count = self.procs.runningPids(&pids);

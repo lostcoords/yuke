@@ -1,4 +1,4 @@
-// Long-lived child processes over `yuke:process`. A plugin ties a child to its scope with `ctx.effect(() => () => child.kill())`.
+// Long-lived children over `yuke:process`. Tie a child to a plugin with `ctx.effect(() => () => child.kill())`.
 
 import * as native from "yuke:process";
 
@@ -24,7 +24,7 @@ export function spawn(argv, options = {}) {
   };
 }
 
-// Join chunks into lines; it strips one CR before each LF, as MCP stdio framing does, and holds a partial line until its LF arrives.
+// Join chunks into lines and strip one CR before each LF, as MCP stdio framing does.
 /** @param {(line: string) => void} onLine @returns {(text: string) => void} */
 export function lines(onLine) {
   let rest = "";
