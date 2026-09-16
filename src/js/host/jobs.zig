@@ -1,7 +1,6 @@
 //! The background jobs of one host. Only the owner adds, finds, and frees a job; one waiter task reaps each job.
 
 const std = @import("std");
-const process = @import("process.zig");
 
 /// The most jobs that run at once. A start past this limit fails.
 pub const max_jobs = 16;
@@ -49,15 +48,14 @@ pub const Jobs = struct {
         return null;
     }
 
-    /// End every running job in one grace period. `Host.close` calls this before it cancels the waiters, because a waiter reaps with cancelation blocked.
-    pub fn endAll(self: *const Jobs, io: std.Io) void {
-        var pids: [max_jobs]std.posix.pid_t = undefined;
+    /// Write the pid of every running job into `out` and answer the count. `Host.close` ends them before it cancels the waiters.
+    pub fn runningPids(self: *const Jobs, out: []std.posix.pid_t) usize {
         var count: usize = 0;
         for (self.live.items) |job| if (!job.done.load(.monotonic)) {
-            pids[count] = job.pid;
+            out[count] = job.pid;
             count += 1;
         };
-        if (count != 0) process.endGroups(io, pids[0..count]);
+        return count;
     }
 
     /// Free every job. Every waiter has returned, so no job runs and no task holds a pointer.

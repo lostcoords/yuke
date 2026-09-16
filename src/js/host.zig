@@ -21,7 +21,8 @@ const call_run = @import("call_run.zig");
 const pending = @import("pending.zig");
 const execution_mod = @import("../execution.zig");
 const Logs = @import("host/logs.zig").Logs;
-const Jobs = @import("host/jobs.zig").Jobs;
+const jobs_mod = @import("host/jobs.zig");
+const process_runner = @import("host/process.zig");
 const timers_mod = @import("timers.zig");
 
 /// Limit the client heap. Scripts fail when they exceed this limit.
@@ -94,7 +95,7 @@ pub const Host = struct {
     /// The command logs. Only the owner makes a path.
     logs: Logs = .{},
     /// The background jobs. `close` ends them before it cancels their waiters.
-    jobs: Jobs = .{},
+    jobs: jobs_mod.Jobs = .{},
     /// The `setTimeout` and `setInterval` table. Only the owner touches it.
     timers: timers_mod.Timers = .{},
     /// The `yuke:process` children. `close` ends them before it cancels their tasks.
@@ -257,9 +258,11 @@ pub const Host = struct {
         self.engine.detach();
         // A turn task may wait on a tool call. Answer each one, or that task never wakes.
         call_run.abortAll(self);
-        // A job or process waiter reaps with cancelation blocked, so every child must end before the cancel.
-        self.jobs.endAll(self.io);
-        self.procs.endAll(self.io);
+        // A job or process waiter reaps with cancelation blocked, so every child must end before the cancel, in one grace period.
+        var pids: [jobs_mod.max_jobs + process_module.max_processes]std.posix.pid_t = undefined;
+        const job_count = self.jobs.runningPids(&pids);
+        const count = job_count + self.procs.runningPids(pids[job_count..]);
+        if (count != 0) process_runner.endGroups(self.io, pids[0..count]);
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
         self.timers.deinit(self.ctx, self.gpa);

@@ -114,15 +114,14 @@ pub const Procs = struct {
         return faulted;
     }
 
-    /// End every running child in one grace period. `Host.close` calls this before it cancels the tasks, because a waiter reaps with cancelation blocked.
-    pub fn endAll(self: *const Procs, io: std.Io) void {
-        var pids: [max_processes]std.posix.pid_t = undefined;
+    /// Write the pid of every running child into `out` and answer the count. `Host.close` ends them before it cancels the tasks.
+    pub fn runningPids(self: *const Procs, out: []std.posix.pid_t) usize {
         var count: usize = 0;
         for (self.live.items) |proc| if (!proc.done.load(.monotonic)) {
-            pids[count] = proc.pid;
+            out[count] = proc.pid;
             count += 1;
         };
-        if (count != 0) runner.endGroups(io, pids[0..count]);
+        return count;
     }
 
     /// Free every process. Every task has returned, so nothing touches a process after this.
