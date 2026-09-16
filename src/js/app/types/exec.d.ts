@@ -27,34 +27,9 @@ declare module "yuke:exec" {
     log: string | null;
   }
 
-  interface StartOptions {
-    /** A relative path resolves against `workspaceRoot`, or the host directory without one. */
-    cwd?: string;
-  }
-
-  interface JobExit {
-    /** The exit code, or null after a signal. */
-    code: number | null;
-    signal: number | null;
-  }
-
-  interface JobHandle {
-    id: number;
-    /** The private log that holds both streams. */
-    log: string;
-    /** Resolves once when the shell exits; the host then ends every process the shell left. */
-    exited: Promise<JobExit>;
-  }
-
-  /** Starts one shell line as a background job in its own process group. The host ends every job when it closes. */
-  export function start(command: string, options?: StartOptions, workspaceRoot?: string): Promise<JobHandle>;
-
-  /** Ends a job with TERM, then KILL after a grace period. Resolves false when the job had already ended. */
-  export function stop(id: number): Promise<boolean>;
-
   /**
    * Runs one shell line in a fresh shell. Nothing carries to the next call, and stdin is closed.
-   * The call ends the whole process group when the shell exits or the deadline passes, so no child outlives the call.
+   * The call ends the process group when the shell exits or the deadline passes; a process that calls `setsid` leaves the group.
    */
   export function exec(command: string, options?: ExecOptions, workspaceRoot?: string): Promise<ExecResult>;
 }

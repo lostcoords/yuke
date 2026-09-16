@@ -83,6 +83,34 @@ pub fn integer(ctx: Context, value: Value, min: u64, max: u64) ?u64 {
     return if (result < min or result > max) null else result;
 }
 
+/// Copy one optional string option. An absent option answers null, and a wrong type is an error.
+pub fn optionalString(ctx: Context, gpa: std.mem.Allocator, options: Value, name: [:0]const u8) error{InvalidOption}!?[]u8 {
+    if (!ctx.isObject(options)) return null;
+    const value = ctx.getPropertyStr(options, name);
+    defer ctx.freeValue(value);
+    if (ctx.isUndefined(value) or ctx.isNull(value)) return null;
+    return owned(ctx, gpa, value) orelse error.InvalidOption;
+}
+
+/// Read one optional boolean option. An absent option is false, and a wrong type is an error.
+pub fn optionalBool(ctx: Context, options: Value, name: [:0]const u8) error{InvalidOption}!bool {
+    if (!ctx.isObject(options)) return false;
+    const value = ctx.getPropertyStr(options, name);
+    defer ctx.freeValue(value);
+    if (ctx.isUndefined(value) or ctx.isNull(value)) return false;
+    if (!ctx.isBool(value)) return error.InvalidOption;
+    return ctx.toBool(value) catch error.InvalidOption;
+}
+
+/// Copy a workspace root argument, or `default` when it is absent. A root that is not an absolute path answers null, because the spawn asserts an absolute directory.
+pub fn rootArg(ctx: Context, gpa: std.mem.Allocator, value: Value, default: []const u8) ?[]u8 {
+    if (ctx.isUndefined(value) or ctx.isNull(value)) return gpa.dupe(u8, default) catch unreachable;
+    const root = owned(ctx, gpa, value) orelse return null;
+    if (std.fs.path.isAbsolute(root)) return root;
+    gpa.free(root);
+    return null;
+}
+
 /// Set one property, or drop the value once the QuickJS heap is full; the builder reads the exception at its end.
 pub fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
     if (ctx.hasException()) return ctx.freeValue(value);

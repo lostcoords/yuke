@@ -727,54 +727,18 @@ fn processExists(pid: std.posix.pid_t) bool {
     return true;
 }
 
-test "yuke:exec jobs start, stop, reap, and end with the host" {
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), "/tmp");
-    var destroyed = false;
-    defer if (!destroyed) support.destroyHost(host);
-    try support.eval(host, "tests/native_tools/jobs.test.js");
-    try support.pumpUntilTrue(host, "globalThis.result !== \"pending\"");
-    try support.expectString(host, "result", "ok");
-    const pid: std.posix.pid_t = try host.evalInt("globalThis.closePid");
-    try std.testing.expect(pid > 0);
-    support.destroyHost(host);
-    destroyed = true;
-    try std.testing.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
-}
-
-/// Submit one tool call, wait for it, and check that its text holds `part`.
+/// Submit one tool call from session 01…01, wait for it, and check that its text holds `part`.
 fn expectTool(host: *Host, name: []const u8, args: []const u8, is_error: bool, part: []const u8) !void {
     const call = host.calls.submit(name, args, "/tmp");
+    call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
     try support.pumpUntilSettled(host, call);
     errdefer std.debug.print("{s} {s} -> {s}\n", .{ name, args, call.text orelse "" });
     try std.testing.expectEqual(is_error, call.is_error);
     try std.testing.expect(std.mem.indexOf(u8, call.text.?, part) != null);
-    call.finish();
-    try host.pump();
+    try support.dropCall(host, call);
 }
 
-test "the exec tool starts a background job that the job tool lists and stops" {
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), "/tmp");
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/native_tools/builtins-test.test.js");
-
-    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", false, "[job j1 started: sleep 30.");
-    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", false, "[job j1 already runs this command.");
-    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true,\"timeout_ms\":5}", true, "Remove one of the two arguments");
-    try expectTool(host, "exec", "{\"command\":\"echo hi\"}", false, "[running jobs: j1 sleep 30]");
-    try expectTool(host, "job", "{}", false, "j1 running: sleep 30. Log: ");
-    try expectTool(host, "job", "{\"id\":\"j1\"}", false, "[no output yet]");
-    try expectTool(host, "job", "{\"id\":\"j9\"}", true, "the job j9 does not exist. The jobs are: j1.");
-    try expectTool(host, "job", "{\"stop\":true}", true, "stop needs an id. The jobs are: j1.");
-    try expectTool(host, "job", "{\"id\":\"j1\",\"stop\":true}", false, "[j1 stopped: sleep 30]");
-    try expectTool(host, "job", "{\"id\":\"j1\",\"stop\":true}", false, "[j1 stopped: sleep 30]");
-    try expectTool(host, "exec", "{\"command\":\"echo hi\"}", false, "[exit code: 0]");
-}
-
-test "a job that exits by itself sends one message to its session, and a stopped job sends none" {
+test "background jobs start, list, stop, and report a natural exit once to their session" {
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const host = support.createHostWith(rt.io(), "/tmp");
@@ -783,23 +747,25 @@ test "a job that exits by itself sends one message to its session, and a stopped
     try host.evalModule(
         \\import { client } from "yuke:client";
         \\globalThis.sent = [];
-        \\client.sessionSendInput = async (id, content) => { globalThis.sent.push(id + " " + content[0].text); return {}; };
+        \\client.sessionSendInput = async (id, content) => { sent.push(content[0].text); return {}; };
     , "job-messages.js");
 
-    const site: @import("../engine/toolset.zig").Site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
-    for ([_][]const u8{ "{\"command\":\"sleep 30\",\"background\":true}", "{\"command\":\"echo done; exit 2\",\"background\":true}", "{\"id\":\"j1\",\"stop\":true}" }, 0..) |args, i| {
-        const call = host.calls.submit(if (i == 2) "job" else "exec", args, "/tmp");
-        call.site = site;
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        call.finish();
-        try host.pump();
-    }
-    try support.pumpUntilTrue(host, "globalThis.sent.length === 1");
+    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", false, "[job j1 started: sleep 30.");
+    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", false, "[job j1 already runs this command.");
+    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true,\"timeout_ms\":5}", true, "Remove one of the two arguments");
+    try expectTool(host, "exec", "{\"command\":\"echo hi\"}", false, "[running jobs: j1 sleep 30]");
+    try expectTool(host, "job", "{}", false, "j1 running: sleep 30. Log: ");
+    try expectTool(host, "job", "{\"id\":\"j9\"}", true, "the job j9 does not exist. The jobs are: j1.");
+    try expectTool(host, "job", "{\"stop\":true}", true, "stop needs an id. The jobs are: j1.");
+    try expectTool(host, "exec", "{\"command\":\"echo done; exit 2\",\"background\":true}", false, "[job j2 started");
+    try expectTool(host, "job", "{\"id\":\"j1\",\"stop\":true}", false, "[j1 stopped: sleep 30]");
+    try expectTool(host, "job", "{\"id\":\"j1\",\"stop\":true}", false, "[j1 stopped: sleep 30]");
+    try support.pumpUntilTrue(host, "sent.length === 1");
     try support.pumpUntilIdle(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
-        \\globalThis.sent.length === 1 && globalThis.sent[0].startsWith("01010101010101010101010101010101 [job j2 exited (exit code 2): echo done; exit 2. Log: ") && globalThis.sent[0].endsWith("]\ndone") ? 1 : 0
+        \\sent.length === 1 && sent[0].startsWith("[job j2 exited (exit code 2): echo done; exit 2. Log: ") && sent[0].endsWith("]\ndone") ? 1 : 0
     ));
+    try expectTool(host, "job", "{\"id\":\"j2\"}", false, "done");
 }
 
 test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves its exit" {
@@ -822,50 +788,29 @@ test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves it
     try support.expectString(host, "result", "ok");
 }
 
-test "a yuke:spawn reader waits for the owner at the queue cap, and host close reaps every child" {
-    const process_module = @import("native/process.zig");
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), "/tmp");
-    var destroyed = false;
-    defer if (!destroyed) support.destroyHost(host);
-    try host.evalModule(
-        \\import { spawn } from "yuke:spawn";
-        \\globalThis.bytes = 0;
-        \\const env = { PATH: "/usr/bin:/bin" };
-        \\const loud = spawn(["yes"], { env });
-        \\loud.onStdout((text) => { globalThis.bytes += text.length; });
-        \\globalThis.quiet = spawn(["sleep", "60"], { env });
-    , "spawn-cap.js");
-    // No pump runs, so the owner drains nothing and the reader must stop at the cap.
-    try rt.io().sleep(.fromMilliseconds(300), .awake);
-    const stream = &host.procs.live.items[0].streams[0];
-    try std.testing.expect(stream.queued >= process_module.max_queued_bytes);
-    try std.testing.expect(stream.queued < process_module.max_queued_bytes + 4096);
-    try host.pump();
-    try std.testing.expect(try host.evalInt("globalThis.bytes") >= process_module.max_queued_bytes);
-
-    var pids: [2]std.posix.pid_t = undefined;
-    for (host.procs.live.items, &pids) |proc, *pid| pid.* = proc.pid;
-    support.destroyHost(host);
-    destroyed = true;
-    for (pids) |pid| try std.testing.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
-}
-
-test "yuke:spawn refuses a child past the process limit" {
+test "a yuke:spawn reader stops at the buffer cap until the owner drains it" {
     const process_module = @import("native/process.zig");
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const host = support.createHostWith(rt.io(), "/tmp");
     defer support.destroyHost(host);
-    const source = std.fmt.comptimePrint(
-        \\import {{ spawn }} from "yuke:spawn";
-        \\const env = {{ PATH: "/usr/bin:/bin" }};
-        \\for (let i = 0; i < {d}; i++) spawn(["sleep", "60"], {{ env }});
-        \\try {{ spawn(["sleep", "60"], {{ env }}); }} catch (e) {{ globalThis.limit = e.name; }}
-    , .{process_module.max_processes});
-    try host.evalModule(source, "spawn-limit.js");
-    try support.expectString(host, "limit", "RangeError");
+    try host.evalModule(
+        \\import { spawn } from "yuke:spawn";
+        \\globalThis.bytes = 0;
+        \\spawn(["yes"], { env: { PATH: "/usr/bin:/bin" } }).onStdout((text) => { bytes += text.length; });
+    , "spawn-cap.js");
+    try rt.io().sleep(.fromMilliseconds(300), .awake);
+    try std.testing.expect(host.procs.live.items[0].streams[0].buffer.items.len < process_module.max_buffered_bytes + 4096);
+    try host.pump();
+    try std.testing.expect(try host.evalInt("bytes") >= process_module.max_buffered_bytes);
+}
+
+test "extension teardown ends a live child instead of waiting for it" {
+    var f: @import("extensions.zig").Fixture = undefined;
+    try f.init("import { spawn } from \"yuke\"; spawn([\"/bin/sleep\", \"60\"]);", "import \"yuke:kernel\";\nimport \"yuke:ext\";");
+    const pid = f.extensions.host.procs.live.items[0].pid;
+    f.deinit();
+    try std.testing.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
 }
 
 test "an MCP stdio client port over spawn answers a tool call and shuts its servers down in order" {
@@ -878,19 +823,14 @@ test "an MCP stdio client port over spawn answers a tool call and shuts its serv
     for (0..2) |i| {
         const call = host.calls.submit("mcp_echo", "{}", "/tmp");
         try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
         const want = try std.fmt.allocPrint(std.testing.allocator, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"ok\":true}}}}", .{i + 1});
         defer std.testing.allocator.free(want);
         try std.testing.expectEqualStrings(want, call.text.?);
-        call.finish();
-        try host.pump();
+        try support.dropCall(host, call);
     }
-    try support.pumpUntilTrue(host, "proof.termExit !== null && proof.killExit !== null");
-    try support.expectString(host, "proof.termExit", "SIGTERM");
-    try support.expectString(host, "proof.killExit", "SIGKILL");
-
+    // The stubborn servers end at TERM (15) and at KILL (9).
+    try support.pumpUntilTrue(host, "proof.termExit === 15 && proof.killExit === 9");
     // A dispose closes stdin, and the server exits by itself at EOF.
     try host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"mcp-proof\");", "mcp-dispose.js");
-    try support.pumpUntilTrue(host, "proof.disposeExit !== null");
-    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("proof.disposeExit"));
+    try support.pumpUntilTrue(host, "proof.disposeExit === 0");
 }

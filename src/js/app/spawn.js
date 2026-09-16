@@ -4,7 +4,7 @@ import * as native from "yuke:process";
 
 /** @typedef {import("yuke:process").ProcessExit} ProcessExit */
 /** @typedef {{ cwd?: string, env?: Record<string, string>, workspaceRoot?: string }} SpawnOptions */
-/** @typedef {{ onStdout(listener: (text: string) => void): void, onStderr(listener: (text: string) => void): void, write(text: string): Promise<void>, closeStdin(): void, kill(): void, exited: Promise<ProcessExit> }} ChildProcess */
+/** @typedef {{ onStdout(listener: (text: string) => void): void, onStderr(listener: (text: string) => void): void, write(text: string): Promise<void>, closeStdin(): void, kill(): boolean, exited: Promise<ProcessExit> }} ChildProcess */
 
 /** @param {string[]} argv @param {SpawnOptions} [options] @returns {ChildProcess} */
 export function spawn(argv, options = {}) {
@@ -19,7 +19,7 @@ export function spawn(argv, options = {}) {
     onStderr(listener) { listeners[1]?.push(listener); },
     write(text) { return native.write(child.id, text); },
     closeStdin() { native.closeStdin(child.id); },
-    kill() { native.kill(child.id); },
+    kill() { return native.kill(child.id); },
     exited: child.exited,
   };
 }

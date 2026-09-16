@@ -1,4 +1,3 @@
-// A proof, not a product: an MCP stdio client port over `spawn`, with a shell stand-in for the server.
 import { plugins, spawn, lines } from "yuke";
 
 const env = { PATH: "/usr/bin:/bin" };

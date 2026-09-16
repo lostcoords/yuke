@@ -1,7 +1,10 @@
 import { exec } from "yuke:exec";
+import { spawn as spawnNative } from "yuke:process";
 import { spawn as spawnWith, lines } from "yuke:spawn";
 // The test host has no PATH, so every child names the utility directories.
-const spawn = (argv, options = {}) => spawnWith(argv, { ...options, env: { PATH: "/usr/bin:/bin", ...(options.env ?? {}) } });
+const env = { PATH: "/usr/bin:/bin" };
+const spawn = (argv, options = {}) => spawnWith(argv, { ...options, env: { ...env, ...(options.env ?? {}) } });
+const until = async (ready) => { for (let i = 0; i < 1000 && !ready(); i++) await new Promise((resolve) => setTimeout(resolve, 5)); };
 const fail = [];
 const check = (name, cond) => { if (!cond) fail.push(name); };
 globalThis.result = "pending";
@@ -15,67 +18,67 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   await cat.write("two\n");
   cat.closeStdin();
   const catExit = await cat.exited;
-  check("cat-order", echoed === "one\ntwo\n");
-  check("cat-exit", catExit.code === 0 && catExit.signal === null);
-  let late = "";
-  try { await cat.write("x"); } catch (e) { late = e.message; }
-  check("write-after-exit", late === "the process does not exist" || late === "the process input is closed");
+  check("cat-order", echoed === "one\ntwo\n" && catExit.code === 0 && catExit.signal === null);
 
-  // A child that closed its input makes a write reject; SIGPIPE is ignored, so the host survives.
-  const deaf = spawn(["sh", "-c", "exec 0<&-; sleep 2"]);
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  // A write to a child that closed its input rejects, because SIGPIPE is ignored.
+  const deaf = spawn(["sh", "-c", "exec 0<&-; echo ready; sleep 2"]);
+  let said = "";
+  deaf.onStdout((text) => { said += text; });
+  await until(() => said.includes("ready"));
   let epipe = "";
   try { await deaf.write("x".repeat(200000)); } catch (e) { epipe = e.message; }
   check("write-epipe", epipe === "the process closed its input");
   deaf.kill();
   await deaf.exited;
 
-  // A signal exit names the signal, and a kill reaches a grandchild.
+  // A kill ends the whole group, and the exit names the signal number.
   const tree = spawn(["sh", "-c", "sleep 60 & echo $!; wait"]);
   let grandchild = "";
   tree.onStdout((text) => { grandchild += text; });
-  for (let i = 0; i < 500 && !grandchild.includes("\n"); i++) await new Promise((resolve) => setTimeout(resolve, 5));
-  tree.kill();
+  await until(() => grandchild.includes("\n"));
+  check("kill-running", tree.kill() === true);
   const treeExit = await tree.exited;
-  check("signal-exit", treeExit.code === null && treeExit.signal === "SIGTERM");
-  check("grandchild-gone", (await exec(`kill -0 ${grandchild.trim()} 2>/dev/null`)).code !== 0);
+  check("signal-exit", treeExit.code === null && treeExit.signal === 15);
+  check("grandchild-gone", Number(grandchild) > 0 && (await exec(`kill -0 ${Number(grandchild)} 2>/dev/null`)).code !== 0);
+  check("kill-exited", tree.kill() === false);
 
   // A character that a read cuts in two arrives whole.
   const split = spawn(["sh", "-c", "printf '\\346'; sleep 0.1; printf '\\227\\245'"]);
-  let chunks = [];
-  split.onStdout((text) => { chunks.push(text); });
+  let text = "";
+  split.onStdout((chunk) => { text += chunk; });
   await split.exited;
-  check("split-char", chunks.join("") === "日" && !chunks.join("").includes("�"));
+  check("split-char", text === "日");
 
-  // stderr is its own stream.
-  const err = spawn(["sh", "-c", "echo out; echo bad 1>&2; exit 4"]);
+  const streams = spawn(["sh", "-c", "echo out; echo bad 1>&2; exit 4"]);
   let out = "", bad = "";
-  err.onStdout((text) => { out += text; });
-  err.onStderr((text) => { bad += text; });
-  const errExit = await err.exited;
-  check("streams", out === "out\n" && bad === "bad\n" && errExit.code === 4);
+  streams.onStdout((chunk) => { out += chunk; });
+  streams.onStderr((chunk) => { bad += chunk; });
+  check("streams", (await streams.exited).code === 4 && out === "out\n" && bad === "bad\n");
 
-  // A missing program rejects `exited` and calls no listener.
-  const missing = spawn(["yuke-no-such-program"]);
-  let heard = false;
-  missing.onStdout(() => { heard = true; });
   let reason = "";
-  try { await missing.exited; } catch (e) { reason = e.message; }
-  check("missing-program", reason === "the program does not exist" && !heard);
+  try { await spawn(["yuke-no-such-program"]).exited; } catch (e) { reason = e.message; }
+  check("missing-program", reason === "the program does not exist");
 
   // A bare name resolves against the PATH the child receives, not the PATH of this process.
   if (globalThis.fixtureDir !== "") {
     const fixture = spawn(["yuke-fixture-hello"], { env: { PATH: globalThis.fixtureDir } });
-    let said = "";
-    fixture.onStdout((text) => { said += text; });
-    const fixtureExit = await fixture.exited;
-    check("path-from-env", said === "fixture\n" && fixtureExit.code === 0);
+    let hello = "";
+    fixture.onStdout((chunk) => { hello += chunk; });
+    check("path-from-env", (await fixture.exited).code === 0 && hello === "fixture\n");
   }
 
-  // Argument errors throw.
-  let thrown = "";
-  try { spawn([]); } catch (e) { thrown = e.name; }
-  check("empty-argv", thrown === "TypeError");
+  // A string runs through the host shell, and a logged child writes both streams to its log.
+  const logged = spawnNative("echo out; echo bad 1>&2", { log: true }, undefined, "/tmp");
+  check("logged-exit", (await logged.exited).code === 0);
+  check("logged-content", (await exec(`cat '${logged.log}'`)).stdout === "out\nbad\n");
+
+  const refusals = [
+    () => spawn([]),
+    () => spawn(["true"], { env: { "BAD=KEY": "x" } }),
+    () => spawnNative(["true"], {}, () => {}, "relative"),
+    () => spawnNative(["true"], {}),
+  ];
+  check("refusals", refusals.every((call) => { try { call(); return false; } catch (e) { return e.name === "TypeError"; } }));
 
   // `lines` holds a partial line and strips one CR.
   const got = [];

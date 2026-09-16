@@ -121,7 +121,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     var child = spawned: {
         defer _ = std.posix.system.close(out_pipe[1]);
         defer _ = std.posix.system.close(err_pipe[1]);
-        break :spawned try spawnSession(scratch, context, spec.command, cwd, out_pipe[1], err_pipe[1]);
+        break :spawned try spawnArgv(scratch, context.env, &.{ context.shell.path, "-c", spec.command }, cwd, null, out_pipe[1], err_pipe[1]);
     };
     const pid = child.id.?;
 
@@ -173,14 +173,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     };
 }
 
-/// Spawn `shell -c command` as the leader of a new session with stdout and stderr on the given descriptors. A program that opens `/dev/tty` then fails at once with no terminal.
-fn spawnSession(scratch: std.mem.Allocator, context: execution.Context, command: []const u8, cwd: []const u8, stdout: std.posix.fd_t, stderr: std.posix.fd_t) h.HostError!std.process.Child {
-    std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
-    // The shell reads one language string, which no direct program execution can accept.
-    return spawnArgv(scratch, context.env, &.{ context.shell.path, "-c", command }, cwd, null, stdout, stderr);
-}
-
-/// Spawn `argv` as the leader of a new session. `argv[0]` is an absolute path, and a null `stdin` reads `/dev/null`.
+/// Spawn `argv` as the leader of a new session with no terminal; `argv[0]` is absolute, and a null `stdin` reads `/dev/null`.
 /// TODO: use a session flag from `std.process.SpawnOptions` when Zig std gains that flag, then delete `src/c/spawn.h`.
 fn spawnArgv(scratch: std.mem.Allocator, env: *const std.process.Environ.Map, argv: []const []const u8, cwd: []const u8, stdin: ?std.posix.fd_t, stdout: std.posix.fd_t, stderr: std.posix.fd_t) h.HostError!std.process.Child {
     std.debug.assert(argv.len > 0 and std.fs.path.isAbsolute(argv[0]));
@@ -225,59 +218,69 @@ fn spawnArgv(scratch: std.mem.Allocator, env: *const std.process.Environ.Map, ar
     return .{ .id = pid, .thread_handle = {}, .stdin = null, .stdout = null, .stderr = null, .request_resource_usage_statistics = false };
 }
 
-/// A started program and the parent ends of its three pipes. The caller owns every descriptor.
-pub const Program = struct {
-    child: std.process.Child,
-    stdin: std.posix.fd_t,
-    stdout: std.Io.File,
-    stderr: std.Io.File,
+/// Where the output of a started program goes.
+pub const Output = union(enum) {
+    pipes,
+    /// Both streams go to a new file at this absolute path, and stdin reads `/dev/null`.
+    log: []const u8,
 };
 
-/// Start `argv` with no shell in a new session, with three pipes. A name without a slash resolves against `PATH` in `env`, not in this process.
-pub fn startProgram(io: std.Io, root: []const u8, env: *const std.process.Environ.Map, scratch: std.mem.Allocator, argv: []const []const u8, cwd: ?[]const u8) h.HostError!Program {
+/// A started program and the parent ends of its pipes. The caller owns every descriptor and reaps the child with `reapGroup`.
+pub const Program = struct {
+    child: std.process.Child,
+    stdin: ?std.posix.fd_t = null,
+    stdout: ?std.Io.File = null,
+    stderr: ?std.Io.File = null,
+};
+
+/// Start `argv` with no shell in a new session. A bare name resolves against `PATH` in `env`, not in this process.
+pub fn startProgram(io: std.Io, root: []const u8, env: *const std.process.Environ.Map, scratch: std.mem.Allocator, argv: []const []const u8, cwd: ?[]const u8, output: Output) h.HostError!Program {
     std.debug.assert(argv.len > 0);
     const dir = try resolveCwd(scratch, root, env, cwd);
-    const program = try resolveProgram(io, scratch, env, argv[0]);
     var resolved = scratch.dupe([]const u8, argv) catch return error.HostFailure;
-    resolved[0] = program;
+    resolved[0] = try resolveProgram(io, scratch, env, dir, argv[0]);
 
-    // The child reads the stdin read end, so that end must sit above the standard streams too.
-    const in_fds = std.Io.Threaded.pipe2(.{ .CLOEXEC = true }) catch return error.HostFailure;
-    const in_read = aboveStdio(in_fds[0]) catch {
-        _ = std.posix.system.close(in_fds[1]);
-        return error.HostFailure;
-    };
-    defer _ = std.posix.system.close(in_read);
-    errdefer _ = std.posix.system.close(in_fds[1]);
-    const out = try pipeAboveStdio();
-    defer _ = std.posix.system.close(out[1]);
-    errdefer _ = std.posix.system.close(out[0]);
-    const err = try pipeAboveStdio();
-    defer _ = std.posix.system.close(err[1]);
-    errdefer _ = std.posix.system.close(err[0]);
-
-    const child = try spawnArgv(scratch, env, resolved, dir, in_read, out[1], err[1]);
-    return .{ .child = child, .stdin = in_fds[1], .stdout = pipeReader(out[0]), .stderr = pipeReader(err[0]) };
+    switch (output) {
+        .log => |path| {
+            std.debug.assert(std.fs.path.isAbsolute(path));
+            const file = std.Io.Dir.createFileAbsolute(io, path, .{}) catch return error.HostFailure;
+            errdefer std.Io.Dir.deleteFileAbsolute(io, path) catch {};
+            const fd = try aboveStdio(file.handle);
+            defer _ = std.posix.system.close(fd);
+            return .{ .child = try spawnArgv(scratch, env, resolved, dir, null, fd, fd) };
+        },
+        .pipes => {
+            const in = try pipeAboveStdio();
+            defer _ = std.posix.system.close(in[0]);
+            errdefer _ = std.posix.system.close(in[1]);
+            const out = try pipeAboveStdio();
+            defer _ = std.posix.system.close(out[1]);
+            errdefer _ = std.posix.system.close(out[0]);
+            const err = try pipeAboveStdio();
+            defer _ = std.posix.system.close(err[1]);
+            errdefer _ = std.posix.system.close(err[0]);
+            const child = try spawnArgv(scratch, env, resolved, dir, in[0], out[1], err[1]);
+            return .{ .child = child, .stdin = in[1], .stdout = pipeReader(out[0]), .stderr = pipeReader(err[0]) };
+        },
+    }
 }
 
-/// Find an executable for `name`. A name with a slash resolves against nothing, and a bare name searches `PATH` in `env`.
-fn resolveProgram(io: std.Io, scratch: std.mem.Allocator, env: *const std.process.Environ.Map, name: []const u8) h.HostError![]const u8 {
+/// Find an executable for `name`. A name with a slash and a relative `PATH` entry resolve against `dir`, as `execvp` does against the working directory.
+fn resolveProgram(io: std.Io, scratch: std.mem.Allocator, env: *const std.process.Environ.Map, dir: []const u8, name: []const u8) h.HostError![]const u8 {
     if (name.len == 0) return error.NotFound;
-    if (std.mem.indexOfScalar(u8, name, '/') != null) {
-        if (!std.fs.path.isAbsolute(name)) return error.NotFound;
-        std.Io.Dir.accessAbsolute(io, name, .{ .execute = true }) catch return error.NotFound;
-        return name;
-    }
-    var dirs = std.mem.tokenizeScalar(u8, env.get("PATH") orelse return error.NotFound, ':');
-    while (dirs.next()) |dir| {
-        if (!std.fs.path.isAbsolute(dir)) continue;
-        const candidate = std.fs.path.join(scratch, &.{ dir, name }) catch return error.HostFailure;
-        const stat = std.Io.Dir.cwd().statFile(io, candidate, .{}) catch continue;
-        if (stat.kind != .file) continue;
-        std.Io.Dir.accessAbsolute(io, candidate, .{ .execute = true }) catch continue;
-        return candidate;
-    }
+    if (std.mem.indexOfScalar(u8, name, '/') != null) return executable(io, scratch, dir, "", name) orelse error.NotFound;
+    var entries = std.mem.splitScalar(u8, env.get("PATH") orelse return error.NotFound, ':');
+    while (entries.next()) |entry| if (executable(io, scratch, dir, entry, name)) |path| return path;
     return error.NotFound;
+}
+
+/// Answer the absolute path of `name` under `entry` when it is an executable regular file.
+fn executable(io: std.Io, scratch: std.mem.Allocator, dir: []const u8, entry: []const u8, name: []const u8) ?[]const u8 {
+    const path = std.fs.path.resolve(scratch, &.{ dir, entry, name }) catch return null;
+    const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch return null;
+    if (stat.kind != .file) return null;
+    std.Io.Dir.accessAbsolute(io, path, .{ .execute = true }) catch return null;
+    return path;
 }
 
 /// Map a libc spawn return code to the host error. Every `posix_spawn` call returns zero or an errno value.
@@ -299,24 +302,18 @@ fn pipeReader(fd: std.posix.fd_t) std.Io.File {
     return .{ .handle = fd, .flags = .{ .nonblocking = false } };
 }
 
-/// Create a CLOEXEC pipe with its write end above the standard streams. The read end may stay low.
+/// Create a CLOEXEC pipe with both ends above the standard streams, so either end can become a child stream.
 fn pipeAboveStdio() h.HostError![2]std.posix.fd_t {
     const fds = std.Io.Threaded.pipe2(.{ .CLOEXEC = true }) catch return error.HostFailure;
-    const write_end = aboveStdio(fds[1]) catch {
-        _ = std.posix.system.close(fds[0]);
+    const read_end = aboveStdio(fds[0]) catch {
+        _ = std.posix.system.close(fds[1]);
         return error.HostFailure;
     };
-    return .{ fds[0], write_end };
-}
-
-/// Start `shell -c command` in a new session with both streams on a new file at `log`. The caller must reap the child with `reapGroup`.
-pub fn startJob(io: std.Io, root: []const u8, context: execution.Context, scratch: std.mem.Allocator, command: []const u8, cwd: ?[]const u8, log: []const u8) h.HostError!std.process.Child {
-    std.debug.assert(std.fs.path.isAbsolute(log));
-    const dir = try resolveCwd(scratch, root, context.env, cwd);
-    const file = std.Io.Dir.createFileAbsolute(io, log, .{}) catch return error.HostFailure;
-    const fd = try aboveStdio(file.handle);
-    defer _ = std.posix.system.close(fd);
-    return spawnSession(scratch, context, command, dir, fd, fd);
+    const write_end = aboveStdio(fds[1]) catch {
+        _ = std.posix.system.close(read_end);
+        return error.HostFailure;
+    };
+    return .{ read_end, write_end };
 }
 
 /// Reap a session leader with cancelation blocked, then end what it left in its group. It returns only after the shell dies.
@@ -629,7 +626,7 @@ test "the child leads a new session apart from the test runner" {
     const null_file = try std.Io.Dir.createFileAbsolute(testing.io, "/dev/null", .{ .truncate = false });
     const null_fd = try aboveStdio(null_file.handle);
     defer _ = std.posix.system.close(null_fd);
-    var child = try spawnSession(arena.allocator(), execution.testContext(&env), "exec sleep 30", "/tmp", null_fd, null_fd);
+    var child = try spawnArgv(arena.allocator(), &env, &.{ execution.fallback_shell, "-c", "exec sleep 30" }, "/tmp", null, null_fd, null_fd);
     const pid = child.id.?;
     // A group kill ends the sleep, so the wait below returns at once and the runner never inherits a stray child.
     defer {

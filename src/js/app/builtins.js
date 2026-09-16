@@ -1,7 +1,8 @@
 // The built-in tools. They use only the asynchronous host primitives.
 
 import { fs } from "yuke:fs";
-import { exec as runCommand, start as startJob, stop as stopJob } from "yuke:exec";
+import { exec as runCommand } from "yuke:exec";
+import { spawn as spawnChild, kill as killChild } from "yuke:process";
 import { diff } from "yuke:diff";
 import { defineTool, hasTool } from "yuke:tools";
 import { client } from "yuke:client";
@@ -205,13 +206,12 @@ function endLine(text) {
   return text.length === 0 || text.endsWith("\n") ? text : `${text}\n`;
 }
 
-// Background jobs, in start order. A job keeps its entry after it ends, so the model can read its final state.
-/** @typedef {{ id: string, native: number, command: string, root: string | undefined, sessionId: string | undefined, log: string, state: "running" | "exited" | "stopped", code: number | null, signal: number | null }} Job */
+// Background jobs, in start order. An ended job keeps its entry, so the model can read its final state.
+/** @typedef {{ id: string, native: number, command: string, root: string | undefined, sessionId: string | undefined, log: string, state: "running" | "exited" | "stopped", code: number | null, signal: number | null, ended: Promise<void> }} Job */
 /** @type {Map<string, Job>} */
 const jobs = new Map();
 let jobCount = 0;
 const MAX_ENDED_JOBS = 32;
-const JOB_TAIL_LINES = 20;
 
 /** @param {string} command @returns {string} */
 function shortCommand(command) {
@@ -236,19 +236,21 @@ function jobState(job) {
 /** @param {Job} job @returns {Promise<string>} */
 async function jobTail(job) {
   const quoted = "'" + job.log.replace(/'/g, "'\\''") + "'";
-  const r = await runCommand(`tail -n ${JOB_TAIL_LINES} ${quoted}`, { maxBytes: 4096 }).catch(() => null);
-  if (r === null || r.stdout.length === 0) return "[no output yet]";
-  return endLine(r.stdout).slice(0, -1);
+  const r = await runCommand(`tail -n 20 ${quoted}`, { maxBytes: 4096 }).catch(() => null);
+  return r === null || r.stdout.length === 0 ? "[no output yet]" : endLine(r.stdout).slice(0, -1);
+}
+
+// Keep the newest ended jobs only, so the table stays bounded.
+function pruneJobs() {
+  const ended = [...jobs.values()].filter(j => j.state !== "running");
+  for (const old of ended.slice(0, Math.max(0, ended.length - MAX_ENDED_JOBS))) jobs.delete(old.id);
 }
 
 /** @param {Job} job @param {{ code: number | null, signal: number | null } | null} exit @returns {void} */
 function endJob(job, exit) {
   if (job.state !== "running") return; // A stopped job sends no message.
-  job.state = "exited";
-  job.code = exit?.code ?? null;
-  job.signal = exit?.signal ?? null;
-  const ended = [...jobs.values()].filter(j => j.state !== "running");
-  for (const old of ended.slice(0, Math.max(0, ended.length - MAX_ENDED_JOBS))) jobs.delete(old.id);
+  Object.assign(job, { state: "exited", code: exit?.code ?? null, signal: exit?.signal ?? null });
+  pruneJobs();
   const sessionId = job.sessionId;
   if (!sessionId) return;
   jobTail(job)
@@ -257,7 +259,7 @@ function endJob(job, exit) {
 }
 
 /** @param {string | undefined} sessionId @returns {string} */
-function liveIds(sessionId) {
+function jobIds(sessionId) {
   const ids = sessionJobs(sessionId).map(j => j.id);
   return ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`;
 }
@@ -266,14 +268,13 @@ function liveIds(sessionId) {
 async function startBackground(command, context) {
   const root = context?.workspaceRoot;
   const sessionId = context?.sessionId;
-  for (const job of jobs.values()) {
-    if (job.state === "running" && job.command === command && job.root === root && job.sessionId === sessionId)
-      return `[job ${job.id} already runs this command. Log: ${job.log}]`;
-  }
-  const handle = await hostCall("exec", startJob(command, {}, root));
-  const job = /** @type {Job} */ ({ id: `j${++jobCount}`, native: handle.id, command, root, sessionId, log: handle.log, state: "running", code: null, signal: null });
+  const same = [...jobs.values()].find(j => j.state === "running" && j.command === command && j.root === root && j.sessionId === sessionId);
+  if (same) return `[job ${same.id} already runs this command. Log: ${same.log}]`;
+  const child = spawnChild(command, { log: true }, undefined, root);
+  if (child.id === 0) await hostCall("exec", child.exited);
+  const job = /** @type {Job} */ ({ id: `j${++jobCount}`, native: child.id, command, root, sessionId, log: child.log, state: "running", code: null, signal: null });
+  job.ended = child.exited.then(exit => endJob(job, exit), () => endJob(job, null));
   jobs.set(job.id, job);
-  handle.exited.then(exit => endJob(job, exit), () => endJob(job, null));
   return `[job ${job.id} started: ${shortCommand(command)}. Log: ${job.log}. A message arrives when it exits by itself. Use the job tool to read or stop it.]`;
 }
 
@@ -288,17 +289,19 @@ async function job(args, _signal, context) {
   if (id !== null && typeof id !== "string") invalid(name, "the argument id must be a string");
   if (typeof stop !== "boolean") invalid(name, "the argument stop must be a boolean");
   if (id === null) {
-    if (stop) invalid(name, `stop needs an id. ${liveIds(sessionId)}`);
+    if (stop) invalid(name, `stop needs an id. ${jobIds(sessionId)}`);
     const list = sessionJobs(sessionId);
     return list.length === 0 ? "[no jobs]" : list.map(j => `${jobState(j)}. Log: ${j.log}`).join("\n");
   }
-  const found = jobs.get(/** @type {string} */ (id));
-  if (!found || found.sessionId !== sessionId) invalid(name, `the job ${id} does not exist. ${liveIds(sessionId)}`);
-  const entry = /** @type {Job} */ (found);
+  const entry = jobs.get(/** @type {string} */ (id));
+  if (!entry || entry.sessionId !== sessionId) return invalid(name, `the job ${id} does not exist. ${jobIds(sessionId)}`);
   if (!stop) return `[${jobState(entry)}. Log: ${entry.log}]\n${await jobTail(entry)}`;
   if (entry.state === "running") {
-    entry.state = "stopped";
-    await hostCall(name, stopJob(entry.native));
+    // A child that exited before the kill reports its real exit instead.
+    if (killChild(entry.native)) {
+      entry.state = "stopped";
+      pruneJobs();
+    } else await entry.ended;
   }
   return `[${jobState(entry)}]`;
 }
