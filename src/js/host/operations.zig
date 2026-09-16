@@ -71,32 +71,3 @@ pub const DirPage = struct {
     /// The name to continue after, or null at the end of the directory.
     next_after: ?[]const u8 = null,
 };
-
-/// One command to run. `cwd` is relative to the workspace root. A null `cwd` uses the root itself.
-pub const ExecSpec = struct {
-    command: []const u8,
-    cwd: ?[]const u8 = null,
-    timeout_ms: u32,
-    /// The cap for each stream. The local host stops the read at this size and reports the cut.
-    max_stream_bytes: u32,
-};
-
-/// How one command ended. The union makes an impossible pair unrepresentable.
-pub const ExecOutcome = union(enum) {
-    /// The command ended on its own with this code.
-    exited: u8,
-    /// A signal ended the command. The value is the signal number.
-    signaled: u8,
-    /// The deadline expired. The local host killed the process group.
-    timed_out,
-};
-
-/// What one command produced. `stdout` and `stderr` come from `scratch`.
-pub const ExecResult = struct {
-    stdout: []const u8,
-    stderr: []const u8,
-    outcome: ExecOutcome,
-    /// The bytes each stream dropped between its head and its tail. Zero means nothing was lost.
-    stdout_dropped: u64 = 0,
-    stderr_dropped: u64 = 0,
-};

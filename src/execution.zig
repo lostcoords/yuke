@@ -6,7 +6,7 @@ const builtin = @import("builtin");
 const paths = @import("paths.zig");
 
 /// The automatic candidates, in order. Bash comes first, because a command may need its syntax.
-const bafallback_shell = "/bin/bash";
+const bash_shell = "/bin/bash";
 /// The final candidate, and the shell a caller names when it runs no command of its own.
 pub const fallback_shell = "/bin/sh";
 
@@ -81,7 +81,7 @@ fn recoverHome(arena: std.mem.Allocator, io: std.Io, probe: Probe) std.mem.Alloc
 fn resolveShell(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, probe: Probe) Error!Shell {
     // Windows has no `<shell> -c` contract, so it needs its own design instead of a silent fallback.
     if (builtin.os.tag == .windows) return error.UnsupportedPlatform;
-    if (probe.executable(io, bafallback_shell)) return .{ .path = bafallback_shell };
+    if (probe.executable(io, bash_shell)) return .{ .path = bash_shell };
     if (try bashOnPath(arena, io, env, probe)) |path| return .{ .path = path };
     if (probe.executable(io, fallback_shell)) return .{ .path = fallback_shell };
     return error.ShellNotFound;
@@ -232,7 +232,7 @@ test "the shell resolver follows one order and every result is absolute" {
         want: []const u8,
     };
     const cases = [_]Case{
-        .{ .pairs = &.{home}, .present = &.{ bafallback_shell, fallback_shell }, .want = bafallback_shell },
+        .{ .pairs = &.{home}, .present = &.{ bash_shell, fallback_shell }, .want = bash_shell },
         // A lost skip would join an empty entry to `bash` or a relative one to `rel/bin/bash`.
         .{ .pairs = &.{ home, .{ "PATH", ":rel/bin:/opt/bin" } }, .present = &.{ "bash", "rel/bin/bash", "/opt/bin/bash", fallback_shell }, .want = "/opt/bin/bash" },
         .{ .pairs = &.{ home, .{ "PATH", "/opt/bin" } }, .present = &.{fallback_shell}, .want = fallback_shell },

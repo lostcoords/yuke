@@ -8,7 +8,7 @@ const quickjs = @import("quickjs");
 const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 const os = @import("../host/operations.zig");
-const LocalHost = @import("../host/local.zig").LocalHost;
+const process = @import("../host/process.zig");
 const pending = @import("../pending.zig");
 const utf8 = @import("../../utf8.zig");
 
@@ -99,44 +99,41 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     return host.startTaskWithSignal(Request, execTask, request, signal);
 }
 
-// TODO: fold this into Cancel.runChild once that helper carries a child result value.
-/// Join the command worker before the owner can free its op.
+const canceled: pending.Result = .{ .failed = .{ .message = "the command was canceled" } };
+
+/// Run the command in a child, so a call abort cancels it. Every child path writes `result` before the op finishes.
 fn execTask(host: *Host, op: *pending.Op, req: Request) void {
     defer req.free(host.gpa);
     std.debug.assert(op.result == null);
-    if (op.cancel.requested) return op.finish(.{ .failed = .{ .message = "the command was canceled" } });
-    var worker = host.io.concurrent(execWorker, .{ host, op, req }) catch
-        return op.finish(.{ .failed = .{ .message = "the host cannot start another operation" } });
-    op.cancel.event.wait(host.io) catch {
-        const result = worker.cancel(host.io);
-        op.finish(result);
-        return;
-    };
-    const result = if (op.cancel.requested) worker.cancel(host.io) else worker.await(host.io);
+    if (op.cancel.requested) return op.finish(canceled);
+    var result: pending.Result = canceled;
+    switch (op.cancel.runChild(host.io, execWorker, .{ host, op, req, &result })) {
+        .returned => |started| started catch return op.finish(.{ .failed = .{ .message = "the host cannot start another operation" } }),
+        .canceled, .aborted => {},
+    }
     op.finish(result);
 }
 
 /// The worker touches no QuickJS values and signals its supervisor before return.
-fn execWorker(host: *Host, op: *pending.Op, req: Request) pending.Result {
+fn execWorker(host: *Host, op: *pending.Op, req: Request, result: *pending.Result) error{}!void {
     defer op.cancel.finish(host.io);
-    if (op.cancel.requested) return .{ .failed = .{ .message = "the command was canceled" } };
-    host.io.checkCancel() catch return .{ .failed = .{ .message = "the command was canceled" } };
+    host.io.checkCancel() catch return;
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
-    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
-
-    const result = local.exec(arena.allocator(), host.execution.shell, .{
+    const ran = process.run(host.io, req.root, host.execution, arena.allocator(), .{
         .command = req.command,
         .cwd = req.cwd,
         .timeout_ms = req.timeout_ms,
         .max_stream_bytes = max_stream_bytes,
-    }) catch |err| return .{ .failed = .{ .message = errorMessage(err) } };
-
-    return .{ .json = encode(host.gpa, arena.allocator(), result) };
+    }) catch |err| {
+        result.* = .{ .failed = .{ .message = errorMessage(err) } };
+        return;
+    };
+    result.* = .{ .json = encode(host.gpa, arena.allocator(), ran) };
 }
 
 /// Build the result text. A command prints any bytes, so each stream becomes valid UTF-8 first.
-fn encode(gpa: std.mem.Allocator, scratch: std.mem.Allocator, r: os.ExecResult) [:0]u8 {
+fn encode(gpa: std.mem.Allocator, scratch: std.mem.Allocator, r: process.Result) [:0]u8 {
     const stdout = utf8.sanitize(scratch, r.stdout) catch unreachable;
     const stderr = utf8.sanitize(scratch, r.stderr) catch unreachable;
 
@@ -148,7 +145,7 @@ fn encode(gpa: std.mem.Allocator, scratch: std.mem.Allocator, r: os.ExecResult) 
 }
 
 /// Write one result. `code` and `signal` are null for each outcome that did not produce them.
-fn write(w: *std.Io.Writer, stdout: []const u8, stderr: []const u8, r: os.ExecResult) std.Io.Writer.Error!void {
+fn write(w: *std.Io.Writer, stdout: []const u8, stderr: []const u8, r: process.Result) std.Io.Writer.Error!void {
     try w.writeAll("{\"stdout\":");
     try std.json.Stringify.encodeJsonString(stdout, .{}, w);
     try w.writeAll(",\"stderr\":");
@@ -195,7 +192,7 @@ fn timeoutOf(ctx: Context, options: Value) error{InvalidOption}!u32 {
 
 const testing = std.testing;
 
-fn encoded(a: std.mem.Allocator, r: os.ExecResult) ![]const u8 {
+fn encoded(a: std.mem.Allocator, r: process.Result) ![]const u8 {
     return encode(a, a, r);
 }
 

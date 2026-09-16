@@ -4,8 +4,6 @@
 const std = @import("std");
 const h = @import("operations.zig");
 const paths = @import("../../paths.zig");
-const process = @import("process.zig");
-const execution = @import("../../execution.zig");
 const blob = @import("../../store/blob.zig");
 
 const Map = std.process.Environ.Map;
@@ -89,12 +87,6 @@ pub const LocalHost = struct {
         const info = std.Io.Dir.cwd().statFile(self.io, full, .{ .follow_symlinks = false }) catch |err| return mapError(err);
         if (info.kind != .file) return error.NotAFile;
         std.Io.Dir.cwd().deleteFile(self.io, full) catch |err| return mapError(err);
-    }
-
-    /// The shell arrives per call, so a file-only operation carries no shell state.
-    /// The host owns the environment, so a caller cannot pair this shell with a different one.
-    pub fn exec(self: *LocalHost, scratch: std.mem.Allocator, shell: execution.Shell, spec: h.ExecSpec) h.HostError!h.ExecResult {
-        return process.run(self.io, self.root, .{ .env = self.env, .shell = shell }, scratch, spec);
     }
 
     pub fn stat(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8) h.HostError!h.Stat {

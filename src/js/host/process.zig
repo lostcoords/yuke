@@ -9,6 +9,35 @@ const h = @import("operations.zig");
 const paths = @import("../../paths.zig");
 const execution = @import("../../execution.zig");
 
+/// One command to run. `cwd` is relative to the workspace root. A null `cwd` uses the root itself.
+pub const Spec = struct {
+    command: []const u8,
+    cwd: ?[]const u8 = null,
+    timeout_ms: u32,
+    /// The cap for each stream. The runner keeps the head and the tail and reports the cut.
+    max_stream_bytes: u32,
+};
+
+/// How one command ended. The union makes an impossible pair unrepresentable.
+pub const Outcome = union(enum) {
+    /// The command ended on its own with this code.
+    exited: u8,
+    /// A signal ended the command. The value is the signal number.
+    signaled: u8,
+    /// The deadline expired. The runner killed the process group.
+    timed_out,
+};
+
+/// What one command produced. `stdout` and `stderr` come from `scratch`.
+pub const Result = struct {
+    stdout: []const u8,
+    stderr: []const u8,
+    outcome: Outcome,
+    /// The bytes each stream dropped between its head and its tail. Zero means nothing was lost.
+    stdout_dropped: u64 = 0,
+    stderr_dropped: u64 = 0,
+};
+
 /// The wait between SIGTERM and SIGKILL. A shell runs its SIGTERM trap in this time. A test waits less.
 const grace_ns: u64 = if (@import("builtin").is_test) 100 * std.time.ns_per_ms else 2 * std.time.ns_per_s;
 
@@ -26,29 +55,24 @@ const Drain = struct {
         return @max(1, self.limit / 2);
     }
 
-    /// Join the head and the tail with one notice between them, from `scratch`; the notice counts the codepoint the cap cut in half.
+    /// Join the head and the tail from `scratch`, with one notice at a gap; the notice counts the codepoint the cap cut in half.
     fn text(self: *Drain, scratch: std.mem.Allocator) []const u8 {
-        if (self.dropped == 0) {
-            if (self.tail.items.len == 0) return self.head.items;
-            // No byte went, so the two ends stay adjacent. The join restores the exact stream.
-            var whole: std.ArrayList(u8) = .empty;
-            whole.appendSlice(scratch, self.head.items) catch unreachable;
-            whole.appendSlice(scratch, self.tail.items) catch unreachable;
-            return whole.toOwnedSlice(scratch) catch unreachable;
-        }
-        const head = self.head.items[0..utf8.whole(self.head.items)];
-        const tail = self.tail.items[utf8.head(self.tail.items)..];
+        if (self.tail.items.len == 0) return self.head.items;
+        // With no gap the two ends stay adjacent, so the join restores the exact stream.
+        const gap = self.dropped != 0;
+        const head = if (gap) self.head.items[0..utf8.whole(self.head.items)] else self.head.items;
+        const tail = if (gap) self.tail.items[utf8.head(self.tail.items)..] else self.tail.items;
         const trimmed = (self.head.items.len - head.len) + (self.tail.items.len - tail.len);
         var joined: std.ArrayList(u8) = .empty;
         joined.appendSlice(scratch, head) catch unreachable;
-        joined.print(scratch, "\n[The tool dropped {d} bytes here.]\n", .{self.dropped + trimmed}) catch unreachable;
+        if (gap) joined.print(scratch, "\n[The tool dropped {d} bytes here.]\n", .{self.dropped + trimmed}) catch unreachable;
         joined.appendSlice(scratch, tail) catch unreachable;
         return joined.toOwnedSlice(scratch) catch unreachable;
     }
 };
 
 /// Run `spec` and return its output. It returns an error rather than an assertion, because `spec` is validated tool input.
-pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: std.mem.Allocator, spec: h.ExecSpec) h.HostError!h.ExecResult {
+pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: std.mem.Allocator, spec: Spec) h.HostError!Result {
     if (spec.timeout_ms == 0 or spec.max_stream_bytes == 0) return error.HostFailure;
     std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
     const cwd = try resolveCwd(scratch, root, context.env, spec.cwd);
@@ -199,10 +223,7 @@ fn terminate(io: std.Io, group: *std.Io.Group, child: *std.process.Child, pid: s
 
 /// Signal a whole process group. A negative pid names the group, so every member receives it.
 fn killGroup(pid: std.posix.pid_t, sig: std.posix.SIG) void {
-    std.posix.kill(-pid, sig) catch |err| switch (err) {
-        error.ProcessNotFound => {}, // The group already ended.
-        else => {},
-    };
+    std.posix.kill(-pid, sig) catch {}; // The group can already be gone.
 }
 
 /// Join the group, then set `done`. The caller waits on `done` with a deadline.
@@ -272,7 +293,7 @@ fn utilityEnv() !std.process.Environ.Map {
     return env;
 }
 
-fn runShell(a: std.mem.Allocator, command: []const u8, timeout_ms: u32) !h.ExecResult {
+fn runShell(a: std.mem.Allocator, command: []const u8, timeout_ms: u32) !Result {
     var env = try utilityEnv();
     defer env.deinit();
     return run(testing.io, "/tmp", execution.testContext(&env), a, .{ .command = command, .timeout_ms = timeout_ms, .max_stream_bytes = 256 });

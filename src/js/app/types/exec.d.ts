@@ -1,6 +1,6 @@
 declare module "yuke:exec" {
   interface ExecOptions {
-    /** A relative path resolves against the directory the host runs in. */
+    /** A relative path resolves against `workspaceRoot`, or the host directory without one. */
     cwd?: string;
     /** The default is 120000 and the maximum is 600000. */
     timeoutMs?: number;
