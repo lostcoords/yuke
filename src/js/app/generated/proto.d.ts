@@ -333,13 +333,14 @@ export interface Job {
   readonly command: string;
   readonly cwd: string;
   readonly state: JobState;
+  readonly stop_requested?: boolean;
   readonly exit_code?: number;
   readonly signal?: number;
   readonly started_at_ms: number;
   readonly ended_at_ms?: number;
 }
 
-/** This payload describes `job.changed`: a job started or ended. */
+/** This payload describes `job.changed`: a job started, received a stop request, or ended. */
 export interface JobChangedData {
   readonly job: Job;
 }
@@ -354,15 +355,17 @@ export interface JobListResult {
   readonly jobs: ReadonlyArray<Job>;
 }
 
-/** These parameters read the job output from a byte offset. `max_bytes` is at most 262144. */
+/** These parameters read the job output from a byte offset. `max_bytes` is from 4 to 262144; a null offset selects the tail. */
 export interface JobReadParams {
   readonly id: JobId;
-  readonly offset: number;
+  readonly offset?: number;
   readonly max_bytes: number;
 }
 
 /** The output text, cut at a character boundary. Read again from `next` to follow a running job; `size` is the log size now. */
 export interface JobReadResult {
+  readonly start: number;
+  readonly complete: boolean;
   readonly text: string;
   readonly next: number;
   readonly size: number;
@@ -1368,7 +1371,7 @@ export type ToolCancellationReason =
 export type JobState =
   | "running"
   | "exited"
-  | "stopped"
+  | "failed"
 ;
 
 /** This type describes one part of a message's content. */

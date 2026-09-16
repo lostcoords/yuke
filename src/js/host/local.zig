@@ -39,21 +39,22 @@ pub const LocalHost = struct {
     }
 
     /// Read at most `max_bytes` from `offset` as text, cut at a character boundary. A growing log reads again from `next`.
-    pub fn readFrom(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, offset: u64, max_bytes: u32) h.HostError!h.BytesRead {
+    pub fn readFrom(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, offset: ?u64, max_bytes: u32, complete: bool) h.HostError!h.BytesRead {
         std.debug.assert(max_bytes > 0);
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         try requireRegularFile(self.io, full);
         var file = std.Io.Dir.cwd().openFile(self.io, full, .{}) catch |err| return mapError(err);
         defer file.close(self.io);
         const size = (file.stat(self.io) catch |err| return mapError(err)).size;
-        const start = @min(offset, size);
+        if (max_bytes < 4) return error.HostFailure;
+        const start = if (offset) |at| @min(at, size) else size -| max_bytes;
         const buffer = scratch.alloc(u8, @intCast(@min(max_bytes, size - start))) catch unreachable;
         const count = file.readPositionalAll(self.io, buffer, start) catch |err| return mapError(err);
         // A writer can stop in the middle of a character, so the cut part waits for the next read.
-        const cut = utf8.whole(buffer[0..count]);
+        const cut = if (complete and start + count == size) count else utf8.whole(buffer[0..count]);
         const bytes = buffer[0..cut];
         const text = if (std.unicode.utf8ValidateSlice(bytes)) bytes else utf8.sanitize(scratch, bytes) catch unreachable;
-        return .{ .text = text, .next = start + cut, .size = size };
+        return .{ .text = text, .next = start + cut, .size = size, .start = start, .complete = complete and start + cut == size };
     }
 
     pub fn readAll(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, max_bytes: u32) h.HostError![]const u8 {
@@ -429,14 +430,14 @@ test "LocalHost reads bytes from an offset and keeps a cut character for the nex
     defer arena.deinit();
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
 
-    const first = try local.readFrom(arena.allocator(), "a.txt", 0, 3);
+    const first = try local.readFrom(arena.allocator(), "a.txt", 0, 4, false);
     try testing.expectEqualStrings("ab", first.text);
     try testing.expectEqual(@as(u64, 2), first.next);
-    const rest = try local.readFrom(arena.allocator(), "a.txt", first.next, 64);
+    const rest = try local.readFrom(arena.allocator(), "a.txt", first.next, 64, false);
     try testing.expectEqualStrings("\xe6\x97\xa5c", rest.text);
     try testing.expectEqual(@as(u64, 6), rest.next);
     // An offset past the end answers the size, so a caller can start at the tail.
-    const past = try local.readFrom(arena.allocator(), "a.txt", 1 << 40, 1);
+    const past = try local.readFrom(arena.allocator(), "a.txt", 1 << 40, 4, false);
     try testing.expectEqualStrings("", past.text);
     try testing.expectEqual(past.size, past.next);
 }
@@ -814,4 +815,24 @@ test "stat reports a directory, a file, and a missing path" {
     try testing.expect(!file.is_dir);
     try testing.expect(file.last_modified_ms > 0);
     try testing.expectError(error.NotFound, local.stat(a, "gone"));
+}
+
+test "a final byte read consumes invalid UTF-8 and a tail needs no size probe" {
+    var f: Fixture = undefined;
+    try f.init("abc\xe6\x97");
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
+    const live = try local.readFrom(a, "a.txt", 0, 64, false);
+    try testing.expectEqualStrings("abc", live.text);
+    try testing.expect(!live.complete);
+    const end = try local.readFrom(a, "a.txt", live.next, 4, true);
+    try testing.expectEqualStrings("\u{FFFD}\u{FFFD}", end.text);
+    try testing.expect(end.complete and end.next == end.size);
+    const tail = try local.readFrom(a, "a.txt", null, 4, true);
+    try testing.expectEqual(@as(u64, 1), tail.start);
+    try testing.expectEqualStrings("bc\u{FFFD}\u{FFFD}", tail.text);
+    try testing.expectError(error.HostFailure, local.readFrom(a, "a.txt", 0, 1, false));
 }

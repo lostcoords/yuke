@@ -5,9 +5,10 @@ declare module "yuke:jobs-native" {
     sessionId: string | null;
     command: string;
     cwd: string;
-    /** The private log that holds both streams and ends with the exit line. */
+    /** The private log that holds both streams without host metadata. */
     log: string;
-    state: "running" | "exited" | "stopped";
+    state: "running" | "exited" | "failed";
+    stopRequested: boolean;
     code: number | null;
     signal: number | null;
     /** Epoch milliseconds. */
@@ -22,6 +23,6 @@ declare module "yuke:jobs-native" {
   export function get(id: number): Job | null;
   /** Stops a running job and answers it as it is now; the end arrives through `ended`. */
   export function stop(id: number): Job | null;
-  /** Reads at most `maxBytes` (up to 262144) of the job log from `offset`, cut at a character boundary. */
-  export function read(id: number, offset: number, maxBytes: number): Promise<{ text: string; next: number; size: number }>;
+  /** Reads at most `maxBytes` (4 to 262144) of the job log from `offset`, cut at a character boundary. */
+  export function read(id: number, offset: number | null, maxBytes: number): Promise<{ text: string; next: number; size: number; start: number; complete: boolean }>;
 }

@@ -163,7 +163,7 @@ fn consumeInitialInputs(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlo
     try engine.deps.io.checkCancel();
     const protection = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(protection);
-    if (slot.cancel.requested) return error.Canceled;
+    if (slot.cancel.isRequested()) return error.Canceled;
     std.debug.assert(slot.progress.current == null);
     var tx = try engine.deps.db.begin();
     defer tx.deinit();
@@ -305,12 +305,12 @@ fn streamAttempt(
         .returned => |r| r,
     };
     if (result) |_| {
-        if (slot.cancel.requested) return .canceled;
+        if (slot.cancel.isRequested()) return .canceled;
         const reason = streamer.stop_reason orelse
             return .{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } };
         return .{ .success = reason };
     } else |err| {
-        if (err == error.Canceled or slot.cancel.requested) return .canceled;
+        if (err == error.Canceled or slot.cancel.isRequested()) return .canceled;
         return err;
     }
 }
@@ -391,7 +391,7 @@ fn commitRound(
     const old_cancel_protection = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old_cancel_protection);
 
-    const result: Terminal = if (slot.cancel.requested) .canceled else response;
+    const result: Terminal = if (slot.cancel.isRequested()) .canceled else response;
     const session_id = slot.sessionId();
     var tx = try engine.deps.db.begin();
     defer tx.deinit();
@@ -784,7 +784,7 @@ fn settlePendingTools(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot,
         try pending.append(arena, .{ .part_id = p.tool.id, .name = p.tool.name, .arguments = p.tool.arguments });
     }
     for (pending.items) |pt| {
-        if (workspace_root == null or slot.cancel.requested) {
+        if (workspace_root == null or slot.cancel.isRequested()) {
             try streamer.emitToolState(pt.part_id, .{ .canceled = .{} });
             continue;
         }
@@ -824,7 +824,7 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_roo
     const duration = engine.nowMillis() -| started; // Saturate; the wall clock can move backward.
     const old = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old);
-    const settled: proto.tool.ToolState = if (slot.cancel.requested)
+    const settled: proto.tool.ToolState = if (slot.cancel.isRequested())
         .{ .canceled = .{ .duration_ms = duration } }
     else if (res.cancellation_reason) |reason|
         .{ .canceled = .{ .duration_ms = duration, .reason = reason } }

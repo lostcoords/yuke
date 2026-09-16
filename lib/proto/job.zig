@@ -2,7 +2,7 @@
 
 const ids = @import("ids.zig");
 
-pub const JobState = enum { running, exited, stopped };
+pub const JobState = enum { running, exited, failed };
 
 /// One background job. `exit_code` and `signal` stay null while it runs, and at most one of them is set after the end.
 pub const Job = struct {
@@ -11,6 +11,7 @@ pub const Job = struct {
     command: []const u8,
     cwd: []const u8,
     state: JobState,
+    stop_requested: bool = false,
     exit_code: ?u8 = null,
     signal: ?u8 = null,
     started_at_ms: u64,
@@ -37,21 +38,23 @@ pub const JobStopResult = struct {
     job: Job,
 };
 
-/// These parameters read the job output from a byte offset. `max_bytes` is at most 262144.
+/// These parameters read the job output from a byte offset. `max_bytes` is from 4 to 262144; a null offset selects the tail.
 pub const JobReadParams = struct {
     id: ids.JobId,
-    offset: u64,
+    offset: ?u64 = null,
     max_bytes: u32,
 };
 
 /// The output text, cut at a character boundary. Read again from `next` to follow a running job; `size` is the log size now.
 pub const JobReadResult = struct {
+    start: u64,
+    complete: bool,
     text: []const u8,
     next: u64,
     size: u64,
 };
 
-/// This payload describes `job.changed`: a job started or ended.
+/// This payload describes `job.changed`: a job started, received a stop request, or ended.
 pub const JobChangedData = struct {
     job: Job,
 };

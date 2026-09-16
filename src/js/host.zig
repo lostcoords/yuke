@@ -22,7 +22,6 @@ const call_run = @import("call_run.zig");
 const pending = @import("pending.zig");
 const execution_mod = @import("../execution.zig");
 const Logs = @import("host/logs.zig").Logs;
-const process_runner = @import("host/process.zig");
 const timers_mod = @import("timers.zig");
 
 /// Limit the client heap. Scripts fail when they exceed this limit.
@@ -279,11 +278,9 @@ pub const Host = struct {
         self.phase = .drained;
     }
 
-    /// End every running child in one grace period. A waiter reaps with cancelation blocked, so call this before `tasks.cancel`.
+    /// Request all child stops before `tasks.cancel`, so their grace periods overlap.
     pub fn endChildren(self: *Host) void {
-        var pids: [process_module.max_processes]std.posix.pid_t = undefined;
-        const count = self.procs.runningPids(&pids);
-        if (count != 0) process_runner.endGroups(self.io, pids[0..count]);
+        self.procs.stopAll(self.io);
     }
 
     /// Recover the host from a QuickJS context opaque pointer.

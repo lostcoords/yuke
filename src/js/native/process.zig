@@ -17,6 +17,8 @@ const rejected = pending.rejected;
 pub const max_processes = 64;
 /// The most bytes one stream buffers before its reader waits for the owner. The child then blocks on a full pipe.
 pub const max_buffered_bytes = 1024 * 1024;
+pub const max_write_bytes = 1024 * 1024;
+pub const max_writes = 1024;
 
 pub fn install(host: *Host) void {
     module.installFunctions(host, "yuke:process", &.{
@@ -32,6 +34,8 @@ const Stream = struct {
     file: ?std.Io.File,
     lock: std.Io.Mutex = .init,
     buffer: std.ArrayList(u8) = .empty,
+    /// Only the owner touches this buffer until it swaps it with `buffer` under `lock`.
+    spare: std.ArrayList(u8) = .empty,
     /// The reader sets this last, at EOF, at a read error, or at a cancel.
     ended: bool,
     /// A reader sets this after it appends or ends, so `hasWork` needs no lock.
@@ -54,19 +58,20 @@ const Proc = struct {
     on_output: Value,
     resolve: Value,
     reject: Value,
-    /// The log path of a job, owned by the process. The waiter appends the exit line to it.
-    log: ?[]u8,
     /// The job record of a job child. The settle ends it, and `exited` resolves with it.
     job: ?*Job,
-    /// Guards `writes`, `stdin`, `writing`, and `close_after`.
+    /// Guards the input queue, its byte count, and the input descriptor.
     writes_lock: std.Io.Mutex = .init,
-    writes: std.ArrayList(Write) = .empty,
+    writes: std.Deque(Write) = .empty,
+    write_bytes: usize = 0,
     stdin: ?std.posix.fd_t,
     writing: bool = false,
     close_after: bool = false,
-    /// The waiter writes the exit, then sets `reaped`, then sets `done` after the last read. The owner reads `outcome` only after `done`.
+    /// The reaper publishes `outcome` through `reaped`; the supervisor publishes stream completion through `done`.
     outcome: ?runner.Outcome = null,
     reaped: std.atomic.Value(bool) = .init(false),
+    stop_requested: std.atomic.Value(bool) = .init(false),
+    changed: std.Io.Event = .unset,
     done: std.atomic.Value(bool) = .init(false),
     /// Owner only.
     settled: bool = false,
@@ -115,14 +120,10 @@ pub const Procs = struct {
         return faulted;
     }
 
-    /// Write the pid of every running child into `out`, and answer the count.
-    pub fn runningPids(self: *const Procs, out: []std.posix.pid_t) usize {
-        var count: usize = 0;
-        for (self.live.items) |proc| if (!proc.done.load(.acquire)) {
-            out[count] = proc.pid;
-            count += 1;
-        };
-        return count;
+    /// Request every stop before the host joins its tasks, so all grace periods overlap.
+    pub fn stopAll(self: *Procs, io: std.Io) void {
+        std.debug.assert(self.live.items.len <= max_processes);
+        for (self.live.items) |proc| _ = requestStop(io, proc);
     }
 
     /// Free every process. Every task has returned, so no task holds a pointer.
@@ -139,19 +140,21 @@ pub const Procs = struct {
 fn idle(io: std.Io, proc: *Proc) bool {
     proc.writes_lock.lockUncancelable(io);
     defer proc.writes_lock.unlock(io);
-    return !proc.writing and proc.writes.items.len == 0;
+    return !proc.writing and proc.writes.len == 0;
 }
 
 fn free(host: *Host, proc: *Proc) void {
-    if (proc.log) |path| host.gpa.free(path);
     host.ctx.freeValue(proc.on_output);
     host.ctx.freeValue(proc.resolve);
     host.ctx.freeValue(proc.reject);
     if (proc.stdin) |fd| _ = std.posix.system.close(fd);
     // `Ops.deinit` frees the op of a write that a close canceled.
-    for (proc.writes.items) |w| host.gpa.free(w.bytes);
+    while (proc.writes.popFront()) |w| host.gpa.free(w.bytes);
     proc.writes.deinit(host.gpa);
-    for (&proc.streams) |*stream| stream.buffer.deinit(host.gpa);
+    for (&proc.streams) |*stream| {
+        stream.buffer.deinit(host.gpa);
+        stream.spare.deinit(host.gpa);
+    }
     host.gpa.destroy(proc);
 }
 
@@ -159,19 +162,25 @@ fn free(host: *Host, proc: *Proc) void {
 fn deliver(host: *Host, proc: *Proc, stream: *Stream, number: i32) bool {
     stream.lock.lockUncancelable(host.io);
     var taken = stream.buffer;
-    stream.buffer = .empty;
+    stream.buffer = stream.spare;
+    stream.spare = .empty;
     const cut = if (stream.ended) taken.items.len else utf8.whole(taken.items);
     stream.buffer.appendSlice(host.gpa, taken.items[cut..]) catch unreachable;
     const finished = stream.ended and stream.buffer.items.len == 0;
     stream.lock.unlock(host.io);
     stream.space.set(host.io);
-    defer taken.deinit(host.gpa);
+    defer {
+        taken.clearRetainingCapacity();
+        stream.spare = taken;
+    }
 
     stream.finished = finished;
     if (cut == 0) return false;
     const ctx = host.ctx;
-    const text = utf8.sanitize(host.gpa, taken.items[0..cut]) catch unreachable;
-    defer host.gpa.free(text);
+    const bytes = taken.items[0..cut];
+    const invalid = !std.unicode.utf8ValidateSlice(bytes);
+    const text = if (invalid) utf8.sanitize(host.gpa, bytes) catch unreachable else bytes;
+    defer if (invalid) host.gpa.free(text);
     host.enterSlice();
     var argv = [_]Value{ ctx.newInt32(number), ctx.newString(text) };
     defer for (argv) |arg| ctx.freeValue(arg);
@@ -230,12 +239,15 @@ fn readTask(host: *Host, stream: *Stream) void {
             stream.space.reset();
             stream.lock.lockUncancelable(host.io);
             const full = stream.buffer.items.len >= max_buffered_bytes;
-            if (!full) stream.buffer.appendSlice(host.gpa, chunk) catch unreachable;
+            if (!full) {
+                const n = @min(chunk.len, max_buffered_bytes - stream.buffer.items.len);
+                stream.buffer.appendSlice(host.gpa, chunk[0..n]) catch unreachable;
+                reader.interface.toss(n);
+            }
             stream.lock.unlock(host.io);
             if (!full) break;
             stream.space.wait(host.io) catch return;
         }
-        reader.interface.toss(chunk.len);
         stream.ready.store(true, .release);
         host.wake.set(host.io);
     }
@@ -255,9 +267,18 @@ fn procTask(host: *Host, proc: *Proc) void {
             stream.ready.store(true, .release);
         };
     }
-    proc.outcome = runner.reapGroup(host.io, &proc.child);
-    proc.reaped.store(true, .release);
-    if (proc.log) |path| appendExit(host.io, path, proc.outcome);
+    const protection = host.io.swapCancelProtection(.blocked);
+    defer _ = host.io.swapCancelProtection(protection);
+    if (host.io.concurrent(reapTask, .{ host, proc })) |future| {
+        var reaper = future;
+        proc.changed.waitUncancelable(host.io);
+        if (proc.stop_requested.load(.acquire) and !proc.reaped.load(.acquire)) runner.endGroups(host.io, &.{proc.pid});
+        _ = reaper.await(host.io);
+        runner.endRemaining(host.io, proc.pid);
+    } else |_| {
+        runner.endGroups(host.io, &.{proc.pid});
+        reapTask(host, proc);
+    }
     _ = runner.awaitDrains(host.io, &readers) catch {
         const old = host.io.swapCancelProtection(.blocked);
         defer _ = host.io.swapCancelProtection(old);
@@ -268,36 +289,34 @@ fn procTask(host: *Host, proc: *Proc) void {
     host.wake.set(host.io);
 }
 
-/// Append how the child ended to its log, so a read of the log shows the end. The group is dead, so no child writes after this line.
-fn appendExit(io: std.Io, path: []const u8, outcome: ?runner.Outcome) void {
-    var buffer: [48]u8 = undefined;
-    const line = if (outcome) |o| switch (o) {
-        .exited => |code| std.fmt.bufPrint(&buffer, "[exited with code {d}]\n", .{code}) catch unreachable,
-        .signaled => |sig| std.fmt.bufPrint(&buffer, "[ended by signal {d}]\n", .{sig}) catch unreachable,
-        .timed_out => unreachable, // A process has no deadline.
-    } else "[the host could not read the exit]\n";
-    const file = std.Io.Dir.openFileAbsolute(io, path, .{ .mode = .write_only }) catch return;
-    defer file.close(io);
-    const end = (file.stat(io) catch return).size;
-    file.writePositionalAll(io, line, end) catch {};
+fn reapTask(host: *Host, proc: *Proc) void {
+    std.debug.assert(proc.child.id != null);
+    std.debug.assert(!proc.reaped.load(.acquire) and !proc.done.load(.acquire));
+    proc.outcome = runner.reapChild(host.io, &proc.child);
+    proc.reaped.store(true, .release);
+    proc.changed.set(host.io);
 }
 
 /// Write queued input in order. One writer runs for each process, because two writers interleave a write above `PIPE_BUF`.
 fn writeTask(host: *Host, proc: *Proc) void {
     while (true) {
         proc.writes_lock.lockUncancelable(host.io);
-        if (proc.writes.items.len == 0) {
+        if (proc.writes.len == 0) {
             proc.writing = false;
             if (proc.close_after) closeInput(proc);
             proc.writes_lock.unlock(host.io);
             return;
         }
-        const w = proc.writes.orderedRemove(0);
+        const w = proc.writes.popFront().?;
         const file: std.Io.File = .{ .handle = proc.stdin.?, .flags = .{ .nonblocking = false } };
         proc.writes_lock.unlock(host.io);
 
         // SIGPIPE is ignored in this process, so a dead reader returns an error here.
         const written = file.writeStreamingAll(host.io, w.bytes);
+        proc.writes_lock.lockUncancelable(host.io);
+        std.debug.assert(proc.write_bytes >= w.bytes.len);
+        proc.write_bytes -= w.bytes.len;
+        proc.writes_lock.unlock(host.io);
         host.gpa.free(w.bytes);
         w.op.finish(if (written) |_| .undefined else |_| .{ .failed = .{ .message = "the process closed its input" } });
     }
@@ -308,10 +327,6 @@ fn closeInput(proc: *Proc) void {
     const fd = proc.stdin orelse return;
     _ = std.posix.system.close(fd);
     proc.stdin = null;
-}
-
-fn killTask(host: *Host, pid: std.posix.pid_t) void {
-    runner.endGroups(host.io, &.{pid});
 }
 
 /// Start `argv` with no shell over pipes. Argument errors throw; an operating error rejects `exited`.
@@ -336,7 +351,7 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     if (!ctx.isFunction(on_output)) return ctx.throwTypeError("spawn needs an output callback");
     const root = module.rootArg(ctx, a, if (args.len > 3) args[3] else quickjs.UNDEFINED, host.cwd) orelse
         return ctx.throwTypeError("the workspace root must be an absolute path");
-    var env = host.execution.env.clone(a) catch unreachable;
+    var env: std.process.Environ.Map = if (pairs.len > 0) host.execution.env.clone(a) catch unreachable else undefined;
     var pair: usize = 0;
     while (pair < pairs.len) : (pair += 2) {
         if (!std.process.Environ.Map.validateKeyForPut(pairs[pair]) or std.mem.indexOfScalar(u8, pairs[pair + 1], 0) != null)
@@ -349,9 +364,9 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     if (ctx.isException(exited)) return exited;
     const handle = ctx.newObject();
     module.set(ctx, handle, "exited", exited);
-    const program = runner.startProgram(host.io, root, &env, a, argv, cwd, .pipes) catch |err|
+    const program = runner.startProgram(host.io, root, if (pairs.len > 0) &env else host.execution.env, a, argv, cwd, .pipes) catch |err|
         return failStart(ctx, handle, &funcs, startMessage(err));
-    const proc = launch(host, program, on_output, funcs, null, null);
+    const proc = launch(host, program, on_output, funcs, null);
     module.set(ctx, handle, "id", ctx.newInt32(@intCast(proc.id)));
     return handle;
 }
@@ -365,8 +380,8 @@ pub fn startMessage(err: anyerror) []const u8 {
     };
 }
 
-/// Take a started program into the table and start its waiter. The process owns `funcs`, `log`, and a copy of `on_output`.
-pub fn launch(host: *Host, program: runner.Program, on_output: Value, funcs: [2]Value, log: ?[]u8, job: ?*Job) *Proc {
+/// Take a started program into the table and start its waiter. The process owns `funcs` and a copy of `on_output`.
+pub fn launch(host: *Host, program: runner.Program, on_output: Value, funcs: [2]Value, job: ?*Job) *Proc {
     std.debug.assert(host.procs.live.items.len < max_processes);
     host.procs.last_id += 1;
     const proc = host.gpa.create(Proc) catch unreachable;
@@ -379,7 +394,6 @@ pub fn launch(host: *Host, program: runner.Program, on_output: Value, funcs: [2]
         .resolve = funcs[0],
         .reject = funcs[1],
         .stdin = program.stdin,
-        .log = log,
         .job = job,
     };
     for (&proc.streams) |*stream| stream.ready.store(stream.ended, .release);
@@ -387,7 +401,8 @@ pub fn launch(host: *Host, program: runner.Program, on_output: Value, funcs: [2]
     host.tasks.concurrent(host.io, procTask, .{ host, proc }) catch {
         // No waiter can run, so the owner ends and reaps the child, and the next drain settles it.
         runner.endGroups(host.io, &.{proc.pid});
-        _ = runner.reapGroup(host.io, &proc.child);
+        proc.outcome = runner.reapChild(host.io, &proc.child);
+        proc.reaped.store(true, .release);
         for (&proc.streams) |*stream| {
             if (stream.file) |file| file.close(host.io);
             stream.ended = true;
@@ -417,16 +432,21 @@ fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
     proc.writes_lock.lockUncancelable(host.io);
     defer proc.writes_lock.unlock(host.io);
     if (proc.stdin == null or proc.close_after or proc.done.load(.acquire)) return rejected(ctx, "the process input is closed");
+    const text = ctx.toCStringLen(args[1]) catch return rejected(ctx, "the process input could not be read");
+    defer ctx.freeCString(text.ptr);
+    if (text.len > max_write_bytes - proc.write_bytes or proc.writes.len >= max_writes)
+        return rejected(ctx, "the process input queue is full; await write before retry");
     const started = host.ops.start(ctx) orelse return ctx.throw(ctx.getException());
-    proc.writes.append(host.gpa, .{ .bytes = module.owned(ctx, host.gpa, args[1]).?, .op = started.op }) catch unreachable;
+    proc.writes.pushBack(host.gpa, .{ .bytes = host.gpa.dupe(u8, text) catch unreachable, .op = started.op }) catch unreachable;
+    proc.write_bytes += text.len;
     if (proc.writing) return started.promise;
     proc.writing = true;
     host.tasks.concurrent(host.io, writeTask, .{ host, proc }) catch {
-        for (proc.writes.items) |w| {
+        while (proc.writes.popFront()) |w| {
             host.gpa.free(w.bytes);
             w.op.finish(.{ .failed = .{ .message = "the host cannot start another operation" } });
         }
-        proc.writes.clearRetainingCapacity();
+        proc.write_bytes = 0;
         proc.writing = false;
     };
     return started.promise;
@@ -452,11 +472,16 @@ fn jsKill(ctx: Context, _: Value, args: []const Value) Value {
     return ctx.newBool(kill(host, @intCast(id)));
 }
 
-/// End the group of child `id` on a task, and answer whether the child was still unreaped. A reaped child already has its real exit.
+/// Request a stop from the lifecycle task; repeated requests share that task.
 pub fn kill(host: *Host, id: u32) bool {
     const proc = host.procs.find(id) orelse return false;
+    return requestStop(host.io, proc);
+}
+
+fn requestStop(io: std.Io, proc: *Proc) bool {
+    std.debug.assert(proc.pid > 0 and proc.id > 0);
     if (proc.reaped.load(.acquire)) return false;
-    host.tasks.concurrent(host.io, killTask, .{ host, proc.pid }) catch runner.endGroups(host.io, &.{proc.pid});
+    if (!proc.stop_requested.swap(true, .acq_rel)) proc.changed.set(io);
     return true;
 }
 
@@ -480,4 +505,28 @@ fn stringList(ctx: Context, a: std.mem.Allocator, value: Value) ?[]const []const
         if (std.mem.indexOfScalar(u8, slot.*, 0) != null) return null;
     }
     return list;
+}
+
+test "a failed task admission preserves the child exit and releases its handle" {
+    const testing = std.testing;
+    const support = @import("../test_support.zig");
+    const Fail = struct {
+        fn concurrent(_: ?*anyopaque, _: *std.Io.Group, _: []const u8, _: std.mem.Alignment, _: *const fn (*const anyopaque) void) std.Io.ConcurrentError!void {
+            return error.ConcurrencyUnavailable;
+        }
+    };
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    var vtable = host.io.vtable.*;
+    vtable.groupConcurrent = Fail.concurrent;
+    host.io.vtable = &vtable;
+    try host.evalModule(
+        \\import { spawn } from "yuke:spawn";
+        \\globalThis.exitKept = false;
+        \\spawn(["/bin/sh", "-c", "exit 7"], { workspaceRoot: "/tmp" }).exited.then(
+        \\  end => { exitKept = end.code !== null || end.signal !== null; }
+        \\);
+    , "admission.js");
+    try support.pumpUntilTrue(host, "exitKept");
+    try testing.expectEqual(@as(usize, 0), host.procs.live.items.len);
 }

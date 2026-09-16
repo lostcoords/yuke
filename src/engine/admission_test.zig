@@ -260,9 +260,9 @@ test "a parent site must name a running tool part in an uncanceled run" {
     bad.child.?.site.part_id = 7;
     try testing.expectError(error.BadToolSite, commands.sessionCreateForRpc(&f.engine, a, bad, &refused, null));
     const active = f.engine.sessions.get(f.parent).?.active_run.?;
-    active.cancel.requested = true;
+    active.cancel.requested.store(true, .release);
     try testing.expectError(error.BadToolSite, f.child("stopping", &refused));
-    active.cancel.requested = false;
+    active.cancel.requested.store(false, .release);
     try testing.expect(refused == null);
     try testing.expectEqual(@as(u64, 1), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
 }
@@ -464,7 +464,7 @@ test "child completion stays queued across an active parent interrupt" {
     try testing.expectEqual(proto.enums.RunErrorCode.unknown_model, pending.source.?.child_report.outcome.failed.code);
     const canceled = try commands.sessionCancelRun(&f.engine, a, .{ .session_id = f.parent, .clear_queue = true });
     try testing.expectEqual(@as(usize, 0), canceled.cleared_inputs.len);
-    try testing.expect(parent.active_run.?.cancel.requested);
+    try testing.expect(parent.active_run.?.cancel.isRequested());
     try testing.expectEqual(@as(usize, 1), parent.queueDepth());
     try testing.expectError(error.ProtectedInput, commands.sessionCancelInput(&f.engine, a, .{ .session_id = f.parent, .input_id = pending.input_id }));
 }

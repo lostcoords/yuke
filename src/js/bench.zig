@@ -38,11 +38,18 @@ pub const Phase = enum {
     advice_around,
     advice_mixed,
     advice_churn,
+    exec_short,
+    exec_bulk,
+    process_echo,
+    process_echo_fresh,
+    jobs_output,
+    timers_batch,
 
-    const Group = enum { transcript, colors, advice, agents };
+    const Group = enum { transcript, colors, advice, agents, process };
 
     fn group(self: Phase) Group {
         return switch (self) {
+            .exec_short, .exec_bulk, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
             .colors => .colors,
             .agents_open, .agents_activity, .agents_burst, .agents_structure => .agents,
             .advice_direct, .advice_before, .advice_around, .advice_mixed, .advice_churn => .advice,
@@ -106,6 +113,7 @@ pub const Harness = struct {
         defer ctx.freeValue(global);
         try ctx.setPropertyStr(global, "FIXTURE", ctx.newString(fixture));
         try self.host.evalModule(switch (self.phase_group) {
+            .process => @embedFile("bench_process.js"),
             .agents => @embedFile("bench_agents.js"),
             .colors => @embedFile("bench_colors.js"),
             .advice => @embedFile("bench_advice.js"),
@@ -270,8 +278,21 @@ pub const Harness = struct {
             std.log.err("benchmark: {s}", .{self.host.faultText()});
             return error.JavaScriptFault;
         }
-        if (self.phase_group == .agents) {
-            try self.settleAgents();
+        if (self.phase_group == .process and ctx.isObject(result)) {
+            const deadline = std.Io.Clock.Timestamp.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake });
+            while (ctx.promiseState(result) == .Pending) {
+                self.host.wake.reset();
+                try self.host.pump();
+                if (ctx.promiseState(result) != .Pending) break;
+                if (deadline.durationFromNow(self.host.io).raw.nanoseconds <= 0) return error.ProcessBenchmarkTimeout;
+                self.host.wake.waitTimeout(self.host.io, .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } }) catch |err| switch (err) {
+                    error.Timeout => {},
+                    else => return err,
+                };
+            }
+        }
+        if (self.phase_group == .agents or self.phase_group == .process) {
+            if (self.phase_group == .agents) try self.settleAgents();
             if (ctx.isObject(result) and ctx.promiseState(result) == .Rejected) return error.AgentBenchmarkRejected;
             if (ctx.isObject(result) and ctx.promiseState(result) == .Fulfilled) {
                 const value = ctx.promiseResult(result);
@@ -287,6 +308,8 @@ test "benchmark scenarios preserve the transcript across updates and cache evict
     var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
     defer _ = pool.deinit();
     for (phases) |phase| {
+        // Process phases use the single-executor benchmark runtime.
+        if (phase.group() == .process) continue;
         const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, phase);
         defer harness.destroy();
         // Scale 9 holds 18 messages, above the 16-message row cache, so eviction runs.

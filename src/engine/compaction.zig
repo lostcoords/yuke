@@ -256,7 +256,7 @@ fn runTask(engine: *Engine, slot: *RunSlot) void {
         .returned => |result| result,
     };
     const outcome = if (completed) |outcome| outcome else if (result) |_| unreachable else |err| blk: {
-        if (err == error.Canceled or slot.cancel.requested) break :blk proto.run.RunOutcome{ .canceled = .{} };
+        if (err == error.Canceled or slot.cancel.isRequested()) break :blk proto.run.RunOutcome{ .canceled = .{} };
         // The wire message names a class, so record the cause before the error loses it.
         std.log.warn("compaction run {d} ended: {t}", .{ slot.runId(), err });
         const detail = provider.failure.classify(err);

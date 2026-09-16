@@ -35,6 +35,8 @@ pub const RangeRead = struct {
 
 /// The result of a byte read from an offset. `next` is the offset after the returned bytes.
 pub const BytesRead = struct {
+    start: u64,
+    complete: bool,
     text: []const u8,
     next: u64,
     size: u64,

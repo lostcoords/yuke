@@ -1352,6 +1352,11 @@
           "presence": "required"
         },
         {
+          "name": "stop_requested",
+          "type": "bool",
+          "presence": "defaulted"
+        },
+        {
           "name": "exit_code",
           "type": "u8",
           "presence": "optional"
@@ -1375,7 +1380,7 @@
     },
     {
       "name": "JobChangedData",
-      "doc": "This payload describes `job.changed`: a job started or ended.",
+      "doc": "This payload describes `job.changed`: a job started, received a stop request, or ended.",
       "fields": [
         {
           "name": "job",
@@ -1408,7 +1413,7 @@
     },
     {
       "name": "JobReadParams",
-      "doc": "These parameters read the job output from a byte offset. `max_bytes` is at most 262144.",
+      "doc": "These parameters read the job output from a byte offset. `max_bytes` is from 4 to 262144; a null offset selects the tail.",
       "fields": [
         {
           "name": "id",
@@ -1418,7 +1423,7 @@
         {
           "name": "offset",
           "type": "u64",
-          "presence": "required"
+          "presence": "optional"
         },
         {
           "name": "max_bytes",
@@ -1431,6 +1436,16 @@
       "name": "JobReadResult",
       "doc": "The output text, cut at a character boundary. Read again from `next` to follow a running job; `size` is the log size now.",
       "fields": [
+        {
+          "name": "start",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "complete",
+          "type": "bool",
+          "presence": "required"
+        },
         {
           "name": "text",
           "type": "string",
@@ -4915,8 +4930,8 @@
           "wire": "exited"
         },
         {
-          "name": "stopped",
-          "wire": "stopped"
+          "name": "failed",
+          "wire": "failed"
         }
       ]
     }

@@ -18,7 +18,7 @@ function failed(error) { notice.show("jobs · " + (/** @type {Error} */ (error)?
 
 /** @param {Job} job @param {number} now @returns {string} */
 export function jobState(job, now) {
-  return job.state === "running" ? "running " + elapsedLabel(now - job.startedAt) : endLabel(job);
+  return job.state === "running" && !job.stopRequested ? "running " + elapsedLabel(now - job.startedAt) : endLabel(job);
 }
 
 /** @param {Job[]} jobs @returns {string} */
@@ -39,8 +39,25 @@ export class JobOutput {
     this.job = job;
     this.onClose = onClose;
     this.pager = new Pager();
-    /** @type {string[]} */
-    this.lines = [];
+    /** @type {import("./types/pager.js").TranscriptRow[]} */
+    this.rows = [];
+    this.first = 0;
+    this.complete = false;
+    this.closed = false;
+    this.pager.setSource({
+      rowCount: () => Math.min(OUTPUT_LINES, this.rows.length + (this.partial ? 1 : 0)) + (this.complete ? 1 : 0),
+      rows: (_width, top, height) => {
+        const skip = this.partial && this.rows.length === OUTPUT_LINES ? 1 : 0;
+        const count = this.rows.length - skip;
+        const end = count + (this.partial ? 1 : 0);
+        const shown = [];
+        for (let i = top; i < Math.min(top + height, end + (this.complete ? 1 : 0)); i++) {
+          if (i < count) shown.push(/** @type {import("./types/pager.js").TranscriptRow} */ (this.rows[(this.first + skip + i) % this.rows.length]));
+          else shown.push({ text: i < end ? this.partial ?? "" : `[${endLabel(this.job)}]`, group: "TxToolBody" });
+        }
+        return shown;
+      },
+    });
     /** The unfinished last line; null marks a first read that began inside a line. */
     /** @type {string | null} */
     this.partial = "";
@@ -56,20 +73,20 @@ export class JobOutput {
   // Read the new bytes; a long log starts at a whole line near its end, a request during a read runs after it, and an ended job reads to the end.
   /** @returns {Promise<void>} */
   async read() {
+    if (this.closed) return;
     if (this.reading) { this.again = true; return; }
     this.reading = true;
     try {
       do {
         this.again = false;
-        if (this.offset === null) {
-          const { size } = await read(this.job.id, Number.MAX_SAFE_INTEGER, 1);
-          this.offset = Math.max(0, size - OUTPUT_BYTES);
-          if (this.offset > 0) this.partial = null;
-        }
         const got = await read(this.job.id, this.offset, OUTPUT_BYTES);
+        if (this.closed) return;
+        if (this.offset === null && got.start > 0) this.partial = null;
         this.offset = got.next;
         this.append(got.text);
-        if (this.job.state !== "running" && got.next < got.size && got.text !== "") this.again = true;
+        this.complete = got.complete;
+        if (this.complete) root.invalidate();
+        if (this.job.state !== "running" && !got.complete && got.next < got.size && got.text !== "") this.again = true;
       } while (this.again);
     } finally {
       this.reading = false;
@@ -86,15 +103,15 @@ export class JobOutput {
       if (parts.length === 1) return;
       parts.shift();
     }
-    this.partial = /** @type {string} */ (parts.pop());
-    if (this.partial.length > LINE_CHARS) {
-      parts.push(this.partial.slice(0, LINE_CHARS));
-      this.partial = "";
+    this.partial = /** @type {string} */ (parts.pop()).slice(0, LINE_CHARS);
+    for (const line of parts) {
+      const row = { text: line.slice(0, LINE_CHARS), group: "TxToolBody" };
+      if (this.rows.length < OUTPUT_LINES) this.rows.push(row);
+      else {
+        this.rows[this.first] = row;
+        this.first = (this.first + 1) % OUTPUT_LINES;
+      }
     }
-    this.lines.push(...parts);
-    if (this.lines.length > OUTPUT_LINES) this.lines.splice(0, this.lines.length - OUTPUT_LINES);
-    const shown = this.partial === "" ? this.lines : [...this.lines, this.partial];
-    this.pager.setRows(shown.map((line) => ({ text: line, group: "TxToolBody" })));
     root.invalidate();
   }
 
@@ -145,6 +162,7 @@ export function openOutput(ctx, job) {
   function close() {
     if (!alive) return;
     alive = false;
+    view.closed = true;
     off(); release(); cleanup();
   }
   view.read().catch(failed);
@@ -168,7 +186,7 @@ export function openJobs(ctx) {
       x: (_event, content) => { const job = content.list.selected(); if (job && job.state === "running") stop(job.id).catch(failed); },
       X: () => {
         const running = items.filter((j) => j.state === "running");
-        Promise.all(running.map((j) => stop(j.id))).then((ended) => notice.show("jobs · stopped " + ended.filter((j) => j?.state === "stopped").length), failed);
+        Promise.all(running.map((j) => stop(j.id))).then((ended) => notice.show("jobs · stop requested for " + ended.filter((j) => j?.stopRequested).length), failed);
       },
     },
   });

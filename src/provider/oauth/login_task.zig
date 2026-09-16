@@ -66,7 +66,7 @@ fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto
         const reply: poller.Reply = if (result) |poll| switch (poll) {
             .tokens => |tokens| {
                 // Claim with no yield between, so a later cancel cannot contradict the outcome.
-                if (slot.cancel.requested) return .{ .canceled = .{} };
+                if (slot.cancel.isRequested()) return .{ .canceled = .{} };
                 try install(runtime, arena.allocator(), slot, tokens);
                 return .{ .succeeded = .{} };
             },
@@ -307,7 +307,7 @@ test "a canceled login stops before its first poll" {
     try probe.init(rt.io(), &.{});
     defer probe.deinit();
     try probe.reserve("xai", .xai);
-    probe.slot.cancel.requested = true;
+    probe.slot.cancel.requested.store(true, .release);
 
     var task = try rt.spawn(Probe.driveTask, .{&probe});
     try task.join();

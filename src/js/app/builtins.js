@@ -216,7 +216,7 @@ function sessionJobs(sessionId) {
 
 /** @param {Job} job @returns {string} */
 function jobState(job) {
-  return job.state === "exited" ? `${jobName(job)} exited (${endLabel(job)}): ${shortCommand(job.command)}` : `${jobName(job)} ${job.state}: ${shortCommand(job.command)}`;
+  return job.stopRequested ? `${jobName(job)} ${endLabel(job)}: ${shortCommand(job.command)}` : job.state === "exited" ? `${jobName(job)} exited (${endLabel(job)}): ${shortCommand(job.command)}` : `${jobName(job)} ${job.state}: ${shortCommand(job.command)}`;
 }
 
 // A job that exits by itself tells its session once, in exit order, even when its log cannot be read; a stop sends nothing.
@@ -224,7 +224,7 @@ function jobState(job) {
 let exitMessages = Promise.resolve();
 events.on("jobs.changed", (/** @type {Job} */ job) => {
   const sessionId = job.sessionId;
-  if (job.state !== "exited" || sessionId === null) return;
+  if (job.state === "running" || job.stopRequested || sessionId === null) return;
   const tail = jobTail(job.id, 20).catch(() => "");
   exitMessages = exitMessages
     .then(() => tail)
@@ -239,7 +239,7 @@ async function startBackground(command, context) {
   const same = sessionJobs(sessionId).find(j => j.state === "running" && j.command === command && (root === undefined || j.cwd === root));
   if (same) return `[job ${jobName(same)} already runs this command. Log: ${same.log}]`;
   const job = await hostCall("exec", startJob(command, { ...(root !== undefined ? { root } : {}), ...(sessionId !== undefined ? { sessionId } : {}) }));
-  return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use job_stop to stop it.]`;
+  return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use job_stop to request its stop.]`;
 }
 
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
@@ -332,7 +332,7 @@ builtin("exec", {
   }, required: ["command"], additionalProperties: false }, execute: exec,
 });
 builtin("job_stop", {
-  description: "Stop a background job and every process it started. A stopped job sends no exit message.",
+  description: "Request a stop for a background job and its process group. Return at once. A requested stop sends no exit message.",
   parameters: { type: "object", properties: {
     id: { type: "string", description: "The job id, for example j1." },
   }, required: ["id"], additionalProperties: false }, execute: jobStop,

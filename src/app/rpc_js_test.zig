@@ -158,7 +158,7 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
         rpc.serve(testing.allocator, &stream,
             \\{"id":"read","method":"job.read","params":{"id":1,"offset":0,"max_bytes":1024}}
         );
-        if (std.mem.indexOf(u8, out.written(), "{\"id\":\"read\",\"result\":{\"text\":\"hello\\n\",\"next\":6,\"size\":6}}") != null) break;
+        if (std.mem.indexOf(u8, out.written(), "{\"id\":\"read\",\"result\":{\"start\":0,\"complete\":false,\"text\":\"hello\\n\",\"next\":6,\"size\":6}}") != null) break;
         try f.reactor.io().sleep(.fromMilliseconds(20), .awake);
     } else return error.TestUnexpectedResult;
     rpc.serve(testing.allocator, &stream,
@@ -174,10 +174,10 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
         \\{"id":"stop","method":"job.stop","params":{"id":1}}
     );
     try testing.expect(std.mem.indexOf(u8, out.written(), "{\"id\":\"stop\",\"result\":{\"job\":{\"id\":1,") != null);
-    try host.evalModule("import { events } from \"yuke:kernel\"; globalThis.ended = 0; events.on(\"jobs.changed\", (job) => { if (job.state === \"stopped\") ended = 1; });", "rpc-job-end.js");
+    try host.evalModule("import { events } from \"yuke:kernel\"; globalThis.ended = 0; events.on(\"jobs.changed\", (job) => { if (job.state === \"exited\" && job.stopRequested) ended = 1; });", "rpc-job-end.js");
     try support.pumpUntilTrue(host, "globalThis.ended === 1");
     stream.flushNotifications();
-    try testing.expect(std.mem.indexOf(u8, out.written(), "\"state\":\"stopped\",\"signal\":15,") != null);
+    try testing.expect(std.mem.indexOf(u8, out.written(), "\"state\":\"exited\",\"stop_requested\":true,\"signal\":15,") != null);
 }
 
 test "a removed session stops its running jobs" {
@@ -218,10 +218,10 @@ test "a removed session stops its running jobs" {
     , .{id});
     rpc.serve(testing.allocator, &stream, remove);
     try testing.expect(std.mem.indexOf(u8, out.written(), "{\"id\":\"r\",\"result\":{}}") != null);
-    try support.pumpUntilTrue(host, "globalThis.state === \"stopped\"");
+    try support.pumpUntilTrue(host, "globalThis.state === \"exited\"");
     // The job of another session keeps running.
     try testing.expectEqual(proto.job.JobState.running, host.jobs.find(2).?.state);
-    try testing.expectEqual(proto.job.JobState.stopped, host.jobs.find(1).?.state);
+    try testing.expectEqual(proto.job.JobState.exited, host.jobs.find(1).?.state);
 }
 
 const support = @import("../js/test_support.zig");

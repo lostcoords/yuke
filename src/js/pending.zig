@@ -73,6 +73,7 @@ pub const Op = struct {
     wake: *std.Io.Event,
     /// Null while the task runs. The task writes it once, and the owner reads it once.
     result: ?Result = null,
+    done: std.atomic.Value(bool) = .init(false),
     /// The exact tool signal remains rooted until this op leaves the table.
     signal: Value = quickjs.UNDEFINED,
     /// Exec waits for either its worker result or a call abort on this token.
@@ -83,7 +84,7 @@ pub const Op = struct {
 
     fn cancelOperation(operation: *@import("../session/work.zig").Operation) void {
         const self: *Op = @fieldParentPtr("operation", operation);
-        std.debug.assert(self.result == null);
+        std.debug.assert(!self.done.load(.acquire));
         self.cancel.request(self.io);
     }
 
@@ -95,7 +96,10 @@ pub const Op = struct {
             self.work = null;
         }
         self.result = result;
-        self.wake.set(self.io);
+        const wake = self.wake;
+        const io = self.io;
+        self.done.store(true, .release);
+        wake.set(io);
     }
 };
 
@@ -135,14 +139,14 @@ pub const Ops = struct {
     pub fn abortSignal(self: *Ops, ctx: Context, signal: Value) void {
         std.debug.assert(ctx.isObject(signal));
         for (self.live.items) |op| {
-            if (op.result != null or !ctx.isStrictEqual(op.signal, signal)) continue;
+            if (op.done.load(.acquire) or !ctx.isStrictEqual(op.signal, signal)) continue;
             op.cancel.request(self.io);
         }
     }
 
     /// Report whether any op finished. The owner asks before it sleeps.
     pub fn anyDone(self: *const Ops) bool {
-        for (self.live.items) |op| if (op.result != null) return true;
+        for (self.live.items) |op| if (op.done.load(.acquire)) return true;
         return false;
     }
 
@@ -152,10 +156,11 @@ pub const Ops = struct {
         var i: usize = 0;
         while (i < self.live.items.len) {
             const op = self.live.items[i];
-            const result = op.result orelse {
+            if (!op.done.load(.acquire)) {
                 i += 1;
                 continue;
-            };
+            }
+            const result = op.result.?;
             _ = self.live.orderedRemove(i);
             if (call(ctx, op, result)) faulted = true;
             self.freeResult(result);

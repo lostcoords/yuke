@@ -15,16 +15,22 @@ export async function start(command, options = {}) {
   return job;
 }
 
-// The answer is the final job, so a job that exited before the stop keeps its real end.
 /** @param {number} id @returns {Promise<Job | null>} */
-export function stop(id) {
+export async function stop(id) {
+  const before = native.get(id);
   const job = native.stop(id);
+  if (job?.stopRequested && !before?.stopRequested) events.emit("jobs.changed", job);
+  return job;
+}
+
+/** @param {number} id @returns {Promise<Job | null>} */
+export function wait(id) {
+  const job = native.get(id);
   if (job === null || job.state !== "running") return Promise.resolve(job);
   return new Promise((resolve) => {
     const off = events.on("jobs.changed", (/** @type {Job} */ changed) => {
       if (changed.id !== id || changed.state === "running") return;
       off();
-      // Every listener shares the event object, so the answer is a fresh copy from the table.
       resolve(native.get(id) ?? changed);
     });
   });
@@ -47,18 +53,18 @@ export function name(job) {
 // The end of a job in words, shared by the tool text and the TUI list.
 /** @param {Job} job @returns {string} */
 export function endLabel(job) {
+  if (job.state === "failed") return "process wait failed";
+  if (job.stopRequested) return job.state === "running" ? "stop requested" : "stopped";
   if (job.state === "running") return "running";
-  if (job.state === "stopped") return "stopped";
   return job.signal !== null ? "signal " + job.signal : "exit code " + job.code;
 }
 
 // The last lines of a job log; the read covers the last 8 KiB.
 /** @param {number} id @param {number} count @returns {Promise<string>} */
 export async function tail(id, count) {
-  const { size } = await read(id, Number.MAX_SAFE_INTEGER, 1);
-  const { text } = await read(id, Math.max(0, size - 8192), 8192);
+  const { text } = await read(id, null, 8192);
   return text.split("\n").filter((line, i, all) => line !== "" || i < all.length - 1).slice(-count).join("\n");
 }
 
 // The public surface: a plugin reads and stops jobs, and only the exec tool starts them.
-export const jobs = { list, get, stop, read };
+export const jobs = { list, get, stop, wait, read };

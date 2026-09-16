@@ -28,8 +28,8 @@ pub const Job = struct {
     cwd: []u8,
     log: []u8,
     state: proto.job.JobState = .running,
-    /// A stop reached the live child, so its end reads as `stopped`.
-    stopping: bool = false,
+    /// A stop request reached the lifecycle task; the exit result does not imply its cause.
+    stop_requested: bool = false,
     code: ?u8 = null,
     signal: ?u8 = null,
     started_at_ms: u64,
@@ -51,10 +51,10 @@ pub const Jobs = struct {
         return null;
     }
 
-    /// Record the end of a job. The process settle calls this on the owner, after the log holds its exit line.
+    /// Record the end of a job. The process settle calls this on the owner, after the child and its output tasks end.
     pub fn end(self: *Jobs, host: *Host, job: *Job, outcome: ?runner.Outcome) void {
         std.debug.assert(job.state == .running and job.proc != null);
-        job.state = if (job.stopping) .stopped else .exited;
+        job.state = if (outcome != null) .exited else .failed;
         if (outcome) |o| switch (o) {
             .exited => |c| job.code = c,
             .signaled => |s| job.signal = s,
@@ -110,6 +110,7 @@ pub fn wire(job: *const Job) proto.job.Job {
         .command = job.command,
         .cwd = job.cwd,
         .state = job.state,
+        .stop_requested = job.stop_requested,
         .exit_code = job.code,
         .signal = job.signal,
         .started_at_ms = job.started_at_ms,
@@ -125,7 +126,10 @@ fn emitChanged(host: *Host, job: *const Job) void {
 
 /// Stop a running job. A job reaped before the stop keeps its real exit, and the end arrives when the process settles.
 pub fn stop(host: *Host, job: *Job) void {
-    if (job.state == .running and !job.stopping and process.kill(host, job.proc.?)) job.stopping = true;
+    if (job.state == .running and !job.stop_requested and process.kill(host, job.proc.?)) {
+        job.stop_requested = true;
+        emitChanged(host, job);
+    }
 }
 
 /// Stop every running job of a removed session.
@@ -166,11 +170,11 @@ pub fn answer(a: std.mem.Allocator, host: *Host, method: []const u8, params: []c
         write(out, proto.job.JobStopResult{ .job = wire(job) });
     } else if (std.mem.eql(u8, method, "job.read")) {
         const p = std.json.parseFromSliceLeaky(proto.job.JobReadParams, a, params, opts) catch return bad;
-        if (p.max_bytes == 0 or p.max_bytes > max_read_bytes or p.offset > proto.meta.constants.MAX_WIRE_INTEGER) return bad;
+        if (p.max_bytes < 4 or p.max_bytes > max_read_bytes or (p.offset orelse 0) > proto.meta.constants.MAX_WIRE_INTEGER) return bad;
         const job = host.jobs.find(p.id) orelse return unknown;
         var local: LocalHost = .{ .io = host.io, .root = "/", .env = host.execution.env };
-        const got = local.readFrom(a, job.log, p.offset, p.max_bytes) catch return .{ .code = .internal, .message = "the host could not read the job log" };
-        write(out, proto.job.JobReadResult{ .text = got.text, .next = got.next, .size = got.size });
+        const got = local.readFrom(a, job.log, p.offset, p.max_bytes, job.state != .running) catch return .{ .code = .internal, .message = "the host could not read the job log" };
+        write(out, proto.job.JobReadResult{ .text = got.text, .next = got.next, .size = got.size, .start = got.start, .complete = got.complete });
     } else return .{ .code = .unknown_method, .message = "unknown method" };
     return null;
 }
@@ -197,6 +201,7 @@ pub fn toValue(ctx: Context, job: *const Job) Value {
     module.set(ctx, obj, "command", ctx.newString(job.command));
     module.set(ctx, obj, "cwd", ctx.newString(job.cwd));
     module.set(ctx, obj, "log", ctx.newString(job.log));
+    module.set(ctx, obj, "stopRequested", ctx.newBool(job.stop_requested));
     module.set(ctx, obj, "state", ctx.newString(@tagName(job.state)));
     module.set(ctx, obj, "code", if (job.code) |c| ctx.newInt32(c) else quickjs.NULL);
     module.set(ctx, obj, "signal", if (job.signal) |s| ctx.newInt32(s) else quickjs.NULL);
@@ -233,14 +238,20 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     var env = host.execution.env.clone(a) catch unreachable;
     env.put("PYTHONUNBUFFERED", "1") catch unreachable;
     const log = host.logs.next(host.gpa, host.io, host.execution.env, "job") catch return rejected(ctx, "the host could not create the log directory");
+    var funcs: [2]Value = undefined;
+    const ended = ctx.newPromiseCapability(&funcs);
+    if (ctx.isException(ended)) {
+        host.gpa.free(log);
+        return ended;
+    }
     const argv: []const []const u8 = &.{ host.execution.shell.path, "-c", command.? };
     const program = runner.startProgram(host.io, root, &env, a, argv, null, .{ .log = log }) catch |err| {
         host.gpa.free(log);
+        ctx.freeValue(ended);
+        for (funcs) |value| ctx.freeValue(value);
         return rejected(ctx, process.startMessage(err));
     };
 
-    var funcs: [2]Value = undefined;
-    const ended = ctx.newPromiseCapability(&funcs);
     const jobs = &host.jobs;
     jobs.last_id += 1;
     const job = host.gpa.create(Job) catch unreachable;
@@ -249,12 +260,12 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
         .session_id = session_id,
         .command = host.gpa.dupe(u8, command.?) catch unreachable,
         .cwd = host.gpa.dupe(u8, root) catch unreachable,
-        .log = host.gpa.dupe(u8, log) catch unreachable,
+        .log = log,
         .started_at_ms = nowMs(host.io),
         .proc = null,
     };
     jobs.list.append(host.gpa, job) catch unreachable;
-    job.proc = process.launch(host, program, quickjs.UNDEFINED, funcs, log, job).id;
+    job.proc = process.launch(host, program, quickjs.UNDEFINED, funcs, job).id;
     emitChanged(host, job);
 
     const result = ctx.newObject();
@@ -288,7 +299,8 @@ fn jsStop(ctx: Context, _: Value, args: []const Value) Value {
 /// One job log read, copied so the task can read it after the call returns.
 const Read = struct {
     log: []u8,
-    offset: u64,
+    offset: ?u64,
+    complete: bool,
     max_bytes: u32,
 
     pub fn free(self: Read, gpa: std.mem.Allocator) void {
@@ -301,10 +313,11 @@ fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (host.phase != .open) return rejected(ctx, "the host is closed");
     const job = jobOf(ctx, args) orelse return rejected(ctx, "the job does not exist");
-    const offset = if (args.len > 1) module.integer(ctx, args[1], 0, (1 << 53) - 1) else null;
-    const max_bytes = if (args.len > 2) module.integer(ctx, args[2], 1, max_read_bytes) else null;
-    if (offset == null or max_bytes == null) return rejected(ctx, "read needs a byte offset and a byte count from 1 to 262144");
-    return host.startTask(Read, readTask, .{ .log = host.gpa.dupe(u8, job.log) catch unreachable, .offset = offset.?, .max_bytes = @intCast(max_bytes.?) });
+    const tail = args.len > 1 and ctx.isNull(args[1]);
+    const offset = if (args.len > 1 and !tail) module.integer(ctx, args[1], 0, (1 << 53) - 1) else null;
+    const max_bytes = if (args.len > 2) module.integer(ctx, args[2], 4, max_read_bytes) else null;
+    if ((!tail and offset == null) or max_bytes == null) return rejected(ctx, "read needs a byte offset and a byte count from 4 to 262144");
+    return host.startTask(Read, readTask, .{ .log = host.gpa.dupe(u8, job.log) catch unreachable, .offset = offset, .complete = job.state != .running, .max_bytes = @intCast(max_bytes.?) });
 }
 
 fn readTask(host: *Host, op: *pending.Op, req: Read) void {
@@ -312,7 +325,7 @@ fn readTask(host: *Host, op: *pending.Op, req: Read) void {
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
     var local: LocalHost = .{ .io = host.io, .root = "/", .env = host.execution.env };
-    const got = local.readFrom(arena.allocator(), req.log, req.offset, req.max_bytes) catch
+    const got = local.readFrom(arena.allocator(), req.log, req.offset, req.max_bytes, req.complete) catch
         return op.finish(.{ .failed = .{ .message = "the host could not read the job log" } });
     var aw: std.Io.Writer.Allocating = .init(host.gpa);
     std.json.Stringify.value(got, .{}, &aw.writer) catch unreachable;

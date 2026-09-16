@@ -747,6 +747,9 @@ test "background jobs start, list, stop, and report a natural exit once to their
     try host.evalModule(
         \\import { client } from "yuke:client";
         \\globalThis.sent = [];
+        \\globalThis.j1Ended = false;
+        \\import { events } from "yuke:kernel";
+        \\events.on("jobs.changed", job => { if (job.id === 1 && job.state !== "running") j1Ended = true; });
         \\client.sessionSendInput = async (id, content) => { sent.push(content[0].text); return {}; };
     , "job-messages.js");
 
@@ -756,12 +759,13 @@ test "background jobs start, list, stop, and report a natural exit once to their
     try expectTool(host, "exec", "{\"command\":\"echo hi\"}", false, "[running jobs: j1 sleep 30]");
     try expectTool(host, "job_stop", "{\"id\":\"j9\"}", true, "the job j9 does not exist. The jobs are: j1.");
     try expectTool(host, "exec", "{\"command\":\"echo done; exit 2\",\"background\":true}", false, "[job j2 started");
-    try expectTool(host, "job_stop", "{\"id\":\"j1\"}", false, "[j1 stopped: sleep 30]");
+    try expectTool(host, "job_stop", "{\"id\":\"j1\"}", false, "[j1 stop requested: sleep 30]");
+    try support.pumpUntilTrue(host, "globalThis.j1Ended");
     try expectTool(host, "job_stop", "{\"id\":\"j1\"}", false, "[j1 stopped: sleep 30]");
     try support.pumpUntilTrue(host, "sent.length === 1");
     try support.pumpUntilIdle(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
-        \\sent.length === 1 && sent[0].startsWith("[job j2 exited (exit code 2): echo done; exit 2. Log: ") && sent[0].endsWith("]\ndone\n[exited with code 2]") ? 1 : 0
+        \\sent.length === 1 && sent[0].startsWith("[job j2 exited (exit code 2): echo done; exit 2. Log: ") && sent[0].endsWith("]\ndone") ? 1 : 0
     ));
     try expectTool(host, "job_stop", "{\"id\":\"j2\"}", false, "[j2 exited (exit code 2): echo done; exit 2]");
 }

@@ -67,20 +67,26 @@ const Drain = struct {
     limit: u32,
     log: ?*Log,
     head: std.ArrayList(u8) = .empty,
-    tail: std.ArrayList(u8) = .empty,
+    tail: []u8 = &.{},
+    tail_len: usize = 0,
+    tail_at: usize = 0,
     dropped: u64 = 0,
     err: ?anyerror = null,
 
     /// Join the head and the tail from `scratch`, with one notice at a gap; the notice counts the codepoint the cap cut in half.
     fn text(self: *Drain, scratch: std.mem.Allocator) []const u8 {
-        if (self.tail.items.len == 0 and self.dropped == 0) return self.head.items;
+        if (self.tail_len == 0 and self.dropped == 0) return self.head.items;
+        const tail_bytes = scratch.alloc(u8, self.tail_len) catch unreachable;
+        const split = @min(self.tail_len, self.tail.len - self.tail_at);
+        @memcpy(tail_bytes[0..split], self.tail[self.tail_at..][0..split]);
+        @memcpy(tail_bytes[split..], self.tail[0 .. self.tail_len - split]);
         // With no gap the two ends stay adjacent, so the join restores the exact stream.
         const gap = self.dropped != 0;
         const head = if (gap) self.head.items[0..utf8.whole(self.head.items)] else self.head.items;
         // After a gap the tail starts at its first whole line, or at its first whole character with no newline.
-        const tail_start = if (!gap) 0 else if (std.mem.indexOfScalar(u8, self.tail.items, '\n')) |newline| newline + 1 else utf8.head(self.tail.items);
-        const tail = self.tail.items[tail_start..];
-        const trimmed = (self.head.items.len - head.len) + (self.tail.items.len - tail.len);
+        const tail_start = if (!gap) 0 else if (std.mem.indexOfScalar(u8, tail_bytes, '\n')) |newline| newline + 1 else utf8.head(tail_bytes);
+        const tail = tail_bytes[tail_start..];
+        const trimmed = (self.head.items.len - head.len) + (self.tail_len - tail.len);
         var joined: std.ArrayList(u8) = .empty;
         joined.appendSlice(scratch, head) catch unreachable;
         if (gap) joined.print(scratch, "\n[The tool dropped {d} bytes here.]\n", .{self.dropped + trimmed}) catch unreachable;
@@ -148,7 +154,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
         endGroups(io, &.{pid});
         exited.waitUncancelable(io);
     }
-    // The shell is reaped, and a process it left holds the group id, so this kill reaches no other group.
+    // A reaped PID can be reused; this backend has no process-group lifetime handle.
     if (groupAlive(pid)) endGroups(io, &.{pid});
     const abandoned = try awaitDrains(io, &drains);
     if (out.err) |e| if (!abandoned) return mapDrainError(e);
@@ -163,7 +169,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     return .{
         .stdout = out.text(scratch),
         .stderr = err.text(scratch),
-        .outcome = if (timed_out) .timed_out else outcomeOf(term orelse return error.HostFailure),
+        .outcome = if (timed_out) .timed_out else outcomeOf(term orelse return error.HostFailure) orelse return error.HostFailure,
         .stdout_dropped = out.dropped,
         .stderr_dropped = err.dropped,
         .log = kept,
@@ -225,7 +231,7 @@ pub const Output = union(enum) {
     log: []const u8,
 };
 
-/// A started program and the parent ends of its pipes. The caller owns every descriptor and reaps the child with `reapGroup`.
+/// A started program and the parent ends of its pipes. The caller owns every descriptor and reaps the child with `reapChild`.
 pub const Program = struct {
     child: std.process.Child,
     stdin: ?std.posix.fd_t = null,
@@ -316,21 +322,24 @@ fn pipeAboveStdio() h.HostError![2]std.posix.fd_t {
     return .{ read_end, write_end };
 }
 
-/// Reap a session leader with cancelation blocked, then end what it left in its group. It returns only after the shell dies.
-pub fn reapGroup(io: std.Io, child: *std.process.Child) ?Outcome {
-    const pid = child.id.?;
+/// Reap a session leader with cancelation blocked; the lifecycle owner handles its process group.
+pub fn reapChild(io: std.Io, child: *std.process.Child) ?Outcome {
     const old = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(old);
     const term = child.wait(io) catch null;
-    if (groupAlive(pid)) endGroups(io, &.{pid});
     return if (term) |t| outcomeOf(t) else null;
 }
 
-fn outcomeOf(term: std.process.Child.Term) Outcome {
+pub fn endRemaining(io: std.Io, pid: std.posix.pid_t) void {
+    std.debug.assert(pid > 0);
+    if (groupAlive(pid)) endGroups(io, &.{pid});
+}
+
+fn outcomeOf(term: std.process.Child.Term) ?Outcome {
     return switch (term) {
         .exited => |code| .{ .exited = code },
-        .signal => |sig| .{ .signaled = std.math.cast(u8, @intFromEnum(sig)) orelse 0 },
-        else => .{ .exited = 0 },
+        .signal => |sig| .{ .signaled = std.math.cast(u8, @intFromEnum(sig)) orelse return null },
+        else => null,
     };
 }
 
@@ -448,12 +457,26 @@ fn drain(io: std.Io, scratch: std.mem.Allocator, state: *Drain) void {
 
 /// Append to the tail and drop the oldest bytes above `cap`. The dropped count names the gap.
 fn keepTail(scratch: std.mem.Allocator, state: *Drain, bytes: []const u8, cap: usize) void {
-    state.tail.appendSlice(scratch, bytes) catch unreachable;
-    if (state.tail.items.len <= cap) return;
-    const excess = state.tail.items.len - cap;
-    std.mem.copyForwards(u8, state.tail.items, state.tail.items[excess..]);
-    state.tail.shrinkRetainingCapacity(cap);
+    std.debug.assert(state.tail_len <= cap);
+    if (cap == 0) {
+        state.dropped += bytes.len;
+        return;
+    }
+    if (state.tail.len == 0) state.tail = scratch.alloc(u8, cap) catch unreachable;
+    const excess = (state.tail_len + bytes.len) -| cap;
     state.dropped += excess;
+    if (bytes.len >= cap) {
+        @memcpy(state.tail, bytes[bytes.len - cap ..]);
+        state.tail_len = cap;
+        state.tail_at = 0;
+        return;
+    }
+    const end = (state.tail_at + state.tail_len) % cap;
+    const split = @min(bytes.len, cap - end);
+    @memcpy(state.tail[end..][0..split], bytes[0..split]);
+    @memcpy(state.tail[0 .. bytes.len - split], bytes[split..]);
+    state.tail_at = (state.tail_at + excess) % cap;
+    state.tail_len = @min(cap, state.tail_len + bytes.len);
 }
 
 const testing = std.testing;
@@ -754,4 +777,26 @@ test "a cut stream keeps the whole output in the log, and an uncut run deletes i
     const whole = try run(testing.io, root, execution.testContext(&env), a, .{ .command = "echo short", .timeout_ms = 10_000, .max_stream_bytes = 64, .log = whole_path });
     try testing.expect(whole.log == null);
     try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "whole.log", .{}));
+}
+
+test "the tail keeps the exact suffix across wrap, oversize chunks, and zero capacity" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const input = "abcdefghijklmnopqrstuvwxyz0123456789";
+    for ([_]usize{ 0, 1, 2, 7, 16, 35, 36, 64 }) |cap| {
+        for ([_]usize{ 1, 3, 8, 36 }) |chunk| {
+            var state: Drain = .{ .file = undefined, .limit = @intCast(cap), .log = null };
+            var at: usize = 0;
+            while (at < input.len) {
+                const end = @min(input.len, at + chunk);
+                keepTail(a, &state, input[at..end], cap);
+                at = end;
+                const kept = @min(cap, at);
+                try testing.expectEqual(kept, state.tail_len);
+                try testing.expectEqual(at - kept, state.dropped);
+                for (0..kept) |i| try testing.expectEqual(input[at - kept + i], state.tail[(state.tail_at + i) % cap]);
+            }
+        }
+    }
 }

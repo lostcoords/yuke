@@ -112,7 +112,7 @@ const canceled: pending.Result = .{ .failed = .{ .message = "the command was can
 fn execTask(host: *Host, op: *pending.Op, req: Request) void {
     defer req.free(host.gpa);
     std.debug.assert(op.result == null);
-    if (op.cancel.requested) return op.finish(canceled);
+    if (op.cancel.isRequested()) return op.finish(canceled);
     var result: pending.Result = canceled;
     switch (op.cancel.runChild(host.io, execWorker, .{ host, op, req, &result })) {
         .returned => |started| started catch return op.finish(.{ .failed = .{ .message = "the host cannot start another operation" } }),
@@ -142,30 +142,21 @@ fn execWorker(host: *Host, op: *pending.Op, req: Request, result: *pending.Resul
 
 /// Build the result text. A command prints any bytes, so each stream becomes valid UTF-8 first.
 fn encode(gpa: std.mem.Allocator, scratch: std.mem.Allocator, r: process.Result) [:0]u8 {
-    const stdout = utf8.sanitize(scratch, r.stdout) catch unreachable;
-    const stderr = utf8.sanitize(scratch, r.stderr) catch unreachable;
-
+    const stdout = if (std.unicode.utf8ValidateSlice(r.stdout)) r.stdout else utf8.sanitize(scratch, r.stdout) catch unreachable;
+    const stderr = if (std.unicode.utf8ValidateSlice(r.stderr)) r.stderr else utf8.sanitize(scratch, r.stderr) catch unreachable;
     var aw: std.Io.Writer.Allocating = .init(gpa);
-    write(&aw.writer, stdout, stderr, r) catch unreachable;
+    std.json.Stringify.value(.{
+        .stdout = stdout,
+        .stderr = stderr,
+        .code = if (r.outcome == .exited) @as(?u8, r.outcome.exited) else null,
+        .signal = if (r.outcome == .signaled) @as(?u8, r.outcome.signaled) else null,
+        .timedOut = r.outcome == .timed_out,
+        .stdoutDropped = r.stdout_dropped,
+        .stderrDropped = r.stderr_dropped,
+        .log = r.log,
+    }, .{}, &aw.writer) catch unreachable;
     var list = aw.toArrayList();
-    // QuickJS reads the JSON text to the sentinel, so the buffer must carry one.
     return list.toOwnedSliceSentinel(gpa, 0) catch unreachable;
-}
-
-/// Write one result. `code` and `signal` are null for each outcome that did not produce them.
-fn write(w: *std.Io.Writer, stdout: []const u8, stderr: []const u8, r: process.Result) std.Io.Writer.Error!void {
-    try w.writeAll("{\"stdout\":");
-    try std.json.Stringify.encodeJsonString(stdout, .{}, w);
-    try w.writeAll(",\"stderr\":");
-    try std.json.Stringify.encodeJsonString(stderr, .{}, w);
-    switch (r.outcome) {
-        .exited => |code| try w.print(",\"code\":{d},\"signal\":null,\"timedOut\":false", .{code}),
-        .signaled => |sig| try w.print(",\"code\":null,\"signal\":{d},\"timedOut\":false", .{sig}),
-        .timed_out => try w.writeAll(",\"code\":null,\"signal\":null,\"timedOut\":true"),
-    }
-    try w.print(",\"stdoutDropped\":{d},\"stderrDropped\":{d},\"log\":", .{ r.stdout_dropped, r.stderr_dropped });
-    if (r.log) |path| try std.json.Stringify.encodeJsonString(path, .{}, w) else try w.writeAll("null");
-    try w.writeAll("}");
 }
 
 /// Map a host error to the sentence a script reads. The set is closed, so a new one needs a message.
@@ -193,10 +184,6 @@ fn integerOption(ctx: Context, options: Value, name: [:0]const u8, default: u32,
 
 const testing = std.testing;
 
-fn encoded(a: std.mem.Allocator, r: process.Result) ![]const u8 {
-    return encode(a, a, r);
-}
-
 test "the result names the outcome that happened and nothing else" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -205,23 +192,23 @@ test "the result names the outcome that happened and nothing else" {
     try testing.expectEqualStrings(
         "{\"stdout\":\"out\\n\",\"stderr\":\"\",\"code\":3,\"signal\":null,\"timedOut\":false," ++
             "\"stdoutDropped\":0,\"stderrDropped\":0,\"log\":null}",
-        try encoded(a, .{ .stdout = "out\n", .stderr = "", .outcome = .{ .exited = 3 } }),
+        encode(a, a, .{ .stdout = "out\n", .stderr = "", .outcome = .{ .exited = 3 } }),
     );
     // A signal and a deadline leave `code` null, so a caller never reads a made-up zero.
     try testing.expectEqualStrings(
         "{\"stdout\":\"\",\"stderr\":\"\",\"code\":null,\"signal\":9,\"timedOut\":false," ++
             "\"stdoutDropped\":0,\"stderrDropped\":0,\"log\":null}",
-        try encoded(a, .{ .stdout = "", .stderr = "", .outcome = .{ .signaled = 9 } }),
+        encode(a, a, .{ .stdout = "", .stderr = "", .outcome = .{ .signaled = 9 } }),
     );
     try testing.expectEqualStrings(
         "{\"stdout\":\"\",\"stderr\":\"\",\"code\":null,\"signal\":null,\"timedOut\":true," ++
             "\"stdoutDropped\":0,\"stderrDropped\":0,\"log\":null}",
-        try encoded(a, .{ .stdout = "", .stderr = "", .outcome = .timed_out }),
+        encode(a, a, .{ .stdout = "", .stderr = "", .outcome = .timed_out }),
     );
     try testing.expectEqualStrings(
         "{\"stdout\":\"head\",\"stderr\":\"tail\",\"code\":0,\"signal\":null,\"timedOut\":false," ++
             "\"stdoutDropped\":12,\"stderrDropped\":34,\"log\":null}",
-        try encoded(a, .{ .stdout = "head", .stderr = "tail", .outcome = .{ .exited = 0 }, .stdout_dropped = 12, .stderr_dropped = 34 }),
+        encode(a, a, .{ .stdout = "head", .stderr = "tail", .outcome = .{ .exited = 0 }, .stdout_dropped = 12, .stderr_dropped = 34 }),
     );
 }
 
@@ -231,7 +218,7 @@ test "the result holds valid text whatever the command printed" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const json = try encoded(a, .{ .stdout = "ok\xe6\x96", .stderr = "\x00\x01", .outcome = .{ .exited = 0 } });
+    const json = encode(a, a, .{ .stdout = "ok\xe6\x96", .stderr = "\x00\x01", .outcome = .{ .exited = 0 } });
     try testing.expect(std.unicode.utf8ValidateSlice(json));
     try testing.expect(std.mem.indexOf(u8, json, "ok\u{FFFD}\u{FFFD}") != null);
 
