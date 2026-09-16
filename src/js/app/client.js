@@ -152,7 +152,7 @@ function sessionWholeText(sessionId, messageId) {
   }
 }
 
-/** @type {WeakMap<MessagePart, { partId: number, type: string, text: string, generation: number, bytes: number }>} */
+/** @type {WeakMap<MessagePart, { partId: number, type: "text" | "reasoning", text: string, generation: number, bytes: number }>} */
 const textCursors = new WeakMap();
 
 // The parts of one message. A cut field every row reads is completed here, and a large body stays paged.
@@ -168,7 +168,7 @@ function sessionPart(sessionId, messageId, partId, previous) {
   const held = previous && textCursors.get(previous);
   const cursor = held && held.partId === partId
     && previous.id === partId && previous.type === held.type
-    && (previous.type === "text" || previous.type === "reasoning") && previous.text === held.text ? held : undefined;
+    && previous.text === held.text ? held : undefined;
   const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId, cursor?.generation, cursor?.bytes)));
   let part = parts[0];
   if (!part) return null;

@@ -1517,11 +1517,10 @@ export class Transcript {
   /** @param {number} id @param {Wire.AssistantPart} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @param {PartCache | undefined} previous @returns {PartCache} */
   _buildPart(id, part, width, expanded, live, tree, previous) {
     const contentW = Math.max(1, width - (tree ? ACTION_INDENT : TX_GUTTER));
-    const tag = { key: id, partId: part.id };
     if (part.type === "text") {
       const text = previous?.text || { doc: new Document(), width: contentW, ends: [] };
       const { doc, ends } = text;
-      const keep = doc._setText(part.text || "");
+      const keep = doc._setText(part.text);
       if (text.width !== contentW) ends.length = 0;
       else if (keep >= 0) ends.length = Math.min(keep, ends.length);
       text.width = contentW;
@@ -1538,7 +1537,7 @@ export class Transcript {
     const built = part.type === "tool"
       ? toolRows(part, contentW, expanded, tree)
       : reasoningRows(/** @type {Extract<Wire.AssistantPart, { type: "reasoning" }>} */ (part), contentW, expanded, live, tree);
-    const rows = built.rows.map((r) => ({ ...r, ...tag }));
+    const rows = built.rows.map((r) => ({ ...r, key: id, partId: part.id }));
     return { w: width, expanded, live, shape: tree, rows, source: built.source, text: null };
   }
 
