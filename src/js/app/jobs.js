@@ -4,16 +4,17 @@ import { spawn, kill } from "yuke:process";
 import { events } from "yuke:kernel";
 
 /** @typedef {{ id: string, command: string, root: string | undefined, sessionId: string | undefined, log: string, state: "running" | "exited" | "stopped", code: number | null, signal: number | null, startedAt: number, endedAt: number | null }} Job */
-/** @typedef {{ job: Job, native: number, ended: Promise<void>, stopping: boolean }} Entry */
+/** @typedef {{ job: Job, native: number, ended: Promise<void>, stopping: boolean, end: number }} Entry */
 
 /** @type {Map<string, Entry>} */
 const table = new Map();
 let count = 0;
+let ends = 0;
 const MAX_ENDED = 32;
 
-// Keep the newest ended jobs only, so the table stays bounded.
+// Keep the jobs that ended last, so the table stays bounded; a long job that ends late stays even when it started first.
 function prune() {
-  const ended = [...table.values()].filter((e) => e.job.state !== "running");
+  const ended = [...table.values()].filter((e) => e.job.state !== "running").sort((a, b) => a.end - b.end);
   for (const old of ended.slice(0, Math.max(0, ended.length - MAX_ENDED))) table.delete(old.job.id);
 }
 
@@ -21,6 +22,7 @@ function prune() {
 function finish(entry, state, exit) {
   if (entry.job.state !== "running") return;
   Object.assign(entry.job, { state, code: exit?.code ?? null, signal: exit?.signal ?? null, endedAt: Date.now() });
+  entry.end = ++ends;
   prune();
   events.emit("jobs.changed", { ...entry.job });
 }
@@ -33,7 +35,7 @@ export async function start(command, options = {}) {
   /** @type {Job} */
   const job = { id: `j${++count}`, command, root: options.root, sessionId: options.sessionId, log: child.log ?? "", state: "running", code: null, signal: null, startedAt: Date.now(), endedAt: null };
   /** @type {Entry} */
-  const entry = { job, native: child.id, ended: Promise.resolve(), stopping: false };
+  const entry = { job, native: child.id, ended: Promise.resolve(), stopping: false, end: 0 };
   // A stop settles when the child ends, so the log already holds its exit line.
   entry.ended = child.exited.then((exit) => finish(entry, entry.stopping ? "stopped" : "exited", exit), () => finish(entry, entry.stopping ? "stopped" : "exited", null));
   table.set(job.id, entry);

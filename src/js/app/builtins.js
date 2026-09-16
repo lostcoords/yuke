@@ -229,13 +229,17 @@ function jobState(job) {
   return `${job.id} exited (${end}): ${shortCommand(job.command)}`;
 }
 
-// A job that exits by itself tells its session once; a stop sends nothing.
+// A job that exits by itself tells its session once, in exit order, even when its log cannot be read; a stop sends nothing.
+/** @type {Promise<unknown>} */
+let exitMessages = Promise.resolve();
 events.on("jobs.changed", (/** @type {Job} */ job) => {
   const sessionId = job.sessionId;
   if (job.state !== "exited" || !sessionId) return;
   const quoted = "'" + job.log.replace(/'/g, "'\\''") + "'";
-  runCommand(`tail -n 20 ${quoted}`, { maxBytes: 4096 })
-    .then(r => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${endLine(r.stdout).slice(0, -1)}`)))
+  const tail = runCommand(`tail -n 20 ${quoted}`, { maxBytes: 4096 }).then(r => r.stdout, () => "");
+  exitMessages = exitMessages
+    .then(() => tail)
+    .then(out => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${out === "" ? "[no output]" : endLine(out).slice(0, -1)}`)))
     .catch(() => {});
 });
 

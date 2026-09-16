@@ -136,7 +136,7 @@ const max_read_from_bytes: u32 = 1024 * 1024;
 /// Read text from a byte offset. The task answers `{ text, next, size }`, so a caller follows a growing file.
 fn jsReadFrom(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const offset = if (args.len > 1) module.integer(ctx, args[1], 0, 1 << 53) else null;
+    const offset = if (args.len > 1) module.integer(ctx, args[1], 0, (1 << 53) - 1) else null;
     const max_bytes = if (args.len > 2) module.integer(ctx, args[2], 1, max_read_from_bytes) else null;
     if (offset == null or max_bytes == null) return rejected(ctx, "readFrom needs a byte offset and a byte count from 1 to 1048576");
     const root = ownedPath(ctx, host, args, 3) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");

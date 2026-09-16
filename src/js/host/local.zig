@@ -51,7 +51,9 @@ pub const LocalHost = struct {
         const count = file.readPositionalAll(self.io, buffer, start) catch |err| return mapError(err);
         // A writer can stop in the middle of a character, so the cut part waits for the next read.
         const cut = utf8.whole(buffer[0..count]);
-        return .{ .text = utf8.sanitize(scratch, buffer[0..cut]) catch unreachable, .next = start + cut, .size = size };
+        const bytes = buffer[0..cut];
+        const text = if (std.unicode.utf8ValidateSlice(bytes)) bytes else utf8.sanitize(scratch, bytes) catch unreachable;
+        return .{ .text = text, .next = start + cut, .size = size };
     }
 
     pub fn readAll(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, max_bytes: u32) h.HostError![]const u8 {

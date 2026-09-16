@@ -30,9 +30,10 @@ function summary(jobs) {
   return "Jobs · " + running + " running · " + (jobs.length - running) + " ended";
 }
 
-// The view loads at most this much of a long log at a time, and keeps at most this many lines.
+// The view loads at most this much of a long log at a time, keeps at most this many lines, and cuts a longer line.
 const OUTPUT_BYTES = 256 * 1024;
 const OUTPUT_LINES = 5000;
+const LINE_CHARS = 4096;
 
 // A live view of one job log: each tick reads the bytes after the last read, and the pager follows the tail.
 export class JobOutput {
@@ -50,24 +51,29 @@ export class JobOutput {
     /** @type {number | null} */
     this.offset = null;
     this.reading = false;
+    this.again = false;
     /** @type {Rect} */
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
   }
 
-  // Read the bytes after the last read; a log longer than the window starts at a whole line near its end.
+  // Read the new bytes; a long log starts at a whole line near its end, a request during a read runs after it, and an ended job reads to the end.
   /** @returns {Promise<void>} */
   async read() {
-    if (this.reading) return;
+    if (this.reading) { this.again = true; return; }
     this.reading = true;
     try {
-      if (this.offset === null) {
-        const { size } = await fs.readFrom(this.job.log, Number.MAX_SAFE_INTEGER, 1);
-        this.offset = Math.max(0, size - OUTPUT_BYTES);
-        if (this.offset > 0) this.partial = null;
-      }
-      const got = await fs.readFrom(this.job.log, this.offset, OUTPUT_BYTES);
-      this.offset = got.next;
-      this.append(got.text);
+      do {
+        this.again = false;
+        if (this.offset === null) {
+          const { size } = await fs.readFrom(this.job.log, Number.MAX_SAFE_INTEGER, 1);
+          this.offset = Math.max(0, size - OUTPUT_BYTES);
+          if (this.offset > 0) this.partial = null;
+        }
+        const got = await fs.readFrom(this.job.log, this.offset, OUTPUT_BYTES);
+        this.offset = got.next;
+        this.append(got.text);
+        if (this.job.state !== "running" && got.next < got.size && got.text !== "") this.again = true;
+      } while (this.again);
     } finally {
       this.reading = false;
     }
@@ -76,9 +82,18 @@ export class JobOutput {
   /** @param {string} text */
   append(text) {
     if (text === "") return;
-    const parts = ((this.partial ?? "") + text.replace(/\t/g, "    ").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")).split("\n");
-    if (this.partial === null) parts.shift();
+    const clean = text.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\t/g, "    ").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+    const parts = ((this.partial ?? "") + clean).split("\n");
+    if (this.partial === null) {
+      // The first read began inside a line, so the view skips up to the first newline.
+      if (parts.length === 1) return;
+      parts.shift();
+    }
     this.partial = /** @type {string} */ (parts.pop());
+    if (this.partial.length > LINE_CHARS) {
+      parts.push(this.partial.slice(0, LINE_CHARS));
+      this.partial = "";
+    }
     this.lines.push(...parts);
     if (this.lines.length > OUTPUT_LINES) this.lines.splice(0, this.lines.length - OUTPUT_LINES);
     const shown = this.partial === "" ? this.lines : [...this.lines, this.partial];
@@ -156,7 +171,7 @@ export function openJobs(ctx) {
       x: (_event, content) => { const job = content.list.selected(); if (job && job.state === "running") stop(job.id).catch(failed); },
       X: () => {
         const running = items.filter((j) => j.state === "running");
-        Promise.all(running.map((j) => stop(j.id))).then(() => notice.show("jobs · stopped " + running.length), failed);
+        Promise.all(running.map((j) => stop(j.id))).then((ended) => notice.show("jobs · stopped " + ended.filter((j) => j?.state === "stopped").length), failed);
       },
     },
   });
@@ -177,7 +192,7 @@ export function openJobs(ctx) {
     clearInterval(timer);
     offChanged(); release(); cleanup();
   }
-  return picker;
+  return { ...picker, close };
 }
 
 export const jobsUiPlugin = {
