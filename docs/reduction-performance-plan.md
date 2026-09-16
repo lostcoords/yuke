@@ -30,6 +30,18 @@ The first audit retains valid optional state:
 The next fixture audit includes `App.initTest` and `execution.testContext`.
 The release benchmark also calls `App.initTest`; its name alone does not prove dead code.
 
+### RPC audit
+
+The RPC frontend now requires its production JS host.
+The hostless state existed only in tests.
+The transport uses the host interaction table directly.
+The type-erased interaction adapter and its optional field are removed.
+The transport also uses the host wake event and I/O instead of duplicate fields.
+Existing transport tests now use real hosts; response error codes remain the same.
+The source diff removes 44 net lines and adds no tests.
+The change adds no production allocator calls and preserves the host lifetime.
+The benchmark harness does not cover JSONL dispatch, so this change has no measured speed claim.
+
 ## Original review checklist
 
 1. Context-flag ownership: implemented with one entry per registration.

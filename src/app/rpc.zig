@@ -5,42 +5,11 @@ const proto = @import("proto");
 const app = @import("app.zig");
 const call = @import("call.zig");
 const extensions_mod = @import("../js/extensions.zig");
-const interactions_mod = @import("../js/interactions.zig");
 const tools_table = @import("../js/tools.zig");
 const Host = extensions_mod.Host;
 const zio = @import("zio");
 
 const App = app.App;
-
-const InteractionFailure = error{ Unknown, ResponseMismatch, InvalidSelection, Internal };
-
-/// The interaction table, type-erased. A direct call would pull the JavaScript host into this module.
-const InteractionPort = struct {
-    ctx: *anyopaque,
-    take_next: *const fn (*anyopaque) ?proto.interaction.InteractionRequestedData,
-    respond: *const fn (*anyopaque, proto.interaction.InteractionRespondParams) InteractionFailure!void,
-};
-
-/// Answer the port for one live table. Only a module that owns the host calls this.
-pub fn interactionPort(table: *interactions_mod.Table) InteractionPort {
-    const adapter = struct {
-        fn takeNext(ctx: *anyopaque) ?proto.interaction.InteractionRequestedData {
-            const held: *interactions_mod.Table = @ptrCast(@alignCast(ctx));
-            return held.takeNext();
-        }
-
-        fn respond(ctx: *anyopaque, params: proto.interaction.InteractionRespondParams) InteractionFailure!void {
-            const held: *interactions_mod.Table = @ptrCast(@alignCast(ctx));
-            held.respond(params) catch |err| return switch (err) {
-                error.Unknown => error.Unknown,
-                error.ResponseMismatch => error.ResponseMismatch,
-                error.InvalidSelection => error.InvalidSelection,
-                else => error.Internal,
-            };
-        }
-    };
-    return .{ .ctx = @ptrCast(table), .take_next = adapter.takeNext, .respond = adapter.respond };
-}
 
 /// Boot the frontend-neutral modules for a headless JSONL process.
 pub const boot =
@@ -112,11 +81,7 @@ pub const Rpc = struct {
     out: *std.Io.Writer,
     gpa: std.mem.Allocator,
     notifications: *NotificationQueue,
-    wake: *std.Io.Event,
-    io: std.Io,
-    interactions: ?InteractionPort = null,
-    /// The host whose gate reads a hooked input. A test stream without a host serves every line inline.
-    host: ?*Host = null,
+    host: *Host,
     /// The inputs the gate holds. Each one writes its answer after the owner settles its call.
     inputs: std.ArrayList(GatedInput) = .empty,
     fatal: bool = false,
@@ -131,7 +96,7 @@ pub const Rpc = struct {
     }
 
     /// Hand one input to the gate. The answer goes out from `drainInputs` once the owner settles the call.
-    fn gateInput(self: *Rpc, host: *Host, request: Line) void {
+    fn gateInput(self: *Rpc, request: Line) void {
         if (self.inputs.items.len == queue_slots) {
             self.flushNotifications();
             if (request.id) |id| self.writeFailure(id, .queue_full, "too many requests are pending") catch |err| self.failWrite(err);
@@ -139,7 +104,7 @@ pub const Rpc = struct {
         }
         const params = self.gpa.dupe(u8, request.params) catch unreachable;
         const id = if (request.id) |value| self.gpa.dupe(u8, value) catch unreachable else null;
-        self.inputs.append(self.gpa, .{ .id = id, .params = params, .call = host.calls.submitInputMethod(request.method, params) }) catch unreachable;
+        self.inputs.append(self.gpa, .{ .id = id, .params = params, .call = self.host.calls.submitInputMethod(request.method, params) }) catch unreachable;
     }
 
     /// Write every gated input the owner settled. The owner is the only writer.
@@ -198,7 +163,7 @@ pub const Rpc = struct {
     fn fail(self: *Rpc, message: []const u8) void {
         if (!self.fatal) std.log.err("rpc: {s}", .{message});
         self.fatal = true;
-        self.wake.set(self.io);
+        self.host.wake.set(self.host.io);
     }
 
     fn failWrite(self: *Rpc, err: anyerror) void {
@@ -218,9 +183,8 @@ pub const Rpc = struct {
                 return;
             };
         }
-        const port = self.interactions orelse return;
-        // `take_next` marks the question sent before the write. A failed write is fatal, so no answer is lost.
-        while (port.take_next(port.ctx)) |request| {
+        // Mark the question sent before the write; a failed write is fatal.
+        while (self.host.interactions.takeNext()) |request| {
             self.writeValue(proto.rpc.Notification{
                 .method = .@"interaction.requested",
                 .params = .{ .interaction_requested_data = request },
@@ -317,9 +281,6 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         .out = &out_file.interface,
         .gpa = gpa,
         .notifications = &notifications,
-        .wake = &extensions.host.wake,
-        .io = extensions.host.io,
-        .interactions = interactionPort(&extensions.host.interactions),
         .host = extensions.host,
     };
     application.engine.sinks.add(.{ .ctx = @ptrCast(&rpc), .on_event = Rpc.onEvent });
@@ -467,9 +428,9 @@ fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
         const params = std.json.parseFromSliceLeaky(proto.misc.CreateSession, arena, request.params, .{ .ignore_unknown_fields = true }) catch break :blk false;
         break :blk params.initial_input != null;
     } else false;
-    if (rpc.host) |host| if (needs_gate and host.hooks.holds(.@"input.before")) {
-        return rpc.gateInput(host, request);
-    };
+    if (needs_gate and rpc.host.hooks.holds(.@"input.before")) {
+        return rpc.gateInput(request);
+    }
 
     var body: std.Io.Writer.Allocating = .init(arena);
     const failure = call.call(rpc.app, arena, request.method, request.params, &body.writer) catch |err| {
@@ -493,10 +454,6 @@ fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
 }
 
 fn serveInteraction(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
-    const port = rpc.interactions orelse {
-        if (request.id) |id| rpc.writeFailure(id, .internal, "interaction is unavailable") catch |err| rpc.failWrite(err);
-        return;
-    };
     const params = std.json.parseFromSliceLeaky(
         proto.interaction.InteractionRespondParams,
         arena,
@@ -507,12 +464,12 @@ fn serveInteraction(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
         if (request.id) |id| rpc.writeFailure(id, .bad_request, "bad interaction response") catch |err| rpc.failWrite(err);
         return;
     };
-    port.respond(port.ctx, params) catch |err| {
+    rpc.host.interactions.respond(params) catch |err| {
         const failure: struct { code: proto.enums.ErrorCode, message: []const u8 } = switch (err) {
             error.Unknown => .{ .code = .unknown_interaction, .message = "unknown interaction" },
             error.ResponseMismatch => .{ .code = .bad_request, .message = "the interaction response has the wrong type" },
             error.InvalidSelection => .{ .code = .bad_request, .message = "the interaction selected an unknown option" },
-            error.Internal => .{ .code = .internal, .message = "the interaction response failed" },
+            else => .{ .code = .internal, .message = "the interaction response failed" },
         };
         rpc.flushNotifications();
         if (request.id) |id| rpc.writeFailure(id, failure.code, failure.message) catch |write_err| rpc.failWrite(write_err);
@@ -560,6 +517,7 @@ fn trim(line: []const u8) []const u8 {
 }
 
 const testing = std.testing;
+const support = @import("../js/test_support.zig");
 
 test "parse reads the envelope and keeps the parameters as text" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -600,8 +558,9 @@ test "a notification does not receive a refusal response" {
     defer buf.deinit();
     var notifications = NotificationQueue{};
     defer drainNotifications(testing.allocator, &notifications);
-    var wake: std.Io.Event = .unset;
-    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake, .io = testing.io };
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    var rpc: Rpc = .{ .host = host, .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications };
 
     serve(testing.allocator, &rpc, "{\"method\":\"missing\"}");
     try testing.expectEqual(@as(usize, 0), buf.written().len);
@@ -656,8 +615,9 @@ test "the transport writes one line for each value" {
     defer buf.deinit();
     var notifications = NotificationQueue{};
     defer drainNotifications(testing.allocator, &notifications);
-    var wake: std.Io.Event = .unset;
-    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake, .io = testing.io };
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    var rpc: Rpc = .{ .host = host, .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications };
 
     try rpc.writeResult("r1", "{\"ok\":true}");
     try rpc.writeFailure("r2", .unknown_method, "unknown method");
@@ -684,8 +644,9 @@ test "owner writes queued notifications before the response" {
     defer buf.deinit();
     var notifications = NotificationQueue{};
     defer drainNotifications(testing.allocator, &notifications);
-    var wake: std.Io.Event = .unset;
-    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake, .io = testing.io };
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    var rpc: Rpc = .{ .host = host, .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications };
     const note: proto.rpc.Notification = .{ .method = .notice, .params = .{ .notice = .{
         .level = .info,
         .source = "test",
@@ -707,8 +668,9 @@ test "the sink callback queues an owned notification without writing" {
     defer buf.deinit();
     var notifications = NotificationQueue{};
     defer drainNotifications(testing.allocator, &notifications);
-    var wake: std.Io.Event = .unset;
-    var rpc: Rpc = .{ .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications, .wake = &wake, .io = testing.io };
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    var rpc: Rpc = .{ .host = host, .app = undefined, .out = &buf.writer, .gpa = testing.allocator, .notifications = &notifications };
     var message = [_]u8{ 'q', 'u', 'e', 'u', 'e', 'd' };
     const note: proto.rpc.Notification = .{ .method = .notice, .params = .{ .notice = .{
         .level = .info,

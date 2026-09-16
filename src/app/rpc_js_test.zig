@@ -22,15 +22,12 @@ test "an interaction question and its answer share the RPC stream" {
     defer buf.deinit();
     var notifications = rpc.NotificationQueue{};
     defer rpc.drainNotifications(testing.allocator, &notifications);
-    var wake: std.Io.Event = .unset;
     var stream: rpc.Rpc = .{
         .app = undefined,
         .out = &buf.writer,
         .gpa = testing.allocator,
         .notifications = &notifications,
-        .wake = &wake,
-        .io = host.io,
-        .interactions = rpc.interactionPort(&host.interactions),
+        .host = host,
     };
 
     stream.flushNotifications();
@@ -80,9 +77,6 @@ test "a pending input hook still accepts an interaction response" {
         .out = &out.writer,
         .gpa = testing.allocator,
         .notifications = &notifications,
-        .wake = &extensions.host.wake,
-        .io = extensions.host.io,
-        .interactions = rpc.interactionPort(&extensions.host.interactions),
         .host = extensions.host,
     };
     defer stream.deinit();
