@@ -5,3 +5,7 @@ zig-pkg/
 
 # macOS Finder metadata
 .DS_Store
+
+# Local analysis and benchmark results
+/docs/
+/bench/exec-results.json
