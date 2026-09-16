@@ -19,6 +19,7 @@ const interactions_table = @import("interactions.zig");
 const call_run = @import("call_run.zig");
 const pending = @import("pending.zig");
 const execution_mod = @import("../execution.zig");
+const Logs = @import("host/logs.zig").Logs;
 
 /// Limit the client heap. Scripts fail when they exceed this limit.
 pub const memory_limit: usize = 64 * 1024 * 1024;
@@ -87,6 +88,8 @@ pub const Host = struct {
     wake: std.Io.Event = .unset,
     /// The tasks running those calls. `close` cancels them before the context dies.
     tasks: std.Io.Group = .init,
+    /// The command logs. Only the owner makes a path.
+    logs: Logs = .{},
 
     pub const Phase = enum { open, closing, drained };
 
@@ -207,6 +210,7 @@ pub const Host = struct {
         self.finishDrain();
         std.debug.assert(self.phase == .drained);
         self.ops.deinit(self.ctx);
+        self.logs.deinit(self.gpa, self.io);
         self.interactions.deinit();
         self.calls.deinit(self.ctx);
         self.tools.deinit(self.ctx);

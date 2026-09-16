@@ -29,6 +29,8 @@ function builtin(name, definition) {
 }
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+// Each stream keeps 4 KiB in the result, and a cut result names the log that holds every byte.
+const EXEC_STREAM_BYTES = 4096;
 const MAX_LINE = 0xffffffff;
 
 /** @param {string} name @param {string} message @returns {never} */
@@ -213,7 +215,7 @@ async function exec(args, signal, context) {
   const timeoutValue = args.timeout_ms;
   const timeout = timeoutValue == null ? 120000 : timeoutValue;
   if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid(name, "the argument timeout_ms has the wrong type or range");
-  const r = await hostCall(name, runCommand(command, { timeoutMs: timeout, signal }, context?.workspaceRoot));
+  const r = await hostCall(name, runCommand(command, { timeoutMs: timeout, signal, maxBytes: EXEC_STREAM_BYTES, log: true }, context?.workspaceRoot));
   let text = r.stdout;
   if (r.stderr.length !== 0) text = `${endLine(text)}[stderr]\n${r.stderr}`;
   const empty = text.length === 0;
@@ -222,6 +224,7 @@ async function exec(args, signal, context) {
   if (r.timedOut) text += `[The command passed its ${timeout} ms timeout. The tool stopped the process group. Run a smaller command, or raise timeout_ms up to 600000.]`;
   else if (r.signal !== null) text += `[A signal ended the command: ${r.signal}.]`;
   else text += `[exit code: ${r.code}]`;
+  if (r.log !== null) text += `\n[The tool cut the output. Full log: ${r.log}. Use grep or read on it.]`;
   return text;
 }
 

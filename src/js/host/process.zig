@@ -16,6 +16,8 @@ pub const Spec = struct {
     timeout_ms: u32,
     /// The cap for each stream. The runner keeps the head and the tail and reports the cut.
     max_stream_bytes: u32,
+    /// An absolute path. The run writes both streams to it and keeps the file only when a stream was cut.
+    log: ?[]const u8 = null,
 };
 
 /// How one command ended. The union makes an impossible pair unrepresentable.
@@ -36,6 +38,8 @@ pub const Result = struct {
     /// The bytes each stream dropped between its head and its tail. Zero means nothing was lost.
     stdout_dropped: u64 = 0,
     stderr_dropped: u64 = 0,
+    /// The kept log, which holds every byte both streams wrote. Null when nothing was cut or no log was asked.
+    log: ?[]const u8 = null,
 };
 
 /// The wait between SIGTERM and SIGKILL. A shell runs its SIGTERM trap in this time. A test waits less.
@@ -44,10 +48,24 @@ const grace_ns: u64 = if (@import("builtin").is_test) 100 * std.time.ns_per_ms e
 /// The probe period while a group ends.
 const poll_ms = 10;
 
+/// One log that both drains append to. A drain reserves its offset before it writes, so two chunks never overlap.
+const Log = struct {
+    file: std.Io.File,
+    end: std.atomic.Value(u64) = .init(0),
+    failed: std.atomic.Value(bool) = .init(false),
+
+    fn append(self: *Log, io: std.Io, bytes: []const u8) void {
+        if (self.failed.load(.monotonic)) return;
+        const at = self.end.fetchAdd(bytes.len, .monotonic);
+        self.file.writePositionalAll(io, bytes, at) catch self.failed.store(true, .monotonic);
+    }
+};
+
 /// One drain leg: it reads one stream to its end and keeps its head and its tail, because a build prints its error last.
 const Drain = struct {
     file: std.Io.File,
     limit: u32,
+    log: ?*Log,
     head: std.ArrayList(u8) = .empty,
     tail: std.ArrayList(u8) = .empty,
     dropped: u64 = 0,
@@ -83,9 +101,17 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     var child = spawned.child;
     const pid = child.id.?;
 
+    // A log that cannot open costs the log, not the command.
+    var log: ?Log = null;
+    if (spec.log) |path| if (std.Io.Dir.createFileAbsolute(io, path, .{})) |file| {
+        log = .{ .file = file };
+    } else |_| {};
+    defer if (log) |*l| l.file.close(io);
+    errdefer if (log != null) std.Io.Dir.deleteFileAbsolute(io, spec.log.?) catch {};
+
     // The drains own the read ends, so the reap never closes a pipe that a drain still reads.
-    var out: Drain = .{ .file = spawned.stdout, .limit = spec.max_stream_bytes };
-    var err: Drain = .{ .file = spawned.stderr, .limit = spec.max_stream_bytes };
+    var out: Drain = .{ .file = spawned.stdout, .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null };
+    var err: Drain = .{ .file = spawned.stderr, .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null };
     defer out.file.close(io);
     defer err.file.close(io);
 
@@ -117,9 +143,15 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     }
     // The shell is reaped, and a process it left holds the group id, so this kill reaches no other group.
     if (groupAlive(pid)) escalate(io, pid);
-    const cut = try awaitDrains(io, &drains);
-    if (out.err) |e| if (!cut) return mapDrainError(e);
-    if (err.err) |e| if (!cut) return mapDrainError(e);
+    const abandoned = try awaitDrains(io, &drains);
+    if (out.err) |e| if (!abandoned) return mapDrainError(e);
+    if (err.err) |e| if (!abandoned) return mapDrainError(e);
+
+    const cut = out.dropped + err.dropped != 0;
+    const kept: ?[]const u8 = if (log) |*l| if (cut and !l.failed.load(.monotonic)) spec.log.? else blk: {
+        std.Io.Dir.deleteFileAbsolute(io, spec.log.?) catch {};
+        break :blk null;
+    } else null;
 
     return .{
         .stdout = out.text(scratch),
@@ -131,6 +163,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
         },
         .stdout_dropped = out.dropped,
         .stderr_dropped = err.dropped,
+        .log = kept,
     };
 }
 
@@ -310,6 +343,7 @@ fn drain(io: std.Io, scratch: std.mem.Allocator, state: *Drain) void {
         const to_head = @min(chunk.len, half -| state.head.items.len);
         if (to_head != 0) state.head.appendSlice(scratch, chunk[0..to_head]) catch unreachable;
         if (to_head < chunk.len) keepTail(scratch, state, chunk[to_head..], half);
+        if (state.log) |log| log.append(io, chunk);
         reader.interface.toss(chunk.len); // Consume every byte, so the writer never blocks.
         if (state.err != null) return;
     }
@@ -663,4 +697,29 @@ test "exec ends a process that left the session after one grace period" {
     const res = try runShell(arena.allocator(), setsid ++ " sleep 2 & echo started", 20_000);
     try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 1500 * std.time.ns_per_ms);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "started") != null);
+}
+
+test "a cut stream keeps the whole output in the log, and an uncut run deletes it" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = try utilityEnv();
+    defer env.deinit();
+
+    const cut_path = try std.fs.path.join(a, &.{ root, "cut.log" });
+    const cut = try run(testing.io, root, execution.testContext(&env), a, .{ .command = "head -c 1000 /dev/zero | tr '\\0' x; echo tail 1>&2", .timeout_ms = 10_000, .max_stream_bytes = 64, .log = cut_path });
+    try testing.expect(cut.stdout_dropped > 0);
+    try testing.expectEqualStrings(cut_path, cut.log.?);
+    const logged = try tmp.dir.readFileAlloc(testing.io, "cut.log", a, .limited(4096));
+    try testing.expectEqual(@as(usize, 1005), logged.len);
+    try testing.expect(std.mem.indexOf(u8, logged, "tail\n") != null);
+
+    const whole_path = try std.fs.path.join(a, &.{ root, "whole.log" });
+    const whole = try run(testing.io, root, execution.testContext(&env), a, .{ .command = "echo short", .timeout_ms = 10_000, .max_stream_bytes = 64, .log = whole_path });
+    try testing.expect(whole.log == null);
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "whole.log", .{}));
 }

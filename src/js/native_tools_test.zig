@@ -341,6 +341,22 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         try host.pump();
     }
     {
+        const call = host.calls.submit("exec", "{\"command\":\"head -c 20000 /dev/zero | tr '\\\\0' x\"}", root);
+        try support.pumpUntilSettled(host, call);
+        try std.testing.expect(!call.is_error);
+        const text = call.text.?;
+        // The result stays small, and the log it names holds every byte.
+        try std.testing.expect(text.len < 2 * 4096 + 512);
+        const marker = "Full log: ";
+        const start = std.mem.indexOf(u8, text, marker).? + marker.len;
+        const path = text[start..std.mem.indexOfPos(u8, text, start, ". Use").?];
+        const logged = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(1 << 20));
+        defer std.testing.allocator.free(logged);
+        try std.testing.expectEqual(@as(usize, 20000), logged.len);
+        call.finish();
+        try host.pump();
+    }
+    {
         const call = host.calls.submit("exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", root);
         try support.pumpUntilSettled(host, call);
         try std.testing.expect(!call.is_error);

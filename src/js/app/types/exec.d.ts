@@ -6,6 +6,10 @@ declare module "yuke:exec" {
     timeoutMs?: number;
     /** The tool signal cancels this command when its call ends. */
     signal?: { aborted: boolean };
+    /** The cap for each stream. The default and the maximum are 65536. */
+    maxBytes?: number;
+    /** Write both streams to a private log, and keep it when a stream was cut. */
+    log?: boolean;
   }
 
   interface ExecResult {
@@ -19,11 +23,13 @@ declare module "yuke:exec" {
     /** The bytes the stream dropped between its head and its tail. */
     stdoutDropped: number;
     stderrDropped: number;
+    /** The kept log path, or null. The host deletes the log directory when it closes. */
+    log: string | null;
   }
 
   /**
    * Runs one shell line in a fresh shell. Nothing carries to the next call, and stdin is closed.
-   * A deadline stops the whole process group, so a background child does not outlive the call.
+   * The call ends the whole process group when the shell exits or the deadline passes, so no child outlives the call.
    */
   export function exec(command: string, options?: ExecOptions, workspaceRoot?: string): Promise<ExecResult>;
 }

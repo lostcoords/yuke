@@ -15,6 +15,9 @@ globalThis.result = "pending";
   // A stream above the host cap fills the pipe, so this proves the reactor drains a blocking pipe end to end.
   const big = await exec("yes abcdefgh | head -c 200000");
   check("big-completes", big.code === 0 && big.stdoutDropped > 0 && big.stdout.startsWith("abcdefgh"));
+  check("no-log-by-default", big.log === null && ok.log === null);
+  const capped = await exec("head -c 100 /dev/zero | tr '\\0' x", { maxBytes: 10 });
+  check("max-bytes", capped.stdoutDropped === 90);
   // A command with no cwd runs in the directory the host runs in.
   check("cwd", (await exec("cat marker.txt")).stdout === "found\n");
   // A refused argument rejects; it never throws at the caller.
@@ -32,6 +35,8 @@ globalThis.result = "pending";
     [["echo x", {}, 42], "the workspace root must be a string"],
     [["echo x", { cwd: 42 }], "cwd must be a string"],
     [["echo x", { cwd: ".", timeoutMs: 0 }], "timeoutMs must be a whole number of milliseconds up to 600000"],
+    [["echo x", { maxBytes: 65537 }], "maxBytes must be a whole number of bytes up to 65536"],
+    [["echo x", { log: "yes" }], "log must be a boolean"],
   ]) {
     message = "";
     try { await exec(...args); } catch (e) { message = e.message; }

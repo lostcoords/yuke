@@ -21,7 +21,7 @@ const Value = quickjs.Value;
 pub const default_timeout_ms: u32 = 120_000;
 pub const max_timeout_ms: u32 = 600_000;
 
-/// The cap for each stream. A command that prints more loses its middle, not its result.
+/// The default and the largest cap for each stream. A command that prints more loses its middle, not its result.
 pub const max_stream_bytes: u32 = 64 * 1024;
 
 /// Register `yuke:exec` and its functions.
@@ -33,12 +33,15 @@ pub fn install(host: *Host) void {
 
 /// One command, copied so the task can read it after the call returns.
 const Request = struct {
-    const ParseError = error{ CommandType, CommandBlank, RootType, CwdType, Timeout };
+    const ParseError = error{ CommandType, CommandBlank, RootType, CwdType, Timeout, MaxBytes };
 
     command: []u8,
     root: []u8,
     cwd: ?[]u8,
     timeout_ms: u32,
+    max_bytes: u32,
+    /// Null unless the caller asked for a log. The owner makes the path, because only the owner touches `Host.logs`.
+    log: ?[]u8 = null,
 
     fn parse(
         ctx: Context,
@@ -62,15 +65,17 @@ const Request = struct {
 
         const cwd = optionalString(ctx, gpa, options, "cwd") catch return error.CwdType;
         errdefer if (cwd) |dir| gpa.free(dir);
-        const timeout_ms = timeoutOf(ctx, options) catch return error.Timeout;
+        const timeout_ms = integerOption(ctx, options, "timeoutMs", default_timeout_ms, max_timeout_ms) catch return error.Timeout;
+        const max_bytes = integerOption(ctx, options, "maxBytes", max_stream_bytes, max_stream_bytes) catch return error.MaxBytes;
 
-        return .{ .command = command, .root = root, .cwd = cwd, .timeout_ms = timeout_ms };
+        return .{ .command = command, .root = root, .cwd = cwd, .timeout_ms = timeout_ms, .max_bytes = max_bytes };
     }
 
     pub fn free(self: Request, gpa: std.mem.Allocator) void {
         gpa.free(self.command);
         gpa.free(self.root);
         if (self.cwd) |dir| gpa.free(dir);
+        if (self.log) |path| gpa.free(path);
     }
 };
 
@@ -88,14 +93,18 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
         return rejected(ctx, "the exec signal does not belong to an active tool call");
 
     // The task cannot touch JavaScript, so every argument is copied before it starts.
-    const request = Request.parse(ctx, host.gpa, args, options, host.cwd) catch |err|
+    const wants_log = boolOption(ctx, options, "log") catch return rejected(ctx, "log must be a boolean");
+    var request = Request.parse(ctx, host.gpa, args, options, host.cwd) catch |err|
         return rejected(ctx, switch (err) {
             error.CommandType => "the command must be a string",
             error.CommandBlank => "the command must not be blank",
             error.RootType => "the workspace root must be a string",
             error.CwdType => "cwd must be a string",
             error.Timeout => "timeoutMs must be a whole number of milliseconds up to 600000",
+            error.MaxBytes => "maxBytes must be a whole number of bytes up to 65536",
         });
+    // A log directory that cannot exist costs the log, not the command.
+    if (wants_log) request.log = host.logs.next(host.gpa, host.io, host.execution.env, "exec") catch null;
     return host.startTaskWithSignal(Request, execTask, request, signal);
 }
 
@@ -124,7 +133,8 @@ fn execWorker(host: *Host, op: *pending.Op, req: Request, result: *pending.Resul
         .command = req.command,
         .cwd = req.cwd,
         .timeout_ms = req.timeout_ms,
-        .max_stream_bytes = max_stream_bytes,
+        .max_stream_bytes = req.max_bytes,
+        .log = req.log,
     }) catch |err| {
         result.* = .{ .failed = .{ .message = errorMessage(err) } };
         return;
@@ -155,7 +165,9 @@ fn write(w: *std.Io.Writer, stdout: []const u8, stderr: []const u8, r: process.R
         .signaled => |sig| try w.print(",\"code\":null,\"signal\":{d},\"timedOut\":false", .{sig}),
         .timed_out => try w.writeAll(",\"code\":null,\"signal\":null,\"timedOut\":true"),
     }
-    try w.print(",\"stdoutDropped\":{d},\"stderrDropped\":{d}}}", .{ r.stdout_dropped, r.stderr_dropped });
+    try w.print(",\"stdoutDropped\":{d},\"stderrDropped\":{d},\"log\":", .{ r.stdout_dropped, r.stderr_dropped });
+    if (r.log) |path| try std.json.Stringify.encodeJsonString(path, .{}, w) else try w.writeAll("null");
+    try w.writeAll("}");
 }
 
 /// Map a host error to the sentence a script reads. The set is closed, so a new one needs a message.
@@ -181,13 +193,23 @@ fn optionalString(ctx: Context, gpa: std.mem.Allocator, options: Value, name: [:
     return module.owned(ctx, gpa, value) orelse error.InvalidOption;
 }
 
-/// Read `timeoutMs`, or answer the default. The range matches the built-in `exec` tool, and a fraction fails rather than truncates.
-fn timeoutOf(ctx: Context, options: Value) error{InvalidOption}!u32 {
-    if (!ctx.isObject(options)) return default_timeout_ms;
-    const value = ctx.getPropertyStr(options, "timeoutMs");
+/// Read a whole-number option from 1 to `max`, or answer `default`. A fraction fails rather than truncates.
+fn integerOption(ctx: Context, options: Value, name: [:0]const u8, default: u32, max: u32) error{InvalidOption}!u32 {
+    if (!ctx.isObject(options)) return default;
+    const value = ctx.getPropertyStr(options, name);
     defer ctx.freeValue(value);
-    if (ctx.isUndefined(value) or ctx.isNull(value)) return default_timeout_ms;
-    return @intCast(module.integer(ctx, value, 1, max_timeout_ms) orelse return error.InvalidOption);
+    if (ctx.isUndefined(value) or ctx.isNull(value)) return default;
+    return @intCast(module.integer(ctx, value, 1, max) orelse return error.InvalidOption);
+}
+
+/// Read a boolean option. An absent option is false.
+fn boolOption(ctx: Context, options: Value, name: [:0]const u8) error{InvalidOption}!bool {
+    if (!ctx.isObject(options)) return false;
+    const value = ctx.getPropertyStr(options, name);
+    defer ctx.freeValue(value);
+    if (ctx.isUndefined(value) or ctx.isNull(value)) return false;
+    if (!ctx.isBool(value)) return error.InvalidOption;
+    return ctx.toBool(value) catch error.InvalidOption;
 }
 
 const testing = std.testing;
@@ -203,23 +225,23 @@ test "the result names the outcome that happened and nothing else" {
 
     try testing.expectEqualStrings(
         "{\"stdout\":\"out\\n\",\"stderr\":\"\",\"code\":3,\"signal\":null,\"timedOut\":false," ++
-            "\"stdoutDropped\":0,\"stderrDropped\":0}",
+            "\"stdoutDropped\":0,\"stderrDropped\":0,\"log\":null}",
         try encoded(a, .{ .stdout = "out\n", .stderr = "", .outcome = .{ .exited = 3 } }),
     );
     // A signal and a deadline leave `code` null, so a caller never reads a made-up zero.
     try testing.expectEqualStrings(
         "{\"stdout\":\"\",\"stderr\":\"\",\"code\":null,\"signal\":9,\"timedOut\":false," ++
-            "\"stdoutDropped\":0,\"stderrDropped\":0}",
+            "\"stdoutDropped\":0,\"stderrDropped\":0,\"log\":null}",
         try encoded(a, .{ .stdout = "", .stderr = "", .outcome = .{ .signaled = 9 } }),
     );
     try testing.expectEqualStrings(
         "{\"stdout\":\"\",\"stderr\":\"\",\"code\":null,\"signal\":null,\"timedOut\":true," ++
-            "\"stdoutDropped\":0,\"stderrDropped\":0}",
+            "\"stdoutDropped\":0,\"stderrDropped\":0,\"log\":null}",
         try encoded(a, .{ .stdout = "", .stderr = "", .outcome = .timed_out }),
     );
     try testing.expectEqualStrings(
         "{\"stdout\":\"head\",\"stderr\":\"tail\",\"code\":0,\"signal\":null,\"timedOut\":false," ++
-            "\"stdoutDropped\":12,\"stderrDropped\":34}",
+            "\"stdoutDropped\":12,\"stderrDropped\":34,\"log\":null}",
         try encoded(a, .{ .stdout = "head", .stderr = "tail", .outcome = .{ .exited = 0 }, .stdout_dropped = 12, .stderr_dropped = 34 }),
     );
 }
