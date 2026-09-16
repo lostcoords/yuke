@@ -867,3 +867,30 @@ test "yuke:spawn refuses a child past the process limit" {
     try host.evalModule(source, "spawn-limit.js");
     try support.expectString(host, "limit", "RangeError");
 }
+
+test "an MCP stdio client port over spawn answers a tool call and shuts its servers down in order" {
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = support.createHostWith(rt.io(), "/tmp");
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/native_tools/mcp-proof.test.js");
+
+    for (0..2) |i| {
+        const call = host.calls.submit("mcp_echo", "{}", "/tmp");
+        try support.pumpUntilSettled(host, call);
+        try std.testing.expect(!call.is_error);
+        const want = try std.fmt.allocPrint(std.testing.allocator, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"ok\":true}}}}", .{i + 1});
+        defer std.testing.allocator.free(want);
+        try std.testing.expectEqualStrings(want, call.text.?);
+        call.finish();
+        try host.pump();
+    }
+    try support.pumpUntilTrue(host, "proof.termExit !== null && proof.killExit !== null");
+    try support.expectString(host, "proof.termExit", "SIGTERM");
+    try support.expectString(host, "proof.killExit", "SIGKILL");
+
+    // A dispose closes stdin, and the server exits by itself at EOF.
+    try host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"mcp-proof\");", "mcp-dispose.js");
+    try support.pumpUntilTrue(host, "proof.disposeExit !== null");
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("proof.disposeExit"));
+}
