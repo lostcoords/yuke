@@ -1,7 +1,7 @@
 // The built-in tools. They use only the asynchronous host primitives.
 
 import { fs } from "yuke:fs";
-import { exec as runCommand } from "yuke:exec";
+import { exec as runCommand, start as startJob, stop as stopJob } from "yuke:exec";
 import { diff } from "yuke:diff";
 import { defineTool, hasTool } from "yuke:tools";
 import { client } from "yuke:client";
@@ -205,14 +205,118 @@ function endLine(text) {
   return text.length === 0 || text.endsWith("\n") ? text : `${text}\n`;
 }
 
+// Background jobs, in start order. A job keeps its entry after it ends, so the model can read its final state.
+/** @typedef {{ id: string, native: number, command: string, root: string | undefined, sessionId: string | undefined, log: string, state: "running" | "exited" | "stopped", code: number | null, signal: number | null }} Job */
+/** @type {Map<string, Job>} */
+const jobs = new Map();
+let jobCount = 0;
+const MAX_ENDED_JOBS = 32;
+const JOB_TAIL_LINES = 20;
+
+/** @param {string} command @returns {string} */
+function shortCommand(command) {
+  const text = command.trim();
+  const end = text.indexOf("\n");
+  const line = end < 0 ? text : text.slice(0, end);
+  return line.length > 60 || end >= 0 ? `${line.slice(0, 57)}...` : line;
+}
+
+/** @param {string | undefined} sessionId @returns {Job[]} */
+function sessionJobs(sessionId) {
+  return [...jobs.values()].filter(j => j.sessionId === sessionId);
+}
+
+/** @param {Job} job @returns {string} */
+function jobState(job) {
+  if (job.state !== "exited") return `${job.id} ${job.state}: ${shortCommand(job.command)}`;
+  const end = job.signal !== null ? `signal ${job.signal}` : `exit code ${job.code}`;
+  return `${job.id} exited (${end}): ${shortCommand(job.command)}`;
+}
+
+/** @param {Job} job @returns {Promise<string>} */
+async function jobTail(job) {
+  const quoted = "'" + job.log.replace(/'/g, "'\\''") + "'";
+  const r = await runCommand(`tail -n ${JOB_TAIL_LINES} ${quoted}`, { maxBytes: 4096 }).catch(() => null);
+  if (r === null || r.stdout.length === 0) return "[no output yet]";
+  return endLine(r.stdout).slice(0, -1);
+}
+
+/** @param {Job} job @param {{ code: number | null, signal: number | null } | null} exit @returns {void} */
+function endJob(job, exit) {
+  if (job.state !== "running") return; // A stopped job sends no message.
+  job.state = "exited";
+  job.code = exit?.code ?? null;
+  job.signal = exit?.signal ?? null;
+  const ended = [...jobs.values()].filter(j => j.state !== "running");
+  for (const old of ended.slice(0, Math.max(0, ended.length - MAX_ENDED_JOBS))) jobs.delete(old.id);
+  const sessionId = job.sessionId;
+  if (!sessionId) return;
+  jobTail(job)
+    .then(tail => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${tail}`)))
+    .catch(() => {});
+}
+
+/** @param {string | undefined} sessionId @returns {string} */
+function liveIds(sessionId) {
+  const ids = sessionJobs(sessionId).map(j => j.id);
+  return ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`;
+}
+
+/** @param {string} command @param {ToolContext} context @returns {Promise<string>} */
+async function startBackground(command, context) {
+  const root = context?.workspaceRoot;
+  const sessionId = context?.sessionId;
+  for (const job of jobs.values()) {
+    if (job.state === "running" && job.command === command && job.root === root && job.sessionId === sessionId)
+      return `[job ${job.id} already runs this command. Log: ${job.log}]`;
+  }
+  const handle = await hostCall("exec", startJob(command, {}, root));
+  const job = /** @type {Job} */ ({ id: `j${++jobCount}`, native: handle.id, command, root, sessionId, log: handle.log, state: "running", code: null, signal: null });
+  jobs.set(job.id, job);
+  handle.exited.then(exit => endJob(job, exit), () => endJob(job, null));
+  return `[job ${job.id} started: ${shortCommand(command)}. Log: ${job.log}. A message arrives when it exits by itself. Use the job tool to read or stop it.]`;
+}
+
+/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
+async function job(args, _signal, context) {
+  const name = "job";
+  args = objectArgs(name, args);
+  only(name, args, ["id", "stop"]);
+  const sessionId = context?.sessionId;
+  const id = args.id ?? null;
+  const stop = args.stop ?? false;
+  if (id !== null && typeof id !== "string") invalid(name, "the argument id must be a string");
+  if (typeof stop !== "boolean") invalid(name, "the argument stop must be a boolean");
+  if (id === null) {
+    if (stop) invalid(name, `stop needs an id. ${liveIds(sessionId)}`);
+    const list = sessionJobs(sessionId);
+    return list.length === 0 ? "[no jobs]" : list.map(j => `${jobState(j)}. Log: ${j.log}`).join("\n");
+  }
+  const found = jobs.get(/** @type {string} */ (id));
+  if (!found || found.sessionId !== sessionId) invalid(name, `the job ${id} does not exist. ${liveIds(sessionId)}`);
+  const entry = /** @type {Job} */ (found);
+  if (!stop) return `[${jobState(entry)}. Log: ${entry.log}]\n${await jobTail(entry)}`;
+  if (entry.state === "running") {
+    entry.state = "stopped";
+    await hostCall(name, stopJob(entry.native));
+  }
+  return `[${jobState(entry)}]`;
+}
+
 /** @param {ToolArgs} args @param {ToolSignal} signal @param {ToolContext} context @returns {Promise<string>} */
 async function exec(args, signal, context) {
   const name = "exec";
   args = objectArgs(name, args);
-  only(name, args, ["command", "timeout_ms"]);
+  only(name, args, ["command", "timeout_ms", "background"]);
   const command = stringArg(name, args, "command");
   if (command.trim().length === 0) invalid(name, "the argument command has the wrong type or range");
+  const background = args.background ?? false;
+  if (typeof background !== "boolean") invalid(name, "the argument background must be a boolean");
   const timeoutValue = args.timeout_ms;
+  if (background) {
+    if (timeoutValue != null) invalid(name, "timeout_ms does not apply to background: true. Remove one of the two arguments");
+    return startBackground(command, context);
+  }
   const timeout = timeoutValue == null ? 120000 : timeoutValue;
   if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid(name, "the argument timeout_ms has the wrong type or range");
   const r = await hostCall(name, runCommand(command, { timeoutMs: timeout, signal, maxBytes: EXEC_STREAM_BYTES, log: true }, context?.workspaceRoot));
@@ -221,10 +325,12 @@ async function exec(args, signal, context) {
   const empty = text.length === 0;
   text = endLine(text);
   if (empty) text += "[no output]\n";
-  if (r.timedOut) text += `[The command passed its ${timeout} ms timeout. The tool stopped the process group. Run a smaller command, or raise timeout_ms up to 600000.]`;
+  if (r.timedOut) text += `[The command passed its ${timeout} ms timeout. The tool stopped the process group. Run a smaller command, raise timeout_ms up to 600000, or set background: true for a server or watcher.]`;
   else if (r.signal !== null) text += `[A signal ended the command: ${r.signal}.]`;
   else text += `[exit code: ${r.code}]`;
   if (r.log !== null) text += `\n[The tool cut the output. Full log: ${r.log}. Use grep or read on it.]`;
+  const running = sessionJobs(context?.sessionId).filter(j => j.state === "running");
+  if (running.length !== 0) text += `\n[running jobs: ${running.map(j => `${j.id} ${shortCommand(j.command)}`).join(", ")}]`;
   return text;
 }
 
@@ -265,11 +371,19 @@ builtin("edit", {
   }, required: ["path", "old_string", "new_string"], additionalProperties: false }, execute: edit,
 });
 builtin("exec", {
-  description: "Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell.\n\n`timeout_ms` is optional (default 120000, max 600000).",
+  description: "Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell. No process outlives the call unless background is true.\n\n`timeout_ms` is optional (default 120000, max 600000).",
   parameters: { type: "object", properties: {
     command: { type: "string", description: "The shell command to run." },
     timeout_ms: { type: ["integer", "null"], minimum: 1, maximum: 600000, description: "The timeout in milliseconds." },
+    background: { type: "boolean", description: "Run a server or watcher as a job and return at once." },
   }, required: ["command"], additionalProperties: false }, execute: exec,
+});
+builtin("job", {
+  description: "Manage background jobs. No id lists them. An id shows the state and the last 20 log lines. An id with stop: true stops the job.",
+  parameters: { type: "object", properties: {
+    id: { type: "string", description: "The job id, for example j1." },
+    stop: { type: "boolean", description: "Stop the job." },
+  }, additionalProperties: false }, execute: job,
 });
 builtin("skill", {
   description: "Load the full instructions for a skill listed in the system prompt. Use this tool when the task matches the skill description.",

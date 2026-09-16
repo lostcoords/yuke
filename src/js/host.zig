@@ -20,6 +20,7 @@ const call_run = @import("call_run.zig");
 const pending = @import("pending.zig");
 const execution_mod = @import("../execution.zig");
 const Logs = @import("host/logs.zig").Logs;
+const Jobs = @import("host/jobs.zig").Jobs;
 
 /// Limit the client heap. Scripts fail when they exceed this limit.
 pub const memory_limit: usize = 64 * 1024 * 1024;
@@ -90,6 +91,8 @@ pub const Host = struct {
     tasks: std.Io.Group = .init,
     /// The command logs. Only the owner makes a path.
     logs: Logs = .{},
+    /// The background jobs. `close` ends them before it cancels their waiters.
+    jobs: Jobs = .{},
 
     pub const Phase = enum { open, closing, drained };
 
@@ -210,6 +213,7 @@ pub const Host = struct {
         self.finishDrain();
         std.debug.assert(self.phase == .drained);
         self.ops.deinit(self.ctx);
+        self.jobs.deinit(self.gpa);
         self.logs.deinit(self.gpa, self.io);
         self.interactions.deinit();
         self.calls.deinit(self.ctx);
@@ -231,6 +235,8 @@ pub const Host = struct {
         self.engine.detach();
         // A turn task may wait on a tool call. Answer each one, or that task never wakes.
         call_run.abortAll(self);
+        // A job waiter reaps with cancelation blocked, so every job must end before the cancel.
+        self.jobs.endAll(self.io);
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
         self.interactions.close();

@@ -97,9 +97,6 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     if (spec.timeout_ms == 0 or spec.max_stream_bytes == 0) return error.HostFailure;
     std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
     const cwd = try resolveCwd(scratch, root, context.env, spec.cwd);
-    const spawned = try spawnDetached(scratch, context, spec.command, cwd);
-    var child = spawned.child;
-    const pid = child.id.?;
 
     // A log that cannot open costs the log, not the command.
     var log: ?Log = null;
@@ -109,11 +106,24 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     defer if (log) |*l| l.file.close(io);
     errdefer if (log != null) std.Io.Dir.deleteFileAbsolute(io, spec.log.?) catch {};
 
-    // The drains own the read ends, so the reap never closes a pipe that a drain still reads.
-    var out: Drain = .{ .file = spawned.stdout, .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null };
-    var err: Drain = .{ .file = spawned.stderr, .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null };
+    // The drains own the read ends from here, so every path closes them after the drains end.
+    const out_pipe = try pipeAboveStdio();
+    var out: Drain = .{ .file = pipeReader(out_pipe[0]), .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null };
     defer out.file.close(io);
+    const err_pipe = pipeAboveStdio() catch |e| {
+        _ = std.posix.system.close(out_pipe[1]);
+        return e;
+    };
+    var err: Drain = .{ .file = pipeReader(err_pipe[0]), .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null };
     defer err.file.close(io);
+
+    // The parent closes its write ends after the spawn, so a drain reaches EOF when the last child copy closes.
+    var child = spawned: {
+        defer _ = std.posix.system.close(out_pipe[1]);
+        defer _ = std.posix.system.close(err_pipe[1]);
+        break :spawned try spawnSession(scratch, context, spec.command, cwd, out_pipe[1], err_pipe[1]);
+    };
+    const pid = child.id.?;
 
     var term: ?std.process.Child.Term = null;
     var exited: std.Io.Event = .unset;
@@ -126,7 +136,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     defer _ = reaper.await(io);
     var drains: std.Io.Group = .init;
     errdefer {
-        escalate(io, pid);
+        endGroups(io, &.{pid});
         const old = io.swapCancelProtection(.blocked);
         defer _ = io.swapCancelProtection(old);
         drains.cancel(io);
@@ -138,11 +148,11 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{ .raw = .fromMilliseconds(spec.timeout_ms), .clock = .awake });
     const timed_out = !try waitUntil(io, &exited, deadline);
     if (timed_out) {
-        escalate(io, pid);
+        endGroups(io, &.{pid});
         exited.waitUncancelable(io);
     }
     // The shell is reaped, and a process it left holds the group id, so this kill reaches no other group.
-    if (groupAlive(pid)) escalate(io, pid);
+    if (groupAlive(pid)) endGroups(io, &.{pid});
     const abandoned = try awaitDrains(io, &drains);
     if (out.err) |e| if (!abandoned) return mapDrainError(e);
     if (err.err) |e| if (!abandoned) return mapDrainError(e);
@@ -156,24 +166,20 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     return .{
         .stdout = out.text(scratch),
         .stderr = err.text(scratch),
-        .outcome = if (timed_out) .timed_out else switch (term orelse return error.HostFailure) {
-            .exited => |code| .{ .exited = code },
-            .signal => |sig| .{ .signaled = std.math.cast(u8, @intFromEnum(sig)) orelse 0 },
-            else => .{ .exited = 0 },
-        },
+        .outcome = if (timed_out) .timed_out else outcomeOf(term orelse return error.HostFailure),
         .stdout_dropped = out.dropped,
         .stderr_dropped = err.dropped,
         .log = kept,
     };
 }
 
-/// Spawn `shell -c command` as the leader of a new session. A program that opens `/dev/tty` then fails at once with no terminal.
+/// Spawn `shell -c command` as the leader of a new session with stdout and stderr on the given descriptors. A program that opens `/dev/tty` then fails at once with no terminal.
 /// TODO: use a session flag from `std.process.SpawnOptions` when Zig std gains that flag, then delete `src/c/spawn.h`.
-const Spawned = struct { child: std.process.Child, stdout: std.Io.File, stderr: std.Io.File };
-
-fn spawnDetached(scratch: std.mem.Allocator, context: execution.Context, command: []const u8, cwd: []const u8) h.HostError!Spawned {
+fn spawnSession(scratch: std.mem.Allocator, context: execution.Context, command: []const u8, cwd: []const u8, stdout: std.posix.fd_t, stderr: std.posix.fd_t) h.HostError!std.process.Child {
     std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
     std.debug.assert(std.fs.path.isAbsolute(cwd));
+    // A `dup2` onto its own number keeps CLOEXEC, so both sources must sit above the standard streams.
+    std.debug.assert(stdout > std.posix.STDERR_FILENO and stderr > std.posix.STDERR_FILENO);
     // The shell reads one language string, which no direct program execution can accept.
     const shell_z = scratch.dupeZ(u8, context.shell.path) catch return error.HostFailure;
     const command_z = scratch.dupeZ(u8, command) catch return error.HostFailure;
@@ -182,20 +188,12 @@ fn spawnDetached(scratch: std.mem.Allocator, context: execution.Context, command
     // The block replaces the raw process environment, so the child sees the recovered home. It drops `ZIG_PROGRESS` as std does.
     const envp = context.env.createPosixBlock(scratch, .{ .zig_progress_fd = -1 }) catch return error.HostFailure;
 
-    // CLOEXEC keeps the pipe ends out of a child that another thread spawns at the same time. The child `dup2` clears the flag on its copy.
-    const out = try pipeAboveStdio();
-    defer _ = std.posix.system.close(out[1]);
-    errdefer _ = std.posix.system.close(out[0]);
-    const err = try pipeAboveStdio();
-    defer _ = std.posix.system.close(err[1]);
-    errdefer _ = std.posix.system.close(err[0]);
-
     var actions: spawn_c.posix_spawn_file_actions_t = undefined;
     try checkSpawn(spawn_c.posix_spawn_file_actions_init(&actions));
     defer std.debug.assert(spawn_c.posix_spawn_file_actions_destroy(&actions) == 0);
     try checkSpawn(spawn_c.posix_spawn_file_actions_addopen(&actions, std.posix.STDIN_FILENO, "/dev/null", spawn_c.O_RDONLY, 0));
-    try checkSpawn(spawn_c.posix_spawn_file_actions_adddup2(&actions, out[1], std.posix.STDOUT_FILENO));
-    try checkSpawn(spawn_c.posix_spawn_file_actions_adddup2(&actions, err[1], std.posix.STDERR_FILENO));
+    try checkSpawn(spawn_c.posix_spawn_file_actions_adddup2(&actions, stdout, std.posix.STDOUT_FILENO));
+    try checkSpawn(spawn_c.posix_spawn_file_actions_adddup2(&actions, stderr, std.posix.STDERR_FILENO));
     try checkSpawn(spawn_c.posix_spawn_file_actions_addchdir_np(&actions, cwd_z.ptr));
 
     var attr: spawn_c.posix_spawnattr_t = undefined;
@@ -213,12 +211,8 @@ fn spawnDetached(scratch: std.mem.Allocator, context: execution.Context, command
     var pid: spawn_c.pid_t = undefined;
     try checkSpawn(spawn_c.posix_spawn(&pid, shell_z.ptr, &actions, &attr, @ptrCast(&argv), @ptrCast(envp.slice.ptr)));
     std.debug.assert(pid > 0);
-    // The child holds no stream, so `wait` closes nothing and the caller owns both read ends.
-    return .{
-        .child = .{ .id = pid, .thread_handle = {}, .stdin = null, .stdout = null, .stderr = null, .request_resource_usage_statistics = false },
-        .stdout = .{ .handle = out[0], .flags = .{ .nonblocking = false } },
-        .stderr = .{ .handle = err[0], .flags = .{ .nonblocking = false } },
-    };
+    // The child holds no stream, so `wait` closes nothing and the caller owns every descriptor.
+    return .{ .id = pid, .thread_handle = {}, .stdin = null, .stdout = null, .stderr = null, .request_resource_usage_statistics = false };
 }
 
 /// Map a libc spawn return code to the host error. Every `posix_spawn` call returns zero or an errno value.
@@ -226,19 +220,56 @@ fn checkSpawn(rc: c_int) h.HostError!void {
     if (rc != 0) return error.HostFailure;
 }
 
-/// Create a CLOEXEC pipe with its write end above the standard streams, so the child `dup2` never targets its own number.
+/// Move a CLOEXEC descriptor above the standard streams, because a launcher that closed one hands out fd 0, 1 or 2. It closes `fd` on a move.
+fn aboveStdio(fd: std.posix.fd_t) h.HostError!std.posix.fd_t {
+    if (fd > std.posix.STDERR_FILENO) return fd;
+    const raised = std.c.fcntl(fd, std.c.F.DUPFD_CLOEXEC, @as(c_int, std.posix.STDERR_FILENO + 1));
+    _ = std.posix.system.close(fd);
+    if (raised < 0) return error.HostFailure;
+    std.debug.assert(raised > std.posix.STDERR_FILENO);
+    return raised;
+}
+
+fn pipeReader(fd: std.posix.fd_t) std.Io.File {
+    return .{ .handle = fd, .flags = .{ .nonblocking = false } };
+}
+
+/// Create a CLOEXEC pipe with its write end above the standard streams. The read end may stay low.
 fn pipeAboveStdio() h.HostError![2]std.posix.fd_t {
     const fds = std.Io.Threaded.pipe2(.{ .CLOEXEC = true }) catch return error.HostFailure;
-    // A launcher that closed a standard stream hands out fd 0, 1 or 2 here. The write end moves up, the read end may stay.
-    if (fds[1] > std.posix.STDERR_FILENO) return fds;
-    const raised = std.c.fcntl(fds[1], std.c.F.DUPFD_CLOEXEC, @as(c_int, std.posix.STDERR_FILENO + 1));
-    _ = std.posix.system.close(fds[1]);
-    if (raised < 0) {
+    const write_end = aboveStdio(fds[1]) catch {
         _ = std.posix.system.close(fds[0]);
         return error.HostFailure;
-    }
-    std.debug.assert(raised > std.posix.STDERR_FILENO);
-    return .{ fds[0], raised };
+    };
+    return .{ fds[0], write_end };
+}
+
+/// Start `shell -c command` in a new session with both streams on a new file at `log`. The caller must reap the child with `reapJob`.
+pub fn startJob(io: std.Io, root: []const u8, context: execution.Context, scratch: std.mem.Allocator, command: []const u8, cwd: ?[]const u8, log: []const u8) h.HostError!std.process.Child {
+    std.debug.assert(std.fs.path.isAbsolute(log));
+    const dir = try resolveCwd(scratch, root, context.env, cwd);
+    const file = std.Io.Dir.createFileAbsolute(io, log, .{}) catch return error.HostFailure;
+    const fd = try aboveStdio(file.handle);
+    defer _ = std.posix.system.close(fd);
+    return spawnSession(scratch, context, command, dir, fd, fd);
+}
+
+/// Reap a job with cancelation blocked, then end what the shell left in its group. It returns only after the shell dies.
+pub fn reapJob(io: std.Io, child: *std.process.Child) ?Outcome {
+    const pid = child.id.?;
+    const old = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(old);
+    const term = child.wait(io) catch null;
+    if (groupAlive(pid)) endGroups(io, &.{pid});
+    return if (term) |t| outcomeOf(t) else null;
+}
+
+fn outcomeOf(term: std.process.Child.Term) Outcome {
+    return switch (term) {
+        .exited => |code| .{ .exited = code },
+        .signal => |sig| .{ .signaled = std.math.cast(u8, @intFromEnum(sig)) orelse 0 },
+        else => .{ .exited = 0 },
+    };
 }
 
 /// Wait for `event` until `deadline`, and answer false at the deadline. A spurious wake also returns `error.Timeout`, so the loop reads the clock.
@@ -281,17 +312,19 @@ fn reap(io: std.Io, child: *std.process.Child, term: *?std.process.Child.Term, e
     exited.set(io);
 }
 
-/// End the whole process group: TERM, then KILL after the grace period. It returns early when the group is gone, and it blocks cancelation, so a shell always gets its SIGTERM trap time.
-fn escalate(io: std.Io, pid: std.posix.pid_t) void {
+/// End process groups: TERM, then KILL after one shared grace period. It returns early when every group is gone, and it blocks cancelation, so a shell always gets its SIGTERM trap time.
+pub fn endGroups(io: std.Io, pids: []const std.posix.pid_t) void {
     const old = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(old);
-    killGroup(pid, .TERM);
+    for (pids) |pid| killGroup(pid, .TERM);
     const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{ .raw = .fromNanoseconds(grace_ns), .clock = .awake });
     while (std.Io.Clock.Timestamp.now(io, .awake).durationTo(deadline).raw.nanoseconds > 0) {
-        if (!groupAlive(pid)) return;
+        for (pids) |pid| {
+            if (groupAlive(pid)) break;
+        } else return;
         std.Io.sleep(io, .fromMilliseconds(poll_ms), .awake) catch {};
     }
-    killGroup(pid, .KILL);
+    for (pids) |pid| killGroup(pid, .KILL);
 }
 
 /// Answer whether any process of the group lives. An unreaped zombie leader still counts.
@@ -528,14 +561,15 @@ test "the child leads a new session apart from the test runner" {
     var env = try utilityEnv();
     defer env.deinit();
 
-    var spawned = try spawnDetached(arena.allocator(), execution.testContext(&env), "exec sleep 30", "/tmp");
-    const pid = spawned.child.id.?;
+    const null_file = try std.Io.Dir.createFileAbsolute(testing.io, "/dev/null", .{ .truncate = false });
+    const null_fd = try aboveStdio(null_file.handle);
+    defer _ = std.posix.system.close(null_fd);
+    var child = try spawnSession(arena.allocator(), execution.testContext(&env), "exec sleep 30", "/tmp", null_fd, null_fd);
+    const pid = child.id.?;
     // A group kill ends the sleep, so the wait below returns at once and the runner never inherits a stray child.
     defer {
         killGroup(pid, .KILL);
-        _ = spawned.child.wait(testing.io) catch {};
-        spawned.stdout.close(testing.io);
-        spawned.stderr.close(testing.io);
+        _ = child.wait(testing.io) catch {};
     }
     try testing.expectEqual(pid, spawn_c.getsid(pid));
     try testing.expectEqual(pid, spawn_c.getpgid(pid));

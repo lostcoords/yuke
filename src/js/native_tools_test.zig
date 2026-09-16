@@ -726,3 +726,78 @@ fn processExists(pid: std.posix.pid_t) bool {
     };
     return true;
 }
+
+test "yuke:exec jobs start, stop, reap, and end with the host" {
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = support.createHostWith(rt.io(), "/tmp");
+    var destroyed = false;
+    defer if (!destroyed) support.destroyHost(host);
+    try support.eval(host, "tests/native_tools/jobs.test.js");
+    try support.pumpUntilTrue(host, "globalThis.result !== \"pending\"");
+    try support.expectString(host, "result", "ok");
+    const pid: std.posix.pid_t = try host.evalInt("globalThis.closePid");
+    try std.testing.expect(pid > 0);
+    support.destroyHost(host);
+    destroyed = true;
+    try std.testing.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
+}
+
+/// Submit one tool call, wait for it, and check that its text holds `part`.
+fn expectTool(host: *Host, name: []const u8, args: []const u8, is_error: bool, part: []const u8) !void {
+    const call = host.calls.submit(name, args, "/tmp");
+    try support.pumpUntilSettled(host, call);
+    errdefer std.debug.print("{s} {s} -> {s}\n", .{ name, args, call.text orelse "" });
+    try std.testing.expectEqual(is_error, call.is_error);
+    try std.testing.expect(std.mem.indexOf(u8, call.text.?, part) != null);
+    call.finish();
+    try host.pump();
+}
+
+test "the exec tool starts a background job that the job tool lists and stops" {
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = support.createHostWith(rt.io(), "/tmp");
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/native_tools/builtins-test.test.js");
+
+    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", false, "[job j1 started: sleep 30.");
+    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", false, "[job j1 already runs this command.");
+    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true,\"timeout_ms\":5}", true, "Remove one of the two arguments");
+    try expectTool(host, "exec", "{\"command\":\"echo hi\"}", false, "[running jobs: j1 sleep 30]");
+    try expectTool(host, "job", "{}", false, "j1 running: sleep 30. Log: ");
+    try expectTool(host, "job", "{\"id\":\"j1\"}", false, "[no output yet]");
+    try expectTool(host, "job", "{\"id\":\"j9\"}", true, "the job j9 does not exist. The jobs are: j1.");
+    try expectTool(host, "job", "{\"stop\":true}", true, "stop needs an id. The jobs are: j1.");
+    try expectTool(host, "job", "{\"id\":\"j1\",\"stop\":true}", false, "[j1 stopped: sleep 30]");
+    try expectTool(host, "job", "{\"id\":\"j1\",\"stop\":true}", false, "[j1 stopped: sleep 30]");
+    try expectTool(host, "exec", "{\"command\":\"echo hi\"}", false, "[exit code: 0]");
+}
+
+test "a job that exits by itself sends one message to its session, and a stopped job sends none" {
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = support.createHostWith(rt.io(), "/tmp");
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/native_tools/builtins-test.test.js");
+    try host.evalModule(
+        \\import { client } from "yuke:client";
+        \\globalThis.sent = [];
+        \\client.sessionSendInput = async (id, content) => { globalThis.sent.push(id + " " + content[0].text); return {}; };
+    , "job-messages.js");
+
+    const site: @import("../engine/toolset.zig").Site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
+    for ([_][]const u8{ "{\"command\":\"sleep 30\",\"background\":true}", "{\"command\":\"echo done; exit 2\",\"background\":true}", "{\"id\":\"j1\",\"stop\":true}" }, 0..) |args, i| {
+        const call = host.calls.submit(if (i == 2) "job" else "exec", args, "/tmp");
+        call.site = site;
+        try support.pumpUntilSettled(host, call);
+        try std.testing.expect(!call.is_error);
+        call.finish();
+        try host.pump();
+    }
+    try support.pumpUntilTrue(host, "globalThis.sent.length === 1");
+    try support.pumpUntilIdle(host);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
+        \\globalThis.sent.length === 1 && globalThis.sent[0].startsWith("01010101010101010101010101010101 [job j2 exited (exit code 2): echo done; exit 2. Log: ") && globalThis.sent[0].endsWith("]\ndone") ? 1 : 0
+    ));
+}
