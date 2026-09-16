@@ -4,6 +4,8 @@ const doc = new Document();
 let source = "# Prefix\n\nstable 世界 é 👩‍💻\n\n```txt\nbody\n```\n\nTail";
 doc.setText(source);
 doc.rows(24);
+const heldRows = doc.rows(24);
+const heldJson = JSON.stringify(heldRows);
 const prefix = doc._cache.get(0);
 const codeAt = source.indexOf("```txt");
 const code = doc._cache.get(codeAt);
@@ -13,6 +15,7 @@ for (const delta of [" extended", "\r", "\n\r\nNext", "\n===", "\n\n| a | b |\n|
   doc.setText(source);
   const fresh = new Document();
   fresh.setText(source);
+  check("snapshot", JSON.stringify(heldRows) === heldJson);
   check("append-rows", JSON.stringify(doc.rows(24)) === JSON.stringify(fresh.rows(24)));
   check("append-blocks", JSON.stringify(doc.blocks()) === JSON.stringify(fresh.blocks()));
   check("prefix-cache", doc._cache.get(0) === prefix);

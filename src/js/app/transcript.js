@@ -1024,7 +1024,7 @@ export class Transcript {
     if (c && state) {
       const blocks = [];
       for (const [key, base] of c.partBases) {
-        const doc = state.rows.get(key)?.doc;
+        const doc = state.rows.get(key)?.text?.doc;
         if (!doc) continue;
         for (const block of doc.blocks()) blocks.push({ kind: block.kind, at: base + block.at, end: base + block.end });
       }
@@ -1501,7 +1501,7 @@ export class Transcript {
       const live = part.type === "reasoning" && this._reasoningLive(m.id, part.id);
       let c = state.rows.get(key);
       if (!c || c.w !== width || c.expanded !== expanded || c.live !== live || c.shape !== tree) {
-        c = this._buildPart(m.id, part, width, expanded, live, tree, c ? c.doc : null);
+        c = this._buildPart(m.id, part, width, expanded, live, tree, c);
         state.rows.set(key, c);
       }
       partBases.set(key, base);
@@ -1513,22 +1513,33 @@ export class Transcript {
     return { rows, source, partBases };
   }
 
-  // Render one part at source base 0. A text part keeps its document, so a delta re-wraps only the open block.
-  /** @param {number} id @param {Wire.AssistantPart} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @param {Document | null} doc @returns {PartCache} */
-  _buildPart(id, part, width, expanded, live, tree, doc) {
+  // Render one part at source base 0; retain rows before the last two markdown blocks.
+  /** @param {number} id @param {Wire.AssistantPart} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @param {PartCache | undefined} previous @returns {PartCache} */
+  _buildPart(id, part, width, expanded, live, tree, previous) {
     const contentW = Math.max(1, width - (tree ? ACTION_INDENT : TX_GUTTER));
     const tag = { key: id, partId: part.id };
     if (part.type === "text") {
-      if (!doc) doc = new Document();
-      doc.setText(part.text || "");
-      const rows = doc.rows(contentW).map((r) => ({ segments: r.segments, indent: TX_GUTTER, key: id, partId: part.id, kind: "text" }));
-      return { w: width, expanded, live, shape: tree, rows, source: doc.sourceText(), doc };
+      const text = previous?.text || { doc: new Document(), width: contentW, ends: [] };
+      const { doc, ends } = text;
+      const keep = doc._setText(part.text || "");
+      if (text.width !== contentW) ends.length = 0;
+      else if (keep >= 0) ends.length = Math.min(keep, ends.length);
+      text.width = contentW;
+      const rows = previous?.text === text ? previous.rows : [];
+      rows.length = ends.at(-1) || 0;
+      for (let i = ends.length; i < doc._blocks.length; i++) {
+        if (i) rows.push({ segments: [{ text: "", group: "MdText" }], indent: TX_GUTTER, key: id, partId: part.id, kind: "text" });
+        const block = /** @type {import("./types/md.js").Block} */ (doc._blocks[i]);
+        for (const r of doc._blockRows(block, contentW)) rows.push({ segments: r.segments, indent: TX_GUTTER, key: id, partId: part.id, kind: "text" });
+        ends.push(rows.length);
+      }
+      return { w: width, expanded, live, shape: tree, rows, source: doc.sourceText(), text };
     }
     const built = part.type === "tool"
       ? toolRows(part, contentW, expanded, tree)
       : reasoningRows(/** @type {Extract<Wire.AssistantPart, { type: "reasoning" }>} */ (part), contentW, expanded, live, tree);
     const rows = built.rows.map((r) => ({ ...r, ...tag }));
-    return { w: width, expanded, live, shape: tree, rows, source: built.source, doc: null };
+    return { w: width, expanded, live, shape: tree, rows, source: built.source, text: null };
   }
 
   /** @param {number} i @returns {MessageDescriptor | null} */

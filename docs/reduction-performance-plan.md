@@ -71,16 +71,23 @@ The benchmark harness does not cover JSONL dispatch, so this change has no measu
 ## Original review checklist
 
 1. Context-flag ownership: implemented with one entry per registration.
-2. Stable transcript rows and the full-prefix bridge check: pending.
+2. Stable transcript rows and the full-prefix bridge check: implemented and measured.
 3. Exact panel and native-setter duplicates: consolidated.
 4. One child-page policy: implemented with explicit failure on incomplete results.
 5. Advice dispatch: measurement and simplification pending.
 6. Commit serialization and large agent-tree refreshes: dedicated benchmarks pending.
 
+## Transcript and boot performance
+
+The transcript retains closed-prefix rows in each text part cache.
+A draft generation and byte offset replace the full-prefix native check.
+A bounded cache reuses up to eight exact-size QuickJS backing blocks.
+This also removes the measured boot allocation regression.
+The public JS API and wire schema remain intact.
+The [evidence report](transcript-performance-evidence.md) records the tradeoffs, tests, and all benchmark phases.
+
 ## Performance next
 
-- Retain stable transcript rows across text updates.
-- Replace the full-prefix JS/native check with a revision and byte cursor.
 - Measure and simplify advice dispatch without a plugin behavior change.
 - Reuse known message sizes at commit and audit clone lifetimes.
 - Measure large agent trees and avoid full-tree reads for activity-only changes.

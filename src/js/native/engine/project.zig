@@ -154,12 +154,18 @@ fn writeCapped(w: *std.Io.Writer, parts: *Parts, field: Cut.Field, list: []const
     if (end < text.len) parts.cuts.add(.{ .field = field, .list = list, .index = index, .size = text.len, .next = end });
 }
 
+/// A byte offset belongs to one draft lifetime.
+pub const TextCursor = struct {
+    generation: u64,
+    offset: usize,
+};
+
 /// Write one part. Every string it holds is bounded, whatever the tool produced.
-fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart, prefix: ?[]const u8) !void {
+fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart, cursor: ?TextCursor) !void {
     parts.* = .{};
     switch (p) {
-        .text => |t| try writeTextPart(w, parts, "text", t.id, t.text, prefix),
-        .reasoning => |r| try writeTextPart(w, parts, "reasoning", r.id, r.text, prefix),
+        .text => |t| try writeTextPart(w, parts, "text", t.id, t.text, cursor),
+        .reasoning => |r| try writeTextPart(w, parts, "reasoning", r.id, r.text, cursor),
         .redacted_reasoning => |r| try w.print("{{\"type\":\"redacted_reasoning\",\"id\":{d}}}", .{r.id}),
         .tool => |t| try writeToolPart(w, parts, t),
     }
@@ -184,14 +190,15 @@ fn writeMediaPart(w: *std.Io.Writer, kind: []const u8, id: u64, source: proto.co
 }
 
 /// Write a text-bearing part. A cut text names itself in `cut`, so a view knows to page the rest.
-fn writeTextPart(w: *std.Io.Writer, parts: *Parts, kind: []const u8, id: u64, text: []const u8, prefix: ?[]const u8) !void {
-    const start = if (prefix) |held| (if (std.mem.startsWith(u8, text, held)) held.len else 0) else 0;
+fn writeTextPart(w: *std.Io.Writer, parts: *Parts, kind: []const u8, id: u64, text: []const u8, cursor: ?TextCursor) !void {
+    const offset = if (cursor) |c| c.offset else 0;
+    const start = if (offset <= text.len and (offset == text.len or text[offset] & 0xc0 != 0x80)) offset else 0;
     std.debug.assert(start <= text.len);
     const end = start + utf8.floor(text[start..], parts.take(@min(text.len - start, max_page_bytes)));
     try w.print("{{\"type\":\"{s}\",\"id\":{d},\"text\":", .{ kind, id });
     try std.json.Stringify.encodeJsonString(text[start..end], .{}, w);
     if (end < text.len) parts.cuts.add(.{ .field = .text, .size = text.len, .next = end });
-    if (start != 0) try w.writeAll(",\"text_prefix\":true");
+    if (cursor) |c| try w.print(",\"text_generation\":{d},\"text_bytes\":{d},\"text_offset\":{d}", .{ c.generation, text.len, start });
     try parts.cuts.write(w);
     try w.writeByte('}');
 }
@@ -352,8 +359,8 @@ fn writeFloor(w: *std.Io.Writer, parts: *Parts, text: []const u8) !bool {
 }
 
 /// Write the parts of one message as a JSON array. With `only`, write just that part, so a delta reads one part.
-pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: proto.ids.MessageId, only: ?proto.ids.PartId, prefix: ?[]const u8) !void {
-    std.debug.assert(only != null or prefix == null);
+pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: proto.ids.MessageId, only: ?proto.ids.PartId, cursor: ?TextCursor) !void {
+    std.debug.assert(only != null or cursor == null);
     var parts: Parts = .{};
     var written: usize = 0;
     try w.writeByte('[');
@@ -363,7 +370,7 @@ pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: pro
             if (only) |want| if (wire.id() != want) continue;
             if (written > 0) try w.writeByte(',');
             written += 1;
-            try writePart(w, &parts, wire, prefix);
+            try writePart(w, &parts, wire, .{ .generation = d.generation, .offset = if (cursor) |c| (if (c.generation == d.generation) c.offset else 0) else 0 });
         }
         return w.writeByte(']');
     };
@@ -374,7 +381,7 @@ pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: pro
                 if (only) |want| if (p.id() != want) continue;
                 if (written > 0) try w.writeByte(',');
                 written += 1;
-                try writePart(w, &parts, p, prefix);
+                try writePart(w, &parts, p, null);
             },
             // A committed message never reorders its content, so the position is a stable id.
             .user => |u| for (u.content, 0..) |c, i| {

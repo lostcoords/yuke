@@ -26,7 +26,7 @@ declare module "yuke:engine-native" {
   export type MessagePart = Wire.AssistantPart | (Wire.ContentPart & { id: number });
 
   /** One part as the read surface returns it: the wire part plus every value the projection cut. */
-  export type ViewPart = MessagePart & { cut?: readonly ViewCut[] };
+  export type ViewPart = MessagePart & { cut?: readonly ViewCut[]; text_generation?: number; text_bytes?: number; text_offset?: number };
 
   /** The QuickJS allocation counters exclude unused memory in the backing allocator. */
   export type MemoryUsage = {
@@ -60,8 +60,8 @@ declare module "yuke:engine-native" {
     sessionActivity(sessionId: string): string;
     /** The parts of one message as JSON. A user part takes its position as its id. */
     sessionParts(sessionId: string, messageId: number): string;
-    /** One part as JSON; a matched prefix sets `text_prefix` and leaves only the suffix in `text`. */
-    sessionPart(sessionId: string, messageId: number, partId: number, prefix?: string): string;
+    /** One part as JSON; a draft cursor reads the suffix at a byte offset within the same lifetime. */
+    sessionPart(sessionId: string, messageId: number, partId: number, generation?: number, offset?: number): string;
     /** One page of a message's whole text, as JSON `TextPage`. */
     sessionText(sessionId: string, messageId: number, offset: number, limit: number): string;
     /** One page of one field of a part, as JSON `TextPage`. `field` is the address a `ViewCut` names. */

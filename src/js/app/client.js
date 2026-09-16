@@ -152,6 +152,9 @@ function sessionWholeText(sessionId, messageId) {
   }
 }
 
+/** @type {WeakMap<MessagePart, { partId: number, type: string, text: string, generation: number, bytes: number }>} */
+const textCursors = new WeakMap();
+
 // The parts of one message. A cut field every row reads is completed here, and a large body stays paged.
 /** @param {string} sessionId @param {number} messageId @returns {MessagePart[]} */
 function sessionParts(sessionId, messageId) {
@@ -162,28 +165,39 @@ function sessionParts(sessionId, messageId) {
 // One part of a message, or null when it is gone. A delta re-reads one part, never the whole message.
 /** @param {string} sessionId @param {number} messageId @param {number} partId @param {MessagePart} [previous] @returns {MessagePart | null} */
 function sessionPart(sessionId, messageId, partId, previous) {
-  const prefix = previous?.type === "text" || previous?.type === "reasoning" ? previous.text : undefined;
-  const parts = /** @type {(ViewPart & { text_prefix?: boolean })[]} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId, prefix)));
-  const part = parts[0];
+  const held = previous && textCursors.get(previous);
+  const cursor = held && held.partId === partId
+    && previous.id === partId && previous.type === held.type
+    && (previous.type === "text" || previous.type === "reasoning") && previous.text === held.text ? held : undefined;
+  const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId, cursor?.generation, cursor?.bytes)));
+  let part = parts[0];
   if (!part) return null;
-  if (part.text_prefix && (part.type === "text" || part.type === "reasoning")) {
-    delete part.text_prefix;
-    return wholePart(sessionId, messageId, { ...part, text: prefix + part.text });
-  }
+  if (part.text_offset && cursor && (part.type === "text" || part.type === "reasoning")) part = { ...part, text: cursor.text + part.text };
   return wholePart(sessionId, messageId, part);
 }
 
 /** @param {string} sessionId @param {number} messageId @param {ViewPart} p @returns {ViewPart} */
 function wholePart(sessionId, messageId, p) {
-  if (!p || !p.cut) return p;
+  const generation = p.text_generation;
+  const bytes = p.text_bytes;
+  delete p.text_generation;
+  delete p.text_bytes;
+  delete p.text_offset;
   // Complete the text or tool arguments; the tool body and views stay paged.
   const field = p.type === "tool" ? "arguments" : "text";
-  const prefix = p.type === "tool" ? p.arguments : p.type === "text" || p.type === "reasoning" ? p.text : null;
-  if (prefix === null) return p;
-  const cut = p.cut.find((c) => c.field === field && c.next != null);
-  if (!cut) return p;
-  const tail = partTextFrom(sessionId, messageId, p.id, field, /** @type {number} */ (cut.next));
-  return { ...p, [field]: prefix + tail, cut: p.cut.filter((c) => c !== cut) };
+  if (p.cut) {
+    const cut = p.cut.find((c) => c.field === field && c.next != null);
+    if (cut) {
+      const tail = partTextFrom(sessionId, messageId, p.id, field, /** @type {number} */ (cut.next));
+      const remaining = p.cut.filter((c) => c !== cut);
+      if (p.type === "tool") p = { ...p, arguments: p.arguments + tail, cut: remaining };
+      else if (p.type === "text" || p.type === "reasoning") p = { ...p, text: p.text + tail, cut: remaining };
+    }
+  }
+  if (generation !== undefined && bytes !== undefined && (p.type === "text" || p.type === "reasoning")) {
+    textCursors.set(p, { partId: p.id, type: p.type, text: p.text, generation, bytes });
+  }
+  return p;
 }
 
 // The rest of one field from `offset`. Each page echoes the next byte offset back, so no caller counts bytes of its own.

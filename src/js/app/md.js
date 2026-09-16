@@ -918,8 +918,14 @@ export class Document {
   // Return true when the source changed. An append keeps every block but the last two, because only the tail can change.
   /** @param {string} text @returns {boolean} */
   setText(text) {
+    return this._setText(text) !== -1;
+  }
+
+  // Return the retained block count, or -1 when the source is unchanged.
+  /** @param {string} text @returns {number} */
+  _setText(text) {
     text = normalizeSource(text);
-    if (text === this._src) return false;
+    if (text === this._src) return -1;
     const append = this._src != null && text.startsWith(this._src);
     const keep = append ? Math.max(0, this._blocks.length - 2) : 0;
     const from = keep > 0 ? /** @type {Block} */ (this._blocks[keep]).at : 0;
@@ -933,7 +939,7 @@ export class Document {
     this._src = text;
     this._blocks.length = keep;
     for (const block of tail) this._blocks.push(block);
-    return true;
+    return keep;
   }
 
   // The normalized markdown. A segment offset indexes into this text, never into the raw input.

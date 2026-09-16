@@ -184,9 +184,10 @@ fn jsSessionPart(ctx: Context, _: Value, args: []const Value) Value {
     const pid = u64Arg(ctx, args, 2) orelse return ctx.newString("[]");
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer aw.deinit();
-    const prefix = if (args.len > 3) module.string(ctx, args[3]) else null;
-    defer if (prefix) |held| ctx.freeCString(held.ptr);
-    project.writeMessageParts(&aw.writer, rt, mid, pid, prefix) catch return ctx.newString("[]");
+    const generation = u64Arg(ctx, args, 3);
+    const offset = if (u64Arg(ctx, args, 4)) |n| std.math.cast(usize, n) else null;
+    const cursor: ?project.TextCursor = if (generation != null and offset != null) .{ .generation = generation.?, .offset = offset.? } else null;
+    project.writeMessageParts(&aw.writer, rt, mid, pid, cursor) catch return ctx.newString("[]");
     return ctx.newString(aw.written());
 }
 

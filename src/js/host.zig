@@ -55,6 +55,7 @@ pub const Options = struct {
 pub const Host = struct {
     gpa: std.mem.Allocator,
     runtime: *quickjs.Runtime,
+    memory: memory.Allocator,
     ctx: quickjs.Context,
     loader: loader_mod.Loader,
     phase: Phase,
@@ -92,7 +93,8 @@ pub const Host = struct {
     /// Allocate a host and install its limits, interrupt handler, and loader.
     pub fn createWith(gpa: std.mem.Allocator, io: std.Io, opts: Options) *Host {
         const self = gpa.create(Host) catch unreachable;
-        const runtime = memory.createRuntime(gpa) catch unreachable;
+        self.memory = .{ .backing = gpa };
+        const runtime = memory.createRuntime(&self.memory) catch unreachable;
         runtime.setMemoryLimit(memory_limit);
         runtime.setMaxStackSize(stack_limit);
         const ctx = quickjs.Context.init(runtime);
@@ -109,6 +111,7 @@ pub const Host = struct {
         self.* = .{
             .gpa = gpa,
             .runtime = runtime,
+            .memory = self.memory,
             .ctx = ctx,
             .loader = ld,
             .phase = .open,
@@ -212,6 +215,7 @@ pub const Host = struct {
         self.paint.freeRoots(self.ctx);
         self.ctx.deinit();
         self.runtime.deinit();
+        self.memory.deinit();
         self.gpa.destroy(self);
     }
 

@@ -236,7 +236,7 @@ test "reused RGB and ANSI colors need no backing allocations after warmup" {
 const support = @import("test_support.zig");
 const paging = @import("native/engine/paging.zig");
 
-test "native part refresh validates the held prefix across replacement and removal" {
+test "native part refresh validates the draft cursor across replacement and removal" {
     var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
     defer _ = pool.deinit();
     const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, .stream_native);
@@ -246,14 +246,25 @@ test "native part refresh validates the held prefix across replacement and remov
     try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .reasoning = .{ .id = 1, .text = "why 世界", .signature = "" } } });
     try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .tool = .{ .id = 2, .name = "exec", .arguments = "{}", .state = .pending } } });
     try support.eval(harness.host, "tests/app/part-refresh.test.js");
-    const text = &session.draft.?.parts.items[0].text.text;
-    text.clearRetainingCapacity();
-    try text.appendSlice(harness.host.gpa, "changed 世界 👩‍💻");
+    session.draft.?.deinit();
+    session.draft = null;
+    try session.apply(.{ .message_started_data = .{
+        .session_id = session.id,
+        .message_id = 2,
+        .run_id = 2,
+        .config_rev = 0,
+        .agent = "bench",
+        .created_at_ms = 2,
+    } });
+    const replacement = try harness.host.gpa.alloc(u8, harness.projection.?.source_bytes + 1);
+    defer harness.host.gpa.free(replacement);
+    @memset(replacement, 'x');
+    try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .text = .{ .id = 0, .text = replacement } } });
     try harness.host.evalModule(
         \\import { client } from "yuke:client";
         \\import { equal } from "yuke:test";
         \\const fresh = client.sessionPart(globalThis.PROJECTION_SESSION, 2, 0, globalThis.previousPart);
-        \\equal(fresh.text, "changed 世界 👩‍💻");
+        \\equal(fresh.text, "x".repeat(globalThis.STREAM_NATIVE_INITIAL_BYTES + 1));
         \\equal(globalThis.previousPart.text, globalThis.PROJECTION_TEXT);
     , "replacement.js");
     session.draft.?.deinit();

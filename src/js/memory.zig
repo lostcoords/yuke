@@ -8,11 +8,32 @@ const assert = std.debug.assert;
 const alignment: std.mem.Alignment = .of(std.c.max_align_t);
 const header_size = std.mem.alignForward(usize, @sizeOf(usize), alignment.toByteUnits());
 
-pub fn createRuntime(gpa: std.mem.Allocator) !*quickjs.Runtime {
+// QuickJS releases empty arenas at once; retain at most eight page-sized blocks per runtime.
+pub const Allocator = struct {
+    backing: std.mem.Allocator,
+    blocks: [8][]align(alignment.toByteUnits()) u8 = undefined,
+    len: usize = 0,
+
+    pub fn deinit(self: *Allocator) void {
+        assert(self.len <= self.blocks.len);
+        for (self.blocks[0..self.len]) |block| self.backing.free(block);
+        self.* = undefined;
+    }
+};
+
+const page_size = 4096;
+
+fn cacheable(size: usize) bool {
+    return size >= 3 * 1024 and size <= page_size;
+}
+
+/// Keep the allocator at one address until the runtime is destroyed.
+pub fn createRuntime(memory: *Allocator) !*quickjs.Runtime {
+    const gpa = memory.backing;
     const runtime = try gpa.create(quickjs.Runtime);
     errdefer gpa.destroy(runtime);
     runtime.allocator = gpa;
-    runtime.ptr = c.JS_NewRuntime2(&functions, runtime) orelse return error.OutOfMemory;
+    runtime.ptr = c.JS_NewRuntime2(&functions, memory) orelse return error.OutOfMemory;
     assert(runtime.ptr != null);
     return runtime;
 }
@@ -25,15 +46,29 @@ const functions: c.JSMallocFunctions = .{
     .js_malloc_usable_size = usableSize,
 };
 
-fn allocator(opaque_ptr: ?*anyopaque) std.mem.Allocator {
-    const runtime: *const quickjs.Runtime = @ptrCast(@alignCast(opaque_ptr.?));
-    return runtime.allocator;
+fn allocator(opaque_ptr: ?*anyopaque) *Allocator {
+    return @ptrCast(@alignCast(opaque_ptr.?));
 }
 
 fn malloc(opaque_ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque {
     if (size == 0) return null;
     const total = std.math.add(usize, header_size, size) catch return null;
-    const bytes = allocator(opaque_ptr).alignedAlloc(u8, alignment, total) catch return null;
+    const memory = allocator(opaque_ptr);
+    assert(memory.len <= memory.blocks.len);
+    const bytes = blk: {
+        if (cacheable(size)) {
+            var i = memory.len;
+            while (i > 0) {
+                i -= 1;
+                const block = memory.blocks[i];
+                if (block.len != total) continue;
+                memory.len -= 1;
+                std.mem.copyForwards(@TypeOf(block), memory.blocks[i..memory.len], memory.blocks[i + 1 .. memory.len + 1]);
+                break :blk block;
+            }
+        }
+        break :blk memory.backing.alignedAlloc(u8, alignment, total) catch return null;
+    };
     std.mem.writeInt(usize, bytes[0..@sizeOf(usize)], size, .little);
     assert(bytes.len > header_size);
     return bytes[header_size..].ptr;
@@ -57,7 +92,18 @@ fn allocation(ptr: *const anyopaque) []align(alignment.toByteUnits()) u8 {
 
 fn free(opaque_ptr: ?*anyopaque, ptr: ?*anyopaque) callconv(.c) void {
     const p = ptr orelse return;
-    allocator(opaque_ptr).free(allocation(p));
+    const memory = allocator(opaque_ptr);
+    const bytes = allocation(p);
+    assert(memory.len <= memory.blocks.len);
+    if (cacheable(bytes.len - header_size)) {
+        if (memory.len == memory.blocks.len) {
+            memory.backing.free(memory.blocks[0]);
+            memory.len -= 1;
+            std.mem.copyForwards(@TypeOf(bytes), memory.blocks[0..memory.len], memory.blocks[1 .. memory.len + 1]);
+        }
+        memory.blocks[memory.len] = bytes;
+        memory.len += 1;
+    } else memory.backing.free(bytes);
 }
 
 fn realloc(opaque_ptr: ?*anyopaque, ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque {
@@ -67,7 +113,7 @@ fn realloc(opaque_ptr: ?*anyopaque, ptr: ?*anyopaque, size: usize) callconv(.c) 
         return null;
     }
     const total = std.math.add(usize, header_size, size) catch return null;
-    const bytes = allocator(opaque_ptr).realloc(allocation(p), total) catch return null;
+    const bytes = allocator(opaque_ptr).backing.realloc(allocation(p), total) catch return null;
     std.mem.writeInt(usize, bytes[0..@sizeOf(usize)], size, .little);
     assert(bytes.len == total);
     return bytes[header_size..].ptr;
@@ -79,7 +125,9 @@ fn usableSize(ptr: ?*const anyopaque) callconv(.c) usize {
 }
 
 test "QuickJS counts large allocations and rejects their combined size over the limit" {
-    const runtime = try createRuntime(std.testing.allocator);
+    var memory: Allocator = .{ .backing = std.testing.allocator };
+    defer memory.deinit();
+    const runtime = try createRuntime(&memory);
     defer runtime.deinit();
     const before = runtime.computeMemoryUsage();
     const size = 128 * 1024;
@@ -103,8 +151,45 @@ test "QuickJS counts large allocations and rejects their combined size over the 
 test "QuickJS runtime initialization releases partial allocations on failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
         fn run(gpa: std.mem.Allocator) !void {
-            const runtime = try createRuntime(gpa);
+            var memory: Allocator = .{ .backing = gpa };
+            defer memory.deinit();
+            const runtime = try createRuntime(&memory);
             runtime.deinit();
         }
     }.run, .{});
+}
+
+test "QuickJS page reuse stays bounded and preserves realloc and calloc semantics" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var memory: Allocator = .{ .backing = failing.allocator() };
+    defer memory.deinit();
+    var pages: [10]*anyopaque = undefined;
+    for (&pages) |*page| {
+        page.* = malloc(&memory, page_size) orelse return error.OutOfMemory;
+        @memset(@as([*]u8, @ptrCast(page.*))[0..page_size], 0xa5);
+    }
+    for (pages) |page| free(&memory, page);
+    try std.testing.expectEqual(memory.blocks.len, memory.len);
+    failing.fail_index = failing.alloc_index;
+    const reused = calloc(&memory, 1, page_size) orelse return error.OutOfMemory;
+    var owned: ?*anyopaque = reused;
+    defer free(&memory, owned);
+    try std.testing.expectEqual(page_size, usableSize(reused));
+    const bytes: [*]u8 = @ptrCast(reused);
+    try std.testing.expect(std.mem.allEqual(u8, bytes[0..page_size], 0));
+    @memset(bytes[0..3072], 0xa5);
+    failing.resize_fail_index = failing.resize_index;
+    try std.testing.expectEqual(null, realloc(&memory, owned, page_size * 2));
+    try std.testing.expectEqual(page_size, usableSize(owned));
+    try std.testing.expect(std.mem.allEqual(u8, bytes[0..3072], 0xa5));
+    failing.fail_index = std.math.maxInt(usize);
+    failing.resize_fail_index = std.math.maxInt(usize);
+    owned = realloc(&memory, owned, page_size * 2) orelse return error.OutOfMemory;
+    try std.testing.expect(std.mem.allEqual(u8, @as([*]u8, @ptrCast(owned.?))[0..3072], 0xa5));
+    owned = realloc(&memory, owned, 3072) orelse return error.OutOfMemory;
+    owned = realloc(&memory, owned, 128) orelse return error.OutOfMemory;
+    try std.testing.expect(std.mem.allEqual(u8, @as([*]u8, @ptrCast(owned.?))[0..128], 0xa5));
+    try std.testing.expectEqual(@as(usize, 128), usableSize(owned));
+    owned = realloc(&memory, owned, 0);
+    try std.testing.expectEqual(null, owned);
 }

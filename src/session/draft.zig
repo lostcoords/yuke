@@ -105,6 +105,8 @@ pub const Part = union(enum) {
 pub const Draft = struct {
     gpa: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
+    // A cursor identifies one append-only lifetime, even after a session reload.
+    generation: u64,
     message_id: ids.MessageId,
     run_id: ids.RunId,
     config_rev: ids.ConfigRev,
@@ -112,10 +114,15 @@ pub const Draft = struct {
     created_at_ms: u64,
     parts: std.ArrayList(Part) = .empty,
 
+    var next_generation: std.atomic.Value(u64) = .init(1);
+
     /// Open a draft from `message.started`. Clone the borrowed `agent` into the arena.
     pub fn init(gpa: std.mem.Allocator, d: message.MessageStartedData) Error!Draft {
+        const generation = next_generation.fetchAdd(1, .monotonic);
+        std.debug.assert(generation > 0 and generation <= proto.meta.constants.MAX_WIRE_INTEGER);
         var self: Draft = .{
             .gpa = gpa,
+            .generation = generation,
             .arena = .init(gpa),
             .message_id = d.message_id,
             .run_id = d.run_id,

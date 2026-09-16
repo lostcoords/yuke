@@ -525,3 +525,7 @@ test "yuke:ui transcript keeps committed renders across a reload" {
     paint.bind(host);
     try support.eval(host, "tests/ui/transcript-reload-reuse.test.js");
 }
+
+test "yuke:ui transcript retains the closed row prefix across text deltas" {
+    try support.run("tests/ui/transcript-row-prefix.test.js");
+}

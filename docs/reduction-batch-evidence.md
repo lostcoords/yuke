@@ -156,3 +156,10 @@ The pagination boundary, cycle, failure, and result-order checks remain.
 The final source diff is net +8 lines, including the two new source files.
 These final edits affect test code only; the measured production behavior is unchanged.
 The known boot allocation increase remains explicit for the next performance review.
+
+## Follow-up resolution
+
+The transcript performance batch addresses the boot allocation regression with bounded backing-block reuse.
+The [follow-up report](transcript-performance-evidence.md) records 133,350,800 bytes per 100 boots.
+That result is below the original 173,047,800-byte baseline; all boot bytes are freed.
+The historical measurements above remain unchanged.

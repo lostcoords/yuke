@@ -54,7 +54,7 @@ export interface PartCache {
   shape: number;
   rows: TranscriptRow[];
   source: string;
-  doc: Document | null;
+  text: { doc: Document; width: number; ends: number[] } | null;
 }
 
 export interface PartState {
