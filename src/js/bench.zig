@@ -7,6 +7,8 @@ const term = @import("term");
 const Host = @import("host.zig").Host;
 const Allocations = @import("../allocations.zig");
 const native_term = @import("native/term.zig");
+const Tree = @import("bench_agents.zig");
+pub const TreeShape = Tree.Shape;
 const Commit = @import("bench_commit.zig");
 const Projection = @import("bench_projection.zig");
 pub const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
@@ -27,17 +29,22 @@ pub const Phase = enum {
     commit,
     commit_serialize,
     commit_size,
+    agents_open,
+    agents_activity,
+    agents_burst,
+    agents_structure,
     advice_direct,
     advice_before,
     advice_around,
     advice_mixed,
     advice_churn,
 
-    const Group = enum { transcript, colors, advice };
+    const Group = enum { transcript, colors, advice, agents };
 
     fn group(self: Phase) Group {
         return switch (self) {
             .colors => .colors,
+            .agents_open, .agents_activity, .agents_burst, .agents_structure => .agents,
             .advice_direct, .advice_before, .advice_around, .advice_mixed, .advice_churn => .advice,
             else => .transcript,
         };
@@ -57,6 +64,8 @@ pub const Harness = struct {
     step_fn: quickjs.Value,
     projection: ?*Projection = null,
     commit: ?*Commit = null,
+    tree: ?*Tree = null,
+    tree_shape: TreeShape = .wide,
     phase: ?Phase = null,
     native_step: usize = 0,
     colors: Colors = .ansi_raw,
@@ -97,6 +106,7 @@ pub const Harness = struct {
         defer ctx.freeValue(global);
         try ctx.setPropertyStr(global, "FIXTURE", ctx.newString(fixture));
         try self.host.evalModule(switch (self.phase_group) {
+            .agents => @embedFile("bench_agents.js"),
             .colors => @embedFile("bench_colors.js"),
             .advice => @embedFile("bench_advice.js"),
             .transcript => @embedFile("bench.js"),
@@ -111,6 +121,7 @@ pub const Harness = struct {
     pub fn destroy(self: *Harness) void {
         const gpa = self.gpa;
         self.host.engine.detach();
+        if (self.tree) |tree| tree.destroy();
         if (self.commit) |commit| commit.destroy();
         if (self.projection) |projection| projection.destroy();
         self.host.ctx.freeValue(self.step_fn);
@@ -130,10 +141,13 @@ pub const Harness = struct {
         self.phase = null;
         self.native_step = 0;
         self.host.engine.detach();
+        if (self.tree) |tree| tree.destroy();
         if (self.commit) |commit| commit.destroy();
         if (self.projection) |projection| projection.destroy();
         self.projection = null;
         self.commit = null;
+        self.tree = null;
+        if (phase.group() == .agents) self.tree = try Tree.create(self.host, scale, self.tree_shape);
         if (std.meta.stringToEnum(Commit.Mode, @tagName(phase))) |mode| {
             self.commit = try Commit.create(self.host.gpa, scale);
             try self.commit.?.step(mode);
@@ -154,7 +168,8 @@ pub const Harness = struct {
         const function = ctx.getPropertyStr(self.api, "start");
         defer ctx.freeValue(function);
         _ = try self.call(function, &args);
-        if (phase == .colors) _ = try self.call(self.step_fn, &.{});
+        if (phase == .colors or phase.group() == .agents) _ = try self.call(self.step_fn, &.{});
+        if (phase.group() == .agents) _ = try self.host.evalInt("agentResetReads()");
         self.host.runtime.runGC();
         self.output.clearRetainingCapacity();
         self.allocations.resetPeak();
@@ -220,6 +235,30 @@ pub const Harness = struct {
         return if (self.projection) |projection| projection.sourceBytes() else null;
     }
 
+    pub fn requests(self: *Harness) !?struct { gets: i32, lists: i32, updates: i32 } {
+        if (self.phase_group != .agents) return null;
+        return .{
+            .gets = try self.host.evalInt("agentReads().gets"),
+            .lists = try self.host.evalInt("agentReads().lists"),
+            .updates = try self.host.evalInt("agentReads().updates"),
+        };
+    }
+
+    fn settleAgents(self: *Harness) !void {
+        const deadline = std.Io.Clock.Timestamp.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake });
+        while (true) {
+            try self.host.pump();
+            if (self.host.ops.live.items.len == 0 and !self.host.hasPending()) return;
+            if (deadline.durationFromNow(self.host.io).raw.nanoseconds <= 0) return error.AgentBenchmarkTimeout;
+            self.host.wake.reset();
+            if (self.host.hasPending()) continue;
+            self.host.wake.waitTimeout(self.host.io, .{ .deadline = deadline }) catch |err| switch (err) {
+                error.Timeout => continue,
+                else => return err,
+            };
+        }
+    }
+
     fn call(self: *Harness, function: quickjs.Value, args: []const quickjs.Value) !i32 {
         const ctx = self.host.ctx;
         std.debug.assert(ctx.isFunction(function));
@@ -230,6 +269,15 @@ pub const Harness = struct {
             self.host.noteFault();
             std.log.err("benchmark: {s}", .{self.host.faultText()});
             return error.JavaScriptFault;
+        }
+        if (self.phase_group == .agents) {
+            try self.settleAgents();
+            if (ctx.isObject(result) and ctx.promiseState(result) == .Rejected) return error.AgentBenchmarkRejected;
+            if (ctx.isObject(result) and ctx.promiseState(result) == .Fulfilled) {
+                const value = ctx.promiseResult(result);
+                defer ctx.freeValue(value);
+                return ctx.toInt32(value);
+            }
         }
         return ctx.toInt32(result);
     }

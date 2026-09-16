@@ -258,7 +258,8 @@ pub fn drain(engine: *Engine, ctx: Context) bool {
         batch[count] = .{ .id = entry.key_ptr.*, .change = entry.value_ptr.* };
     }
     engine.dirty.clearRetainingCapacity();
-    const index = engine.index_dirty or engine.dirty_overflow;
+    const overflow = engine.dirty_overflow;
+    const index = engine.index_dirty or overflow;
     const index_facts = engine.index_facts;
     var auth = engine.index_auth;
     var notices = engine.index_notices;
@@ -273,15 +274,16 @@ pub fn drain(engine: *Engine, ctx: Context) bool {
     // A dropped event must not leave a stale view, so an unset sink clears the batch and stops.
     if (ctx.isUndefined(engine.sink)) return false;
     engine.faulted = false;
-    if (index) emitIndex(engine, ctx, index_facts, auth.items, notices.items);
+    if (index) emitIndex(engine, ctx, index_facts, auth.items, notices.items, overflow);
     for (batch[0..count]) |entry| emitSession(engine, ctx, entry.id, entry.change);
     return engine.faulted;
 }
 
-fn emitIndex(engine: *Engine, ctx: Context, facts: FactSet, auth: []const AuthNote, notices: []const NoticeNote) void {
+fn emitIndex(engine: *Engine, ctx: Context, facts: FactSet, auth: []const AuthNote, notices: []const NoticeNote, overflow: bool) void {
     const ev = ctx.newObject();
     defer ctx.freeValue(ev);
     module.set(ctx, ev, "type", ctx.newString("index"));
+    module.set(ctx, ev, "overflow", ctx.newBool(overflow));
     setFacts(ctx, ev, facts);
     if (auth.len > 0) setNotes(AuthNote, ctx, ev, auth, "auth");
     if (notices.len > 0) setNotes(NoticeNote, ctx, ev, notices, "notices");

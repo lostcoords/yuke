@@ -12,6 +12,7 @@ pub fn main(init: std.process.Init) !void {
     var iterations: u32 = 100;
     var selected: ?bench.Phase = null;
     var fixture_path: ?[]const u8 = null;
+    var tree_shape: bench.TreeShape = .wide;
     var colors: bench.Colors = .ansi_raw;
     var i: usize = 1;
     while (i < args.len) : (i += 2) {
@@ -26,6 +27,8 @@ pub fn main(init: std.process.Init) !void {
             selected = std.meta.stringToEnum(bench.Phase, value) orelse return error.InvalidPhase;
         } else if (std.mem.eql(u8, arg, "--fixture")) {
             fixture_path = value;
+        } else if (std.mem.eql(u8, arg, "--tree-shape")) {
+            tree_shape = std.meta.stringToEnum(bench.TreeShape, value) orelse return error.InvalidTreeShape;
         } else if (std.mem.eql(u8, arg, "--colors")) {
             colors = std.meta.stringToEnum(bench.Colors, value) orelse return error.InvalidColors;
         } else return error.UnknownArgument;
@@ -53,6 +56,7 @@ pub fn main(init: std.process.Init) !void {
         const harness = try bench.Harness.create(gpa, io, fixture, 100, 40, phase);
         defer harness.destroy();
         harness.colors = colors;
+        harness.tree_shape = tree_shape;
         for (0..5) |repeat| {
             try harness.start(phase, scale);
             const before = harness.allocations.counts;
@@ -84,6 +88,8 @@ pub fn main(init: std.process.Init) !void {
                 .p95_ns = samples[(samples.len - 1) * 95 / 100],
                 .max_ns = samples[samples.len - 1],
                 .checksum = checksum,
+                .requests = try harness.requests(),
+                .tree_shape = if (harness.tree != null) @tagName(tree_shape) else null,
                 .source_bytes = harness.sourceBytes(),
                 .output_bytes = output_bytes,
                 .js_estimated_bytes = usage.memory_used_size,

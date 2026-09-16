@@ -341,3 +341,37 @@ test "agent rows reject cyclic ancestry" {
     try support.eval(host, "tests/agents/cycle.test.js");
     try support.expectString(host, "result", "The session ancestry contains a cycle.");
 }
+
+test "agent activity refresh retains selection and handles concurrent reload or close" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/agents/fixture.js");
+    try host.evalModule(tool_fixture, "tools.js");
+    try support.eval(host, "tests/agents/refresh.test.js");
+    try support.expectString(host, "result", "ok");
+}
+
+test "dirty overflow refreshes a picker even beside unrelated index facts" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/agents/fixture.js");
+    try host.evalModule(tool_fixture, "tools.js");
+    try support.eval(host, "tests/agents/overflow.test.js");
+    try support.expectString(host, "result", "ready");
+    try host.evalModule("child.activity.state = { type: 'streaming' };", "changed.js");
+    const sink = host.engine.eventSink();
+    for (0..@import("native/engine/digest.zig").max_dirty_sessions) |n| {
+        sink.on_event(sink.ctx, .{ .method = .@"session.removed", .params = .{ .session_removed_data = .{
+            .session_id = .bytes(std.mem.toBytes(@as(u128, n + 1000))),
+            .revision = 1,
+        } } });
+    }
+    sink.on_event(sink.ctx, .{ .method = .@"session.activity_changed", .params = .{ .session_activity_changed_data = .{
+        .session_id = .bytes([_]u8{2} ** 16),
+        .activity = .{ .state = .{ .idle = .{} }, .config = null, .queued = 0, .context_usage = .zero, .pending_compaction = null },
+    } } });
+    sink.on_event(sink.ctx, .{ .method = .notice, .params = .{ .notice = .{ .level = .info, .source = "bench", .message = "unrelated" } } });
+    try host.pump();
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("picker.win.opts.title.includes('1 active') ? 1 : 0"));
+    try host.evalModule("picker.content.cancel(); chat.sessionId = null; chat.dispose();", "close.js");
+}

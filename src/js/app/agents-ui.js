@@ -109,31 +109,55 @@ export async function openAgents(ctx, sessionId) {
   picker.content.selectKey(sessionId);
   const release = ctx.tui.overlay(picker.win);
   // A new child lands in the index digest, which names no session; a listed child's state lands in its own digest.
-  const off = ctx.on("index.changed", /** @param {EngineEvent} ev */ (ev) => { if (ev.facts.includes("session.summary_changed")) refresh(); });
+  const off = ctx.on("index.changed", /** @param {EngineEvent} ev */ (ev) => { if (ev.type === "index" && (ev.overflow || ev.facts.includes("session.summary_changed"))) refresh(); });
   const offSession = ctx.on("session.changed", /** @param {Extract<EngineEvent, { type: "session" }>} ev */ (ev) => {
     if (!items.some((row) => row.item.session.id === ev.session)) return;
-    if (ev.kind === "gone" || ev.facts.includes("session.activity_changed") || ev.facts.includes("run.done") || ev.facts.includes("session.summary_changed")) refresh();
+    if (ev.kind === "gone" || ev.facts.includes("run.done") || ev.facts.includes("session.summary_changed")) refresh();
+    else if (ev.facts.includes("session.activity_changed")) refresh(ev.session);
   });
+  /** @type {Set<string>} */
+  const pending = new Set();
   const cleanup = ctx.effect(() => () => close());
   function close() {
     if (!alive) return;
     alive = false;
+    pending.clear();
     off(); offSession(); release(); cleanup();
   }
   let refreshRunning = false;
-  let refreshAgain = false;
-  function refresh() {
-    if (refreshRunning) { refreshAgain = true; return; }
+  let reload = false;
+  /** @param {string} [session] */
+  function refresh(session) {
+    if (!alive) return;
+    if (session) pending.add(session);
+    else { reload = true; pending.clear(); }
+    if (refreshRunning) return;
     refreshRunning = true;
     (async () => {
       try {
-        const next = await agentRows(mainId);
-        if (alive) { items = next; picker.win.opts.title = agentSummary(childItems()); picker.content.setSource(next); root.invalidate(); }
-      } catch (error) { if (alive) failed(error); }
-      finally {
-        refreshRunning = false;
-        if (alive && refreshAgain) { refreshAgain = false; refresh(); }
-      }
+        while (alive && (reload || pending.size)) {
+          const full = reload;
+          const changed = Array.from(pending);
+          reload = false; pending.clear();
+          try {
+            if (full) {
+              const next = await agentRows(mainId);
+              if (!alive) return;
+              items = next;
+            } else {
+              for (const id of changed) {
+                const row = items.find(row => row.item.session.id === id);
+                if (!row) continue;
+                const next = await client.sessionGet(id);
+                if (!alive) return;
+                if (reload) break;
+                row.item = next;
+              }
+            }
+            if (!reload) { picker.win.opts.title = agentSummary(childItems()); picker.content.setSource(items); root.invalidate(); }
+          } catch (error) { if (alive) failed(error); }
+        }
+      } finally { refreshRunning = false; }
     })();
   }
   /** @param {() => Promise<unknown>} action */

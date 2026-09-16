@@ -75,7 +75,7 @@ The benchmark harness does not cover JSONL dispatch, so this change has no measu
 3. Exact panel and native-setter duplicates: consolidated.
 4. One child-page policy: implemented with explicit failure on incomplete results.
 5. Advice dispatch: measured; no-around wrapper removed with contract checks.
-6. Commit serialization: stored size reused and measured. Large agent-tree refreshes: benchmark pending.
+6. Commit serialization: stored size reused and measured. Large agent-tree activity refreshes: targeted reads implemented and measured.
 
 ## Transcript and boot performance
 
@@ -91,7 +91,7 @@ The [evidence report](transcript-performance-evidence.md) records the tradeoffs,
 - The [advice report](advice-dispatch-baseline.md) records the fast path and its measured costs.
 - Stored message sizes now avoid a second serialization; the [evidence](commit-size-performance.md) records the result.
 - Examine temporary JSON buffer growth next; preserve the current clone lifetimes until a separate review.
-- Measure large agent trees and avoid full-tree reads for activity-only changes.
+- Agent activity updates now use targeted reads; the [evidence](agent-tree-performance.md) records the gain and boot cost.
 - Audit paint-only invalidation and selection allocation costs.
 
 ## Evidence
@@ -103,7 +103,7 @@ Use the same scenario before and after each performance change.
 Run metrics and latency separately. Report allocation and free counts, byte totals,
 resize and remap attempts, live and peak bytes, and UI work counters.
 The harness now isolates advice and commit components with SQLite in memory.
-Disk durability and agent-tree reads need separate scenarios.
+The harness also covers native agent-tree reads. Disk durability needs a separate scenario.
 Add targeted scenarios before a performance claim for those paths.
 
 Run `zig fmt` for Zig edits and run the relevant tests for each batch.
