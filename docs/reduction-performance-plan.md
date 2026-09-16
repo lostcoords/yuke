@@ -108,3 +108,10 @@ Add targeted scenarios before a performance claim for those paths.
 
 Run `zig fmt` for Zig edits and run the relevant tests for each batch.
 Run the full suite before each handoff. Preserve wire rejection tests.
+
+### Follow-up cleanup
+
+The [cleanup evidence](cleanup-evidence.md) records six redundant transcript fallbacks,
+three impossible listener checks, and the shared session-item projection.
+The cache retains its valid stale state. The JS plugin API remains intact.
+The source diff is net +1 line. No tests or fixtures were removed.

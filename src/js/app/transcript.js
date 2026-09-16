@@ -872,7 +872,7 @@ export class Transcript {
       }
     };
     this._buildActionPlan(
-      (m) => this._partState(m.id).list || [],
+      (m) => this._partState(m.id).list,
       renderThrough,
     );
   }
@@ -1222,7 +1222,7 @@ export class Transcript {
   }
 
   // The parts of one rendered message stay held until a delta or an eviction drops them.
-  /** @param {number} id @returns {PartState} */
+  /** @param {number} id */
   _partState(id) {
     const key = String(id);
     let state = this._parts.get(key);
@@ -1230,7 +1230,7 @@ export class Transcript {
       state = { list: this._readParts(id), rows: new Map() };
       this._parts.set(key, state);
     } else if (!state.list) state.list = this._readParts(id);
-    return state;
+    return /** @type {PartState & { list: Wire.AssistantPart[] }} */ (state);
   }
 
   // The plan holds one tree value per filtered part, so a lookup is the message start plus the part index.
@@ -1342,7 +1342,7 @@ export class Transcript {
   /** @param {number} id @param {number} partId @returns {boolean} */
   _reasoningLive(id, partId) {
     if (!sameId(this._active?.id, id)) return false;
-    const parts = this._partState(id).list || [];
+    const parts = this._partState(id).list;
     const last = parts.length ? parts[parts.length - 1] : null;
     return !!last && last.type === "reasoning" && sameId(last.id, partId);
   }
@@ -1363,7 +1363,7 @@ export class Transcript {
     const k = this._expandKey(id, partId);
     let part = null;
     if (partId !== -1 && this.partsOf) {
-      for (const p of this._partState(id).list || []) if (sameId(p.id, partId)) part = p;
+      for (const p of this._partState(id).list) if (sameId(p.id, partId)) part = p;
     }
     this._expand.set(k, !(partId === -1 ? this._expand.get(k) === true : this._isExpanded(id, partId, part)));
     this._markStale(id);
@@ -1394,7 +1394,7 @@ export class Transcript {
 
   /** @param {number} id @param {number} partId @returns {boolean} */
   openTool(id, partId) {
-    const part = (this._partState(id).list || []).find((entry) => sameId(entry.id, partId));
+    const part = this._partState(id).list.find((entry) => sameId(entry.id, partId));
     if (!part || part.type !== "tool") return false;
     const state = part.state || {};
     const field = state.type === "error" ? "error" : "output";
@@ -1410,7 +1410,7 @@ export class Transcript {
 
   /** @param {number} id @param {number} partId @returns {boolean} */
   openReasoning(id, partId) {
-    const part = (this._partState(id).list || []).find((entry) => sameId(entry.id, partId));
+    const part = this._partState(id).list.find((entry) => sameId(entry.id, partId));
     if (!part || part.type !== "reasoning") return false;
     openDetails("thought · reasoning details", [{ label: "reasoning", text: String(part.text || ""), empty: "(empty)" }]);
     return true;
@@ -1487,7 +1487,7 @@ export class Transcript {
     const rows = /** @type {TranscriptRow[]} */ ([]);
     const partBases = new Map();
     let source = "";
-    const list = state.list || [];
+    const list = state.list;
     for (let index = 0; index < list.length; index++) {
       const part = /** @type {Wire.AssistantPart} */ (list[index]);
       if (emptyPart(part)) continue;

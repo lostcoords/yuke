@@ -89,11 +89,7 @@ pub fn sessionList(engine: *Engine, arena: std.mem.Allocator, params: proto.sess
         .id = kept[kept.len - 1].id,
     }) else null;
     const items = try arena.alloc(proto.session.SessionListItem, kept.len);
-    for (kept, 0..) |row, i| {
-        items[i] = try session_events.sessionItem(arena, row);
-        if (row.parent_id != null) items[i].last_run = try database.run.latestOutcome(engine.deps.db, arena, row.id);
-        items[i].activity = try liveActivity(engine, arena, items[i].session.id, items[i].activity);
-    }
+    for (kept, 0..) |row, i| items[i] = try liveSessionItem(engine, arena, row);
 
     return .{
         .revision = engine.session_revision,
@@ -101,6 +97,13 @@ pub fn sessionList(engine: *Engine, arena: std.mem.Allocator, params: proto.sess
         .next_cursor = next_cursor,
         .total = try session_store.count(engine.deps.db, arena, sel),
     };
+}
+
+fn liveSessionItem(engine: *Engine, arena: std.mem.Allocator, row: anytype) !proto.session.SessionListItem {
+    var item = try session_events.sessionItem(arena, row);
+    if (row.parent_id != null) item.last_run = try database.run.latestOutcome(engine.deps.db, arena, row.id);
+    item.activity = try liveActivity(engine, arena, item.session.id, item.activity);
+    return item;
 }
 
 /// Handle session.get. The result is one `session.list` item with the activity the engine holds now.
@@ -111,9 +114,7 @@ pub fn sessionGet(engine: *Engine, arena: std.mem.Allocator, params: proto.sessi
         break :blk proto.ids.SessionId.bytes(child.value.id);
     } else params.session_id;
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, session_id.raw)) orelse return error.UnknownSession;
-    var item = try session_events.sessionItem(arena, snapshot);
-    if (snapshot.parent_id != null) item.last_run = try database.run.latestOutcome(engine.deps.db, arena, snapshot.id);
-    item.activity = try liveActivity(engine, arena, session_id, item.activity);
+    var item = try liveSessionItem(engine, arena, snapshot);
     item.instruction_sources = try session_store.instructionSources(engine.deps.db, arena, session_id.raw);
     item.skills = try session_store.skillCatalog(engine.deps.db, arena, session_id.raw);
     if (params.check_files) item.context_changes = .{

@@ -8,15 +8,15 @@ import * as native from "yuke:process";
 
 /** @param {string[]} argv @param {SpawnOptions} [options] @returns {ChildProcess} */
 export function spawn(argv, options = {}) {
-  /** @type {((text: string) => void)[][]} */
+  /** @type {[((text: string) => void)[], ((text: string) => void)[]]} */
   const listeners = [[], []];
   const env = options.env ? Object.entries(options.env).flat() : undefined;
   const child = native.spawn(argv, { ...(options.cwd !== undefined ? { cwd: options.cwd } : {}), ...(env ? { env } : {}) }, (stream, text) => {
-    for (const listener of listeners[stream - 1] ?? []) listener(text);
+    for (const listener of listeners[stream === 1 ? 0 : 1]) listener(text);
   }, options.workspaceRoot);
   return {
-    onStdout(listener) { listeners[0]?.push(listener); },
-    onStderr(listener) { listeners[1]?.push(listener); },
+    onStdout(listener) { listeners[0].push(listener); },
+    onStderr(listener) { listeners[1].push(listener); },
     write(text) { return native.write(child.id, text); },
     closeStdin() { native.closeStdin(child.id); },
     kill() { return native.kill(child.id); },
