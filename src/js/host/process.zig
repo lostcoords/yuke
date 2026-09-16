@@ -174,24 +174,34 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
 }
 
 /// Spawn `shell -c command` as the leader of a new session with stdout and stderr on the given descriptors. A program that opens `/dev/tty` then fails at once with no terminal.
-/// TODO: use a session flag from `std.process.SpawnOptions` when Zig std gains that flag, then delete `src/c/spawn.h`.
 fn spawnSession(scratch: std.mem.Allocator, context: execution.Context, command: []const u8, cwd: []const u8, stdout: std.posix.fd_t, stderr: std.posix.fd_t) h.HostError!std.process.Child {
     std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
-    std.debug.assert(std.fs.path.isAbsolute(cwd));
-    // A `dup2` onto its own number keeps CLOEXEC, so both sources must sit above the standard streams.
-    std.debug.assert(stdout > std.posix.STDERR_FILENO and stderr > std.posix.STDERR_FILENO);
     // The shell reads one language string, which no direct program execution can accept.
-    const shell_z = scratch.dupeZ(u8, context.shell.path) catch return error.HostFailure;
-    const command_z = scratch.dupeZ(u8, command) catch return error.HostFailure;
+    return spawnArgv(scratch, context.env, &.{ context.shell.path, "-c", command }, cwd, null, stdout, stderr);
+}
+
+/// Spawn `argv` as the leader of a new session. `argv[0]` is an absolute path, and a null `stdin` reads `/dev/null`.
+/// TODO: use a session flag from `std.process.SpawnOptions` when Zig std gains that flag, then delete `src/c/spawn.h`.
+fn spawnArgv(scratch: std.mem.Allocator, env: *const std.process.Environ.Map, argv: []const []const u8, cwd: []const u8, stdin: ?std.posix.fd_t, stdout: std.posix.fd_t, stderr: std.posix.fd_t) h.HostError!std.process.Child {
+    std.debug.assert(argv.len > 0 and std.fs.path.isAbsolute(argv[0]));
+    std.debug.assert(std.fs.path.isAbsolute(cwd));
+    // A `dup2` onto its own number keeps CLOEXEC, so every source must sit above the standard streams.
+    std.debug.assert(stdout > std.posix.STDERR_FILENO and stderr > std.posix.STDERR_FILENO);
+    if (stdin) |fd| std.debug.assert(fd > std.posix.STDERR_FILENO);
+    const argv_z = scratch.allocSentinel(?[*:0]const u8, argv.len, null) catch return error.HostFailure;
+    for (argv, argv_z) |arg, *slot| slot.* = (scratch.dupeZ(u8, arg) catch return error.HostFailure).ptr;
     const cwd_z = scratch.dupeZ(u8, cwd) catch return error.HostFailure;
-    const argv = [_:null]?[*:0]const u8{ shell_z.ptr, "-c", command_z.ptr };
     // The block replaces the raw process environment, so the child sees the recovered home. It drops `ZIG_PROGRESS` as std does.
-    const envp = context.env.createPosixBlock(scratch, .{ .zig_progress_fd = -1 }) catch return error.HostFailure;
+    const envp = env.createPosixBlock(scratch, .{ .zig_progress_fd = -1 }) catch return error.HostFailure;
 
     var actions: spawn_c.posix_spawn_file_actions_t = undefined;
     try checkSpawn(spawn_c.posix_spawn_file_actions_init(&actions));
     defer std.debug.assert(spawn_c.posix_spawn_file_actions_destroy(&actions) == 0);
-    try checkSpawn(spawn_c.posix_spawn_file_actions_addopen(&actions, std.posix.STDIN_FILENO, "/dev/null", spawn_c.O_RDONLY, 0));
+    if (stdin) |fd| {
+        try checkSpawn(spawn_c.posix_spawn_file_actions_adddup2(&actions, fd, std.posix.STDIN_FILENO));
+    } else {
+        try checkSpawn(spawn_c.posix_spawn_file_actions_addopen(&actions, std.posix.STDIN_FILENO, "/dev/null", spawn_c.O_RDONLY, 0));
+    }
     try checkSpawn(spawn_c.posix_spawn_file_actions_adddup2(&actions, stdout, std.posix.STDOUT_FILENO));
     try checkSpawn(spawn_c.posix_spawn_file_actions_adddup2(&actions, stderr, std.posix.STDERR_FILENO));
     try checkSpawn(spawn_c.posix_spawn_file_actions_addchdir_np(&actions, cwd_z.ptr));
@@ -199,20 +209,75 @@ fn spawnSession(scratch: std.mem.Allocator, context: execution.Context, command:
     var attr: spawn_c.posix_spawnattr_t = undefined;
     try checkSpawn(spawn_c.posix_spawnattr_init(&attr));
     defer std.debug.assert(spawn_c.posix_spawnattr_destroy(&attr) == 0);
-    // The empty mask keeps a signal the caller blocks from staying blocked in the shell.
+    // The empty mask keeps a signal the caller blocks from staying blocked in the child.
     var empty_mask: spawn_c.sigset_t = undefined;
     try checkSpawn(spawn_c.sigemptyset(&empty_mask));
     try checkSpawn(spawn_c.posix_spawnattr_setsigmask(&attr, &empty_mask));
-    // SETSID makes pid, pgid and sid equal, so `killGroup(pid)` reaches every process the shell starts.
+    // SETSID makes pid, pgid and sid equal, so `killGroup(pid)` reaches every process the child starts.
     const flags: c_short = @intCast(spawn_c.POSIX_SPAWN_SETSID | spawn_c.POSIX_SPAWN_SETSIGMASK);
     try checkSpawn(spawn_c.posix_spawnattr_setflags(&attr, flags));
 
     // A failed exec returns here as an error with no child left behind, so the caller has nothing to reap.
     var pid: spawn_c.pid_t = undefined;
-    try checkSpawn(spawn_c.posix_spawn(&pid, shell_z.ptr, &actions, &attr, @ptrCast(&argv), @ptrCast(envp.slice.ptr)));
+    try checkSpawn(spawn_c.posix_spawn(&pid, argv_z[0].?, &actions, &attr, @ptrCast(argv_z.ptr), @ptrCast(envp.slice.ptr)));
     std.debug.assert(pid > 0);
     // The child holds no stream, so `wait` closes nothing and the caller owns every descriptor.
     return .{ .id = pid, .thread_handle = {}, .stdin = null, .stdout = null, .stderr = null, .request_resource_usage_statistics = false };
+}
+
+/// A started program and the parent ends of its three pipes. The caller owns every descriptor.
+pub const Program = struct {
+    child: std.process.Child,
+    stdin: std.posix.fd_t,
+    stdout: std.Io.File,
+    stderr: std.Io.File,
+};
+
+/// Start `argv` with no shell in a new session, with three pipes. A name without a slash resolves against `PATH` in `env`, not in this process.
+pub fn startProgram(io: std.Io, root: []const u8, env: *const std.process.Environ.Map, scratch: std.mem.Allocator, argv: []const []const u8, cwd: ?[]const u8) h.HostError!Program {
+    std.debug.assert(argv.len > 0);
+    const dir = try resolveCwd(scratch, root, env, cwd);
+    const program = try resolveProgram(io, scratch, env, argv[0]);
+    var resolved = scratch.dupe([]const u8, argv) catch return error.HostFailure;
+    resolved[0] = program;
+
+    // The child reads the stdin read end, so that end must sit above the standard streams too.
+    const in_fds = std.Io.Threaded.pipe2(.{ .CLOEXEC = true }) catch return error.HostFailure;
+    const in_read = aboveStdio(in_fds[0]) catch {
+        _ = std.posix.system.close(in_fds[1]);
+        return error.HostFailure;
+    };
+    defer _ = std.posix.system.close(in_read);
+    errdefer _ = std.posix.system.close(in_fds[1]);
+    const out = try pipeAboveStdio();
+    defer _ = std.posix.system.close(out[1]);
+    errdefer _ = std.posix.system.close(out[0]);
+    const err = try pipeAboveStdio();
+    defer _ = std.posix.system.close(err[1]);
+    errdefer _ = std.posix.system.close(err[0]);
+
+    const child = try spawnArgv(scratch, env, resolved, dir, in_read, out[1], err[1]);
+    return .{ .child = child, .stdin = in_fds[1], .stdout = pipeReader(out[0]), .stderr = pipeReader(err[0]) };
+}
+
+/// Find an executable for `name`. A name with a slash resolves against nothing, and a bare name searches `PATH` in `env`.
+fn resolveProgram(io: std.Io, scratch: std.mem.Allocator, env: *const std.process.Environ.Map, name: []const u8) h.HostError![]const u8 {
+    if (name.len == 0) return error.NotFound;
+    if (std.mem.indexOfScalar(u8, name, '/') != null) {
+        if (!std.fs.path.isAbsolute(name)) return error.NotFound;
+        std.Io.Dir.accessAbsolute(io, name, .{ .execute = true }) catch return error.NotFound;
+        return name;
+    }
+    var dirs = std.mem.tokenizeScalar(u8, env.get("PATH") orelse return error.NotFound, ':');
+    while (dirs.next()) |dir| {
+        if (!std.fs.path.isAbsolute(dir)) continue;
+        const candidate = std.fs.path.join(scratch, &.{ dir, name }) catch return error.HostFailure;
+        const stat = std.Io.Dir.cwd().statFile(io, candidate, .{}) catch continue;
+        if (stat.kind != .file) continue;
+        std.Io.Dir.accessAbsolute(io, candidate, .{ .execute = true }) catch continue;
+        return candidate;
+    }
+    return error.NotFound;
 }
 
 /// Map a libc spawn return code to the host error. Every `posix_spawn` call returns zero or an errno value.
@@ -244,7 +309,7 @@ fn pipeAboveStdio() h.HostError![2]std.posix.fd_t {
     return .{ fds[0], write_end };
 }
 
-/// Start `shell -c command` in a new session with both streams on a new file at `log`. The caller must reap the child with `reapJob`.
+/// Start `shell -c command` in a new session with both streams on a new file at `log`. The caller must reap the child with `reapGroup`.
 pub fn startJob(io: std.Io, root: []const u8, context: execution.Context, scratch: std.mem.Allocator, command: []const u8, cwd: ?[]const u8, log: []const u8) h.HostError!std.process.Child {
     std.debug.assert(std.fs.path.isAbsolute(log));
     const dir = try resolveCwd(scratch, root, context.env, cwd);
@@ -254,8 +319,8 @@ pub fn startJob(io: std.Io, root: []const u8, context: execution.Context, scratc
     return spawnSession(scratch, context, command, dir, fd, fd);
 }
 
-/// Reap a job with cancelation blocked, then end what the shell left in its group. It returns only after the shell dies.
-pub fn reapJob(io: std.Io, child: *std.process.Child) ?Outcome {
+/// Reap a session leader with cancelation blocked, then end what it left in its group. It returns only after the shell dies.
+pub fn reapGroup(io: std.Io, child: *std.process.Child) ?Outcome {
     const pid = child.id.?;
     const old = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(old);
@@ -287,7 +352,7 @@ fn waitUntil(io: std.Io, event: *std.Io.Event, deadline: std.Io.Clock.Timestamp)
 }
 
 /// Give the drains one grace period after the group ends, and answer true when they were cut. A descendant that left the session can hold a pipe open forever.
-fn awaitDrains(io: std.Io, drains: *std.Io.Group) h.HostError!bool {
+pub fn awaitDrains(io: std.Io, drains: *std.Io.Group) h.HostError!bool {
     var done: std.Io.Event = .unset;
     var joiner = io.concurrent(joinGroup, .{ io, drains, &done }) catch return error.HostFailure;
     const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{ .raw = .fromNanoseconds(grace_ns), .clock = .awake });

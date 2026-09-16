@@ -801,3 +801,69 @@ test "a job that exits by itself sends one message to its session, and a stopped
         \\globalThis.sent.length === 1 && globalThis.sent[0].startsWith("01010101010101010101010101010101 [job j2 exited (exit code 2): echo done; exit 2. Log: ") && globalThis.sent[0].endsWith("]\ndone") ? 1 : 0
     ));
 }
+
+test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves its exit" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "yuke-fixture-hello", .data = "#!/bin/sh\necho fixture\n" });
+    try tmp.dir.setFilePermissions(std.testing.io, "yuke-fixture-hello", .fromMode(0o755), .{});
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = dir_buf[0..try tmp.dir.realPath(std.testing.io, &dir_buf)];
+
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = support.createHostWith(rt.io(), "/tmp");
+    defer support.destroyHost(host);
+    const setup = try std.fmt.allocPrintSentinel(std.testing.allocator, "globalThis.fixtureDir = \"{s}\";", .{dir}, 0);
+    defer std.testing.allocator.free(setup);
+    try host.eval(setup, "fixture.js");
+    try support.eval(host, "tests/native_tools/spawn.test.js");
+    try support.pumpUntilTrue(host, "globalThis.result !== \"pending\"");
+    try support.expectString(host, "result", "ok");
+}
+
+test "a yuke:spawn reader waits for the owner at the queue cap, and host close reaps every child" {
+    const process_module = @import("native/process.zig");
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = support.createHostWith(rt.io(), "/tmp");
+    var destroyed = false;
+    defer if (!destroyed) support.destroyHost(host);
+    try host.evalModule(
+        \\import { spawn } from "yuke:spawn";
+        \\globalThis.bytes = 0;
+        \\const env = { PATH: "/usr/bin:/bin" };
+        \\const loud = spawn(["yes"], { env });
+        \\loud.onStdout((text) => { globalThis.bytes += text.length; });
+        \\globalThis.quiet = spawn(["sleep", "60"], { env });
+    , "spawn-cap.js");
+    // No pump runs, so the owner drains nothing and the reader must stop at the cap.
+    try rt.io().sleep(.fromMilliseconds(300), .awake);
+    const stream = &host.procs.live.items[0].streams[0];
+    try std.testing.expect(stream.queued >= process_module.max_queued_bytes);
+    try std.testing.expect(stream.queued < process_module.max_queued_bytes + 4096);
+    try host.pump();
+    try std.testing.expect(try host.evalInt("globalThis.bytes") >= process_module.max_queued_bytes);
+
+    var pids: [2]std.posix.pid_t = undefined;
+    for (host.procs.live.items, &pids) |proc, *pid| pid.* = proc.pid;
+    support.destroyHost(host);
+    destroyed = true;
+    for (pids) |pid| try std.testing.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
+}
+
+test "yuke:spawn refuses a child past the process limit" {
+    const process_module = @import("native/process.zig");
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = support.createHostWith(rt.io(), "/tmp");
+    defer support.destroyHost(host);
+    const source = std.fmt.comptimePrint(
+        \\import {{ spawn }} from "yuke:spawn";
+        \\const env = {{ PATH: "/usr/bin:/bin" }};
+        \\for (let i = 0; i < {d}; i++) spawn(["sleep", "60"], {{ env }});
+        \\try {{ spawn(["sleep", "60"], {{ env }}); }} catch (e) {{ globalThis.limit = e.name; }}
+    , .{process_module.max_processes});
+    try host.evalModule(source, "spawn-limit.js");
+    try support.expectString(host, "limit", "RangeError");
+}

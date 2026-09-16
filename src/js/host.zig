@@ -9,6 +9,7 @@ const term_module = @import("native/term.zig");
 const engine_module = @import("native/engine.zig");
 const fs_module = @import("native/fs.zig");
 const exec_module = @import("native/exec.zig");
+const process_module = @import("native/process.zig");
 const diff_module = @import("native/diff.zig");
 const tools_module = @import("native/tools.zig");
 const hooks_module = @import("native/hooks.zig");
@@ -96,6 +97,8 @@ pub const Host = struct {
     jobs: Jobs = .{},
     /// The `setTimeout` and `setInterval` table. Only the owner touches it.
     timers: timers_mod.Timers = .{},
+    /// The `yuke:process` children. `close` ends them before it cancels their tasks.
+    procs: process_module.Procs = .{},
 
     pub const Phase = enum { open, closing, drained };
 
@@ -149,6 +152,7 @@ pub const Host = struct {
         fs_module.install(self);
         exec_module.install(self);
         timers_mod.install(self);
+        process_module.install(self);
         diff_module.install(self);
         tools_module.install(self);
         hooks_module.install(self);
@@ -188,7 +192,9 @@ pub const Host = struct {
         // Engine events reach JavaScript here, on the owner, never from an engine task.
         if (engine_module.drain(self.engine, self.ctx)) return error.JavaScriptFault;
         call_run.abortLeft(self); // A continuation below must read a left call's signal as aborted.
-        var faulted = self.ops.settle(self.ctx);
+        // Output reaches its callback before `settle`, so every chunk of a child arrives before a promise its exit settles.
+        var faulted = self.procs.drain(self);
+        if (self.ops.settle(self.ctx)) faulted = true;
         // A timer fires before the drain, so a promise it settles runs its reactions in this pump.
         if (self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) faulted = true;
         try self.drainJobs();
@@ -208,7 +214,7 @@ pub const Host = struct {
     /// Report whether the owner has work to run. The owner asks before it sleeps.
     pub fn hasPending(self: *const Host) bool {
         return self.runtime.isJobPending() or self.ops.anyDone() or self.engine.hasPending() or
-            self.calls.hasWork(self.ctx) or self.timers.isDue(std.Io.Timestamp.now(self.io, .awake));
+            self.calls.hasWork(self.ctx) or self.procs.hasWork() or self.timers.isDue(std.Io.Timestamp.now(self.io, .awake));
     }
 
     /// Sleep until a task sets the wake or the next timer is due. The caller resets the wake before its last pump and reads its own condition again first.
@@ -251,11 +257,13 @@ pub const Host = struct {
         self.engine.detach();
         // A turn task may wait on a tool call. Answer each one, or that task never wakes.
         call_run.abortAll(self);
-        // A job waiter reaps with cancelation blocked, so every job must end before the cancel.
+        // A job or process waiter reaps with cancelation blocked, so every child must end before the cancel.
         self.jobs.endAll(self.io);
+        self.procs.endAll(self.io);
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
         self.timers.deinit(self.ctx, self.gpa);
+        self.procs.deinit(self);
         self.interactions.close();
         if (self.ops.settle(self.ctx)) {
             self.dropPendingException();

@@ -151,7 +151,7 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     host.tasks.concurrent(host.io, jobTask, .{ host, started.op, job }) catch {
         // No waiter can run, so the owner ends and reaps the job itself.
         process.endGroups(host.io, &.{job.pid});
-        _ = process.reapJob(host.io, &job.child);
+        _ = process.reapGroup(host.io, &job.child);
         job.done.store(true, .monotonic);
         ctx.freeValue(handle);
         started.op.finish(.undefined);
@@ -164,7 +164,7 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
 
 /// Reap one job and answer its exit. The job is done before the op finishes, so the owner can free it at any later point.
 fn jobTask(host: *Host, op: *pending.Op, job: *Job) void {
-    const outcome = process.reapJob(host.io, &job.child);
+    const outcome = process.reapGroup(host.io, &job.child);
     job.done.store(true, .monotonic);
     const result: pending.Result = if (outcome) |o| .{
         .json = switch (o) {
