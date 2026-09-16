@@ -4,7 +4,7 @@ import { spawn, kill } from "yuke:process";
 import { events } from "yuke:kernel";
 
 /** @typedef {{ id: string, command: string, root: string | undefined, sessionId: string | undefined, log: string, state: "running" | "exited" | "stopped", code: number | null, signal: number | null, startedAt: number, endedAt: number | null }} Job */
-/** @typedef {{ job: Job, native: number, ended: Promise<void> }} Entry */
+/** @typedef {{ job: Job, native: number, ended: Promise<void>, stopping: boolean }} Entry */
 
 /** @type {Map<string, Entry>} */
 const table = new Map();
@@ -33,8 +33,9 @@ export async function start(command, options = {}) {
   /** @type {Job} */
   const job = { id: `j${++count}`, command, root: options.root, sessionId: options.sessionId, log: child.log ?? "", state: "running", code: null, signal: null, startedAt: Date.now(), endedAt: null };
   /** @type {Entry} */
-  const entry = { job, native: child.id, ended: Promise.resolve() };
-  entry.ended = child.exited.then((exit) => finish(entry, "exited", exit), () => finish(entry, "exited", null));
+  const entry = { job, native: child.id, ended: Promise.resolve(), stopping: false };
+  // A stop settles when the child ends, so the log already holds its exit line.
+  entry.ended = child.exited.then((exit) => finish(entry, entry.stopping ? "stopped" : "exited", exit), () => finish(entry, entry.stopping ? "stopped" : "exited", null));
   table.set(job.id, entry);
   events.emit("jobs.changed", { ...job });
   return { ...job };
@@ -56,10 +57,8 @@ export function get(id) {
 export async function stop(id) {
   const entry = table.get(id);
   if (!entry) return null;
-  if (entry.job.state === "running") {
-    if (kill(entry.native)) finish(entry, "stopped", null);
-    else await entry.ended;
-  }
+  if (entry.job.state === "running" && kill(entry.native)) entry.stopping = true;
+  await entry.ended;
   return { ...entry.job };
 }
 

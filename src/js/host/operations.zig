@@ -33,6 +33,13 @@ pub const RangeRead = struct {
     long_lines: u32 = 0,
 };
 
+/// The result of a byte read from an offset. `next` is the offset after the returned bytes.
+pub const BytesRead = struct {
+    text: []const u8,
+    next: u64,
+    size: u64,
+};
+
 /// A file read returns bounded text or the anchored path of an image.
 pub const FileRead = union(enum) {
     text: RangeRead,

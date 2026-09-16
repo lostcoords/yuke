@@ -1,13 +1,17 @@
-// yuke:jobs-ui — background jobs in the TUI: a status count and the /jobs list.
+// yuke:jobs-ui — background jobs in the TUI: a status count, the /jobs list, and a live output view.
 import { root } from "yuke:core";
-import { ui } from "yuke:ui";
-import { list, stop } from "yuke:jobs";
+import { ui, Window, NAV_KEYS } from "yuke:ui";
+import { Pager } from "yuke:pager";
+import { fs } from "yuke:fs";
+import { strokeOf } from "yuke:keys";
+import { list, get, stop } from "yuke:jobs";
 import { focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
 import { elapsedLabel } from "yuke:indicator";
 
 /** @import { Context as PluginContext } from "yuke:ext" */
 /** @import { InjectContext as Context } from "./types/ext.js" */
+/** @import { Rect, HostMouseEvent } from "./types/core.js" */
 /** @typedef {import("yuke:jobs").Job} Job */
 
 /** @param {unknown} error */
@@ -26,6 +30,115 @@ function summary(jobs) {
   return "Jobs · " + running + " running · " + (jobs.length - running) + " ended";
 }
 
+// The view loads at most this much of a long log at a time, and keeps at most this many lines.
+const OUTPUT_BYTES = 256 * 1024;
+const OUTPUT_LINES = 5000;
+
+// A live view of one job log: each tick reads the bytes after the last read, and the pager follows the tail.
+export class JobOutput {
+  /** @param {Job} job @param {() => void} onClose */
+  constructor(job, onClose) {
+    this.job = job;
+    this.onClose = onClose;
+    this.pager = new Pager();
+    /** @type {string[]} */
+    this.lines = [];
+    /** The unfinished last line; null marks a first read that began inside a line. */
+    /** @type {string | null} */
+    this.partial = "";
+    /** Null until the first read picks a start near the end of the log. */
+    /** @type {number | null} */
+    this.offset = null;
+    this.reading = false;
+    /** @type {Rect} */
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
+  }
+
+  // Read the bytes after the last read; a log longer than the window starts at a whole line near its end.
+  /** @returns {Promise<void>} */
+  async read() {
+    if (this.reading) return;
+    this.reading = true;
+    try {
+      if (this.offset === null) {
+        const { size } = await fs.readFrom(this.job.log, Number.MAX_SAFE_INTEGER, 1);
+        this.offset = Math.max(0, size - OUTPUT_BYTES);
+        if (this.offset > 0) this.partial = null;
+      }
+      const got = await fs.readFrom(this.job.log, this.offset, OUTPUT_BYTES);
+      this.offset = got.next;
+      this.append(got.text);
+    } finally {
+      this.reading = false;
+    }
+  }
+
+  /** @param {string} text */
+  append(text) {
+    if (text === "") return;
+    const parts = ((this.partial ?? "") + text.replace(/\t/g, "    ").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")).split("\n");
+    if (this.partial === null) parts.shift();
+    this.partial = /** @type {string} */ (parts.pop());
+    this.lines.push(...parts);
+    if (this.lines.length > OUTPUT_LINES) this.lines.splice(0, this.lines.length - OUTPUT_LINES);
+    const shown = this.partial === "" ? this.lines : [...this.lines, this.partial];
+    this.pager.setRows(shown.map((line) => ({ text: line, group: "TxToolBody" })));
+    root.invalidate();
+  }
+
+  /** @param {Rect} rect */
+  layout(rect) { this.rect = rect; }
+
+  draw() { this.pager.draw(this.rect); }
+
+  /** @returns {{ periodMs: number } | null} */
+  needsTick() { return this.job.state === "running" ? { periodMs: 500 } : null; }
+
+  tick() { this.read().catch(failed); }
+
+  /** @param {HostEvent} event @returns {boolean} */
+  onKey(event) {
+    if (event.type !== "key" || event.event === "release") return true;
+    const stroke = strokeOf(event);
+    if (stroke === "esc" || stroke === "q") this.onClose();
+    else if (stroke === "x" && this.job.state === "running") stop(this.job.id).catch(failed);
+    else NAV_KEYS[stroke]?.(this.pager);
+    root.invalidate();
+    return true;
+  }
+
+  /** @param {HostMouseEvent} event @returns {boolean} */
+  onMouse(event) { return this.pager.onMouse(event); }
+}
+
+/** @param {Context} ctx @param {Job} job */
+export function openOutput(ctx, job) {
+  /** @type {() => void} */
+  let release = () => {};
+  const view = new JobOutput(job, () => close());
+  const win = new Window({
+    title: () => view.job.id + " · " + jobState(view.job, Date.now()) + " · " + view.job.command, footer: "x stop · esc close",
+    border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.8), content: view,
+  });
+  root.pushOverlay(win);
+  release = ctx.tui.overlay(win);
+  // The end of a job needs one last read, because its tick stops with the run.
+  const off = ctx.on("jobs.changed", (/** @type {Job} */ changed) => {
+    if (changed.id !== job.id) return;
+    view.job = changed;
+    view.read().catch(failed);
+  });
+  let alive = true;
+  const cleanup = ctx.effect(() => () => close());
+  function close() {
+    if (!alive) return;
+    alive = false;
+    off(); release(); cleanup();
+  }
+  view.read().catch(failed);
+  return view;
+}
+
 // The list shows every job of this process, newest first, and marks the jobs of the focused session.
 /** @param {Context} ctx */
 export function openJobs(ctx) {
@@ -37,8 +150,7 @@ export function openJobs(ctx) {
     border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.6),
     key: (job) => job.id,
     format: (job) => ({ marker: job.state === "running" ? "•" : "·", indent: 2, text: job.id + "  " + job.command, detail: job.sessionId === current ? "this session" : "", right: jobState(job, Date.now()) }),
-    // The output view replaces this in the next slice; the log path is the output until then.
-    onAccept: (job) => notice.show("jobs · " + job.id + " log · " + job.log),
+    onAccept: (job) => { close(); openOutput(ctx, get(job.id) ?? job); },
     onCancel: () => close(),
     keymap: {
       x: (_event, content) => { const job = content.list.selected(); if (job && job.state === "running") stop(job.id).catch(failed); },

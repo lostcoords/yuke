@@ -31,6 +31,7 @@ pub fn install(host: *Host) void {
         .{ .name = "list", .arity = 1, .call = jsList },
         .{ .name = "readFile", .arity = 1, .call = jsReadFile },
         .{ .name = "readRange", .arity = 2, .call = jsReadRange },
+        .{ .name = "readFrom", .arity = 3, .call = jsReadFrom },
         .{ .name = "writeFile", .arity = 2, .call = jsWriteFile },
         .{ .name = "stat", .arity = 1, .call = jsStat },
         .{ .name = "removeFile", .arity = 1, .call = jsRemoveFile },
@@ -86,6 +87,8 @@ const ReadRequest = struct {
     path: []u8,
     root: []u8,
     range: os.Range = .{},
+    offset: u64 = 0,
+    max_bytes: u32 = 0,
 
     pub fn free(self: ReadRequest, gpa: std.mem.Allocator) void {
         gpa.free(self.path);
@@ -125,6 +128,36 @@ fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
         return rejected(ctx, "the read range is invalid");
     };
     return host.startTask(ReadRequest, readRangeTask, .{ .path = path, .root = root, .range = range });
+}
+
+/// The largest `readFrom` answer, so one poll of a log stays small.
+const max_read_from_bytes: u32 = 1024 * 1024;
+
+/// Read text from a byte offset. The task answers `{ text, next, size }`, so a caller follows a growing file.
+fn jsReadFrom(ctx: Context, _: Value, args: []const Value) Value {
+    const host = Host.fromContext(ctx);
+    const offset = if (args.len > 1) module.integer(ctx, args[1], 0, 1 << 53) else null;
+    const max_bytes = if (args.len > 2) module.integer(ctx, args[2], 1, max_read_from_bytes) else null;
+    if (offset == null or max_bytes == null) return rejected(ctx, "readFrom needs a byte offset and a byte count from 1 to 1048576");
+    const root = ownedPath(ctx, host, args, 3) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    const path = ownedPath(ctx, host, args, 0) orelse {
+        host.gpa.free(root);
+        return rejected(ctx, "the path must be a string with no NUL byte");
+    };
+    return host.startTask(ReadRequest, readFromTask, .{ .path = path, .root = root, .offset = offset.?, .max_bytes = @intCast(max_bytes.?) });
+}
+
+fn readFromTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
+    defer req.free(host.gpa);
+    var arena: std.heap.ArenaAllocator = .init(host.gpa);
+    defer arena.deinit();
+    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
+    const got = local.readFrom(arena.allocator(), req.path, req.offset, req.max_bytes) catch |err|
+        return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
+    var aw: std.Io.Writer.Allocating = .init(host.gpa);
+    std.json.Stringify.value(got, .{}, &aw.writer) catch unreachable;
+    var list = aw.toArrayList();
+    op.finish(.{ .json = list.toOwnedSliceSentinel(host.gpa, 0) catch unreachable });
 }
 
 /// Read one file on a task. It writes bytes into the op and never enters JavaScript.

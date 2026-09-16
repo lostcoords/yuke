@@ -5,6 +5,7 @@ const std = @import("std");
 const h = @import("operations.zig");
 const paths = @import("../../paths.zig");
 const blob = @import("../../store/blob.zig");
+const utf8 = @import("../../utf8.zig");
 
 const Map = std.process.Environ.Map;
 
@@ -35,6 +36,22 @@ pub const LocalHost = struct {
                 error.ReadFailed => return if (reader.err) |e| mapError(e) else error.HostFailure,
             },
         };
+    }
+
+    /// Read at most `max_bytes` from `offset` as text, cut at a character boundary. A growing log reads again from `next`.
+    pub fn readFrom(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, offset: u64, max_bytes: u32) h.HostError!h.BytesRead {
+        std.debug.assert(max_bytes > 0);
+        const full = self.resolve(scratch, path) catch |err| return mapError(err);
+        try requireRegularFile(self.io, full);
+        var file = std.Io.Dir.cwd().openFile(self.io, full, .{}) catch |err| return mapError(err);
+        defer file.close(self.io);
+        const size = (file.stat(self.io) catch |err| return mapError(err)).size;
+        const start = @min(offset, size);
+        const buffer = scratch.alloc(u8, @intCast(@min(max_bytes, size - start))) catch unreachable;
+        const count = file.readPositionalAll(self.io, buffer, start) catch |err| return mapError(err);
+        // A writer can stop in the middle of a character, so the cut part waits for the next read.
+        const cut = utf8.whole(buffer[0..count]);
+        return .{ .text = utf8.sanitize(scratch, buffer[0..cut]) catch unreachable, .next = start + cut, .size = size };
     }
 
     pub fn readAll(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, max_bytes: u32) h.HostError![]const u8 {
@@ -219,7 +236,8 @@ const ExpandError = @typeInfo(@typeInfo(@TypeOf(paths.expandHome)).@"fn".return_
 const FsError = ExpandError || std.mem.Allocator.Error || std.Io.File.OpenError;
 const NativeError = FsError || std.Io.Dir.ReadFileAllocError || std.Io.Dir.StatFileError ||
     std.Io.Dir.OpenError || std.Io.Dir.CreateFileAtomicError || std.Io.File.Writer.Error ||
-    std.Io.File.SetPermissionsError || std.Io.Dir.RenameError || std.Io.Dir.DeleteFileError;
+    std.Io.File.SetPermissionsError || std.Io.Dir.RenameError || std.Io.Dir.DeleteFileError ||
+    std.Io.File.StatError || std.Io.File.ReadPositionalError;
 
 /// Map a native file-system error to `HostError`, an unlisted one to `HostFailure`. An opened directory reports on the first read.
 fn mapError(err: NativeError) h.HostError {
@@ -399,6 +417,26 @@ test "LocalHost reads a whole file and a line range" {
 
     const some = try f.read(a, .{ .start = 2, .end = 3 }, test_limits);
     try testing.expectEqualStrings("two\nthree\n", some.text);
+}
+
+test "LocalHost reads bytes from an offset and keeps a cut character for the next read" {
+    var f: Fixture = undefined;
+    try f.init("ab\xe6\x97\xa5c");
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
+
+    const first = try local.readFrom(arena.allocator(), "a.txt", 0, 3);
+    try testing.expectEqualStrings("ab", first.text);
+    try testing.expectEqual(@as(u64, 2), first.next);
+    const rest = try local.readFrom(arena.allocator(), "a.txt", first.next, 64);
+    try testing.expectEqualStrings("\xe6\x97\xa5c", rest.text);
+    try testing.expectEqual(@as(u64, 6), rest.next);
+    // An offset past the end answers the size, so a caller can start at the tail.
+    const past = try local.readFrom(arena.allocator(), "a.txt", 1 << 40, 1);
+    try testing.expectEqualStrings("", past.text);
+    try testing.expectEqual(past.size, past.next);
 }
 
 test "LocalHost returns the final unterminated line" {
