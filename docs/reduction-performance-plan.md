@@ -74,7 +74,7 @@ The benchmark harness does not cover JSONL dispatch, so this change has no measu
 2. Stable transcript rows and the full-prefix bridge check: implemented and measured.
 3. Exact panel and native-setter duplicates: consolidated.
 4. One child-page policy: implemented with explicit failure on incomplete results.
-5. Advice dispatch: measurement and simplification pending.
+5. Advice dispatch: baseline measured; simplification awaits discussion.
 6. Commit serialization and large agent-tree refreshes: dedicated benchmarks pending.
 
 ## Transcript and boot performance
@@ -88,7 +88,7 @@ The [evidence report](transcript-performance-evidence.md) records the tradeoffs,
 
 ## Performance next
 
-- Measure and simplify advice dispatch without a plugin behavior change.
+- Review the [advice baseline](advice-dispatch-baseline.md) before a dispatch change.
 - Reuse known message sizes at commit and audit clone lifetimes.
 - Measure large agent trees and avoid full-tree reads for activity-only changes.
 - Audit paint-only invalidation and selection allocation costs.

@@ -10,7 +10,35 @@ const native_term = @import("native/term.zig");
 const Projection = @import("bench_projection.zig");
 pub const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
-pub const Phase = enum { build, reflow, scroll, stream, stream_native, paint, colors, selection, preview, projection, gc, boot };
+pub const Phase = enum {
+    build,
+    reflow,
+    scroll,
+    stream,
+    stream_native,
+    paint,
+    colors,
+    selection,
+    preview,
+    projection,
+    gc,
+    boot,
+    advice_direct,
+    advice_before,
+    advice_around,
+    advice_mixed,
+    advice_churn,
+
+    const Group = enum { transcript, colors, advice };
+
+    fn group(self: Phase) Group {
+        return switch (self) {
+            .colors => .colors,
+            .advice_direct, .advice_before, .advice_around, .advice_mixed, .advice_churn => .advice,
+            else => .transcript,
+        };
+    }
+};
 pub const Colors = enum { ansi_raw, rgb_raw, ansi_group, rgb_group, rgb_fresh };
 pub const phases = std.enums.values(Phase);
 
@@ -27,7 +55,7 @@ pub const Harness = struct {
     phase: ?Phase = null,
     native_step: usize = 0,
     colors: Colors = .ansi_raw,
-    color_benchmark: bool,
+    phase_group: Phase.Group,
 
     /// The benchmark borrows its own environment and runs no command of its own.
     fn context(self: *Harness) execution.Context {
@@ -47,7 +75,7 @@ pub const Harness = struct {
             .output = .init(gpa),
             .api = quickjs.UNDEFINED,
             .step_fn = quickjs.UNDEFINED,
-            .color_benchmark = phase == .colors,
+            .phase_group = phase.group(),
         };
         errdefer self.env.deinit();
         errdefer self.output.deinit();
@@ -63,7 +91,11 @@ pub const Harness = struct {
         const global = ctx.getGlobalObject();
         defer ctx.freeValue(global);
         try ctx.setPropertyStr(global, "FIXTURE", ctx.newString(fixture));
-        try self.host.evalModule(if (self.color_benchmark) @embedFile("bench_colors.js") else @embedFile("bench.js"), "bench.js");
+        try self.host.evalModule(switch (self.phase_group) {
+            .colors => @embedFile("bench_colors.js"),
+            .advice => @embedFile("bench_advice.js"),
+            .transcript => @embedFile("bench.js"),
+        }, "bench.js");
         self.api = ctx.getPropertyStr(global, "bench");
         self.step_fn = ctx.getPropertyStr(self.api, "step");
         std.debug.assert(ctx.isObject(self.api));
@@ -88,7 +120,7 @@ pub const Harness = struct {
 
     pub fn start(self: *Harness, phase: Phase, scale: u32) !void {
         std.debug.assert(scale > 0);
-        std.debug.assert(self.color_benchmark == (phase == .colors));
+        std.debug.assert(self.phase_group == phase.group());
         self.phase = null;
         self.native_step = 0;
         self.host.engine.detach();
