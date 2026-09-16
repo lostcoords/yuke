@@ -11,6 +11,12 @@ const modules = host_mod.default_baked ++ [_]BakedModule{
     .{ .name = "yuke:test", .code = .{ .source = @embedFile("tests/assert.js") } },
 };
 
+const environment: std.process.Environ.Map = .init(std.testing.allocator);
+
+pub fn hostOptions(cwd: []const u8) host_mod.Options {
+    return .{ .cwd = cwd, .execution = @import("../execution.zig").testContext(&environment) };
+}
+
 /// A test allocator that records no stack traces, because QuickJS allocates on every JavaScript step.
 pub const Pool = std.heap.DebugAllocator(.{ .stack_trace_frames = 0 });
 
@@ -22,7 +28,7 @@ pub fn createHost() *Host {
 pub fn createHostWith(io: std.Io, cwd: []const u8) *Host {
     const pool = std.testing.allocator.create(Pool) catch unreachable;
     pool.* = .{ .backing_allocator = std.testing.allocator };
-    return Host.createTest(pool.allocator(), io, cwd);
+    return Host.createWith(pool.allocator(), io, hostOptions(cwd));
 }
 
 /// Destroy a host from `createHostWith` and then its pool.

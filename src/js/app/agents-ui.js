@@ -1,10 +1,9 @@
 // yuke:agents-ui — stored children and explicit user actions.
 import { root } from "yuke:core";
 import { ui } from "yuke:ui";
-import { client } from "yuke:client";
+import { client, allChildren } from "yuke:client";
 import { focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
-import { allChildren } from "yuke:agent-tools";
 import { editSlot, recoverAgent } from "yuke:agents";
 
 /** @import { Context as PluginContext } from "yuke:ext" */

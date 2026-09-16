@@ -1,6 +1,5 @@
 const std = @import("std");
 const utf8 = @import("../utf8.zig");
-const builtin = @import("builtin");
 const quickjs = @import("quickjs");
 const memory = @import("memory.zig");
 const zio = @import("zio");
@@ -52,9 +51,6 @@ pub const Options = struct {
     execution: execution_mod.Context,
 };
 
-/// The environment every test host borrows. An empty environment allocates nothing, so no test frees it.
-pub var test_env: std.process.Environ.Map = .init(std.testing.allocator);
-
 /// Own one QuickJS runtime and context. The TUI owner calls `eval` and `destroy`.
 pub const Host = struct {
     gpa: std.mem.Allocator,
@@ -64,7 +60,6 @@ pub const Host = struct {
     phase: Phase,
     interrupt_budget: u32,
     interrupt_count: u32,
-    budget: u32,
     /// Hold the last script fault text. The Host owns these bytes and `report.zig` paints them.
     fault_text: [fault_text_max]u8,
     fault_text_len: usize,
@@ -94,17 +89,6 @@ pub const Host = struct {
 
     pub const Phase = enum { open, closing, drained };
 
-    /// Allocate a host with the test I/O and no workspace.
-    pub fn create(gpa: std.mem.Allocator) *Host {
-        return createTest(gpa, std.testing.io, "");
-    }
-
-    /// Allocate a test host that uses `io` and takes `cwd` as its workspace root.
-    pub fn createTest(gpa: std.mem.Allocator, io: std.Io, cwd: []const u8) *Host {
-        std.debug.assert(builtin.is_test);
-        return createWith(gpa, io, .{ .cwd = cwd, .execution = execution_mod.testContext(&test_env) });
-    }
-
     /// Allocate a host and install its limits, interrupt handler, and loader.
     pub fn createWith(gpa: std.mem.Allocator, io: std.Io, opts: Options) *Host {
         const self = gpa.create(Host) catch unreachable;
@@ -130,7 +114,6 @@ pub const Host = struct {
             .phase = .open,
             .interrupt_budget = default_interrupt_budget,
             .interrupt_count = 0,
-            .budget = job_budget,
             .fault_text = undefined,
             .fault_text_len = 0,
             .paint = .{},
@@ -343,11 +326,11 @@ pub const Host = struct {
         return n;
     }
 
-    /// Drain up to `budget` jobs. Leave extra jobs queued for the owner.
+    /// Drain at most `job_budget` jobs and leave the rest for the owner.
     pub fn drainJobs(self: *Host) Error!void {
         var n: u32 = 0;
         while (self.runtime.isJobPending()) {
-            if (n == self.budget) return;
+            if (n == job_budget) return;
             self.enterSlice();
             _ = self.runtime.executePendingJob() catch {
                 self.noteFault();
@@ -487,13 +470,6 @@ test "a syntax error is a JavaScriptFault" {
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.n"));
 }
 
-test "drainJobs runs a then callback" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try host.eval("globalThis.hit = 0; Promise.resolve().then(() => { globalThis.hit = 7; })", "job.js");
-    try std.testing.expectEqual(@as(i32, 7), try host.evalInt("globalThis.hit"));
-}
-
 test "an infinite loop hits the interrupt budget" {
     const host = support.createHost();
     defer support.destroyHost(host);
@@ -505,10 +481,9 @@ test "an infinite loop hits the interrupt budget" {
 test "close interrupts a leftover spinning job" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    host.budget = 0;
-    try host.eval("Promise.resolve().then(() => { while (true) {} })", "spin.js");
+    const queued = try host.ctx.eval("Promise.resolve().then(() => { while (true) {} })", "spin.js", .{});
+    host.ctx.freeValue(queued);
     try std.testing.expect(host.runtime.isJobPending());
-    host.budget = job_budget;
     host.interrupt_budget = 0;
     try std.testing.expectError(error.JavaScriptFault, host.close());
     // The host stopped inside the drain, so it never reached `drained`.
@@ -516,42 +491,36 @@ test "close interrupts a leftover spinning job" {
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "interrupted") != null);
 }
 
-test "a job the drain budget leaves keeps the owner awake" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    host.budget = 0;
-    try host.eval("Promise.resolve().then(() => {})", "left.js");
-    try std.testing.expect(host.runtime.isJobPending());
-    try std.testing.expect(host.hasPending());
-    host.budget = job_budget;
-    try host.pump();
-    try std.testing.expect(!host.hasPending());
-}
-
 test "close drains then destroy frees the runtime" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    host.budget = 0;
-    try host.eval("Promise.resolve().then(() => {})", "close.js");
+    const queued = try host.ctx.eval("Promise.resolve().then(() => {})", "close.js", .{});
+    host.ctx.freeValue(queued);
     try std.testing.expect(host.runtime.isJobPending());
-    host.budget = job_budget;
     try host.close();
     try std.testing.expectEqual(Host.Phase.drained, host.phase);
     try std.testing.expect(!host.runtime.isJobPending());
 }
 
-test "drainJobs yields when the budget is hit" {
+test "the job budget yields to the owner and pump completes the jobs" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    host.budget = 1;
-    try host.eval(
+    const source = std.fmt.comptimePrint(
         \\globalThis.n = 0;
-        \\Promise.resolve().then(() => { globalThis.n++; }).then(() => { globalThis.n++; });
-    , "budget.js");
+        \\function next() {{ if (++globalThis.n < {d}) Promise.resolve().then(next); }}
+        \\Promise.resolve().then(next);
+    , .{job_budget + 1});
+    try host.eval(source, "budget.js");
     try std.testing.expect(host.runtime.isJobPending());
-    try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
-    try host.drainJobs();
-    try std.testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.n"));
+    const global = host.ctx.getGlobalObject();
+    defer host.ctx.freeValue(global);
+    const count = host.ctx.getPropertyStr(global, "n");
+    defer host.ctx.freeValue(count);
+    try std.testing.expectEqual(@as(i64, job_budget), try host.ctx.toInt64(count));
+    try std.testing.expect(host.hasPending());
+    try host.pump();
+    try std.testing.expect(!host.hasPending());
+    try std.testing.expectEqual(@as(i32, job_budget + 1), try host.evalInt("globalThis.n"));
 }
 
 test "a memory-limit hit is a catchable fault" {
@@ -625,7 +594,7 @@ test "an unknown yuke module is a JavaScriptFault" {
 }
 
 test "user files can import public entries but cannot import cached internal modules" {
-    const host = Host.create(std.testing.allocator);
+    const host = Host.createWith(std.testing.allocator, std.testing.io, support.hostOptions(""));
     defer host.destroy();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -782,7 +751,7 @@ test "an oversize module file does not load" {
 
     var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
     defer _ = pool.deinit();
-    const host = Host.createWith(pool.allocator(), std.testing.io, .{ .max_file_bytes = 8, .cwd = "", .execution = execution_mod.testContext(&test_env) });
+    const host = Host.createWith(pool.allocator(), std.testing.io, .{ .max_file_bytes = 8, .cwd = "", .execution = support.hostOptions("").execution });
     defer host.destroy();
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});

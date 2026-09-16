@@ -481,7 +481,7 @@ test "a user entry file evaluates and a missing one is not an error" {
     const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
     const dir = dir_buf[0..dir_len];
 
-    const host = Host.create(gpa.allocator());
+    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
     defer host.destroy();
     try evalUserEntry(host, dir);
     try std.testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.result"));
@@ -507,7 +507,7 @@ test "a throwing user entry is a JavaScriptFault the loop absorbs" {
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
     const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
 
-    const host = Host.create(gpa.allocator());
+    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,

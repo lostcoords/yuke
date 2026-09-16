@@ -37,6 +37,25 @@ function sessionList(params = {}) {
   });
 }
 
+// A complete child list costs at most 32 pages; a limit or cursor cycle is an error.
+/** @param {string} parentId @returns {Promise<Wire.SessionListItem[]>} */
+export async function allChildren(parentId) {
+  /** @type {Wire.SessionListItem[]} */
+  const items = [];
+  const seen = new Set();
+  /** @type {string | undefined} */
+  let cursor;
+  for (let n = 0; n < 32; n++) {
+    const page = await client.sessionList({ population: { type: "children", parent_id: parentId }, limit: 100, ...(cursor ? { cursor } : {}) });
+    items.push(...page.items);
+    if (!page.next_cursor) return items;
+    if (seen.has(page.next_cursor)) throw new Error("The child page cursor did not advance.");
+    seen.add(page.next_cursor);
+    cursor = page.next_cursor;
+  }
+  throw new Error("The child list exceeds 32 pages.");
+}
+
 // Open a view onto a session. The pin holds the engine runtime while a pane shows it.
 /** @param {string} sessionId @returns {boolean} */
 function sessionOpen(sessionId) {

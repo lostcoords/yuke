@@ -5,6 +5,10 @@ const std = @import("std");
 const Host = @import("host.zig").Host;
 const proto = @import("proto");
 
+test "child pages return a complete list or refuse" {
+    try support.run("tests/agents/pages.test.js");
+}
+
 test "setup coalesces both slots and continues one atomic spawn per caller" {
     const host = support.createHost();
     defer support.destroyHost(host);

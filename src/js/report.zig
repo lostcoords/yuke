@@ -44,7 +44,7 @@ fn bindTestHost(
     render: *term_pkg.Render,
     out: *std.Io.Writer,
 ) !*Host {
-    const host = Host.create(gpa);
+    const host = Host.createWith(gpa, std.testing.io, support.hostOptions(""));
     errdefer host.destroy();
     host.paint.bindRender(host.ctx, render, out);
     return host;

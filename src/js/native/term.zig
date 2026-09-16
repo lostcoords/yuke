@@ -605,7 +605,7 @@ test "RGB styles reach all paint paths and preserve frame diffs" {
 test "an extra yuke:term export name fails" {
     var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.create(gpa.allocator());
+    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
     defer host.destroy();
     try std.testing.expectError(
         error.JavaScriptFault,
@@ -655,7 +655,7 @@ test "native wrap preserves UTF-16 rows and bounds preview work" {
 test "measure and graphemes use cell width and UTF-16 offsets" {
     var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.create(gpa.allocator());
+    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
     defer host.destroy();
 
     // Printable ASCII takes the byte-length path, so both ends of the range must measure as one.
@@ -720,7 +720,7 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
 test "setNeedsTick clamps and quit blocks a later arm" {
     var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.create(gpa.allocator());
+    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
     defer host.destroy();
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -738,7 +738,7 @@ test "setNeedsTick clamps and quit blocks a later arm" {
 test "beginFrame without a renderer throws" {
     var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.create(gpa.allocator());
+    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
     defer host.destroy();
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -764,7 +764,7 @@ test "paint copies graphemes, skips negative coords, and diffs" {
 
     var out: std.Io.Writer.Allocating = .init(gpa.allocator());
     defer out.deinit();
-    const host = Host.create(gpa.allocator());
+    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
     defer host.destroy();
     host.paint.bindRender(host.ctx, &render, &out.writer);
 
@@ -809,7 +809,7 @@ test "a failed endFrame keeps the frame dirty and retries" {
     try render.resize(&sink.writer, .{ .rows = 1, .cols = 1, .x_pixel = 0, .y_pixel = 0 });
 
     var fail: std.Io.Writer = .failing;
-    const host = Host.create(gpa.allocator());
+    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
     defer host.destroy();
     host.paint.bindRender(host.ctx, &render, &fail);
 

@@ -1,9 +1,8 @@
 // yuke:context — the context reading on the status bar and the `/context` breakdown window.
-import { root, text } from "yuke:core";
-import { clip } from "yuke:text-input";
-import { strokeOf } from "yuke:keys";
+import { root } from "yuke:core";
 import { client } from "yuke:client";
 import { Window } from "yuke:ui";
+import { InfoPanel } from "yuke:info-panel";
 import { chatEntry } from "yuke:chat";
 import { catalogOf, contextWindowOf, defaultModel, tokenLabel } from "yuke:catalog";
 
@@ -91,38 +90,6 @@ export function contextRows(r, sources = [], skills = []) {
   return rows;
 }
 
-class ContextPanel {
-  /** @param {Reading} r @param {ReadonlyArray<Wire.InstructionSource>} sources @param {ReadonlyArray<Wire.SkillInfo>} skills @param {() => void} onClose */
-  constructor(r, sources, skills, onClose) {
-    this.rows = contextRows(r, sources, skills);
-    this.onClose = onClose;
-    /** @type {{ x: number, y: number, w: number, h: number }} */
-    this.rect = { x: 0, y: 0, w: 0, h: 0 };
-  }
-
-  /** @param {{ x: number, y: number, w: number, h: number }} rect @returns {void} */
-  layout(rect) {
-    this.rect = rect;
-  }
-
-  /** @param {boolean} [_focused] @returns {void} */
-  draw(_focused = false) {
-    const { x, y, w, h } = this.rect;
-    if (w <= 0 || h <= 0) return;
-    for (let i = 0; i < this.rows.length; i++) {
-      if (i >= h) break;
-      const row = /** @type {[string, string]} */ (this.rows[i]);
-      text(x, y + i, clip(row[0].padEnd(12), w), "UIDim");
-      if (w > 12) text(x + 12, y + i, clip(row[1], w - 12), "UIQuery");
-    }
-  }
-
-  /** @param {HostEvent} event @returns {boolean} */
-  onKey(event) {
-    if (event.type === "key" && (strokeOf(event) === "esc" || strokeOf(event) === "q")) this.onClose();
-    return true;
-  }
-}
 
 export const contextPlugin = {
   name: "context",
@@ -141,7 +108,7 @@ export const contextPlugin = {
           const item = entry ? await client.sessionGet(entry.session.id) : null;
           /** @type {(() => void)} */
           let release = () => {};
-          const panel = new ContextPanel(current, item?.instruction_sources || [], item?.skills || [], () => release());
+          const panel = new InfoPanel(contextRows(current, item?.instruction_sources || [], item?.skills || []), () => release());
           const win = new Window({ title: "context", footer: "esc close", border: "rounded", width: max => Math.round(max * 0.6), height: panel.rows.length + 2, content: panel });
           root.pushOverlay(win);
           release = ctx.tui.overlay(win);

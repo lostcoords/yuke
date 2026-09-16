@@ -242,22 +242,25 @@ function normalizePredicate(predicate) {
 
 // The active context: an ordered atom stack plus plugin flags, where a deeper atom beats a shallower or unscoped one.
 export const context = {
-  /** @type {Record<string, ContextFlag>} */
+  /** @type {Record<string, Array<{ value: ContextFlag }>>} */
   _flags: Object.create(null),
 
-  // Set flags and return a restoring disposer; a function value resolves at match time, so a live mode needs no update.
+  // Each registration owns one entry; removal preserves every other live provider.
   /** @param {Record<string, ContextFlag>} flags @returns {() => void} */
   add(flags) {
-    /** @type {Array<[string, ContextFlag | undefined]>} */
-    const prev = [];
+    /** @type {Array<[string, { value: ContextFlag }]>} */
+    const held = [];
     for (const name in flags) {
-      prev.push([name, this._flags[name]]);
-      this._flags[name] = /** @type {ContextFlag} */ (flags[name]);
+      const entry = { value: /** @type {ContextFlag} */ (flags[name]) };
+      const list = this._flags[name] || (this._flags[name] = []);
+      list.push(entry);
+      held.push([name, entry]);
     }
     return once(() => {
-      for (const [name, was] of prev) {
-        if (was === undefined) delete this._flags[name];
-        else this._flags[name] = was;
+      for (const [name, entry] of held) {
+        const list = /** @type {Array<{ value: ContextFlag }>} */ (this._flags[name]);
+        list.splice(list.indexOf(entry), 1);
+        if (list.length === 0) delete this._flags[name];
       }
     });
   },
@@ -265,7 +268,7 @@ export const context = {
   // The value of one flag. A throwing provider reads as absent, so it never breaks a key.
   /** @param {string} name @returns {string | undefined} */
   flag(name) {
-    const v = this._flags[name];
+    const v = this._flags[name]?.at(-1)?.value;
     if (typeof v !== "function") return v;
     try {
       const out = v();

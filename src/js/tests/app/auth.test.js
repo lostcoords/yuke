@@ -5,6 +5,7 @@ import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { defaultModel } from "yuke:catalog";
 import { chat } from "yuke:defaults";
+globalThis.authTest = (async () => {
 const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0, ...o });
 const settle = async () => { for (let i = 0; i < 64; i++) await Promise.resolve(); };
 const finished = (login_id, outcome) => events.emit("auth.login_finished", { type: "index", facts: ["auth.login_finished"],
@@ -105,3 +106,5 @@ client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r4", pr
 command.perform("model:pick", "codex/gpt");
 await settle();
 check("query-ready-uses-default", root.overlays.length === 0 && defaultModel().model === "codex/gpt" && defaultModel().reasoning === "high");
+
+})();

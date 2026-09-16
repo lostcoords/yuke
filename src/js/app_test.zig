@@ -94,11 +94,12 @@ test "the slash menu follows the composer, completes, runs, and leaves a message
 test "the auth plugin logs in with a device code or a key, logs out, and guards the model picker" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    host.budget = 2048; // The test settles several dialogs in one module evaluation.
     host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
     try support.eval(host, "tests/app/boot-3.test.js");
     // `client` is one object, so the test replaces the auth calls and drives the dialogs with keys.
     try support.eval(host, "tests/app/auth.test.js");
+    try host.pump();
+    try host.evalModule("await globalThis.authTest;", "auth-result.js");
 }
 
 test "the auth device dialog closes for native completion before or after the login response" {

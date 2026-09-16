@@ -1,5 +1,5 @@
 // yuke:agent-tools — thin tools over stored child sessions.
-import { client } from "yuke:client";
+import { client, allChildren } from "yuke:client";
 import { hasTool } from "yuke:tools";
 import { NAME, check, failure, spawnAgent } from "yuke:agents";
 
@@ -33,18 +33,6 @@ export async function ownedChild(parentId, target) {
 /** @param {Wire.SessionListItem} item */
 export function agentRow(item) {
     return { name: item.session.name, session_id: item.session.id, model: item.session.model, reasoning: item.session.reasoning, activity: item.activity, last_run: item.last_run ?? null };
-}
-/** @param {string} parentId */
-export async function allChildren(parentId) {
-    /** @type {Wire.SessionListItem[]} */
-    const items = [];
-    let cursor;
-    do {
-        const page = await client.sessionList({ population: { type: "children", parent_id: parentId }, limit: 100, ...(cursor ? { cursor } : {}) });
-        items.push(...page.items);
-        cursor = page.next_cursor;
-    } while (cursor);
-    return items;
 }
 /** @param {string} parentId */
 export async function stopAllChildren(parentId) {

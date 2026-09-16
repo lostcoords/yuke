@@ -2,6 +2,35 @@ import { check } from "yuke:test";
 import { keymap, root, context, parseContext, View, Node } from "yuke:core";
 const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
+// Plugins can unload in either order without loss or resurrection of another flag.
+{
+  for (const oldestFirst of [true, false]) {
+    const old = context.add({ owned: "old", sibling: "live" });
+    const next = context.add({ owned: "new" });
+    check("ctx-owner-new", context.flag("owned") === "new");
+    if (oldestFirst) {
+      old();
+      check("ctx-owner-preserved", context.flag("owned") === "new" && context.flag("sibling") === undefined);
+      next();
+    } else {
+      next();
+      check("ctx-owner-uncovered", context.flag("owned") === "old" && context.flag("sibling") === "live");
+      old();
+    }
+    check("ctx-owner-empty", context.flag("owned") === undefined);
+    const replacement = context.add({ owned: "replacement" });
+    old(); next();
+    check("ctx-owner-stale", context.flag("owned") === "replacement");
+    replacement();
+  }
+  const a = context.add({ identical: "same" });
+  const b = context.add({ identical: "same" });
+  a();
+  check("ctx-owner-identical", context.flag("identical") === "same");
+  b();
+  check("ctx-owner-identical-empty", context.flag("identical") === undefined);
+}
+
 // A view contributes its atoms, and the stack orders them from the root outward.
 {
   class Pane extends View { get name() { return "pane"; } draw() {} }
