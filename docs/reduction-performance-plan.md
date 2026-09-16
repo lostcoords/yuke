@@ -8,10 +8,10 @@ Protocol changes require coordinated Zig types, generated outputs, and consumer 
 
 - [x] Fix context-flag ownership for arbitrary plugin unload order.
 - [x] Remove the test-only host job budget and move host fixture setup into test support.
-- [ ] Complete the optional-value and fallback audit against production lifetimes.
+- [x] Review optional values and fallbacks against production lifetimes; the close-out lists the remaining candidates.
 - [x] Consolidate duplicate panels and native property setters.
 - [x] Define one complete child-page traversal policy.
-- [ ] Complete the helper and fixture audit.
+- [x] Review helpers and fixtures; retain the shared support with real callers.
 
 The child traversal requests 100 items per page and allows at most 32 pages.
 It rejects a cursor cycle or an incomplete result at the page bound.
@@ -86,13 +86,13 @@ This also removes the measured boot allocation regression.
 The public JS API and wire schema remain intact.
 The [evidence report](transcript-performance-evidence.md) records the tradeoffs, tests, and all benchmark phases.
 
-## Performance next
+## Performance results and optional follow-up
 
 - The [advice report](advice-dispatch-baseline.md) records the fast path and its measured costs.
 - Stored message sizes now avoid a second serialization; the [evidence](commit-size-performance.md) records the result.
-- Examine temporary JSON buffer growth next; preserve the current clone lifetimes until a separate review.
+- Temporary JSON buffer growth was examined. The allocator alternatives had mixed costs; retain the current allocator and clone lifetimes.
 - Agent activity updates now use targeted reads; the [evidence](agent-tree-performance.md) records the gain and boot cost.
-- Audit paint-only invalidation and selection allocation costs.
+- Optional future work: measure paint-only invalidation and selection allocation costs. These are not demonstrated defects or blockers for this review.
 
 ## Evidence
 
@@ -115,3 +115,11 @@ The [cleanup evidence](cleanup-evidence.md) records six redundant transcript fal
 three impossible listener checks, and the shared session-item projection.
 The cache retains its valid stale state. The JS plugin API remains intact.
 The source diff is net +1 line. No tests or fixtures were removed.
+
+## Close-out
+
+The original six priorities and their implementation batches are complete.
+The bounded [close-out review](reduction-closeout.md) is complete.
+It identifies three small cleanup candidates; those edits are not complete.
+It finds no further required helper removal in the reviewed scope.
+This status does not certify every file or unrelated work in progress.
