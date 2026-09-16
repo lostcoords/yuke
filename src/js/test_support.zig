@@ -123,12 +123,16 @@ fn awaitWork(host: *Host) !void {
     host.wake.reset();
     if (host.hasPending()) return;
     const deadline = std.Io.Clock.Timestamp.fromNow(host.io, wake_timeout);
+    // A timer due before the missed-wake deadline ends the sleep with no wake, as `Host.waitForWork` does.
+    const timer = host.timers.nextDeadline();
+    const until: std.Io.Clock.Timestamp = if (timer) |due| (if (due.nanoseconds < deadline.raw.nanoseconds) .{ .raw = due, .clock = .awake } else deadline) else deadline;
     while (true) {
-        host.wake.waitTimeout(host.io, .{ .deadline = deadline }) catch |err| switch (err) {
+        host.wake.waitTimeout(host.io, .{ .deadline = until }) catch |err| switch (err) {
             error.Canceled => return err,
-            // A spurious wakeup also returns Timeout, so only the deadline proves a missed wake.
+            // A spurious wakeup also returns Timeout, so only a passed deadline proves a missed wake.
             error.Timeout => {
-                if (deadline.durationFromNow(host.io).raw.nanoseconds > 0) continue;
+                if (until.durationFromNow(host.io).raw.nanoseconds > 0) continue;
+                if (timer != null and until.raw.nanoseconds != deadline.raw.nanoseconds) return;
                 return error.OwnerNeverWoken;
             },
         };

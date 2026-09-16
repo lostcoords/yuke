@@ -243,7 +243,7 @@ fn gatedCommand(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.
         host.wake.reset();
         pump(extensions);
         if (record.state == .settled) break;
-        try sleep(extensions);
+        try extensions.host.waitForWork();
     }
     if (record.is_error) {
         try fail(err, "the input gate failed: {s}", .{record.text orelse ""});
@@ -259,7 +259,7 @@ fn awaitRun(extensions: *Extensions, waiter: *Waiter, run_id: proto.ids.RunId) !
         pump(extensions);
         // A settle inside the pump sets no wake, so the condition is read again before the sleep.
         if (waiter.doneOf(run_id) != null) break;
-        try sleep(extensions);
+        try extensions.host.waitForWork();
     }
 }
 
@@ -270,13 +270,6 @@ fn pump(extensions: *Extensions) void {
         std.log.warn("yuke -p: JavaScript fault: {s}", .{host.faultText()});
         host.clearFault();
     };
-}
-
-/// Sleep until an event or a call wakes the host. Reset the wake before the pump that precedes this.
-fn sleep(extensions: *Extensions) !void {
-    const host = extensions.host;
-    if (host.hasPending()) return;
-    host.wake.wait(host.io) catch return error.Canceled;
 }
 
 /// The events of one session, copied out of the emitter's arena, and the wake of the owner loop.

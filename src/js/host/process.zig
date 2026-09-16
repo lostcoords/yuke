@@ -278,7 +278,7 @@ fn waitUntil(io: std.Io, event: *std.Io.Event, deadline: std.Io.Clock.Timestamp)
         event.waitTimeout(io, .{ .deadline = deadline }) catch |wait_err| switch (wait_err) {
             error.Canceled => return error.Canceled,
             error.Timeout => {
-                if (std.Io.Clock.Timestamp.now(io, .awake).durationTo(deadline).raw.nanoseconds > 0) continue;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
                 return event.isSet();
             },
         };
@@ -318,7 +318,7 @@ pub fn endGroups(io: std.Io, pids: []const std.posix.pid_t) void {
     defer _ = io.swapCancelProtection(old);
     for (pids) |pid| killGroup(pid, .TERM);
     const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{ .raw = .fromNanoseconds(grace_ns), .clock = .awake });
-    while (std.Io.Clock.Timestamp.now(io, .awake).durationTo(deadline).raw.nanoseconds > 0) {
+    while (deadline.durationFromNow(io).raw.nanoseconds > 0) {
         for (pids) |pid| {
             if (groupAlive(pid)) break;
         } else return;

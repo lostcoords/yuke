@@ -21,6 +21,7 @@ const pending = @import("pending.zig");
 const execution_mod = @import("../execution.zig");
 const Logs = @import("host/logs.zig").Logs;
 const Jobs = @import("host/jobs.zig").Jobs;
+const timers_mod = @import("timers.zig");
 
 /// Limit the client heap. Scripts fail when they exceed this limit.
 pub const memory_limit: usize = 64 * 1024 * 1024;
@@ -93,6 +94,8 @@ pub const Host = struct {
     logs: Logs = .{},
     /// The background jobs. `close` ends them before it cancels their waiters.
     jobs: Jobs = .{},
+    /// The `setTimeout` and `setInterval` table. Only the owner touches it.
+    timers: timers_mod.Timers = .{},
 
     pub const Phase = enum { open, closing, drained };
 
@@ -145,6 +148,7 @@ pub const Host = struct {
         engine_module.install(self);
         fs_module.install(self);
         exec_module.install(self);
+        timers_mod.install(self);
         diff_module.install(self);
         tools_module.install(self);
         hooks_module.install(self);
@@ -185,6 +189,8 @@ pub const Host = struct {
         if (engine_module.drain(self.engine, self.ctx)) return error.JavaScriptFault;
         call_run.abortLeft(self); // A continuation below must read a left call's signal as aborted.
         var faulted = self.ops.settle(self.ctx);
+        // A timer fires before the drain, so a promise it settles runs its reactions in this pump.
+        if (self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) faulted = true;
         try self.drainJobs();
         // The first drain settles a promise a handler awaited, the poll reads it, and the second drain runs what the handler queued.
         call_run.pump(self);
@@ -202,7 +208,17 @@ pub const Host = struct {
     /// Report whether the owner has work to run. The owner asks before it sleeps.
     pub fn hasPending(self: *const Host) bool {
         return self.runtime.isJobPending() or self.ops.anyDone() or self.engine.hasPending() or
-            self.calls.hasWork(self.ctx);
+            self.calls.hasWork(self.ctx) or self.timers.isDue(std.Io.Timestamp.now(self.io, .awake));
+    }
+
+    /// Sleep until a task sets the wake or the next timer is due. The caller resets the wake before its last pump and reads its own condition again first.
+    pub fn waitForWork(self: *Host) error{Canceled}!void {
+        if (self.hasPending()) return;
+        const due = self.timers.nextDeadline() orelse return self.wake.wait(self.io);
+        self.wake.waitTimeout(self.io, .{ .deadline = .{ .raw = due, .clock = .awake } }) catch |err| switch (err) {
+            error.Timeout => {},
+            error.Canceled => return error.Canceled,
+        };
     }
 
     /// Drain jobs, release QuickJS resources, and destroy the host.
@@ -239,6 +255,7 @@ pub const Host = struct {
         self.jobs.endAll(self.io);
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
+        self.timers.deinit(self.ctx, self.gpa);
         self.interactions.close();
         if (self.ops.settle(self.ctx)) {
             self.dropPendingException();
@@ -833,6 +850,7 @@ test {
     _ = @import("ui_test.zig");
     _ = @import("plugins_test.zig");
     _ = @import("native_tools_test.zig");
+    _ = @import("timers.zig");
     _ = @import("interaction_test.zig");
 }
 
