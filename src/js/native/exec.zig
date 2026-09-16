@@ -33,7 +33,7 @@ pub fn install(host: *Host) void {
 
 /// One command, copied so the task can read it after the call returns.
 const Request = struct {
-    const ParseError = error{ CommandType, CommandBlank, RootType, CwdType, Timeout, MaxBytes };
+    const ParseError = error{ CommandType, CommandBlank, CommandNul, RootType, CwdType, Timeout, MaxBytes };
 
     command: []u8,
     root: []u8,
@@ -55,6 +55,7 @@ const Request = struct {
         const command = module.owned(ctx, gpa, args[0]) orelse return error.CommandType;
         errdefer gpa.free(command);
         if (std.mem.trim(u8, command, " \t\r\n").len == 0) return error.CommandBlank;
+        if (std.mem.indexOfScalar(u8, command, 0) != null) return error.CommandNul;
 
         const root = module.rootArg(ctx, gpa, if (args.len > 2) args[2] else quickjs.UNDEFINED, default_root) orelse return error.RootType;
         errdefer gpa.free(root);
@@ -94,6 +95,7 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
         return rejected(ctx, switch (err) {
             error.CommandType => "the command must be a string",
             error.CommandBlank => "the command must not be blank",
+            error.CommandNul => "the command must not hold a NUL byte",
             error.RootType => "the workspace root must be an absolute path",
             error.CwdType => "cwd must be a string",
             error.Timeout => "timeoutMs must be a whole number of milliseconds up to 600000",

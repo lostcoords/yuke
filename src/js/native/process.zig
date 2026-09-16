@@ -59,8 +59,9 @@ const Proc = struct {
     stdin: ?std.posix.fd_t,
     writing: bool = false,
     close_after: bool = false,
-    /// The waiter writes the exit, then sets `done`. The owner reads `outcome` only after `done`.
+    /// The waiter writes the exit, then sets `reaped`, then sets `done` after the last read. The owner reads `outcome` only after `done`.
     outcome: ?runner.Outcome = null,
+    reaped: std.atomic.Value(bool) = .init(false),
     done: std.atomic.Value(bool) = .init(false),
     /// Owner only.
     settled: bool = false,
@@ -237,11 +238,14 @@ fn procTask(host: *Host, proc: *Proc) void {
         readers.concurrent(host.io, readTask, .{ host, stream }) catch {
             // A stream with no reader must not block the child on a full pipe.
             runner.endGroups(host.io, &.{proc.pid});
+            stream.lock.lockUncancelable(host.io);
             stream.ended = true;
+            stream.lock.unlock(host.io);
             stream.ready.store(true, .release);
         };
     }
     proc.outcome = runner.reapGroup(host.io, &proc.child);
+    proc.reaped.store(true, .release);
     _ = runner.awaitDrains(host.io, &readers) catch {
         const old = host.io.swapCancelProtection(.blocked);
         defer _ = host.io.swapCancelProtection(old);
@@ -314,7 +318,8 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     var env = host.execution.env.clone(a) catch unreachable;
     var pair: usize = 0;
     while (pair < pairs.len) : (pair += 2) {
-        if (!std.process.Environ.Map.validateKeyForPut(pairs[pair])) return ctx.throwTypeError("an env key must be non-empty and hold no '='");
+        if (!std.process.Environ.Map.validateKeyForPut(pairs[pair]) or std.mem.indexOfScalar(u8, pairs[pair + 1], 0) != null)
+            return ctx.throwTypeError("an env key must be non-empty and hold no '=', and no env string may hold a NUL byte");
         env.put(pairs[pair], pairs[pair + 1]) catch unreachable;
     }
 
@@ -416,7 +421,8 @@ fn jsKill(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (host.phase != .open) return quickjs.FALSE;
     const proc = procOf(ctx, host, args) orelse return quickjs.FALSE;
-    if (proc.done.load(.acquire)) return quickjs.FALSE;
+    // A reaped child already has its real exit, so a kill must not report a stop.
+    if (proc.reaped.load(.acquire)) return quickjs.FALSE;
     host.tasks.concurrent(host.io, killTask, .{ host, proc.pid }) catch runner.endGroups(host.io, &.{proc.pid});
     return quickjs.TRUE;
 }
@@ -437,6 +443,8 @@ fn stringList(ctx: Context, a: std.mem.Allocator, value: Value) ?[]const []const
         const item = ctx.getPropertyUint32(value, @intCast(i));
         defer ctx.freeValue(item);
         slot.* = module.owned(ctx, a, item) orelse return null;
+        // A C string ends at NUL, so a NUL would cut the argument without an error.
+        if (std.mem.indexOfScalar(u8, slot.*, 0) != null) return null;
     }
     return list;
 }

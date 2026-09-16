@@ -33,6 +33,7 @@ globalThis.result = "pending";
   for (const [args, expected] of [
     [[42], "the command must be a string"],
     [["echo x", {}, 42], "the workspace root must be an absolute path"],
+    [["echo ok\0; echo cut"], "the command must not hold a NUL byte"],
     [["echo x", {}, "relative"], "the workspace root must be an absolute path"],
     [["echo x", { cwd: 42 }], "cwd must be a string"],
     [["echo x", { cwd: ".", timeoutMs: 0 }], "timeoutMs must be a whole number of milliseconds up to 600000"],

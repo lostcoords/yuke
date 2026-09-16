@@ -24,7 +24,8 @@ declare module "yuke:process" {
   }
 
   /** A string runs through the host shell and an array runs with no shell, in a new process group. */
-  export function spawn(command: string | string[], options?: SpawnOptions, onOutput?: (stream: 1 | 2, text: string) => void, workspaceRoot?: string): NativeProcess;
+  export function spawn(command: string | string[], options: SpawnOptions | undefined, onOutput: (stream: 1 | 2, text: string) => void, workspaceRoot?: string): NativeProcess;
+  export function spawn(command: string | string[], options: SpawnOptions & { log: true }, onOutput?: undefined, workspaceRoot?: string): NativeProcess;
   /** Resolves when the pipe accepts every byte. */
   export function write(id: number, text: string): Promise<void>;
   export function closeStdin(id: number): void;

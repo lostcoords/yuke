@@ -77,7 +77,9 @@ const Drain = struct {
         // With no gap the two ends stay adjacent, so the join restores the exact stream.
         const gap = self.dropped != 0;
         const head = if (gap) self.head.items[0..utf8.whole(self.head.items)] else self.head.items;
-        const tail = if (gap) self.tail.items[utf8.head(self.tail.items)..] else self.tail.items;
+        // After a gap the tail starts at its first whole line, or at its first whole character with no newline.
+        const tail_start = if (!gap) 0 else if (std.mem.indexOfScalar(u8, self.tail.items, '\n')) |newline| newline + 1 else utf8.head(self.tail.items);
+        const tail = self.tail.items[tail_start..];
         const trimmed = (self.head.items.len - head.len) + (self.tail.items.len - tail.len);
         var joined: std.ArrayList(u8) = .empty;
         joined.appendSlice(scratch, head) catch unreachable;
@@ -176,6 +178,9 @@ fn spawnArgv(scratch: std.mem.Allocator, env: *const std.process.Environ.Map, ar
     // A `dup2` onto its own number keeps CLOEXEC, so every source must sit above the standard streams.
     std.debug.assert(stdout > std.posix.STDERR_FILENO and stderr > std.posix.STDERR_FILENO);
     if (stdin) |fd| std.debug.assert(fd > std.posix.STDERR_FILENO);
+    // A C string ends at NUL, so a NUL would cut the program, an argument, or the directory without an error.
+    for (argv) |arg| if (std.mem.indexOfScalar(u8, arg, 0) != null) return error.HostFailure;
+    if (std.mem.indexOfScalar(u8, cwd, 0) != null) return error.HostFailure;
     const argv_z = scratch.allocSentinel(?[*:0]const u8, argv.len, null) catch return error.HostFailure;
     for (argv, argv_z) |arg, *slot| slot.* = (scratch.dupeZ(u8, arg) catch return error.HostFailure).ptr;
     const cwd_z = scratch.dupeZ(u8, cwd) catch return error.HostFailure;

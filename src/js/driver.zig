@@ -245,7 +245,11 @@ fn tickDue(host: *const Host, last: std.Io.Timestamp) ?std.Io.Timestamp {
     var due: ?std.Io.Timestamp = null;
     if (host.paint.needs_tick) due = last.addDuration(.fromMilliseconds(host.paint.tick_period_ms));
     if (host.hasPending()) due = earlier(due, last.addDuration(engine_frame));
-    if (host.timers.nextDeadline()) |timer| due = earlier(due, timer);
+    // A due timer is paced like engine work, so the task sends one tick per frame and not one per loop.
+    if (host.timers.nextDeadline()) |timer| {
+        const paced = last.addDuration(engine_frame);
+        due = earlier(due, if (timer.nanoseconds < paced.nanoseconds) paced else timer);
+    }
     return due;
 }
 

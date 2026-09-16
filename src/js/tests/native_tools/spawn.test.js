@@ -74,6 +74,7 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
 
   const refusals = [
     () => spawn([]),
+    () => spawn(["echo", "ok\0cut"]),
     () => spawn(["true"], { env: { "BAD=KEY": "x" } }),
     () => spawnNative(["true"], {}, () => {}, "relative"),
     () => spawnNative(["true"], {}),
