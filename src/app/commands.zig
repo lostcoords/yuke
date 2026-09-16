@@ -133,11 +133,11 @@ fn credentialKind(p: provider_config.LocalProvider) ?proto.enums.AuthCredentialK
     };
 }
 
+const app_fixture = @import("fixture.zig");
 const testing = std.testing;
 
 test "auth.list reports the providers the environment offers, not only the file" {
     const zio = @import("zio");
-    const database = @import("../store/store.zig");
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
 
@@ -150,7 +150,7 @@ test "auth.list reports the providers the environment offers, not only the file"
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), transport.transport());
+    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), transport.transport());
     defer runtime.deinit();
     _ = try runtime.store.rebuild();
 
@@ -176,7 +176,6 @@ test "auth.list reports the providers the environment offers, not only the file"
 
 test "catalog.reload reads the file again and reports whether the revision moved" {
     const zio = @import("zio");
-    const database = @import("../store/store.zig");
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     var tmp = std.testing.tmpDir(.{});
@@ -189,7 +188,7 @@ test "catalog.reload reads the file again and reports whether the revision moved
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), transport.transport());
+    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), transport.transport());
     defer runtime.deinit();
     _ = try runtime.store.rebuild();
 

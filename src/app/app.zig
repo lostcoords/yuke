@@ -8,7 +8,6 @@ const zqlite = @import("zqlite");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
 const paths = @import("../paths.zig");
-const provider = @import("../provider/provider.zig");
 const provider_store = @import("../provider/provider_store.zig");
 const provider_registry = @import("../provider/registry.zig");
 const login_runtime = @import("../provider/oauth/login_runtime.zig");
@@ -99,41 +98,6 @@ pub const App = struct {
         return self;
     }
 
-    /// Build one app in caller memory around a test database. `deinit` closes it.
-    pub fn initTest(self: *App, gpa: std.mem.Allocator, io: std.Io, db: database.Database, blob_dir: []const u8, context: execution.Context, route_transport: ai.transport.Transport) !void {
-        self.* = .{
-            .gpa = gpa,
-            .io = io,
-            .http_transport = undefined,
-            .db = db,
-            .blob_dir = try gpa.dupe(u8, blob_dir),
-            .logins = .init(gpa),
-            .store = .init(gpa, io, context.env),
-            .engine = undefined,
-        };
-        self.engine = Engine.init(.{
-            .gpa = gpa,
-            .io = io,
-            .db = &self.db,
-            .blobs = .{ .dir = self.blob_dir },
-            .providers = &self.store,
-            .route_transport = route_transport,
-            .execution = context,
-        });
-    }
-
-    /// Offer `test/model` so a test that creates a session can name a model the catalog serves.
-    pub fn installTestModel(self: *App) !void {
-        std.debug.assert(builtin.is_test);
-        var local = try provider.config.loadBytes(self.gpa,
-            \\{"providers":[{"id":"test","base_url":"http://localhost:1/v1","endpoints":[{"protocol":"openai_chat"}],"models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}}]}]}
-        );
-        _ = self.store.installLocal(&local) catch |err| {
-            local.deinit();
-            return err;
-        };
-    }
-
     /// Publish one provider's new authentication state. A null `kind` means the engine holds no credential.
     pub fn announceAuthChanged(self: *App, provider_id: []const u8, kind: ?proto.enums.AuthCredentialKind) void {
         const note: proto.rpc.Notification = .{
@@ -176,25 +140,24 @@ pub const App = struct {
         return @import("../util.zig").newId(self.io);
     }
 
-    /// Join the maintenance task and close the store.
+    /// Close the app and release its allocation.
     pub fn close(self: *App) void {
         const gpa = self.gpa;
-        const io = self.io;
-        // Order is load-bearing. A login task publishes through the engine sinks, so every process
-        // task must join BEFORE the engine closes: `Engine.close` ends with `self.* = undefined`,
-        // and it suspends, so a task that runs after it would publish through a poisoned engine.
-        self.maintenance.cancel(io);
-        self.tasks.cancel(io);
         self.deinit();
-        self.http_transport.deinit();
         gpa.destroy(self);
     }
 
-    /// Close an app from `initTest`, which owns no tasks and no HTTP client.
+    /// Close every resource while the caller retains the app memory.
     pub fn deinit(self: *App) void {
+        std.debug.assert(self.engine.deps.db == &self.db);
+        std.debug.assert(self.engine.deps.providers == &self.store);
+        // Join every publisher before the engine closes and invalidates its sinks.
+        self.maintenance.cancel(self.io);
+        self.tasks.cancel(self.io);
         self.engine.close();
         self.deinitState();
         self.gpa.free(self.blob_dir);
+        self.http_transport.deinit();
     }
 
     fn deinitState(self: *App) void {
@@ -237,6 +200,7 @@ fn ensureDataDir(io: std.Io, dir: []const u8) !void {
 }
 
 /// The test dependencies. An empty environment allocates nothing, so no test frees it.
+const app_fixture = @import("fixture.zig");
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
 
@@ -273,7 +237,7 @@ test "a catalog replacement announces the merged revision" {
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&test_env), test_transport.transport());
+    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&test_env), test_transport.transport());
     defer runtime.deinit();
 
     const Seen = struct {

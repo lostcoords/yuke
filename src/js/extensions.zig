@@ -70,6 +70,7 @@ pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
 const ai = @import("ai");
 const database = @import("../store/store.zig");
 const tools_table = @import("tools.zig");
+const app_fixture = @import("../app/fixture.zig");
 const support = @import("test_support.zig");
 
 /// The boot a headless test host runs: the kernel and the plugin bus, and nothing of the view tier.
@@ -96,8 +97,8 @@ pub const Fixture = struct {
         self.canned = .{ .bytes = ai.transport.canned_reply };
         // One context, so a split between the two owners is a test failure and not a silent drift.
         const context = execution.testContext(&self.env);
-        try self.app.initTest(self.gpa.allocator(), self.reactor.io(), try database.Database.openTest(), root, context, self.canned.transport());
-        try self.app.installTestModel();
+        try app_fixture.init(&self.app, self.gpa.allocator(), self.reactor.io(), root, context, self.canned.transport());
+        try app_fixture.installModel(&self.app);
         try self.extensions.init(self.gpa.allocator(), self.reactor.io(), &self.app, .{
             .host = .{ .cwd = root, .execution = context },
             .boot = boot,

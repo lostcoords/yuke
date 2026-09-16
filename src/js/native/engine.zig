@@ -287,6 +287,7 @@ fn jsSetPromptConfig(ctx: Context, _: Value, args: []const Value) Value {
     return quickjs.UNDEFINED;
 }
 
+const app_fixture = @import("../../app/fixture.zig");
 const testing = std.testing;
 
 test "view integers stay within the protocol safe integer range" {
@@ -303,7 +304,6 @@ test "view integers stay within the protocol safe integer range" {
 
 test "a request reaches a command and answers with its result" {
     const ai = @import("ai");
-    const database = @import("../../store/store.zig");
 
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
@@ -313,9 +313,9 @@ test "a request reaches a command and answers with its result" {
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: app.App = undefined;
-    try runtime.initTest(testing.allocator, rt.io(), try database.Database.openTest(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), canned.transport());
+    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), canned.transport());
     defer runtime.deinit();
-    try runtime.installTestModel();
+    try app_fixture.installModel(&runtime);
 
     const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);

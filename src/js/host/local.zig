@@ -353,8 +353,8 @@ fn selectPage(io: std.Io, dir: std.Io.Dir, scratch: std.mem.Allocator, options: 
 
 const testing = std.testing;
 
-/// The environment every host test borrows. An empty environment allocates nothing, so no test frees it.
-pub var test_env: Map = .init(testing.allocator);
+/// The local host tests borrow this empty environment.
+const test_env: Map = .init(testing.allocator);
 
 const test_limits: h.ReadLimits = .{ .max_lines = 2000, .max_line_bytes = 64, .max_bytes = 4096 };
 

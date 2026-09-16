@@ -9,8 +9,7 @@ const quickjs = @import("quickjs");
 const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 const os = @import("../host/operations.zig");
-const local_host = @import("../host/local.zig");
-const LocalHost = local_host.LocalHost;
+const LocalHost = @import("../host/local.zig").LocalHost;
 const paths = @import("../../paths.zig");
 const pending = @import("../pending.zig");
 
@@ -322,7 +321,8 @@ test "list answers the directories of a real path and marks a repository" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var local: LocalHost = .{ .io = testing.io, .root = root, .env = &local_host.test_env };
+    const env: std.process.Environ.Map = .init(testing.allocator);
+    var local: LocalHost = .{ .io = testing.io, .root = root, .env = &env };
     const page = try local.listDir(arena, root, .{ .limit = max_entries, .include_files = false });
 
     var aw: std.Io.Writer.Allocating = .init(testing.allocator);

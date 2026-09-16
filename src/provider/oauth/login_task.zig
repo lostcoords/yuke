@@ -260,6 +260,7 @@ fn store(runtime: *App, arena: std.mem.Allocator, due: Due, grant: provider.conf
     runtime.announceAuthChanged(due.provider_id, .oauth);
 }
 
+const app_fixture = @import("../../app/fixture.zig");
 const testing = std.testing;
 
 /// One login under test. The engine borrows the runtime fields, so the probe must not move after `init`.
@@ -274,10 +275,9 @@ const Probe = struct {
     outcome: ?proto.auth.AuthLoginOutcome = null,
 
     fn init(self: *Probe, io: std.Io, replies: []const oauth.CannedHttp.Reply) !void {
-        const database = @import("../../store/store.zig");
         self.* = .{ .env = .init(testing.allocator), .canned = .{ .replies = replies } };
         self.blobs = testing.tmpDir(.{});
-        try self.runtime.initTest(testing.allocator, io, try database.Database.openTest(), self.blob_dir[0..try self.blobs.dir.realPath(testing.io, &self.blob_dir)], execution.testContext(&self.env), self.transport.transport());
+        try app_fixture.init(&self.runtime, testing.allocator, io, self.blob_dir[0..try self.blobs.dir.realPath(testing.io, &self.blob_dir)], execution.testContext(&self.env), self.transport.transport());
     }
 
     fn deinit(self: *Probe) void {

@@ -1,6 +1,7 @@
 //! A resident session exercises the real native projection and client page reads.
 
 const std = @import("std");
+const app_fixture = @import("../app/fixture.zig");
 const proto = @import("proto");
 const ai = @import("ai");
 const App = @import("../app/app.zig").App;
@@ -25,7 +26,7 @@ pub fn create(host: *Host, io: std.Io, scale: u32, native_stream: bool) !*Projec
     errdefer gpa.destroy(self);
     self.* = .{ .gpa = gpa, .app = undefined, .transport = .{ .bytes = "" }, .session = undefined, .session_id = undefined };
     // The bench never puts a blob, so the host working directory stands in for the store.
-    try self.app.initTest(gpa, io, try Database.openTest(), host.cwd, host.execution, self.transport.transport());
+    try app_fixture.init(&self.app, gpa, io, host.cwd, host.execution, self.transport.transport());
     errdefer self.app.deinit();
     const sid = proto.ids.SessionId.bytes([_]u8{7} ** 16);
     const session = try self.app.engine.sessions.getOrCreate(sid);

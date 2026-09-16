@@ -27,8 +27,34 @@ The first audit retains valid optional state:
 - The JS engine runtime can be absent before attachment or after detachment.
 - A cache child list can be absent after a failed read.
 
-The next fixture audit includes `App.initTest` and `execution.testContext`.
-The release benchmark also calls `App.initTest`; its name alone does not prove dead code.
+### App fixture audit
+
+`app/fixture.zig` now owns the private database setup for tests and the release benchmark.
+`App` no longer exposes `initTest` or `installTestModel`.
+The fixture copies the blob path before it opens the database.
+This removes the database ownership gap if the path allocation fails.
+The fixture initializes its HTTP client and scheduler instead of leaving them undefined.
+`App.deinit` now owns the same task, engine, store, and HTTP shutdown order for all callers.
+The local host test environment is private and immutable.
+
+The audit retains `execution.testContext`: several test modules use its shell policy.
+It also retains `Database.openTest`: both tests and the projection benchmark need a private database.
+Neither helper represents unused production state.
+
+This batch adds 15 net source lines and no tests; its benefit is resource ownership and API scope.
+The full test command passes all 42 steps, with 781 source tests run.
+The application build and format checks pass.
+The projection benchmark uses ReleaseFast, scale 1, and five repeats of 100 iterations.
+Before and after, all allocation, free, byte, remap, live/peak, and UI counters match for every repeat.
+The result checksums also match.
+The median repeat has 3,800 allocations, 3,798 frees, 88,127,800 allocated bytes,
+88,021,224 freed bytes, 4,500 remaps, 2,502,763 live bytes, and 2,908,679 peak bytes.
+Resize attempts and allocation failures are zero.
+Separate latency medians are 532.0 microseconds before and 525.5 after; no speed gain is claimed.
+The repeated-work counters exclude fixture setup; live and peak values include the harness state.
+Raw files are `/tmp/yuke-fixture-{before,after}-{metrics,latency}.jsonl` on this machine.
+Commands are `zig build bench -Doptimize=ReleaseFast -Dmetrics=true -- --phase projection`
+and `zig build bench -Doptimize=ReleaseFast -- --phase projection`.
 
 ### RPC audit
 
