@@ -326,13 +326,18 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
         .content => |c| c.content,
         .skill => |invocation| try skillContent(engine, arena, try session_store.skillCatalog(engine.deps.db, arena, sid), invocation, diagnostic),
     };
+    const skill_name: ?[]const u8 = switch (params.input) {
+        .content => null,
+        .skill => |invocation| invocation.name,
+    };
     try engine.deps.blobs.admit(engine.deps.io, arena, content);
     // A skill file read can yield, so use the current config after the read.
-    const snapshot = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
     const rt = try engine.activate(params.session_id);
     if (rt.faulted) return error.RuntimeFailed;
+    const context = try run.prepareContext(engine, arena, rt, false);
+    const snapshot = context.snapshot;
     const parent: ?proto.ids.SessionId = if (snapshot.parent_id) |id| .bytes(id) else null;
-    const tree = try admission.location(engine, arena, params.session_id);
+    const tree = context.tree;
     const source: ?proto.input.InputSource = if (params.parent_tool) |site| blk: {
         if (parent == null or !std.mem.eql(u8, &parent.?.raw, &site.session_id.raw)) return error.BadToolSite;
         try validateParentSite(engine, site);
@@ -343,16 +348,15 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
     if (available and rt.active_run == null and rt.queueDepth() > 0) launch.* = .{ .slot = try run.prepareQueued(engine, rt) };
 
     if (available and rt.active_run == null) {
-        const stored_prompt = try session_store.prompt(engine.deps.db, arena, sid);
-        var prepared = try run.RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, stored_prompt orelse "", snapshot.max_rounds);
+        var prepared = try run.prepareSlot(engine, arena, rt, context, .turn);
         errdefer prepared.deinit();
-        const started = try run.beginTurn(engine.deps.db, engine.deps.io, arena, sid, .{ .content = content, .source = source, .skill_name = if (params.input == .skill) params.input.skill.name else null }, snapshot.config_rev);
-        const slot = prepared.bind(started.handle, parent, tree);
+        const started = try run.beginTurn(engine.deps.db, engine.deps.io, arena, sid, .{ .content = content, .source = source, .skill_name = skill_name }, snapshot.config_rev);
+        const slot = run.bindPrepared(&prepared, context, started);
         rt.active_run = slot;
         launch.* = .{ .slot = slot };
         // Fold each durable event in sequence order: the user message, then run.started.
         session_events.publishUserCommits(engine, rt, started.user_commits);
-        session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
+        run.emitStarted(engine, rt, started);
         return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.started.run_id } };
     }
 
@@ -361,7 +365,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
     const now = engine.nowMillis();
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
-    const queued = try input_store.enqueue(engine.deps.db, arena, sid, engine.newId(), now, .{ .content = content, .source = source, .skill_name = if (params.input == .skill) params.input.skill.name else null }, now);
+    const queued = try input_store.enqueue(engine.deps.db, arena, sid, engine.newId(), now, .{ .content = content, .source = source, .skill_name = skill_name }, now);
     try tx.commit();
     session_events.emitDurable(engine, rt, .{ .method = .@"input.queued", .params = .{
         .input_queued_data = .{ .session_id = params.session_id, .seq = queued.seq, .input = queued.input },
@@ -479,20 +483,12 @@ pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto
 
 /// Collect the session and, with `cascade`, each session below it. The walk follows parent_id.
 fn removalSet(engine: *Engine, arena: std.mem.Allocator, root: [16]u8, cascade: bool) ![]const [16]u8 {
-    var out: std.ArrayList([16]u8) = .empty;
-    try out.append(arena, root);
-    if (!cascade) return out.items;
-    // A parent_id chain forms a tree, so a repeated id means a corrupt row.
-    var seen: std.AutoHashMapUnmanaged([16]u8, void) = .empty;
-    try seen.put(arena, root, {});
-    var frontier: usize = 0;
-    while (frontier < out.items.len) : (frontier += 1) {
-        for (try session_store.childIds(engine.deps.db, arena, out.items[frontier])) |child| {
-            if ((try seen.getOrPut(arena, child)).found_existing) return error.CorruptDatabase;
-            try out.append(arena, child);
-        }
+    if (!cascade) {
+        const ids = try arena.alloc([16]u8, 1);
+        ids[0] = root;
+        return ids;
     }
-    return out.items;
+    return engine.treeIds(arena, root);
 }
 
 /// Handle session.remove: delete the session and, with `cascade_children`, its children.
@@ -691,10 +687,8 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     } } else null };
 }
 
-const zio = @import("zio");
 const ai = @import("ai");
 const provider = @import("../provider/provider.zig");
-const provider_store = @import("../provider/provider_store.zig");
 
 const Resources = @import("test_resources.zig");
 

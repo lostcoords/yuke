@@ -301,12 +301,12 @@ fn listFiles(b: *std.Build, dir_path: []const u8, suffix: []const u8) []const []
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, suffix)) continue;
         names.append(b.allocator, b.dupe(entry.name)) catch @panic("OOM");
     }
-    std.mem.sort([]const u8, names.items, {}, lessThan);
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.lessThan(u8, lhs, rhs);
+        }
+    }.lessThan);
     return names.items;
-}
-
-fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
-    return std.mem.lessThan(u8, lhs, rhs);
 }
 
 /// The modules `src/js/native` installs in every host. The bake stubs these and rejects any other unknown import.

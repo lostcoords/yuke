@@ -75,9 +75,7 @@ export class Pager {
     let next = this.scroll;
     if (index < next) next = index;
     else if (index >= next + this._h) next = index - this._h + 1;
-    const max = this._maxScroll();
-    this.scroll = Math.min(Math.max(0, next), max);
-    this.stuck = this.scroll >= max;
+    this.scrollBy(next - this.scroll);
   }
 
   /** @param {RowSource} source */

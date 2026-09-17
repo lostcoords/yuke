@@ -315,7 +315,7 @@ fn setNotes(comptime Note: type, ctx: Context, ev: Value, entries: []const Note,
     const notes = ctx.newArray();
     for (entries, 0..) |note, index| {
         if (ctx.hasException()) break;
-        ctx.setPropertyUint32(notes, @intCast(index), ctx.parseJSON(note.text, property)) catch {};
+        module.setIndex(ctx, notes, index, ctx.parseJSON(note.text, property));
     }
     module.set(ctx, ev, property, notes);
 }
@@ -327,7 +327,7 @@ fn setFacts(ctx: Context, ev: Value, facts: FactSet) void {
     var it = facts.iterator();
     while (it.next()) |fact| : (index += 1) {
         if (ctx.hasException()) break;
-        ctx.setPropertyUint32(names, index, ctx.newString(@tagName(fact))) catch {};
+        module.setIndex(ctx, names, index, ctx.newString(@tagName(fact)));
     }
     module.set(ctx, ev, "facts", names);
 }

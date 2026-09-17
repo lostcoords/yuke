@@ -973,16 +973,6 @@ export class Document {
     return this._blocks.map((b) => ({ kind: b.kind, at: b.at, end: b.end }));
   }
 
-  // The fenced code blocks, in document order. The text is the body, without the fence lines.
-  /** @returns {{lang: string, text: string}[]} */
-  codeBlocks() {
-    const out = /** @type {{lang: string, text: string}[]} */ ([]);
-    for (const b of this._blocks) {
-      if (b.kind === "code") out.push({ lang: b.lang || "", text: b.lines.join("\n") });
-    }
-    return out;
-  }
-
   // The cache keys on the block offset, because a segment holds absolute offsets; `raw` catches a change under one offset.
   /** @param {Block} block @param {number} width @param {number} [limit] @returns {Row[]} */
   _blockRows(block, width, limit = Infinity) {

@@ -21,6 +21,12 @@ globalThis.done = 0;
   let directory = "";
   try { await fs.removeFile("."); } catch (e) { directory = e.message; }
   check("remove-directory-rejects", directory === "the path names a directory or a special file");
+  let coerced = false;
+  const path = { toString() { coerced = true; return "hello.txt"; } };
+  const wrongPath = async (call) => { try { await call(); return ""; } catch (e) { return e.message; } };
+  check("stat-non-string-rejects", await wrongPath(() => fs.stat(path)) === "the path must be a string with no NUL byte");
+  check("list-non-string-rejects", await wrongPath(() => fs.list(path)) === "the path must be a string with no NUL byte");
+  check("write-non-string-rejects", await wrongPath(() => fs.writeFile(path, "x")) === "the path must be a string with no NUL byte" && !coerced);
   // A NUL byte would cut the path short in the OS, so every path argument rejects it.
   const nulMessage = async (call) => { try { await call(); return ""; } catch (e) { return e.message; } };
   check("nul-remove-rejects", await nulMessage(() => fs.removeFile("hello.txt\0.bak")) === "the path must be a string with no NUL byte");

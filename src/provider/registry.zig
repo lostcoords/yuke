@@ -49,8 +49,8 @@ pub fn credential(source: CredentialSource, env: *const EnvMap, now_ms: u64) ?ai
         .none => .none,
         .env => |name| blk: {
             // An empty value is no value, so a run reports a missing credential and sends no header.
-            const value = env.get(name) orelse return null;
-            break :blk if (value.len == 0) null else .{ .api_key = value };
+            const value = envValue(env, name) orelse return null;
+            break :blk .{ .api_key = value };
         },
         .literal => |key| .{ .api_key = key },
         .oauth => |stored| blk: {
@@ -306,8 +306,7 @@ fn localAvailability(
         // The file names no credential, so the environment supplies the key the catalog names.
         .api_key => |named| {
             const name = named orelse return .{ .unavailable = .needs_credential };
-            const value = envValue(env, name) orelse return .{ .unavailable = .needs_credential };
-            std.debug.assert(value.len != 0); // `envValue` rejects a blank variable.
+            if (envValue(env, name) == null) return .{ .unavailable = .needs_credential };
             source = .{ .env = name };
         },
         // No variable can hold a grant, so this provider waits for a login.
@@ -320,17 +319,24 @@ fn localAvailability(
         else => &.{},
     };
     // The catalog can name the header, so check the composed set that the loader could not.
-    const endpoints = try arena.alloc(instance.Endpoint, declared.len);
-    for (declared, 0..) |e, i| {
-        endpoints[i] = e;
-        endpoints[i].key_header = switch (source) {
-            .none => null,
-            // A key needs a header to travel in.
-            .env, .literal => e.key_header orelse return .{ .unavailable = .needs_route },
-            // Every grant presents a bearer, whatever header a key would take on this path.
-            .oauth => .authorization_bearer,
-        };
-        if (ai.resolve.headerConflict(endpoints[i].mechanism().headerName(), pinned, headers)) {
+    const endpoints: []const instance.Endpoint = if (source == .env or source == .literal) blk: {
+        for (declared) |e| if (e.key_header == null) return .{ .unavailable = .needs_route };
+        break :blk declared;
+    } else blk: {
+        const out = try arena.alloc(instance.Endpoint, declared.len);
+        for (declared, 0..) |e, i| {
+            out[i] = e;
+            out[i].key_header = switch (source) {
+                .none => null,
+                // Every grant presents a bearer, whatever header a key would take on this path.
+                .oauth => .authorization_bearer,
+                else => unreachable,
+            };
+        }
+        break :blk out;
+    };
+    for (endpoints) |e| {
+        if (ai.resolve.headerConflict(e.mechanism().headerName(), pinned, headers)) {
             return .{ .unavailable = .needs_route };
         }
     }

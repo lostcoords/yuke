@@ -262,7 +262,6 @@ fn earlier(a: ?std.Io.Timestamp, b: std.Io.Timestamp) std.Io.Timestamp {
 fn absorbScriptFault(host: *Host, result: host_mod.Error!void) host_mod.Error!void {
     result catch |err| switch (err) {
         error.JavaScriptFault => report.paintFault(host),
-        else => |e| return e,
     };
 }
 

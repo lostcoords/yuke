@@ -93,24 +93,11 @@ pub fn sessionItem(arena: std.mem.Allocator, row: anytype) !proto.session.Sessio
     };
 }
 
-/// The active run identity that an activity projection needs.
-pub const RunInfo = struct {
-    run_id: proto.ids.RunId,
-    started_at_ms: u64,
-    kind: proto.enums.RunKind,
-    /// The reason for a compaction run. A turn carries none.
-    reason: ?proto.enums.CompactionReason = null,
-    /// The run pins one config revision, so the activity reads it here and never queries.
-    config: proto.run.RunConfig,
-    round: RunSlot.Round = .none,
-    compacting: bool = false,
-};
-
 /// Build an activity from the session projection and its context usage.
 fn sessionActivity(
     arena: std.mem.Allocator,
     session: *Session,
-    run_info: ?RunInfo,
+    slot: ?*RunSlot,
     context_usage: proto.message.TokenUsage,
 ) !proto.session.SessionActivity {
     var activity: proto.session.SessionActivity = .{
@@ -121,27 +108,31 @@ fn sessionActivity(
         .pending_compaction = if (session.pending_compaction) |pending| pending.run_id else null,
     };
 
-    const run = run_info orelse {
+    const run = slot orelse {
         std.debug.assert(session.draft == null); // A live draft belongs to an active run.
         return activity;
     };
-    activity.config = try proto.dupe(arena, run.config);
-    if (session.draft) |*draft| std.debug.assert(draft.config_rev == run.config.config_rev); // one run pins one revision
+    activity.config = try proto.dupe(arena, proto.run.RunConfig{
+        .config_rev = run.handle.started.config_rev,
+        .model = run.config.model,
+        .reasoning = run.config.reasoning,
+    });
+    if (session.draft) |*draft| std.debug.assert(draft.config_rev == run.handle.started.config_rev); // one run pins one revision
     if (run.compacting) {
         std.debug.assert(run.round == .none); // compaction runs before the round opens
-        activity.state = .{ .compacting = .{ .run_id = run.run_id, .reason = .auto, .started_at_ms = run.started_at_ms } };
+        activity.state = .{ .compacting = .{ .run_id = run.handle.started.run_id, .reason = .auto, .started_at_ms = run.handle.started.started_at_ms } };
         return activity;
     }
     activity.state = switch (run.round) {
         .retrying => |retry| try proto.dupe(arena, proto.activity.ActivityState{ .retrying = retry }),
         // The draft is open before the send, so the draft alone does not mean the provider answered.
-        .waiting => .{ .waiting = .{ .run_id = run.run_id, .started_at_ms = run.started_at_ms } },
+        .waiting => .{ .waiting = .{ .run_id = run.handle.started.run_id, .started_at_ms = run.handle.started.started_at_ms } },
         // A draft with no open round runs its tools between two rounds.
-        .streaming, .none => if (session.draft) |*draft| try proto.dupe(arena, draft.deriveStreamingState(run.started_at_ms)) else switch (run.kind) {
-            .turn => .{ .building = .{ .run_id = run.run_id, .started_at_ms = run.started_at_ms } },
+        .streaming, .none => if (session.draft) |*draft| try proto.dupe(arena, draft.deriveStreamingState(run.handle.started.started_at_ms)) else switch (run.handle.started.kind) {
+            .turn => .{ .building = .{ .run_id = run.handle.started.run_id, .started_at_ms = run.handle.started.started_at_ms } },
             .compaction => blk: {
-                std.debug.assert(run.reason != null); // the engine sets the reason at every compaction start
-                break :blk .{ .compacting = .{ .run_id = run.run_id, .reason = run.reason.?, .started_at_ms = run.started_at_ms } };
+                std.debug.assert(run.handle.started.reason != null); // the engine sets the reason at every compaction start
+                break :blk .{ .compacting = .{ .run_id = run.handle.started.run_id, .reason = run.handle.started.reason.?, .started_at_ms = run.handle.started.started_at_ms } };
             },
         },
     };
@@ -152,26 +143,13 @@ fn sessionActivity(
 /// Build the activity of one resident session.
 pub fn residentActivity(engine: *Engine, arena: std.mem.Allocator, rt: *Session) !proto.session.SessionActivity {
     const session_id = rt.id.raw;
-    const run_info: ?RunInfo = if (rt.active_run) |slot| .{
-        .run_id = slot.handle.started.run_id,
-        .started_at_ms = slot.handle.started.started_at_ms,
-        .kind = slot.handle.started.kind,
-        .reason = slot.handle.started.reason,
-        .config = .{
-            .config_rev = slot.handle.started.config_rev,
-            .model = slot.config.model,
-            .reasoning = slot.config.reasoning,
-        },
-        .round = slot.round,
-        .compacting = slot.compacting,
-    } else null;
     // Only a committed message moves the gauge, and nothing commits inside a round.
     const usage = rt.context_usage orelse blk: {
         const read = try message_store.contextUsage(engine.deps.db, arena, session_id);
         rt.context_usage = read;
         break :blk read;
     };
-    return sessionActivity(arena, rt, run_info, usage);
+    return sessionActivity(arena, rt, rt.active_run, usage);
 }
 
 /// Fold a durable engine event into the session, then publish the same value.

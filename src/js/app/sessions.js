@@ -26,7 +26,7 @@ export class SessionFeed {
 
   /** @param {Wire.SessionListResult} listResult @returns {void} */
   seed(listResult) {
-    touchFeed();
+    feedsRev++;
     this.items.clear();
     const items = listResult && listResult.items ? listResult.items : [];
     for (const it of items) if (it && it.session) this.items.set(it.session.id, it);
@@ -41,7 +41,7 @@ export class SessionFeed {
 
   /** @returns {void} */
   clear() {
-    touchFeed();
+    feedsRev++;
     this.items.clear();
     this.loaded = false;
   }
@@ -66,11 +66,6 @@ const feed = new SessionFeed();
 
 // The feed only changes on a read, so the rows are rebuilt on a change and not on every frame.
 let feedsRev = 0;
-
-/** @returns {void} */
-function touchFeed() {
-  feedsRev++;
-}
 
 /** @type {{ rev: number, session: Wire.Session | null }} */
 let newestLocal = { rev: -1, session: null };
@@ -101,16 +96,6 @@ export function feedOf() {
   return feed;
 }
 
-
-/** @param {SessionRow} row @returns {string} */
-export function rowKey(row) {
-  return row.id;
-}
-
-/** @param {SessionRow} row @returns {string} */
-export function rowLabel(row) {
-  return row.title;
-}
 /** @param {Wire.Session} s @returns {string} */
 function sessionTitle(s) {
   const t = (s && s.title ? s.title : "").trim();

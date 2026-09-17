@@ -82,6 +82,9 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   const { events } = await import("yuke:kernel");
   const changes = [];
   const off = events.on("jobs.changed", (job) => { changes.push(`${job.id} ${job.state}`); job.state = "mutated"; });
+  let uppercase = "";
+  try { await startJob("true", { root: "/tmp", sessionId: "AA" + "00".repeat(15) }); } catch (e) { uppercase = e.message; }
+  check("uppercase-session-rejects", uppercase === "the session id must be 32 lowercase hex digits");
   const long = await startJob("sleep 30", { root: "/tmp", sessionId: "01010101010101010101010101010101" });
   const quick = await startJob("echo out; echo bad 1>&2; echo \"$PYTHONUNBUFFERED\"; exit 3", { root: "/tmp" });
   await until(() => jobs.get(quick.id)?.state === "exited");

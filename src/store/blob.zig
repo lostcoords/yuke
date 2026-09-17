@@ -67,18 +67,18 @@ pub const Store = struct {
 
     /// Refuse an input whose media parts name bytes the store does not hold as described.
     pub fn admit(self: Store, io: std.Io, arena: std.mem.Allocator, content: []const proto.content.ContentPart) AdmitError!void {
-        var blobs: [max_images_per_input]MediaBlob = undefined;
+        std.debug.assert(self.dir.len != 0);
         var count: usize = 0;
         for (content) |part| switch (part) {
             .text => {},
-            .image => |image| {
-                if (count == blobs.len) return error.BlobTooManyImages;
-                blobs[count] = image.source;
+            .image => {
                 count += 1;
+                if (count > max_images_per_input) return error.BlobTooManyImages;
             },
             .audio, .file => return error.BlobUnsupportedPart,
         };
-        return self.admitBlobs(io, arena, blobs[0..count]);
+        for (content) |part| if (part == .image) try self.admitBlob(io, arena, part.image.source);
+        if (count != 0) try syncDirectories(io, self.dir);
     }
 
     /// Refuse a list that is too long or names bytes the store does not hold as described.

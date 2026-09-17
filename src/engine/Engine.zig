@@ -4,14 +4,12 @@ const std = @import("std");
 const ai = @import("ai");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
-const provider = @import("../provider/provider.zig");
 const provider_store = @import("../provider/provider_store.zig");
 const Session = @import("../session/session.zig").Session;
 const session = @import("../session/session.zig");
 const retry = @import("ai").retry;
 const transcript = @import("../session/transcript.zig");
 const util = @import("../util.zig");
-const zio = @import("zio");
 const Sinks = @import("sink.zig").Sinks;
 const toolset = @import("toolset.zig");
 const hookset = @import("hookset.zig");
@@ -75,14 +73,8 @@ pub fn ownNewRoot(self: *Engine, id: proto.ids.SessionId) !void {
     defer self.owner_mutex.unlock(self.deps.io);
     if (self.closing) return error.EngineClosing;
     std.debug.assert(!self.owners.contains(id.raw));
-    try self.owners.ensureUnusedCapacity(self.deps.gpa, 1);
-    var guard = try ownership.acquire(self.deps.gpa, self.deps.io, self.deps.db, id.raw);
-    if (self.closing) {
-        guard.release(self.deps.io);
-        return error.EngineClosing;
-    }
+    const guard = try self.claim(id.raw);
     guard.repaired = true;
-    self.owners.putAssumeCapacity(id.raw, guard);
 }
 
 /// Release a root claim after its last resident leaves.
@@ -164,13 +156,7 @@ pub fn own(self: *Engine, session_id: proto.ids.SessionId) !void {
     if (self.closing) return error.EngineClosing;
     if (!try database.session.exists(self.deps.db, arena, session_id.raw)) return error.UnknownSession;
     if (!self.owners.contains(id)) {
-        try self.owners.ensureUnusedCapacity(self.deps.gpa, 1);
-        const guard = try ownership.acquire(self.deps.gpa, self.deps.io, self.deps.db, id);
-        if (self.closing) {
-            guard.release(self.deps.io);
-            return error.EngineClosing;
-        }
-        self.owners.putAssumeCapacity(id, guard);
+        _ = try self.claim(id);
     }
     const guard = self.owners.getPtr(id).?;
     if (guard.repaired) return;
@@ -185,8 +171,21 @@ pub fn own(self: *Engine, session_id: proto.ids.SessionId) !void {
     for (wake.items) |sid| reports.requestWake(self, sid);
 }
 
+/// Claim one tree while the caller holds the owner lock.
+fn claim(self: *Engine, id: [16]u8) !*ownership.Guard {
+    std.debug.assert(!self.owners.contains(id));
+    try self.owners.ensureUnusedCapacity(self.deps.gpa, 1);
+    var guard = try ownership.acquire(self.deps.gpa, self.deps.io, self.deps.db, id);
+    if (self.closing) {
+        guard.release(self.deps.io);
+        return error.EngineClosing;
+    }
+    self.owners.putAssumeCapacity(id, guard);
+    return self.owners.getPtr(id).?;
+}
+
 /// Traverse only child links; a fork owns its own tree.
-fn treeIds(self: *Engine, arena: std.mem.Allocator, root: [16]u8) ![]const [16]u8 {
+pub fn treeIds(self: *Engine, arena: std.mem.Allocator, root: [16]u8) ![]const [16]u8 {
     var ids: std.ArrayList([16]u8) = .empty;
     var seen: std.AutoHashMapUnmanaged([16]u8, void) = .empty;
     try ids.append(arena, root);

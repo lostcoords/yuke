@@ -60,23 +60,22 @@ fn jsDiff(ctx: Context, _: Value, args: []const Value) Value {
 /// Build `{path, hunks}`. The caller reads the exception once the whole value is built.
 fn fileOf(ctx: Context, arena: std.mem.Allocator, path: []const u8, hunks: []const diff.Hunk) Value {
     const out = ctx.newObject();
-    set(ctx, out, "path", ctx.newString(path));
+    module.set(ctx, out, "path", ctx.newString(path));
     const list = ctx.newArray();
-    // `set` takes the array reference, so the loop below writes through the one the object holds.
-    set(ctx, out, "hunks", list);
-    for (hunks, 0..) |hunk, i| append(ctx, list, i, hunkOf(ctx, arena, hunk));
+    module.set(ctx, out, "hunks", list);
+    for (hunks, 0..) |hunk, i| module.setIndex(ctx, list, i, hunkOf(ctx, arena, hunk));
     return out;
 }
 
 /// Build one hunk. The start values stay as the difference states them: 1-based, 0 for an empty side.
 fn hunkOf(ctx: Context, arena: std.mem.Allocator, hunk: diff.Hunk) Value {
     const out = ctx.newObject();
-    set(ctx, out, "oldStart", ctx.newInt64(hunk.old_start));
-    set(ctx, out, "oldLines", ctx.newInt64(hunk.old_lines));
-    set(ctx, out, "newStart", ctx.newInt64(hunk.new_start));
-    set(ctx, out, "newLines", ctx.newInt64(hunk.new_lines));
+    module.set(ctx, out, "oldStart", ctx.newInt64(hunk.old_start));
+    module.set(ctx, out, "oldLines", ctx.newInt64(hunk.old_lines));
+    module.set(ctx, out, "newStart", ctx.newInt64(hunk.new_start));
+    module.set(ctx, out, "newLines", ctx.newInt64(hunk.new_lines));
     const list = ctx.newArray();
-    set(ctx, out, "lines", list);
+    module.set(ctx, out, "lines", list);
     for (hunk.lines, 0..) |line, i| {
         // The wire carries plain strings. The leading mark identifies the operation.
         const mark: u8 = switch (line.op) {
@@ -85,19 +84,7 @@ fn hunkOf(ctx: Context, arena: std.mem.Allocator, hunk: diff.Hunk) Value {
             .insert => '+',
         };
         const text = std.fmt.allocPrint(arena, "{c}{s}", .{ mark, line.text }) catch unreachable;
-        append(ctx, list, i, ctx.newString(text));
+        module.setIndex(ctx, list, i, ctx.newString(text));
     }
     return out;
-}
-
-/// Set one property, or drop the value once the QuickJS heap is full; the caller reads the exception at the end.
-fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
-    if (ctx.hasException()) return ctx.freeValue(value);
-    ctx.setPropertyStr(obj, name, value) catch {};
-}
-
-/// Append one entry under the same rule as `set`.
-fn append(ctx: Context, list: Value, index: usize, value: Value) void {
-    if (ctx.hasException()) return ctx.freeValue(value);
-    ctx.setPropertyUint32(list, @intCast(index), value) catch {};
 }

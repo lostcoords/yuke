@@ -47,15 +47,15 @@ fn errorMessage(err: os.HostError) []const u8 {
     };
 }
 
-/// Take the path argument, or the directory the process runs in when it is absent.
-fn pathArg(ctx: Context, arena: std.mem.Allocator, args: []const Value, idx: usize, root: []const u8) ?[]const u8 {
-    if (args.len <= idx or ctx.isUndefined(args[idx]) or ctx.isNull(args[idx])) return root;
+/// Copy one path argument, or `default` when it is absent or empty.
+fn ownedPath(ctx: Context, gpa: std.mem.Allocator, args: []const Value, idx: usize, default: []const u8) ?[]u8 {
+    if (args.len <= idx or ctx.isUndefined(args[idx]) or ctx.isNull(args[idx])) return gpa.dupe(u8, default) catch unreachable;
+    if (!ctx.isString(args[idx])) return null;
     const raw = ctx.toCStringLen(args[idx]) catch return null;
     defer ctx.freeCString(raw.ptr);
-    if (raw.len == 0) return root;
-    // The OS reads a path up to a NUL byte, so a path with a NUL names a different file.
+    // The OS stops at a NUL byte, so the check rejects a different file name.
     if (std.mem.indexOfScalar(u8, raw, 0) != null) return null;
-    return arena.dupe(u8, raw) catch unreachable;
+    return gpa.dupe(u8, if (raw.len == 0) default else raw) catch unreachable;
 }
 
 /// One scratch arena and one local host for a single call. The host anchors a relative path.
@@ -99,8 +99,8 @@ const read_limits: os.ReadLimits = .{
 fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     // The task cannot touch JavaScript, so the path is copied before it starts.
-    const root = ownedPath(ctx, host, args, 1) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
-    const path = ownedPath(ctx, host, args, 0) orelse {
+    const root = ownedPath(ctx, host.gpa, args, 1, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    const path = ownedPath(ctx, host.gpa, args, 0, host.cwd) orelse {
         host.gpa.free(root);
         return rejected(ctx, "the path must be a string with no NUL byte");
     };
@@ -110,8 +110,8 @@ fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
 /// Read bounded whole lines. The task owns the path and returns a small JSON range descriptor.
 fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = ownedPath(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
-    const path = ownedPath(ctx, host, args, 0) orelse {
+    const root = ownedPath(ctx, host.gpa, args, 2, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    const path = ownedPath(ctx, host.gpa, args, 0, host.cwd) orelse {
         host.gpa.free(root);
         return rejected(ctx, "the path must be a string with no NUL byte");
     };
@@ -172,26 +172,16 @@ fn encodeRange(gpa: std.mem.Allocator, got: os.FileRead) [:0]u8 {
     return list.toOwnedSliceSentinel(gpa, 0) catch unreachable;
 }
 
-/// Copy one path argument so a task can read it after the call returns. An absent or empty one is the cwd.
-fn ownedPath(ctx: Context, host: *Host, args: []const Value, idx: usize) ?[]u8 {
-    if (args.len <= idx or ctx.isUndefined(args[idx]) or ctx.isNull(args[idx])) return host.gpa.dupe(u8, host.cwd) catch unreachable;
-    if (!ctx.isString(args[idx])) return null;
-    const raw = ctx.toCStringLen(args[idx]) catch return null;
-    defer ctx.freeCString(raw.ptr);
-    if (std.mem.indexOfScalar(u8, raw, 0) != null) return null;
-    return host.gpa.dupe(u8, if (raw.len == 0) host.cwd else raw) catch unreachable;
-}
-
 /// Replace a file's whole content. It answers the byte count it wrote.
 fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = ownedPath(ctx, host, args, 2) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    const root = ownedPath(ctx, host.gpa, args, 2, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
     defer host.gpa.free(root);
     var call = Call.open(host, root);
     defer call.close();
 
     if (args.len < 2) return rejected(ctx, "writeFile needs a path and content");
-    const path = pathArg(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const path = ownedPath(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     if (!ctx.isString(args[1])) return rejected(ctx, "the content must be a string");
     const raw = ctx.toCStringLen(args[1]) catch return rejected(ctx, "the content must be a string");
     defer ctx.freeCString(raw.ptr);
@@ -203,20 +193,20 @@ fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
 /// Describe one path, or answer null when nothing is there. The answer names the anchored path.
 fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = ownedPath(ctx, host, args, 1) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    const root = ownedPath(ctx, host.gpa, args, 1, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
     defer host.gpa.free(root);
     var call = Call.open(host, root);
     defer call.close();
 
-    const path = pathArg(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const path = ownedPath(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     const info = call.local.stat(call.alloc(), path) catch |err| switch (err) {
         error.NotFound => return resolved(ctx, quickjs.NULL),
         else => return rejected(ctx, errorMessage(err)),
     };
     const out = ctx.newObject();
-    ctx.setPropertyStr(out, "path", ctx.newString(info.path)) catch {};
-    ctx.setPropertyStr(out, "isDirectory", ctx.newBool(info.is_dir)) catch {};
-    ctx.setPropertyStr(out, "lastModifiedMs", ctx.newInt64(@intCast(info.last_modified_ms))) catch {};
+    module.set(ctx, out, "path", ctx.newString(info.path));
+    module.set(ctx, out, "isDirectory", ctx.newBool(info.is_dir));
+    module.set(ctx, out, "lastModifiedMs", ctx.newInt64(@intCast(info.last_modified_ms)));
     // A full QuickJS heap throws at the caller, because no promise can be built for it either.
     if (ctx.hasException()) {
         ctx.freeValue(out);
@@ -232,7 +222,7 @@ fn jsRemoveFile(ctx: Context, _: Value, args: []const Value) Value {
     defer call.close();
 
     if (args.len < 1 or !ctx.isString(args[0])) return rejected(ctx, "removeFile needs a path");
-    const path = pathArg(ctx, call.alloc(), args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const path = ownedPath(ctx, call.alloc(), args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     call.local.removeFile(call.alloc(), path) catch |err| switch (err) {
         error.NotFound => return resolved(ctx, ctx.newBool(false)),
         else => return rejected(ctx, errorMessage(err)),
@@ -247,7 +237,7 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     defer call.close();
     const arena = call.alloc();
 
-    const requested = pathArg(ctx, arena, args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const requested = ownedPath(ctx, arena, args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     const path = paths.canonicalizeWorkspace(arena, host.execution.env, requested) catch |err| switch (err) {
         error.HomeUnavailable => return rejected(ctx, errorMessage(error.HomeUnavailable)),
         else => return rejected(ctx, "the path is not a directory this process can read"),

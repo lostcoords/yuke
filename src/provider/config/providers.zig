@@ -52,12 +52,6 @@ pub const CredentialSource = union(enum) {
     literal: []const u8,
 };
 
-/// A `union(enum)` renders as one tagged key, so an api_key entry keeps the shape it always had.
-const FileAuth = LocalAuth;
-
-/// The file writes a header in the shape the provider layer already defines.
-const FileHeader = instance.Header;
-
 /// How one model reads and writes, in the flat shape the file states it.
 pub const FileFlags = struct {
     supports_vision: bool = false,
@@ -132,13 +126,13 @@ const FileProvider = struct {
     id: []const u8,
     base_url: ?[]const u8 = null,
     /// The long form names the source.
-    auth: ?FileAuth = null,
+    auth: ?LocalAuth = null,
     /// The short form. It is a literal key, and the endpoints name the header.
     api_key: ?[]const u8 = null,
     session_header: ?instance.SessionHeader = null,
     /// The paths this host serves. A list here replaces the catalog list as a whole.
     endpoints: ?[]const instance.Endpoint = null,
-    headers: ?[]const FileHeader = null,
+    headers: ?[]const instance.Header = null,
     models: []const FileModel = &.{},
 };
 
@@ -150,10 +144,10 @@ const FileDoc = struct {
 const WritableProvider = struct {
     id: []const u8,
     base_url: ?[]const u8 = null,
-    auth: ?FileAuth = null,
+    auth: ?LocalAuth = null,
     session_header: ?instance.SessionHeader = null,
     endpoints: ?[]const instance.Endpoint = null,
-    headers: ?[]const FileHeader = null,
+    headers: ?[]const instance.Header = null,
     models: ?[]const FileModel = null,
 };
 
@@ -224,9 +218,7 @@ pub fn serialize(gpa: Allocator, providers: []const LocalProvider) ![]u8 {
     defer arena.deinit();
 
     const doc: WritableDoc = .{ .providers = try fileProviders(arena.allocator(), providers) };
-    var json: std.Io.Writer.Allocating = .init(arena.allocator());
-    try std.json.Stringify.value(doc, .{ .emit_null_optional_fields = false, .whitespace = .indent_2 }, &json.writer);
-    return gpa.dupe(u8, json.written());
+    return std.json.Stringify.valueAlloc(gpa, doc, .{ .emit_null_optional_fields = false, .whitespace = .indent_2 });
 }
 
 /// Replace the absolute `path` with `bytes` after the caller renders and validates the document; create the parent directory when absent so a first write on a clean machine works.

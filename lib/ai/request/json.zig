@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-pub fn field(jw: *std.json.Stringify, key: []const u8, value: []const u8) !void {
+pub fn field(jw: *std.json.Stringify, key: []const u8, value: anytype) !void {
     try jw.objectField(key);
     try jw.write(value);
 }
@@ -11,8 +11,7 @@ pub fn field(jw: *std.json.Stringify, key: []const u8, value: []const u8) !void 
 pub fn nested(jw: *std.json.Stringify, key: []const u8, inner_key: []const u8, value: anytype) !void {
     try jw.objectField(key);
     try jw.beginObject();
-    try jw.objectField(inner_key);
-    try jw.write(value);
+    try field(jw, inner_key, value);
     try jw.endObject();
 }
 
@@ -27,8 +26,7 @@ pub fn schemaMembers(jw: *std.json.Stringify, name: []const u8, schema: []const 
     try field(jw, "name", name);
     try jw.objectField("schema");
     try writeRawJson(jw, schema);
-    try jw.objectField("strict");
-    try jw.write(strict);
+    try field(jw, "strict", strict);
 }
 
 /// Write bytes as a base64 JSON string, in chunks, so no encoded copy of the media is ever held.
@@ -95,11 +93,9 @@ test "base64 survives the chunk boundary it encodes across" {
 /// Write the sampling members a request states. An absent member leaves the endpoint default.
 pub fn sampling(jw: *std.json.Stringify, temperature: ?f64, top_p: ?f64) !void {
     if (temperature) |value| {
-        try jw.objectField("temperature");
-        try jw.write(value);
+        try field(jw, "temperature", value);
     }
     if (top_p) |value| {
-        try jw.objectField("top_p");
-        try jw.write(value);
+        try field(jw, "top_p", value);
     }
 }

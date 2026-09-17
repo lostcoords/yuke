@@ -244,23 +244,6 @@ pub const numeric_enums = [_]EnumEntry{
     .{ .name = "ErrorCode", .ty = enums.ErrorCode },
 };
 
-/// The emission order lists the string enums, then the one numeric enum after the second; the list derives from the two tables, so adding or removing an enum needs no edit here.
-pub const enum_order = blk: {
-    const Ordered = struct { entry: EnumEntry, numeric: bool };
-    var out: [string_enums.len + numeric_enums.len]Ordered = undefined;
-    var i: usize = 0;
-    for (string_enums, 0..) |entry, n| {
-        out[i] = .{ .entry = entry, .numeric = false };
-        i += 1;
-        if (n == 1) {
-            out[i] = .{ .entry = numeric_enums[0], .numeric = true };
-            i += 1;
-        }
-    }
-    const frozen = out;
-    break :blk frozen;
-};
-
 pub const aliases = [_]AliasEntry{
     .{ .name = "ProviderId", .base = "string" },
     .{ .name = "MessagePartDeltaData", .base = "PartDelta" },

@@ -4,8 +4,25 @@ const std = @import("std");
 
 const disc = "type";
 
+/// Provide the JSON codec methods that a tagged union exposes to `std.json`.
+pub fn Codec(comptime T: type) type {
+    return struct {
+        pub fn jsonParse(a: std.mem.Allocator, source: anytype, o: std.json.ParseOptions) !T {
+            return parse(T, a, source, o);
+        }
+
+        pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !T {
+            return fromValue(T, a, v, o);
+        }
+
+        pub fn jsonStringify(self: T, jw: *std.json.Stringify) !void {
+            return stringify(T, self, jw);
+        }
+    };
+}
+
 /// Decode a tagged wire union from JSON.
-pub fn jsonParse(comptime T: type, a: std.mem.Allocator, source: anytype, o: std.json.ParseOptions) !T {
+fn parse(comptime T: type, a: std.mem.Allocator, source: anytype, o: std.json.ParseOptions) !T {
     const v = try std.json.Value.jsonParse(a, source, o);
     return fromValue(T, a, v, o);
 }

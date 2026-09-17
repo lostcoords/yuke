@@ -1,5 +1,5 @@
 import { check } from "yuke:test";
-import { hitRate, cacheSaving, hitBar, cacheRows, rateLabelOf } from "yuke:cache";
+import { hitRate, cacheSaving, cacheRows, rateLabelOf } from "yuke:cache";
 
 const usage = { input: 1000000, output: 20000, reasoning: 5000, cache_read: 900000, cache_write: 0 };
 const cold = { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 };
@@ -8,9 +8,6 @@ check("hit-rate", hitRate(usage) === 0.9 && hitRate(cold) === 0);
 // A model that names no cache price reads every cached token at the input price, so it saves nothing.
 check("saving", cacheSaving(usage, { input: 10, cache_read: 2 }) === 7.2 && cacheSaving(usage, { input: 10 }) === 0);
 check("saving-unpriced", cacheSaving(usage, {}) === 0);
-check("bar", hitBar(0) === "[░░░░░░░░░░]" && hitBar(1) === "[██████████]" && hitBar(0.5) === "[█████░░░░░]");
-// A share outside the range still draws ten cells rather than a broken row.
-check("bar-clamped", hitBar(-1) === "[░░░░░░░░░░]" && hitBar(9) === "[██████████]");
 
 // Every price reads to the cent, so a column of rates lines up.
 check("rate", rateLabelOf({ input: 0.2, cache_read: 0.02, output: 1.2 }) === "$0.20 in · $0.02 cache · $1.20 out, per 1M");

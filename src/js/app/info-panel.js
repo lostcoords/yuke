@@ -1,8 +1,10 @@
-import { text } from "yuke:core";
+import { root, text } from "yuke:core";
+import { Window } from "yuke:ui";
 import { clip } from "yuke:text-input";
 import { strokeOf } from "yuke:keys";
 
 /** @import { Rect } from "./types/core.js" */
+/** @import { InjectContext } from "./types/ext.js" */
 
 // A two-column information panel shares the cache and context window layout.
 export class InfoPanel {
@@ -35,4 +37,14 @@ export class InfoPanel {
     if (event.type === "key" && (strokeOf(event) === "esc" || strokeOf(event) === "q")) this.onClose();
     return true;
   }
+}
+
+/** @param {InjectContext<"tui">} ctx @param {string} title @param {[string, string][]} rows @returns {void} */
+export function showInfo(ctx, title, rows) {
+  /** @type {() => void} */
+  let release = () => {};
+  const panel = new InfoPanel(rows, () => release());
+  const win = new Window({ title, footer: "esc close", border: "rounded", width: max => Math.round(max * 0.6), contentHeight: panel.rows.length, content: panel });
+  root.pushOverlay(win);
+  release = ctx.tui.overlay(win);
 }

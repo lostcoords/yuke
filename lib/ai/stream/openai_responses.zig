@@ -79,14 +79,14 @@ pub const Reducer = struct {
         const blocks = self.blocks.items;
         for (blocks) |*block| {
             block.args.deinit(self.gpa);
-            self.release(block.call_id);
-            self.release(block.name);
-            self.release(block.signature);
-            if (block.authoritative_args) |arguments| self.release(arguments);
+            json.release(self.gpa, block.call_id);
+            json.release(self.gpa, block.name);
+            json.release(self.gpa, block.signature);
+            if (block.authoritative_args) |arguments| json.release(self.gpa, arguments);
         }
         self.blocks.deinit(self.gpa);
         self.outputs.deinit(self.gpa);
-        self.release(self.raw_stop_reason);
+        json.release(self.gpa, self.raw_stop_reason);
         self.* = undefined;
     }
 
@@ -102,10 +102,7 @@ pub const Reducer = struct {
         // The first terminal decides the turn. Drop every later frame before the parse can reject it.
         if (self.done_emitted) return;
 
-        const root = std.json.parseFromSliceLeaky(std.json.Value, scratch, data, .{}) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.Protocol,
-        };
+        const root = try json.parse(data, scratch);
         const kind = std.meta.stringToEnum(ResponsesEvent, json.fieldStr(root, "type") orelse return error.Protocol) orelse return; // Unknown event types do nothing.
 
         switch (kind) {
@@ -149,8 +146,8 @@ pub const Reducer = struct {
         const call_id = json.fieldStr(item, "call_id") orelse return error.Protocol;
         const name = json.fieldStr(item, "name") orelse return error.Protocol;
         const block = try self.addBlock(.tool);
-        block.call_id = try self.own(call_id);
-        block.name = try self.own(name);
+        block.call_id = try json.own(self.gpa, call_id);
+        block.name = try json.own(self.gpa, name);
         const id: event.BlockId = @intCast(self.blocks.items.len - 1);
         entry.value_ptr.kind = .tool;
         entry.value_ptr.tool = id;
@@ -198,8 +195,7 @@ pub const Reducer = struct {
         const block = try self.openBlock(id);
         const fragment = json.fieldStr(root, "delta") orelse return error.Protocol;
         if (block.authoritative_args != null) return error.Protocol;
-        std.debug.assert(block.args.items.len <= event.max_tool_arg_bytes);
-        if (fragment.len > event.max_tool_arg_bytes - block.args.items.len) return error.Protocol;
+        try json.checkToolArgSize(block.args.items.len, fragment, event.max_tool_arg_bytes);
         try block.args.appendSlice(self.gpa, fragment);
         try out.append(self.gpa, .{ .tool_input_delta = .{ .block = id, .partial_json = fragment } });
     }
@@ -226,7 +222,7 @@ pub const Reducer = struct {
         if (block.authoritative_args != null) return error.Protocol;
         const arguments = json.fieldStr(root, "arguments") orelse return error.Protocol;
         // Keep the accumulated buffer when the echo matches. Own a different value.
-        if (!std.mem.eql(u8, arguments, block.args.items)) block.authoritative_args = try self.own(arguments);
+        if (!std.mem.eql(u8, arguments, block.args.items)) block.authoritative_args = try json.own(self.gpa, arguments);
     }
 
     fn onOutputItemDone(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
@@ -248,7 +244,7 @@ pub const Reducer = struct {
                     break :blk new_id;
                 };
                 if (id) |rid| {
-                    if (encrypted.len != 0) (try self.openBlock(rid)).signature = try self.own(encrypted);
+                    if (encrypted.len != 0) (try self.openBlock(rid)).signature = try json.own(self.gpa, encrypted);
                     try self.stopBlockIfOpen(rid, out);
                 }
             },
@@ -271,7 +267,7 @@ pub const Reducer = struct {
                     if (block.authoritative_args) |echo| {
                         if (!std.mem.eql(u8, echo, arguments)) return error.Protocol;
                     } else if (!std.mem.eql(u8, arguments, block.args.items)) {
-                        block.authoritative_args = try self.own(arguments);
+                        block.authoritative_args = try json.own(self.gpa, arguments);
                     }
                 }
                 try self.stopBlock(id, out);
@@ -286,7 +282,7 @@ pub const Reducer = struct {
         try self.recordUsage(response);
         // This API reports `completed` even for a response that holds a function call.
         self.stop_reason = if (self.refused) .refusal else if (self.hasToolBlock()) .tool_calls else .stop;
-        try self.setRawStopReason("completed");
+        try json.replaceOwned(self.gpa, &self.raw_stop_reason, "completed");
         try self.emitDone(out);
     }
 
@@ -308,7 +304,7 @@ pub const Reducer = struct {
             }
         }
         self.stop_reason = mapIncompleteReason(reason);
-        try self.setRawStopReason(reason);
+        try json.replaceOwned(self.gpa, &self.raw_stop_reason, reason);
         try self.emitDone(out);
     }
 
@@ -333,11 +329,7 @@ pub const Reducer = struct {
             try self.stopBlockIfOpen(@intCast(i), out);
         }
         self.done_emitted = true;
-        try out.append(self.gpa, .{ .done = .{
-            .stop_reason = self.stop_reason,
-            .raw_stop_reason = self.raw_stop_reason,
-            .usage = self.usage,
-        } });
+        try json.appendDone(self.gpa, out, self.stop_reason, self.raw_stop_reason, self.usage);
     }
 
     /// Find the item an event names. An `item_id` that names another item rejects the frame.
@@ -409,21 +401,6 @@ pub const Reducer = struct {
             } },
         };
         try out.append(self.gpa, .{ .block_stopped = .{ .block = id, .result = result } });
-    }
-
-    /// Copy peer bytes into reducer memory until `deinit`.
-    fn own(self: *Reducer, bytes: []const u8) Error![]const u8 {
-        return self.gpa.dupe(u8, bytes);
-    }
-
-    fn setRawStopReason(self: *Reducer, raw: []const u8) Error!void {
-        const owned = try self.own(raw);
-        self.release(self.raw_stop_reason);
-        self.raw_stop_reason = owned;
-    }
-
-    fn release(self: *Reducer, bytes: []const u8) void {
-        if (bytes.len != 0) self.gpa.free(bytes);
     }
 };
 

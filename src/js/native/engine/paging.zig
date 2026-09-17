@@ -13,37 +13,6 @@ pub const max_page_bytes: usize = 64 * 1024;
 /// The widest UTF-8 character, so a page below this size can hold no character.
 pub const max_char_bytes: usize = 4;
 
-/// Call `each` with the text of every text-bearing part of one message, in order.
-pub fn forEachText(
-    s: *domain_session.Session,
-    mid: u64,
-    ctx: anytype,
-    comptime each: fn (@TypeOf(ctx), []const u8) void,
-) void {
-    if (s.draft) |*d| if (d.message_id == mid) {
-        for (d.parts.items) |*p| switch (domain_draft.partToWire(p)) {
-            .text => |t| each(ctx, t.text),
-            else => {},
-        };
-        return;
-    };
-    for (s.transcript.list.items) |entry| {
-        if (entry.message.id() != mid) continue;
-        switch (entry.message) {
-            .user => |u| for (u.content) |c| switch (c) {
-                .text => |t| each(ctx, t.text),
-                else => {},
-            },
-            .assistant => |a| for (a.content) |p| switch (p) {
-                .text => |t| each(ctx, t.text),
-                else => {},
-            },
-            .compaction => |c| each(ctx, c.summary),
-        }
-        return;
-    }
-}
-
 /// Copy one window of a message's concatenated text: a walk over the parts and one bounded copy, never the whole message.
 const TextWindow = struct {
     want_from: usize,
@@ -74,7 +43,26 @@ const TextPage = struct { text: []const u8, next: ?usize, total: usize };
 pub fn textPage(s: *domain_session.Session, mid: u64, offset: usize, want: usize, raw: *std.Io.Writer.Allocating) ?TextPage {
     std.debug.assert(want >= max_char_bytes); // pageLimit resolved this, so a whole character always fits
     var window: TextWindow = .{ .want_from = offset, .want_to = offset +| want, .out = &raw.writer };
-    forEachText(s, mid, &window, TextWindow.take);
+    const draft_matches = if (s.draft) |d| d.message_id == mid else false;
+    if (draft_matches) if (s.draft) |*d| for (d.parts.items) |*p| switch (domain_draft.partToWire(p)) {
+        .text => |t| window.take(t.text),
+        else => {},
+    };
+    if (!draft_matches) for (s.transcript.list.items) |entry| {
+        if (entry.message.id() != mid) continue;
+        switch (entry.message) {
+            .user => |u| for (u.content) |c| switch (c) {
+                .text => |t| window.take(t.text),
+                else => {},
+            },
+            .assistant => |a| for (a.content) |p| switch (p) {
+                .text => |t| window.take(t.text),
+                else => {},
+            },
+            .compaction => |c| window.take(c.summary),
+        }
+        break;
+    };
     if (window.failed) return null;
 
     // A window is copied at byte offsets, so it can split a character at each end.

@@ -156,15 +156,9 @@ pub const SessionOrigin = union(enum) {
     fork: SessionOriginFork,
 
     /// Decode a tagged wire union from JSON.
-    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
-        return tagged.jsonParse(@This(), a, s, o);
-    }
-    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
-        return tagged.fromValue(@This(), a, v, o);
-    }
-    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
-        return tagged.stringify(@This(), self, jw);
-    }
+    pub const jsonParse = tagged.Codec(@This()).jsonParse;
+    pub const jsonParseFromValue = tagged.Codec(@This()).jsonParseFromValue;
+    pub const jsonStringify = tagged.Codec(@This()).jsonStringify;
 };
 
 /// This origin links a session to its parent session and message part.
@@ -200,15 +194,9 @@ pub const SessionPopulation = union(enum) {
     all: SessionPopulationAll,
 
     /// Decode a tagged wire union from JSON.
-    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
-        return tagged.jsonParse(@This(), a, s, o);
-    }
-    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
-        return tagged.fromValue(@This(), a, v, o);
-    }
-    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
-        return tagged.stringify(@This(), self, jw);
-    }
+    pub const jsonParse = tagged.Codec(@This()).jsonParse;
+    pub const jsonParseFromValue = tagged.Codec(@This()).jsonParseFromValue;
+    pub const jsonStringify = tagged.Codec(@This()).jsonStringify;
 };
 
 /// This option selects every session regardless of origin.
@@ -278,15 +266,9 @@ pub const SessionSendInputResult = union(enum) {
     queued: SessionSendInputResultQueued,
 
     /// Decode a tagged wire union from JSON.
-    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
-        return tagged.jsonParse(@This(), a, s, o);
-    }
-    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
-        return tagged.fromValue(@This(), a, v, o);
-    }
-    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
-        return tagged.stringify(@This(), self, jw);
-    }
+    pub const jsonParse = tagged.Codec(@This()).jsonParse;
+    pub const jsonParseFromValue = tagged.Codec(@This()).jsonParseFromValue;
+    pub const jsonStringify = tagged.Codec(@This()).jsonStringify;
 };
 
 /// The engine accepted the input for the next round or run.

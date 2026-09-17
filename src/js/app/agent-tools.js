@@ -34,15 +34,6 @@ export async function ownedChild(parentId, target) {
 export function agentRow(item) {
     return { name: item.session.name, session_id: item.session.id, model: item.session.model, reasoning: item.session.reasoning, activity: item.activity, last_run: item.last_run ?? null };
 }
-/** @param {string} parentId */
-export async function stopAllChildren(parentId) {
-    const children = await allChildren(parentId);
-    const results = await Promise.allSettled(children.map((child) => client.sessionCancelRun(child.session.id, true)));
-    const failed = results.filter((result) => result.status === "rejected").length;
-    const stopped = results.filter((result) => result.status === "fulfilled" && (result.value.canceled_run != null || result.value.cleared_compaction != null || result.value.cleared_inputs?.length)).length;
-    return { stopped, unchanged: results.length - stopped - failed, failed };
-}
-
 /** @type {Record<string, unknown>} */
 const childField = { type: "string", description: "Child session ID or name." };
 const definitions = [

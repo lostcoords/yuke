@@ -67,17 +67,9 @@ pub const Render = struct {
         return true;
     }
 
-    pub fn enterAltScreen(self: *Render, writer: *std.Io.Writer) !void {
-        try self.vx.enterAltScreen(writer);
-    }
-
-    pub fn exitAltScreen(self: *Render, writer: *std.Io.Writer) !void {
-        try self.vx.exitAltScreen(writer);
-    }
-
     /// Enter the alternate screen. Paste wrapping and mouse reports stay on for the session.
     pub fn enableTui(self: *Render, writer: *std.Io.Writer) !void {
-        try self.enterAltScreen(writer);
+        try self.vx.enterAltScreen(writer);
         try self.setBracketedPaste(writer, true);
         try self.setMouseMode(writer, true);
         std.debug.assert(self.vx.state.alt_screen);

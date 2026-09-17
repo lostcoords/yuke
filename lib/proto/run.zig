@@ -39,15 +39,9 @@ pub const RunOutcome = union(enum) {
     failed: RunOutcomeFailed,
 
     /// Decode a tagged wire union from JSON.
-    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
-        return tagged.jsonParse(@This(), a, s, o);
-    }
-    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
-        return tagged.fromValue(@This(), a, v, o);
-    }
-    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
-        return tagged.stringify(@This(), self, jw);
-    }
+    pub const jsonParse = tagged.Codec(@This()).jsonParse;
+    pub const jsonParseFromValue = tagged.Codec(@This()).jsonParseFromValue;
+    pub const jsonStringify = tagged.Codec(@This()).jsonStringify;
 };
 
 /// The user or engine canceled the run. The terminal envelope carries its timing.

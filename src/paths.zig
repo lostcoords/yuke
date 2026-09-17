@@ -67,30 +67,22 @@ fn joinUnder(alloc: std.mem.Allocator, env: *const Map, base: []const u8, mid: [
 
 /// Return the shared configuration directory from `APPDATA` on Windows, `XDG_CONFIG_HOME` elsewhere, or `~/.config` under home; return null without a base, return an error for an invalid profile, and let the caller free the result.
 pub fn configDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
-    if (builtin.os.tag == .windows) {
-        const base = envBasePath(env, "APPDATA") orelse return null;
-        return try joinUnder(alloc, env, base, &.{});
-    }
-    if (envBasePath(env, "XDG_CONFIG_HOME")) |xdg| return try joinUnder(alloc, env, xdg, &.{});
-    const home = homeDir(env) orelse return null;
-    return try joinUnder(alloc, env, home, &.{".config"});
+    return platformDir(alloc, env, "APPDATA", "XDG_CONFIG_HOME", &.{".config"});
 }
 
 /// Return the data directory from `LOCALAPPDATA` on Windows, `XDG_DATA_HOME` elsewhere, or `~/.local/share` under home; return null without a base, return an error for an invalid profile, and let the caller free the result.
 pub fn dataDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
-    if (builtin.os.tag == .windows) {
-        const base = envBasePath(env, "LOCALAPPDATA") orelse return null;
-        return try joinUnder(alloc, env, base, &.{});
-    }
-    if (envBasePath(env, "XDG_DATA_HOME")) |xdg| return try joinUnder(alloc, env, xdg, &.{});
-    const home = homeDir(env) orelse return null;
-    return try joinUnder(alloc, env, home, &.{ ".local", "share" });
+    return platformDir(alloc, env, "LOCALAPPDATA", "XDG_DATA_HOME", &.{ ".local", "share" });
 }
 
-/// Return the event-log database path under `base`. The caller frees the result.
-pub fn dbPathIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
-    std.debug.assert(base.len != 0);
-    return std.fs.path.join(alloc, &.{ base, db_file });
+fn platformDir(alloc: std.mem.Allocator, env: *const Map, comptime windows_key: []const u8, comptime xdg_key: []const u8, comptime home_mid: []const []const u8) !?[]u8 {
+    if (builtin.os.tag == .windows) {
+        const base = envBasePath(env, windows_key) orelse return null;
+        return try joinUnder(alloc, env, base, &.{});
+    }
+    if (envBasePath(env, xdg_key)) |xdg| return try joinUnder(alloc, env, xdg, &.{});
+    const home = homeDir(env) orelse return null;
+    return try joinUnder(alloc, env, home, home_mid);
 }
 
 /// Return the blob directory under `base`. The caller frees the result.
@@ -211,12 +203,6 @@ test "configDir falls back to dot-config" {
     const got = (try configDir(testing.allocator, &env)).?;
     defer testing.allocator.free(got);
     try testing.expectEqualStrings("/home/u/.config/yuke", got);
-}
-
-test "dbPathIn appends the database file" {
-    const db = try dbPathIn(testing.allocator, "/data/yuke");
-    defer testing.allocator.free(db);
-    try testing.expectEqualStrings("/data/yuke/yuke.db", db);
 }
 
 test "expandHome substitutes a leading tilde" {

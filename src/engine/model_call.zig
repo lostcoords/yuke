@@ -14,8 +14,6 @@ pub const Request = struct {
     blocks: []const ai.ir.Block,
     /// The tools the turn declares. A call repeats the same tools to keep the turn prefix.
     tools: []const ai.ir.Tool = &.{},
-    /// A call answers in text, so the request refuses every tool.
-    tool_choice: ai.ir.ToolChoice = .none,
     max_output_tokens: u32,
     /// The session reasoning level. An empty level leaves the provider default.
     reasoning: []const u8 = "",
@@ -70,7 +68,7 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
             .max_output_tokens = limit,
             // A call answers on the session model, so it must reason at the session level too.
             .reasoning = reasoning,
-            .tool_choice = request.tool_choice,
+            .tool_choice = .none,
             // A call repeats the turn prefix, so it stays on the cache and the upstream of its session.
             .cache_key = request.session_id,
             .session_id = request.session_id,

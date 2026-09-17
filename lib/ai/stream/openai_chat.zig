@@ -38,11 +38,11 @@ pub const Reducer = struct {
     pub fn deinit(self: *Reducer) void {
         for (self.blocks.items) |*b| {
             b.args.deinit(self.gpa);
-            self.release(b.call_id);
-            self.release(b.name);
+            json.release(self.gpa, b.call_id);
+            json.release(self.gpa, b.name);
         }
         self.blocks.deinit(self.gpa);
-        self.release(self.raw_stop_reason);
+        json.release(self.gpa, self.raw_stop_reason);
         self.* = undefined;
     }
 
@@ -57,10 +57,7 @@ pub const Reducer = struct {
         // Some gateways send an extra frame after `[DONE]`. Ignore it.
         if (self.done_emitted) return;
 
-        const root = std.json.parseFromSliceLeaky(std.json.Value, scratch, data, .{}) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.Protocol,
-        };
+        const root = try json.parse(data, scratch);
         const choices = switch (json.fieldGet(root, "choices") orelse return error.Protocol) {
             .array => |a| a,
             else => return error.Protocol,
@@ -84,9 +81,7 @@ pub const Reducer = struct {
         if (json.fieldGet(choice, "finish_reason")) |reason| switch (reason) {
             .string => |raw| {
                 self.stop_reason = mapStopReason(raw);
-                const owned = try self.own(raw);
-                self.release(self.raw_stop_reason);
-                self.raw_stop_reason = owned;
+                try json.replaceOwned(self.gpa, &self.raw_stop_reason, raw);
             },
             else => {},
         };
@@ -94,18 +89,18 @@ pub const Reducer = struct {
 
     fn onDelta(self: *Reducer, delta: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         if (json.fieldStr(delta, "content")) |text| {
-            try self.appendTextDelta(text, out);
+            try self.appendDelta(text, .text, out);
         }
 
         // Expose a refusal as assistant text so the consumer receives it.
         if (json.fieldStr(delta, "refusal")) |text| {
             self.refused = true;
-            try self.appendTextDelta(text, out);
+            try self.appendDelta(text, .text, out);
         }
 
         const reasoning_text = json.fieldStr(delta, "reasoning_content") orelse json.fieldStr(delta, "reasoning");
         if (reasoning_text) |text| {
-            try self.appendReasoningDelta(text, out);
+            try self.appendDelta(text, .reasoning, out);
         }
 
         if (json.fieldGet(delta, "tool_calls")) |tool_calls| switch (tool_calls) {
@@ -114,16 +109,14 @@ pub const Reducer = struct {
         };
     }
 
-    fn appendTextDelta(self: *Reducer, text: []const u8, out: *std.ArrayList(StreamEvent)) Error!void {
+    fn appendDelta(self: *Reducer, text: []const u8, kind: event.BlockKind, out: *std.ArrayList(StreamEvent)) Error!void {
         if (text.len == 0) return;
-        const index = try self.openFor(.text, out);
-        try out.append(self.gpa, .{ .text_delta = .{ .block = @intCast(index), .text = text } });
-    }
-
-    fn appendReasoningDelta(self: *Reducer, text: []const u8, out: *std.ArrayList(StreamEvent)) Error!void {
-        if (text.len == 0) return;
-        const index = try self.openFor(.reasoning, out);
-        try out.append(self.gpa, .{ .reasoning_delta = .{ .block = @intCast(index), .text = text } });
+        const index = try self.openFor(kind, out);
+        try out.append(self.gpa, switch (kind) {
+            .text => .{ .text_delta = .{ .block = @intCast(index), .text = text } },
+            .reasoning => .{ .reasoning_delta = .{ .block = @intCast(index), .text = text } },
+            else => unreachable,
+        });
     }
 
     /// Return the open block of `kind`. A block of another kind stops first.
@@ -159,8 +152,7 @@ pub const Reducer = struct {
 
         if (function_object.get("arguments")) |arguments| switch (arguments) {
             .string => |fragment| {
-                std.debug.assert(block.args.items.len <= event.max_tool_arg_bytes);
-                if (fragment.len > event.max_tool_arg_bytes - block.args.items.len) return error.Protocol;
+                try json.checkToolArgSize(block.args.items.len, fragment, event.max_tool_arg_bytes);
                 try block.args.appendSlice(self.gpa, fragment);
                 try out.append(self.gpa, .{ .tool_input_delta = .{ .block = @intCast(block_index), .partial_json = fragment } });
             },
@@ -192,8 +184,8 @@ pub const Reducer = struct {
         const index = self.blocks.items.len - 1;
         std.debug.assert(index < event.max_blocks);
         const block = &self.blocks.items[index];
-        if (call_id.len != 0) block.call_id = try self.own(call_id);
-        if (name.len != 0) block.name = try self.own(name);
+        if (call_id.len != 0) block.call_id = try json.own(self.gpa, call_id);
+        if (name.len != 0) block.name = try json.own(self.gpa, name);
         try out.append(self.gpa, .{ .block_started = .{ .block = @intCast(index), .kind = kind } });
         if (kind != .tool) self.open_block = index;
         return index;
@@ -213,7 +205,7 @@ pub const Reducer = struct {
             if (!std.mem.eql(u8, destination.*, bytes)) return error.Protocol;
             return;
         }
-        destination.* = try self.own(bytes);
+        destination.* = try json.own(self.gpa, bytes);
     }
 
     /// Stop the open block. A stopped block never reopens.
@@ -259,20 +251,7 @@ pub const Reducer = struct {
         // A refusal outranks the finish reason, because the model declined the request.
         if (self.refused) self.stop_reason = .refusal;
         self.done_emitted = true;
-        try out.append(self.gpa, .{ .done = .{
-            .stop_reason = self.stop_reason,
-            .raw_stop_reason = self.raw_stop_reason,
-            .usage = self.usage,
-        } });
-    }
-
-    /// Copy peer bytes into reducer memory until `deinit`.
-    fn own(self: *Reducer, bytes: []const u8) Error![]const u8 {
-        return self.gpa.dupe(u8, bytes);
-    }
-
-    fn release(self: *Reducer, bytes: []const u8) void {
-        if (bytes.len != 0) self.gpa.free(bytes);
+        try json.appendDone(self.gpa, out, self.stop_reason, self.raw_stop_reason, self.usage);
     }
 };
 

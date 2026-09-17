@@ -263,29 +263,55 @@ fn startQueued(engine: *Engine, rt: *Session) !void {
     try launch(engine, slot);
 }
 
+pub const Preparation = struct {
+    snapshot: session_store.Snapshot,
+    tree: admission.Location,
+};
+
+/// Load the session values that a run slot needs.
+pub fn prepareContext(engine: *Engine, arena: std.mem.Allocator, rt: *Session, ensure_owner: bool) !Preparation {
+    if (ensure_owner) try engine.own(rt.id);
+    const snapshot = (try session_store.snapshot(engine.deps.db, arena, rt.id.raw)) orelse return error.UnknownSession;
+    return .{ .snapshot = snapshot, .tree = try admission.location(engine, arena, rt.id) };
+}
+
+/// Copy the session configuration into a slot before its start transaction.
+pub fn prepareSlot(engine: *Engine, arena: std.mem.Allocator, rt: *Session, context: Preparation, kind: proto.enums.RunKind) !RunSlot.Prepared {
+    std.debug.assert(rt.active_run == null);
+    const prompt = (try session_store.prompt(engine.deps.db, arena, rt.id.raw)) orelse "";
+    return RunSlot.prepare(engine.deps.gpa, context.snapshot.model, context.snapshot.reasoning, prompt, if (kind == .turn) context.snapshot.max_rounds else null);
+}
+
+/// Bind a durable start to the prepared slot.
+pub fn bindPrepared(prepared: *RunSlot.Prepared, context: Preparation, started: Started) *RunSlot {
+    return prepared.bind(started.handle, if (context.snapshot.parent_id) |id| .bytes(id) else null, context.tree);
+}
+
+/// Emit the durable start after the caller folds any user commits.
+pub fn emitStarted(engine: *Engine, rt: *Session, started: Started) void {
+    session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
+}
+
 /// Commit one run for all queued inputs.
 pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
-    try engine.own(rt.id);
-    std.debug.assert(rt.active_run == null);
-    std.debug.assert(rt.queueDepth() > 0);
-
-    // The workspace path must outlive every round.
     var arena_state = std.heap.ArenaAllocator.init(engine.deps.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    const context = try prepareContext(engine, arena, rt, true);
+    std.debug.assert(rt.active_run == null);
+    std.debug.assert(rt.queueDepth() > 0);
+
+    // The arena holds store values until the slot owns its prompt and run ids.
     const session_id = rt.id;
-    const snapshot = (try session_store.snapshot(engine.deps.db, arena, session_id.raw)) orelse return error.UnknownSession;
-    const tree = try admission.location(engine, arena, session_id);
-    const prompt = try session_store.prompt(engine.deps.db, arena, session_id.raw);
-    var prepared = try RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, prompt orelse "", snapshot.max_rounds);
+    var prepared = try prepareSlot(engine, arena, rt, context, .turn);
     errdefer prepared.deinit();
-    const started = try beginQueuedTurn(engine.deps.db, engine.deps.io, arena, session_id.raw, snapshot.config_rev);
-    const slot = prepared.bind(started.handle, if (snapshot.parent_id) |id| .bytes(id) else null, tree);
+    const started = try beginQueuedTurn(engine.deps.db, engine.deps.io, arena, session_id.raw, context.snapshot.config_rev);
+    const slot = bindPrepared(&prepared, context, started);
     // Publish the user commits before run.started to retire the queue in sequence order.
     session_events.publishUserCommits(engine, rt, started.user_commits);
     std.debug.assert(rt.queueDepth() == 0);
     rt.active_run = slot;
-    session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
+    emitStarted(engine, rt, started);
     return slot;
 }
 
@@ -303,16 +329,13 @@ pub fn resumeSession(engine: *Engine, rt: *Session) !void {
 
 /// Commit and publish the run start. A reserved id belongs to a compaction the engine already answered.
 pub fn prepareCompaction(engine: *Engine, rt: *Session, reason: proto.enums.CompactionReason, reserved: ?proto.ids.RunId) !*RunSlot {
-    try engine.own(rt.id);
-    std.debug.assert(rt.active_run == null);
     var arena_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    const context = try prepareContext(engine, arena, rt, true);
+    std.debug.assert(rt.active_run == null);
     const sid = rt.id.raw;
-    const snapshot = (try database.session.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
-    const tree = try admission.location(engine, arena, rt.id);
-    const prompt = (try database.session.prompt(engine.deps.db, arena, sid)) orelse "";
-    var prepared = try RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, prompt, null);
+    var prepared = try prepareSlot(engine, arena, rt, context, .compaction);
     errdefer prepared.deinit();
 
     const started_at = engine.nowMillis();
@@ -325,14 +348,15 @@ pub fn prepareCompaction(engine: *Engine, rt: *Session, reason: proto.enums.Comp
         .run_id = run_id,
         .kind = .compaction,
         .reason = reason,
-        .config_rev = snapshot.config_rev,
+        .config_rev = context.snapshot.config_rev,
         .started_at_ms = started_at,
     });
     try tx.commit();
 
-    const slot = prepared.bind(.{ .input_id = 0, .started = started }, if (snapshot.parent_id) |id| .bytes(id) else null, tree);
+    const started_result: Started = .{ .handle = .{ .input_id = 0, .started = started }, .user_commits = &.{} };
+    const slot = bindPrepared(&prepared, context, started_result);
     rt.active_run = slot;
-    session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started } });
+    emitStarted(engine, rt, started_result);
     session_events.announceActivity(engine, rt); // A compaction opens no round, so nothing else says it runs.
     return slot;
 }

@@ -9,9 +9,6 @@ const request_config = @import("request_config.zig");
 /// How much recent history one compaction keeps, in estimated tokens.
 pub const default_keep_recent_tokens: u64 = 20_000;
 
-/// One tool result or one argument blob contributes about this many bytes to the summary source.
-const max_source_field_bytes: usize = 2048;
-
 /// The boundary one compaction takes.
 pub const Cut = struct {
     /// The first message the tail keeps. Every earlier message enters the summary.
@@ -40,25 +37,23 @@ pub fn selectCut(gpa: std.mem.Allocator, db: *database.Database, session_id: [16
     defer scratch.deinit();
     while (try rows.next(scratch.allocator())) |owned| {
         defer _ = scratch.reset(.retain_capacity);
-        {
-            var row = owned;
-            defer row.deinit();
-            if (std.mem.eql(u8, row.value.role, "compaction")) continue;
-            const tokens = context.messageTokens(row.value.bytes, row.value.images);
-            total += tokens;
-            if (cut == null) {
-                tail += tokens;
-                if (std.mem.eql(u8, row.value.role, "user")) {
-                    // An older user message extends the same turn, so the run start moves back.
-                    pending = row.value.message_id;
-                    pending_tokens = tail;
-                } else {
-                    // A message that is not a user message closes the run above it.
-                    if (crossed and pending != 0) cut = .{ .first_kept_id = pending, .tokens_before = 0, .tokens_kept = pending_tokens };
-                    pending = 0;
-                }
-                if (tail >= target) crossed = true;
+        var row = owned;
+        defer row.deinit();
+        if (std.mem.eql(u8, row.value.role, "compaction")) continue;
+        const tokens = context.messageTokens(row.value.bytes, row.value.images);
+        total += tokens;
+        if (cut == null) {
+            tail += tokens;
+            if (std.mem.eql(u8, row.value.role, "user")) {
+                // An older user message extends the same turn, so the run start moves back.
+                pending = row.value.message_id;
+                pending_tokens = tail;
+            } else {
+                // A message that is not a user message closes the run above it.
+                if (crossed and pending != 0) cut = .{ .first_kept_id = pending, .tokens_before = 0, .tokens_kept = pending_tokens };
+                pending = 0;
             }
+            if (tail >= target) crossed = true;
         }
     }
 

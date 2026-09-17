@@ -123,28 +123,13 @@ function blobPut(path) {
   return request("blob.put", { path });
 }
 
-// One page of a message's whole text. `next` is the offset to ask for, or null at the end.
-/**
- * @param {string} sessionId @param {number} messageId
- * @param {number} [offset] @param {number} [limit]
- * @returns {{ text: string, next: number | null, bytes: number }}
- */
-function sessionTextPage(sessionId, messageId, offset = 0, limit = 0) {
-  return JSON.parse(native.sessionText(sessionId, messageId, offset, limit));
-}
-
-// The concatenated text of one message, up to `max` bytes. A longer message is cut on a character.
-/** @param {string} sessionId @param {number} messageId @param {number} [max] @returns {string} */
-function sessionText(sessionId, messageId, max = 0) {
-  return sessionTextPage(sessionId, messageId, 0, max).text;
-}
-
+// The concatenated text of one message. A page echoes the next byte offset, or null at the end.
 /** @param {string} sessionId @param {number} messageId @returns {string} */
 function sessionWholeText(sessionId, messageId) {
   let text = "";
   let offset = 0;
   while (true) {
-    const page = sessionTextPage(sessionId, messageId, offset);
+    const page = JSON.parse(native.sessionText(sessionId, messageId, offset, 0));
     text += page.text;
     if (page.next == null) return text;
     if (page.next <= offset) throw new Error("The text page did not advance.");
@@ -215,11 +200,7 @@ function partTextFrom(sessionId, messageId, partId, field, offset) {
 }
 
 // One page of one field of a part. `field` is the address a `cut` entry names, passed back unchanged.
-/**
- * @param {string} sessionId @param {number} messageId @param {number} partId @param {string} field
- * @param {number} [offset] @param {number} [limit]
- * @returns {{ text: string, next: number | null }}
- */
+/** @param {string} sessionId @param {number} messageId @param {number} partId @param {string} field @param {number} [offset] @param {number} [limit] @returns {{ text: string, next: number | null }} */
 function partTextPage(sessionId, messageId, partId, field, offset = 0, limit = 0) {
   return JSON.parse(native.partText(sessionId, messageId, partId, field, offset, limit));
 }
@@ -379,9 +360,7 @@ export const client = {
   skillLoad,
   sessionQueue,
   blobPut,
-  sessionText,
   sessionWholeText,
-  sessionTextPage,
   sessionParts,
   sessionPart,
   partTextPage,

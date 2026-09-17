@@ -12,7 +12,7 @@ import { authPlugin } from "yuke:auth";
 import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
 import { client } from "yuke:client";
 import { attachClipboard } from "yuke:attach";
-import { rowKey, rowLabel, activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
+import { activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
 import { activityOf, activityPlugin } from "yuke:activity";
 import { indicatorPlugin } from "yuke:indicator";
 import { queuePlugin } from "yuke:queue";
@@ -58,10 +58,10 @@ function openSessionFinder(ctx) {
       width: max => Math.round(max * 0.6),
       height: max => Math.round(max * 0.5),
       items: rows,
-      key: rowKey,
-      filterText: r => rowLabel(r),
+      key: r => r.id,
+      filterText: r => r.title,
       // An open session reads its live activity; the rest shows what the list reported.
-      format: r => ({ text: rowLabel(r), right: activityMark(activityOf(r.id) || r.activity) }),
+      format: r => ({ text: r.title, right: activityMark(activityOf(r.id) || r.activity) }),
       onAccept: r => {
         const c = focusedChat();
         if (c) c.open(r.id);

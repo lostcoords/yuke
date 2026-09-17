@@ -53,12 +53,7 @@ pub fn install(host: *Host) void {
 
 fn sidArg(ctx: Context, args: []const Value, idx: usize) ?SessionId {
     if (args.len <= idx) return null;
-    const text = module.string(ctx, args[idx]) orelse return null;
-    defer ctx.freeCString(text.ptr);
-    if (text.len != SessionId.byte_len * 2) return null;
-    var raw: [SessionId.byte_len]u8 = undefined;
-    _ = std.fmt.hexToBytes(&raw, text) catch return null;
-    return SessionId.bytes(raw);
+    return module.sessionId(ctx, args[idx]);
 }
 
 fn u64Arg(ctx: Context, args: []const Value, idx: usize) ?u64 {
@@ -78,16 +73,13 @@ fn jsFactNames(ctx: Context, _: Value, _: []const Value) Value {
     const names = ctx.newArray();
     for (std.meta.tags(proto.enums.BroadcastName), 0..) |fact, i| {
         if (ctx.hasException()) break;
-        ctx.setPropertyUint32(names, @intCast(i), ctx.newString(@tagName(fact))) catch {};
+        module.setIndex(ctx, names, i, ctx.newString(@tagName(fact)));
     }
-    return built(ctx, names);
-}
-
-/// Answer a built value, or free it and throw once the QuickJS heap is full.
-fn built(ctx: Context, value: Value) Value {
-    if (!ctx.hasException()) return value;
-    ctx.freeValue(value);
-    return module.throwPending(ctx);
+    if (ctx.hasException()) {
+        ctx.freeValue(names);
+        return module.throwPending(ctx);
+    }
+    return names;
 }
 
 /// Return the QuickJS allocation counters, separate from the process footprint.
@@ -108,7 +100,11 @@ fn jsMemoryUsage(ctx: Context, _: Value, _: []const Value) Value {
         .{ "fastArrayElements", usage.fast_array_elements },
     };
     for (fields) |field| module.set(ctx, out, field[0], ctx.newFloat64(@floatFromInt(field[1])));
-    return built(ctx, out);
+    if (ctx.hasException()) {
+        ctx.freeValue(out);
+        return module.throwPending(ctx);
+    }
+    return out;
 }
 
 fn jsSetEventSink(ctx: Context, _: Value, args: []const Value) Value {
@@ -201,12 +197,7 @@ fn jsSessionText(ctx: Context, _: Value, args: []const Value) Value {
 
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer aw.deinit();
-    aw.writer.writeAll("{\"text\":") catch return ctx.newString(empty);
-    std.json.Stringify.encodeJsonString(page.text, .{}, &aw.writer) catch return ctx.newString(empty);
-    if (page.next) |next|
-        aw.writer.print(",\"next\":{d},\"bytes\":{d}}}", .{ next, page.total }) catch return ctx.newString(empty)
-    else
-        aw.writer.print(",\"next\":null,\"bytes\":{d}}}", .{page.total}) catch return ctx.newString(empty);
+    writePage(&aw.writer, page.text, page.next, page.total) catch return ctx.newString(empty);
     return ctx.newString(aw.written());
 }
 
@@ -228,13 +219,16 @@ fn jsPartText(ctx: Context, _: Value, args: []const Value) Value {
 
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer aw.deinit();
-    aw.writer.writeAll("{\"text\":") catch return ctx.newString(empty);
-    std.json.Stringify.encodeJsonString(page.text, .{}, &aw.writer) catch return ctx.newString(empty);
-    if (page.next) |next|
-        aw.writer.print(",\"next\":{d}}}", .{next}) catch return ctx.newString(empty)
-    else
-        aw.writer.writeAll(",\"next\":null}") catch return ctx.newString(empty);
+    writePage(&aw.writer, page.text, page.next, null) catch return ctx.newString(empty);
     return ctx.newString(aw.written());
+}
+
+fn writePage(w: *std.Io.Writer, text: []const u8, next: ?usize, bytes: ?usize) !void {
+    try w.writeAll("{\"text\":");
+    try std.json.Stringify.encodeJsonString(text, .{}, w);
+    if (next) |offset| try w.print(",\"next\":{d}", .{offset}) else try w.writeAll(",\"next\":null");
+    if (bytes) |total| try w.print(",\"bytes\":{d}", .{total});
+    try w.writeByte('}');
 }
 
 /// Run one command on the owner and answer a settled Promise, so a caller reads every outcome one way.
@@ -359,12 +353,12 @@ test "a request reaches a command and answers with its result" {
     try support.pumpUntilIdle(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.sent"));
 
-    // The text a person typed must come back. A default limit reads one page, never zero bytes.
+    // The text a person typed must come back; the client reads the complete text through bounded native pages.
     try host.evalModule(
         \\import { client } from "yuke:client";
         \\const o = client.sessionOutline(globalThis.sid);
         \\const first = o && o.messages.length ? o.messages[0].id : 0;
-        \\globalThis.text = first ? client.sessionText(globalThis.sid, first) : "";
+        \\globalThis.text = first ? client.sessionWholeText(globalThis.sid, first) : "";
         \\globalThis.len = globalThis.text.length;
     , "text.js");
     try testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.len")); // "probe"

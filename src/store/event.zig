@@ -3,17 +3,10 @@
 const std = @import("std");
 const sql = @import("sql");
 const Database = @import("store.zig").Database;
+const queries_gen = @import("queries_gen.zig");
 
-/// Recovery reads these id marks. It never computes them with MAX over the log.
-pub const HighWater = struct {
-    seq_high: u64,
-    message_id_high: u64,
-    run_id_high: u64,
-    input_id_high: u64,
-    config_rev_high: u64,
-    /// Every committed message ever stored. No path deletes a message row.
-    message_count: u64,
-};
+/// Recovery reads these id marks without MAX; the count includes every committed message because no path deletes a message row.
+pub const HighWater = queries_gen.ReadHigh.Row;
 
 /// Allocate the next seq, append the event, and return the seq inside a write transaction; the caller mints event_id (UUIDv7) and stamps committed_at_ms, and both fields belong to the event envelope.
 pub fn append(
@@ -33,10 +26,7 @@ pub fn append(
 
 /// Allocate the next event sequence. Run inside the transaction that appends the event.
 pub fn allocSeq(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
-    std.debug.assert(sql.inTransaction(db.conn));
-    const alloc = try db.queries.alloc_seq.one(arena, .{ .id = session_id });
-    std.debug.assert(alloc.value.seq_high > 0);
-    return alloc.value.seq_high;
+    return allocMark("alloc_seq", "seq_high", true, db, arena, session_id);
 }
 
 /// Append an event at a sequence that `allocSeq` reserved in the same transaction.
@@ -65,33 +55,31 @@ pub fn appendAt(
 
 /// Allocate the next run id for a session. Run inside a write transaction. Return NoRow when absent.
 pub fn allocRunId(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
-    std.debug.assert(sql.inTransaction(db.conn));
-    return (try db.queries.alloc_run_id.one(arena, .{ .id = session_id })).value.run_id_high;
+    return allocMark("alloc_run_id", "run_id_high", false, db, arena, session_id);
 }
 
 /// Allocate the next message id for a session. Run inside a write transaction. Return NoRow when absent.
 pub fn allocMessageId(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
-    std.debug.assert(sql.inTransaction(db.conn));
-    return (try db.queries.alloc_message_id.one(arena, .{ .id = session_id })).value.message_id_high;
+    return allocMark("alloc_message_id", "message_id_high", false, db, arena, session_id);
 }
 
 /// Allocate the next input id for a session. Run inside a write transaction. Return NoRow when absent.
 pub fn allocInputId(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
+    return allocMark("alloc_input_id", "input_id_high", false, db, arena, session_id);
+}
+
+fn allocMark(comptime query_name: []const u8, comptime field_name: []const u8, comptime assert_positive: bool, db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
     std.debug.assert(sql.inTransaction(db.conn));
-    return (try db.queries.alloc_input_id.one(arena, .{ .id = session_id })).value.input_id_high;
+    const row = try @field(db.queries, query_name).one(arena, .{ .id = session_id });
+    const value = @field(row.value, field_name);
+    if (assert_positive) std.debug.assert(value > 0);
+    return value;
 }
 
 /// Read the high-water marks into `arena`, or null when the session has no row.
 pub fn highWater(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !?HighWater {
     const row = (try db.queries.read_high.maybeOne(arena, .{ .id = session_id })) orelse return null;
-    return .{
-        .seq_high = row.value.seq_high,
-        .message_id_high = row.value.message_id_high,
-        .run_id_high = row.value.run_id_high,
-        .input_id_high = row.value.input_id_high,
-        .config_rev_high = row.value.config_rev_high,
-        .message_count = row.value.message_count,
-    };
+    return row.value;
 }
 
 const testing = std.testing;

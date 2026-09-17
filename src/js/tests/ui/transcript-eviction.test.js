@@ -72,15 +72,6 @@ const next = t.partStep({ id: "m50", row: 0, col: 0 }, 1);
 const previous = t.partStep(next, -1);
 check("part-motion-local", next?.id === "m51" && previous?.id === "m50" && builds <= 4);
 
-// A code-block query over plain text parses on demand and leaves the row index alone.
-const code = new Transcript({ textOf: (id) => "```zig\nconst x = " + id + ";\n```" });
-code.setOutline(messages, null);
-const codeTotal = code.rowCount(32);
-builds = 0;
-const codeRowsOf = code._rowsOf;
-code._rowsOf = function(m, w, i) { builds++; return codeRowsOf.call(this, m, w, i); };
-check("code-blocks", code.codeBlocks().length === messages.length && code.rowCount(32) === codeTotal && builds === 0);
-
 // Message ids repeat across sessions, so an empty outline clears even a message whose fold moved after its eviction.
 parts.m40 = [{ type: "text", id: 2, text: "other session" }];
 t.setOutline([], null);

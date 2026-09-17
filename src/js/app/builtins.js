@@ -27,7 +27,18 @@ const result = (text, extra) => ({ __yuke_result: true, text, extra });
 // A user tool with the same name wins, so the built-in steps aside.
 /** @param {string} name @param {ToolDefinition} definition @returns {void} */
 function builtin(name, definition) {
-  if (!hasTool(name)) defineTool(name, definition);
+  if (hasTool(name)) return;
+  const properties = /** @type {{ properties: Record<string, unknown> }} */ (definition.parameters);
+  const fields = new Set(Object.keys(properties.properties));
+  const execute = definition.execute;
+  defineTool(name, {
+    ...definition,
+    execute: (args, signal, context) => {
+      if (args == null || typeof args !== "object" || Array.isArray(args)) invalid(name, "the arguments must be an object");
+      for (const key of Object.keys(args)) if (!fields.has(key)) invalid(name, "the schema lacks the argument");
+      return execute(args, signal, context);
+    },
+  });
 }
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -51,17 +62,6 @@ function messageOf(error) {
 async function hostCall(name, promise) {
   try { return await promise; }
   catch (e) { throw new Error(`${name}: ${messageOf(e)}`); }
-}
-
-/** @param {string} name @param {unknown} args @returns {ToolArgs} */
-function objectArgs(name, args) {
-  if (args == null || typeof args !== "object" || Array.isArray(args)) invalid(name, "the arguments must be an object");
-  return /** @type {ToolArgs} */ (args);
-}
-
-/** @param {string} name @param {ToolArgs} args @param {readonly string[]} fields @returns {void} */
-function only(name, args, fields) {
-  for (const key of Object.keys(args)) if (!fields.includes(key)) invalid(name, "the schema lacks the argument");
 }
 
 /** @param {string} name @param {ToolArgs} args @param {string} key @returns {string} */
@@ -124,8 +124,6 @@ function renderRead(got, first) {
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | BuiltinResult>} */
 async function read(args, _signal, context) {
   const name = "read";
-  args = objectArgs(name, args);
-  only(name, args, ["path", "start", "end"]);
   const path = stringArg(name, args, "path");
   const start = lineArg(name, args, "start");
   const end = lineArg(name, args, "end");
@@ -141,8 +139,6 @@ async function read(args, _signal, context) {
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<BuiltinResult>} */
 async function write(args, _signal, context) {
   const name = "write";
-  args = objectArgs(name, args);
-  only(name, args, ["path", "content"]);
   const path = stringArg(name, args, "path");
   const content = stringArg(name, args, "content");
   let old = "";
@@ -181,8 +177,6 @@ function replaceAt(text, old, replacement, all) {
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<BuiltinResult>} */
 async function edit(args, _signal, context) {
   const name = "edit";
-  args = objectArgs(name, args);
-  only(name, args, ["path", "old_string", "new_string", "replace_all"]);
   const path = stringArg(name, args, "path");
   const oldString = stringArg(name, args, "old_string");
   const newString = stringArg(name, args, "new_string");
@@ -245,8 +239,6 @@ async function startBackground(command, context) {
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
 async function jobStop(args, _signal, context) {
   const name = "job_stop";
-  args = objectArgs(name, args);
-  only(name, args, ["id"]);
   const id = stringArg(name, args, "id");
   const job = /^j[1-9][0-9]*$/.test(id) ? getJob(Number(id.slice(1))) : null;
   if (!job || job.sessionId !== (context?.sessionId ?? null)) {
@@ -259,8 +251,6 @@ async function jobStop(args, _signal, context) {
 /** @param {ToolArgs} args @param {ToolSignal} signal @param {ToolContext} context @returns {Promise<string>} */
 async function exec(args, signal, context) {
   const name = "exec";
-  args = objectArgs(name, args);
-  only(name, args, ["command", "timeout_ms", "background"]);
   const command = stringArg(name, args, "command");
   if (command.trim().length === 0) invalid(name, "the argument command has the wrong type or range");
   const background = args.background ?? false;
@@ -291,8 +281,6 @@ async function exec(args, signal, context) {
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
 async function skill(args, _signal, context) {
   const name = "skill";
-  args = objectArgs(name, args);
-  only(name, args, ["name"]);
   const skillName = stringArg(name, args, "name");
   if (!context?.sessionId) invalid(name, "the tool has no session");
   const loaded = await hostCall(name, client.skillLoad(context.sessionId, skillName));

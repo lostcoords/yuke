@@ -254,11 +254,12 @@ fn stringValid(value: []const u8) bool {
 fn validateObject(arena: std.mem.Allocator, raw: []const u8) !void {
     if (raw.len == 0) return;
     if (!stringValid(raw)) return error.InvalidRequest;
-    const value = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.InvalidRequest,
-    };
-    if (value != .object) return error.InvalidRequest;
+    for (raw) |byte| {
+        if (std.ascii.isWhitespace(byte)) continue;
+        if (byte != '{') return error.InvalidRequest;
+        break;
+    } else return error.InvalidRequest;
+    if (!try std.json.validate(arena, raw)) return error.InvalidRequest;
 }
 
 test "request validation rejects role mismatches and malformed raw JSON" {

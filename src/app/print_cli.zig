@@ -140,7 +140,7 @@ fn pickSession(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.W
     const engine = &extensions.app.engine;
     switch (opts.target) {
         .new => {
-            const model = opts.model orelse (try newestModel(engine, arena)) orelse {
+            const model = opts.model orelse if (try newest(engine, arena, null)) |session| session.model else {
                 try fail(err, "no model; pass --model <provider/model>", .{});
                 return null;
             };
@@ -155,7 +155,7 @@ fn pickSession(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.W
             return .{ .id = created.session.id, .model = created.session.model, .input = created.input };
         },
         .@"continue" => {
-            const id = (try newestIn(engine, arena, cwd)) orelse {
+            const id = if (try newest(engine, arena, cwd)) |session| session.id else {
                 try fail(err, "no session in this directory", .{});
                 return null;
             };
@@ -182,26 +182,17 @@ fn configured(engine: *Engine, arena: std.mem.Allocator, err: *std.Io.Writer, id
     return .{ .id = id, .model = config.config.model };
 }
 
-/// The model of the newest session that names one. This is the rule the TUI applies.
-fn newestModel(engine: *Engine, arena: std.mem.Allocator) !?[]const u8 {
+/// Return the newest session, with an optional workspace filter.
+fn newest(engine: *Engine, arena: std.mem.Allocator, cwd: ?[]const u8) !?proto.misc.Session {
     const listed = try commands.sessionList(engine, arena, .{ .limit = proto.meta.limits.max_page_size });
     var best: ?proto.misc.Session = null;
     for (listed.items) |item| {
-        if (item.session.model.len == 0) continue;
+        if (cwd) |root| {
+            if (!std.mem.eql(u8, item.session.root, root)) continue;
+        } else if (item.session.model.len == 0) continue;
         if (best == null or item.session.updated_at_ms > best.?.updated_at_ms) best = item.session;
     }
-    return if (best) |s| s.model else null;
-}
-
-/// The newest session whose workspace is `cwd`.
-fn newestIn(engine: *Engine, arena: std.mem.Allocator, cwd: []const u8) !?proto.ids.SessionId {
-    const listed = try commands.sessionList(engine, arena, .{ .limit = proto.meta.limits.max_page_size });
-    var best: ?proto.misc.Session = null;
-    for (listed.items) |item| {
-        if (!std.mem.eql(u8, item.session.root, cwd)) continue;
-        if (best == null or item.session.updated_at_ms > best.?.updated_at_ms) best = item.session;
-    }
-    return if (best) |s| s.id else null;
+    return best;
 }
 
 const Sent = union(enum) {

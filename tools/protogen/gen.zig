@@ -10,7 +10,6 @@ const meta = proto.meta;
 const rpc = proto.rpc;
 
 const TypeEntry = registry.TypeEntry;
-const EnumEntry = struct { name: []const u8, ty: type, numeric: bool };
 const AliasUse = struct { owner: []const u8, field: []const u8, alias: []const u8 };
 
 const alias_uses = [_]AliasUse{
@@ -152,16 +151,34 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "CompactionMessage", .field = "id", .alias = "MessageId" },
     .{ .owner = "CompactionMessage", .field = "run_id", .alias = "RunId" },
     .{ .owner = "CompactionMessage", .field = "first_kept_id", .alias = "MessageId" },
+    .{ .owner = "Broadcast", .field = "message.part_delta", .alias = "MessagePartDeltaData" },
+    .{ .owner = "Broadcast", .field = "tool.output_delta", .alias = "ToolOutputDeltaData" },
+    .{ .owner = "BroadcastData", .field = "message_part_delta_data", .alias = "MessagePartDeltaData" },
+    .{ .owner = "BroadcastData", .field = "tool_output_delta_data", .alias = "ToolOutputDeltaData" },
 };
 
 comptime {
     @setEvalBranchQuota(100000);
     for (alias_uses, 0..) |use, index| {
-        var has_field = false;
-        for (registry.structs) |entry| {
-            if (std.mem.eql(u8, entry.name, use.owner)) has_field = @hasField(entry.ty, use.field);
+        if (std.mem.eql(u8, use.owner, "Broadcast")) {
+            var has_broadcast = false;
+            for (rpc.broadcasts) |spec| {
+                if (std.mem.eql(u8, @tagName(spec.name), use.field)) has_broadcast = true;
+            }
+            if (!has_broadcast) @compileError("unknown broadcast alias: " ++ use.field);
+        } else if (std.mem.eql(u8, use.owner, "BroadcastData")) {
+            var has_field = false;
+            for (registry.envelope_unions) |entry| {
+                if (std.mem.eql(u8, entry.name, use.owner)) has_field = @hasField(entry.ty, use.field);
+            }
+            if (!has_field) @compileError("unknown alias field: " ++ use.owner ++ "." ++ use.field);
+        } else {
+            var has_field = false;
+            for (registry.structs) |entry| {
+                if (std.mem.eql(u8, entry.name, use.owner)) has_field = @hasField(entry.ty, use.field);
+            }
+            if (!has_field) @compileError("unknown alias field: " ++ use.owner ++ "." ++ use.field);
         }
-        if (!has_field) @compileError("unknown alias field: " ++ use.owner ++ "." ++ use.field);
         var has_alias = false;
         for (registry.aliases) |entry| {
             if (std.mem.eql(u8, entry.name, use.alias)) has_alias = true;
@@ -234,12 +251,7 @@ fn fieldDoc(a: std.mem.Allocator, docs: *const std.StringHashMap([]const u8), ow
 
 fn writeStruct(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.StringHashMap([]const u8), entry: TypeEntry) !void {
     try jw.beginObject();
-    try jw.objectField("name");
-    try jw.write(entry.name);
-    if (docs.get(entry.name)) |doc| {
-        try jw.objectField("doc");
-        try jw.write(doc);
-    }
+    try writeNameDoc(jw, docs, entry.name);
     try jw.objectField("fields");
     try jw.beginArray();
     inline for (@typeInfo(entry.ty).@"struct".fields) |field| {
@@ -262,12 +274,7 @@ fn writeStruct(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.S
 
 fn writeUnion(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.StringHashMap([]const u8), entry: TypeEntry, envelope: bool) !void {
     try jw.beginObject();
-    try jw.objectField("name");
-    try jw.write(entry.name);
-    if (docs.get(entry.name)) |doc| {
-        try jw.objectField("doc");
-        try jw.write(doc);
-    }
+    try writeNameDoc(jw, docs, entry.name);
     try jw.objectField("discriminator");
     try jw.write(if (envelope) "" else "type");
     try jw.objectField("arms");
@@ -290,16 +297,11 @@ fn writeUnion(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.St
     try jw.endObject();
 }
 
-fn writeEnum(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.StringHashMap([]const u8), entry: EnumEntry) !void {
+fn writeEnum(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.StringHashMap([]const u8), entry: registry.EnumEntry, numeric: bool) !void {
     try jw.beginObject();
-    try jw.objectField("name");
-    try jw.write(entry.name);
-    if (docs.get(entry.name)) |doc| {
-        try jw.objectField("doc");
-        try jw.write(doc);
-    }
+    try writeNameDoc(jw, docs, entry.name);
     try jw.objectField("numeric");
-    try jw.write(entry.numeric);
+    try jw.write(numeric);
     try jw.objectField("values");
     try jw.beginArray();
     inline for (@typeInfo(entry.ty).@"enum".fields) |field| {
@@ -307,7 +309,7 @@ fn writeEnum(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.Str
         try jw.objectField("name");
         try jw.write(field.name);
         try jw.objectField("wire");
-        if (entry.numeric) try jw.write(try std.fmt.allocPrint(a, "{d}", .{field.value})) else try jw.write(field.name);
+        if (numeric) try jw.write(try std.fmt.allocPrint(a, "{d}", .{field.value})) else try jw.write(field.name);
         if (try fieldDoc(a, docs, entry.name, field.name)) |doc| {
             try jw.objectField("doc");
             try jw.write(doc);
@@ -316,6 +318,15 @@ fn writeEnum(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.Str
     }
     try jw.endArray();
     try jw.endObject();
+}
+
+fn writeNameDoc(jw: *std.json.Stringify, docs: *const std.StringHashMap([]const u8), name: []const u8) !void {
+    try jw.objectField("name");
+    try jw.write(name);
+    if (docs.get(name)) |doc| {
+        try jw.objectField("doc");
+        try jw.write(doc);
+    }
 }
 
 fn writeNamespace(jw: *std.json.Stringify, comptime T: type) !void {
@@ -356,12 +367,8 @@ fn broadcastType(
     comptime field_name: []const u8,
     comptime T: type,
 ) []const u8 {
-    if (std.mem.eql(u8, name, "message.part_delta") or
-        (std.mem.eql(u8, union_name, "BroadcastData") and std.mem.eql(u8, field_name, "message_part_delta_data")))
-        return "MessagePartDeltaData";
-    if (std.mem.eql(u8, name, "tool.output_delta") or
-        (std.mem.eql(u8, union_name, "BroadcastData") and std.mem.eql(u8, field_name, "tool_output_delta_data")))
-        return "ToolOutputDeltaData";
+    if (aliasFor("Broadcast", name)) |alias| return alias;
+    if (aliasFor(union_name, field_name)) |alias| return alias;
     return shortName(@typeName(T));
 }
 
@@ -410,11 +417,10 @@ pub fn emit(a: std.mem.Allocator, io: std.Io, w: *std.Io.Writer) !void {
     try jw.endArray();
     try jw.objectField("enumerations");
     try jw.beginArray();
-    inline for (registry.enum_order) |ordered| try writeEnum(a, &jw, &docs, .{
-        .name = ordered.entry.name,
-        .ty = ordered.entry.ty,
-        .numeric = ordered.numeric,
-    });
+    inline for (registry.string_enums, 0..) |entry, i| {
+        try writeEnum(a, &jw, &docs, entry, false);
+        if (i == 1) inline for (registry.numeric_enums) |numeric| try writeEnum(a, &jw, &docs, numeric, true);
+    }
     try jw.endArray();
     try jw.objectField("aliases");
     try jw.beginArray();

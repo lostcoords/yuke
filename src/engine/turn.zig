@@ -58,7 +58,7 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
     defer boundary_state.deinit();
     const boundary_arena = boundary_state.allocator();
     consumeInitialInputs(engine, boundary_arena, slot) catch |err| {
-        commitFinal(engine, boundary_arena, slot, null, null, if (err == error.Canceled) .canceled else .{ .failed = failure(err) });
+        commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = failure(err) });
         return;
     };
 
@@ -70,7 +70,7 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
         std.debug.assert(rt.draft == null); // one draft per round
         const terminal = streamRound(engine, slot, &streamer);
         const live = if (rt.draft) |*live| live else {
-            commitFinal(engine, boundary_arena, slot, null, streamer.usage, terminal);
+            commitFinal(engine, boundary_arena, slot, null, false, streamer.usage, terminal);
             return;
         };
 
@@ -88,7 +88,7 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
                     return;
                 };
                 if (workspace_root == null) {
-                    commitFinal(engine, boundary_arena, slot, live, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
+                    commitFinal(engine, boundary_arena, slot, live, has_tools, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
                     return;
                 }
             } else {
@@ -98,13 +98,13 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
                     return;
                 };
                 if (terminal == .success) {
-                    commitFinal(engine, boundary_arena, slot, live, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
+                    commitFinal(engine, boundary_arena, slot, live, has_tools, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
                     return;
                 }
             }
         }
 
-        commitRound(engine, boundary_arena, slot, live, streamer.usage, terminal) catch |err| {
+        commitRound(engine, boundary_arena, slot, live, has_tools, streamer.usage, terminal) catch |err| {
             run.faultSlot(engine, slot, err);
             return;
         };
@@ -129,7 +129,7 @@ fn consumeInitialInputs(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlo
 }
 
 /// End a failed or canceled run and fault the slot on a save error.
-fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: ?*const draft.Draft, usage: ?message.TokenUsage, terminal: Terminal) void {
+fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: ?*const draft.Draft, has_tools: bool, usage: ?message.TokenUsage, terminal: Terminal) void {
     std.debug.assert(terminal != .success);
     if (live == null) {
         const outcome: proto.run.RunOutcome = switch (terminal) {
@@ -141,7 +141,7 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
         run.finishRunOpen(engine, arena, slot, outcome) catch |err| run.faultSlot(engine, slot, err);
         return;
     }
-    commitRound(engine, arena, slot, live.?, usage, terminal) catch |err| {
+    commitRound(engine, arena, slot, live.?, has_tools, usage, terminal) catch |err| {
         run.faultSlot(engine, slot, err);
         return;
     };
@@ -330,6 +330,7 @@ fn commitRound(
     arena: std.mem.Allocator,
     slot: *RunSlot,
     live: *const draft.Draft,
+    has_tools: bool,
     usage: ?message.TokenUsage,
     response: Terminal,
 ) !void {
@@ -344,7 +345,7 @@ fn commitRound(
     var tx = try engine.deps.db.begin();
     defer tx.deinit();
     const pending = try database.input.count(engine.deps.db, arena, session_id.raw);
-    const wants_next = result == .success and (hasToolPart(live) or pending > 0);
+    const wants_next = result == .success and (has_tools or pending > 0);
     const capped = wants_next and if (slot.config.max_rounds) |cap| slot.progress.rounds_committed >= cap -| 1 else false;
     const terminal: Terminal = if (capped) .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } } else result;
     const final = !wants_next or capped;
@@ -1287,14 +1288,14 @@ test "a failed boundary transaction preserves the draft progress and pending inp
     f.slot.phase = .running;
     const input_id = try f.queue(a, "next input");
     try f.db.conn.execNoArgs("CREATE TEMP TRIGGER refuse_consume BEFORE DELETE ON pending_inputs BEGIN SELECT RAISE(FAIL, 'test refusal'); END");
-    try std.testing.expectError(error.ConstraintTrigger, commitRound(&f.engine, a, f.slot, &f.session.draft.?, null, .{ .success = .stop }));
+    try std.testing.expectError(error.ConstraintTrigger, commitRound(&f.engine, a, f.slot, &f.session.draft.?, false, null, .{ .success = .stop }));
     try std.testing.expectEqual(@as(usize, 1), (try database.message.historyPage(&f.db, a, StreamerFixture.session_id, 0, 10)).messages.len);
     try std.testing.expectEqual(@as(u64, 0), f.slot.progress.rounds_committed);
     try std.testing.expectEqual(@as(u64, 2), f.slot.progress.current.?.message_id);
     try std.testing.expectEqual(@as(usize, 1), f.session.queueDepth());
     try std.testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, StreamerFixture.session_id));
     try f.db.conn.execNoArgs("DROP TRIGGER refuse_consume");
-    try commitRound(&f.engine, a, f.slot, &f.session.draft.?, null, .{ .success = .stop });
+    try commitRound(&f.engine, a, f.slot, &f.session.draft.?, false, null, .{ .success = .stop });
     try std.testing.expectEqual(@as(u64, 1), f.slot.progress.rounds_committed);
     try std.testing.expect(f.slot.progress.current == null and f.session.draft == null);
     try std.testing.expectEqual(@as(usize, 0), f.session.queueDepth());
@@ -1317,7 +1318,7 @@ test "a cancel at the boundary wins over a successful response and preserves pen
     f.slot.phase = .running;
     _ = try f.queue(a, "pending");
     f.slot.cancel.request(f.engine.deps.io);
-    try commitRound(&f.engine, a, f.slot, &f.session.draft.?, null, .{ .success = .stop });
+    try commitRound(&f.engine, a, f.slot, &f.session.draft.?, false, null, .{ .success = .stop });
     try std.testing.expectEqual(RunSlot.Phase.terminalized, f.slot.phase);
     try std.testing.expectEqual(@as(usize, 1), f.session.queueDepth());
     try std.testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, StreamerFixture.session_id));

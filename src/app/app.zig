@@ -185,13 +185,12 @@ fn resolveDataDir(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.En
 
 /// Return the SQLite path under `base`. The caller owns the result.
 fn dbPathZ(gpa: std.mem.Allocator, base: []const u8) ![:0]u8 {
-    const file = try paths.dbPathIn(gpa, base);
-    defer gpa.free(file);
-    return try gpa.dupeZ(u8, file);
+    std.debug.assert(base.len != 0);
+    return std.fs.path.joinZ(gpa, &.{ base, paths.db_file });
 }
 
 /// Create the data directory with mode 0700 on POSIX, and default permissions on Windows.
-fn ensureDataDir(io: std.Io, dir: []const u8) !void {
+pub fn ensureDataDir(io: std.Io, dir: []const u8) !void {
     const cwd = std.Io.Dir.cwd();
     if (builtin.os.tag == .windows) return cwd.createDirPath(io, dir);
     const perms = std.Io.File.Permissions.fromMode(0o700);

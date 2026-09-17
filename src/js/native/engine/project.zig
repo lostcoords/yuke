@@ -11,13 +11,6 @@ const paging = @import("paging.zig");
 
 const max_page_bytes = paging.max_page_bytes;
 
-pub fn messageError(m: proto.message.Message) ?proto.message.MessageError {
-    return switch (m) {
-        .assistant => |a| a.@"error",
-        else => null,
-    };
-}
-
 /// Write the message ids and roles of one session. The list is small, so it is not paged.
 pub fn writeOutline(w: *std.Io.Writer, s: *domain_session.Session) !void {
     try w.writeAll("{\"messages\":[");
@@ -37,7 +30,11 @@ pub fn writeOutline(w: *std.Io.Writer, s: *domain_session.Session) !void {
             try w.writeAll(",\"skill_name\":");
             try std.json.Stringify.encodeJsonString(name, .{}, w);
         };
-        if (messageError(entry.message)) |e| {
+        const message_error = switch (entry.message) {
+            .assistant => |a| a.@"error",
+            else => null,
+        };
+        if (message_error) |e| {
             try w.writeAll(",\"error\":{\"type\":");
             try std.json.Stringify.encodeJsonString(e.type, .{}, w);
             try w.writeAll(",\"message\":");
@@ -279,27 +276,21 @@ fn writeViews(w: *std.Io.Writer, parts: *Parts, list: []const u8, views: []const
 
 fn writeView(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, v: proto.view.View) !void {
     switch (v) {
-        .text => |t| {
-            try w.writeAll("{\"type\":\"text\",");
-            try writeCapped(w, parts, .view_text, list, index, "text", t.text);
-            if (t.language) |lang| {
-                try w.writeAll(",\"language\":");
-                try std.json.Stringify.encodeJsonString(lang, .{}, w);
-            }
-            try w.writeByte('}');
-        },
-        .markdown => |t| {
-            try w.writeAll("{\"type\":\"markdown\",");
-            try writeCapped(w, parts, .view_text, list, index, "text", t.text);
-            try w.writeByte('}');
-        },
-        .json => |t| {
-            try w.writeAll("{\"type\":\"json\",");
-            try writeCapped(w, parts, .view_text, list, index, "text", t.text);
-            try w.writeByte('}');
-        },
+        .text => |t| try writeTextView(w, parts, list, index, "text", t.text, t.language),
+        .markdown => |t| try writeTextView(w, parts, list, index, "markdown", t.text, null),
+        .json => |t| try writeTextView(w, parts, list, index, "json", t.text, null),
         .diff => |d| try writeDiff(w, parts, list, index, d),
     }
+}
+
+fn writeTextView(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, kind: []const u8, text: []const u8, language: ?[]const u8) !void {
+    try w.print("{{\"type\":\"{s}\",", .{kind});
+    try writeCapped(w, parts, .view_text, list, index, "text", text);
+    if (language) |lang| {
+        try w.writeAll(",\"language\":");
+        try std.json.Stringify.encodeJsonString(lang, .{}, w);
+    }
+    try w.writeByte('}');
 }
 
 /// Write a diff with a bounded line count. A transcript shows a preview, never a whole patch.

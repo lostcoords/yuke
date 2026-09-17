@@ -10,7 +10,7 @@ import { byteLabel } from "yuke:format";
 
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
-/** @import { ActionEntry, ActionPlan, CodeBlock, MessageDescriptor, PartCache, PartHit, PartOf, PartState, PartsOf, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions } from "./types/transcript.js" */
+/** @import { ActionEntry, ActionPlan, MessageDescriptor, PartCache, PartHit, PartOf, PartState, PartsOf, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions } from "./types/transcript.js" */
 /** @import { MessagePart } from "yuke:engine-native" */
 
 // Left gutter for a transcript row marker; the body indents past it.
@@ -840,13 +840,16 @@ export class Transcript {
   }
 
   // A missing count renders its message once and lets the cache drop the rows; later reads use the counts alone.
-  /** @returns {void} */
-  _indexRows() {
+  /** @param {number} last @returns {void} */
+  _indexRowsThrough(last) {
     if (!this._actionPlanCache && this.partsOf && this._prefix.length === 1) {
-      this._indexRowsWithActionPlan();
+      this._buildActionPlan(
+        (m) => this._partState(m.id).list,
+        this._indexRowsThrough,
+      );
       return;
     }
-    for (let i = this._prefix.length - 1; ; i++) {
+    for (let i = this._prefix.length - 1; i <= last; i++) {
       const m = this._at(i);
       if (!m) break;
       const key = String(m.id);
@@ -854,26 +857,6 @@ export class Transcript {
       if (count == null) count = this._rowsOf(m, this._width, i).length;
       this._prefix.push(this._offset(i) + count);
     }
-  }
-
-  // Build the first action plan and row index together, so each projected message stays live only until its group closes.
-  /** @returns {void} */
-  _indexRowsWithActionPlan() {
-    /** @param {number} last */
-    const renderThrough = (last) => {
-      while (this._prefix.length - 1 <= last) {
-        const i = this._prefix.length - 1;
-        const m = this._at(i);
-        if (!m) break;
-        const key = String(m.id);
-        const count = this._counts.get(key) ?? this._rowsOf(m, this._width, i).length;
-        this._prefix.push(this._offset(i) + count);
-      }
-    };
-    this._buildActionPlan(
-      (m) => this._partState(m.id).list,
-      renderThrough,
-    );
   }
 
   /** @param {number} i @returns {number} */
@@ -1065,7 +1048,7 @@ export class Transcript {
     if (!pos || this._width <= 0 || pos.row < 0) return -1;
     const i = this._indexOf(pos.id);
     if (i < 0) return -1;
-    this._indexRows();
+    this._indexRowsThrough(Infinity);
     return pos.row < this._offset(i + 1) - this._offset(i) ? this._offset(i) + pos.row : -1;
   }
 
@@ -1272,7 +1255,7 @@ export class Transcript {
       if (m.type !== "assistant") {
         starts.push(trees.length);
         flush();
-        if (ready) ready(message);
+        if (ready) ready.call(this, message);
         continue;
       }
       const messageParts = readParts(m);
@@ -1287,14 +1270,14 @@ export class Transcript {
         segment.push({ part: start + index, message });
       }
       if (m.error) flush();
-      if (ready && segment.length === 0) ready(message);
+      if (ready && segment.length === 0) ready.call(this, message);
     }
     flush();
     plan.trees = new Float64Array(trees);
     plan.starts = new Float64Array(starts);
     plan.joinAfter = new Uint8Array(joinAfter);
     // The last group has closed, so every message is ready; the draft sits one past the committed ones.
-    if (ready) ready(this._messages.length + (this._active ? 0 : -1));
+    if (ready) ready.call(this, this._messages.length + (this._active ? 0 : -1));
     return plan;
   }
 
@@ -1635,7 +1618,7 @@ export class Transcript {
   rowCount(width) {
     if (width <= 0) return 0;
     this._invalidate(width);
-    this._indexRows();
+    this._indexRowsThrough(Infinity);
     return this._offset(this._prefix.length - 1);
   }
 
@@ -1643,7 +1626,7 @@ export class Transcript {
   _rowsRange(width, top, height, absolute) {
     if (width <= 0 || height <= 0) return [];
     this._invalidate(width);
-    this._indexRows();
+    this._indexRowsThrough(Infinity);
     const first = this._messageAtRow(top);
     this._viewport.clear();
     for (let i = first; i + 1 < this._prefix.length && this._offset(i) < top + height; i++) {
@@ -1681,36 +1664,6 @@ export class Transcript {
     return out;
   }
 
-  // The newest message of `type`, or the newest of any type without one. Return null when empty.
-  /** @param {MessageDescriptor["type"] | undefined} type @returns {MessageDescriptor | null} */
-  last(type) {
-    const all = this.messages();
-    for (let i = all.length - 1; i >= 0; i--) {
-      const message = /** @type {MessageDescriptor} */ (all[i]);
-      if (!type || message.type === type) return message;
-    }
-    return null;
-  }
-
-  /** @param {MessageDescriptor | null} m @returns {string} */
-  textFor(m) {
-    return m ? this.textOf(m.id) : "";
-  }
-
-  // Return the fenced block bodies of every message oldest first, because a user turn can also hold a fence.
-  /** @returns {CodeBlock[]} */
-  codeBlocks() {
-    const out = [];
-    for (const m of this.messages()) {
-      const held = this._rows.get(String(m.id))?.doc;
-      const doc = held || new Document();
-      // A changed source makes the held render stale, because this call is outside a draw.
-      if (doc.setText(this.textOf(m.id)) && held) this._markStale(m.id);
-      for (const b of doc.codeBlocks()) out.push({ id: m.id, lang: b.lang, text: b.text });
-    }
-    return out;
-  }
-
   /** @param {Rect} rect @returns {void} */
   draw(rect) {
     this.pager.draw(rect);
@@ -1724,7 +1677,7 @@ export class Transcript {
     const y = clamp ? Math.min(Math.max(row, rect.y), rect.y + rect.h - 1) : row;
     const g = this.pager.rowAtY(y);
     if (g < 0) return null;
-    this._indexRows();
+    this._indexRowsThrough(Infinity);
     const i = this._messageAtRow(g);
     const m = this._at(i);
     if (!m) return null;

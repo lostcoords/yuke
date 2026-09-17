@@ -51,12 +51,12 @@ pub const Reducer = struct {
         for (self.blocks.items) |*b| {
             b.args.deinit(self.gpa);
             b.signature.deinit(self.gpa);
-            self.release(b.call_id);
-            self.release(b.name);
-            self.release(b.data);
+            json.release(self.gpa, b.call_id);
+            json.release(self.gpa, b.name);
+            json.release(self.gpa, b.data);
         }
         self.blocks.deinit(self.gpa);
-        self.release(self.raw_stop_reason);
+        json.release(self.gpa, self.raw_stop_reason);
         self.* = undefined;
     }
 
@@ -67,10 +67,7 @@ pub const Reducer = struct {
         scratch: std.mem.Allocator,
         out: *std.ArrayList(StreamEvent),
     ) Error!void {
-        const root = std.json.parseFromSliceLeaky(std.json.Value, scratch, data, .{}) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.Protocol,
-        };
+        const root = try json.parse(data, scratch);
         const kind = std.meta.stringToEnum(AnthropicEvent, json.fieldStr(root, "type") orelse return error.Protocol) orelse return; // Unknown event types are no-ops.
 
         switch (kind) {
@@ -136,9 +133,9 @@ pub const Reducer = struct {
 
         try self.blocks.append(self.gpa, .{ .kind = kind, .ignored = ignored });
         const block = &self.blocks.items[index];
-        if (data.len != 0) block.data = try self.own(data);
-        if (call_id.len != 0) block.call_id = try self.own(call_id);
-        if (name.len != 0) block.name = try self.own(name);
+        if (data.len != 0) block.data = try json.own(self.gpa, data);
+        if (call_id.len != 0) block.call_id = try json.own(self.gpa, call_id);
+        if (name.len != 0) block.name = try json.own(self.gpa, name);
 
         // A dropped block emits nothing, so the neutral ids stay dense from 0 for the fold.
         if (!ignored) {
@@ -181,8 +178,7 @@ pub const Reducer = struct {
         } else if (std.mem.eql(u8, delta_type, "input_json_delta")) {
             if (block.kind != .tool) return error.Protocol;
             const fragment = json.fieldStr(delta, "partial_json") orelse return error.Protocol;
-            std.debug.assert(block.args.items.len <= event.max_tool_arg_bytes);
-            if (fragment.len > event.max_tool_arg_bytes - block.args.items.len) return error.Protocol;
+            try json.checkToolArgSize(block.args.items.len, fragment, event.max_tool_arg_bytes);
             try block.args.appendSlice(self.gpa, fragment);
             try out.append(self.gpa, .{ .tool_input_delta = .{ .block = block.emitted_id, .partial_json = fragment } });
         }
@@ -212,9 +208,7 @@ pub const Reducer = struct {
         if (json.fieldGet(root, "delta")) |delta| {
             if (json.fieldStr(delta, "stop_reason")) |raw| {
                 self.stop_reason = mapStopReason(raw);
-                const owned = try self.own(raw);
-                self.release(self.raw_stop_reason);
-                self.raw_stop_reason = owned;
+                try json.replaceOwned(self.gpa, &self.raw_stop_reason, raw);
             }
         }
         // The final message_delta reports thinking tokens as a subset of output_tokens.
@@ -230,11 +224,7 @@ pub const Reducer = struct {
         if (self.done_emitted) return error.Protocol;
         for (self.blocks.items) |b| if (b.open and !b.ignored) return error.Protocol; // An emitted block closes before the done event.
         self.done_emitted = true;
-        try out.append(self.gpa, .{ .done = .{
-            .stop_reason = self.stop_reason,
-            .raw_stop_reason = self.raw_stop_reason,
-            .usage = self.usage,
-        } });
+        try json.appendDone(self.gpa, out, self.stop_reason, self.raw_stop_reason, self.usage);
     }
 
     fn openBlock(self: *Reducer, index: usize) Error!*Block {
@@ -242,15 +232,6 @@ pub const Reducer = struct {
         const block = &self.blocks.items[index];
         if (!block.open) return error.Protocol;
         return block;
-    }
-
-    /// Copy peer bytes into memory that the reducer owns until `deinit`.
-    fn own(self: *Reducer, bytes: []const u8) Error![]const u8 {
-        return self.gpa.dupe(u8, bytes);
-    }
-
-    fn release(self: *Reducer, bytes: []const u8) void {
-        if (bytes.len != 0) self.gpa.free(bytes);
     }
 };
 

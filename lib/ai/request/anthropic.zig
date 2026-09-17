@@ -12,12 +12,9 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
 
-    try jw.objectField("model");
-    try jw.write(request.model);
-    try jw.objectField("max_tokens");
-    try jw.write(request.max_output_tokens);
-    try jw.objectField("stream");
-    try jw.write(true);
+    try json.field(&jw, "model", request.model);
+    try json.field(&jw, "max_tokens", request.max_output_tokens);
+    try json.field(&jw, "stream", true);
 
     try json.sampling(&jw, request.temperature, request.top_p);
 
@@ -29,10 +26,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
         try jw.objectField("system");
         try jw.beginArray();
         try jw.beginObject();
-        try jw.objectField("type");
-        try jw.write("text");
-        try jw.objectField("text");
-        try jw.write(request.system);
+        try json.field(&jw, "type", "text");
+        try json.field(&jw, "text", request.system);
         if (cache) try writeCacheControl(&jw);
         try jw.endObject();
         try jw.endArray();
@@ -43,10 +38,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
         try jw.beginArray();
         for (request.tools) |tool| {
             try jw.beginObject();
-            try jw.objectField("name");
-            try jw.write(tool.name);
-            try jw.objectField("description");
-            try jw.write(tool.description);
+            try json.field(&jw, "name", tool.name);
+            try json.field(&jw, "description", tool.description);
             try jw.objectField("input_schema");
             try json.writeRawJson(&jw, tool.input_schema);
             try jw.endObject();
@@ -95,8 +88,7 @@ fn writeThinking(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void 
     try jw.beginObject();
     try json.field(jw, "type", kind);
     if (reasoning == .budget) {
-        try jw.objectField("budget_tokens");
-        try jw.write(reasoning.budget);
+        try json.field(jw, "budget_tokens", reasoning.budget);
     }
     try jw.endObject();
 }
@@ -126,8 +118,7 @@ fn writeOutputConfig(jw: *std.json.Stringify, reasoning: ir.ReasoningControl, sc
 
 fn beginMessage(jw: *std.json.Stringify, role: ir.Role) !void {
     try jw.beginObject();
-    try jw.objectField("role");
-    try jw.write(if (role == .user) "user" else "assistant");
+    try json.field(jw, "role", if (role == .user) "user" else "assistant");
     try jw.objectField("content");
     try jw.beginArray();
 }
@@ -192,8 +183,7 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
                 for (tr.media) |media| try writeMedia(jw, media, false);
                 try jw.endArray();
             }
-            try jw.objectField("is_error");
-            try jw.write(tr.is_error);
+            try json.field(jw, "is_error", tr.is_error);
             if (cache) try writeCacheControl(jw);
             try jw.endObject();
         },

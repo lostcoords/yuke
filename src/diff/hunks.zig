@@ -94,23 +94,21 @@ fn build(
     for (window, lines) |record, *line| {
         std.debug.assert(record.op == .insert or record.old_index < old_text.len);
         std.debug.assert(record.op == .delete or record.new_index < new_text.len);
-        switch (record.op) {
-            .keep, .delete => {
-                if (hunk.old_lines == 0) hunk.old_start = record.old_index + 1;
-                hunk.old_lines += 1;
-            },
-            .insert => {},
+        const text = switch (record.op) {
+            .insert => new_text[record.new_index],
+            .keep, .delete => old_text[record.old_index],
+        };
+        if (record.op != .insert) {
+            if (hunk.old_lines == 0) hunk.old_start = record.old_index + 1;
+            hunk.old_lines += 1;
         }
-        switch (record.op) {
-            .keep, .insert => {
-                if (hunk.new_lines == 0) hunk.new_start = record.new_index + 1;
-                hunk.new_lines += 1;
-            },
-            .delete => {},
+        if (record.op != .delete) {
+            if (hunk.new_lines == 0) hunk.new_start = record.new_index + 1;
+            hunk.new_lines += 1;
         }
         line.* = .{
             .op = record.op,
-            .text = if (record.op == .insert) new_text[record.new_index] else old_text[record.old_index],
+            .text = text,
         };
     }
 

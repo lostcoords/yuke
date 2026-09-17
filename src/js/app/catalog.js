@@ -25,6 +25,12 @@ export function catalogOf() {
   return catalog;
 }
 
+/** @param {string | null | undefined} selector @returns {Wire.ModelInfo | null} */
+export function modelOf(selector) {
+  if (!selector) return null;
+  return catalog.models.find((x) => x.selector === selector) || null;
+}
+
 const refresh = new Refresh(
   () => client.catalogList(catalog.rev).then((r) => {
     if (r && r.type === "full") {
@@ -68,8 +74,7 @@ export function providerStateLabel(state, canLogin = true) {
 // The context window of one model, or 0 when the catalog does not name it.
 /** @param {string | null | undefined} modelId @returns {number} */
 export function contextWindowOf(modelId) {
-  if (!modelId) return 0;
-  const m = catalog.models.find((x) => x.selector === modelId);
+  const m = modelOf(modelId);
   return m && m.context_window ? m.context_window : 0;
 }
 

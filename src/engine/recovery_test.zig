@@ -6,7 +6,6 @@ const proto = @import("proto");
 const database = @import("../store/store.zig");
 const Engine = @import("Engine.zig");
 const commands = @import("commands.zig");
-const runs = @import("run.zig");
 const run = @import("run.zig");
 const testing = std.testing;
 const Resources = @import("test_resources.zig");
@@ -182,13 +181,13 @@ test "tree ownership protects live runs and repair preserves committed input" {
     try testing.expect(promoted);
     stale.unpin();
 
-    var launch: ?runs.Launch = null;
+    var launch: ?run.Launch = null;
     const result = try commands.sessionSendInputForRpc(&f.other, a, .{
         .session_id = .bytes(child),
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "continue" } }} } },
     }, &launch, null);
     try testing.expectEqual(@as(u64, 2), result.started.run_id);
-    runs.Launch.release(&launch, &f.other);
+    run.Launch.release(&launch, &f.other);
     f.other.stopTurns();
 }
 

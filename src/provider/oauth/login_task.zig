@@ -93,13 +93,7 @@ fn pollFlow(arena: std.mem.Allocator, slot: *login_runtime.LoginSlot, seam: oaut
 
 /// Store the grant through the one mutator, so the write cannot lose another edit.
 fn install(runtime: *App, arena: std.mem.Allocator, slot: *login_runtime.LoginSlot, tokens: oauth.Tokens) !void {
-    const grant: provider.config.Grant = .{
-        .access_token = tokens.access_token,
-        .refresh_token = tokens.refresh_token,
-        .expires_at_ms = tokens.expires_at_ms,
-        .account_id = tokens.account_id,
-    };
-    if (try runtime.store.edit(arena, slot.provider_id, .{ .set_grant = grant })) runtime.announceCatalogChanged();
+    if (try runtime.store.edit(arena, slot.provider_id, .{ .set_grant = tokens })) runtime.announceCatalogChanged();
     runtime.announceAuthChanged(slot.provider_id, .oauth);
 }
 
@@ -163,7 +157,10 @@ pub fn refreshOnce(runtime: *App, margin_ms: u64) !bool {
     // `dueGrant` selects only a grant that can rotate, so this token is present.
     const old = due.grant.refresh_token.?;
 
-    const tokens = refreshFlow(arena, due.flow, seam, old, runtime.nowMillis(), body) catch |err| switch (err) {
+    const tokens = (switch (due.flow) {
+        .xai => xai.refresh(arena, seam, old, runtime.nowMillis(), body),
+        .codex => codex.refresh(arena, seam, old, runtime.nowMillis(), body),
+    }) catch |err| switch (err) {
         // The request never left or the call spends no token, so the caller may repeat it.
         oauth.Error.PreFlight, oauth.Error.Transient => return err,
         // The rotation may have landed, so repeating it would cost the whole grant.
@@ -192,13 +189,16 @@ fn moreDue(runtime: *App, arena: std.mem.Allocator, margin_ms: u64) bool {
 
 /// Write the rotated grant; a failed write returns no error because a retry would spend it twice, and the memory layer then forgets the grant so no later pass reads the replaced token.
 fn keep(runtime: *App, arena: std.mem.Allocator, due: Due, grant: provider.config.Grant) void {
-    store(runtime, arena, due, grant) catch |err| {
+    const changed = runtime.store.edit(arena, due.provider_id, .{ .set_grant = grant }) catch |err| {
         std.log.warn("cannot store the grant for {s}: {t}", .{ due.provider_id, err });
         runtime.store.forgetGrant(due.provider_id);
+        return;
     };
+    if (changed) runtime.announceCatalogChanged();
+    runtime.announceAuthChanged(due.provider_id, .oauth);
 }
 
-/// Return the grant a terminal rotation leaves, which holds nothing the engine may send again.
+/// Lapse the grant, so the run path refuses it and the client asks the human to log in again.
 fn lapsed(grant: provider.config.Grant) provider.config.Grant {
     var dead = grant;
     dead.expires_at_ms = 0;
@@ -240,19 +240,6 @@ fn dueGrant(runtime: *App, arena: std.mem.Allocator, margin_ms: u64) !?Due {
         };
     }
     return null;
-}
-
-fn refreshFlow(arena: std.mem.Allocator, flow: login_runtime.Flow, seam: oauth.Http, token: []const u8, now_ms: u64, body: []u8) !oauth.Tokens {
-    return switch (flow) {
-        .xai => xai.refresh(arena, seam, token, now_ms, body),
-        .codex => codex.refresh(arena, seam, token, now_ms, body),
-    };
-}
-
-/// Lapse the grant, so the run path refuses it and the client asks the human to log in again.
-fn store(runtime: *App, arena: std.mem.Allocator, due: Due, grant: provider.config.Grant) !void {
-    if (try runtime.store.edit(arena, due.provider_id, .{ .set_grant = grant })) runtime.announceCatalogChanged();
-    runtime.announceAuthChanged(due.provider_id, .oauth);
 }
 
 const app_fixture = @import("../../app/fixture.zig");

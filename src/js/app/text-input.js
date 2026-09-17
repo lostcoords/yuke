@@ -201,25 +201,21 @@ export class TextInput {
     return this.text.slice(0, this.caret);
   }
 
-  /** @param {number} from @param {number} to @param {string} ins @returns {void} */
-  _splice(from, to, ins) {
-    this.text = this.text.slice(0, from) + ins + this.text.slice(to);
-    this.caret = from + ins.length;
-    callHook(this, "onEdit", from, to, ins.length);
-    callHook(this, "onChange");
-  }
-
   // Replace [from, to) with `s`. The caret lands after the new text.
   /** @param {number} from @param {number} to @param {string} s @returns {void} */
   replace(from, to, s) {
-    this._splice(from, to, String(s));
+    s = String(s);
+    this.text = this.text.slice(0, from) + s + this.text.slice(to);
+    this.caret = from + s.length;
+    callHook(this, "onEdit", from, to, s.length);
+    callHook(this, "onChange");
   }
 
   // Insert `s` at the caret with one edit. A paste and a newline key use this.
   /** @param {string} s @returns {void} */
   insert(s) {
     s = String(s);
-    if (s !== "") this._splice(this.caret, this.caret, s);
+    if (s !== "") this.replace(this.caret, this.caret, s);
   }
 
   /** @param {HostEvent} ev @returns {boolean} */
@@ -242,21 +238,21 @@ export class TextInput {
         return true;
       case "backspace": {
         const p = prevGrapheme(this.text, this.caret);
-        if (p !== this.caret) this._splice(p, this.caret, "");
+        if (p !== this.caret) this.replace(p, this.caret, "");
         return true;
       }
       case "delete": {
         const n = nextGrapheme(this.text, this.caret);
-        if (n !== this.caret) this._splice(this.caret, n, "");
+        if (n !== this.caret) this.replace(this.caret, n, "");
         return true;
       }
       case "ctrl+w": {
         const p = deleteWordBack(this.text, this.caret);
-        if (p !== this.caret) this._splice(p, this.caret, "");
+        if (p !== this.caret) this.replace(p, this.caret, "");
         return true;
       }
       case "ctrl+u":
-        if (this.caret > 0) this._splice(0, this.caret, "");
+        if (this.caret > 0) this.replace(0, this.caret, "");
         return true;
     }
     const ins = textOf(ev);

@@ -2,6 +2,40 @@
 
 const std = @import("std");
 
+pub inline fn parse(data: []const u8, scratch: std.mem.Allocator) error{ Protocol, OutOfMemory }!std.json.Value {
+    return std.json.parseFromSliceLeaky(std.json.Value, scratch, data, .{}) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.Protocol,
+    };
+}
+
+pub inline fn own(gpa: std.mem.Allocator, bytes: []const u8) error{OutOfMemory}![]const u8 {
+    return gpa.dupe(u8, bytes);
+}
+
+pub inline fn release(gpa: std.mem.Allocator, bytes: []const u8) void {
+    if (bytes.len != 0) gpa.free(bytes);
+}
+
+pub inline fn replaceOwned(gpa: std.mem.Allocator, target: *[]const u8, bytes: []const u8) error{OutOfMemory}!void {
+    const owned = try own(gpa, bytes);
+    release(gpa, target.*);
+    target.* = owned;
+}
+
+pub inline fn checkToolArgSize(current: usize, fragment: []const u8, max: usize) error{Protocol}!void {
+    std.debug.assert(current <= max);
+    if (fragment.len > max - current) return error.Protocol;
+}
+
+pub inline fn appendDone(gpa: std.mem.Allocator, out: anytype, stop_reason: anytype, raw_stop_reason: []const u8, usage: anytype) !void {
+    try out.append(gpa, .{ .done = .{
+        .stop_reason = stop_reason,
+        .raw_stop_reason = raw_stop_reason,
+        .usage = usage,
+    } });
+}
+
 pub fn fieldGet(v: std.json.Value, key: []const u8) ?std.json.Value {
     const o = switch (v) {
         .object => |o| o,

@@ -127,14 +127,8 @@ fn stepResize(host: *Host, ws: Winsize) Error!void {
     host.paint.resize(host.ctx, ws);
     const ctx = host.ctx;
     const obj = objectType(ctx, "resize");
-    ctx.setPropertyStr(obj, "w", ctx.newInt32(host.paint.width)) catch {
-        ctx.freeValue(obj);
-        return error.JavaScriptFault;
-    };
-    ctx.setPropertyStr(obj, "h", ctx.newInt32(host.paint.height)) catch {
-        ctx.freeValue(obj);
-        return error.JavaScriptFault;
-    };
+    module.set(ctx, obj, "w", ctx.newInt32(host.paint.width));
+    module.set(ctx, obj, "h", ctx.newInt32(host.paint.height));
     _ = try dispatch(host, obj);
 }
 

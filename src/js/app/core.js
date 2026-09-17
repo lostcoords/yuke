@@ -1301,7 +1301,7 @@ export class RootView {
     for (const layer of this.overlays) {
       callHook(layer, "draw", layer === focused);
     }
-    const c = /** @type {{ x: number, y: number, visible: boolean } | null} */ (callHook(this.focused, "cursor"));
+    const c = /** @type {{ x: number, y: number, visible: boolean } | null} */ (callHook(focused, "cursor"));
     if (c && c.visible) term.cursor(c.x, c.y, true);
     else term.cursor(0, 0, false);
     term.endFrame();

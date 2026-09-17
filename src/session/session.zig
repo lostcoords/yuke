@@ -210,14 +210,6 @@ pub const Session = struct {
         try self.pending.append(self.gpa, item);
     }
 
-    pub fn queueOnCanceled(self: *Session, input_id: ids.InputId) void {
-        self.removeQueued(input_id);
-    }
-
-    pub fn queueRetire(self: *Session, input_id: ids.InputId) void {
-        self.removeQueued(input_id);
-    }
-
     /// Seal the projection after the store history is in the transcript. Call once before the first fold on a fresh Session.
     pub fn sealHistory(self: *Session, base_seq: ids.Seq, has_more: bool) void {
         std.debug.assert(self.base_seq == 0 and self.finalized_message_id == 0); // a fresh projection
@@ -245,9 +237,9 @@ pub const Session = struct {
             .input_queued_data => |d| self.onQueued(d),
             .input_canceled_data => |d| self.onCanceled(d),
             .transcript_truncated_data => |d| self.onTruncated(d),
-            .run_started_data => |d| self.onCursor(d.seq),
-            .run_done_data => |d| self.onCursor(d.seq),
-            .config_changed_data => |d| self.onCursor(d.seq),
+            .run_started_data => |d| self.advance(d.seq),
+            .run_done_data => |d| self.advance(d.seq),
+            .config_changed_data => |d| self.advance(d.seq),
             // Index, workspace, auth, and notice events are not session-projection state.
             else => {},
         };
@@ -314,7 +306,7 @@ pub const Session = struct {
         std.debug.assert(d.message.id() > self.finalized_message_id);
         try self.transcript.appendSized(d.message, bytes); // cache before the draft or queue mutates, so an OOM is clean
         switch (d.message) {
-            .user => |u| self.queueRetire(u.input_id),
+            .user => |u| self.removeQueued(u.input_id),
             .assistant => |a| if (self.draft) |*dr| {
                 if (dr.message_id == a.id) {
                     dr.deinit();
@@ -333,7 +325,7 @@ pub const Session = struct {
     }
 
     fn onCanceled(self: *Session, d: proto.input.InputCanceledData) void {
-        self.queueOnCanceled(d.input_id);
+        self.removeQueued(d.input_id);
         self.advance(d.seq);
     }
 
@@ -341,10 +333,6 @@ pub const Session = struct {
         self.raiseFinalized(d.first_removed_id); // truncated ids reject a late draft
         self.transcript.trimFrom(d.first_removed_id); // drop the truncated messages from the cache
         self.advance(d.seq);
-    }
-
-    fn onCursor(self: *Session, seq: ids.Seq) void {
-        self.advance(seq);
     }
 
     fn raiseFinalized(self: *Session, message_id: ids.MessageId) void {

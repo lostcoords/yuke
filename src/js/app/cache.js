@@ -1,12 +1,10 @@
 // yuke:cache — the `/cache` window: how much of this chat the provider served from its prompt cache.
-import { root } from "yuke:core";
 import { allChildren } from "yuke:client";
-import { Window } from "yuke:ui";
-import { InfoPanel } from "yuke:info-panel";
+import { showInfo } from "yuke:info-panel";
 import { chatEntry } from "yuke:chat";
 import { notice } from "yuke:notice";
-import { catalogOf, tokenLabel } from "yuke:catalog";
-import { sessionCost } from "yuke:context";
+import { modelOf, tokenLabel } from "yuke:catalog";
+import { contextBar, money, sessionCost } from "yuke:context";
 
 /** @import { Context } from "yuke:ext" */
 /** @typedef {{ name: string, total: Wire.TokenUsage, model: string }} Child */
@@ -28,32 +26,20 @@ export function cacheSaving(total, cost) {
   return (total.cache_read / 1e6) * (cost.input - cached);
 }
 
-/** @param {number} n @returns {string} */
-function money(n) {
-  return "$" + n.toFixed(n < 1 ? 3 : 2);
-}
-
 /** @param {number} share @returns {string} */
 function percent(share) {
   return (share * 100).toFixed(1) + "%";
-}
-
-// A ten-cell bar of the hit rate, so the window reads at a glance and not only as a number.
-/** @param {number} share @returns {string} */
-export function hitBar(share) {
-  const full = Math.round(Math.max(0, Math.min(1, share)) * 10);
-  return "[" + "█".repeat(full) + "░".repeat(10 - full) + "]";
 }
 
 // Build the label and value rows. The model must be in the catalog for the price rows to appear.
 /** @param {Wire.Session} session @param {ReadonlyArray<Child> | null} [children] @returns {[string, string][]} */
 export function cacheRows(session, children = []) {
   const t = session.usage_total;
-  const model = catalogOf().models.find((m) => m.selector === session.model);
+  const model = modelOf(session.model);
   const fresh = Math.max(0, t.input - t.cache_read - t.cache_write);
   /** @type {[string, string][]} */
   const rows = [
-    ["hit", hitBar(hitRate(t)) + " " + percent(hitRate(t))],
+    ["hit", contextBar(hitRate(t), 1, 10) + " " + percent(hitRate(t))],
     ["cached", tokenLabel(t.cache_read)],
     ["fresh", tokenLabel(fresh)],
   ];
@@ -82,7 +68,7 @@ export function cacheRows(session, children = []) {
 
 /** @param {string} selector @returns {Wire.ModelCost} */
 function costOf(selector) {
-  const model = catalogOf().models.find((m) => m.selector === selector);
+  const model = modelOf(selector);
   return model ? model.cost : {};
 }
 
@@ -115,12 +101,7 @@ export const cachePlugin = {
           const children = await allChildren(entry.session.id)
             .then((items) => items.map(({ session }) => ({ name: session.name || "agent", total: session.usage_total, model: session.model })))
             .catch(() => null);
-          /** @type {(() => void)} */
-          let release = () => {};
-          const panel = new InfoPanel(cacheRows(entry.session, children), () => release());
-          const win = new Window({ title: "cache", footer: "esc close", border: "rounded", width: (max) => Math.round(max * 0.6), contentHeight: panel.rows.length, content: panel });
-          root.pushOverlay(win);
-          release = ctx.tui.overlay(win);
+          showInfo(ctx, "cache", cacheRows(entry.session, children));
         },
       }, {
         "cache:show": { title: "Cache", description: "show what the provider served from its prompt cache", slash: "cache" },

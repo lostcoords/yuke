@@ -162,20 +162,10 @@ const HttpBody = struct {
         return self.peekRaw();
     }
 
-    /// Return the bytes the stream holds now, because a full-buffer read would delay every SSE event.
-    fn peekAvailable(self: *HttpBody) std.Io.Reader.Error![]const u8 {
-        self.reader.fill(1) catch |err| switch (err) {
-            error.EndOfStream => return "",
-            else => |e| return e,
-        };
-        const have = self.reader.buffered();
-        std.debug.assert(have.len > 0); // fill(1) returned, so the reader holds at least one byte
-        return have;
-    }
-
     /// Return an empty slice only at the end of the stream, as ResponseBody requires.
     fn peekRaw(self: *HttpBody) anyerror![]const u8 {
-        return self.peekAvailable() catch |err| switch (err) {
+        self.reader.fill(1) catch |err| switch (err) {
+            error.EndOfStream => return "",
             error.ReadFailed => {
                 // A malformed or truncated body sets bodyErr without a socket error. Return it as a peer error.
                 if (self.response.bodyErr()) |be| {
@@ -189,6 +179,9 @@ const HttpBody = struct {
             },
             else => |e| return e,
         };
+        const have = self.reader.buffered();
+        std.debug.assert(have.len > 0); // fill(1) returned, so the reader holds at least one byte
+        return have;
     }
 
     fn deinit(ctx: *anyopaque) void {
@@ -246,24 +239,22 @@ fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
         hb.reader.toss(take);
     }
     const body = buf[0..len];
-    if (bodyIsQuota(arena, body)) return Error.QuotaExhausted;
+    const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return Error.RateLimitUnknown;
+    const err = json.fieldGet(value, "error") orelse return Error.RateLimitUnknown;
+    if (bodyIsQuota(err)) return Error.QuotaExhausted;
     // A rate limit must prove itself. An unreadable body may still name a spend cap.
-    return if (bodyIsRateLimit(arena, body)) Error.RateLimited else Error.RateLimitUnknown;
+    return if (bodyIsRateLimit(err)) Error.RateLimited else Error.RateLimitUnknown;
 }
 
 /// Report whether the error body names a temporary rate limit. Absence of proof is not proof.
-fn bodyIsRateLimit(arena: Allocator, body: []const u8) bool {
-    const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return false;
-    const err = json.fieldGet(value, "error") orelse return false;
+fn bodyIsRateLimit(err: std.json.Value) bool {
     if (json.fieldStr(err, "code")) |code| if (std.mem.eql(u8, code, "rate_limit_exceeded")) return true;
     if (json.fieldStr(err, "type")) |t| if (std.mem.eql(u8, t, "rate_limit_error")) return true;
     return false;
 }
 
 /// Report whether the error body names an exhausted quota, by code, type, or spend-limit detail.
-fn bodyIsQuota(arena: Allocator, body: []const u8) bool {
-    const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return false;
-    const err = json.fieldGet(value, "error") orelse return false;
+fn bodyIsQuota(err: std.json.Value) bool {
     if (json.fieldStr(err, "code")) |code| if (isQuotaCode(code)) return true;
     if (json.fieldStr(err, "type")) |t| if (std.mem.eql(u8, t, "insufficient_quota")) return true;
     if (json.fieldGet(err, "details")) |details| if (json.fieldStr(details, "error_code")) |dc| {

@@ -283,14 +283,6 @@ test "a user tool can replace a stock agent tool without a boot failure" {
     try std.testing.expectEqualStrings("custom agent", result.text);
 }
 
-test "stop all distinguishes changed idle and failed children" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/stop-all.test.js");
-    try support.expectString(host, "result", "ok");
-}
-
 test "JavaScript leaves child prompt composition to native admission" {
     const host = support.createHost();
     defer support.destroyHost(host);

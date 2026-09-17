@@ -59,8 +59,8 @@ const Request = struct {
 
         const cwd = module.optionalString(ctx, gpa, options, "cwd") catch return error.CwdType;
         errdefer if (cwd) |dir| gpa.free(dir);
-        const timeout_ms = integerOption(ctx, options, "timeoutMs", default_timeout_ms, max_timeout_ms) catch return error.Timeout;
-        const max_bytes = integerOption(ctx, options, "maxBytes", max_stream_bytes, max_stream_bytes) catch return error.MaxBytes;
+        const timeout_ms = (module.optionalInteger(ctx, options, "timeoutMs", default_timeout_ms, max_timeout_ms) catch return error.Timeout).?;
+        const max_bytes = (module.optionalInteger(ctx, options, "maxBytes", max_stream_bytes, max_stream_bytes) catch return error.MaxBytes).?;
 
         return .{ .command = command, .root = root, .cwd = cwd, .timeout_ms = timeout_ms, .max_bytes = max_bytes };
     }
@@ -168,15 +168,6 @@ fn errorMessage(err: os.HostError) []const u8 {
         error.Canceled => "the command was canceled",
         error.HostFailure => "the host could not run the command",
     };
-}
-
-/// Read a whole-number option from 1 to `max`, or answer `default`. A fraction fails rather than truncates.
-fn integerOption(ctx: Context, options: Value, name: [:0]const u8, default: u32, max: u32) error{InvalidOption}!u32 {
-    if (!ctx.isObject(options)) return default;
-    const value = ctx.getPropertyStr(options, name);
-    defer ctx.freeValue(value);
-    if (ctx.isUndefined(value) or ctx.isNull(value)) return default;
-    return @intCast(module.integer(ctx, value, 1, max) orelse return error.InvalidOption);
 }
 
 const testing = std.testing;

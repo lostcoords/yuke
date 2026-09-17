@@ -50,7 +50,7 @@ test "yuke:ui mouse config, wheel scroll, and pane routing under the pointer" {
     try support.runPainted(10, 21, "tests/ui/mouse.test.js");
 }
 
-test "yuke:ui copy targets: last reply, message list, and code blocks" {
+test "yuke:ui copy writes clipboard data" {
     var fixture = try support.PaintedHost.init(10, 40);
     defer fixture.deinit();
     const host = fixture.host;

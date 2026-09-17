@@ -194,10 +194,7 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
     // A hook or the gate answers one object, which never carries model text or a view.
     if (call.kind != .tool) return stringifyValue(host, call, value);
     if (ctx.isString(value)) {
-        const text = ctx.toCStringLen(value) catch {
-            pending.dropException(ctx);
-            return settleText(host, call, "the tool answered text the host cannot read", true);
-        };
+        const text = cstring(ctx, value) orelse return settleText(host, call, "the tool answered text the host cannot read", true);
         defer ctx.freeCString(text.ptr);
         return settleText(host, call, text, false);
     }
@@ -210,10 +207,7 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
         const text_value = ctx.getPropertyStr(value, "text");
         defer ctx.freeValue(text_value);
         if (ctx.isString(text_value)) {
-            const text = ctx.toCStringLen(text_value) catch {
-                pending.dropException(ctx);
-                return settleText(host, call, "the tool answered text the host cannot read", true);
-            };
+            const text = cstring(ctx, text_value) orelse return settleText(host, call, "the tool answered text the host cannot read", true);
             defer ctx.freeCString(text.ptr);
             // The extra object holds the view and the media, so a new member needs no host change.
             const extra_value = ctx.getPropertyStr(value, "extra");
@@ -225,10 +219,7 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
                 pending.dropException(ctx);
                 return settleText(host, call, "the tool answered a result that is not JSON", true);
             }
-            const extra_text = ctx.toCStringLen(json) catch {
-                pending.dropException(ctx);
-                return settleText(host, call, "the tool answered a result that is not JSON", true);
-            };
+            const extra_text = cstring(ctx, json) orelse return settleText(host, call, "the tool answered a result that is not JSON", true);
             defer ctx.freeCString(extra_text.ptr);
             return settleTextAndExtra(host, call, text, extra_text);
         }
@@ -246,7 +237,7 @@ fn cancellationReason(ctx: Context, value: Value) ?proto.tool.ToolCancellationRe
         return null;
     }
     if (!ctx.isString(code)) return null;
-    const text = ctx.toCStringLen(code) catch return null;
+    const text = cstring(ctx, code) orelse return null;
     defer ctx.freeCString(text.ptr);
     if (std.mem.eql(u8, text, "setup_declined")) return .setup_declined;
     if (std.mem.eql(u8, text, "setup_canceled")) return .setup_dismissed;
@@ -261,10 +252,7 @@ fn stringifyValue(host: *Host, call: *table.Call, value: Value) void {
         pending.dropException(ctx);
         return settleText(host, call, "the tool answered a value that is not JSON", true);
     }
-    const text = ctx.toCStringLen(json) catch {
-        pending.dropException(ctx);
-        return settleText(host, call, "the tool answered a value that is not JSON", true);
-    };
+    const text = cstring(ctx, json) orelse return settleText(host, call, "the tool answered a value that is not JSON", true);
     defer ctx.freeCString(text.ptr);
     settleText(host, call, text, false);
 }
@@ -275,12 +263,13 @@ fn errorText(ctx: Context, value: Value) ?[:0]const u8 {
         const message = ctx.getPropertyStr(value, "message");
         defer ctx.freeValue(message);
         if (ctx.isString(message)) {
-            return ctx.toCStringLen(message) catch {
-                pending.dropException(ctx);
-                return null;
-            };
+            return cstring(ctx, message);
         }
     }
+    return cstring(ctx, value);
+}
+
+fn cstring(ctx: Context, value: Value) ?[:0]const u8 {
     return ctx.toCStringLen(value) catch {
         pending.dropException(ctx);
         return null;

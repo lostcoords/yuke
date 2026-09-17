@@ -64,13 +64,8 @@ fn stopTuiLog(io: std.Io) void {
 fn openTuiLog(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !?std.Io.File {
     const dir = (try paths.dataDir(gpa, env)) orelse return null;
     defer gpa.free(dir);
+    try app.ensureDataDir(io, dir);
     const cwd = std.Io.Dir.cwd();
-    const private = std.Io.File.Permissions.fromMode(0o700);
-    if (builtin.os.tag == .windows) {
-        try cwd.createDirPath(io, dir);
-    } else if (try cwd.createDirPathStatus(io, dir, private) == .created) {
-        try cwd.setFilePermissions(io, dir, private, .{});
-    }
     const path = try std.fs.path.join(gpa, &.{ dir, "tui.log" });
     defer gpa.free(path);
     const file_private = std.Io.File.Permissions.fromMode(0o600);

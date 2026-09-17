@@ -14,10 +14,6 @@ pub const Store = struct {
     mutex: std.Io.Mutex = .init,
 };
 
-pub fn get(engine: *Engine, arena: std.mem.Allocator) !Wire.AgentsGetResult {
-    return read(engine, arena);
-}
-
 pub fn update(engine: *Engine, arena: std.mem.Allocator, params: Wire.AgentsUpdateParams) !Wire.AgentsGetResult {
     try engine.agents.mutex.lock(engine.deps.io);
     defer engine.agents.mutex.unlock(engine.deps.io);
@@ -28,7 +24,7 @@ pub fn update(engine: *Engine, arena: std.mem.Allocator, params: Wire.AgentsUpda
     const lock = std.Io.Dir.createFileAbsolute(engine.deps.io, lock_path, .{ .truncate = false, .permissions = .fromMode(0o600) }) catch return error.AgentConfigSaveFailed;
     defer lock.close(engine.deps.io);
     try lock.lock(engine.deps.io, .exclusive);
-    const current = try read(engine, arena);
+    const current = try get(engine, arena);
     if (!std.mem.eql(u8, &current.revision.raw, &params.revision.raw)) return error.AgentConfigConflict;
     // A slot names no level, so the update validates each model with its own default level.
     for ([_]Wire.AgentModelSlot{ .small, .medium }) |slot| if (params.config.models.get(slot)) |entry| {
@@ -44,7 +40,7 @@ pub fn update(engine: *Engine, arena: std.mem.Allocator, params: Wire.AgentsUpda
 
 /// The model one slot names. A read refreshes the map from disk.
 pub fn slotModel(engine: *Engine, arena: std.mem.Allocator, slot: Wire.AgentModelSlot) ![]const u8 {
-    const current = try read(engine, arena);
+    const current = try get(engine, arena);
     const entry = current.config.models.get(slot) orelse return error.AgentSetupRequired;
     return entry.model;
 }
@@ -58,7 +54,7 @@ fn configPath(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Envi
     return try std.fs.path.join(arena, &.{ canonical, "agents.json" });
 }
 
-fn read(engine: *Engine, arena: std.mem.Allocator) !Wire.AgentsGetResult {
+pub fn get(engine: *Engine, arena: std.mem.Allocator) !Wire.AgentsGetResult {
     const path = try configPath(arena, engine.deps.io, engine.deps.execution.env);
     const file = std.Io.Dir.openFileAbsolute(engine.deps.io, path orelse return parse(arena, null, "{}"), .{ .follow_symlinks = false }) catch |err| switch (err) {
         error.FileNotFound => return parse(arena, path, "{}"),

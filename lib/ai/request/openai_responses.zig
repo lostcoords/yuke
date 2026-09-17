@@ -14,13 +14,10 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
 
-    try jw.objectField("model");
-    try jw.write(request.model);
-    try jw.objectField("stream");
-    try jw.write(true);
+    try json.field(&jw, "model", request.model);
+    try json.field(&jw, "stream", true);
     // The caller owns the input history, so the endpoint never keeps a copy.
-    try jw.objectField("store");
-    try jw.write(false);
+    try json.field(&jw, "store", false);
 
     // A stable key sends every round of one session to the same cache node.
     if (request.cache_key.len != 0) try json.field(&jw, "prompt_cache_key", request.cache_key);
@@ -31,8 +28,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     // The Codex backend refuses the sampling limits an API key accepts.
     switch (request.responses_dialect) {
         .standard => {
-            try jw.objectField("max_output_tokens");
-            try jw.write(request.max_output_tokens);
+            try json.field(&jw, "max_output_tokens", request.max_output_tokens);
             try json.sampling(&jw, request.temperature, request.top_p);
         },
         .codex => {},
@@ -59,8 +55,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             try json.field(&jw, "description", tool.description);
             try jw.objectField("parameters");
             try json.writeRawJson(&jw, tool.input_schema);
-            try jw.objectField("strict");
-            try jw.write(tool.strict);
+            try json.field(&jw, "strict", tool.strict);
             try jw.endObject();
         }
         try jw.endArray();
@@ -98,29 +93,13 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                 // Omit reasoning state when it has no encrypted content.
                 if (reasoning.signature.len == 0) continue;
                 try closeMessage(&jw, &message);
-                try jw.beginObject();
-                try json.field(&jw, "type", "reasoning");
-                try jw.objectField("summary");
-                try jw.beginArray();
-                try jw.beginObject();
-                try json.field(&jw, "type", "summary_text");
-                try json.field(&jw, "text", reasoning.text);
-                try jw.endObject();
-                try jw.endArray();
-                try json.field(&jw, "encrypted_content", reasoning.signature);
-                try jw.endObject();
+                try writeReasoningItem(&jw, reasoning.text, reasoning.signature);
             },
             .redacted_reasoning => |data| {
                 // Omit reasoning state when it has no encrypted content.
                 if (data.len == 0) continue;
                 try closeMessage(&jw, &message);
-                try jw.beginObject();
-                try json.field(&jw, "type", "reasoning");
-                try jw.objectField("summary");
-                try jw.beginArray();
-                try jw.endArray();
-                try json.field(&jw, "encrypted_content", data);
-                try jw.endObject();
+                try writeReasoningItem(&jw, null, data);
             },
             .tool_use => |tool_use| {
                 try closeMessage(&jw, &message);
@@ -214,6 +193,23 @@ fn writeReasoning(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void
 
 fn endMessage(jw: *std.json.Stringify) !void {
     try jw.endArray();
+    try jw.endObject();
+}
+
+fn writeReasoningItem(jw: *std.json.Stringify, summary: ?[]const u8, signature: []const u8) !void {
+    std.debug.assert(signature.len != 0);
+    try jw.beginObject();
+    try json.field(jw, "type", "reasoning");
+    try jw.objectField("summary");
+    try jw.beginArray();
+    if (summary) |text| {
+        try jw.beginObject();
+        try json.field(jw, "type", "summary_text");
+        try json.field(jw, "text", text);
+        try jw.endObject();
+    }
+    try jw.endArray();
+    try json.field(jw, "encrypted_content", signature);
     try jw.endObject();
 }
 
@@ -329,8 +325,6 @@ test "off asks for no reasoning rather than omitting the control" {
         .{ .blocks = &blocks },
     );
 }
-
-// gpt-4o has no reasoning levels. An empty session level resolves to .default and must omit the object.
 
 test "assistant reasoning text and tool call precede a tool result" {
     const blocks = [_]ir.Block{

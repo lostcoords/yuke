@@ -11,8 +11,7 @@ for (let n = 1; n <= text.length; n++) {
   const fresh = new Document();
   fresh.setText(head);
   const same = JSON.stringify(stream.blocks()) === JSON.stringify(fresh.blocks()) &&
-    JSON.stringify(stream.rows(24)) === JSON.stringify(fresh.rows(24)) &&
-    JSON.stringify(stream.codeBlocks()) === JSON.stringify(fresh.codeBlocks());
+    JSON.stringify(stream.rows(24)) === JSON.stringify(fresh.rows(24));
   if (!same) fails.push(n);
 }
 // A rewrite that is not an append parses from the start again.

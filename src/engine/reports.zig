@@ -114,22 +114,25 @@ fn runOutput(engine: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId,
             out.tokens.cache_read += tokens.cache_read;
             out.tokens.cache_write += tokens.cache_write;
         }
-        var output: std.Io.Writer.Allocating = .init(scratch.allocator());
+        var output: ?std.Io.Writer.Allocating = null;
         for (message.assistant.content) |part| switch (part) {
             .tool => out.tool_calls += 1,
             .text => |text| if (with_text and out.text.len == 0 and text.text.len > 0) {
-                if (output.written().len > 0 and output.written().len < max_output_bytes) try output.writer.writeByte('\n');
-                const available = max_output_bytes - output.written().len;
+                if (output == null) output = .init(scratch.allocator());
+                if (output.?.written().len > 0 and output.?.written().len < max_output_bytes) try output.?.writer.writeByte('\n');
+                const available = max_output_bytes - output.?.written().len;
                 var len = @min(text.text.len, available);
                 if (len < text.text.len) {
                     out.truncated = true;
                     while (len > 0 and text.text[len] & 0xc0 == 0x80) len -= 1;
                 }
-                try output.writer.writeAll(text.text[0..len]);
+                try output.?.writer.writeAll(text.text[0..len]);
             },
             else => {},
         };
-        if (output.written().len > 0) out.text = try arena.dupe(u8, output.written());
+        if (output) |*writer| {
+            if (writer.written().len > 0) out.text = try arena.dupe(u8, writer.written());
+        }
     }
     std.debug.assert(out.text.len <= max_output_bytes);
     return out;
@@ -144,11 +147,16 @@ pub fn publishReport(engine: *Engine, report: proto.input.InputQueuedData, reque
     if (request_wake) requestWake(engine, report.session_id);
 }
 
+fn emitErrorNotice(engine: *Engine, source: []const u8, log: bool, comptime buffer_size: usize, comptime format: []const u8, args: anytype) void {
+    var buffer: [buffer_size]u8 = undefined;
+    const text = std.fmt.bufPrint(&buffer, format, args) catch unreachable;
+    if (log) std.log.err("{s}", .{text});
+    engine.sinks.emit(.{ .method = .notice, .params = .{ .notice = .{ .level = .@"error", .source = source, .message = text } } });
+}
+
 /// Tell subscribers that a run needs recovery after its terminal write failed.
 pub fn faultNotice(engine: *Engine, session_id: proto.ids.SessionId, run_id: proto.ids.RunId, err: anyerror) void {
-    var buffer: [512]u8 = undefined;
-    const text = std.fmt.bufPrint(&buffer, "Run save failed. Restart yuke to recover this run. Run {d}, session {x}: {t}.", .{ run_id, &session_id.raw, err }) catch unreachable;
-    engine.sinks.emit(.{ .method = .notice, .params = .{ .notice = .{ .level = .@"error", .source = "engine", .message = text } } });
+    emitErrorNotice(engine, "engine", false, 512, "Run save failed. Restart yuke to recover this run. Run {d}, session {x}: {t}.", .{ run_id, &session_id.raw, err });
 }
 
 /// A failed wake leaves the durable report for the next input or workspace resume.
@@ -160,7 +168,6 @@ pub fn requestWake(engine: *Engine, parent: proto.ids.SessionId) void {
 }
 
 fn wakeParent(engine: *Engine, parent: proto.ids.SessionId) void {
-    if (engine.closing) return;
     wake(engine, parent) catch |err| {
         wakeFailed(engine, parent, err);
     };
@@ -174,8 +181,5 @@ pub fn wake(engine: *Engine, parent: proto.ids.SessionId) !void {
 }
 
 fn wakeFailed(engine: *Engine, parent: proto.ids.SessionId, err: anyerror) void {
-    var buffer: [256]u8 = undefined;
-    const text = std.fmt.bufPrint(&buffer, "The child report for session {x} is saved, but the parent could not resume: {t}. Send input or resume the workspace to retry.", .{ &parent.raw, err }) catch unreachable;
-    std.log.err("{s}", .{text});
-    engine.sinks.emit(.{ .method = .notice, .params = .{ .notice = .{ .level = .@"error", .source = "agents", .message = text } } });
+    emitErrorNotice(engine, "agents", true, 256, "The child report for session {x} is saved, but the parent could not resume: {t}. Send input or resume the workspace to retry.", .{ &parent.raw, err });
 }

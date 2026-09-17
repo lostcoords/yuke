@@ -1,7 +1,7 @@
 import { equal } from "yuke:test";
 import { client } from "yuke:client";
 const surface = ["request", "sessionList", "sessionOpen", "sessionClose",
-  "sessionOutline", "sessionText", "sessionTextPage", "sessionParts", "sessionPart", "partTextPage",
+  "sessionOutline", "sessionWholeText", "sessionParts", "sessionPart", "partTextPage",
   "textContent", "sessionSendInput", "sessionCancelRun", "sessionCreate", "catalogList", "catalogReload",
   "authList", "authLogin", "authCancelLogin", "authSetApiKey", "authRemove"]
   .every((k) => typeof client[k] === "function");

@@ -1,10 +1,8 @@
 // yuke:context — the context reading on the status bar and the `/context` breakdown window.
-import { root } from "yuke:core";
 import { client } from "yuke:client";
-import { Window } from "yuke:ui";
-import { InfoPanel } from "yuke:info-panel";
+import { showInfo } from "yuke:info-panel";
 import { chatEntry } from "yuke:chat";
-import { catalogOf, contextWindowOf, defaultModel, tokenLabel } from "yuke:catalog";
+import { modelOf, contextWindowOf, defaultModel, tokenLabel } from "yuke:catalog";
 
 /** @import { Context } from "yuke:ext" */
 /** @typedef {{ model: string, count: number, usage: Wire.TokenUsage, total: Wire.TokenUsage, queued: number, compaction: boolean }} Reading */
@@ -63,12 +61,17 @@ export function sessionCost(total, cost) {
   return per(fresh, cost.input) + per(total.output, cost.output) + per(total.cache_read, cost.cache_read) + per(total.cache_write, cost.cache_write);
 }
 
+/** @param {number} n @returns {string} */
+export function money(n) {
+  return "$" + n.toFixed(n < 1 ? 3 : 2);
+}
+
 // Build the label and value rows of the breakdown window. The cost row needs the model in the catalog.
 /** @param {Reading} r @param {ReadonlyArray<Wire.InstructionSource>} [sources] @param {ReadonlyArray<Wire.SkillInfo>} [skills] @returns {[string, string][]} */
 export function contextRows(r, sources = [], skills = []) {
   const u = r.usage;
   const t = r.total;
-  const model = catalogOf().models.find((m) => m.selector === r.model);
+  const model = modelOf(r.model);
   const window = (model && model.context_window) || 0;
   /** @type {[string, string][]} */
   const rows = [
@@ -83,7 +86,7 @@ export function contextRows(r, sources = [], skills = []) {
   ];
   if (model) {
     const cost = sessionCost(t, model.cost);
-    rows.push(["cost", "$" + cost.toFixed(cost < 1 ? 3 : 2)]);
+    rows.push(["cost", money(cost)]);
   }
   for (const source of sources) rows.push([source.scope + " AGENTS", source.path]);
   for (const skill of skills) rows.push([skill.scope + " skill", skill.name + " · " + skill.description]);
@@ -106,12 +109,7 @@ export const contextPlugin = {
           const current = reading();
           const entry = chatEntry();
           const item = entry ? await client.sessionGet(entry.session.id) : null;
-          /** @type {(() => void)} */
-          let release = () => {};
-          const panel = new InfoPanel(contextRows(current, item?.instruction_sources || [], item?.skills || []), () => release());
-          const win = new Window({ title: "context", footer: "esc close", border: "rounded", width: max => Math.round(max * 0.6), contentHeight: panel.rows.length, content: panel });
-          root.pushOverlay(win);
-          release = ctx.tui.overlay(win);
+          showInfo(ctx, "context", contextRows(current, item?.instruction_sources || [], item?.skills || []));
         },
       }, {
         "context:show": { title: "Context", description: "show the context and usage of this chat", slash: "context" },

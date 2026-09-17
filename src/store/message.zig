@@ -13,26 +13,26 @@ const transcript = @import("../session/transcript.zig");
 const Meta = struct {
     message_id: u64,
     role: []const u8,
-    run_id: ?u64,
-    config_rev: ?u64,
-    model: ?[]const u8,
-    protocol: ?[]const u8,
-    finish: ?[]const u8,
-    tokens_input: ?u64,
-    tokens_output: ?u64,
-    tokens_reasoning: ?u64,
-    tokens_cache_read: ?u64,
-    tokens_cache_write: ?u64,
-    cost: ?f64,
+    run_id: ?u64 = null,
+    config_rev: ?u64 = null,
+    model: ?[]const u8 = null,
+    protocol: ?[]const u8 = null,
+    finish: ?[]const u8 = null,
+    tokens_input: ?u64 = null,
+    tokens_output: ?u64 = null,
+    tokens_reasoning: ?u64 = null,
+    tokens_cache_read: ?u64 = null,
+    tokens_cache_write: ?u64 = null,
+    cost: ?f64 = null,
     created_at_ms: u64,
     /// The context estimate charges an image by count and not by bytes, so the row keeps the count.
     images: u64,
     // Add the session usage totals. Use zero when the message carries no tokens.
-    add_input: u64,
-    add_output: u64,
-    add_reasoning: u64,
-    add_cache_read: u64,
-    add_cache_write: u64,
+    add_input: u64 = 0,
+    add_output: u64 = 0,
+    add_reasoning: u64 = 0,
+    add_cache_read: u64 = 0,
+    add_cache_write: u64 = 0,
 };
 
 /// The event borrows the input message; bytes is the exact stored JSON size.
@@ -114,24 +114,8 @@ fn metaOf(message: proto.message.Message) Meta {
         .user => |u| .{
             .message_id = u.id,
             .role = "user",
-            .run_id = null,
-            .config_rev = null,
-            .model = null,
-            .protocol = null,
-            .finish = null,
-            .tokens_input = null,
-            .tokens_output = null,
-            .tokens_reasoning = null,
-            .tokens_cache_read = null,
-            .tokens_cache_write = null,
-            .cost = null,
             .created_at_ms = u.time.created_at_ms,
             .images = imagesOf(u.content),
-            .add_input = 0,
-            .add_output = 0,
-            .add_reasoning = 0,
-            .add_cache_read = 0,
-            .add_cache_write = 0,
         },
         .assistant => |a| .{
             .message_id = a.id,
@@ -159,23 +143,8 @@ fn metaOf(message: proto.message.Message) Meta {
             .message_id = c.id,
             .role = "compaction",
             .run_id = c.run_id,
-            .config_rev = null,
-            .model = null,
-            .protocol = null,
-            .finish = null,
-            .tokens_input = null,
-            .tokens_output = null,
-            .tokens_reasoning = null,
-            .tokens_cache_read = null,
-            .tokens_cache_write = null,
-            .cost = null,
             .created_at_ms = c.time.created_at_ms,
             .images = 0,
-            .add_input = 0,
-            .add_output = 0,
-            .add_reasoning = 0,
-            .add_cache_read = 0,
-            .add_cache_write = 0,
         },
     };
 }
@@ -235,20 +204,13 @@ pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
 
     const has_more = newest_first.items.len > limit;
     const kept = newest_first.items[0..@min(newest_first.items.len, limit)];
-    const out = try arena.alloc(proto.message.Message, kept.len);
-    for (kept, 0..) |msg, i| out[out.len - 1 - i] = msg;
-    return .{ .messages = out, .has_more = has_more };
+    std.mem.reverse(proto.message.Message, kept);
+    return .{ .messages = kept, .has_more = has_more };
 }
 
 /// Return the token usage of the newest committed assistant turn as the live context gauge, not a lifetime total; a session with no such turn reports zero.
 pub fn contextUsage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !proto.message.TokenUsage {
-    const row = (try db.queries.last_assistant_usage.maybeOne(arena, .{ .session_id = session_id })) orelse return .{
-        .input = 0,
-        .output = 0,
-        .reasoning = 0,
-        .cache_read = 0,
-        .cache_write = 0,
-    };
+    const row = (try db.queries.last_assistant_usage.maybeOne(arena, .{ .session_id = session_id })) orelse return .zero;
     std.debug.assert(row.value.tokens_input != null); // The query keeps a null-usage turn out.
     return .{
         .input = row.value.tokens_input orelse 0,

@@ -223,33 +223,6 @@ comptime {
     }
 }
 
-fn decodeFromTable(
-    a: std.mem.Allocator,
-    method: anytype,
-    v: std.json.Value,
-    optional_v: std.json.Value,
-    o: std.json.ParseOptions,
-    comptime table: anytype,
-    comptime Target: type,
-    comptime payload_field: []const u8,
-) !Target {
-    inline for (table) |spec| {
-        if (method == spec.name) {
-            const value = if (@hasField(@TypeOf(spec), "params_optional"))
-                if (spec.params_optional) optional_v else v
-            else
-                v;
-            const payload = @field(spec, payload_field);
-            inline for (@typeInfo(Target).@"union".fields) |field| {
-                if (field.type == payload)
-                    return @unionInit(Target, field.name, try std.json.parseFromValueLeaky(payload, a, value, o));
-            }
-            return error.InvalidEnumTag;
-        }
-    }
-    return error.InvalidEnumTag;
-}
-
 /// This union carries an RPC response.
 pub const Response = union(enum) {
     ok: ResponseOk,
@@ -265,41 +238,6 @@ pub const Request = struct {
     id: ids.RequestId,
     method: enums.MethodName,
     params: RequestParams,
-
-    /// Decode a tagged wire union from JSON.
-    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
-        const v = try std.json.Value.jsonParse(a, s, o);
-        return jsonParseFromValue(a, v, o);
-    }
-
-    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
-        const obj = switch (v) {
-            .object => |obj| obj,
-            else => return error.UnexpectedToken,
-        };
-        const id_value = obj.get("id") orelse return error.MissingField;
-        const id = switch (id_value) {
-            .string => |id| id,
-            else => return error.UnexpectedToken,
-        };
-        const method_value = obj.get("method") orelse return error.MissingField;
-        const method_string = switch (method_value) {
-            .string => |method| method,
-            else => return error.UnexpectedToken,
-        };
-        const method = std.meta.stringToEnum(enums.MethodName, method_string) orelse return error.InvalidEnumTag;
-        const pv = obj.get("params") orelse std.json.Value{ .object = .empty };
-        const optional_pv = switch (pv) {
-            .null => std.json.Value{ .object = .empty },
-            else => pv,
-        };
-        var arm_opts = o;
-        arm_opts.ignore_unknown_fields = true;
-
-        const params = try decodeFromTable(a, method, pv, optional_pv, arm_opts, methods, RequestParams, "params");
-
-        return .{ .id = id, .method = method, .params = params };
-    }
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         try jw.beginObject();
@@ -330,32 +268,6 @@ pub const Notification = struct {
     method: enums.BroadcastName,
     params: BroadcastData,
 
-    /// Decode a tagged wire union from JSON.
-    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
-        const v = try std.json.Value.jsonParse(a, s, o);
-        return jsonParseFromValue(a, v, o);
-    }
-
-    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
-        const obj = switch (v) {
-            .object => |obj| obj,
-            else => return error.UnexpectedToken,
-        };
-        const method_value = obj.get("method") orelse return error.MissingField;
-        const method_string = switch (method_value) {
-            .string => |method| method,
-            else => return error.UnexpectedToken,
-        };
-        const method = std.meta.stringToEnum(enums.BroadcastName, method_string) orelse return error.InvalidEnumTag;
-        const pv = obj.get("params") orelse return error.MissingField;
-        var arm_opts = o;
-        arm_opts.ignore_unknown_fields = true;
-
-        const params = try decodeFromTable(a, method, pv, pv, arm_opts, broadcasts, BroadcastData, "data");
-
-        return .{ .method = method, .params = params };
-    }
-
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         try jw.beginObject();
         try jw.objectField("method");
@@ -366,69 +278,15 @@ pub const Notification = struct {
     }
 };
 
-/// Decode a method result from its JSON value.
-pub fn resultFromValue(a: std.mem.Allocator, method: enums.MethodName, v: std.json.Value, o: std.json.ParseOptions) !ResponseResult {
-    var arm_opts = o;
-    arm_opts.ignore_unknown_fields = true;
-    return decodeFromTable(a, method, v, v, arm_opts, methods, ResponseResult, "result");
-}
-
 const testing = std.testing;
 const parse_opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
-test "every method result and broadcast payload has a union arm to decode into" {
-    @setEvalBranchQuota(10_000);
-    inline for (methods) |spec| {
-        comptime var found = false;
-        inline for (@typeInfo(ResponseResult).@"union".fields) |field| {
-            if (field.type == spec.result) found = true;
-        }
-        if (!found) @compileError("no ResponseResult arm decodes " ++ @tagName(spec.name));
-    }
-    inline for (broadcasts) |spec| {
-        comptime var found = false;
-        inline for (@typeInfo(BroadcastData).@"union".fields) |field| {
-            if (field.type == spec.data) found = true;
-        }
-        if (!found) @compileError("no BroadcastData arm decodes " ++ @tagName(spec.name));
-    }
-}
-
-test "optional method parameters decode from an empty object" {
-    inline for (methods) |spec| {
-        if (spec.params_optional) {
-            const parsed = try std.json.parseFromSlice(spec.params, testing.allocator, "{}", parse_opts);
-            defer parsed.deinit();
-        }
-    }
-}
-
-test "create requires its workspace and the method set excludes skill list" {
-    try testing.expectError(error.MissingField, std.json.parseFromSlice(Request, testing.allocator,
-        \\{"id":"create","method":"session.create"}
-    , parse_opts));
-    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(Request, testing.allocator,
-        \\{"id":"skills","method":"skill.list"}
-    , parse_opts));
-    const parsed = try std.json.parseFromSlice(Request, testing.allocator,
-        \\{"id":"create","method":"session.create","params":{"workspace_path":"/tmp"}}
-    , parse_opts);
-    defer parsed.deinit();
-    try testing.expectEqualStrings("/tmp", parsed.value.params.create_session.workspace_path);
-}
-
 test "request envelope round-trips" {
-    const json =
-        \\{"id":"req-1","method":"initialize","params":{}}
-    ;
-    const parsed = try std.json.parseFromSlice(Request, testing.allocator, json, parse_opts);
-    defer parsed.deinit();
-    try testing.expectEqualStrings("req-1", parsed.value.id);
-    try testing.expect(parsed.value.params == .empty);
+    const value: Request = .{ .id = "req-1", .method = .initialize, .params = .empty };
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(
         \\{"id":"req-1","method":"initialize","params":{}}
     , buf.written());
@@ -438,32 +296,15 @@ test "notification envelope round-trips" {
     const json =
         \\{"method":"notice","params":{"level":"info","source":"test","message":"hello"}}
     ;
-    const parsed = try std.json.parseFromSlice(Notification, testing.allocator, json, parse_opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value.params == .notice);
-    try testing.expectEqualStrings("hello", parsed.value.params.notice.message);
+    const value: Notification = .{ .method = .notice, .params = .{ .notice = .{ .level = .info, .source = "test", .message = "hello" } } };
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(json, buf.written());
 }
 
-test "result dispatch and response error" {
-    const result_json =
-        \\{"protocol":2,"engine":{"version":"v"},"session_revision":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","blob_dir":"/data/blobs"}
-    ;
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const result_value = try std.json.parseFromSlice(std.json.Value, arena.allocator(), result_json, parse_opts);
-    const result = try resultFromValue(arena.allocator(), .initialize, result_value.value, parse_opts);
-    try testing.expect(result == .initialize_result);
-    try testing.expectEqual(@as(u32, 2), result.initialize_result.protocol);
-    try testing.expectEqualStrings("/data/blobs", result.initialize_result.blob_dir);
-
-    const auth_result = try resultFromValue(arena.allocator(), .@"auth.set_api_key", .{ .object = .empty }, parse_opts);
-    try testing.expect(auth_result == .empty);
-
+test "response error stringifies" {
     const error_json =
         \\{"id":"req-1","error":{"code":-32602,"message":"bad request"}}
     ;

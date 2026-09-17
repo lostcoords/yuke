@@ -9,7 +9,7 @@ import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { feedItem } from "yuke:sessions";
 import { activityOf, refreshActivity } from "yuke:activity";
-import { catalogOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:catalog";
+import { catalogOf, modelOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:catalog";
 import { pasteAttaches } from "yuke:attach";
 
 /** @import { PresentationContext } from "yuke:chat-view" */
@@ -135,7 +135,7 @@ export class Chat {
   /** @param {string} [selector] @returns {void} */
   checkVision(selector = this.modelSelector()) {
     if (!this.composer.hasImages()) return;
-    const model = selector === "" ? null : catalogOf().models.find((m) => m.selector === selector);
+    const model = selector === "" ? null : modelOf(selector);
     // An unknown model, and one whose catalog entry says nothing, never raise a warning.
     if (!model || model.supports_vision !== false) return;
     notice.show(model.name + " reads no images");

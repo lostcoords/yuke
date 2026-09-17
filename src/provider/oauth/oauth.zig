@@ -21,12 +21,7 @@ pub const Start = struct {
 };
 
 /// One grant. The caller keeps its old refresh token when a refresh omits a new one.
-pub const Tokens = struct {
-    access_token: []const u8,
-    refresh_token: ?[]const u8 = null,
-    expires_at_ms: u64,
-    account_id: ?[]const u8 = null,
-};
+pub const Tokens = @import("../config/providers.zig").Grant;
 
 /// What one poll learned. Only `tokens` ends the login.
 pub const Poll = union(enum) {
@@ -73,16 +68,15 @@ pub const Http = struct {
 
 /// Read the provider error code, because a bare string `error` misses `{"code":"..."}`.
 pub fn errorCode(body: []const u8, arena: std.mem.Allocator, out: []u8) ?[]const u8 {
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return null;
-    if (parsed != .object) return null;
+    const parsed = parseObject(arena, body) orelse return null;
 
-    const nested: ?std.json.Value = if (parsed.object.get("error")) |value| switch (value) {
+    const nested: ?std.json.Value = if (parsed.get("error")) |value| switch (value) {
         .object => |obj| obj.get("code"),
         else => null,
     } else null;
 
     // The first name that holds a usable string wins, so an empty one falls through to the next.
-    for ([_]?std.json.Value{ nested, parsed.object.get("error"), parsed.object.get("code"), parsed.object.get("error_code") }) |candidate| {
+    for ([_]?std.json.Value{ nested, parsed.get("error"), parsed.get("code"), parsed.get("error_code") }) |candidate| {
         if (candidate) |value| if (lower(value, out)) |code| return code;
     }
     return null;

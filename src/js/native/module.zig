@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const quickjs = @import("quickjs");
+const proto = @import("proto");
 const Host = @import("../host.zig").Host;
 
 const Context = quickjs.Context;
@@ -83,6 +84,25 @@ pub fn integer(ctx: Context, value: Value, min: u64, max: u64) ?u64 {
     return if (result < min or result > max) null else result;
 }
 
+/// Read one lowercase session ID, or answer null for another value.
+pub fn sessionId(ctx: Context, value: Value) ?proto.ids.SessionId {
+    const text = string(ctx, value) orelse return null;
+    defer ctx.freeCString(text.ptr);
+    if (!proto.ids.SessionId.validText(text)) return null;
+    var raw: [proto.ids.SessionId.byte_len]u8 = undefined;
+    _ = std.fmt.hexToBytes(&raw, text) catch unreachable;
+    return .bytes(raw);
+}
+
+/// Read one optional whole-number property in `[1, max]`, or answer `default`.
+pub fn optionalInteger(ctx: Context, options: Value, name: [:0]const u8, default: ?u32, max: u32) error{InvalidOption}!?u32 {
+    if (!ctx.isObject(options)) return default;
+    const value = ctx.getPropertyStr(options, name);
+    defer ctx.freeValue(value);
+    if (ctx.isUndefined(value) or ctx.isNull(value)) return default;
+    return @intCast(integer(ctx, value, 1, max) orelse return error.InvalidOption);
+}
+
 /// Copy one optional string option. An absent option answers null, and a wrong type is an error.
 pub fn optionalString(ctx: Context, gpa: std.mem.Allocator, options: Value, name: [:0]const u8) error{InvalidOption}!?[]u8 {
     if (!ctx.isObject(options)) return null;
@@ -117,6 +137,12 @@ pub fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
     ctx.setPropertyStr(obj, name, value) catch {};
 }
 
+/// Set one indexed property, or drop the value once the QuickJS heap is full.
+pub inline fn setIndex(ctx: Context, obj: Value, index: usize, value: Value) void {
+    if (ctx.hasException()) return ctx.freeValue(value);
+    ctx.setPropertyUint32(obj, @intCast(index), value) catch {};
+}
+
 test "integer checks exact bounds before and after the float conversion" {
     const host = support.createHost();
     defer support.destroyHost(host);
@@ -140,6 +166,17 @@ test "integer checks exact bounds before and after the float conversion" {
     const text = host.ctx.newString("42");
     defer host.ctx.freeValue(text);
     try std.testing.expectEqual(null, integer(host.ctx, text, 0, 100));
+}
+
+test "session ids accept only lowercase hexadecimal text" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    const lower = host.ctx.newString("00" ** 16);
+    defer host.ctx.freeValue(lower);
+    try std.testing.expect(sessionId(host.ctx, lower) != null);
+    const upper = host.ctx.newString("AA" ++ ("00" ** 15));
+    defer host.ctx.freeValue(upper);
+    try std.testing.expectEqual(null, sessionId(host.ctx, upper));
 }
 
 const support = @import("../test_support.zig");

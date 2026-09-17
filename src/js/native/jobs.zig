@@ -222,14 +222,10 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     if (command == null or std.mem.trim(u8, command.?, " \t\r\n").len == 0) return rejected(ctx, "the command must be a non-blank string");
     if (std.mem.indexOfScalar(u8, command.?, 0) != null) return rejected(ctx, "the command must not hold a NUL byte");
     const session_value: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;
-    var session_id: ?SessionId = null;
-    if (!ctx.isUndefined(session_value) and !ctx.isNull(session_value)) {
-        const text = module.owned(ctx, a, session_value) orelse "";
-        if (!SessionId.validText(text)) return rejected(ctx, "the session id must be 32 lowercase hex digits");
-        var raw: [16]u8 = undefined;
-        _ = std.fmt.hexToBytes(&raw, text) catch unreachable;
-        session_id = .bytes(raw);
-    }
+    const session_id: ?SessionId = if (ctx.isUndefined(session_value) or ctx.isNull(session_value))
+        null
+    else
+        module.sessionId(ctx, session_value) orelse return rejected(ctx, "the session id must be 32 lowercase hex digits");
     const root = module.rootArg(ctx, a, if (args.len > 2) args[2] else quickjs.UNDEFINED, host.cwd) orelse
         return rejected(ctx, "the workspace root must be an absolute path");
     if (host.procs.live.items.len >= process.max_processes) return rejected(ctx, "the host runs 64 processes");
@@ -279,7 +275,7 @@ fn jsList(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
     const out = ctx.newArray();
     const items = host.jobs.list.items;
-    for (items, 0..) |_, i| ctx.setPropertyUint32(out, @intCast(i), toValue(ctx, items[items.len - 1 - i])) catch {};
+    for (items, 0..) |_, i| module.setIndex(ctx, out, i, toValue(ctx, items[items.len - 1 - i]));
     return out;
 }
 

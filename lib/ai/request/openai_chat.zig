@@ -11,19 +11,15 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
 
-    try jw.objectField("model");
-    try jw.write(request.model);
-    try jw.objectField("stream");
-    try jw.write(true);
+    try json.field(&jw, "model", request.model);
+    try json.field(&jw, "stream", true);
     try json.nested(&jw, "stream_options", "include_usage", true);
     // The caller owns the input history, so the endpoint never keeps a copy.
-    try jw.objectField("store");
-    try jw.write(false);
-    try jw.objectField(switch (request.max_tokens_field) {
+    try json.field(&jw, "store", false);
+    try json.field(&jw, switch (request.max_tokens_field) {
         .max_tokens => "max_tokens",
         .max_completion_tokens => "max_completion_tokens",
-    });
-    try jw.write(request.max_output_tokens);
+    }, request.max_output_tokens);
     try json.sampling(&jw, request.temperature, request.top_p);
     // This endpoint writes no cache marker: OpenAI documents explicit breakpoints for Responses alone.
     try writeReasoning(&jw, request.thinking_format, request.reasoning);
@@ -41,8 +37,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             try json.field(&jw, "description", tool.description);
             try jw.objectField("parameters");
             try json.writeRawJson(&jw, tool.input_schema);
-            try jw.objectField("strict");
-            try jw.write(tool.strict);
+            try json.field(&jw, "strict", tool.strict);
             try jw.endObject();
             try jw.endObject();
         }
@@ -359,8 +354,7 @@ fn writeReasoning(
         .openrouter => try json.nested(jw, "reasoning", "effort", level),
         .together => try json.nested(jw, "reasoning", "enabled", on),
         .qwen => {
-            try jw.objectField("enable_thinking");
-            try jw.write(on);
+            try json.field(jw, "enable_thinking", on);
         },
         .string_thinking => try json.field(jw, "thinking", level),
         .ant_ling => if (on) try json.nested(jw, "reasoning", "effort", level),
@@ -373,8 +367,7 @@ fn writeReasoning(
             try jw.objectField("thinking");
             try jw.beginObject();
             try json.field(jw, "type", switch_shape);
-            try jw.objectField("clear_thinking");
-            try jw.write(false);
+            try json.field(jw, "clear_thinking", false);
             try jw.endObject();
         },
     }
