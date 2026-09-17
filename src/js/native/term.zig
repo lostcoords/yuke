@@ -6,6 +6,7 @@ const term_pkg = @import("term");
 const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 const wrapping = @import("wrap.zig");
+const TestPaint = @import("../test_paint.zig").Paint;
 const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
 const Context = quickjs.Context;
@@ -603,10 +604,8 @@ test "RGB styles reach all paint paths and preserve frame diffs" {
 }
 
 test "an extra yuke:term export name fails" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try std.testing.expectError(
         error.JavaScriptFault,
         host.evalModule("import { foo } from 'yuke:term';", "term.js"),
@@ -653,10 +652,8 @@ test "native wrap preserves UTF-16 rows and bounds preview work" {
 }
 
 test "measure and graphemes use cell width and UTF-16 offsets" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     // Printable ASCII takes the byte-length path, so both ends of the range must measure as one.
     try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
@@ -718,10 +715,8 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
 }
 
 test "setNeedsTick clamps and quit blocks a later arm" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.evalModule(
         \\import { term } from "yuke:term";
         \\term.setNeedsTick(true, 10);
@@ -736,10 +731,8 @@ test "setNeedsTick clamps and quit blocks a later arm" {
 }
 
 test "beginFrame without a renderer throws" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.evalModule(
         \\import { term } from "yuke:term";
         \\globalThis.term = term;
@@ -750,23 +743,12 @@ test "beginFrame without a renderer throws" {
 }
 
 test "paint copies graphemes, skips negative coords, and diffs" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var env_map = try std.testing.environ.createMap(gpa.allocator());
-    defer env_map.deinit();
-    const io = std.testing.io;
-    var render = try term_pkg.Render.init(io, gpa.allocator(), &env_map, .{});
-    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer sink.deinit();
-    defer render.deinit(&sink.writer);
-    try render.resize(&sink.writer, .{ .rows = 2, .cols = 8, .x_pixel = 0, .y_pixel = 0 });
-
-    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer out.deinit();
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
-    host.paint.bindRender(host.ctx, &render, &out.writer);
+    var paint: TestPaint = undefined;
+    try paint.setup(std.testing.allocator, 2, 8);
+    defer paint.deinit();
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    paint.bind(host);
 
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -779,12 +761,12 @@ test "paint copies graphemes, skips negative coords, and diffs" {
         \\globalThis.result = term.width * 10 + term.height;
     , "term.js");
     try std.testing.expectEqual(@as(i32, 82), try host.evalInt("globalThis.result"));
-    const first = out.written();
+    const first = paint.out.written();
     try std.testing.expect(std.mem.indexOf(u8, first, "A") != null);
     try std.testing.expect(std.mem.indexOf(u8, first, "中") != null);
     try std.testing.expect(std.mem.indexOf(u8, first, "Z") == null);
 
-    out.clearRetainingCapacity();
+    paint.out.clearRetainingCapacity();
     try host.evalModule(
         \\import { term } from "yuke:term";
         \\term.beginFrame();
@@ -792,26 +774,18 @@ test "paint copies graphemes, skips negative coords, and diffs" {
         \\term.text(0, 0, "A中", { fg: "white", bold: true });
         \\term.endFrame();
     , "term.js");
-    try std.testing.expectEqual(@as(usize, 0), out.written().len);
+    try std.testing.expectEqual(@as(usize, 0), paint.out.written().len);
 }
 
 test "a failed endFrame keeps the frame dirty and retries" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var env_map = try std.testing.environ.createMap(gpa.allocator());
-    defer env_map.deinit();
-    const io = std.testing.io;
-    var render = try term_pkg.Render.init(io, gpa.allocator(), &env_map, .{});
-    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer sink.deinit();
-    defer render.deinit(&sink.writer);
-    try render.resize(&sink.writer, .{ .rows = 1, .cols = 1, .x_pixel = 0, .y_pixel = 0 });
+    var paint: TestPaint = undefined;
+    try paint.setup(std.testing.allocator, 1, 1);
+    defer paint.deinit();
 
     var fail: std.Io.Writer = .failing;
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
-    host.paint.bindRender(host.ctx, &render, &fail);
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    host.paint.bindRender(host.ctx, &paint.render, &fail);
 
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -819,18 +793,16 @@ test "a failed endFrame keeps the frame dirty and retries" {
         \\term.text(0, 0, "A");
         \\term.endFrame();
     , "term.js");
-    try std.testing.expectEqual(.open, render.frame);
-    try std.testing.expect(render.vx.refresh);
+    try std.testing.expectEqual(.open, paint.render.frame);
+    try std.testing.expect(paint.render.vx.refresh);
 
-    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer out.deinit();
-    host.paint.bindRender(host.ctx, &render, &out.writer);
+    host.paint.bindRender(host.ctx, &paint.render, &paint.out.writer);
     try host.evalModule(
         \\import { term } from "yuke:term";
         \\term.endFrame();
     , "term.js");
-    try std.testing.expectEqual(.idle, render.frame);
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "A") != null);
+    try std.testing.expectEqual(.idle, paint.render.frame);
+    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "A") != null);
 }
 
 const support = @import("../test_support.zig");

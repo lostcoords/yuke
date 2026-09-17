@@ -673,43 +673,32 @@ test "user files can import public entries but cannot import cached internal mod
 }
 
 test "resize keeps unicode width after a write fail" {
-    var env_map = try std.testing.environ.createMap(std.testing.allocator);
-    defer env_map.deinit();
-    var render = try term_pkg.Render.init(std.testing.io, std.testing.allocator, &env_map, .{});
-    var sink: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer sink.deinit();
-    defer render.deinit(&sink.writer);
-    try render.resize(&sink.writer, .{ .rows = 2, .cols = 4, .x_pixel = 0, .y_pixel = 0 });
+    var paint: TestPaint = undefined;
+    try paint.setup(std.testing.allocator, 2, 4);
+    defer paint.deinit();
 
     var fail: std.Io.Writer = .failing;
     const host = support.createHost();
     defer support.destroyHost(host);
-    host.paint.bindRender(host.ctx, &render, &fail);
+    host.paint.bindRender(host.ctx, &paint.render, &fail);
     // Only `resize` can put the method back, so the assertion cannot pass on `bindRender` alone.
-    render.vx.screen.width_method = .wcwidth;
+    paint.render.vx.screen.width_method = .wcwidth;
     host.paint.resize(host.ctx, .{ .rows = 3, .cols = 8, .x_pixel = 0, .y_pixel = 0 });
-    try std.testing.expectEqual(term_pkg.gwidth.Method.unicode, render.vx.screen.width_method);
+    try std.testing.expectEqual(term_pkg.gwidth.Method.unicode, paint.render.vx.screen.width_method);
     try std.testing.expectEqual(@as(u16, 8), host.paint.width);
     try std.testing.expectEqual(@as(u16, 3), host.paint.height);
-    try std.testing.expectEqual(.pending, render.frame);
-    try std.testing.expect(try render.commitFrame(&sink.writer));
-    try std.testing.expectEqual(.idle, render.frame);
+    try std.testing.expectEqual(.pending, paint.render.frame);
+    try std.testing.expect(try paint.render.commitFrame(&paint.sink.writer));
+    try std.testing.expectEqual(.idle, paint.render.frame);
 }
 
 test "an event asks for a frame and the flush paints it once" {
-    var env_map = try std.testing.environ.createMap(std.testing.allocator);
-    defer env_map.deinit();
-    var render = try term_pkg.Render.init(std.testing.io, std.testing.allocator, &env_map, .{});
-    var sink: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer sink.deinit();
-    defer render.deinit(&sink.writer);
-    try render.resize(&sink.writer, .{ .rows = 2, .cols = 8, .x_pixel = 0, .y_pixel = 0 });
-
-    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
+    var paint: TestPaint = undefined;
+    try paint.setup(std.testing.allocator, 2, 8);
+    defer paint.deinit();
     const host = support.createHost();
     defer support.destroyHost(host);
-    host.paint.bindRender(host.ctx, &render, &out.writer);
+    paint.bind(host);
 
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -868,3 +857,4 @@ test {
 }
 
 const support = @import("test_support.zig");
+const TestPaint = @import("test_paint.zig").Paint;

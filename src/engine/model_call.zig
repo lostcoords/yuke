@@ -91,13 +91,7 @@ fn mockMatch(arena: std.mem.Allocator, credential: registry.CredentialSource) !r
     const spec = try arena.create(registry.ModelSpec);
     spec.* = .{ .id = "mock", .upstream_id = "mock-1", .name = "Mock", .protocol = .anthropic_messages, .caps = .{ .tools = true } };
     const row = try arena.create(registry.Provider);
-    row.* = .{ .id = "mock", .name = "Mock", .models = &.{}, .availability = .{ .ready = .{
-        .base_url = "https://example.test/v1",
-        .headers = &.{},
-        .session_header = .none,
-        .endpoints = &.{.{ .protocol = .anthropic_messages, .key_header = .x_api_key }},
-        .credential = credential,
-    } } };
+    row.* = Resources.mockProvider(&.{}, .{ .base_url = "https://example.test/v1", .credential = credential, .authenticated = true });
     return .{ .provider = row, .model = spec };
 }
 

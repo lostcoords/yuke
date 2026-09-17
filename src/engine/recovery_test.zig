@@ -47,36 +47,19 @@ const Fixture = struct {
 };
 
 fn seed(db: *database.Database, id: [16]u8, parent: ?[16]u8, workspace: []const u8) !void {
-    try database.session.create(db, .{
-        .id = id,
+    try Resources.seedSession(db, id, .{
         .root = workspace,
         .origin = if (parent != null) "child" else "root",
         .parent_id = parent,
         .parent_message_id = if (parent != null) 1 else null,
         .parent_part_id = if (parent != null) 0 else null,
         .name = if (parent != null) "child" else null,
-        .profile = "default",
         .model = "test/model",
-        .reasoning = "",
-        .config_rev = 0,
-        .title = "test",
-        .created_at_ms = 1,
-        .updated_at_ms = 1,
     });
 }
 
 fn start(db: *database.Database, io: std.Io, arena: std.mem.Allocator, id: [16]u8) !void {
     _ = try run.beginTurn(db, io, arena, id, .{ .content = &.{.{ .text = .{ .text = "committed input" } }} }, 0);
-}
-
-/// A wake runs on the executor; wait until that run committed its terminal.
-fn awaitIdle(f: *Fixture, arena: std.mem.Allocator, id: [16]u8, run_id: u64) !void {
-    for (0..1000) |_| {
-        const marks = (try database.event.highWater(&f.db, arena, id)).?;
-        if (marks.run_id_high >= run_id and (try database.session.snapshot(&f.db, arena, id)).?.open_run_id == null) return;
-        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
-    }
-    return error.RunDidNotFinish;
 }
 
 fn queued(db: *database.Database, arena: std.mem.Allocator, id: [16]u8) !void {
@@ -139,8 +122,8 @@ test "repair wakes an idle intermediate parent after a grandchild interruption" 
     try seed(&f.db, grandchild, child, "/work");
     try start(&f.db, f.resources.runtime.io(), a, grandchild);
     try f.engine.own(.bytes(root));
-    try awaitIdle(&f, a, child, 1);
-    try awaitIdle(&f, a, root, 1);
+    try Resources.awaitDurableRun(&f.engine, &f.db, a, child, 1);
+    try Resources.awaitDurableRun(&f.engine, &f.db, a, root, 1);
     const history = try database.message.historyPage(&f.db, a, child, 0, 10);
     try testing.expectEqualStrings("child", history.messages[0].user.source.?.child_report.name);
     try testing.expectEqual(proto.enums.RunErrorCode.interrupted, history.messages[0].user.source.?.child_report.outcome.failed.code);
@@ -179,7 +162,7 @@ test "tree ownership protects live runs and repair preserves committed input" {
     f.engine = f.resources.makeEngine(&f.db);
     try f.other.own(.bytes(child));
     // The repair wakes the root on the executor: run 2 takes the queued input and the child report.
-    try awaitIdle(&f, a, root, 2);
+    try Resources.awaitDurableRun(&f.engine, &f.db, a, root, 2);
     try testing.expect((try database.session.snapshot(&f.db, a, child)).?.open_run_id == null);
     try testing.expectEqual(@as(u32, 1), stale.pins);
     try testing.expectEqual(@as(usize, 0), stale.queueDepth());

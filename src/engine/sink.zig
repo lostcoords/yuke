@@ -70,12 +70,6 @@ const Counter = struct {
     }
 };
 
-test "an empty set drops an event" {
-    var sinks: Sinks = .{};
-    sinks.emit(removedNote()); // a headless run has no subscriber
-    try testing.expectEqual(@as(usize, 0), sinks.len);
-}
-
 test "every subscriber receives the same event" {
     var sinks: Sinks = .{};
     var tui: Counter = .{};
@@ -103,17 +97,13 @@ test "a removed subscriber stops receiving, and the others continue" {
     try testing.expectEqual(@as(usize, 0), second.seen); // it left before the emit
     try testing.expectEqual(@as(usize, 1), third.seen);
     try testing.expectEqual(@as(usize, 2), sinks.len);
-}
 
-test "a re-added subscriber receives events again" {
-    var sinks: Sinks = .{};
-    var only: Counter = .{};
-    sinks.add(only.sink());
-    sinks.remove(@ptrCast(&only));
+    sinks.remove(@ptrCast(&first));
+    sinks.remove(@ptrCast(&third));
     sinks.emit(removedNote());
-    try testing.expectEqual(@as(usize, 0), only.seen);
+    try testing.expectEqual(@as(usize, 0), sinks.len);
 
-    sinks.add(only.sink());
+    sinks.add(second.sink());
     sinks.emit(removedNote());
-    try testing.expectEqual(@as(usize, 1), only.seen);
+    try testing.expectEqual(@as(usize, 1), second.seen);
 }

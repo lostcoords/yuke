@@ -4,27 +4,20 @@ const std = @import("std");
 const testing = std.testing;
 const proto = @import("proto");
 const ai = @import("ai");
-const Engine = @import("Engine.zig");
 const database = @import("../store/store.zig");
 const commands = @import("commands.zig");
 const runs = @import("run.zig");
 const hookset = @import("hookset.zig");
 const Resources = @import("test_resources.zig");
-const registry = @import("../provider/registry.zig");
 
 const Fixture = struct {
-    resources: Resources,
-    db: database.Database,
-    engine: Engine,
-    arena: std.heap.ArenaAllocator,
-    models: [1]registry.ModelSpec,
-    rows: [1]registry.Provider,
+    base: Resources.Fixture,
     requests: std.ArrayList([]const u8) = .empty,
     stage: Stage = .stream,
     entered: std.Io.Event = .unset,
     release: std.Io.Event = .unset,
     paused: bool = false,
-    gate: ?runs.Launch = null,
+
     run_starts: usize = 0,
     run_done: std.ArrayList(proto.run.RunDoneData) = .empty,
     activity: ?proto.session.SessionActivity = null,
@@ -35,69 +28,47 @@ const Fixture = struct {
     waiting_with_draft: bool = false,
 
     const Stage = enum { stream, build, send, tool, retry, retry_stream };
-    const id: proto.ids.SessionId = .bytes([_]u8{73} ** 16);
+    const id = Resources.Fixture.id;
 
     fn init(self: *Fixture) !void {
-        self.* = .{ .resources = undefined, .db = undefined, .engine = undefined, .arena = .init(testing.allocator), .models = undefined, .rows = undefined };
-        try self.resources.init();
-        self.db = try database.Database.openTest();
-        self.engine = self.resources.makeEngine(&self.db);
-        self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tools = true } }};
-        self.rows = .{.{ .id = "mock", .name = "Mock", .models = &self.models, .availability = .{ .ready = .{
-            .base_url = "https://example.test",
-            .headers = &.{},
-            .session_header = .none,
-            .endpoints = &.{.{ .protocol = .anthropic_messages }},
-            .credential = .none,
-        } } }};
-        self.resources.providers.merged.rows = &self.rows;
-        self.engine.deps.route_transport = .{ .ctx = self, .vtable = &.{ .open = open } };
-        self.engine.deps.retry_policy = .{ .base_ms = 0, .cap_ms = 0 };
-        self.engine.installHooks(.{ .ctx = self, .holds = holds, .ask = ask });
-        self.engine.sinks.add(.{ .ctx = self, .on_event = onEvent });
-        try database.session.create(&self.db, .{ .id = id.raw, .root = "/work", .origin = "root", .profile = "default", .model = "mock/m", .reasoning = "", .config_rev = 0, .title = "test", .created_at_ms = 1, .updated_at_ms = 1 });
-        _ = try database.session.setPrompt(&self.db, self.arena.allocator(), id.raw, .{ .base = "", .child_policy = null, .environment = "" });
+        self.* = .{ .base = undefined };
+        try self.base.init(.{});
+        self.base.engine.deps.route_transport = .{ .ctx = self, .vtable = &.{ .open = open } };
+        self.base.engine.deps.retry_policy = .{ .base_ms = 0, .cap_ms = 0 };
+        self.base.engine.installHooks(.{ .ctx = self, .holds = holds, .ask = ask });
+        self.base.engine.sinks.add(.{ .ctx = self, .on_event = onEvent });
     }
 
     fn deinit(self: *Fixture) void {
-        self.release.set(self.engine.deps.io);
-        self.engine.close();
-        self.resources.providers.merged.rows = &.{};
-        self.db.deinit();
-        self.resources.deinit();
-        self.arena.deinit();
+        self.release.set(self.base.engine.deps.io);
+        self.base.deinit();
     }
 
     fn send(self: *Fixture, text: []const u8) !proto.session.SessionSendInputResult {
-        return commands.sessionSendInputForRpc(&self.engine, self.arena.allocator(), .{ .session_id = id, .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = text } }} } } }, &self.gate, null);
+        return commands.sessionSendInputForRpc(&self.base.engine, self.base.arena.allocator(), .{ .session_id = id, .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = text } }} } } }, &self.base.gate, null);
     }
 
     fn start(self: *Fixture) !void {
         _ = try self.send("initial task");
-        runs.Launch.release(&self.gate, &self.engine);
-        try self.entered.waitTimeout(self.engine.deps.io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
+        runs.Launch.release(&self.base.gate, &self.base.engine);
+        try self.entered.waitTimeout(self.base.engine.deps.io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
     }
 
     fn finish(self: *Fixture) !void {
-        self.release.set(self.engine.deps.io);
-        for (0..1000) |_| {
-            const resident = self.engine.sessions.get(id);
-            if (resident == null or (resident.?.active_run == null and resident.?.queueDepth() == 0)) return;
-            try std.Io.sleep(self.engine.deps.io, .fromMilliseconds(1), .awake);
-        }
-        return error.RunDidNotFinish;
+        self.release.set(self.base.engine.deps.io);
+        try Resources.awaitLiveIdle(&self.base.engine, id);
     }
 
     fn pause(self: *Fixture) !void {
         if (self.paused) return;
         self.paused = true;
-        self.entered.set(self.engine.deps.io);
-        try self.release.waitTimeout(self.engine.deps.io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
+        self.entered.set(self.base.engine.deps.io);
+        try self.release.waitTimeout(self.base.engine.deps.io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
     }
 
     fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
         const self: *Fixture = @ptrCast(@alignCast(ctx));
-        const a = self.arena.allocator();
+        const a = self.base.arena.allocator();
         switch (note.method) {
             .@"run.started" => self.run_starts += 1,
             .@"run.done" => self.run_done.append(a, proto.dupe(a, note.params.run_done_data) catch @panic("out of memory")) catch @panic("out of memory"),
@@ -130,10 +101,10 @@ const Fixture = struct {
     fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: ai.transport.Request, _: *ai.transport.AttemptInfo) !ai.transport.ResponseBody {
         const self: *Fixture = @ptrCast(@alignCast(ctx));
         const index = self.requests.items.len;
-        try self.requests.append(self.arena.allocator(), try self.arena.allocator().dupe(u8, request.body));
+        try self.requests.append(self.base.arena.allocator(), try self.base.arena.allocator().dupe(u8, request.body));
         if (index > 5) return error.UnexpectedRequest;
         if (self.stage == .retry and index == 0) {
-            self.waiting_with_draft = self.activity.?.state == .waiting and self.engine.sessions.get(id).?.draft != null;
+            self.waiting_with_draft = self.activity.?.state == .waiting and self.base.engine.sessions.get(id).?.draft != null;
             try self.pause();
             return error.ConnectionRefused;
         }
@@ -186,7 +157,7 @@ const Fixture = struct {
     }
 
     fn history(self: *Fixture) ![]const proto.message.Message {
-        return (try database.message.historyPage(&self.db, self.arena.allocator(), id.raw, 0, 100)).messages;
+        return self.base.history();
     }
 };
 
@@ -203,7 +174,7 @@ test "input during a response or hook joins the next round in FIFO order" {
         const one = try f.send("steer one");
         const two = try f.send("steer two");
         try testing.expect(one == .queued and two == .queued);
-        try testing.expectEqual(@as(u64, 2), try database.input.count(&f.db, f.arena.allocator(), Fixture.id.raw));
+        try testing.expectEqual(@as(u64, 2), try database.input.count(&f.base.db, f.base.arena.allocator(), Fixture.id.raw));
         try testing.expectEqual(@as(usize, 1), (try f.history()).len);
         try f.finish();
         try testing.expectEqual(@as(usize, 2), f.requests.items.len);
@@ -222,8 +193,8 @@ test "input during a response or hook joins the next round in FIFO order" {
         try testing.expectEqual(messages[1].assistant.run_id, messages[4].assistant.run_id);
         try testing.expectEqual(@as(usize, 1), f.run_starts);
         try testing.expectEqual(@as(usize, 1), f.run_done.items.len);
-        try testing.expectEqual(@as(u64, 2), (try database.run.latestOutcome(&f.db, f.arena.allocator(), Fixture.id.raw)).?.turn.rounds);
-        try testing.expectEqual(@as(u64, 0), try database.input.count(&f.db, f.arena.allocator(), Fixture.id.raw));
+        try testing.expectEqual(@as(u64, 2), (try database.run.latestOutcome(&f.base.db, f.base.arena.allocator(), Fixture.id.raw)).?.turn.rounds);
+        try testing.expectEqual(@as(u64, 0), try database.input.count(&f.base.db, f.base.arena.allocator(), Fixture.id.raw));
     }
 }
 
@@ -246,12 +217,12 @@ test "input before launch joins the first request without an early assistant id"
     try f.init();
     defer f.deinit();
     _ = try f.send("initial task");
-    const launch = f.gate;
-    f.gate = null;
+    const launch = f.base.gate;
+    f.base.gate = null;
     _ = try f.send("before launch");
-    f.gate = launch;
-    f.release.set(f.engine.deps.io);
-    runs.Launch.release(&f.gate, &f.engine);
+    f.base.gate = launch;
+    f.release.set(f.base.engine.deps.io);
+    runs.Launch.release(&f.base.gate, &f.base.engine);
     try f.finish();
     try testing.expectEqual(@as(usize, 1), f.requests.items.len);
     try testing.expect(std.mem.indexOf(u8, f.requests.items[0], "before launch") != null);
@@ -270,7 +241,7 @@ test "cancel preserves pending input unless clear_queue is set" {
             f.stage = stage;
             try f.start();
             const queued = try f.send("after cancel");
-            const canceled = try commands.sessionCancelRun(&f.engine, f.arena.allocator(), .{ .session_id = Fixture.id, .clear_queue = clear });
+            const canceled = try commands.sessionCancelRun(&f.base.engine, f.base.arena.allocator(), .{ .session_id = Fixture.id, .clear_queue = clear });
             try testing.expectEqual(@as(usize, if (clear) 1 else 0), canceled.cleared_inputs.len);
             try f.finish();
             try testing.expectEqual(@as(usize, if (clear) 1 else 2), f.run_starts);
@@ -292,10 +263,10 @@ test "steering respects the pinned round limit and leaves excess input for a new
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
-    const a = f.arena.allocator();
-    _ = try commands.sessionPatch(&f.engine, a, .{ .session_id = Fixture.id, .patch = .{ .max_rounds = 1 } });
+    const a = f.base.arena.allocator();
+    _ = try commands.sessionPatch(&f.base.engine, a, .{ .session_id = Fixture.id, .patch = .{ .max_rounds = 1 } });
     try f.start();
-    _ = try commands.sessionPatch(&f.engine, a, .{ .session_id = Fixture.id, .patch = .{ .max_rounds = 4 } });
+    _ = try commands.sessionPatch(&f.base.engine, a, .{ .session_id = Fixture.id, .patch = .{ .max_rounds = 4 } });
     _ = try f.send("next run after cap");
     try f.finish();
     const messages = try f.history();
@@ -316,7 +287,7 @@ test "input accepted after run completion starts a new run" {
     try f.finish();
     const next = try f.send("next task");
     try testing.expectEqual(@as(u64, 2), next.started.run_id);
-    runs.Launch.release(&f.gate, &f.engine);
+    runs.Launch.release(&f.base.gate, &f.base.engine);
     try f.finish();
     try testing.expectEqual(@as(usize, 2), f.run_starts);
     try testing.expectEqual(@as(usize, 2), f.run_done.items.len);
@@ -328,20 +299,20 @@ test "a protected child report joins its active parent at the next boundary" {
     try f.init();
     defer f.deinit();
     try f.start();
-    const a = f.arena.allocator();
+    const a = f.base.arena.allocator();
     const child: proto.ids.SessionId = .bytes([_]u8{75} ** 16);
-    try database.session.create(&f.db, .{ .id = child.raw, .root = "/work", .origin = "child", .parent_id = Fixture.id.raw, .parent_message_id = 2, .parent_part_id = 0, .name = "worker", .profile = "default", .model = "mock/m", .reasoning = "", .config_rev = 0, .title = "child", .created_at_ms = 1, .updated_at_ms = 1 });
-    const started = try @import("run.zig").beginTurn(&f.db, f.engine.deps.io, a, child.raw, .{ .content = &.{.{ .text = .{ .text = "child task" } }} }, 0);
+    try Resources.seedSession(&f.base.db, child.raw, .{ .root = "/work", .origin = "child", .parent_id = Fixture.id.raw, .parent_message_id = 2, .parent_part_id = 0, .name = "worker", .model = "mock/m", .title = "child" });
+    const started = try @import("run.zig").beginTurn(&f.base.db, f.base.engine.deps.io, a, child.raw, .{ .content = &.{.{ .text = .{ .text = "child task" } }} }, 0);
     const report = blk: {
-        var tx = try f.db.begin();
+        var tx = try f.base.db.begin();
         defer tx.deinit();
-        const terminal = try reports.append(&f.engine, a, .{ .session_id = child, .seq = 0, .run_id = started.handle.started.run_id, .kind = .turn, .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = f.engine.nowMillis() }, .outcome = .{ .turn = .{ .finish = .stop, .rounds = 0 } } });
+        const terminal = try reports.append(&f.base.engine, a, .{ .session_id = child, .seq = 0, .run_id = started.handle.started.run_id, .kind = .turn, .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = f.base.engine.nowMillis() }, .outcome = .{ .turn = .{ .finish = .stop, .rounds = 0 } } });
         try tx.commit();
         break :blk terminal.report.?;
     };
-    reports.publishReport(&f.engine, report, true);
-    try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = Fixture.id.raw })).value.used);
-    try testing.expectError(error.ProtectedInput, commands.sessionCancelInput(&f.engine, a, .{ .session_id = Fixture.id, .input_id = report.input.input_id }));
+    reports.publishReport(&f.base.engine, report, true);
+    try testing.expectEqual(@as(i64, 1), (try f.base.db.queries.child_report_credits.one(a, .{ .parent_id = Fixture.id.raw })).value.used);
+    try testing.expectError(error.ProtectedInput, commands.sessionCancelInput(&f.base.engine, a, .{ .session_id = Fixture.id, .input_id = report.input.input_id }));
     try f.finish();
     const messages = try f.history();
     try testing.expectEqual(@as(usize, 4), messages.len);
@@ -349,25 +320,25 @@ test "a protected child report joins its active parent at the next boundary" {
     try testing.expectEqualStrings("worker", messages[2].user.source.?.child_report.name);
     try testing.expectEqual(messages[1].assistant.run_id, messages[3].assistant.run_id);
     try testing.expect(std.mem.indexOf(u8, f.requests.items[1], "Report from worker") != null);
-    try testing.expectEqual(@as(i64, 0), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = Fixture.id.raw })).value.used);
+    try testing.expectEqual(@as(i64, 0), (try f.base.db.queries.child_report_credits.one(a, .{ .parent_id = Fixture.id.raw })).value.used);
 }
 
 test "input during automatic compaction waits for the next round and keeps message ids ordered" {
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
-    f.models[0].limits.context_window = 20_000;
-    const a = f.arena.allocator();
+    f.base.models[0].limits.context_window = 20_000;
+    const a = f.base.arena.allocator();
     {
-        var tx = try f.db.begin();
+        var tx = try f.base.db.begin();
         defer tx.deinit();
         for ([_]usize{ 300, 30_000, 300, 7000 }, 0..) |len, i| {
-            const id = try database.event.allocMessageId(&f.db, a, Fixture.id.raw);
+            const id = try database.event.allocMessageId(&f.base.db, a, Fixture.id.raw);
             const text = try a.alloc(u8, len);
             @memset(text, 'x');
             const message: proto.message.Message = if (i % 2 == 0) .{ .user = .{
                 .id = id,
-                .input_id = try database.event.allocInputId(&f.db, a, Fixture.id.raw),
+                .input_id = try database.event.allocInputId(&f.base.db, a, Fixture.id.raw),
                 .content = &.{.{ .text = .{ .text = text } }},
                 .time = .{ .created_at_ms = 1 },
             } } else .{ .assistant = .{
@@ -379,12 +350,12 @@ test "input during automatic compaction waits for the next round and keeps messa
                 .finish = .stop,
                 .time = .{ .created_at_ms = 1 },
             } };
-            _ = try database.message.appendCommittedMessage(&f.db, a, Fixture.id.raw, f.engine.newId(), 1, message);
+            _ = try database.message.appendCommittedMessage(&f.base.db, a, Fixture.id.raw, f.base.engine.newId(), 1, message);
         }
         try tx.commit();
     }
     try f.start();
-    const resident = f.engine.sessions.get(Fixture.id).?;
+    const resident = f.base.engine.sessions.get(Fixture.id).?;
     try testing.expect(resident.active_run.?.compacting);
     try testing.expect(resident.draft == null and resident.active_run.?.progress.current == null);
     _ = try f.send("steer during summary");
@@ -432,7 +403,7 @@ test "a cancel while the provider has not answered ends the run without a retry"
     defer f.deinit();
     f.stage = .retry;
     try f.start();
-    _ = try commands.sessionCancelRun(&f.engine, f.arena.allocator(), .{ .session_id = Fixture.id });
+    _ = try commands.sessionCancelRun(&f.base.engine, f.base.arena.allocator(), .{ .session_id = Fixture.id });
     try f.finish();
     try testing.expect(f.run_done.items[0].outcome == .canceled);
     try testing.expectEqualSlices(Phase, &.{ .waiting, .idle }, f.roundPhases());

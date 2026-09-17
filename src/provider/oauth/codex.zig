@@ -145,6 +145,20 @@ fn jwtClaims(arena: std.mem.Allocator, token: []const u8) ?std.json.ObjectMap {
 
 const testing = std.testing;
 
+const Fixture = struct {
+    arena: std.heap.ArenaAllocator,
+    body: [512]u8 = undefined,
+    canned: oauth.CannedHttp,
+
+    fn init(replies: []const oauth.CannedHttp.Reply) Fixture {
+        return .{ .arena = .init(testing.allocator), .canned = .{ .replies = replies } };
+    }
+
+    fn deinit(self: *Fixture) void {
+        self.arena.deinit();
+    }
+};
+
 /// Build one JWT with `payload` as its claims. Only the middle segment is ever read.
 fn jwt(arena: std.mem.Allocator, payload: []const u8) ![]const u8 {
     const encoder = std.base64.url_safe_no_pad.Encoder;
@@ -154,52 +168,46 @@ fn jwt(arena: std.mem.Allocator, payload: []const u8) ![]const u8 {
 }
 
 test "a start reads the codex handle and its fixed verification page" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    var out: [512]u8 = undefined;
-    var canned: oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body =
+    var f = Fixture.init(&.{.{ .answer = .{ .status = 200, .body =
         \\{"user_code":"UC","device_auth_id":"dai","interval":"7"}
-    } }} };
+    } }});
+    defer f.deinit();
 
-    const s = try start(arena.allocator(), canned.seam(), &out);
+    const s = try start(f.arena.allocator(), f.canned.seam(), &f.body);
     try testing.expectEqualStrings("UC", s.user_code);
     try testing.expectEqualStrings("dai", s.device_auth_id);
     try testing.expectEqualStrings(verification_url, s.verification_url);
     // Codex sends the interval as a string where other flows send a number.
     try testing.expectEqual(@as(u64, 7000), s.interval_ms);
     // The wire request must name the right endpoint and carry the client id.
-    try testing.expectEqualStrings(user_code_url, canned.sent.?.url);
-    try testing.expect(std.mem.indexOf(u8, canned.sent.?.payload.json, client_id) != null);
+    try testing.expectEqualStrings(user_code_url, f.canned.sent.?.url);
+    try testing.expect(std.mem.indexOf(u8, f.canned.sent.?.payload.json, client_id) != null);
 }
 
 test "a 403 and a 404 both mean the human has not approved yet" {
     for ([_]u16{ 403, 404 }) |status| {
-        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-        defer arena.deinit();
-        var out: [512]u8 = undefined;
         const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = status, .body = "{}" } }};
-        var canned: oauth.CannedHttp = .{ .replies = &replies };
+        var f = Fixture.init(&replies);
+        defer f.deinit();
 
-        const got = try poll(arena.allocator(), canned.seam(), "dai", "UC", 0, &out);
+        const got = try poll(f.arena.allocator(), f.canned.seam(), "dai", "UC", 0, &f.body);
         try testing.expectEqual(std.meta.Tag(oauth.Poll).pending, std.meta.activeTag(got));
     }
 }
 
 test "an approved poll exchanges the server-issued code and verifier for tokens" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    var out: [512]u8 = undefined;
-    var canned: oauth.CannedHttp = .{ .replies = &.{
+    var f = Fixture.init(&.{
         .{ .answer = .{ .status = 200, .body = "{\"authorization_code\":\"ac\",\"code_verifier\":\"cv\"}" } },
         .{ .answer = .{ .status = 200, .body = "{\"access_token\":\"at\",\"refresh_token\":\"rt\",\"expires_in\":60}" } },
-    } };
+    });
+    defer f.deinit();
 
-    const got = try poll(arena.allocator(), canned.seam(), "dai", "UC", 1000, &out);
+    const got = try poll(f.arena.allocator(), f.canned.seam(), "dai", "UC", 1000, &f.body);
     try testing.expectEqualStrings("at", got.tokens.access_token);
     try testing.expectEqualStrings("rt", got.tokens.refresh_token.?);
     try testing.expectEqual(@as(u64, 61_000), got.tokens.expires_at_ms);
     // Both calls ran, so the exchange really followed the poll.
-    try testing.expectEqual(@as(usize, 2), canned.index);
+    try testing.expectEqual(@as(usize, 2), f.canned.index);
 }
 
 test "a device grant missing either half is unusable" {
@@ -207,69 +215,61 @@ test "a device grant missing either half is unusable" {
         "{\"authorization_code\":\"ac\"}",
         "{\"code_verifier\":\"cv\"}",
     }) |body| {
-        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-        defer arena.deinit();
-        var out: [512]u8 = undefined;
         const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = 200, .body = body } }};
-        var canned: oauth.CannedHttp = .{ .replies = &replies };
+        var f = Fixture.init(&replies);
+        defer f.deinit();
 
-        try testing.expectError(oauth.Error.BadResponse, poll(arena.allocator(), canned.seam(), "dai", "UC", 0, &out));
+        try testing.expectError(oauth.Error.BadResponse, poll(f.arena.allocator(), f.canned.seam(), "dai", "UC", 0, &f.body));
     }
 }
 
 test "the expiry prefers the jwt claim over expires_in" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var out: [1024]u8 = undefined;
+    var f = Fixture.init(&.{});
+    defer f.deinit();
+    const a = f.arena.allocator();
 
     const access = try jwt(a, "{\"exp\":1700000000}");
     const body = try std.fmt.allocPrint(a, "{{\"access_token\":\"{s}\",\"expires_in\":60}}", .{access});
     const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = 200, .body = body } }};
-    var canned: oauth.CannedHttp = .{ .replies = &replies };
+    f.canned.replies = &replies;
 
-    const got = try exchange(a, canned.seam(), "ac", "cv", 1000, &out);
+    const got = try exchange(a, f.canned.seam(), "ac", "cv", 1000, &f.body);
     try testing.expectEqual(@as(u64, 1_700_000_000_000), got.expires_at_ms);
 }
 
 test "the account id comes from the id_token claim and is not a secret" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var out: [1024]u8 = undefined;
+    var f = Fixture.init(&.{});
+    defer f.deinit();
+    const a = f.arena.allocator();
 
     const id_token = try jwt(a, "{\"https://api.openai.com/auth\":{\"chatgpt_account_id\":\"acct-1\"}}");
     const body = try std.fmt.allocPrint(a, "{{\"access_token\":\"at\",\"id_token\":\"{s}\"}}", .{id_token});
     const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = 200, .body = body } }};
-    var canned: oauth.CannedHttp = .{ .replies = &replies };
+    f.canned.replies = &replies;
 
-    const got = try exchange(a, canned.seam(), "ac", "cv", 0, &out);
+    const got = try exchange(a, f.canned.seam(), "ac", "cv", 0, &f.body);
     try testing.expectEqualStrings("acct-1", got.account_id.?);
 }
 
 test "an unreadable jwt falls back instead of failing the login" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var out: [512]u8 = undefined;
+    var f = Fixture.init(&.{.{ .answer = .{ .status = 200, .body = "{\"access_token\":\"opaque\",\"id_token\":\"also-opaque\"}" } }});
+    defer f.deinit();
+    const a = f.arena.allocator();
     // The token is opaque, so neither the expiry nor the account id can be read from it.
-    const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = 200, .body = "{\"access_token\":\"opaque\",\"id_token\":\"also-opaque\"}" } }};
-    var canned: oauth.CannedHttp = .{ .replies = &replies };
 
-    const got = try exchange(a, canned.seam(), "ac", "cv", 1000, &out);
+    const got = try exchange(a, f.canned.seam(), "ac", "cv", 1000, &f.body);
     try testing.expectEqual(@as(u64, 1000 + oauth.default_lifetime_ms), got.expires_at_ms);
     try testing.expect(got.account_id == null);
 }
 
 test "the codex refresh codes end the grant" {
     for (permanent_refresh) |code| {
-        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-        defer arena.deinit();
-        var out: [512]u8 = undefined;
-        const body = try std.fmt.allocPrint(arena.allocator(), "{{\"error\":\"{s}\"}}", .{code});
+        var f = Fixture.init(&.{});
+        defer f.deinit();
+        const body = try std.fmt.allocPrint(f.arena.allocator(), "{{\"error\":\"{s}\"}}", .{code});
         const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = 400, .body = body } }};
-        var canned: oauth.CannedHttp = .{ .replies = &replies };
+        f.canned.replies = &replies;
 
-        try testing.expectError(oauth.Error.Permanent, refresh(arena.allocator(), canned.seam(), "rt", 0, &out));
+        try testing.expectError(oauth.Error.Permanent, refresh(f.arena.allocator(), f.canned.seam(), "rt", 0, &f.body));
     }
 }

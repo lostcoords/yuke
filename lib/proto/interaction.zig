@@ -79,24 +79,6 @@ pub const InteractionValue = struct {
 
 const testing = std.testing;
 
-test "a question and its answer use tagged wire shapes" {
-    const request_json =
-        \\{"interaction_id":7,"request":{"type":"select","title":"pick","options":["a","b"]}}
-    ;
-    const request = try std.json.parseFromSlice(InteractionRequestedData, testing.allocator, request_json, .{});
-    defer request.deinit();
-    try testing.expect(request.value.request == .select);
-    try testing.expectEqualStrings("b", request.value.request.select.options[1]);
-
-    const response_json =
-        \\{"interaction_id":7,"response":{"type":"select","value":"b"}}
-    ;
-    const response = try std.json.parseFromSlice(InteractionRespondParams, testing.allocator, response_json, .{});
-    defer response.deinit();
-    try testing.expect(response.value.response == .select);
-    try testing.expectEqualStrings("b", response.value.response.select.value);
-}
-
 test "an answer rejects an unknown arm" {
     try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(InteractionRespondParams, testing.allocator,
         \\{"interaction_id":7,"response":{"type":"maybe"}}

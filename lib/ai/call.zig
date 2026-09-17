@@ -411,18 +411,18 @@ fn testModel(protocol: types.Protocol) Model {
 }
 
 test "generate dispatches every protocol through its serializer and reducer" {
-    const chat_reply = comptime sseFrame(
+    const chat_reply = comptime transport.sseFrame(
         \\{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}]}
     ) ++ "data: [DONE]\n\n";
-    const responses_reply = comptime sseFrame(
+    const responses_reply = comptime transport.sseFrame(
         \\{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"response.output_text.delta","output_index":0,"delta":"Hello"}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"response.output_text.done","output_index":0}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}
     );
 
@@ -545,7 +545,7 @@ test "stream releases the response body after a callback error" {
 
 test "stream releases the response body after a truncated response" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    var lifecycle = LifecycleTransport{ .bytes = sseFrame(
+    var lifecycle = LifecycleTransport{ .bytes = transport.sseFrame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
     ) };
     const Ignore = struct {
@@ -560,28 +560,24 @@ test "stream releases the response body after a truncated response" {
     try std.testing.expectEqual(@as(usize, 1), lifecycle.deinit_count);
 }
 
-fn sseFrame(comptime json: []const u8) []const u8 {
-    return "data: " ++ json ++ "\n\n";
-}
-
 test "generate preserves reasoning and joins every text block" {
-    const reply = comptime sseFrame(
+    const reply = comptime transport.sseFrame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":4}}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"why","signature":"sig"}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"content_block_stop","index":0}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"A"}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"content_block_stop","index":1}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"content_block_start","index":2,"content_block":{"type":"text","text":"B"}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"content_block_stop","index":2}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"message_stop"}
     );
     var canned = transport.CannedTransport{ .bytes = reply };
@@ -598,17 +594,17 @@ test "generate preserves reasoning and joins every text block" {
 }
 
 test "generate preserves a completed tool call" {
-    const reply = comptime sseFrame(
+    const reply = comptime transport.sseFrame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":8}}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"run"}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"zig test\"}"}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"content_block_stop","index":0}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":9}}
-    ) ++ sseFrame(
+    ) ++ transport.sseFrame(
         \\{"type":"message_stop"}
     );
     var canned = transport.CannedTransport{ .bytes = reply };

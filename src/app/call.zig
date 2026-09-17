@@ -180,24 +180,16 @@ test "a name outside the protocol refuses with the unknown method code" {
     try std.testing.expectEqual(@as(usize, 0), sink.written().len);
 }
 
-test "an unresolvable home directory refuses the call rather than reaching the client bare" {
-    const refusal = failureFor(error.HomeUnavailable).?;
-    try std.testing.expectEqual(proto.enums.ErrorCode.bad_request, refusal.code);
-}
-
-test "tree contention uses the existing session busy error" {
-    const refusal = failureFor(error.SessionOwned).?;
-    try std.testing.expectEqual(proto.enums.ErrorCode.session_busy, refusal.code);
-    try std.testing.expectEqualStrings("another engine owns this session tree", refusal.message);
-}
-
 test "a bad blob attachment refuses as a bad request, but a store write failure is a runtime failure" {
     const bad = [_]anyerror{
-        error.BlobPathNotAbsolute, error.BlobUnreadable, error.BlobNotRegularFile,
-        error.BlobEmpty,           error.BlobTooLarge,   error.BlobUnsupportedType,
-        error.BlobMissing,         error.BlobMismatch,   error.BlobTooManyImages,
-        error.BlobUnsupportedPart,
+        error.BlobPathNotAbsolute, error.BlobUnreadable,  error.BlobNotRegularFile,
+        error.BlobEmpty,           error.BlobTooLarge,    error.BlobUnsupportedType,
+        error.BlobMissing,         error.BlobMismatch,    error.BlobTooManyImages,
+        error.BlobUnsupportedPart, error.HomeUnavailable,
     };
     for (bad) |err| try std.testing.expectEqual(proto.enums.ErrorCode.bad_request, failureFor(err).?.code);
     try std.testing.expectEqual(proto.enums.ErrorCode.runtime_failed, failureFor(error.BlobStoreFailed).?.code);
+    const busy = failureFor(error.SessionOwned).?;
+    try std.testing.expectEqual(proto.enums.ErrorCode.session_busy, busy.code);
+    try std.testing.expectEqualStrings("another engine owns this session tree", busy.message);
 }

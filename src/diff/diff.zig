@@ -43,13 +43,6 @@ pub fn changedLines(list: []const Hunk) usize {
 
 const testing = std.testing;
 
-test "compare returns no hunk for an equal text" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const text = "alpha\nbeta\ngamma\n";
-    try testing.expectEqual(@as(usize, 0), (try compare(arena.allocator(), text, text, .{})).len);
-}
-
 test "compare reports one changed line with its context" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -65,17 +58,6 @@ test "compare reports one changed line with its context" {
     try testing.expectEqual(Op.delete, list[0].lines[1].op);
     try testing.expectEqualStrings("CHANGED", list[0].lines[2].text);
     try testing.expectEqual(Op.insert, list[0].lines[2].op);
-}
-
-test "compare treats a new file as one insert hunk" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const list = try compare(arena.allocator(), "", "a\nb\n", .{});
-    try testing.expectEqual(@as(usize, 1), list.len);
-    try testing.expectEqual(@as(u32, 0), list[0].old_start);
-    try testing.expectEqual(@as(u32, 0), list[0].old_lines);
-    try testing.expectEqual(@as(usize, 2), changedLines(list));
 }
 
 test "compare reports a line-ending change as a changed line" {

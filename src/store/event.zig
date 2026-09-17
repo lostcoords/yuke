@@ -163,20 +163,8 @@ test "two sessions each start at seq 1" {
 
     const one = [_]u8{1} ** 16;
     const two = [_]u8{2} ** 16;
-    for ([_][16]u8{ one, two }) |sid| {
-        try session.create(&db, .{
-            .id = sid,
-            .root = "/w",
-            .origin = "root",
-            .profile = "default",
-            .model = "opus",
-            .reasoning = "high",
-            .config_rev = 0,
-            .title = "t",
-            .created_at_ms = 100,
-            .updated_at_ms = 100,
-        });
-    }
+    try session.seedSession(&db, one);
+    try session.seedSession(&db, two);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     try testing.expectEqual(@as(u64, 1), try append(&db, a, one, eid(1), 1, "x", "{}"));

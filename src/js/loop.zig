@@ -6,6 +6,7 @@ const Host = host_mod.Host;
 const Error = host_mod.Error;
 const term_mod = @import("native/term.zig");
 const module = @import("native/module.zig");
+const Paint = @import("test_paint.zig").Paint;
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -278,10 +279,8 @@ fn keyCode(cp: u21) []const u8 {
 }
 
 test "start and stepTick deliver their event type" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.eval("globalThis.onEvent = function(ev) { globalThis.seen = ev.type; };", "onEvent.js");
     try start(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen === 'start' ? 1 : 0"));
@@ -290,22 +289,12 @@ test "start and stepTick deliver their event type" {
 }
 
 test "a parser key paints and a missing endFrame still commits" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var env_map = try std.testing.environ.createMap(gpa.allocator());
-    defer env_map.deinit();
-    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
-    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer sink.deinit();
-    defer render.deinit(&sink.writer);
-    try render.resize(&sink.writer, .{ .rows = 1, .cols = 4, .x_pixel = 0, .y_pixel = 0 });
-
-    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer out.deinit();
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
-    host.paint.bindRender(host.ctx, &render, &out.writer);
+    var paint: Paint = undefined;
+    try paint.setup(std.testing.allocator, 1, 4);
+    defer paint.deinit();
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    paint.bind(host);
 
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -320,17 +309,15 @@ test "a parser key paints and a missing endFrame still commits" {
     try input.push("a");
     const ev = (try input.next()).?;
     try step(host, ev);
-    try std.testing.expectEqual(@as(usize, 0), out.written().len);
+    try std.testing.expectEqual(@as(usize, 0), paint.out.written().len);
     try flushFrame(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.code === 'char' && globalThis.ch === 'a' ? 1 : 0"));
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "a") != null);
 }
 
 test "a paste arrives as one paste event with the whole text" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
 
     const text = "line one\nline two";
@@ -342,8 +329,8 @@ test "a paste arrives as one paste event with the whole text" {
 test "a large paste reaches JavaScript in one event" {
     var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.eval("globalThis.n = 0; globalThis.onEvent = (ev) => { globalThis.n++; globalThis.len = ev.text.length; };", "onEvent.js");
 
     const text = try gpa.allocator().alloc(u8, 100 * 1024);
@@ -355,10 +342,8 @@ test "a large paste reaches JavaScript in one event" {
 }
 
 test "onEvent throw is a JavaScriptFault" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.eval("globalThis.onEvent = function(ev) { throw new Error('nope'); };", "onEvent.js");
     try std.testing.expectError(error.JavaScriptFault, start(host));
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "nope") != null);
@@ -366,19 +351,15 @@ test "onEvent throw is a JavaScriptFault" {
 }
 
 test "q with no handler requests quit" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try step(host, .{ .key_press = .{ .codepoint = 'q' } });
     try std.testing.expect(host.paint.quit_requested);
 }
 
 test "a mouse event reaches JavaScript with the cell, the button, and the modifiers" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
 
     try step(host, .{ .mouse = .{
@@ -397,10 +378,8 @@ test "a mouse event reaches JavaScript with the cell, the button, and the modifi
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.ev.mods"));
 }
 test "focus in and focus out reach JavaScript" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.eval("globalThis.seen = []; globalThis.onEvent = (ev) => { globalThis.seen.push(ev.type + ':' + ev.focused); };", "onEvent.js");
 
     try step(host, .focus_in);
@@ -409,10 +388,8 @@ test "focus in and focus out reach JavaScript" {
 }
 
 test "a key reports the modifiers and no lock state" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
     try step(host, .{ .key_press = .{
         .codepoint = 'a',
@@ -424,22 +401,12 @@ test "a key reports the modifiers and no lock state" {
 }
 
 test "resize updates term.width before JS reads ev.w" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var env_map = try std.testing.environ.createMap(gpa.allocator());
-    defer env_map.deinit();
-    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
-    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer sink.deinit();
-    defer render.deinit(&sink.writer);
-    try render.resize(&sink.writer, .{ .rows = 2, .cols = 4, .x_pixel = 0, .y_pixel = 0 });
-
-    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer out.deinit();
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
-    host.paint.bindRender(host.ctx, &render, &out.writer);
+    var paint: Paint = undefined;
+    try paint.setup(std.testing.allocator, 2, 4);
+    defer paint.deinit();
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    paint.bind(host);
 
     try host.evalModule(
         \\import { term } from "yuke:term";

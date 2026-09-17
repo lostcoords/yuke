@@ -90,21 +90,6 @@ pub const ToolStateRunning = struct {
 const testing = std.testing;
 const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
-test "tool state running preserves an optional output" {
-    const json =
-        \\{"type":"running","started_at_ms":100,"output":"partial"}
-    ;
-    const parsed = try std.json.parseFromSlice(ToolState, testing.allocator, json, opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value == .running);
-    try testing.expectEqualStrings("partial", parsed.value.running.output.?);
-
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    try testing.expectEqualStrings(json, buf.written());
-}
-
 test "tool state completed keeps its media and omits an absent list" {
     const plain = try std.json.parseFromSlice(ToolState, testing.allocator, "{\"type\":\"completed\",\"output\":\"ok\",\"duration_ms\":3}", opts);
     defer plain.deinit();

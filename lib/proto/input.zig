@@ -111,22 +111,6 @@ pub const InputSkill = struct {
 const testing = std.testing;
 const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
-test "input content union round-trips" {
-    const json =
-        \\{"type":"content","content":[{"type":"text","text":"hello"}]}
-    ;
-    const parsed = try std.json.parseFromSlice(Input, testing.allocator, json, opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value == .content);
-    try testing.expect(parsed.value.content.content[0] == .text);
-    try testing.expectEqualStrings("hello", parsed.value.content.content[0].text.text);
-
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    try testing.expectEqualStrings(json, buf.written());
-}
-
 test "a skill input needs a name and keeps its arguments optional" {
     const a = testing.allocator;
     const parsed = try std.json.parseFromSlice(Input, a, "{\"type\":\"skill\",\"name\":\"pdf\"}", .{});

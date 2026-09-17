@@ -4,9 +4,7 @@ const Paint = @import("test_paint.zig").Paint;
 const Host = @import("host.zig").Host;
 
 test "yuke:client exposes the engine surface and answers a closed session" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/app/c.test.js");
+    try support.run("tests/app/c.test.js");
 }
 
 test "yuke:defaults boots the shell, seeds the session feed, and wires commands" {
@@ -49,29 +47,21 @@ test "the notice plugin draws and listens only while it is loaded" {
 }
 
 test "the session feed caches its derived reads until a change" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/app/sessions.test.js");
+    try support.run("tests/app/sessions.test.js");
 }
 
 test "the session feed replaces its state after a refresh" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/app/feed-refresh.test.js");
+    try support.run("tests/app/feed-refresh.test.js");
 }
 
 test "the command ui registers its palette as one plugin" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // The slice owns the palette, so an unload takes the command, the key, and an open overlay.
-    try support.eval(host, "tests/app/cmdui.test.js");
+    try support.run("tests/app/cmdui.test.js");
 }
 
 test "the palette lists only the commands that carry metadata" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // A keymap target is not a user action, so the palette must skip it and sort the rest by title.
-    try support.eval(host, "tests/app/meta.test.js");
+    try support.run("tests/app/meta.test.js");
 }
 
 test "an attachment warns when the model it would go to reads no images" {
@@ -152,77 +142,55 @@ test "the indicator, the queue strip, and the context reading follow the live ac
 }
 
 test "the cache window reads the session totals and the catalog prices" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/app/cache.test.js");
+    try support.run("tests/app/cache.test.js");
 }
 
 test "the palette hints only the strokes that run the command here" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // A hint the current context cannot run is worse than no hint, so the scan must rank like dispatch.
-    try support.eval(host, "tests/app/hint.test.js");
+    try support.run("tests/app/hint.test.js");
 }
 
 test "the catalog stores a full reply and keeps the models on unchanged" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // `client` is one object, so a test replaces the one method the branch calls.
-    try support.eval(host, "tests/app/catload.test.js");
+    try support.run("tests/app/catload.test.js");
 }
 
 test "the explorer turns one directory listing into rows" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/app/explore.test.js");
+    try support.run("tests/app/explore.test.js");
 }
 
 test "the catalog slice owns the model reading" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // The readings need the open session, which the shell owns, so the slice takes it as config.
-    try support.eval(host, "tests/app/catalog.test.js");
+    try support.run("tests/app/catalog.test.js");
 }
 
 test "loadCatalog retains its state after a refusal" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // Controlled requests exercise shared and follow-up reads, then a refusal.
-    try support.eval(host, "tests/app/loadcatalog.test.js");
+    try support.run("tests/app/loadcatalog.test.js");
 }
 
 test "the chat slice owns its listeners and its transcript commands" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // The chat reacts to session events and offers the commands that read its transcript.
-    try support.eval(host, "tests/app/chat.test.js");
+    try support.run("tests/app/chat.test.js");
 }
 
 test "a split gives each chat pane its own session" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // Each pane starts with its own session, and an event reaches every pane that shows the pair.
-    try support.eval(host, "tests/app/splitchat.test.js");
+    try support.run("tests/app/splitchat.test.js");
 }
 
 test "the context owns every overlay its plugin pushes" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // A modal that outlives its plugin consumes every key, so the scope must own the stack too.
-    try support.eval(host, "tests/app/ctxoverlay.test.js");
+    try support.run("tests/app/ctxoverlay.test.js");
 }
 
 test "the explorer registers its command and takes it back on unload" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // The picker walks the filesystem through the client, so only its command lifetime is tested here.
-    try support.eval(host, "tests/app/explorer.test.js");
+    try support.run("tests/app/explorer.test.js");
 }
 
 test "a chat retains only successful session pins" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/app/pins.test.js");
+    try support.run("tests/app/pins.test.js");
 }
 
 test "navigation after initial admission neither sends twice nor closes an unowned pin" {
@@ -235,7 +203,5 @@ test "navigation after initial admission neither sends twice nor closes an unown
 }
 
 test "refresh shares callers through follow-up reads and refusals" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/app/refresh.test.js");
+    try support.run("tests/app/refresh.test.js");
 }

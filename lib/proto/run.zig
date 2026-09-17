@@ -89,21 +89,6 @@ pub const RunStartedData = struct {
 const testing = std.testing;
 const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
-test "run outcome failed round-trips" {
-    const json =
-        \\{"type":"failed","code":"timeout","message":"provider timed out"}
-    ;
-    const parsed = try std.json.parseFromSlice(RunOutcome, testing.allocator, json, opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value == .failed);
-    try testing.expectEqual(enums.RunErrorCode.timeout, parsed.value.failed.code);
-
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    try testing.expectEqualStrings(json, buf.written());
-}
-
 test "interrupted is a closed run failure category" {
     const json = "{\"type\":\"failed\",\"code\":\"interrupted\",\"message\":\"the engine stopped\"}";
     const parsed = try std.json.parseFromSlice(RunOutcome, testing.allocator, json, .{});

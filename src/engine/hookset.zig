@@ -53,13 +53,11 @@ fn proceed(_: *anyopaque, _: std.mem.Allocator, _: proto.hook.Point, _: []const 
 
 const testing = std.testing;
 
-test "the default set holds nothing and proceeds" {
-    const set: HookSet = .{};
-    try testing.expect(!set.holds(set.ctx, .@"tool.before"));
-    try testing.expectEqual(Decision.proceed, set.ask(set.ctx, testing.allocator, .@"tool.before", "{}"));
-}
+test "the default set holds nothing and askIfHeld skips the round trip" {
+    const defaults: HookSet = .{};
+    try testing.expect(!defaults.holds(defaults.ctx, .@"tool.before"));
+    try testing.expectEqual(Decision.proceed, defaults.ask(defaults.ctx, testing.allocator, .@"tool.before", "{}"));
 
-test "askIfHeld skips the round trip when no handler waits" {
     const Counter = struct {
         asked: usize = 0,
         fn holds(_: *anyopaque, _: proto.hook.Point) bool {

@@ -5,6 +5,7 @@ const host_mod = @import("host.zig");
 const Host = host_mod.Host;
 const tools_table = @import("tools.zig");
 const BakedModule = @import("loader.zig").BakedModule;
+const Paint = @import("test_paint.zig").Paint;
 
 const modules = host_mod.default_baked ++ [_]BakedModule{
     .{ .name = "yuke:test-markdown", .code = .{ .source = @embedFile("tests/markdown.js") } },
@@ -37,7 +38,7 @@ pub fn destroyHost(host: *Host) void {
     std.debug.assert(host.gpa.vtable == probe.allocator().vtable);
     const pool: *Pool = @ptrCast(@alignCast(host.gpa.ptr));
     host.destroy();
-    _ = pool.deinit();
+    std.debug.assert(pool.deinit() == .ok);
     std.testing.allocator.destroy(pool);
 }
 
@@ -46,6 +47,33 @@ pub fn run(comptime path: [:0]const u8) !void {
     const host = createHost();
     defer destroyHost(host);
     try eval(host, path);
+}
+
+pub const PaintedHost = struct {
+    paint: *Paint,
+    host: *Host,
+
+    pub fn init(rows: u16, cols: u16) !@This() {
+        const paint = try std.testing.allocator.create(Paint);
+        errdefer std.testing.allocator.destroy(paint);
+        try paint.setup(std.testing.allocator, rows, cols);
+        errdefer paint.deinit();
+        const host = createHost();
+        paint.bind(host);
+        return .{ .paint = paint, .host = host };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        destroyHost(self.host);
+        self.paint.deinit();
+        std.testing.allocator.destroy(self.paint);
+    }
+};
+
+pub fn runPainted(rows: u16, cols: u16, comptime path: [:0]const u8) !void {
+    var fixture = try PaintedHost.init(rows, cols);
+    defer fixture.deinit();
+    try eval(fixture.host, path);
 }
 
 pub fn eval(host: *Host, comptime path: [:0]const u8) !void {

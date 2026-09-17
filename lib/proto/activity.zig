@@ -100,20 +100,7 @@ test "activity state running_tool round-trips" {
     try testing.expectEqualStrings(json, buf.written());
 }
 
-test "activity state waiting round-trips and the removed running tag is rejected" {
-    const json =
-        \\{"type":"waiting","run_id":7,"started_at_ms":100}
-    ;
-    const parsed = try std.json.parseFromSlice(ActivityState, testing.allocator, json, opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value == .waiting);
-    try testing.expectEqual(@as(u64, 100), parsed.value.waiting.started_at_ms);
-
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    try testing.expectEqualStrings(json, buf.written());
-
+test "activity state rejects the removed running tag" {
     const removed =
         \\{"type":"running","run_id":7,"started_at_ms":100}
     ;

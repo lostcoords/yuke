@@ -316,7 +316,7 @@ test "the cut lands on the start of the turn that holds the tail target" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const sid = [_]u8{7} ** 16;
-    try seedSessionModel(&db, sid, "mock", "");
+    try Resources.seedSession(&db, sid, .{ .model = "mock", .title = "t" });
 
     try seedMessage(&db, arena.allocator(), sid, 1, .user, 300);
     try seedMessage(&db, arena.allocator(), sid, 2, .assistant, 300);
@@ -335,7 +335,7 @@ test "a drained queue starts one turn, so the cut takes every user message of th
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const sid = [_]u8{8} ** 16;
-    try seedSessionModel(&db, sid, "mock", "");
+    try Resources.seedSession(&db, sid, .{ .model = "mock", .title = "t" });
     try seedMessage(&db, arena.allocator(), sid, 1, .user, 300);
     try seedMessage(&db, arena.allocator(), sid, 2, .assistant, 300);
     try seedMessage(&db, arena.allocator(), sid, 3, .user, 300);
@@ -352,7 +352,7 @@ test "a history with no earlier turn is a skip" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const sid = [_]u8{9} ** 16;
-    try seedSessionModel(&db, sid, "mock", "");
+    try Resources.seedSession(&db, sid, .{ .model = "mock", .title = "t" });
     try seedMessage(&db, arena.allocator(), sid, 1, .user, 300);
     try seedMessage(&db, arena.allocator(), sid, 2, .assistant, 30_000);
 
@@ -369,7 +369,7 @@ test "the estimate charges each image a fixed cost above its payload bytes" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{10} ** 16;
-    try seedSessionModel(&db, sid, "mock", "");
+    try Resources.seedSession(&db, sid, .{ .model = "mock", .title = "t" });
     try seedMessage(&db, a, sid, 1, .user, 300);
     const before = try context.estimate(testing.allocator, a, &db, sid);
     const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(0x5a)), .mime = "image/png", .bytes = 64 };
@@ -386,21 +386,6 @@ test "the estimate charges each image a fixed cost above its payload bytes" {
     try testing.expectEqual(@as(u64, 4), cut.first_kept_id);
     try testing.expectEqual(try context.estimate(testing.allocator, a, &db, sid), cut.tokens_before);
     try testing.expect(cut.tokens_before - cut.tokens_kept >= after);
-}
-
-fn seedSessionModel(db: *database.Database, id: [16]u8, model: []const u8, reasoning: []const u8) !void {
-    try database.session.create(db, .{
-        .id = id,
-        .root = "/w",
-        .origin = "root",
-        .profile = "default",
-        .model = model,
-        .reasoning = reasoning,
-        .config_rev = 0,
-        .title = "t",
-        .created_at_ms = 1,
-        .updated_at_ms = 1,
-    });
 }
 
 /// Commit one message of about `bytes` payload bytes, so a scan test states its own sizes.
@@ -449,16 +434,10 @@ const TaskFixture = struct {
         self.db = try database.Database.openTest();
         self.engine = self.resources.makeEngine(&self.db);
         self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tools = true }, .limits = .{ .context_window = 200_000 } }};
-        self.rows = .{.{ .id = "mock", .name = "Mock", .models = &self.models, .availability = .{ .ready = .{
-            .base_url = "https://example.test/v1",
-            .headers = &.{},
-            .session_header = .none,
-            .endpoints = &.{.{ .protocol = .anthropic_messages, .key_header = .x_api_key }},
-            .credential = .{ .literal = "secret" },
-        } } }};
+        self.rows = .{Resources.mockProvider(&self.models, .{ .base_url = "https://example.test/v1", .credential = .{ .literal = "secret" }, .authenticated = true })};
         // The test owns this snapshot, so no reload can free it under a run.
         self.engine.deps.providers.merged.rows = &self.rows;
-        try seedSessionModel(&self.db, sid, "mock/m", self.reasoning);
+        try Resources.seedSession(&self.db, sid, .{ .model = "mock/m", .reasoning = self.reasoning, .title = "t" });
         self.session = try self.engine.activate(.bytes(sid));
     }
 
@@ -503,10 +482,7 @@ test "a compaction commits one checkpoint and ends its run" {
     const a = arena.allocator();
 
     // Two turns. The newest turn alone crosses the tail target, so the cut lands at message 3.
-    try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
+    try seedCompactableHistory(&f.db, a);
 
     const outcome = try f.run(.manual);
     try testing.expectEqual(@as(u64, 5), outcome.compacted.message_id);
@@ -553,10 +529,7 @@ test "a cancel that landed before the summary leaves the transcript alone" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
+    try seedCompactableHistory(&f.db, a);
 
     const slot = try runs.prepareCompaction(&f.engine, f.session, .manual, null);
     slot.phase = .running;
@@ -578,10 +551,7 @@ test "a compaction on an idle session starts at once and answers its run id" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
+    try seedCompactableHistory(&f.db, a);
 
     var gate: ?runs.Launch = null;
     const answer = try commands.sessionCompact(&f.engine, a, .{ .session_id = .bytes(TaskFixture.sid) }, &gate);
@@ -632,18 +602,9 @@ test "the session starts the compaction it held once its run ends" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
+    try seedCompactableHistory(&f.db, a);
 
-    const run_id = blk: {
-        var tx = try f.db.begin();
-        defer tx.deinit();
-        const id = try database.event.allocRunId(&f.db, a, TaskFixture.sid);
-        try tx.commit();
-        break :blk id;
-    };
+    const run_id = try runs.reserveCompaction(&f.engine, a, TaskFixture.sid);
     f.session.pending_compaction = .{ .run_id = run_id, .reason = .auto };
     try testing.expect(runs.startPendingCompaction(&f.engine, f.session));
     try testing.expect(f.session.pending_compaction == null);
@@ -837,10 +798,7 @@ test "an incomplete or empty summary leaves the checkpoint unchanged" {
         var arena: std.heap.ArenaAllocator = .init(testing.allocator);
         defer arena.deinit();
         const a = arena.allocator();
-        try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
-        try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
-        try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-        try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
+        try seedCompactableHistory(&f.db, a);
         _ = try f.run(.manual);
         f.session = try f.engine.activate(.bytes(TaskFixture.sid));
         try seedMessage(&f.db, a, TaskFixture.sid, 6, .user, 300);
@@ -899,14 +857,7 @@ test "a tool round can compact and resume within the same run" {
         }
     };
     f.engine.installTools(.{ .run = Tool.run });
-    const tool_reply =
-        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
-        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"unknown\"}}\n\n" ++
-        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" ++
-        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
-        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":1}}\n\n" ++
-        "data: {\"type\":\"message_stop\"}\n\n";
-    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ tool_reply, ai.transport.canned_reply, ai.transport.canned_reply } };
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ Resources.tool_reply, ai.transport.canned_reply, ai.transport.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try sendAndWait(&f, a, "continue after the tool");
     try testing.expectEqual(@as(usize, 3), capture.requests.items.len);
@@ -930,10 +881,7 @@ test "a summary that grows the context does not replace the checkpoint" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
+    try seedCompactableHistory(&f.db, a);
     f.resources.transport.bytes = try std.mem.replaceOwned(u8, a, ai.transport.canned_reply, "Hello from the yuke mock provider.", "x" ** 6000);
     const outcome = try f.run(.manual);
     try testing.expect(outcome == .failed);
@@ -982,10 +930,7 @@ test "a cancel interrupts a blocked summary and leaves the history intact" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
+    try seedCompactableHistory(&f.db, a);
     var blocked: Blocked = .{ .io = f.engine.deps.io, .engine = &f.engine };
     f.engine.deps.route_transport = .{ .ctx = &blocked, .vtable = &.{ .open = Blocked.open } };
     var canceller = try blocked.io.concurrent(Blocked.cancel, .{&blocked});
@@ -1004,10 +949,7 @@ test "repeated compaction merges the prior summary and charges only the active c
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
+    try seedCompactableHistory(&f.db, a);
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{ ai.transport.canned_reply, ai.transport.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try testing.expect(try f.run(.manual) == .compacted);

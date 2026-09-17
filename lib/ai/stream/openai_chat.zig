@@ -301,26 +301,7 @@ fn identity(value: std.json.Value, key: []const u8) Error!?[]const u8 {
 const testing = std.testing;
 const stream_testing = @import("testing.zig");
 
-/// The parse arena and reducer must stay alive while emitted events borrow them.
-const Harness = struct {
-    arena: std.heap.ArenaAllocator,
-    reducer: Reducer,
-    out: std.ArrayList(StreamEvent) = .empty,
-
-    fn init() Harness {
-        return .{ .arena = std.heap.ArenaAllocator.init(testing.allocator), .reducer = Reducer.init(testing.allocator) };
-    }
-
-    fn deinit(self: *Harness) void {
-        self.out.deinit(testing.allocator);
-        self.reducer.deinit();
-        self.arena.deinit();
-    }
-
-    fn feed(self: *Harness, events: []const []const u8) Error!void {
-        for (events) |e| try self.reducer.decode(e, self.arena.allocator(), &self.out);
-    }
-};
+const Harness = stream_testing.Harness(Reducer);
 
 test "text turn: started, deltas, stopped, done with usage" {
     var h = Harness.init();
@@ -542,26 +523,18 @@ test "a second done sentinel is rejected" {
     try testing.expectError(error.Protocol, h.feed(&.{ "[DONE]", "[DONE]" }));
 }
 
-fn decodeAll(gpa: std.mem.Allocator, events: []const []const u8) !void {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    var reducer = Reducer.init(gpa);
-    defer reducer.deinit();
-    var out: std.ArrayList(StreamEvent) = .empty;
-    defer out.deinit(gpa);
-    for (events) |e| try reducer.decode(e, arena.allocator(), &out);
-}
-
 test "decode frees everything on allocation failure at every point" {
-    try testing.checkAllAllocationFailures(testing.allocator, decodeAll, .{&.{
-        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"tool_1","function":{"name":"run","arguments":"{\"a\":1"}}]},"finish_reason":null}]}
-        ,
-        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":null}]}
-        ,
-        \\{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
-        ,
-        "[DONE]",
-    }});
+    try testing.checkAllAllocationFailures(testing.allocator, stream_testing.decodeAll(Reducer), .{
+        &.{
+            \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"tool_1","function":{"name":"run","arguments":"{\"a\":1"}}]},"finish_reason":null}]}
+            ,
+            \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":null}]}
+            ,
+            \\{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+            ,
+            "[DONE]",
+        },
+    });
 }
 
 test "a chunk with no function and an openrouter reasoning field are both handled" {

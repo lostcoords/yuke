@@ -373,22 +373,23 @@ const test_limits: h.ReadLimits = .{ .max_lines = 2000, .max_line_bytes = 64, .m
 /// The fixture writes `data` to a temporary file. It reads a range through `LocalHost`.
 const Fixture = struct {
     tmp: testing.TmpDir,
+    arena: std.heap.ArenaAllocator,
     root_buf: [std.fs.max_path_bytes]u8 = undefined,
     root_len: usize = 0,
 
     fn init(self: *Fixture, data: []const u8) !void {
-        self.* = .{ .tmp = testing.tmpDir(.{}) };
+        self.* = .{ .tmp = testing.tmpDir(.{}), .arena = .init(testing.allocator) };
         errdefer self.tmp.cleanup();
         try self.tmp.dir.writeFile(testing.io, .{ .sub_path = "a.txt", .data = data });
         self.root_len = try self.tmp.dir.realPath(testing.io, &self.root_buf);
     }
     fn deinit(self: *Fixture) void {
+        self.arena.deinit();
         self.tmp.cleanup();
     }
-    /// Build the host per call. A stored root slice would dangle if the fixture moved.
-    fn read(self: *Fixture, a: std.mem.Allocator, range: h.Range, limits: h.ReadLimits) h.HostError!h.RangeRead {
+    fn read(self: *Fixture, range: h.Range, limits: h.ReadLimits) h.HostError!h.RangeRead {
         var local: LocalHost = .{ .io = testing.io, .root = self.root_buf[0..self.root_len], .env = &test_env };
-        return (try local.readRange(a, "a.txt", range, limits)).text;
+        return (try local.readRange(self.arena.allocator(), "a.txt", range, limits)).text;
     }
 };
 
@@ -397,112 +398,65 @@ test "LocalHost detects image headers before a range and without a file extensio
         var f: Fixture = undefined;
         try f.init(data);
         defer f.deinit();
-        var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        defer arena.deinit();
         var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
-        const got = try local.readRange(arena.allocator(), "a.txt", .{ .start = 2, .end = 2 }, test_limits);
-        try testing.expectEqualStrings(try std.fs.path.join(arena.allocator(), &.{ local.root, "a.txt" }), got.image);
+        const got = try local.readRange(f.arena.allocator(), "a.txt", .{ .start = 2, .end = 2 }, test_limits);
+        try testing.expectEqualStrings(try std.fs.path.join(f.arena.allocator(), &.{ local.root, "a.txt" }), got.image);
     }
 }
 
-test "LocalHost reads a whole file and a line range" {
-    var f: Fixture = undefined;
-    try f.init("one\ntwo\nthree\n");
-    defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const all = try f.read(a, .{}, test_limits);
-    try testing.expectEqualStrings("one\ntwo\nthree\n", all.text);
-    try testing.expectEqual(@as(?u32, null), all.next_line);
-
-    const some = try f.read(a, .{ .start = 2, .end = 3 }, test_limits);
-    try testing.expectEqualStrings("two\nthree\n", some.text);
+test "LocalHost reads simple ranges" {
+    const Case = struct {
+        data: []const u8,
+        range: h.Range,
+        limits: h.ReadLimits,
+        want_text: []const u8,
+        want_next: ?u32,
+    };
+    const cases = [_]Case{
+        .{ .data = "one\ntwo\nthree\n", .range = .{}, .limits = test_limits, .want_text = "one\ntwo\nthree\n", .want_next = null },
+        .{ .data = "one\ntwo\nthree\n", .range = .{ .start = 2, .end = 3 }, .limits = test_limits, .want_text = "two\nthree\n", .want_next = null },
+        .{ .data = "x\ny", .range = .{ .start = 2, .end = 2 }, .limits = test_limits, .want_text = "y\n", .want_next = null },
+        .{ .data = "x\ny", .range = .{ .start = 10 }, .limits = test_limits, .want_text = "", .want_next = null },
+        .{ .data = "1\n2\n3\n4\n5\n", .range = .{}, .limits = .{ .max_lines = 2, .max_line_bytes = 64, .max_bytes = 4096 }, .want_text = "1\n2\n", .want_next = 3 },
+        .{ .data = "1\n2\n", .range = .{}, .limits = .{ .max_lines = 2, .max_line_bytes = 64, .max_bytes = 4096 }, .want_text = "1\n2\n", .want_next = null },
+    };
+    for (cases) |case| {
+        var f: Fixture = undefined;
+        try f.init(case.data);
+        defer f.deinit();
+        const got = try f.read(case.range, case.limits);
+        try testing.expectEqualStrings(case.want_text, got.text);
+        try testing.expectEqual(case.want_next, got.next_line);
+    }
 }
 
 test "LocalHost reads bytes from an offset and keeps a cut character for the next read" {
     var f: Fixture = undefined;
     try f.init("ab\xe6\x97\xa5c");
     defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
+    const a = f.arena.allocator();
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
 
-    const first = try local.readFrom(arena.allocator(), "a.txt", 0, 4, false);
+    const first = try local.readFrom(a, "a.txt", 0, 4, false);
     try testing.expectEqualStrings("ab", first.text);
     try testing.expectEqual(@as(u64, 2), first.next);
-    const rest = try local.readFrom(arena.allocator(), "a.txt", first.next, 64, false);
+    const rest = try local.readFrom(a, "a.txt", first.next, 64, false);
     try testing.expectEqualStrings("\xe6\x97\xa5c", rest.text);
     try testing.expectEqual(@as(u64, 6), rest.next);
     // An offset past the end answers the size, so a caller can start at the tail.
-    const past = try local.readFrom(arena.allocator(), "a.txt", 1 << 40, 4, false);
+    const past = try local.readFrom(a, "a.txt", 1 << 40, 4, false);
     try testing.expectEqualStrings("", past.text);
     try testing.expectEqual(past.size, past.next);
-}
-
-test "LocalHost returns the final unterminated line" {
-    var f: Fixture = undefined;
-    try f.init("x\ny");
-    defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const last = try f.read(arena.allocator(), .{ .start = 2, .end = 2 }, test_limits);
-    try testing.expectEqualStrings("y\n", last.text); // the scan adds the newline the file lacks
-}
-
-test "LocalHost returns an empty result for a start past the file end" {
-    var f: Fixture = undefined;
-    try f.init("x\ny");
-    defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const past = try f.read(arena.allocator(), .{ .start = 10 }, test_limits);
-    try testing.expectEqualStrings("", past.text);
-    try testing.expectEqual(@as(?u32, null), past.next_line);
-}
-
-test "LocalHost reports the next line after the line limit" {
-    var f: Fixture = undefined;
-    try f.init("1\n2\n3\n4\n5\n");
-    defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    var narrow = test_limits;
-    narrow.max_lines = 2;
-    const got = try f.read(arena.allocator(), .{}, narrow);
-    try testing.expectEqualStrings("1\n2\n", got.text);
-    try testing.expectEqual(@as(?u32, 3), got.next_line);
-}
-
-test "LocalHost reports no next line when the limit lands on the file end" {
-    var f: Fixture = undefined;
-    try f.init("1\n2\n");
-    defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    var narrow = test_limits;
-    narrow.max_lines = 2; // the file holds exactly the limit, so no line remains
-    const got = try f.read(arena.allocator(), .{}, narrow);
-    try testing.expectEqualStrings("1\n2\n", got.text);
-    try testing.expectEqual(@as(?u32, null), got.next_line);
 }
 
 test "LocalHost stops at the byte limit with complete lines" {
     var f: Fixture = undefined;
     try f.init("aaaa\nbbbb\ncccc\n");
     defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     var narrow = test_limits;
     narrow.max_line_bytes = 8; // a line must always fit inside the byte limit
     narrow.max_bytes = 12; // two five-byte lines fit. The third line does not fit.
-    const got = try f.read(arena.allocator(), .{}, narrow);
+    const got = try f.read(.{}, narrow);
     try testing.expectEqualStrings("aaaa\nbbbb\n", got.text);
     try testing.expectEqual(@as(?u32, 3), got.next_line);
 }
@@ -516,10 +470,7 @@ test "LocalHost keeps a line of exactly the line limit whole" {
     try data.appendSlice(testing.allocator, "\ntail\n");
     try f.init(data.items);
     defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const got = try f.read(arena.allocator(), .{}, test_limits);
+    const got = try f.read(.{}, test_limits);
     try testing.expectEqual(@as(u32, 0), got.long_lines); // the scan did not cut it
     try testing.expectEqualStrings(data.items, got.text);
 }
@@ -533,10 +484,7 @@ test "LocalHost cuts a long line on a codepoint boundary" {
     try data.appendSlice(testing.allocator, "\ntail\n");
     try f.init(data.items);
     defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const got = try f.read(arena.allocator(), .{}, test_limits);
+    const got = try f.read(.{}, test_limits);
     try testing.expectEqual(@as(u32, 1), got.long_lines);
     var it = std.mem.splitScalar(u8, got.text[0 .. got.text.len - 1], '\n');
     const first = it.next().?;
@@ -550,9 +498,7 @@ test "LocalHost refuses a file it cannot decode as UTF-8" {
     var f: Fixture = undefined;
     try f.init("ok\n\xff\xfe\n");
     defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    try testing.expectError(error.InvalidUtf8, f.read(arena.allocator(), .{}, test_limits));
+    try testing.expectError(error.InvalidUtf8, f.read(.{}, test_limits));
 }
 
 test "LocalHost refuses an invalid byte at a cut boundary" {
@@ -566,9 +512,7 @@ test "LocalHost refuses an invalid byte at a cut boundary" {
     try data.append(testing.allocator, '\n');
     try f.init(data.items);
     defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    try testing.expectError(error.InvalidUtf8, f.read(arena.allocator(), .{}, test_limits));
+    try testing.expectError(error.InvalidUtf8, f.read(.{}, test_limits));
 }
 
 test "LocalHost maps a missing path and a directory" {

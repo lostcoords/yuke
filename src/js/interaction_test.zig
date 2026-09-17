@@ -1,6 +1,5 @@
 const support = @import("test_support.zig");
 const std = @import("std");
-const Paint = @import("test_paint.zig").Paint;
 const Host = @import("host.zig").Host;
 
 test "RPC interaction answers correlated promises out of order" {
@@ -55,12 +54,9 @@ test "disposing an interaction consumer cancels only its pending dialog" {
 }
 
 test "the TUI interaction provider answers select and input dialogs" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 12, 50);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
+    var fixture = try support.PaintedHost.init(12, 50);
+    defer fixture.deinit();
+    const host = fixture.host;
     try support.eval(host, "tests/interaction/interaction-tui.test.js");
 
     const loop = @import("loop.zig");
@@ -80,7 +76,5 @@ test "a composition with no answerer refuses every question" {
 }
 
 test "an install replaces the answerer and its disposer restores the last one" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/interaction/install-stack.test.js");
+    try support.run("tests/interaction/install-stack.test.js");
 }

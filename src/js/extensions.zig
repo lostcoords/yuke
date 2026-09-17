@@ -470,9 +470,6 @@ fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) !
 }
 
 test "a user entry file evaluates and a missing one is not an error" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{
@@ -483,8 +480,8 @@ test "a user entry file evaluates and a missing one is not an error" {
     const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
     const dir = dir_buf[0..dir_len];
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try evalUserEntry(host, dir);
     try std.testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.result"));
 
@@ -497,9 +494,6 @@ test "a user entry file evaluates and a missing one is not an error" {
 }
 
 test "a throwing user entry is a JavaScriptFault the loop absorbs" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{
@@ -509,8 +503,8 @@ test "a throwing user entry is a JavaScriptFault the loop absorbs" {
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
     const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try std.testing.expectError(
         error.JavaScriptFault,
         evalUserEntry(host, dir_buf[0..dir_len]),

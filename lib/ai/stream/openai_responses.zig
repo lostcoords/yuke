@@ -471,26 +471,7 @@ fn partSlot(output: *Output, part_type: []const u8) ?PartSlot {
 const testing = std.testing;
 const stream_testing = @import("testing.zig");
 
-/// The parse arena and reducer must stay alive while emitted events borrow them.
-const Harness = struct {
-    arena: std.heap.ArenaAllocator,
-    reducer: Reducer,
-    out: std.ArrayList(StreamEvent) = .empty,
-
-    fn init() Harness {
-        return .{ .arena = std.heap.ArenaAllocator.init(testing.allocator), .reducer = Reducer.init(testing.allocator) };
-    }
-
-    fn deinit(self: *Harness) void {
-        self.out.deinit(testing.allocator);
-        self.reducer.deinit();
-        self.arena.deinit();
-    }
-
-    fn feed(self: *Harness, events: []const []const u8) Error!void {
-        for (events) |e| try self.reducer.decode(e, self.arena.allocator(), &self.out);
-    }
-};
+const Harness = stream_testing.Harness(Reducer);
 
 test "text turn: started, deltas, stopped, done with usage" {
     var h = Harness.init();
@@ -889,30 +870,22 @@ test "malformed JSON degrades to a protocol error" {
     try testing.expectError(error.Protocol, h.feed(&.{"{not json"}));
 }
 
-fn decodeAll(gpa: std.mem.Allocator, events: []const []const u8) !void {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    var reducer = Reducer.init(gpa);
-    defer reducer.deinit();
-    var out: std.ArrayList(StreamEvent) = .empty;
-    defer out.deinit(gpa);
-    for (events) |e| try reducer.decode(e, arena.allocator(), &out);
-}
-
 test "decode frees everything on allocation failure at every point" {
-    try testing.checkAllAllocationFailures(testing.allocator, decodeAll, .{&.{
-        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}
-        ,
-        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"gAAAAsig"}}
-        ,
-        \\{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"run"}}
-        ,
-        \\{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"a\":1}"}
-        ,
-        \\{"type":"response.function_call_arguments.done","output_index":1,"arguments":"{\"a\":1}"}
-        ,
-        \\{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","arguments":"{\"a\":1}"}}
-        ,
-        \\{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":1}}}
-    }});
+    try testing.checkAllAllocationFailures(testing.allocator, stream_testing.decodeAll(Reducer), .{
+        &.{
+            \\{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}
+            ,
+            \\{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"gAAAAsig"}}
+            ,
+            \\{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"run"}}
+            ,
+            \\{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"a\":1}"}
+            ,
+            \\{"type":"response.function_call_arguments.done","output_index":1,"arguments":"{\"a\":1}"}
+            ,
+            \\{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","arguments":"{\"a\":1}"}}
+            ,
+            \\{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":1}}}
+        },
+    });
 }

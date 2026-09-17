@@ -29,21 +29,14 @@ const Fixture = struct {
         errdefer self.engine.close();
         for ([_]proto.ids.SessionId{ root, child }) |id| {
             const is_child = std.mem.eql(u8, &id.raw, &child.raw);
-            try database.session.create(&self.db, .{
-                .id = id.raw,
+            try Resources.seedSession(&self.db, id.raw, .{
                 .root = "/work",
                 .origin = if (is_child) "child" else "root",
                 .parent_id = if (is_child) root.raw else null,
                 .parent_message_id = if (is_child) 1 else null,
                 .parent_part_id = if (is_child) 0 else null,
                 .name = if (is_child) "research" else null,
-                .profile = "default",
                 .model = "test/model",
-                .reasoning = "",
-                .config_rev = 0,
-                .title = "test",
-                .created_at_ms = 1,
-                .updated_at_ms = 1,
             });
         }
         try self.engine.own(root);
@@ -54,17 +47,6 @@ const Fixture = struct {
         self.arena.deinit();
         self.db.deinit();
         self.resources.deinit();
-    }
-
-    /// The wake runs on the executor; wait until the parent run committed its terminal.
-    fn awaitRootRun(self: *Fixture, run_id: u64) !void {
-        const a = self.arena.allocator();
-        for (0..1000) |_| {
-            const marks = (try database.event.highWater(&self.db, a, root.raw)).?;
-            if (marks.run_id_high >= run_id and (try database.session.snapshot(&self.db, a, root.raw)).?.open_run_id == null) return;
-            try std.Io.sleep(self.resources.runtime.io(), .fromMilliseconds(1), .awake);
-        }
-        return error.RootRunDidNotFinish;
     }
 
     fn start(self: *Fixture) !run.Started {
@@ -182,21 +164,15 @@ test "one report reservation survives each hop from a grandchild to the root" {
     defer f.deinit();
     const a = f.arena.allocator();
     const grandchild = [_]u8{3} ** 16;
-    try database.session.create(&f.db, .{
-        .id = grandchild,
+    try Resources.seedSession(&f.db, grandchild, .{
         .root = "/work",
         .origin = "child",
         .parent_id = child.raw,
         .parent_message_id = 1,
         .parent_part_id = 0,
         .name = "scan",
-        .profile = "default",
         .model = "test/model",
-        .reasoning = "",
-        .config_rev = 0,
         .title = "scan",
-        .created_at_ms = 1,
-        .updated_at_ms = 1,
     });
     try reports.reserve(&f.engine, a, root);
     {
@@ -277,7 +253,7 @@ test "a crash notice and parent report commit once without a child retry" {
     f.engine.close();
     f.engine = f.resources.makeEngine(&f.db);
     try f.engine.own(child);
-    try f.awaitRootRun(1);
+    try Resources.awaitDurableRun(&f.engine, &f.db, a, root.raw, 1);
     const parent = try database.message.historyPage(&f.db, a, root.raw, 0, 10);
     try testing.expectEqual(proto.enums.RunErrorCode.interrupted, parent.messages[0].user.source.?.child_report.outcome.failed.code);
     try testing.expectEqual(@as(u64, 0), try database.input.count(&f.db, a, root.raw));
@@ -361,7 +337,7 @@ test "an owned tree wakes an existing durable report without another terminal ev
     f.engine.close();
     f.engine = f.resources.makeEngine(&f.db);
     try f.engine.own(child);
-    try f.awaitRootRun(1);
+    try Resources.awaitDurableRun(&f.engine, &f.db, a, root.raw, 1);
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, root.raw)).?.run_id_high);
     try testing.expectEqual(@as(u64, 0), try database.input.count(&f.db, a, root.raw));
     const history = try database.message.historyPage(&f.db, a, root.raw, 0, 10);

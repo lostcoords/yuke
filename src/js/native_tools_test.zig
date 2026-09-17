@@ -5,18 +5,55 @@ const std = @import("std");
 const Host = @import("host.zig").Host;
 const tools_table = @import("tools.zig");
 
-test "yuke:fs reads, writes and stats a real directory through promises" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "hello.txt", .data = "one\ntwo\n" });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
+const ReactorHost = struct {
+    rt: *zio.Runtime,
+    host: *Host,
+    cwd: []const u8,
+    tmp: ?std.testing.TmpDir = null,
+    root_buf: ?*[std.fs.max_path_bytes]u8 = null,
+    root_len: usize = 0,
 
-    // A real task needs a reactor, so this test runs on one instead of the testing I/O.
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), root);
-    defer support.destroyHost(host);
+    fn init(cwd: []const u8) !@This() {
+        var self: @This() = .{ .rt = undefined, .host = undefined, .cwd = cwd };
+        try self.start();
+        return self;
+    }
+
+    fn initTmp(cwd: ?[]const u8) !@This() {
+        var self: @This() = .{ .rt = undefined, .host = undefined, .cwd = undefined, .tmp = std.testing.tmpDir(.{}) };
+        errdefer self.tmp.?.cleanup();
+        self.root_buf = try std.testing.allocator.create([std.fs.max_path_bytes]u8);
+        errdefer std.testing.allocator.destroy(self.root_buf.?);
+        self.root_len = try self.tmp.?.dir.realPath(std.testing.io, self.root_buf.?);
+        self.cwd = cwd orelse self.root_buf.?[0..self.root_len];
+        try self.start();
+        return self;
+    }
+
+    fn start(self: *@This()) !void {
+        self.rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+        errdefer self.rt.deinit();
+        self.host = support.createHostWith(self.rt.io(), self.cwd);
+    }
+
+    fn root(self: *const @This()) []const u8 {
+        std.debug.assert(self.tmp != null);
+        return self.root_buf.?[0..self.root_len];
+    }
+
+    fn deinit(self: *@This()) void {
+        support.destroyHost(self.host);
+        self.rt.deinit();
+        if (self.root_buf) |root_buf| std.testing.allocator.destroy(root_buf);
+        if (self.tmp) |*tmp| tmp.cleanup();
+    }
+};
+
+test "yuke:fs reads, writes and stats a real directory through promises" {
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "hello.txt", .data = "one\ntwo\n" });
+    const host = fixture.host;
     try support.eval(host, "tests/native_tools/fsp.test.js");
     try support.pumpUntilIdle(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.done"));
@@ -114,16 +151,10 @@ test "a failed handler answers the model with an error it can read" {
 }
 
 test "a handler that awaits a primitive answers when the task finishes" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "note.txt", .data = "from disk" });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), root);
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "note.txt", .data = "from disk" });
+    const host = fixture.host;
 
     try support.eval(host, "tests/native_tools/await.test.js");
 
@@ -228,40 +259,21 @@ test "a tool registers after boot and keeps the advertised order stable" {
 }
 
 test "baked tools preserve file edits, bounded reads, views, and command output" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "one\ntwo\ntwo\n" });
+    var fixture = try ReactorHost.initTmp("/tmp");
+    defer fixture.deinit();
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "one\ntwo\ntwo\n" });
     const long_line = try std.testing.allocator.alloc(u8, 8001);
     defer std.testing.allocator.free(long_line);
     @memset(long_line, 'x');
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "long.txt", .data = long_line });
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "shot.png", .data = @import("../store/blob.zig").png_1x1 });
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "blob.bin", .data = "\xff\xfe\x00\x01" });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), "/tmp");
-    defer support.destroyHost(host);
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "long.txt", .data = long_line });
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "shot.png", .data = @import("../store/blob.zig").png_1x1 });
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "blob.bin", .data = "\xff\xfe\x00\x01" });
+    const root = fixture.root();
+    const host = fixture.host;
     try support.eval(host, "tests/native_tools/builtins-test.test.js");
 
-    {
-        const call = host.calls.submit("read", "{\"path\":\"a.txt\",\"start\":2,\"end\":3}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        try std.testing.expectEqualStrings("2: two\n3: two", call.text.?);
-        call.finish();
-        try host.pump();
-    }
-    {
-        const call = host.calls.submit("read", "{\"path\":\"long.txt\"}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        try std.testing.expect(std.mem.endsWith(u8, call.text.?, "[The tool cut 1 line(s) at 8000 bytes.]"));
-        call.finish();
-        try host.pump();
-    }
+    try expectCall(host, "read", "{\"path\":\"a.txt\",\"start\":2,\"end\":3}", root, false, "2: two\n3: two");
+    try expectCall(host, "read", "{\"path\":\"long.txt\"}", root, false, "[The tool cut 1 line(s) at 8000 bytes.]");
     // An image reads as one media ref. The host anchors the relative path before the engine reads the file.
     {
         const call = host.calls.submit("read", "{\"path\":\"shot.png\",\"start\":2,\"end\":2}", root);
@@ -274,30 +286,9 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         try host.pump();
     }
     // A binary file that has no image signature keeps the text error.
-    {
-        const call = host.calls.submit("read", "{\"path\":\"blob.bin\"}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(call.is_error);
-        try std.testing.expectEqualStrings("read: the file holds invalid UTF-8", call.text.?);
-        call.finish();
-        try host.pump();
-    }
-    {
-        const call = host.calls.submit("read", "{\"path\":\"missing.txt\"}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(call.is_error);
-        try std.testing.expectEqualStrings("read: the path does not exist", call.text.?);
-        call.finish();
-        try host.pump();
-    }
-    {
-        const call = host.calls.submit("read", "{\"path\":1}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(call.is_error);
-        try std.testing.expectEqualStrings("read: the argument path must be a string", call.text.?);
-        call.finish();
-        try host.pump();
-    }
+    try expectCall(host, "read", "{\"path\":\"blob.bin\"}", root, true, "read: the file holds invalid UTF-8");
+    try expectCall(host, "read", "{\"path\":\"missing.txt\"}", root, true, "read: the path does not exist");
+    try expectCall(host, "read", "{\"path\":1}", root, true, "read: the argument path must be a string");
     {
         const call = host.calls.submit("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", root);
         try support.pumpUntilSettled(host, call);
@@ -332,14 +323,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         call.finish();
         try host.pump();
     }
-    {
-        const call = host.calls.submit("exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        try std.testing.expectEqualStrings("out\n[stderr]\nerr\n[exit code: 3]", call.text.?);
-        call.finish();
-        try host.pump();
-    }
+    try expectCall(host, "exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", root, false, "out\n[stderr]\nerr\n[exit code: 3]");
     {
         const call = host.calls.submit("exec", "{\"command\":\"head -c 20000 /dev/zero | tr '\\\\0' x\"}", root);
         try support.pumpUntilSettled(host, call);
@@ -356,14 +340,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         call.finish();
         try host.pump();
     }
-    {
-        const call = host.calls.submit("exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        try std.testing.expect(std.mem.indexOf(u8, call.text.?, "[The command passed its 300 ms timeout.") != null);
-        call.finish();
-        try host.pump();
-    }
+    try expectCall(host, "exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", root, false, "[The command passed its 300 ms timeout.");
 }
 
 test "a user edit tool overrides the baked edit tool" {
@@ -381,14 +358,10 @@ test "a user edit tool overrides the baked edit tool" {
 }
 
 test "exec call abort ends its process group and preserves unrelated work" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), root);
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    const root = fixture.root();
+    const host = fixture.host;
     try host.evalModule("import \"yuke:builtins\";", "builtins.js");
 
     const canceled = host.calls.submit("exec",
@@ -396,7 +369,7 @@ test "exec call abort ends its process group and preserves unrelated work" {
     , root);
     const survivor = host.calls.submit("exec", "{\"command\":\"sleep 1; echo survived\"}", root);
     try host.pump();
-    const pids = try waitExecPids(host, tmp.dir);
+    const pids = try waitExecPids(host, fixture.tmp.?.dir);
     try std.testing.expect(processExists(pids[0]));
     try std.testing.expect(processExists(pids[1]));
 
@@ -419,14 +392,10 @@ test "exec call abort ends its process group and preserves unrelated work" {
 }
 
 test "exec rejects forged and retained signals and aborts before process creation" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), root);
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    const root = fixture.root();
+    const host = fixture.host;
     try support.eval(host, "tests/native_tools/exec-signal.test.js");
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.refusals"));
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
@@ -441,18 +410,14 @@ test "exec rejects forged and retained signals and aborts before process creatio
     try host.evalModule("globalThis.retained.aborted = false; globalThis.resume();", "late-exec.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.late"));
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
-    try std.testing.expectError(error.FileNotFound, tmp.dir.access(std.testing.io, "forbidden", .{}));
+    try std.testing.expectError(error.FileNotFound, fixture.tmp.?.dir.access(std.testing.io, "forbidden", .{}));
 }
 
 test "exec completion detaches before call abort and host close rejects late exec" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), root);
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    const root = fixture.root();
+    const host = fixture.host;
     try support.eval(host, "tests/native_tools/exec-complete.test.js");
     const call = host.calls.submit("probe", "{}", "/tmp");
     try host.pump();
@@ -471,7 +436,7 @@ test "exec completion detaches before call abort and host close rejects late exe
     try support.dropCall(host, race);
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
     try support.eval(host, "tests/native_tools/exec-close.test.js");
-    const pids = try waitExecPids(host, tmp.dir);
+    const pids = try waitExecPids(host, fixture.tmp.?.dir);
     const started: std.Io.Timestamp = .now(host.io, .awake);
     try host.close();
     try std.testing.expect(started.durationTo(.now(host.io, .awake)).toMilliseconds() < 8000);
@@ -541,17 +506,10 @@ test "session cancel reaches the builtin exec process group" {
 }
 
 test "yuke:exec runs commands on tasks and reports each outcome" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "marker.txt", .data = "found\n" });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-
-    // A command needs a real reactor, because it runs on its own task.
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), root);
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "marker.txt", .data = "found\n" });
+    const host = fixture.host;
 
     try support.eval(host, "tests/native_tools/exec.test.js");
     try support.pumpUntilIdle(host);
@@ -559,10 +517,10 @@ test "yuke:exec runs commands on tasks and reports each outcome" {
 }
 
 test "yuke:exec ends a command that passes its deadline" {
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), "/tmp");
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.init("/tmp");
+    defer fixture.deinit();
+    const rt = fixture.rt;
+    const host = fixture.host;
 
     // The deadline must stop the command and name the outcome. A failed kill would wait 30 seconds.
     const started: std.Io.Timestamp = .now(rt.io(), .awake);
@@ -587,16 +545,10 @@ test "yuke:diff describes a change, an equal pair, and a new file" {
 }
 
 test "a primitive stays pending until the owner lets its task run" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "x" });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), root);
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "x" });
+    const host = fixture.host;
 
     try support.eval(host, "tests/native_tools/pend.test.js");
 
@@ -610,16 +562,10 @@ test "a primitive stays pending until the owner lets its task run" {
 }
 
 test "a throwing await handler faults once and leaves no pending exception" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "x" });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), root);
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "x" });
+    const host = fixture.host;
 
     // A resolver that throws must not leave an exception for the next owner turn.
     try support.eval(host, "tests/native_tools/throwy.test.js");
@@ -639,14 +585,11 @@ test "a throwing await handler faults once and leaves no pending exception" {
 }
 
 test "run cleanup stops signaled exec without another owner pump" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
-    const runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer runtime.deinit();
-    const host = support.createHostWith(runtime.io(), root);
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    const root = fixture.root();
+    const runtime = fixture.rt;
+    const host = fixture.host;
     try host.evalModule("import \"yuke:builtins\";", "builtins.js");
     var work: @import("../session/work.zig") = .{};
     const call = host.calls.submit("exec",
@@ -654,7 +597,7 @@ test "run cleanup stops signaled exec without another owner pump" {
     , root);
     call.work = &work;
     try host.pump();
-    const pids = try waitExecPids(host, tmp.dir);
+    const pids = try waitExecPids(host, fixture.tmp.?.dir);
     try std.testing.expectEqual(@as(usize, 1), work.pending);
     call.finish();
     work.drain(runtime.io());
@@ -738,11 +681,18 @@ fn expectTool(host: *Host, name: []const u8, args: []const u8, is_error: bool, p
     try support.dropCall(host, call);
 }
 
+fn expectCall(host: *Host, name: []const u8, args: []const u8, root: []const u8, is_error: bool, part: []const u8) !void {
+    const call = host.calls.submit(name, args, root);
+    try support.pumpUntilSettled(host, call);
+    try std.testing.expectEqual(is_error, call.is_error);
+    try std.testing.expect(std.mem.indexOf(u8, call.text.?, part) != null);
+    try support.dropCall(host, call);
+}
+
 test "background jobs start, list, stop, and report a natural exit once to their session" {
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), "/tmp");
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.init("/tmp");
+    defer fixture.deinit();
+    const host = fixture.host;
     try support.eval(host, "tests/native_tools/builtins-test.test.js");
     try host.evalModule(
         \\import { client } from "yuke:client";
@@ -771,17 +721,12 @@ test "background jobs start, list, stop, and report a natural exit once to their
 }
 
 test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves its exit" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "yuke-fixture-hello", .data = "#!/bin/sh\necho fixture\n" });
-    try tmp.dir.setFilePermissions(std.testing.io, "yuke-fixture-hello", .fromMode(0o755), .{});
-    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const dir = dir_buf[0..try tmp.dir.realPath(std.testing.io, &dir_buf)];
-
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), "/tmp");
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.initTmp("/tmp");
+    defer fixture.deinit();
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "yuke-fixture-hello", .data = "#!/bin/sh\necho fixture\n" });
+    try fixture.tmp.?.dir.setFilePermissions(std.testing.io, "yuke-fixture-hello", .fromMode(0o755), .{});
+    const dir = fixture.root();
+    const host = fixture.host;
     const setup = try std.fmt.allocPrintSentinel(std.testing.allocator, "globalThis.fixtureDir = \"{s}\";", .{dir}, 0);
     defer std.testing.allocator.free(setup);
     try host.eval(setup, "fixture.js");
@@ -791,10 +736,9 @@ test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves it
 }
 
 test "the jobs status segment and the /jobs list show, refresh, and stop background jobs" {
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), "/tmp");
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.init("/tmp");
+    defer fixture.deinit();
+    const host = fixture.host;
     try support.eval(host, "tests/native_tools/jobs-ui.test.js");
     try support.pumpUntilTrue(host, "globalThis.result !== \"pending\"");
     try support.expectString(host, "result", "ok");
@@ -802,10 +746,10 @@ test "the jobs status segment and the /jobs list show, refresh, and stop backgro
 
 test "a yuke:spawn reader stops at the buffer cap until the owner drains it" {
     const process_module = @import("native/process.zig");
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), "/tmp");
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.init("/tmp");
+    defer fixture.deinit();
+    const rt = fixture.rt;
+    const host = fixture.host;
     try host.evalModule(
         \\import { spawn } from "yuke:spawn";
         \\globalThis.bytes = 0;
@@ -826,10 +770,9 @@ test "extension teardown ends a live child instead of waiting for it" {
 }
 
 test "an MCP stdio client port over spawn answers a tool call and shuts its servers down in order" {
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const host = support.createHostWith(rt.io(), "/tmp");
-    defer support.destroyHost(host);
+    var fixture = try ReactorHost.init("/tmp");
+    defer fixture.deinit();
+    const host = fixture.host;
     try support.eval(host, "tests/native_tools/mcp-proof.test.js");
 
     for (0..2) |i| {

@@ -476,25 +476,6 @@ fn isZigIdentifier(name: []const u8) bool {
         !std.zig.primitives.isPrimitive(name);
 }
 
-test "parse explicit cardinality and typed annotations" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const definitions = try parse(arena.allocator(),
-        \\-- name: ReadWidget :optional
-        \\-- Documentation is ignored by the fixed annotation grammar.
-        \\-- id: i64!
-        \\-- name: []const u8
-        \\SELECT id, name FROM widget WHERE id = :id;
-        \\
-    );
-    try std.testing.expectEqual(@as(usize, 1), definitions.len);
-    try std.testing.expectEqual(Cardinality.optional, definitions[0].cardinality);
-    try std.testing.expectEqualStrings("ReadWidget", definitions[0].name);
-    try std.testing.expectEqual(@as(usize, 2), definitions[0].fields.len);
-    try std.testing.expect(definitions[0].fields[0].required);
-    try std.testing.expect(!definitions[0].fields[1].required);
-}
-
 test "parse drops a trailing comment that belongs to the next query" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -521,10 +502,18 @@ test "resolve uses SQLite names and requires ambiguous types to be annotated" {
 
     const definitions = try parse(arena.allocator(),
         \\-- name: ReadWidget :optional
+        \\-- Documentation is ignored by the fixed annotation grammar.
         \\-- id: i64!
+        \\-- name: []const u8
         \\SELECT id, name FROM widget WHERE id = :id;
         \\
     );
+    try std.testing.expectEqual(@as(usize, 1), definitions.len);
+    try std.testing.expectEqual(Cardinality.optional, definitions[0].cardinality);
+    try std.testing.expectEqualStrings("ReadWidget", definitions[0].name);
+    try std.testing.expectEqual(@as(usize, 2), definitions[0].fields.len);
+    try std.testing.expect(definitions[0].fields[0].required);
+    try std.testing.expect(!definitions[0].fields[1].required);
     const query = try resolve(arena.allocator(), conn, definitions[0], null);
     try std.testing.expectEqualStrings("id", query.params[0].name);
     try std.testing.expectEqualStrings("i64", query.row[0].zig_type);

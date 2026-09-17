@@ -313,8 +313,8 @@ test "serve stops when q arrives" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     var slot: [1]Msg = undefined;
     var ch = Channel.init(&slot);
@@ -331,8 +331,8 @@ test "serve folds a wheel run into one dispatch and keeps the next button" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.eval(
         \\globalThis.seen = [];
         \\globalThis.onEvent = (ev) => {
@@ -360,8 +360,8 @@ test "a closed channel unblocks serve" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     try host.eval("globalThis.seen = 0; globalThis.onEvent = () => { globalThis.seen++; };", "count.js");
 
@@ -382,8 +382,8 @@ test "serve keeps the loop after onEvent throw" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
     try host.evalModule(
         \\import { term } from "yuke:term";
         \\globalThis.onEvent = (ev) => {
@@ -407,8 +407,8 @@ test "tickTask enqueues a tick while armed" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     host.paint.needs_tick = true;
     host.paint.tick_period_ms = 50;
@@ -434,8 +434,8 @@ test "tickTask wakes for a timer set while it sleeps with no deadline" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = Host.createWith(gpa.allocator(), rt.io(), support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHostWith(rt.io(), "");
+    defer support.destroyHost(host);
 
     var slot: [1]Msg = undefined;
     var ch = Channel.init(&slot);
@@ -462,8 +462,8 @@ test "tickTask paces engine wakes to the frame gap" {
     var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    const host = Host.createWith(gpa.allocator(), std.testing.io, support.hostOptions(""));
-    defer host.destroy();
+    const host = support.createHost();
+    defer support.destroyHost(host);
 
     // No owner drains here, so the engine stays pending and the task must not flood the channel.
     host.engine.index_dirty = true;

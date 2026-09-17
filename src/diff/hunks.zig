@@ -1,7 +1,7 @@
 //! Group the edit runs into hunks. A hunk holds the changed lines plus the context lines around them.
 
 const std = @import("std");
-const line_source = @import("lines.zig");
+const diff = @import("diff.zig");
 const myers = @import("myers.zig");
 
 const Op = myers.Op;
@@ -156,13 +156,9 @@ const Fixture = struct {
 
 /// Build the hunks of two texts. It runs the whole path, so a test states real text.
 fn hunksOf(arena: std.mem.Allocator, old: []const []const u8, new: []const []const u8, context: u32) ![]const Hunk {
-    var table: line_source.Table = .{};
-    defer table.deinit(arena);
-
-    const old_lines = try line_source.split(arena, &table, try join(arena, old));
-    const new_lines = try line_source.split(arena, &table, try join(arena, new));
-    const edits = try myers.script(arena, old_lines.ids, new_lines.ids, 1000);
-    return group(arena, edits, old_lines.text, new_lines.text, context);
+    const old_text = try join(arena, old);
+    const new_text = try join(arena, new);
+    return diff.compare(arena, old_text, new_text, .{ .context = context });
 }
 
 /// Join the test lines into one text. Each line gets a line feed.
@@ -265,21 +261,7 @@ test "a gap of two times the context joins and one more splits" {
     const a = f.arena.allocator();
 
     // Two changes with exactly 2 * context unchanged lines between them stay in one hunk.
-    var old: [12][]const u8 = undefined;
-    for (&old, 0..) |*line, i| line.* = switch (i) {
-        0 => "0",
-        1 => "1",
-        2 => "2",
-        3 => "3",
-        4 => "4",
-        5 => "5",
-        6 => "6",
-        7 => "7",
-        8 => "8",
-        9 => "9",
-        10 => "10",
-        else => "11",
-    };
+    const old = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11" };
 
     var joined = old;
     joined[2] = "X";

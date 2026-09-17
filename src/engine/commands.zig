@@ -707,18 +707,7 @@ test "session.get and session.queue read the durable queue, resident or not" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const session_id = [_]u8{2} ** 16;
-    try session_store.create(&db, .{
-        .id = session_id,
-        .root = "/boot",
-        .origin = "root",
-        .profile = "default",
-        .model = "mock",
-        .reasoning = "",
-        .config_rev = 0,
-        .title = "boot",
-        .created_at_ms = 1,
-        .updated_at_ms = 1,
-    });
+    try Resources.seedSession(&db, session_id, .{ .root = "/boot", .model = "mock", .title = "boot" });
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     const queued = try input_store.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, .{ .content = &.{.{ .text = .{ .text = "recover" } }} }, 2);
     try db.conn.execNoArgs("COMMIT");
@@ -741,6 +730,7 @@ test "session.get and session.queue read the durable queue, resident or not" {
 
     // Resident: the runtime answers, and its restored queue reports the same depth.
     const rt = try engine.activate(id);
+    try std.testing.expectEqual(queued.input.input_id, rt.queueEntries()[0].input_id);
     const resident = try sessionGet(&engine, arena, .{ .session_id = id });
     try std.testing.expectEqual(@as(u64, 1), resident.activity.queued);
 

@@ -319,39 +319,6 @@ pub fn jitter(self: *const Engine) f64 {
     return util.jitterFrom(self.newId());
 }
 
-test "activation restores durable pending input into the runtime queue" {
-    var resources: @import("test_resources.zig") = undefined;
-    try resources.init();
-    defer resources.deinit();
-    var db = try database.Database.openTest();
-    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const session_id = [_]u8{2} ** 16;
-    try database.session.create(&db, .{
-        .id = session_id,
-        .root = "/boot",
-        .origin = "root",
-        .profile = "default",
-        .model = "mock",
-        .reasoning = "",
-        .config_rev = 0,
-        .title = "boot",
-        .created_at_ms = 1,
-        .updated_at_ms = 1,
-    });
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    const queued = try database.input.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, .{ .content = &.{.{ .text = .{ .text = "recover" } }} }, 2);
-    try db.conn.execNoArgs("COMMIT");
-
-    var engine = resources.makeEngine(&db);
-    defer engine.close();
-    defer db.deinit();
-    const rt = try engine.activate(.bytes(session_id));
-    try std.testing.expectEqual(@as(usize, 1), rt.queueDepth());
-    try std.testing.expectEqual(queued.input.input_id, rt.queueEntries()[0].input_id);
-}
-
 test {
     _ = @import("recovery_test.zig");
     _ = @import("admission_test.zig");

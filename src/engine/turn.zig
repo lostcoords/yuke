@@ -847,13 +847,6 @@ test "the stream cap rejects an oversized provider delta" {
 }
 
 const Resources = @import("test_resources.zig");
-const capped_tool_reply =
-    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
-    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"unknown\"}}\n\n" ++
-    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" ++
-    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
-    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":1}}\n\n" ++
-    "data: {\"type\":\"message_stop\"}\n\n";
 
 /// Drive `Streamer.onEvent` over a real engine, session, and draft. The caller reads the draft parts.
 const StreamerFixture = struct {
@@ -883,18 +876,7 @@ const StreamerFixture = struct {
         errdefer self.resources.deinit();
         self.db = try database.Database.openTest();
         errdefer self.db.deinit();
-        try session_store.create(&self.db, .{
-            .id = session_id,
-            .root = "/w",
-            .origin = "root",
-            .profile = "default",
-            .model = "mock",
-            .reasoning = "",
-            .config_rev = 0,
-            .title = "t",
-            .created_at_ms = 1,
-            .updated_at_ms = 1,
-        });
+        try Resources.seedSession(&self.db, session_id, .{ .model = "mock", .title = "t" });
         const system = try session_store.setPrompt(&self.db, arena.allocator(), session_id, parts);
         {
             var tx = try self.db.begin();
@@ -986,22 +968,11 @@ test "a capped tool round reloads with an assistant error and failed outcome" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     try fixture.persistStarted(a);
-    fixture.resources.providers.merged.rows = &.{.{
-        .id = "mock",
-        .name = "Mock",
-        .models = &.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .anthropic_messages, .caps = .{ .tools = true } }},
-        .availability = .{ .ready = .{
-            .base_url = "https://example.test",
-            .headers = &.{},
-            .session_header = .none,
-            .endpoints = &.{.{ .protocol = .anthropic_messages }},
-            .credential = .none,
-        } },
-    }};
+    fixture.resources.providers.merged.rows = &.{Resources.mockProvider(&.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .anthropic_messages, .caps = .{ .tools = true } }}, .{})};
     fixture.slot.gpa.free(fixture.slot.config.model);
     fixture.slot.config.model = try fixture.slot.gpa.dupe(u8, "mock/model");
     fixture.slot.config.max_rounds = 1;
-    fixture.resources.transport.bytes = capped_tool_reply;
+    fixture.resources.transport.bytes = Resources.tool_reply;
     fixture.session.draft.?.deinit();
     fixture.session.draft = null;
     fixture.slot.progress = .{};
@@ -1170,18 +1141,15 @@ test "a build hook can discard the live registry and tools before the request se
         .cost = .{ .input = 1.5 },
     });
     const row = try source.create(registry.Provider);
-    row.* = try proto.dupe(source, registry.Provider{
+    row.* = try proto.dupe(source, Resources.mockProvider(&.{}, .{
         .id = "provider-before",
         .name = "Before",
-        .models = &.{},
-        .availability = .{ .ready = .{
-            .base_url = "https://example.test/v1",
-            .headers = &.{.{ .name = "X-Source", .value = "before" }},
-            .session_header = .none,
-            .endpoints = &.{.{ .protocol = .openai_chat, .key_header = .authorization_bearer }},
-            .credential = .{ .literal = "secret-before" },
-        } },
-    });
+        .base_url = "https://example.test/v1",
+        .protocol = .openai_chat,
+        .headers = &.{.{ .name = "X-Source", .value = "before" }},
+        .credential = .{ .literal = "secret-before" },
+        .authenticated = true,
+    }));
     state.tools = try proto.dupe(source, @as([]const ai.ir.Tool, &.{.{
         .name = "tool_before",
         .description = "Before",
@@ -1258,18 +1226,7 @@ test "a run cancel interrupts either request hook before it settles" {
         f.slot.gpa.free(f.slot.config.model);
         f.slot.config.model = try f.slot.gpa.dupe(u8, "mock/model");
         f.slot.phase = .running;
-        f.resources.providers.merged.rows = &.{.{
-            .id = "mock",
-            .name = "Mock",
-            .models = &.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .openai_chat }},
-            .availability = .{ .ready = .{
-                .base_url = "https://example.test",
-                .headers = &.{},
-                .session_header = .none,
-                .endpoints = &.{.{ .protocol = .openai_chat }},
-                .credential = .none,
-            } },
-        }};
+        f.resources.providers.merged.rows = &.{Resources.mockProvider(&.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .openai_chat }}, .{ .protocol = .openai_chat })};
         var state: State = .{ .io = f.engine.deps.io, .slot = f.slot, .point = point };
         f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
         var canceller = try state.io.concurrent(State.cancel, .{&state});
@@ -1307,18 +1264,7 @@ test "the final build hook obeys prompt and context limits without a new floor" 
     defer f.deinit();
     var state: State = .{};
     f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
-    const row: registry.Provider = .{
-        .id = "mock",
-        .name = "Mock",
-        .models = &.{},
-        .availability = .{ .ready = .{
-            .base_url = "https://example.test",
-            .headers = &.{},
-            .session_header = .none,
-            .endpoints = &.{.{ .protocol = .openai_chat }},
-            .credential = .none,
-        } },
-    };
+    const row = Resources.mockProvider(&.{}, .{ .protocol = .openai_chat });
     const model: registry.ModelSpec = .{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .openai_chat };
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();

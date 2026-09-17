@@ -102,16 +102,28 @@ fn tokensFrom(arena: std.mem.Allocator, obj: std.json.ObjectMap, now_ms: u64) oa
 
 const testing = std.testing;
 
+const Fixture = struct {
+    arena: std.heap.ArenaAllocator,
+    body: [512]u8 = undefined,
+    canned: oauth.CannedHttp,
+
+    fn init(replies: []const oauth.CannedHttp.Reply) Fixture {
+        return .{ .arena = .init(testing.allocator), .canned = .{ .replies = replies } };
+    }
+
+    fn deinit(self: *Fixture) void {
+        self.arena.deinit();
+    }
+};
+
 test "a start reads the code, prefers the complete url, and defaults the interval" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    var out: [512]u8 = undefined;
-    var canned: oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body =
+    var f = Fixture.init(&.{.{ .answer = .{ .status = 200, .body =
         \\{"device_code":"dc","user_code":"UC","verification_uri":"https://x.ai/d",
         \\ "verification_uri_complete":"https://x.ai/d?code=UC"}
-    } }} };
+    } }});
+    defer f.deinit();
 
-    const s = try start(arena.allocator(), canned.seam(), &out);
+    const s = try start(f.arena.allocator(), f.canned.seam(), &f.body);
     try testing.expectEqualStrings("UC", s.user_code);
     try testing.expectEqualStrings("dc", s.device_auth_id);
     try testing.expectEqualStrings("https://x.ai/d?code=UC", s.verification_url);
@@ -119,14 +131,12 @@ test "a start reads the code, prefers the complete url, and defaults the interva
 }
 
 test "a start accepts the usercode spelling" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    var out: [512]u8 = undefined;
-    var canned: oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body =
+    var f = Fixture.init(&.{.{ .answer = .{ .status = 200, .body =
         \\{"device_code":"dc","usercode":"UC","verification_uri":"https://x.ai/d"}
-    } }} };
+    } }});
+    defer f.deinit();
 
-    const s = try start(arena.allocator(), canned.seam(), &out);
+    const s = try start(f.arena.allocator(), f.canned.seam(), &f.body);
     try testing.expectEqualStrings("UC", s.user_code);
 }
 
@@ -138,13 +148,11 @@ test "each documented poll status and code maps to one outcome" {
         // RFC 8628 section 3.5 pairs `slow_down` with a 429, so the code decides before the status.
         .{ .status = 429, .body = "{\"error\":\"slow_down\"}", .want = .slow_down },
     }) |case| {
-        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-        defer arena.deinit();
-        var out: [512]u8 = undefined;
         const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = case.status, .body = case.body } }};
-        var canned: oauth.CannedHttp = .{ .replies = &replies };
+        var f = Fixture.init(&replies);
+        defer f.deinit();
 
-        const got = try poll(arena.allocator(), canned.seam(), "dc", 0, &out);
+        const got = try poll(f.arena.allocator(), f.canned.seam(), "dc", 0, &f.body);
         try testing.expectEqual(case.want, std.meta.activeTag(got));
     }
 }
@@ -152,13 +160,11 @@ test "each documented poll status and code maps to one outcome" {
 test "a throttled or failed poll backs off instead of holding one poll rate" {
     // `pending` adopts the interval and clears the delay, so a status with no code must not use it.
     for ([_]u16{ 408, 429, 503 }) |status| {
-        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-        defer arena.deinit();
-        var out: [512]u8 = undefined;
         const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = status, .body = "{}" } }};
-        var canned: oauth.CannedHttp = .{ .replies = &replies };
+        var f = Fixture.init(&replies);
+        defer f.deinit();
 
-        try testing.expectError(oauth.Error.Transient, poll(arena.allocator(), canned.seam(), "dc", 0, &out));
+        try testing.expectError(oauth.Error.Transient, poll(f.arena.allocator(), f.canned.seam(), "dc", 0, &f.body));
     }
 }
 
@@ -168,25 +174,21 @@ test "a denied, expired, or unknown poll code ends the login" {
         "{\"error\":\"something_new\"}",
         "{}",
     }) |body| {
-        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-        defer arena.deinit();
-        var out: [512]u8 = undefined;
         const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = 400, .body = body } }};
-        var canned: oauth.CannedHttp = .{ .replies = &replies };
+        var f = Fixture.init(&replies);
+        defer f.deinit();
 
-        try testing.expectError(oauth.Error.Permanent, poll(arena.allocator(), canned.seam(), "dc", 0, &out));
+        try testing.expectError(oauth.Error.Permanent, poll(f.arena.allocator(), f.canned.seam(), "dc", 0, &f.body));
     }
 }
 
 test "a poll that succeeds carries the tokens with no exchange step" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    var out: [512]u8 = undefined;
-    var canned: oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body =
+    var f = Fixture.init(&.{.{ .answer = .{ .status = 200, .body =
         \\{"access_token":"at","refresh_token":"rt","expires_in":60}
-    } }} };
+    } }});
+    defer f.deinit();
 
-    const got = try poll(arena.allocator(), canned.seam(), "dc", 1000, &out);
+    const got = try poll(f.arena.allocator(), f.canned.seam(), "dc", 1000, &f.body);
     try testing.expectEqualStrings("at", got.tokens.access_token);
     try testing.expectEqualStrings("rt", got.tokens.refresh_token.?);
     try testing.expectEqual(@as(u64, 61_000), got.tokens.expires_at_ms);
@@ -194,12 +196,10 @@ test "a poll that succeeds carries the tokens with no exchange step" {
 }
 
 test "a token response with no readable lifetime uses the shared fallback" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    var out: [512]u8 = undefined;
-    var canned: oauth.CannedHttp = .{ .replies = &.{.{ .answer = .{ .status = 200, .body = "{\"access_token\":\"at\"}" } }} };
+    var f = Fixture.init(&.{.{ .answer = .{ .status = 200, .body = "{\"access_token\":\"at\"}" } }});
+    defer f.deinit();
 
-    const got = try poll(arena.allocator(), canned.seam(), "dc", 1000, &out);
+    const got = try poll(f.arena.allocator(), f.canned.seam(), "dc", 1000, &f.body);
     try testing.expectEqual(@as(u64, 1000 + oauth.default_lifetime_ms), got.tokens.expires_at_ms);
     // The caller keeps its old refresh token when the response omits one.
     try testing.expect(got.tokens.refresh_token == null);
@@ -207,29 +207,25 @@ test "a token response with no readable lifetime uses the shared fallback" {
 
 test "the standard OAuth refresh codes end the grant" {
     for (permanent_refresh) |code| {
-        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-        defer arena.deinit();
-        var out: [512]u8 = undefined;
-        const body = try std.fmt.allocPrint(arena.allocator(), "{{\"error\":\"{s}\"}}", .{code});
+        var f = Fixture.init(&.{});
+        defer f.deinit();
+        const body = try std.fmt.allocPrint(f.arena.allocator(), "{{\"error\":\"{s}\"}}", .{code});
         const replies = [_]oauth.CannedHttp.Reply{.{ .answer = .{ .status = 400, .body = body } }};
-        var canned: oauth.CannedHttp = .{ .replies = &replies };
+        f.canned.replies = &replies;
 
-        try testing.expectError(oauth.Error.Permanent, refresh(arena.allocator(), canned.seam(), "rt", 0, &out));
+        try testing.expectError(oauth.Error.Permanent, refresh(f.arena.allocator(), f.canned.seam(), "rt", 0, &f.body));
     }
 }
 
 test "a transport failure keeps a poll alive but ends a refresh" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    var out: [512]u8 = undefined;
-
-    var timed_out: oauth.CannedHttp = .{ .replies = &.{.{ .fail = error.ConnectionResetByPeer }} };
-    try testing.expectError(oauth.Error.Transient, poll(arena.allocator(), timed_out.seam(), "dc", 0, &out));
-
-    var rotating: oauth.CannedHttp = .{ .replies = &.{.{ .fail = error.ConnectionResetByPeer }} };
-    try testing.expectError(oauth.Error.Ambiguous, refresh(arena.allocator(), rotating.seam(), "rt", 0, &out));
+    var f = Fixture.init(&.{.{ .fail = error.ConnectionResetByPeer }});
+    defer f.deinit();
+    try testing.expectError(oauth.Error.Transient, poll(f.arena.allocator(), f.canned.seam(), "dc", 0, &f.body));
+    f.canned.index = 0;
+    try testing.expectError(oauth.Error.Ambiguous, refresh(f.arena.allocator(), f.canned.seam(), "rt", 0, &f.body));
 
     // A request that never left is safe to repeat on either call.
-    var never_left: oauth.CannedHttp = .{ .replies = &.{.{ .fail = error.PreFlight }} };
-    try testing.expectError(oauth.Error.PreFlight, refresh(arena.allocator(), never_left.seam(), "rt", 0, &out));
+    f.canned.replies = &.{.{ .fail = error.PreFlight }};
+    f.canned.index = 0;
+    try testing.expectError(oauth.Error.PreFlight, refresh(f.arena.allocator(), f.canned.seam(), "rt", 0, &f.body));
 }

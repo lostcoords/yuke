@@ -3,6 +3,7 @@
 const std = @import("std");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
+const Resources = @import("test_resources.zig");
 
 pub const default_context_window: u64 = 128_000;
 /// One image costs about this many tokens after a provider resize, whatever its byte size.
@@ -143,7 +144,7 @@ test "model history survives cache eviction and an insufficient budget drops not
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{42} ** 16;
-    try database.session.create(&db, .{ .id = sid, .root = "/w", .origin = "root", .profile = "default", .model = "test/model", .reasoning = "", .config_rev = 0, .title = "", .created_at_ms = 0, .updated_at_ms = 0 });
+    try Resources.seedSession(&db, sid, .{ .model = "test/model", .title = "", .created_at_ms = 0, .updated_at_ms = 0 });
     var cache = @import("../session/transcript.zig").Transcript.init(t.allocator);
     defer cache.deinit();
     cache.max_messages = 2;
@@ -179,7 +180,7 @@ test "the newest checkpoint leads the request and an older one drops out" {
     defer arena.deinit();
     const a = arena.allocator();
     const sid = [_]u8{51} ** 16;
-    try database.session.create(&db, .{ .id = sid, .root = "/w", .origin = "root", .profile = "default", .model = "test/model", .reasoning = "", .config_rev = 0, .title = "", .created_at_ms = 0, .updated_at_ms = 0 });
+    try Resources.seedSession(&db, sid, .{ .model = "test/model", .title = "", .created_at_ms = 0, .updated_at_ms = 0 });
 
     // 1 and 2 are covered history, 3 is an old checkpoint, 4 is the tail, 5 is the newest checkpoint.
     const messages = [_]proto.message.Message{

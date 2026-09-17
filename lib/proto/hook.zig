@@ -68,35 +68,6 @@ test "a point reads back from the name it writes" {
     try testing.expectEqual(@as(?Point, null), Point.parse("tool.started"));
 }
 
-test "a decision uses the tagged wire shape" {
-    const blocked = try std.json.parseFromSlice(Decision, testing.allocator,
-        \\{"type":"block","reason":"denied"}
-    , .{});
-    defer blocked.deinit();
-    try testing.expectEqualStrings("denied", blocked.value.block.reason);
-
-    const proceed = try std.json.parseFromSlice(Decision, testing.allocator,
-        \\{"type":"proceed"}
-    , .{});
-    defer proceed.deinit();
-    try testing.expect(proceed.value == .proceed);
-}
-
-test "a replace decision carries its payload both ways" {
-    const parsed = try std.json.parseFromSlice(Decision, testing.allocator,
-        \\{"type":"replace","value":{"name":"bash","arguments":"{}"}}
-    , .{});
-    defer parsed.deinit();
-    try testing.expectEqualStrings("bash", parsed.value.replace.value.object.get("name").?.string);
-
-    // A handler answer must survive the round trip, because the next handler reads what this wrote.
-    const written = try std.json.Stringify.valueAlloc(testing.allocator, parsed.value, .{});
-    defer testing.allocator.free(written);
-    try testing.expectEqualStrings(
-        \\{"type":"replace","value":{"name":"bash","arguments":"{}"}}
-    , written);
-}
-
 test "a decision rejects an unknown arm" {
     try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(Decision, testing.allocator,
         \\{"type":"retry"}

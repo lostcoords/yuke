@@ -1,22 +1,13 @@
 const support = @import("test_support.zig");
 const std = @import("std");
-const Paint = @import("test_paint.zig").Paint;
 const Host = @import("host.zig").Host;
 
 test "yuke:core clip and style.resolve" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/core.test.js");
+    try support.run("tests/ui/core.test.js");
 }
 
 test "a tool image shows one label row per blob after the output" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 12, 60);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-    try support.eval(host, "tests/ui/tool-media.test.js");
+    try support.runPainted(12, 60, "tests/ui/tool-media.test.js");
 }
 
 test "skill messages fold by native identity and preserve their exact text" {
@@ -31,18 +22,15 @@ test "yuke:core wrapOffsets keeps every byte and caretRowCol places the caret" {
 }
 
 test "yuke:core RootView paints and only ctrl+q quits" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 2, 8);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
+    var fixture = try support.PaintedHost.init(2, 8);
+    defer fixture.deinit();
+    const host = fixture.host;
 
     try support.eval(host, "tests/ui/ui.test.js");
     const loop = @import("loop.zig");
     try loop.start(host);
     try loop.flushFrame(host);
-    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "hi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "hi") != null);
     // A bare key never quits, so a stray key in a modal layer cannot end the session.
     try loop.step(host, .{ .key_press = .{ .codepoint = 'q' } });
     try std.testing.expect(!host.paint.quit_requested);
@@ -55,178 +43,99 @@ test "yuke:core RootView paints and only ctrl+q quits" {
 }
 
 test "yuke:core config validates and TextInput inserts committed text" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/cfg.test.js");
+    try support.run("tests/ui/cfg.test.js");
 }
 
 test "yuke:ui mouse config, wheel scroll, and pane routing under the pointer" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 10, 21);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-
-    try support.eval(host, "tests/ui/mouse.test.js");
+    try support.runPainted(10, 21, "tests/ui/mouse.test.js");
 }
 
 test "yuke:ui copy targets: last reply, message list, and code blocks" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 10, 40);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
+    var fixture = try support.PaintedHost.init(10, 40);
+    defer fixture.deinit();
+    const host = fixture.host;
 
     try support.eval(host, "tests/ui/copy.test.js");
-    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "\x1b]52;c;aGk=\x1b\\") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "\x1b]52;c;aGk=\x1b\\") != null);
 }
 
 test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 12, 40);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-
-    try support.eval(host, "tests/ui/sel.test.js");
+    try support.runPainted(12, 40, "tests/ui/sel.test.js");
 }
 
 test "yuke:ui the transcript seam maps a position to source, screen, and scroll" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 8, 20);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-
-    try support.eval(host, "tests/ui/seam.test.js");
+    try support.runPainted(8, 20, "tests/ui/seam.test.js");
 }
 
 test "yuke:composer-vim moves, edits, and puts in normal mode" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/cvim.test.js");
+    try support.run("tests/ui/cvim.test.js");
 }
 
 test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 20, 24);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-
-    try support.eval(host, "tests/ui/tvim.test.js");
+    try support.runPainted(20, 24, "tests/ui/tvim.test.js");
 }
 
 test "yuke:ui tool parts render, collapse, copy, and toggle" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 12, 40);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-
-    try support.eval(host, "tests/ui/ui-components.test.js");
+    try support.runPainted(12, 40, "tests/ui/ui-components.test.js");
 }
 
 test "yuke:ui action groups cross reasoning and full tool fields stay available" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/action-groups.test.js");
+    try support.run("tests/ui/action-groups.test.js");
 }
 
 test "yuke:ui hidden tool deltas keep rows stable and details fresh" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/hidden-deltas.test.js");
+    try support.run("tests/ui/hidden-deltas.test.js");
 }
 
 test "yuke:ui action plans stay aligned after eviction and outline changes" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/action-plan-order.test.js");
+    try support.run("tests/ui/action-plan-order.test.js");
 }
 
 test "yuke:ui reasoning auto-collapses when assistant text starts and J/K walks parts" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 12, 40);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-
-    try support.eval(host, "tests/ui/reason.test.js");
+    try support.runPainted(12, 40, "tests/ui/reason.test.js");
 }
 
 test "yuke:md renders the GFM subset and caches finalized blocks" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/md.test.js");
+    try support.run("tests/ui/md.test.js");
 }
 
 test "yuke:md an appended stream parses like a fresh document" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/md-stream.test.js");
+    try support.run("tests/ui/md-stream.test.js");
 }
 
 test "yuke:md maps a rendered row back to its markdown source" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/mdsrc.test.js");
+    try support.run("tests/ui/mdsrc.test.js");
 }
 
 test "yuke:ui a selection maps back to the markdown source" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 12, 40);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-
-    try support.eval(host, "tests/ui/selsrc.test.js");
+    try support.runPainted(12, 40, "tests/ui/selsrc.test.js");
 }
 
 test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/ui-2.test.js");
+    try support.run("tests/ui/ui-2.test.js");
 }
 
 test "yuke:ui Composer grows, pastes in one edit, and owns the vertical keys" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/composer.test.js");
+    try support.run("tests/ui/composer.test.js");
 }
 
 test "yuke:ui Transcript draws markdown segments through the pager" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 6, 24);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
+    var fixture = try support.PaintedHost.init(6, 24);
+    defer fixture.deinit();
+    const host = fixture.host;
 
     try support.eval(host, "tests/ui/draw.test.js");
-    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "hi") != null);
-    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "there") != null);
-    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "─") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "hi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "there") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "─") != null);
 }
 
 test "yuke:ui Composer collapses a large paste and still submits the whole text" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/paste.test.js");
+    try support.run("tests/ui/paste.test.js");
 }
 
 test "yuke:ui Composer labels an image span by position and submits content parts" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/image-span.test.js");
+    try support.run("tests/ui/image-span.test.js");
 }
 
 test "a pasted image path attaches, and every other paste keeps its text" {
@@ -238,9 +147,7 @@ test "a pasted image path attaches, and every other paste keeps its text" {
 }
 
 test "a user message draws its image label where the part sits" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/user-image.test.js");
+    try support.run("tests/ui/user-image.test.js");
 }
 
 test "the clipboard image attaches and its temporary file never outlives the put" {
@@ -252,20 +159,17 @@ test "the clipboard image attaches and its temporary file never outlives the put
 }
 
 test "yuke:ui Composer draws a wrapped row whole and puts the caret on it" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 4, 7);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
+    var fixture = try support.PaintedHost.init(4, 7);
+    defer fixture.deinit();
+    const host = fixture.host;
 
     // The prompt takes two cells of the seven, so "hello world" wraps at five.
     try support.eval(host, "tests/ui/composer_draw.test.js");
 
     // The hanging space must not turn the row into an ellipsis.
-    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "hello") != null);
-    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "world") != null);
-    try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "…") == null);
+    try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "hello") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "world") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "…") == null);
 
     try support.expectString(host, "result", "ok");
 }
@@ -278,12 +182,9 @@ test "a style link cycle falls back instead of spinning" {
 }
 
 test "an overlay without a hook is consumed, not a fault" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 2, 8);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
+    var fixture = try support.PaintedHost.init(2, 8);
+    defer fixture.deinit();
+    const host = fixture.host;
 
     // The overlay implements `draw` and no other hook.
     try support.eval(host, "tests/ui/overlay.test.js");
@@ -302,13 +203,7 @@ test "an overlay without a hook is consumed, not a fault" {
 }
 
 test "bordered picker preserves actions padding and mouse targets after resize" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 24, 80);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-    try support.eval(host, "tests/ui/picker-geometry.test.js");
+    try support.runPainted(24, 80, "tests/ui/picker-geometry.test.js");
 }
 
 test "an unusable view or layer is rejected at the call" {
@@ -320,12 +215,9 @@ test "an unusable view or layer is rejected at the call" {
 }
 
 test "a route sends an event to the keymap before the view" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 2, 8);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
+    var fixture = try support.PaintedHost.init(2, 8);
+    defer fixture.deinit();
+    const host = fixture.host;
     const loop = @import("loop.zig");
 
     // The pane records a "V" when it reads, and the binding records a "K".
@@ -378,9 +270,7 @@ test "a route sends an event to the keymap before the view" {
 }
 
 test "route.add rejects a destination it cannot serve" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/reject-2.test.js");
+    try support.run("tests/ui/reject-2.test.js");
 }
 
 test "the composer route stays off while another pane has focus" {
@@ -391,12 +281,9 @@ test "the composer route stays off while another pane has focus" {
 }
 
 test "a pane focus and a terminal focus are separate events" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 4, 16);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
+    var fixture = try support.PaintedHost.init(4, 16);
+    defer fixture.deinit();
+    const host = fixture.host;
     const loop = @import("loop.zig");
 
     // `focus.changed` is the terminal window and `pane.focused` is a leaf inside the layout.
@@ -422,108 +309,59 @@ test "a pane focus and a terminal focus are separate events" {
 }
 
 test "the chat pane names the region that reads the keyboard" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/region.test.js");
+    try support.run("tests/ui/region.test.js");
 }
 
 test "a focused transcript takes the keys even while the composer sits in normal mode" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 20, 24);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-
-    // Both layers can be on at once. The region atom decides, so the load order cannot.
-    try support.eval(host, "tests/ui/both.test.js");
+    try support.runPainted(20, 24, "tests/ui/both.test.js");
 }
 
 test "a slot lets a plugin answer for a widget it does not own" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/slot.test.js");
+    try support.run("tests/ui/slot.test.js");
 }
 
 test "composer-vim supplies the prompt glyph through the slot" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/prompt.test.js");
+    try support.run("tests/ui/prompt.test.js");
 }
 
 test "a modal picker reads the shared nav keys and seals the keymap" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // The keys travel through the real dispatch, so the modal boundary is part of the test.
-    try support.eval(host, "tests/ui/picker.test.js");
+    try support.run("tests/ui/picker.test.js");
 }
 
 test "a finder answers the whole picker contract" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/finder.test.js");
+    try support.run("tests/ui/finder.test.js");
 }
 
 test "a tickable registered through a plugin leaves when the plugin unloads" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "tests/ui/service.test.js");
+    try support.run("tests/ui/service.test.js");
 }
 
 test "a tickable removed during startup never starts" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // One `onStart` can remove a service the pass has not reached, so that service never starts.
-    try support.eval(host, "tests/ui/startup.test.js");
+    try support.run("tests/ui/startup.test.js");
 }
 
 test "the nav vocabulary cannot drift after the shell binds it" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
     // The shell copies the table once and a modal reads it per key, so it must not be writable.
-    try support.eval(host, "tests/ui/frozen.test.js");
+    try support.run("tests/ui/frozen.test.js");
 }
 
 test "the pager follows the tail and counts the rows once per frame" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 24, 80);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-    try support.eval(host, "tests/ui/pager.test.js");
+    try support.runPainted(24, 80, "tests/ui/pager.test.js");
 }
 
 test "the chat pane routes a drag that leaves the transcript and guards its press slot" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 20, 40);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-
     // A drag that ends over the composer must still reach the transcript, or its drag never ends.
-    try support.eval(host, "tests/ui/mouse-2.test.js");
+    try support.runPainted(20, 40, "tests/ui/mouse-2.test.js");
 }
 
 test "yuke:ui transcript renders evicted history exactly" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 12, 32);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-    try support.eval(host, "tests/ui/transcript-eviction.test.js");
+    try support.runPainted(12, 32, "tests/ui/transcript-eviction.test.js");
 }
 
 test "yuke:ui transcript keeps committed renders across a reload" {
-    var paint: Paint = undefined;
-    try paint.setup(std.testing.allocator, 12, 40);
-    defer paint.deinit();
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    paint.bind(host);
-    try support.eval(host, "tests/ui/transcript-reload-reuse.test.js");
+    try support.runPainted(12, 40, "tests/ui/transcript-reload-reuse.test.js");
 }
 
 test "yuke:ui transcript retains the closed row prefix across text deltas" {

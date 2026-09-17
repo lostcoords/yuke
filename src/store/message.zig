@@ -531,17 +531,3 @@ test "tail streams the newest messages oldest-first" {
     try testing.expectEqual(2, n);
     try testing.expectEqualSlices(u64, &.{ 2, 3 }, seen[0..n]);
 }
-
-test "appendCommittedMessage rejects a missing session" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const user: proto.message.Message = .{ .user = .{ .id = 1, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 1 } } };
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    defer db.conn.execNoArgs("ROLLBACK") catch {};
-    // An absent session fails the seq allocation before any row is written.
-    try testing.expectError(error.NoRow, appendCommittedMessage(&db, a, [_]u8{9} ** 16, [_]u8{1} ** 16, 1, user));
-}

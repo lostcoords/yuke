@@ -55,6 +55,106 @@ pub fn makeEngine(self: *Resources, db: *Database) Engine {
     });
 }
 
+pub const SessionOptions = struct {
+    root: []const u8 = "/w",
+    origin: []const u8 = "root",
+    parent_id: ?[16]u8 = null,
+    parent_message_id: ?u64 = null,
+    parent_part_id: ?u64 = null,
+    name: ?[]const u8 = null,
+    profile: []const u8 = "default",
+    model: []const u8 = "mock/m",
+    reasoning: []const u8 = "",
+    config_rev: u64 = 0,
+    title: []const u8 = "test",
+    created_at_ms: u64 = 1,
+    updated_at_ms: u64 = 1,
+};
+
+pub fn seedSession(db: *Database, id: [16]u8, options: SessionOptions) !void {
+    try database.session.create(db, .{
+        .id = id,
+        .root = options.root,
+        .origin = options.origin,
+        .parent_id = options.parent_id,
+        .parent_message_id = options.parent_message_id,
+        .parent_part_id = options.parent_part_id,
+        .name = options.name,
+        .profile = options.profile,
+        .model = options.model,
+        .reasoning = options.reasoning,
+        .config_rev = options.config_rev,
+        .title = options.title,
+        .created_at_ms = options.created_at_ms,
+        .updated_at_ms = options.updated_at_ms,
+    });
+}
+
+pub const MockProviderOptions = struct {
+    id: []const u8 = "mock",
+    name: []const u8 = "Mock",
+    base_url: []const u8 = "https://example.test",
+    protocol: ai.types.Protocol = .anthropic_messages,
+    headers: []const ai.transport.Header = &.{},
+    credential: registry.CredentialSource = .none,
+    authenticated: bool = false,
+};
+
+pub fn mockProvider(models: []const registry.ModelSpec, options: MockProviderOptions) registry.Provider {
+    const endpoints = switch (options.protocol) {
+        .anthropic_messages => if (options.authenticated)
+            &[_]ai.instance.Endpoint{.{ .protocol = .anthropic_messages, .key_header = .x_api_key }}
+        else
+            &[_]ai.instance.Endpoint{.{ .protocol = .anthropic_messages }},
+        .openai_chat => if (options.authenticated)
+            &[_]ai.instance.Endpoint{.{ .protocol = .openai_chat, .key_header = .authorization_bearer }}
+        else
+            &[_]ai.instance.Endpoint{.{ .protocol = .openai_chat }},
+        .openai_responses => if (options.authenticated)
+            &[_]ai.instance.Endpoint{.{ .protocol = .openai_responses, .key_header = .authorization_bearer }}
+        else
+            &[_]ai.instance.Endpoint{.{ .protocol = .openai_responses }},
+    };
+    return .{
+        .id = options.id,
+        .name = options.name,
+        .models = models,
+        .availability = .{ .ready = .{
+            .base_url = options.base_url,
+            .headers = options.headers,
+            .session_header = .none,
+            .endpoints = endpoints,
+            .credential = options.credential,
+        } },
+    };
+}
+
+pub fn waitUntil(io: std.Io, state: anytype) !void {
+    for (0..1000) |_| {
+        if (try state.done()) return;
+        try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+    }
+    return error.WaitDidNotFinish;
+}
+
+pub fn awaitLiveIdle(engine: *Engine, id: proto.ids.SessionId) !void {
+    for (0..1000) |_| {
+        const resident = engine.sessions.get(id);
+        if (resident == null or (resident.?.active_run == null and resident.?.queueDepth() == 0)) return;
+        try std.Io.sleep(engine.deps.io, .fromMilliseconds(1), .awake);
+    }
+    return error.RunDidNotFinish;
+}
+
+pub fn awaitDurableRun(engine: *Engine, db: *Database, arena: std.mem.Allocator, id: [16]u8, run_id: u64) !void {
+    for (0..1000) |_| {
+        const marks = (try database.event.highWater(db, arena, id)).?;
+        if (marks.run_id_high >= run_id and (try database.session.snapshot(db, arena, id)).?.open_run_id == null) return;
+        try std.Io.sleep(engine.deps.io, .fromMilliseconds(1), .awake);
+    }
+    return error.RunDidNotFinish;
+}
+
 /// One Anthropic stream that calls the tool `unknown` with no arguments and stops for its result.
 pub const tool_reply =
     "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
@@ -113,17 +213,11 @@ pub const Fixture = struct {
         self.db = try Database.openTest();
         self.engine = self.resources.makeEngine(&self.db);
         self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tools = true }, .modalities = options.modalities }};
-        self.rows = .{.{ .id = "mock", .name = "Mock", .models = &self.models, .availability = .{ .ready = .{
-            .base_url = "https://example.test",
-            .headers = &.{},
-            .session_header = .none,
-            .endpoints = &.{.{ .protocol = .anthropic_messages }},
-            .credential = .none,
-        } } }};
+        self.rows = .{mockProvider(&self.models, .{})};
         self.resources.providers.merged.rows = &self.rows;
         self.capture = .{ .arena = self.arena.allocator(), .replies = options.replies };
         self.engine.deps.route_transport = self.capture.transport();
-        try database.session.create(&self.db, .{ .id = id.raw, .root = "/work", .origin = "root", .profile = "default", .model = "mock/m", .reasoning = "", .config_rev = 0, .title = "test", .created_at_ms = 1, .updated_at_ms = 1 });
+        try seedSession(&self.db, id.raw, .{ .root = "/work" });
         _ = try database.session.setPrompt(&self.db, self.arena.allocator(), id.raw, .{ .base = "", .child_policy = null, .environment = "" });
     }
 
@@ -143,12 +237,7 @@ pub const Fixture = struct {
     /// Start the launched run and wait until the session is idle again.
     pub fn finish(self: *Fixture, session: proto.ids.SessionId) !void {
         runs.Launch.release(&self.gate, &self.engine);
-        for (0..1000) |_| {
-            const resident = self.engine.sessions.get(session);
-            if (resident == null or (resident.?.active_run == null and resident.?.queueDepth() == 0)) return;
-            try std.Io.sleep(self.engine.deps.io, .fromMilliseconds(1), .awake);
-        }
-        return error.RunDidNotFinish;
+        try awaitLiveIdle(&self.engine, session);
     }
 
     pub fn history(self: *Fixture) ![]const proto.message.Message {

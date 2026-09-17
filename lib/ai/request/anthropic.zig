@@ -3,6 +3,7 @@
 const std = @import("std");
 const ir = @import("ir.zig");
 const json = @import("json.zig");
+const request_testing = @import("testing.zig");
 const types = @import("../types.zig");
 
 /// Write the request JSON to `w`.
@@ -255,13 +256,7 @@ fn writeCacheControl(jw: *std.json.Stringify) !void {
 }
 
 const testing = std.testing;
-
-fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestIr) !void {
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try serialize(&buf.writer, request, request_ir);
-    try testing.expectEqualStrings(expected, buf.written());
-}
+const expectJson = request_testing.forSerializer(serialize).expectJson;
 
 test "a plain user turn with a system prompt" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};

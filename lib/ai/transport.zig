@@ -153,23 +153,23 @@ pub const ReplayReader = struct {
 };
 
 /// Wrap a JSON event body as one SSE event.
-fn frame(comptime json: []const u8) []const u8 {
+pub fn sseFrame(comptime json: []const u8) []const u8 {
     return "data: " ++ json ++ "\n\n";
 }
 
 /// A test uses this canned reply. The real path uses `HttpTransport`.
 pub const canned_reply =
-    frame(
+    sseFrame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":0}}}
-    ) ++ frame(
+    ) ++ sseFrame(
         \\{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-    ) ++ frame(
+    ) ++ sseFrame(
         \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from the yuke mock provider."}}
-    ) ++ frame(
+    ) ++ sseFrame(
         \\{"type":"content_block_stop","index":0}
-    ) ++ frame(
+    ) ++ sseFrame(
         \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}
-    ) ++ frame(
+    ) ++ sseFrame(
         \\{"type":"message_stop"}
     );
 
@@ -197,36 +197,36 @@ const testing = std.testing;
 const anthropic = @import("stream/anthropic.zig");
 
 const canned_text_turn =
-    frame(
+    sseFrame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":20}}}
     ) ++
-    frame(
+    sseFrame(
         \\{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
     ) ++
-    frame(
+    sseFrame(
         \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}
     ) ++
-    frame(
+    sseFrame(
         \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}}
     ) ++
-    frame(
+    sseFrame(
         \\{"type":"content_block_stop","index":0}
     ) ++
-    frame(
+    sseFrame(
         \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
     ) ++
-    frame(
+    sseFrame(
         \\{"type":"message_stop"}
     );
 
 const canned_truncated =
-    frame(
+    sseFrame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":100}}}
     ) ++
-    frame(
+    sseFrame(
         \\{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
     ) ++
-    frame(
+    sseFrame(
         \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}
     );
 

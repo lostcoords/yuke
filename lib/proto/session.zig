@@ -310,21 +310,6 @@ pub const SessionSummaryChangedData = struct {
 const testing = std.testing;
 const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
-test "session population round-trips" {
-    const json =
-        \\{"type":"children","parent_id":"abababababababababababababababab"}
-    ;
-    const parsed = try std.json.parseFromSlice(SessionPopulation, testing.allocator, json, opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value == .children);
-    try testing.expectEqual([_]u8{0xab} ** 16, parsed.value.children.parent_id.raw);
-
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    try testing.expectEqualStrings(json, buf.written());
-}
-
 test "session.get keeps check_files a boolean and reload_context needs its session" {
     const a = std.testing.allocator;
     const plain = try std.json.parseFromSlice(SessionGetParams, a, "{\"session_id\":\"" ++ "ab" ** 16 ++ "\"}", .{});

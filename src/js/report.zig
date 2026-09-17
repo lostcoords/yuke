@@ -38,69 +38,40 @@ pub fn paintFault(host: *Host) void {
 
 const testing = std.testing;
 
-/// Build a Host that is bound to `render`. The caller destroys the Host.
-fn bindTestHost(
-    gpa: std.mem.Allocator,
-    render: *term_pkg.Render,
-    out: *std.Io.Writer,
-) !*Host {
-    const host = Host.createWith(gpa, std.testing.io, support.hostOptions(""));
-    errdefer host.destroy();
-    host.paint.bindRender(host.ctx, render, out);
-    return host;
-}
-
 test "a throwing onEvent paints the message on the bottom row" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var env_map = try testing.environ.createMap(gpa.allocator());
-    defer env_map.deinit();
-    var render = try term_pkg.Render.init(testing.io, gpa.allocator(), &env_map, .{});
-    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer sink.deinit();
-    defer render.deinit(&sink.writer);
-    try render.resize(&sink.writer, .{ .rows = 2, .cols = 16, .x_pixel = 0, .y_pixel = 0 });
-
-    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer out.deinit();
-    const host = try bindTestHost(gpa.allocator(), &render, &out.writer);
-    defer host.destroy();
+    var paint: TestPaint = undefined;
+    try paint.setup(testing.allocator, 2, 16);
+    defer paint.deinit();
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    paint.bind(host);
 
     try host.eval("globalThis.onEvent = function() { throw new Error('boom'); };", "onEvent.js");
     const loop = @import("loop.zig");
     try testing.expectError(error.JavaScriptFault, loop.start(host));
     try testing.expect(std.mem.indexOf(u8, host.faultText(), "boom") != null);
 
-    out.clearRetainingCapacity();
+    paint.out.clearRetainingCapacity();
     paintFault(host);
-    try testing.expect(std.mem.indexOf(u8, out.written(), "boom") != null);
+    try testing.expect(std.mem.indexOf(u8, paint.out.written(), "boom") != null);
     @memset(host.fault_text[0..host.fault_text_len], 'X');
-    out.clearRetainingCapacity();
-    render.queueRefresh();
-    try render.render(&out.writer);
-    try testing.expect(std.mem.indexOf(u8, out.written(), "boom") != null);
+    paint.out.clearRetainingCapacity();
+    paint.render.queueRefresh();
+    try paint.render.render(&paint.out.writer);
+    try testing.expect(std.mem.indexOf(u8, paint.out.written(), "boom") != null);
 }
 
 test "paintFault does nothing without a recorded fault" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var env_map = try testing.environ.createMap(gpa.allocator());
-    defer env_map.deinit();
-    var render = try term_pkg.Render.init(testing.io, gpa.allocator(), &env_map, .{});
-    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer sink.deinit();
-    defer render.deinit(&sink.writer);
-    try render.resize(&sink.writer, .{ .rows = 2, .cols = 16, .x_pixel = 0, .y_pixel = 0 });
-
-    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
-    defer out.deinit();
-    const host = try bindTestHost(gpa.allocator(), &render, &out.writer);
-    defer host.destroy();
+    var paint: TestPaint = undefined;
+    try paint.setup(testing.allocator, 2, 16);
+    defer paint.deinit();
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    paint.bind(host);
 
     paintFault(host);
-    try testing.expectEqual(@as(usize, 0), out.written().len);
+    try testing.expectEqual(@as(usize, 0), paint.out.written().len);
 }
 
 const support = @import("test_support.zig");
+const TestPaint = @import("test_paint.zig").Paint;
