@@ -101,6 +101,8 @@ export interface WindowOptions {
   content?: WindowContent | null;
   width?: Dimension;
   height?: Dimension;
+  /** The content row count, before the border, padding, and footer; height takes precedence. */
+  contentHeight?: Dimension;
   anchor?: (() => Rect) | null;
   panelGroup?: string;
   borderGroup?: string;

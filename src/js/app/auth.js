@@ -128,7 +128,7 @@ function deviceLogin(ctx, p) {
       footer: "o open · c copy code · esc cancel",
       border: "rounded",
       width: max => Math.round(max * 0.6),
-      height: 5,
+      contentHeight: 3,
       content: dialog,
     });
     root.pushOverlay(win);
@@ -170,7 +170,7 @@ function keyLogin(ctx, p) {
       );
     },
   });
-  const win = new Window({ title: "api key · " + p.provider_id, footer: "↵ save · esc cancel", border: "rounded", width: max => Math.round(max * 0.6), height: 3, content: prompt });
+  const win = new Window({ title: "api key · " + p.provider_id, footer: "↵ save · esc cancel", border: "rounded", width: max => Math.round(max * 0.6), contentHeight: 1, content: prompt });
   root.pushOverlay(win);
   release = ctx.tui.overlay(win);
 }

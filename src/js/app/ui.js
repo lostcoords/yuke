@@ -804,6 +804,16 @@ export class Window {
     return typeof b === "object" ? b : borders[b] || borders.single;
   }
 
+  /** @param {number} width @returns {number} */
+  contentWidth(width) {
+    return Math.max(0, width - (this._borderSet() ? 6 : 0));
+  }
+
+  /** @param {number} rows @returns {number} */
+  heightFor(rows) {
+    return rows + (this._borderSet() ? 4 : 0) + (this.opts.footer ? 1 : 0);
+  }
+
   // Resolve a cell count or a callback against a maximum available size.
   /** @param {Dimension | null | undefined} v @param {number} max @param {number} fallback @returns {number} */
   _dim(v, max, fallback) {
@@ -821,25 +831,19 @@ export class Window {
     const H = bounds.h;
     const pad = this._borderSet() ? 2 : 0;
 
-    let w = this._dim(this.opts.width, W, Math.round(W * 0.6));
-    let h = this._dim(this.opts.height, H, Math.round(H * 0.6));
-    w = Math.min(W, Math.max(pad + 1, w));
-    h = Math.min(H, Math.max(pad + 1, h));
-
-    let x = X + Math.max(0, Math.floor((W - w) / 2));
-    let y = Y + Math.max(0, Math.floor((H - h) / 2));
-    // Place an anchored window above its rect with the rect's columns; the rows above bound its height.
     const anchor = this.opts.anchor ? this.opts.anchor() : null;
-    if (anchor) {
-      w = Math.min(W, Math.max(pad + 1, this._dim(this.opts.width, anchor.w, anchor.w)));
-      const above = Math.max(0, anchor.y - Y);
-      h = Math.max(0, Math.min(above, this._dim(this.opts.height, above, above)));
-      x = Math.max(X, Math.min(anchor.x, X + W - w));
-      y = Math.max(Y, anchor.y - h);
-    }
+    const available = anchor ? Math.max(0, Math.min(H, anchor.y - Y)) : H;
+    const w = Math.min(W, Math.max(pad + 1, this._dim(this.opts.width, anchor ? anchor.w : W, anchor ? anchor.w : Math.round(W * 0.6))));
+    const contentHeight = this.opts.contentHeight;
+    const desired = this.opts.height != null ? this._dim(this.opts.height, available, 0)
+      : contentHeight != null ? this.heightFor(this._dim(contentHeight, Math.max(0, available - this.heightFor(0)), 0))
+      : Math.round(available * 0.6);
+    const h = Math.min(available, Math.max(pad + 1, desired));
+    const x = anchor ? Math.max(X, Math.min(anchor.x, X + W - w)) : X + Math.max(0, Math.floor((W - w) / 2));
+    const y = anchor ? Y + available - h : Y + Math.max(0, Math.floor((H - h) / 2));
     this.rect = { x, y, w, h };
-    // The inner rect never goes negative, so a window smaller than its border has an empty interior.
-    this.inner = pad ? { x: x + 1, y: y + 1, w: Math.max(0, w - 2), h: Math.max(0, h - 2) } : { x, y, w, h };
+    // The content excludes the border, shared padding, and the footer row.
+    this.inner = { x: x + (pad ? 3 : 0), y: y + pad, w: this.contentWidth(w), h: Math.max(0, h - this.heightFor(0)) };
     if (this.content) this.content.layout(this.inner);
   }
 
@@ -852,6 +856,8 @@ export class Window {
     const bs = this._borderSet();
     if (bs) this._drawBorder(bs);
     if (this.content) this.content.draw(_focused);
+    const footerY = y + h - (bs ? 2 : 1);
+    if (footerY >= y + (bs ? 1 : 0)) this._drawLabel(this.opts.footer, this.opts.footer_pos, footerY, this.opts.footerGroup || "UIDim", this.inner.x, this.inner.w);
   }
 
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
@@ -866,6 +872,8 @@ export class Window {
 
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
+    const { x, y, w, h } = this.inner;
+    if (ev.event === "press" && (ev.col < x || ev.col >= x + w || ev.row < y || ev.row >= y + h)) return false;
     return this.content && this.content.onMouse ? this.content.onMouse(ev) : false;
   }
 
@@ -891,30 +899,24 @@ export class Window {
       text(x + w - 1, y + i, bs.r, g);
     }
     this._drawLabel(this.opts.title, this.opts.title_pos, y, this.opts.titleGroup || "UITitle");
-    this._drawLabel(this.opts.footer, this.opts.footer_pos, y + h - 1, this.opts.footerGroup || "UIBorder");
   }
 
-  // A title/footer embedded in the border edge. `pos` is "left" (default), "center", or "right".
-  /** @param {string | (() => string) | undefined} label @param {"left" | "center" | "right" | undefined} pos @param {number} ry @param {string} group @returns {void} */
-  _drawLabel(label, pos, ry, group) {
+  // The title uses the border edge; the footer uses the content columns.
+  /** @param {string | (() => string) | undefined} label @param {"left" | "center" | "right" | undefined} pos @param {number} ry @param {string} group @param {number} [x] @param {number} [w] @returns {void} */
+  _drawLabel(label, pos, ry, group, x = this.rect.x + 2, w = Math.max(0, this.rect.w - 4)) {
     if (!label) return;
     const s = typeof label === "function" ? label() : String(label);
     if (!s) return;
-    const { x, w } = this.rect;
-    const room = w - 4;
-    if (room <= 0) return;
-    const t = " " + clip(s, room) + " ";
-    let tx = x + 2;
-    if (pos === "center") tx = x + Math.floor((w - term.measure(t)) / 2);
-    else if (pos === "right") tx = x + w - 2 - term.measure(t);
-    text(Math.max(x + 1, tx), ry, t, group);
+    if (w <= 0) return;
+    const t = clip(s, w);
+    if (pos === "center") x += Math.floor((w - term.measure(t)) / 2);
+    else if (pos === "right") x += w - term.measure(t);
+    text(x, ry, t, group);
   }
 }
 
 // A picker window's content: a List with accept/cancel/validate, an optional keymap over the default actions, and an optional query line.
 const PICKER_PROMPT = "\u203a ";
-const PICKER_PAD_X = 2;
-const PICKER_PAD_Y = 1;
 
 /** @template T */
 export class Picker {
@@ -958,14 +960,6 @@ export class Picker {
     this.refilter();
   }
 
-  /** @returns {Rect} */
-  _contentRect() {
-    const r = this._layoutRect;
-    const px = this.win && this.win._borderSet() ? PICKER_PAD_X : 0;
-    const py = this.win && this.win._borderSet() ? PICKER_PAD_Y : 0;
-    return { x: r.x + px, y: r.y + py, w: Math.max(0, r.w - px * 2), h: Math.max(0, r.h - py * 2) };
-  }
-
   /** @param {number} width @returns {number} */
   _bodyHeight(width) {
     width = Math.max(1, width);
@@ -986,12 +980,11 @@ export class Picker {
 
   /** @param {number} width @returns {number} */
   preferredHeight(width) {
-    const bordered = !!this.win?._borderSet();
-    const contentWidth = Math.max(1, width - (bordered ? 2 + PICKER_PAD_X * 2 : 0));
+    const contentWidth = Math.max(1, this.win ? this.win.contentWidth(width) : width);
     const bodyRows = this._bodyHeight(contentWidth);
     const gap = bodyRows > 0 ? 1 : 0;
     const rows = bodyRows + gap + (this.filter ? 1 : 0) + this.list.items.length * this.list.itemHeight;
-    return rows + (bordered ? 2 + PICKER_PAD_Y * 2 : 0);
+    return this.win ? this.win.heightFor(rows) : rows;
   }
 
   /** @returns {string} */
@@ -1049,7 +1042,7 @@ export class Picker {
 
   /** @param {boolean} [_focused] @returns {void} */
   draw(_focused = false) {
-    const { x, y, w, h } = this._contentRect();
+    const { x, y, w, h } = this._layoutRect;
     if (w <= 0 || h <= 0) {
       this.list.clearRect();
       return;
@@ -1085,7 +1078,7 @@ export class Picker {
       if (ev.col < x || ev.col >= x + w || ev.row < y || ev.row >= y + h) return false;
     }
     if (this.body && ev.event === "press" && isWheel(ev.button) && win) {
-      const r = this._contentRect();
+      const r = this._layoutRect;
       const { height: bodyHeight } = this._bodyLayout(r);
       if (ev.row >= r.y && ev.row < r.y + bodyHeight) {
         const step = Math.max(1, ev.count || 1);
@@ -1101,7 +1094,7 @@ export class Picker {
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
   cursor() {
     if (!this.input) return null; // a menu edits no query, so it places no cursor
-    const { x, y, w, h } = this._contentRect();
+    const { x, y, w, h } = this._layoutRect;
     if (w <= 0 || h <= 0) return null; // an empty interior places no cursor
     const { height: bodyHeight, gap } = this._bodyLayout({ x, y, w, h });
     const rowY = y + bodyHeight + gap;
@@ -1181,7 +1174,7 @@ export class Picker {
     // A float leaves every other key to the view under it, so the composer keeps typing.
     if (this.win && this.win.modal === false) return false;
     if (this.body && this.win && (s === "page_up" || s === "page_down")) {
-      const { height } = this._bodyLayout(this._contentRect());
+      const { height } = this._bodyLayout(this._layoutRect);
       const max = Math.max(0, this._bodyRows.length - height);
       if (height > 0 && max > 0) {
         this._bodyScroll = Math.min(max, Math.max(0, this._bodyScroll + (s === "page_down" ? height : -height)));

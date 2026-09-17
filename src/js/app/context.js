@@ -109,7 +109,7 @@ export const contextPlugin = {
           /** @type {(() => void)} */
           let release = () => {};
           const panel = new InfoPanel(contextRows(current, item?.instruction_sources || [], item?.skills || []), () => release());
-          const win = new Window({ title: "context", footer: "esc close", border: "rounded", width: max => Math.round(max * 0.6), height: panel.rows.length + 2, content: panel });
+          const win = new Window({ title: "context", footer: "esc close", border: "rounded", width: max => Math.round(max * 0.6), contentHeight: panel.rows.length, content: panel });
           root.pushOverlay(win);
           release = ctx.tui.overlay(win);
         },

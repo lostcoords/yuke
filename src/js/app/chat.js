@@ -312,9 +312,10 @@ function openModelPicker(ctx, query) {
     const p = ui.pick({
       title: "select a model",
       footer: "type to filter · ↵ select · esc close",
-      border: "rounded",
-      width: max => Math.round(max * 0.6),
-      height: max => Math.round(max * 0.6),
+      border: "none",
+      panelGroup: "UIFloat",
+      anchor: () => chat.composer.rect,
+      contentHeight: /** @returns {number} */ () => 1 + Math.min(6, p.content.list.items.length),
       items: models,
       key: qualified,
       filterText: m => m.provider + " " + m.name + " " + m.id,
@@ -353,12 +354,14 @@ function pickReasoning(ctx, model, sessionId) {
     chooseModel(model, model.default_reasoning || levels[0] || "", sessionId);
     return;
   }
+  const chat = focusedChat();
   const step = ui.pick({
     title: model.name + " · effort",
     footer: "↵ select · esc close",
-    border: "rounded",
-    width: max => Math.round(max * 0.4),
-    height: max => Math.round(max * 0.4),
+    border: "none",
+    panelGroup: "UIFloat",
+    anchor: chat ? () => chat.composer.rect : null,
+    contentHeight: /** @returns {number} */ () => 1 + Math.min(6, step.content.list.items.length),
     items: levels.map((id) => ({ id })),
     key: l => l.id,
     filterText: l => l.id,

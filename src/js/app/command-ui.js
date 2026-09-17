@@ -118,7 +118,7 @@ export const commandUiPlugin = {
           border,
           panelGroup: "UIFloat",
           anchor: () => chat.composer.rect,
-          height: () => Math.min(rows, content ? content.list.items.length : 0),
+          contentHeight: () => Math.min(rows, content ? content.list.items.length : 0),
           key: (e) => e.name,
           format: (e) => format(e, col),
           keymap: {
@@ -193,7 +193,7 @@ export const commandUiPlugin = {
           border,
           panelGroup: "UIFloat",
           anchor: chat ? () => chat.composer.rect : null,
-          height: () => Math.min(rows, content ? content.list.items.length : 0) + 1,
+          contentHeight: () => Math.min(rows, content ? content.list.items.length : 0) + 1,
           items: all,
           key: (e) => e.name,
           filterText: cfg.filterText || ((e) => wordOf(e) + " " + e.title),
