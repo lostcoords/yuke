@@ -27,13 +27,9 @@ JOIN events e ON e.session_id = p.session_id AND e.seq = p.seq
 WHERE p.session_id = :session_id AND p.input_id = :input_id;
 
 -- name: PendingInputs :many
+-- row-from: PendingInputById
 -- Return pending inputs in event order.
 -- session_id: [16]u8!
--- row_input_id: u64!
--- seq: u64!
--- queued_at_ms: u64!
--- payload: []const u8!
--- event_name: []const u8!
 SELECT p.input_id AS row_input_id,
        p.seq,
        p.queued_at_ms,

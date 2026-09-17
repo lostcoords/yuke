@@ -10,7 +10,6 @@ pub const version = "0.0.1";
 const database = @import("../store/store.zig");
 const blob_store = database.blob;
 const run = @import("run.zig");
-const run_task = @import("turn.zig");
 const session_events = @import("events.zig");
 const paths = @import("../paths.zig");
 const instructions = @import("../session/instructions.zig");
@@ -18,7 +17,6 @@ const skills = @import("../session/skills.zig");
 const reports = @import("reports.zig");
 const admission = @import("admission.zig");
 const model_config = @import("model_config.zig");
-const compaction = @import("compaction.zig");
 
 const session_store = database.session;
 const message_store = database.message;
@@ -141,7 +139,7 @@ fn instructionsChanged(engine: *Engine, arena: std.mem.Allocator, root: []const 
 }
 
 /// Handle skill.load: read the body of one catalog entry. The catalog is the session snapshot, not the disk.
-pub fn skillLoad(engine: *Engine, arena: std.mem.Allocator, params: proto.skill.SkillLoadParams, _: *?run_task.Launch, diagnostic: ?*?[]const u8) !proto.skill.SkillLoadResult {
+pub fn skillLoad(engine: *Engine, arena: std.mem.Allocator, params: proto.skill.SkillLoadParams, _: *?run.Launch, diagnostic: ?*?[]const u8) !proto.skill.SkillLoadResult {
     if (skills.nameFault(params.name) != null) return error.UnknownSkill;
     const sid = params.session_id.raw;
     const entry = (try session_store.skill(engine.deps.db, arena, sid, params.name)) orelse {
@@ -153,7 +151,7 @@ pub fn skillLoad(engine: *Engine, arena: std.mem.Allocator, params: proto.skill.
 }
 
 /// Handle session.reload_context: rescan both roots and replace the stored snapshots of one idle session.
-pub fn sessionReloadContext(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionReloadContextParams, _: *?run_task.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionReloadContextResult {
+pub fn sessionReloadContext(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionReloadContextParams, _: *?run.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionReloadContextResult {
     try engine.own(params.session_id);
     const sid = params.session_id.raw;
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
@@ -324,7 +322,7 @@ pub fn sessionHistory(engine: *Engine, arena: std.mem.Allocator, params: proto.s
 }
 
 /// Accept input for an RPC and return its prepared run to the response gate.
-pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionSendInputParams, launch: *?run_task.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionSendInputResult {
+pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionSendInputParams, launch: *?run.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionSendInputResult {
     try engine.own(params.session_id);
     std.debug.assert(launch.* == null);
     const sid = params.session_id.raw;
@@ -346,7 +344,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
     } else null;
     if (parent != null) try reports.reserve(engine, arena, tree.root);
     const available = parent == null or try admission.available(engine, arena, tree.root, params.session_id);
-    if (available and rt.active_run == null and rt.queueDepth() > 0) launch.* = .{ .slot = try run_task.prepareQueued(engine, rt) };
+    if (available and rt.active_run == null and rt.queueDepth() > 0) launch.* = .{ .slot = try run.prepareQueued(engine, rt) };
 
     if (available and rt.active_run == null) {
         const stored_prompt = try session_store.prompt(engine.deps.db, arena, sid);
@@ -380,7 +378,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
 }
 
 /// Handle session.compact: start a compaction now, or hold it until the active run ends.
-pub fn sessionCompact(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionCompactParams, launch: *?run_task.Launch) !proto.session.SessionCompactResult {
+pub fn sessionCompact(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionCompactParams, launch: *?run.Launch) !proto.session.SessionCompactResult {
     try engine.own(params.session_id);
     std.debug.assert(launch.* == null);
     const sid = params.session_id.raw;
@@ -390,9 +388,9 @@ pub fn sessionCompact(engine: *Engine, arena: std.mem.Allocator, params: proto.s
     // A second request while one waits answers the compaction the session already holds.
     if (rt.pending_compaction) |held| return .{ .status = .queued, .run_id = held.run_id };
 
-    const run_id = try compaction.reserveRun(engine, arena, sid);
+    const run_id = try run.reserveCompaction(engine, arena, sid);
     if (rt.active_run == null) {
-        launch.* = .{ .slot = try compaction.begin(engine, rt, .manual, run_id) };
+        launch.* = .{ .slot = try run.prepareCompaction(engine, rt, .manual, run_id) };
         return .{ .status = .started, .run_id = run_id };
     }
     rt.pending_compaction = .{ .run_id = run_id, .reason = .manual };
@@ -559,13 +557,13 @@ fn validateParentSite(engine: *Engine, site: proto.input.ToolSite) !void {
 
 /// Handle session.create: resolve the workspace, mint ids, insert the session, and return it.
 pub fn sessionCreate(engine: *Engine, arena: std.mem.Allocator, params: proto.misc.CreateSession) !proto.session.SessionResult {
-    var launch: ?run_task.Launch = null;
-    defer run_task.Launch.release(&launch, engine);
+    var launch: ?run.Launch = null;
+    defer run.Launch.release(&launch, engine);
     return sessionCreateForRpc(engine, arena, params, &launch, null);
 }
 
 /// Save the session and its first input under one transaction and one response gate.
-pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.misc.CreateSession, launch: *?run_task.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionResult {
+pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: proto.misc.CreateSession, launch: *?run.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionResult {
     std.debug.assert(launch.* == null);
     if (engine.closing) return error.EngineClosing;
     const root = try paths.canonicalizeWorkspace(arena, engine.deps.execution.env, params.workspace_path);

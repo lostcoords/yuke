@@ -7,7 +7,7 @@ const ai = @import("ai");
 const Engine = @import("Engine.zig");
 const database = @import("../store/store.zig");
 const commands = @import("commands.zig");
-const turn = @import("turn.zig");
+const runs = @import("run.zig");
 const hookset = @import("hookset.zig");
 const Resources = @import("test_resources.zig");
 const registry = @import("../provider/registry.zig");
@@ -24,7 +24,7 @@ const Fixture = struct {
     entered: std.Io.Event = .unset,
     release: std.Io.Event = .unset,
     paused: bool = false,
-    gate: ?turn.Launch = null,
+    gate: ?runs.Launch = null,
     run_starts: usize = 0,
     run_done: std.ArrayList(proto.run.RunDoneData) = .empty,
     activity: ?proto.session.SessionActivity = null,
@@ -74,7 +74,7 @@ const Fixture = struct {
 
     fn start(self: *Fixture) !void {
         _ = try self.send("initial task");
-        turn.Launch.release(&self.gate, &self.engine);
+        runs.Launch.release(&self.gate, &self.engine);
         try self.entered.waitTimeout(self.engine.deps.io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
     }
 
@@ -251,7 +251,7 @@ test "input before launch joins the first request without an early assistant id"
     _ = try f.send("before launch");
     f.gate = launch;
     f.release.set(f.engine.deps.io);
-    turn.Launch.release(&f.gate, &f.engine);
+    runs.Launch.release(&f.gate, &f.engine);
     try f.finish();
     try testing.expectEqual(@as(usize, 1), f.requests.items.len);
     try testing.expect(std.mem.indexOf(u8, f.requests.items[0], "before launch") != null);
@@ -316,7 +316,7 @@ test "input accepted after run completion starts a new run" {
     try f.finish();
     const next = try f.send("next task");
     try testing.expectEqual(@as(u64, 2), next.started.run_id);
-    turn.Launch.release(&f.gate, &f.engine);
+    runs.Launch.release(&f.gate, &f.engine);
     try f.finish();
     try testing.expectEqual(@as(usize, 2), f.run_starts);
     try testing.expectEqual(@as(usize, 2), f.run_done.items.len);

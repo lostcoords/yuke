@@ -1,4 +1,4 @@
-//! Own the run tasks and commit input at round boundaries.
+//! Execute model rounds and tools, then commit input at round boundaries.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -27,57 +27,11 @@ const agent_name = "claude";
 const round_request = @import("request.zig");
 const request_context = @import("context.zig");
 
-/// The response gate must launch a prepared run exactly once through an optional token.
-pub const Launch = union(enum) {
-    slot: *RunSlot,
-    wake: ids.SessionId,
-
-    /// Launch the prepared slot. Return when another path consumed the token.
-    pub fn release(self: *?Launch, engine: *Engine) void {
-        const launch = self.* orelse return;
-        self.* = null;
-        switch (launch) {
-            .slot => |slot| switch (slot.handle.started.kind) {
-                .turn => launchSlot(engine, slot) catch |err| {
-                    std.log.err("cannot release the run launch gate: {t}", .{err});
-                },
-                .compaction => @import("compaction.zig").launch(engine, slot) catch |err| {
-                    std.log.err("cannot release the compaction launch gate: {t}", .{err});
-                },
-            },
-            .wake => |parent| @import("admission.zig").drain(engine, parent) catch |err| {
-                std.log.err("cannot admit a queued child: {t}", .{err});
-            },
-        }
-    }
-};
-
-/// Launch one prepared run.
-pub fn launchSlot(engine: *Engine, slot: *RunSlot) !void {
-    std.debug.assert(slot.phase == .pending_start);
-    std.debug.assert(slot.progress.current == null);
-    slot.retry_budget = engine.deps.retry_budget; // The budget covers this run, not one request.
-    // The caller already folded and published run.started. This spawns the run task.
-    const run_id = slot.runId();
-    const session_id = slot.sessionId();
-    slot.phase = .running;
-    engine.turn_tasks.concurrent(engine.deps.io, runSession, .{ engine, slot }) catch |err| {
-        std.log.err("cannot launch run {d}: {t}", .{ run_id, err });
-        var terminal_arena = std.heap.ArenaAllocator.init(engine.deps.gpa);
-        defer terminal_arena.deinit();
-        commitFinal(engine, terminal_arena.allocator(), slot, null, null, .{ .failed = .{
-            .code = .internal,
-            .message = "the engine could not launch the run task",
-        } });
-        finishSlot(engine, session_id, slot);
-        return err;
-    };
-}
-
 /// Run one turn. The engine task group owns this task. The session owns `slot` until cleanup.
-fn runSession(engine: *Engine, slot: *RunSlot) void {
+pub fn execute(engine: *Engine, slot: *RunSlot) void {
+    std.debug.assert(slot.phase == .running);
+    std.debug.assert(slot.handle.started.kind == .turn);
     const session_id = slot.sessionId();
-    defer finishSlot(engine, session_id, slot);
 
     const rt = engine.sessions.get(session_id) orelse unreachable;
     std.debug.assert(rt.active_run == slot);
@@ -130,7 +84,7 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
                     root_resolved = true;
                 }
                 settlePendingTools(engine, boundary_arena, slot, &streamer, workspace_root, live) catch |err| {
-                    faultSlot(engine, session_id, slot, err);
+                    run.faultSlot(engine, slot, err);
                     return;
                 };
                 if (workspace_root == null) {
@@ -140,7 +94,7 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
             } else {
                 // Cancel any pending tool part; a canceled/failed stream or a malformed tool_use lands here.
                 settlePendingTools(engine, boundary_arena, slot, &streamer, null, live) catch |err| {
-                    faultSlot(engine, session_id, slot, err);
+                    run.faultSlot(engine, slot, err);
                     return;
                 };
                 if (terminal == .success) {
@@ -151,7 +105,7 @@ fn runSession(engine: *Engine, slot: *RunSlot) void {
         }
 
         commitRound(engine, boundary_arena, slot, live, streamer.usage, terminal) catch |err| {
-            faultSlot(engine, session_id, slot, err);
+            run.faultSlot(engine, slot, err);
             return;
         };
         if (slot.phase == .terminalized) return;
@@ -184,11 +138,11 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
             .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message } },
         };
         slot.progress.current = null;
-        finishRunOpen(engine, arena, slot, outcome) catch |err| faultSlot(engine, slot.sessionId(), slot, err);
+        run.finishRunOpen(engine, arena, slot, outcome) catch |err| run.faultSlot(engine, slot, err);
         return;
     }
     commitRound(engine, arena, slot, live.?, usage, terminal) catch |err| {
-        faultSlot(engine, slot.sessionId(), slot, err);
+        run.faultSlot(engine, slot, err);
         return;
     };
 }
@@ -453,39 +407,7 @@ fn commitRound(
     session_events.publishUserCommits(engine, rt, inputs);
     if (inputs.len == 0) session_events.announceSummary(engine, session_id);
     if (!final) session_events.announceActivity(engine, rt);
-    if (done) |terminal_result| {
-        session_events.emitDurable(engine, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = terminal_result.done } });
-        if (terminal_result.notice) |notice| session_events.emitCommitted(engine, rt, notice);
-        if (terminal_result.report) |report| reports.publishReport(engine, report, true);
-    }
-}
-
-/// End a run with no active assistant message.
-pub fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, outcome: proto.run.RunOutcome) !void {
-    std.debug.assert(slot.phase == .running);
-    std.debug.assert(slot.progress.current == null);
-    const old_cancel_protection = engine.deps.io.swapCancelProtection(.blocked);
-    defer _ = engine.deps.io.swapCancelProtection(old_cancel_protection);
-
-    const session_id = slot.sessionId();
-    const ended_at = @max(engine.nowMillis(), slot.handle.started.started_at_ms);
-    var tx = try engine.deps.db.*.begin();
-    defer tx.deinit();
-    const done = try reports.append(engine, arena, .{
-        .session_id = session_id,
-        .seq = 0,
-        .run_id = slot.runId(),
-        .kind = slot.handle.started.kind,
-        .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
-        .outcome = outcome,
-    });
-    try tx.commit();
-    slot.phase = .terminalized;
-
-    const rt = engine.sessions.get(session_id) orelse unreachable;
-    session_events.emitDurable(engine, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = done.done } });
-    if (done.notice) |notice| session_events.emitCommitted(engine, rt, notice);
-    if (done.report) |report| reports.publishReport(engine, report, true);
+    if (done) |terminal_result| run.publishTerminal(engine, rt, terminal_result);
 }
 
 /// Allocate the next round: allocate a message id, then advance the progress state.
@@ -498,89 +420,6 @@ fn beginRound(engine: *Engine, slot: *RunSlot) !void {
     const message_id = try event_store.allocMessageId(engine.deps.db, arena_state.allocator(), slot.sessionId().raw);
     try tx.commit();
     slot.progress.current = .{ .message_id = message_id, .created_at_ms = engine.nowMillis() };
-}
-
-/// Preserve the open marker when Tx2 fails. A matching terminal event must clear it.
-pub fn faultSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot, err: anyerror) void {
-    slot.phase = .faulted;
-    if (engine.sessions.get(session_id)) |rt| rt.faulted = true;
-    reports.faultNotice(engine, session_id, slot.runId(), err);
-}
-
-pub fn finishSlot(engine: *Engine, session_id: ids.SessionId, slot: *RunSlot) void {
-    slot.work.drain(engine.deps.io);
-    std.debug.assert(slot.body == null);
-    std.debug.assert(slot.phase == .terminalized or slot.phase == .faulted);
-    const rt = engine.sessions.get(session_id) orelse unreachable;
-    std.debug.assert(rt.active_run == slot);
-    const can_drain = slot.phase == .terminalized and !engine.closing and !rt.faulted;
-    const parent = slot.parent_id;
-    rt.active_run = null;
-    slot.destroy();
-
-    // A manual compaction takes priority over queued input.
-    const compaction_mod = @import("compaction.zig");
-    const compacting = can_drain and compaction_mod.startPending(engine, rt);
-    if (parent != null and !engine.closing) {
-        @import("admission.zig").drain(engine, parent.?) catch |err| {
-            std.log.err("cannot admit a queued child: {t}", .{err});
-        };
-    } else if (!compacting and can_drain) {
-        // A failed launch nests a finish that can evict this session, so read the registry again.
-        if (engine.sessions.get(session_id)) |current| if (current.queueDepth() > 0) {
-            startQueued(engine, current) catch |err| {
-                if (engine.sessions.get(session_id)) |failed| failed.faulted = true;
-                std.log.err("cannot start a queued run: {t}", .{err});
-            };
-        };
-    }
-    // A nested finishSlot can evict the session, so look the runtime up again before it is read.
-    if (engine.sessions.get(session_id)) |settled| session_events.announceActivity(engine, settled);
-    engine.sessions.evictIfIdle(session_id);
-}
-
-fn startQueued(engine: *Engine, rt: *Session) !void {
-    const slot = try prepareQueued(engine, rt);
-    try launchSlot(engine, slot);
-}
-
-/// Commit one run for all queued inputs.
-pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
-    try engine.own(rt.id);
-    std.debug.assert(rt.active_run == null);
-    std.debug.assert(rt.queueDepth() > 0);
-
-    // The workspace path must outlive every round.
-    var arena_state = std.heap.ArenaAllocator.init(engine.deps.gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const session_id = rt.id;
-    const snapshot = (try session_store.snapshot(engine.deps.db, arena, session_id.raw)) orelse return error.UnknownSession;
-    const tree = try @import("admission.zig").location(engine, arena, session_id);
-    const prompt = try session_store.prompt(engine.deps.db, arena, session_id.raw);
-    var prepared = try RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, prompt orelse "", snapshot.max_rounds);
-    errdefer prepared.deinit();
-    const started = try run.beginQueuedTurn(engine.deps.db, engine.deps.io, arena, session_id.raw, snapshot.config_rev);
-    const slot = prepared.bind(started.handle, if (snapshot.parent_id) |id| .bytes(id) else null, tree);
-    // Fold each durable event in sequence order: the drained user messages, then run.started.
-    // The commit fold retires each drained input from the queue.
-    session_events.publishUserCommits(engine, rt, started.user_commits);
-    std.debug.assert(rt.queueDepth() == 0);
-    rt.active_run = slot;
-    session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
-    return slot;
-}
-
-/// Restart durable queued work after frontend setup.
-pub fn resumeSession(engine: *Engine, rt: *Session) !void {
-    if (engine.closing) return error.EngineClosing;
-    if (rt.active_run != null) return;
-    if (rt.queueDepth() == 0) return;
-    var scratch: std.heap.ArenaAllocator = .init(engine.deps.gpa);
-    defer scratch.deinit();
-    const row = (try session_store.snapshot(engine.deps.db, scratch.allocator(), rt.id.raw)) orelse return error.UnknownSession;
-    if (row.parent_id) |parent| return @import("admission.zig").drain(engine, .bytes(parent));
-    try startQueued(engine, rt);
 }
 
 /// Report whether an event carries model output that closes the retry window.
@@ -1146,52 +985,6 @@ const StreamerFixture = struct {
     }
 };
 
-const NoticeCapture = struct {
-    seen: bool = false,
-    source: []const u8 = "",
-    text: [512]u8 = undefined,
-    len: usize = 0,
-
-    fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
-        const self: *@This() = @ptrCast(@alignCast(ctx));
-        if (note.method != .notice) return;
-        self.source = note.params.notice.source;
-        const message_text = note.params.notice.message;
-        self.len = @min(message_text.len, self.text.len);
-        @memcpy(self.text[0..self.len], message_text[0..self.len]);
-        self.seen = true;
-    }
-
-    fn sink(self: *@This()) @import("sink.zig").Sink {
-        return .{ .ctx = @ptrCast(self), .on_event = onEvent };
-    }
-};
-
-test "a terminal commit fault emits recovery notice and leaves the run open" {
-    var fixture: StreamerFixture = undefined;
-    try fixture.init();
-    defer fixture.deinit();
-    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-    try fixture.persistStarted(a);
-    var notice: NoticeCapture = .{};
-    fixture.engine.sinks.add(notice.sink());
-    fixture.slot.phase = .running;
-
-    faultSlot(&fixture.engine, .bytes(StreamerFixture.session_id), fixture.slot, error.ConstraintTrigger);
-
-    try std.testing.expect(fixture.session.faulted);
-    try std.testing.expectEqual(RunSlot.Phase.faulted, fixture.slot.phase);
-    try std.testing.expect(notice.seen);
-    try std.testing.expect(std.mem.indexOf(u8, notice.text[0..notice.len], "Restart yuke to recover") != null);
-    try std.testing.expectEqualStrings("engine", notice.source);
-    try std.testing.expectEqual(@as(?u64, 1), (try session_store.snapshot(&fixture.db, a, StreamerFixture.session_id)).?.open_run_id);
-    const row = (try fixture.db.conn.row("SELECT count(*) FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
-    defer row.deinit();
-    try std.testing.expectEqual(@as(i64, 0), row.int(0));
-}
-
 test "a capped tool round reloads with an assistant error and failed outcome" {
     var fixture: StreamerFixture = undefined;
     try fixture.init();
@@ -1220,7 +1013,7 @@ test "a capped tool round reloads with an assistant error and failed outcome" {
     fixture.session.draft = null;
     fixture.slot.progress = .{};
     fixture.slot.phase = .running;
-    runSession(&fixture.engine, fixture.slot);
+    run.execute(&fixture.engine, fixture.slot);
 
     const restored = try fixture.engine.activate(.bytes(StreamerFixture.session_id));
     var saved_message: ?proto.message.Message = null;
@@ -1571,7 +1364,7 @@ test "a failed boundary transaction preserves the draft progress and pending inp
     try std.testing.expectEqual(@as(u64, 2), messages[1].assistant.id);
     try std.testing.expectEqual(@as(u64, 3), messages[2].user.id);
     try std.testing.expectEqual(input_id, messages[2].user.input_id);
-    try finishRunOpen(&f.engine, a, f.slot, .{ .canceled = .{} });
+    try run.finishRunOpen(&f.engine, a, f.slot, .{ .canceled = .{} });
 }
 
 test "a cancel at the boundary wins over a successful response and preserves pending input" {

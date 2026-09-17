@@ -153,99 +153,18 @@ const Engine = @import("Engine.zig");
 const session_mod = @import("../session/session.zig");
 const Session = session_mod.Session;
 const RunSlot = session_mod.RunSlot;
-const turn = @import("turn.zig");
+const runs = @import("run.zig");
 const model_call = @import("model_call.zig");
 const session_events = @import("events.zig");
 const provider = @import("../provider/provider.zig");
-const admission = @import("admission.zig");
 
 /// The output one summary may take. A checkpoint states the work, not the conversation.
 const summary_output_tokens: u32 = 4096;
 
-/// Commit and publish the run start. A reserved id belongs to a compaction the engine already answered.
-pub fn begin(engine: *Engine, rt: *Session, reason: proto.enums.CompactionReason, reserved: ?proto.ids.RunId) !*RunSlot {
-    try engine.own(rt.id);
-    std.debug.assert(rt.active_run == null);
-    var arena_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const sid = rt.id.raw;
-    const snapshot = (try database.session.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
-    const tree = try admission.location(engine, arena, rt.id);
-    const prompt = (try database.session.prompt(engine.deps.db, arena, sid)) orelse "";
-    var prepared = try RunSlot.prepare(engine.deps.gpa, snapshot.model, snapshot.reasoning, prompt, null);
-    errdefer prepared.deinit();
-
-    const started_at = engine.nowMillis();
-    var tx = try engine.deps.db.begin();
-    defer tx.deinit();
-    const run_id = reserved orelse try database.event.allocRunId(engine.deps.db, arena, sid);
-    const started = try database.run.appendStarted(engine.deps.db, arena, engine.newId(), started_at, .{
-        .session_id = rt.id,
-        .seq = 0,
-        .run_id = run_id,
-        .kind = .compaction,
-        .reason = reason,
-        .config_rev = snapshot.config_rev,
-        .started_at_ms = started_at,
-    });
-    try tx.commit();
-
-    const slot = prepared.bind(.{ .input_id = 0, .started = started }, if (snapshot.parent_id) |id| .bytes(id) else null, tree);
-    rt.active_run = slot;
-    session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started } });
-    session_events.announceActivity(engine, rt); // A compaction opens no round, so nothing else says it runs.
-    return slot;
-}
-
-/// Launch one prepared compaction. The engine task group owns the task.
-pub fn launch(engine: *Engine, slot: *RunSlot) !void {
-    std.debug.assert(slot.phase == .pending_start);
-    std.debug.assert(slot.progress.current == null); // a compaction opens no round
-    const session_id = slot.sessionId();
-    slot.phase = .running;
-    engine.turn_tasks.concurrent(engine.deps.io, runTask, .{ engine, slot }) catch |err| {
-        var scratch: std.heap.ArenaAllocator = .init(engine.deps.gpa);
-        defer scratch.deinit();
-        turn.finishRunOpen(engine, scratch.allocator(), slot, .{ .failed = .{
-            .code = .internal,
-            .message = "the engine could not launch the compaction task",
-        } }) catch |commit_err| turn.faultSlot(engine, session_id, slot, commit_err);
-        turn.finishSlot(engine, session_id, slot);
-        return err;
-    };
-}
-
-/// Allocate one run id for a compaction the engine answers before it starts.
-pub fn reserveRun(engine: *Engine, arena: std.mem.Allocator, session_id: [16]u8) !proto.ids.RunId {
-    var tx = try engine.deps.db.begin();
-    defer tx.deinit();
-    const run_id = try database.event.allocRunId(engine.deps.db, arena, session_id);
-    try tx.commit();
-    return run_id;
-}
-
-/// Start the compaction the session holds. Report whether it took the session.
-pub fn startPending(engine: *Engine, rt: *Session) bool {
-    const pending = rt.pending_compaction orelse return false;
-    std.debug.assert(rt.active_run == null);
-    const slot = begin(engine, rt, pending.reason, pending.run_id) catch |err| {
-        std.log.err("cannot start the pending compaction of run {d}: {t}", .{ pending.run_id, err });
-        rt.pending_compaction = null; // A compaction that cannot start must not block the queue.
-        return false;
-    };
-    rt.pending_compaction = null;
-    launch(engine, slot) catch |err| {
-        std.log.err("cannot launch the pending compaction of run {d}: {t}", .{ pending.run_id, err });
-        return false; // `launch` terminalized the run and released the session.
-    };
-    return true;
-}
-
 /// Run one compaction. The engine task group owns this task; the session owns `slot` until cleanup.
-fn runTask(engine: *Engine, slot: *RunSlot) void {
-    const session_id = slot.sessionId();
-    defer turn.finishSlot(engine, session_id, slot);
+pub fn execute(engine: *Engine, slot: *RunSlot) void {
+    std.debug.assert(slot.phase == .running);
+    std.debug.assert(slot.handle.started.kind == .compaction);
     var arena_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -262,7 +181,7 @@ fn runTask(engine: *Engine, slot: *RunSlot) void {
         const detail = provider.failure.classify(err);
         break :blk proto.run.RunOutcome{ .failed = .{ .code = detail.code, .message = detail.message } };
     };
-    turn.finishRunOpen(engine, arena, slot, outcome) catch |err| turn.faultSlot(engine, session_id, slot, err);
+    runs.finishRunOpen(engine, arena, slot, outcome) catch |err| runs.faultSlot(engine, slot, err);
 }
 
 fn summarizeChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?proto.run.RunOutcome) !void {
@@ -552,9 +471,9 @@ const TaskFixture = struct {
 
     /// Run one compaction to its terminal record. The resident session can retire with the run.
     fn run(self: *TaskFixture, reason: proto.enums.CompactionReason) !proto.run.RunOutcome {
-        const slot = try begin(&self.engine, self.session, reason, null);
+        const slot = try runs.prepareCompaction(&self.engine, self.session, reason, null);
         slot.phase = .running; // the test drives the task, so it takes the transition `launch` makes
-        var handle = try self.resources.runtime.spawn(runTask, .{ &self.engine, slot });
+        var handle = try self.resources.runtime.spawn(runs.execute, .{ &self.engine, slot });
         handle.join();
         return self.lastOutcome();
     }
@@ -639,10 +558,10 @@ test "a cancel that landed before the summary leaves the transcript alone" {
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
 
-    const slot = try begin(&f.engine, f.session, .manual, null);
+    const slot = try runs.prepareCompaction(&f.engine, f.session, .manual, null);
     slot.phase = .running;
     slot.cancel.request(f.resources.runtime.io());
-    var handle = try f.resources.runtime.spawn(runTask, .{ &f.engine, slot });
+    var handle = try f.resources.runtime.spawn(runs.execute, .{ &f.engine, slot });
     handle.join();
     const outcome = try f.lastOutcome();
     try testing.expect(outcome == .canceled);
@@ -664,14 +583,14 @@ test "a compaction on an idle session starts at once and answers its run id" {
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
 
-    var gate: ?turn.Launch = null;
+    var gate: ?runs.Launch = null;
     const answer = try commands.sessionCompact(&f.engine, a, .{ .session_id = .bytes(TaskFixture.sid) }, &gate);
     try testing.expectEqual(proto.enums.CompactStatus.started, answer.status);
     const slot = gate.?.slot;
     try testing.expectEqual(answer.run_id, slot.runId());
     gate = null; // the test drives the task instead of the launch gate
     slot.phase = .running;
-    var handle = try f.resources.runtime.spawn(runTask, .{ &f.engine, slot });
+    var handle = try f.resources.runtime.spawn(runs.execute, .{ &f.engine, slot });
     handle.join();
 
     const outcome = try f.lastOutcome();
@@ -688,8 +607,8 @@ test "a compaction under a run waits, shows in the activity, and a cancel drops 
     try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
 
     // One run holds the session, so the next request waits behind it.
-    _ = try begin(&f.engine, f.session, .manual, null);
-    var gate: ?turn.Launch = null;
+    _ = try runs.prepareCompaction(&f.engine, f.session, .manual, null);
+    var gate: ?runs.Launch = null;
     const held = try commands.sessionCompact(&f.engine, a, .{ .session_id = .bytes(TaskFixture.sid) }, &gate);
     try testing.expectEqual(proto.enums.CompactStatus.queued, held.status);
     try testing.expect(gate == null);
@@ -726,7 +645,7 @@ test "the session starts the compaction it held once its run ends" {
         break :blk id;
     };
     f.session.pending_compaction = .{ .run_id = run_id, .reason = .auto };
-    try testing.expect(startPending(&f.engine, f.session));
+    try testing.expect(runs.startPendingCompaction(&f.engine, f.session));
     try testing.expect(f.session.pending_compaction == null);
     // The start is durable before the task runs, so a stop still leaves a repairable record.
     const row = (try f.db.conn.row("SELECT count(*) FROM events WHERE name = 'run.started'", .{})).?;
@@ -737,12 +656,12 @@ test "the session starts the compaction it held once its run ends" {
 const ai = @import("ai");
 
 fn sendAndWait(f: *TaskFixture, arena: std.mem.Allocator, text: []const u8) !void {
-    var gate: ?turn.Launch = null;
+    var gate: ?runs.Launch = null;
     _ = try commands.sessionSendInputForRpc(&f.engine, arena, .{
         .session_id = .bytes(TaskFixture.sid),
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = text } }} } },
     }, &gate, null);
-    turn.Launch.release(&gate, &f.engine);
+    runs.Launch.release(&gate, &f.engine);
     try f.engine.turn_tasks.await(f.engine.deps.io);
 }
 

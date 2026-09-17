@@ -5,7 +5,7 @@ const proto = @import("proto");
 const Engine = @import("Engine.zig");
 const store = @import("../store/store.zig");
 const events = @import("events.zig");
-const turn = @import("turn.zig");
+const runs = @import("run.zig");
 
 pub const max_output_bytes = 64 * 1024;
 
@@ -170,7 +170,7 @@ pub fn wake(engine: *Engine, parent: proto.ids.SessionId) !void {
     if (engine.closing) return;
     const resident = try engine.activate(parent);
     if (resident.faulted or resident.active_run != null or resident.queueDepth() == 0) return;
-    try turn.resumeSession(engine, resident);
+    try runs.resumeSession(engine, resident);
 }
 
 fn wakeFailed(engine: *Engine, parent: proto.ids.SessionId, err: anyerror) void {

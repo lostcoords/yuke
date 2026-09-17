@@ -18,6 +18,21 @@ annotation. INTEGER and computed result columns need annotations too, because SQ
 the generator their Zig signedness or semantic type. Plain TEXT, BLOB, and REAL result columns can
 fall back to `[]const u8`, `sql.Blob`, and `f64`.
 
+Use `-- row-from: QueryName` to reuse another query's complete result type:
+
+```sql
+-- name: WidgetPage :many
+-- row-from: ReadWidget
+-- after_id: wire.ids.SessionId!
+SELECT id, name FROM widget WHERE id > :after_id;
+```
+
+The reference can precede its source. Each query still needs its parameter annotations.
+The generator checks the result column names and order against the shared row.
+It rejects missing or extra columns, conflicting annotations, and reference cycles.
+The source row defines the Zig types and null rules; SQLite does not prove expression types.
+The generated query uses `ReadWidget.Row` directly.
+
 Generate and check the committed output with:
 
 ```sh

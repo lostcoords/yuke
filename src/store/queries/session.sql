@@ -172,41 +172,12 @@ LIMIT :limit;
 
 -- name: SessionPageParent :many
 -- Return children of one session. A seek on sessions_by_parent serves the order; parent is more selective
+-- row-from: SessionPageRecent
 -- filter_parent_id: [16]u8!
 -- top_level: bool!
 -- cursor_updated_at_ms: u64!
 -- cursor_id: [16]u8!
 -- limit: i64!
--- id: [16]u8!
--- root: []const u8!
--- origin: []const u8!
--- parent_id: ?[16]u8!
--- parent_message_id: ?u64!
--- parent_part_id: ?u64!
--- source_id: ?[16]u8!
--- profile: []const u8!
--- model: []const u8!
--- reasoning: []const u8!
--- config_rev: u64!
--- max_rounds: ?u64!
--- title: []const u8!
--- agent: ?[]const u8!
--- name: ?[]const u8!
--- created_by_name: ?[]const u8!
--- created_by_version: ?[]const u8!
--- message_count: u64!
--- usage_input_total: u64!
--- usage_output_total: u64!
--- usage_reasoning_total: u64!
--- usage_cache_read_total: u64!
--- usage_cache_write_total: u64!
--- created_at_ms: u64!
--- updated_at_ms: u64!
--- ctx_tokens_input: ?u64!
--- ctx_tokens_output: ?u64!
--- ctx_tokens_reasoning: ?u64!
--- ctx_tokens_cache_read: ?u64!
--- ctx_tokens_cache_write: ?u64!
 SELECT
     id, root,
     origin, parent_id, parent_message_id, parent_part_id, source_id,

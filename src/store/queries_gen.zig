@@ -222,13 +222,7 @@ pub const PendingInputs = sql.ManyQuery(
     struct {
         session_id: [16]u8,
     },
-    struct {
-        row_input_id: u64,
-        seq: u64,
-        queued_at_ms: u64,
-        payload: []const u8,
-        event_name: []const u8,
-    },
+    PendingInputById.Row,
 );
 
 pub const PendingInputCount = sql.OneQuery(
@@ -380,10 +374,7 @@ pub const MessageTail = sql.ManyQuery(
         session_id: [16]u8,
         limit: i64,
     },
-    struct {
-        message_id: u64,
-        payload: []const u8,
-    },
+    MessagePage.Row,
 );
 
 pub const LastAssistantUsage = sql.OptionalQuery(
@@ -449,10 +440,7 @@ pub const ContextMessages = sql.ManyQuery(
         first_message_id: u64,
         stop_message_id: ?u64,
     },
-    struct {
-        message_id: u64,
-        payload: []const u8,
-    },
+    MessagePage.Row,
 );
 
 pub const NewestCompaction = sql.OptionalQuery(
@@ -691,38 +679,7 @@ pub const SessionPageParent = sql.ManyQuery(
         cursor_id: [16]u8,
         limit: i64,
     },
-    struct {
-        id: [16]u8,
-        root: []const u8,
-        origin: []const u8,
-        parent_id: ?[16]u8,
-        parent_message_id: ?u64,
-        parent_part_id: ?u64,
-        source_id: ?[16]u8,
-        profile: []const u8,
-        model: []const u8,
-        reasoning: []const u8,
-        config_rev: u64,
-        max_rounds: ?u64,
-        title: []const u8,
-        agent: ?[]const u8,
-        name: ?[]const u8,
-        created_by_name: ?[]const u8,
-        created_by_version: ?[]const u8,
-        message_count: u64,
-        usage_input_total: u64,
-        usage_output_total: u64,
-        usage_reasoning_total: u64,
-        usage_cache_read_total: u64,
-        usage_cache_write_total: u64,
-        created_at_ms: u64,
-        updated_at_ms: u64,
-        ctx_tokens_input: ?u64,
-        ctx_tokens_output: ?u64,
-        ctx_tokens_reasoning: ?u64,
-        ctx_tokens_cache_read: ?u64,
-        ctx_tokens_cache_write: ?u64,
-    },
+    SessionPageRecent.Row,
 );
 
 pub const SessionCountRecent = sql.OneQuery(

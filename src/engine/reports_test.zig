@@ -166,7 +166,7 @@ test "report credits bound accepted work and preserve capacity after a lower lim
     const a = f.arena.allocator();
     for (0..136) |_| _ = try f.terminal(try f.start(), &.{}, success);
     try testing.expectError(error.ReportCapacityFull, reports.reserve(&f.engine, a, root));
-    var launch: ?@import("turn.zig").Launch = null;
+    var launch: ?@import("run.zig").Launch = null;
     const before = (try database.event.highWater(&f.db, a, child.raw)).?.input_id_high;
     try testing.expectError(error.ReportCapacityFull, commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = child, .input = .{ .content = .{ .content = &.{} } } }, &launch, null));
     try testing.expectEqual(before, (try database.event.highWater(&f.db, a, child.raw)).?.input_id_high);

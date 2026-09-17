@@ -19,7 +19,7 @@ const execution = @import("../execution.zig");
 
 const reports = @import("reports.zig");
 const ownership = @import("ownership.zig");
-const run_task = @import("turn.zig");
+const runs = @import("run.zig");
 const session_events = @import("events.zig");
 
 const Engine = @This();
@@ -261,7 +261,7 @@ pub fn resumeWorkspace(self: *Engine, workspace: []const u8) !void {
     }
     for (ready.items) |id| {
         const resident = try self.activate(id);
-        try run_task.resumeSession(self, resident);
+        try runs.resumeSession(self, resident);
     }
 }
 

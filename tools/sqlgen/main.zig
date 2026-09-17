@@ -35,13 +35,11 @@ fn run(init: std.process.Init) !void {
     const migration_count = try applyMigrations(a, init.io, conn, options.migrations);
 
     const definitions = try loadQueries(a, init.io, options.queries);
-    var resolved = try a.alloc(generator.Resolved, definitions.len);
-    for (definitions, 0..) |definition, i| {
-        resolved[i] = generator.resolve(a, conn, definition) catch |err| {
-            std.log.err("query {s}: {s}", .{ definition.name, @errorName(err) });
-            return err;
-        };
-    }
+    var diagnostic: ?[]const u8 = null;
+    const resolved = generator.resolveAll(a, conn, definitions, &diagnostic) catch |err| {
+        if (diagnostic) |name| std.log.err("query {s}: {s}", .{ name, @errorName(err) });
+        return err;
+    };
 
     var output: std.Io.Writer.Allocating = .init(a);
     try generator.emit(a, &output.writer, resolved);

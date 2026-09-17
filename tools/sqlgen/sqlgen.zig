@@ -17,27 +17,13 @@ pub const Definition = struct {
     cardinality: Cardinality,
     sql: []const u8,
     fields: []const Field,
+    row_from: ?[]const u8 = null,
 };
 
 pub const Resolved = struct {
     definition: Definition,
     params: []const Field,
     row: []const Field,
-};
-
-pub const Error = error{
-    InvalidSource,
-    DuplicateField,
-    ParameterUnnamed,
-    ParameterMissingType,
-    ParameterDuplicate,
-    ColumnInvalidName,
-    ColumnDuplicate,
-    ColumnMissingType,
-    AnnotationUnused,
-    CardinalityMismatch,
-    InvalidIdentifier,
-    NameCollision,
 };
 
 pub fn parse(a: std.mem.Allocator, source: []const u8) ![]const Definition {
@@ -60,10 +46,18 @@ pub fn parse(a: std.mem.Allocator, source: []const u8) ![]const Definition {
         i += 1;
 
         var fields: std.ArrayList(Field) = .empty;
+        var row_from: ?[]const u8 = null;
         while (i < lines.items.len) : (i += 1) {
             const trimmed = std.mem.trim(u8, lines.items[i], " \t");
             if (!std.mem.startsWith(u8, trimmed, "--")) break;
             if (parseHeader(lines.items[i]) != null) break;
+            const row_prefix = "-- row-from:";
+            if (std.mem.startsWith(u8, trimmed, row_prefix)) {
+                const name = std.mem.trim(u8, trimmed[row_prefix.len..], " \t");
+                if (row_from != null or !isIdentifier(name) or header.cardinality == .exec) return error.InvalidSource;
+                row_from = name;
+                continue;
+            }
             const field = parseField(trimmed) orelse continue;
             for (fields.items) |existing| {
                 if (std.mem.eql(u8, existing.name, field.name)) return error.DuplicateField;
@@ -85,6 +79,7 @@ pub fn parse(a: std.mem.Allocator, source: []const u8) ![]const Definition {
             .cardinality = header.cardinality,
             .sql = sql,
             .fields = try fields.toOwnedSlice(a),
+            .row_from = row_from,
         });
     }
     if (definitions.items.len == 0) return error.InvalidSource;
@@ -145,12 +140,42 @@ fn joinLines(a: std.mem.Allocator, lines: []const []const u8) ![]const u8 {
     return out.toOwnedSlice();
 }
 
-pub fn resolve(a: std.mem.Allocator, conn: zqlite.Conn, definition: Definition) !Resolved {
+/// Resolve source rows first, then validate each reference against its source.
+pub fn resolveAll(a: std.mem.Allocator, conn: zqlite.Conn, definitions: []const Definition, diagnostic: ?*?[]const u8) ![]const Resolved {
+    const queries = try a.alloc(Resolved, definitions.len);
+    for (definitions, 0..) |definition, i| {
+        if (definition.row_from != null) continue;
+        if (diagnostic) |out| out.* = definition.name;
+        queries[i] = try resolve(a, conn, definition, null);
+    }
+    for (definitions, 0..) |definition, i| {
+        if (definition.row_from == null) continue;
+        if (diagnostic) |out| out.* = definition.name;
+        var source = i;
+        // A chain longer than the query set must contain a cycle.
+        for (0..definitions.len) |_| {
+            const name = definitions[source].row_from orelse break;
+            source = for (definitions, 0..) |candidate, index| {
+                if (std.mem.eql(u8, candidate.name, name)) break index;
+            } else return error.UnknownRowSource;
+        } else return error.RowSourceCycle;
+        const row = queries[source].row;
+        if (row.len == 0) return error.RowShapeMismatch;
+        queries[i] = try resolve(a, conn, definition, row);
+    }
+    if (diagnostic) |out| out.* = null;
+    return queries;
+}
+
+fn resolve(a: std.mem.Allocator, conn: zqlite.Conn, definition: Definition, shared_row: ?[]const Field) !Resolved {
+    std.debug.assert((definition.row_from != null) == (shared_row != null));
     var statement = try prepareStatement(conn, definition.sql);
     defer statement.deinit();
 
     const column_count: usize = @intCast(c.sqlite3_column_count(statement.stmt));
     if ((definition.cardinality == .exec) != (column_count == 0)) return error.CardinalityMismatch;
+
+    if (shared_row) |fields| if (fields.len != column_count) return error.RowShapeMismatch;
 
     const used = try a.alloc(bool, definition.fields.len);
     defer a.free(used);
@@ -186,6 +211,18 @@ pub fn resolve(a: std.mem.Allocator, conn: zqlite.Conn, definition: Definition) 
         if (!isIdentifier(name)) return error.ColumnInvalidName;
         for (row.items) |existing| {
             if (std.mem.eql(u8, existing.name, name)) return error.ColumnDuplicate;
+        }
+
+        if (shared_row) |fields| {
+            const field = fields[column_i];
+            if (!std.mem.eql(u8, field.name, name)) return error.RowShapeMismatch;
+            if (fieldIndex(definition.fields, name)) |annotation_i| {
+                const annotation = definition.fields[annotation_i];
+                if (!std.mem.eql(u8, annotation.zig_type, field.zig_type) or annotation.required != field.required) return error.RowShapeMismatch;
+                used[annotation_i] = true;
+            }
+            try row.append(a, field);
+            continue;
         }
 
         if (fieldIndex(definition.fields, name)) |annotation_i| {
@@ -296,7 +333,11 @@ pub fn emit(a: std.mem.Allocator, w: *std.Io.Writer, queries: []const Resolved) 
         try writeStruct(w, query.params);
         if (query.definition.cardinality != .exec) {
             try w.writeAll(",\n");
-            try writeStruct(w, query.row);
+            if (query.definition.row_from) |source| {
+                try w.writeAll("    ");
+                try writeTitleName(w, source);
+                try w.writeAll(".Row");
+            } else try writeStruct(w, query.row);
         }
         try w.writeAll(",\n);\n");
     }
@@ -484,7 +525,7 @@ test "resolve uses SQLite names and requires ambiguous types to be annotated" {
         \\SELECT id, name FROM widget WHERE id = :id;
         \\
     );
-    const query = try resolve(arena.allocator(), conn, definitions[0]);
+    const query = try resolve(arena.allocator(), conn, definitions[0], null);
     try std.testing.expectEqualStrings("id", query.params[0].name);
     try std.testing.expectEqualStrings("i64", query.row[0].zig_type);
     try std.testing.expectEqualStrings("[]const u8", query.row[1].zig_type);
@@ -530,5 +571,91 @@ test "resolve rejects a second SQL statement in every build mode" {
         \\DELETE FROM sqlite_schema; SELECT 1;
         \\
     );
-    try std.testing.expectError(error.InvalidSource, resolve(arena.allocator(), conn, definitions[0]));
+    try std.testing.expectError(error.InvalidSource, resolve(arena.allocator(), conn, definitions[0], null));
+}
+
+test "shared rows resolve forward references and preserve result annotations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex);
+    defer conn.tryClose() catch unreachable;
+    const definitions = try parse(a,
+        \\-- name: Page :many
+        \\-- row-from: Lookup
+        \\-- after: u64!
+        \\SELECT :after AS id, NULL AS label;
+        \\-- name: Lookup :optional
+        \\-- row-from: Record
+        \\SELECT 2 AS id, NULL AS label;
+        \\-- name: Record :one
+        \\-- id: u64!
+        \\-- label: []const u8
+        \\SELECT 1 AS id, 'label' AS label;
+    );
+    const queries = try resolveAll(a, conn, definitions, null);
+    try std.testing.expectEqualStrings("after", queries[0].params[0].name);
+    try std.testing.expectEqualDeep(queries[2].row, queries[0].row);
+    try std.testing.expectEqualDeep(queries[2].row, queries[1].row);
+    var output: std.Io.Writer.Allocating = .init(a);
+    try emit(a, &output.writer, queries);
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "    Lookup.Row,\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "    Record.Row,\n") != null);
+}
+
+test "shared rows reject shape drift and keep parameter checks" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex);
+    defer conn.tryClose() catch unreachable;
+    const base =
+        \\-- name: Record :one
+        \\-- id: u64!
+        \\-- label: []const u8
+        \\SELECT 1 AS id, 'label' AS label;
+        \\
+        \\-- name: Page :many
+        \\-- row-from: Record
+        \\
+    ;
+    const cases = [_]struct { source: []const u8, err: anyerror }{
+        .{ .source = "SELECT 1 AS id;", .err = error.RowShapeMismatch },
+        .{ .source = "SELECT 1 AS id, 'x' AS label, 2 AS extra;", .err = error.RowShapeMismatch },
+        .{ .source = "SELECT 'x' AS label, 1 AS id;", .err = error.RowShapeMismatch },
+        .{ .source = "SELECT 1 AS other, 'x' AS label;", .err = error.RowShapeMismatch },
+        .{ .source = "-- id: i64!\nSELECT 1 AS id, 'x' AS label;", .err = error.RowShapeMismatch },
+        .{ .source = "-- label: []const u8!\nSELECT 1 AS id, 'x' AS label;", .err = error.RowShapeMismatch },
+        .{ .source = "SELECT :id AS id, 'x' AS label;", .err = error.ParameterMissingType },
+        .{ .source = "-- unused: u64!\nSELECT 1 AS id, 'x' AS label;", .err = error.AnnotationUnused },
+    };
+    for (cases) |case| {
+        const definitions = try parse(a, try std.mem.concat(a, u8, &.{ base, case.source }));
+        try std.testing.expectError(case.err, resolveAll(a, conn, definitions, null));
+    }
+}
+
+test "shared rows reject invalid references and declarations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex);
+    defer conn.tryClose() catch unreachable;
+    const cases = [_]struct { source: []const u8, err: anyerror }{
+        .{ .source = "-- name: Page :many\n-- row-from: Missing\nSELECT 1 AS id;", .err = error.UnknownRowSource },
+        .{ .source = "-- name: Page :many\n-- row-from: Page\nSELECT 1 AS id;", .err = error.RowSourceCycle },
+        .{ .source = "-- name: A :one\n-- row-from: B\nSELECT 1 AS id;\n-- name: B :one\n-- row-from: A\nSELECT 1 AS id;", .err = error.RowSourceCycle },
+        .{ .source = "-- name: Empty :exec\nCREATE TABLE widget (id INTEGER);\n-- name: Page :many\n-- row-from: Empty\nSELECT 1 AS id;", .err = error.RowShapeMismatch },
+    };
+    for (cases) |case| {
+        const definitions = try parse(a, case.source);
+        try std.testing.expectError(case.err, resolveAll(a, conn, definitions, null));
+    }
+    const invalid = [_][]const u8{
+        "-- name: Page :many\n-- row-from:\nSELECT 1;",
+        "-- name: Page :many\n-- row-from: bad name\nSELECT 1;",
+        "-- name: Page :many\n-- row-from: A\n-- row-from: B\nSELECT 1;",
+        "-- name: Page :exec\n-- row-from: A\nDELETE FROM widget;",
+    };
+    for (invalid) |source| try std.testing.expectError(error.InvalidSource, parse(a, source));
 }

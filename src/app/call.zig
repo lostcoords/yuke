@@ -5,7 +5,7 @@ const proto = @import("proto");
 const App = @import("app.zig").App;
 const commands = @import("../engine/commands.zig");
 const app_commands = @import("commands.zig");
-const turn = @import("../engine/turn.zig");
+const runs = @import("../engine/run.zig");
 
 /// A command refused the request. This is an operating outcome, not a bug.
 pub const Failure = struct {
@@ -26,8 +26,8 @@ pub fn call(
         return Failure{ .code = .unknown_method, .message = "unknown method" };
 
     // The launch token starts a run after the answer, so `send_input` returns before the turn does.
-    var launch: ?turn.Launch = null;
-    defer turn.Launch.release(&launch, &runtime.engine);
+    var launch: ?runs.Launch = null;
+    defer runs.Launch.release(&launch, &runtime.engine);
 
     inline for (proto.rpc.methods) |spec| {
         if (method == spec.name) {
@@ -87,7 +87,7 @@ comptime {
 }
 
 /// The handler signature states its owner and whether it needs response gates.
-fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, params: spec.params, launch: *?turn.Launch, diagnostic: *?[]const u8) !spec.result {
+fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, params: spec.params, launch: *?runs.Launch, diagnostic: *?[]const u8) !spec.result {
     const handler = @field(bindings, @tagName(spec.name));
     const args = @typeInfo(@TypeOf(handler)).@"fn".params;
     const owner = if (args[0].type.? == *App) runtime else &runtime.engine;

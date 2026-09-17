@@ -264,16 +264,9 @@ pub fn list(db: *Database, arena: std.mem.Allocator, sel: Selector, cursor: ?Cur
     return out.items;
 }
 
-/// Copy each variant row into one PageRow. All variants select the same columns in the same order.
+/// Both index variants return the same generated row type.
 fn collectPage(it: anytype, arena: std.mem.Allocator, out: *std.ArrayList(PageRow)) !void {
-    while (try it.next(arena)) |row| try out.append(arena, asPageRow(row.value));
-}
-
-fn asPageRow(row: anytype) PageRow {
-    if (@TypeOf(row) == PageRow) return row;
-    var out: PageRow = undefined;
-    inline for (@typeInfo(PageRow).@"struct".fields) |field| @field(out, field.name) = @field(row, field.name);
-    return out;
+    while (try it.next(arena)) |row| try out.append(arena, row.value);
 }
 
 /// Count the full view that the selector defines. The selector picks the same variant as `list`.

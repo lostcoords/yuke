@@ -7,7 +7,7 @@ const Engine = @import("Engine.zig");
 const commands = @import("commands.zig");
 const admission = @import("admission.zig");
 const config = @import("agent_config.zig");
-const turn = @import("turn.zig");
+const runs = @import("run.zig");
 const Draft = @import("../session/draft.zig").Draft;
 const testing = std.testing;
 const Resources = @import("test_resources.zig");
@@ -49,7 +49,7 @@ const Fixture = struct {
         _ = try config.update(&self.engine, self.arena.allocator(), .{ .revision = empty.revision, .config = .{ .models = .{ .small = .{ .model = "test/model" } } } });
         const root = try commands.sessionCreate(&self.engine, self.arena.allocator(), .{ .workspace_path = "/work", .model = "test/model", .system_prompt = base_prompt });
         self.parent = root.session.id;
-        var launch: ?turn.Launch = null;
+        var launch: ?runs.Launch = null;
         _ = try commands.sessionSendInputForRpc(&self.engine, self.arena.allocator(), .{ .session_id = self.parent, .input = input() }, &launch, null);
         const slot = launch.?.slot;
         slot.phase = .running;
@@ -71,7 +71,7 @@ const Fixture = struct {
         return .{ .workspace_path = "/work", .model = "test/model", .initial_input = input(), .child = .{ .slot = .small, .site = .{ .session_id = self.parent, .message_id = 2, .part_id = 0 }, .name = name } };
     }
 
-    fn child(self: *Fixture, name: []const u8, launch: *?turn.Launch) !proto.session.SessionResult {
+    fn child(self: *Fixture, name: []const u8, launch: *?runs.Launch) !proto.session.SessionResult {
         return commands.sessionCreateForRpc(&self.engine, self.arena.allocator(), self.params(name), launch, null);
     }
 
@@ -95,7 +95,7 @@ const Fixture = struct {
         slot.progress.current = .{ .message_id = id, .created_at_ms = 1 };
     }
 
-    fn releaseParent(self: *Fixture, launch: *?turn.Launch) void {
+    fn releaseParent(self: *Fixture, launch: *?runs.Launch) void {
         const slot = launch.*.?.slot;
         const resident = self.engine.sessions.get(slot.sessionId()).?;
         std.debug.assert(resident.draft != null);
@@ -103,7 +103,7 @@ const Fixture = struct {
         resident.draft = null;
         slot.progress.current = null;
         slot.phase = .pending_start;
-        turn.Launch.release(launch, &self.engine);
+        runs.Launch.release(launch, &self.engine);
     }
 };
 
@@ -116,18 +116,18 @@ test "depth limits admit grandchildren and keep names local to each parent" {
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    var child_launch: ?turn.Launch = null;
+    var child_launch: ?runs.Launch = null;
     const child = try f.child("review", &child_launch);
     var params = f.params("review");
     params.child.?.site = try f.toolSite(child.session.id);
-    var grandchild_launch: ?turn.Launch = null;
+    var grandchild_launch: ?runs.Launch = null;
     try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch, null));
     try f.engine.setAgentLimits(8, 2);
     const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch, null);
     try testing.expectEqual(@as(u32, 2), grandchild_launch.?.slot.depth);
     try testing.expectEqual(f.parent, grandchild_launch.?.slot.tree_root);
     params.child.?.site = .{ .session_id = grandchild.session.id, .message_id = 2, .part_id = 0 };
-    var refused: ?turn.Launch = null;
+    var refused: ?runs.Launch = null;
     try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, params, &refused, null));
 }
 
@@ -137,16 +137,16 @@ test "one tree limit queues grandchildren and resumes their parent after reports
     defer f.deinit();
     const a = f.arena.allocator();
     try f.engine.setAgentLimits(1, 2);
-    var child_launch: ?turn.Launch = null;
+    var child_launch: ?runs.Launch = null;
     const child = try f.child("review", &child_launch);
     var params = f.params("scan");
     params.child.?.site = try f.toolSite(child.session.id);
-    var grandchild_launch: ?turn.Launch = null;
+    var grandchild_launch: ?runs.Launch = null;
     const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grandchild_launch, null);
     try testing.expect(grandchild.input.? == .queued);
     try testing.expectEqual(@as(u64, 1), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, grandchild.session.id.raw)).?.run_id_high);
-    var sibling_launch: ?turn.Launch = null;
+    var sibling_launch: ?runs.Launch = null;
     const sibling = try f.child("later", &sibling_launch);
     {
         var candidates = try f.db.queries.child_admission_candidates.rows(.{ .parent_id = f.parent.raw });
@@ -155,10 +155,10 @@ test "one tree limit queues grandchildren and resumes their parent after reports
         try testing.expectEqual(sibling.session.id.raw, (try candidates.next(a)).?.value.id);
         try testing.expect(try candidates.next(a) == null);
     }
-    turn.Launch.release(&sibling_launch, &f.engine);
-    turn.Launch.release(&grandchild_launch, &f.engine);
+    runs.Launch.release(&sibling_launch, &f.engine);
+    runs.Launch.release(&grandchild_launch, &f.engine);
     try f.engine.setAgentLimits(1, 1);
-    var refused: ?turn.Launch = null;
+    var refused: ?runs.Launch = null;
     params.child.?.name = "later";
     try testing.expectError(error.AgentDepthLimit, commands.sessionCreateForRpc(&f.engine, a, params, &refused, null));
     f.releaseParent(&child_launch);
@@ -186,7 +186,7 @@ test "atomic creation binds its receipt and rejects invalid child sites without 
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    var launch: ?turn.Launch = null;
+    var launch: ?runs.Launch = null;
     const first = try f.child("research", &launch);
     try testing.expectEqual(@as(u64, 1), first.input.?.started.run_id);
     try testing.expectEqual(@as(u64, 1), admission.capacity(&f.engine, f.parent).active);
@@ -195,7 +195,7 @@ test "atomic creation binds its receipt and rejects invalid child sites without 
     try testing.expectEqual(first.input.?.started.input_id, history.messages[0].user.input_id);
     try testing.expectEqual(f.parent, history.messages[0].user.source.?.parent_instruction.session_id);
     try testing.expectEqual(@as(u64, 2), history.messages[0].user.source.?.parent_instruction.message_id);
-    var refused: ?turn.Launch = null;
+    var refused: ?runs.Launch = null;
     try testing.expectError(error.DuplicateChildName, f.child("research", &refused));
     for ([_][]const u8{ "root", "Research", "../escape", "two words", "", "9start", "a" ** 65 }) |name| try testing.expectError(error.BadChildName, f.child(name, &refused));
     var bad = f.params("invalid");
@@ -217,24 +217,24 @@ test "child capacity excludes the parent and admits durable queues in FIFO order
     defer f.deinit();
     const a = f.arena.allocator();
     try f.engine.setAgentLimits(1, 1);
-    var one_launch: ?turn.Launch = null;
+    var one_launch: ?runs.Launch = null;
     const one = try f.child("one", &one_launch);
-    var two_launch: ?turn.Launch = null;
+    var two_launch: ?runs.Launch = null;
     const two = try f.child("two", &two_launch);
-    var three_launch: ?turn.Launch = null;
+    var three_launch: ?runs.Launch = null;
     const three = try f.child("three", &three_launch);
     try testing.expectEqual(proto.session.InputQueueReason.concurrency_limit, two.input.?.queued.reason);
     try testing.expect(three.input.? == .queued);
     try testing.expectEqual(@as(u64, 1), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, two.session.id.raw));
-    turn.Launch.release(&two_launch, &f.engine);
-    turn.Launch.release(&three_launch, &f.engine);
+    runs.Launch.release(&two_launch, &f.engine);
+    runs.Launch.release(&three_launch, &f.engine);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, two.session.id.raw)).?.run_id_high);
-    var followup: ?turn.Launch = null;
+    var followup: ?runs.Launch = null;
     const queued = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = one.session.id, .input = input() }, &followup, null);
     try testing.expectEqual(proto.session.InputQueueReason.session_busy, queued.queued.reason);
-    turn.Launch.release(&followup, &f.engine);
-    turn.Launch.release(&one_launch, &f.engine);
+    runs.Launch.release(&followup, &f.engine);
+    runs.Launch.release(&one_launch, &f.engine);
     for (0..1000) |_| {
         if (admission.capacity(&f.engine, f.parent).active == 0) break;
         try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
@@ -245,7 +245,7 @@ test "child capacity excludes the parent and admits durable queues in FIFO order
     const row = (try f.db.conn.row("SELECT (SELECT min(rowid) FROM events WHERE session_id = ?1 AND name = 'run.started') < (SELECT min(rowid) FROM events WHERE session_id = ?2 AND name = 'run.started')", .{ zqlite.blob(&two.session.id.raw), zqlite.blob(&three.session.id.raw) })).?;
     defer row.deinit();
     try testing.expectEqual(@as(i64, 1), row.int(0));
-    var next: ?turn.Launch = null;
+    var next: ?runs.Launch = null;
     const reused = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = two.session.id, .input = input() }, &next, null);
     try testing.expectEqual(@as(u64, 2), reused.started.run_id);
 }
@@ -255,7 +255,7 @@ test "a parent site must name a running tool part in an uncanceled run" {
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    var refused: ?turn.Launch = null;
+    var refused: ?runs.Launch = null;
     var bad = f.params("outside");
     bad.child.?.site.part_id = 7;
     try testing.expectError(error.BadToolSite, commands.sessionCreateForRpc(&f.engine, a, bad, &refused, null));
@@ -273,16 +273,16 @@ test "a free slot serves the oldest queued child before a new request" {
     defer f.deinit();
     const a = f.arena.allocator();
     try f.engine.setAgentLimits(1, 1);
-    var one_launch: ?turn.Launch = null;
+    var one_launch: ?runs.Launch = null;
     _ = try f.child("one", &one_launch);
-    var two_launch: ?turn.Launch = null;
+    var two_launch: ?runs.Launch = null;
     const two = try f.child("two", &two_launch);
-    turn.Launch.release(&two_launch, &f.engine);
+    runs.Launch.release(&two_launch, &f.engine);
     // Free a slot without the drain task, so the rule alone decides.
     f.engine.max_concurrent_children = 2;
     try testing.expect(try admission.available(&f.engine, a, f.parent, two.session.id));
     try testing.expect(!try admission.available(&f.engine, a, f.parent, .bytes([_]u8{9} ** 16)));
-    turn.Launch.release(&one_launch, &f.engine);
+    runs.Launch.release(&one_launch, &f.engine);
 }
 
 test "admission skips a faulted child and serves its sibling" {
@@ -291,16 +291,16 @@ test "admission skips a faulted child and serves its sibling" {
     defer f.deinit();
     const a = f.arena.allocator();
     try f.engine.setAgentLimits(1, 1);
-    var one_launch: ?turn.Launch = null;
+    var one_launch: ?runs.Launch = null;
     _ = try f.child("one", &one_launch);
-    var two_launch: ?turn.Launch = null;
+    var two_launch: ?runs.Launch = null;
     const two = try f.child("two", &two_launch);
-    var three_launch: ?turn.Launch = null;
+    var three_launch: ?runs.Launch = null;
     const three = try f.child("three", &three_launch);
     f.engine.sessions.get(two.session.id).?.faulted = true;
-    turn.Launch.release(&two_launch, &f.engine);
-    turn.Launch.release(&three_launch, &f.engine);
-    turn.Launch.release(&one_launch, &f.engine);
+    runs.Launch.release(&two_launch, &f.engine);
+    runs.Launch.release(&three_launch, &f.engine);
+    runs.Launch.release(&one_launch, &f.engine);
     for (0..1000) |_| {
         if ((try database.event.highWater(&f.db, a, three.session.id.raw)).?.run_id_high > 0) break;
         try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
@@ -315,12 +315,12 @@ test "a lower live limit preserves active runs and a higher limit drains queued 
     defer f.deinit();
     const a = f.arena.allocator();
     try f.engine.setAgentLimits(2, 1);
-    var first: ?turn.Launch = null;
+    var first: ?runs.Launch = null;
     _ = try f.child("first", &first);
-    var second: ?turn.Launch = null;
+    var second: ?runs.Launch = null;
     _ = try f.child("second", &second);
     try f.engine.setAgentLimits(1, 1);
-    var pending: ?turn.Launch = null;
+    var pending: ?runs.Launch = null;
     const third = try f.child("third", &pending);
     try testing.expect(third.input.? == .queued);
     try testing.expectEqual(@as(u64, 2), admission.capacity(&f.engine, f.parent).active);
@@ -340,11 +340,11 @@ test "boot resumes queued children under the limit without a surviving parent dr
     defer f.deinit();
     const a = f.arena.allocator();
     try f.engine.setAgentLimits(1, 1);
-    var first_gate: ?turn.Launch = null;
+    var first_gate: ?runs.Launch = null;
     const first = try f.child("first", &first_gate);
-    var second_gate: ?turn.Launch = null;
+    var second_gate: ?runs.Launch = null;
     const second = try f.child("second", &second_gate);
-    var third_gate: ?turn.Launch = null;
+    var third_gate: ?runs.Launch = null;
     const third = try f.child("third", &third_gate);
     f.engine.close();
     f.engine = f.resources.makeEngine(&f.db);
@@ -366,16 +366,16 @@ test "a full child input queue rejects work without an input id or event" {
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    var gate: ?turn.Launch = null;
+    var gate: ?runs.Launch = null;
     const child = try f.child("busy", &gate);
     const params: proto.session.SessionSendInputParams = .{ .session_id = child.session.id, .input = input() };
     for (0..proto.meta.limits.max_queued_inputs) |_| {
-        var wake: ?turn.Launch = null;
+        var wake: ?runs.Launch = null;
         const result = try commands.sessionSendInputForRpc(&f.engine, a, params, &wake, null);
         try testing.expectEqual(proto.session.InputQueueReason.session_busy, result.queued.reason);
     }
     const before = (try database.event.highWater(&f.db, a, child.session.id.raw)).?;
-    var refused: ?turn.Launch = null;
+    var refused: ?runs.Launch = null;
     try testing.expectError(error.QueueFull, commands.sessionSendInputForRpc(&f.engine, a, params, &refused, null));
     const after = (try database.event.highWater(&f.db, a, child.session.id.raw)).?;
     try testing.expectEqual(before.seq_high, after.seq_high);
@@ -389,7 +389,7 @@ test "a terminal child retains capacity until native cleanup ends" {
     defer f.deinit();
     const a = f.arena.allocator();
     try f.engine.setAgentLimits(1, 1);
-    var first: ?turn.Launch = null;
+    var first: ?runs.Launch = null;
     _ = try f.child("first", &first);
     const slot = first.?.slot;
     const Work = @import("../session/work.zig");
@@ -405,10 +405,10 @@ test "a terminal child retains capacity until native cleanup ends" {
     slot.work.retain(&cleanup.operation);
     var retained = true;
     defer if (retained) slot.work.release(f.resources.runtime.io(), &cleanup.operation);
-    var next: ?turn.Launch = null;
+    var next: ?runs.Launch = null;
     const second = try f.child("second", &next);
-    turn.Launch.release(&next, &f.engine);
-    turn.Launch.release(&first, &f.engine);
+    runs.Launch.release(&next, &f.engine);
+    runs.Launch.release(&first, &f.engine);
     for (0..1000) |_| {
         if (cleanup.canceled) break;
         try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
@@ -434,7 +434,7 @@ test "a failed initial input transaction leaves no session or ownership claim" {
     try f.db.conn.execNoArgs("CREATE TEMP TRIGGER refuse_input BEFORE INSERT ON pending_inputs BEGIN SELECT RAISE(FAIL, 'test refusal'); END");
     const owner_count = f.engine.owners.count();
     const session_count = try database.session.count(&f.db, a, .{});
-    var gate: ?turn.Launch = null;
+    var gate: ?runs.Launch = null;
     try testing.expectError(error.ConstraintTrigger, commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .initial_input = input() }, &gate, null));
     try testing.expectEqual(owner_count, f.engine.owners.count());
     try testing.expectEqual(session_count, try database.session.count(&f.db, a, .{}));
@@ -447,11 +447,11 @@ test "child completion stays queued across an active parent interrupt" {
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    var launch: ?turn.Launch = null;
+    var launch: ?runs.Launch = null;
     const child = try f.child("reporter", &launch);
     f.resources.providers.deinit();
     f.resources.providers = .init(testing.allocator, f.resources.runtime.io(), &f.resources.env);
-    turn.Launch.release(&launch, &f.engine);
+    runs.Launch.release(&launch, &f.engine);
     for (0..1000) |_| {
         if (admission.capacity(&f.engine, f.parent).active == 0) break;
         try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
@@ -474,10 +474,10 @@ test "a canceled active child emits one terminal report" {
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    var launch: ?turn.Launch = null;
+    var launch: ?runs.Launch = null;
     const child = try f.child("cancel", &launch);
     _ = try commands.sessionCancelRun(&f.engine, a, .{ .session_id = child.session.id });
-    turn.Launch.release(&launch, &f.engine);
+    runs.Launch.release(&launch, &f.engine);
     for (0..1000) |_| {
         if (admission.capacity(&f.engine, f.parent).active == 0) break;
         try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
@@ -493,7 +493,7 @@ test "native child admission enforces the slot and preserves parent instruction 
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    var gate: ?turn.Launch = null;
+    var gate: ?runs.Launch = null;
     var params = f.params("guarded");
     params.child.?.slot = .medium;
     try testing.expectError(error.AgentSetupRequired, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
@@ -513,7 +513,7 @@ test "native child admission enforces the slot and preserves parent instruction 
     const policy = try prompts.expand(a, prompts.default_child_instructions, .{ .workspace = child.session.root, .session_id = child.session.id, .agent_name = "guarded" });
     try testing.expect(std.mem.indexOf(u8, policy, "You are guarded,") != null);
     try testing.expectEqualStrings(try std.fmt.allocPrint(a, "custom child prompt\n\n{s}\n\n{s}", .{ policy, (try database.session.promptParts(&f.db, a, child.session.id.raw)).environment }), prompt);
-    var next: ?turn.Launch = null;
+    var next: ?runs.Launch = null;
     var followup: proto.session.SessionSendInputParams = .{ .session_id = child.session.id, .input = input(), .parent_tool = .{ .session_id = f.parent, .message_id = 999, .part_id = 0 } };
     try testing.expectError(error.BadToolSite, commands.sessionSendInputForRpc(&f.engine, a, followup, &next, null));
     followup.parent_tool.?.message_id = 2;
@@ -531,7 +531,7 @@ test "child prompts inherit the saved base and snapshot their own policy" {
     try f.engine.setPromptConfig("new process default", f.engine.child_instructions);
     try f.engine.setPromptConfig(f.engine.default_system_prompt, "policy for ${agent_name} in ${workspace}");
     f.engine.max_agent_depth = 2;
-    var launch: ?turn.Launch = null;
+    var launch: ?runs.Launch = null;
     const child = try f.child("worker", &launch);
     const saved = try commands.sessionConfig(&f.engine, a, .{ .session_id = child.session.id });
     const child_parts = try database.session.promptParts(&f.db, a, child.session.id.raw);
@@ -543,7 +543,7 @@ test "child prompts inherit the saved base and snapshot their own policy" {
     const site = try f.toolSite(child.session.id);
     var grand_params = f.params("grandchild");
     grand_params.child.?.site = site;
-    var grand_launch: ?turn.Launch = null;
+    var grand_launch: ?runs.Launch = null;
     const grandchild = try commands.sessionCreateForRpc(&f.engine, a, grand_params, &grand_launch, null);
     const grand_parts = try database.session.promptParts(&f.db, a, grandchild.session.id.raw);
     try testing.expectEqualStrings(try std.fmt.allocPrint(a, "parent base\n\nnext policy grandchild\n\n{s}", .{grand_parts.environment}), (try database.session.prompt(&f.db, a, grandchild.session.id.raw)).?);
@@ -551,7 +551,7 @@ test "child prompts inherit the saved base and snapshot their own policy" {
     try f.engine.setPromptConfig(f.engine.default_system_prompt, "");
     var explicit = f.params("explicit");
     explicit.system_prompt = "${agent_name}";
-    var explicit_launch: ?turn.Launch = null;
+    var explicit_launch: ?runs.Launch = null;
     const custom = try commands.sessionCreateForRpc(&f.engine, a, explicit, &explicit_launch, null);
     const custom_parts = try database.session.promptParts(&f.db, a, custom.session.id.raw);
     try testing.expectEqualStrings(try std.fmt.allocPrint(a, "explicit\n\n{s}", .{custom_parts.environment}), (try database.session.prompt(&f.db, a, custom.session.id.raw)).?);
@@ -569,7 +569,7 @@ test "root templates resolve once and invalid templates create no session" {
     const expected = try std.fmt.allocPrint(a, "root /work {s}\n\n{s}", .{ hex, parts.environment });
     try testing.expectEqualStrings(expected, (try database.session.prompt(&f.db, a, root.session.id.raw)).?);
     try f.engine.setPromptConfig("changed", f.engine.child_instructions);
-    var launch: ?turn.Launch = null;
+    var launch: ?runs.Launch = null;
     _ = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = root.session.id, .input = input() }, &launch, null);
     try testing.expectEqualStrings(expected, launch.?.slot.config.system_prompt);
     try testing.expectError(error.InvalidPromptPlaceholder, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .system_prompt = "${missing}" }));
@@ -621,7 +621,7 @@ test "instruction snapshots survive file edits and child creation" {
     const workspace = path_buf[0..try tmp.dir.realPath(testing.io, &path_buf)];
     const original = "Use the project rules literally: ${unknown}.\n";
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = original });
-    var root_launch: ?turn.Launch = null;
+    var root_launch: ?runs.Launch = null;
     const root = try commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model", .initial_input = input(), .system_prompt = "custom" }, &root_launch, null);
     const root_parts = try database.session.promptParts(&f.db, a, root.session.id.raw);
     try testing.expectEqualStrings("custom", root_parts.base);
@@ -636,7 +636,7 @@ test "instruction snapshots survive file edits and child creation" {
     params.workspace_path = workspace;
     params.child.?.site = try f.toolSite(root.session.id);
     params.system_prompt = "";
-    var child_launch: ?turn.Launch = null;
+    var child_launch: ?runs.Launch = null;
     const child = try commands.sessionCreateForRpc(&f.engine, a, params, &child_launch, null);
     const child_parts = try database.session.promptParts(&f.db, a, child.session.id.raw);
     try testing.expectEqualStrings("", child_parts.base);
@@ -645,13 +645,13 @@ test "instruction snapshots survive file edits and child creation" {
     try testing.expectEqualStrings(original, sources[0].text);
     params.child.?.site = try f.toolSite(child.session.id);
     params.child.?.name = "grandchild";
-    var grand_launch: ?turn.Launch = null;
+    var grand_launch: ?runs.Launch = null;
     const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grand_launch, null);
     const grand_parts = try database.session.promptParts(&f.db, a, grandchild.session.id.raw);
     try testing.expectEqualStrings(root_parts.instructions, grand_parts.instructions);
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, grand_launch.?.slot.config.system_prompt, original));
     const count = (try commands.sessionList(&f.engine, a, .{})).total;
-    var refused: ?turn.Launch = null;
+    var refused: ?runs.Launch = null;
     var diagnostic: ?[]const u8 = null;
     try testing.expectError(error.InvalidInstructions, commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model" }, &refused, &diagnostic));
     try testing.expect(std.mem.indexOf(u8, diagnostic.?, metadata[0].path) != null);
@@ -706,7 +706,7 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
     f.engine.sinks.add(.{ .ctx = @ptrCast(&notices), .on_event = NoticeLog.onEvent });
     defer f.engine.sinks.remove(@ptrCast(&notices));
 
-    var root_launch: ?turn.Launch = null;
+    var root_launch: ?runs.Launch = null;
     const root = try commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model", .initial_input = input() }, &root_launch, null);
     const parts = try database.session.promptParts(&f.db, a, root.session.id.raw);
     try testing.expect(std.mem.indexOf(u8, parts.skills, "<name>pdf</name>") != null);
@@ -725,7 +725,7 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
     try testing.expectEqual(.workspace, item.skills.?[0].scope);
     try testing.expect(item.context_changes == null);
 
-    var unused: ?turn.Launch = null;
+    var unused: ?runs.Launch = null;
     var diagnostic: ?[]const u8 = null;
     const loaded = try commands.skillLoad(&f.engine, a, .{ .session_id = root.session.id, .name = "pdf" }, &unused, &diagnostic);
     try testing.expectEqualStrings("Do the pdf thing.", loaded.body);
@@ -741,7 +741,7 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
     var params = f.params("worker");
     params.workspace_path = workspace;
     params.child.?.site = try f.toolSite(root.session.id);
-    var child_launch: ?turn.Launch = null;
+    var child_launch: ?runs.Launch = null;
     const child = try commands.sessionCreateForRpc(&f.engine, a, params, &child_launch, null);
     const inherited = try database.session.skillCatalog(&f.db, a, child.session.id.raw);
     try testing.expectEqual(@as(usize, 1), inherited.len);
@@ -788,7 +788,7 @@ test "reload replaces both snapshots of an idle session and the stale check trac
     try testing.expect(stale.context_changes.?.skills and stale.context_changes.?.instructions);
     try testing.expectEqualStrings("Handle PDFs", stale.skills.?[0].description);
 
-    var unused: ?turn.Launch = null;
+    var unused: ?runs.Launch = null;
     var diagnostic: ?[]const u8 = null;
     const reloaded = try commands.sessionReloadContext(&f.engine, a, .{ .session_id = root.session.id }, &unused, &diagnostic);
     try testing.expectEqual(@as(usize, 1), reloaded.instruction_sources.len);

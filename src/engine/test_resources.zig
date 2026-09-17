@@ -7,7 +7,7 @@ const ai = @import("ai");
 const proto = @import("proto");
 const Engine = @import("Engine.zig");
 const commands = @import("commands.zig");
-const turn = @import("turn.zig");
+const runs = @import("run.zig");
 const database = @import("../store/store.zig");
 const Database = database.Database;
 const ProviderStore = @import("../provider/provider_store.zig");
@@ -98,7 +98,7 @@ pub const Fixture = struct {
     models: [1]registry.ModelSpec,
     rows: [1]registry.Provider,
     capture: Capture,
-    gate: ?turn.Launch = null,
+    gate: ?runs.Launch = null,
 
     pub const id: proto.ids.SessionId = .bytes([_]u8{74} ** 16);
 
@@ -142,7 +142,7 @@ pub const Fixture = struct {
 
     /// Start the launched run and wait until the session is idle again.
     pub fn finish(self: *Fixture, session: proto.ids.SessionId) !void {
-        turn.Launch.release(&self.gate, &self.engine);
+        runs.Launch.release(&self.gate, &self.engine);
         for (0..1000) |_| {
             const resident = self.engine.sessions.get(session);
             if (resident == null or (resident.?.active_run == null and resident.?.queueDepth() == 0)) return;

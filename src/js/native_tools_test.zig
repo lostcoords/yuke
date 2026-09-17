@@ -485,7 +485,7 @@ test "exec completion detaches before call abort and host close rejects late exe
 
 test "session cancel reaches the builtin exec process group" {
     const commands = @import("../engine/commands.zig");
-    const turn = @import("../engine/turn.zig");
+    const runs = @import("../engine/run.zig");
     const provider = @import("../provider/provider.zig");
     var f: @import("extensions.zig").Fixture = undefined;
     try f.init("", "import \"yuke:kernel\"; import \"yuke:ext\";");
@@ -520,12 +520,12 @@ test "session cancel reaches the builtin exec process group" {
         "data: {\"type\":\"message_stop\"}\n\n",
     });
     const created = try commands.sessionCreate(&f.app.engine, a, .{ .workspace_path = host.cwd, .model = "test-exec/model" });
-    var launch: ?turn.Launch = null;
+    var launch: ?runs.Launch = null;
     _ = try commands.sessionSendInputForRpc(&f.app.engine, a, .{
         .session_id = created.session.id,
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "Run the command." } }} } },
     }, &launch, null);
-    turn.Launch.release(&launch, &f.app.engine);
+    runs.Launch.release(&launch, &f.app.engine);
     const pids = try waitExecPids(host, f.tmp.dir);
     const canceled = try commands.sessionCancelRun(&f.app.engine, a, .{ .session_id = created.session.id });
     try std.testing.expect(canceled.canceled_run != null);

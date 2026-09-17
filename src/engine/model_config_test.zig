@@ -221,8 +221,8 @@ test "a patch lands on the next turn while a run holds its own config" {
     defer f.deinit();
     const a = f.arena.allocator();
     const id = try seed(&f, a);
-    var launch: ?@import("turn.zig").Launch = null;
-    defer @import("turn.zig").Launch.release(&launch, &f.engine);
+    var launch: ?@import("run.zig").Launch = null;
+    defer @import("run.zig").Launch.release(&launch, &f.engine);
     _ = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = id, .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "go" } }} } } }, &launch, null);
 
     // The run copied its settings at start, so a patch during the turn is accepted and does not disturb it.
