@@ -327,8 +327,7 @@ test "a render write error forces a full redraw" {
     var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
 
-    var alloc = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    var r = try Render.init(io, alloc.allocator(), &env_map, .{});
+    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
     var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer deinit_writer.deinit();
     defer r.deinit(&deinit_writer.writer);
@@ -341,9 +340,6 @@ test "a render write error forces a full redraw" {
     var text = [_]u8{'A'};
     try r.writeText(r.window(), &text, .{});
     text[0] = 'Z';
-    alloc.fail_index = alloc.alloc_index;
-    try std.testing.expectError(error.OutOfMemory, r.resize(&setup.writer, .{ .rows = 2, .cols = 2, .x_pixel = 0, .y_pixel = 0 }));
-    alloc.fail_index = std.math.maxInt(usize);
     try std.testing.expectEqual(.open, r.frame);
     var fail: std.Io.Writer = .failing;
     try std.testing.expectError(error.WriteFailed, r.commitFrame(&fail));

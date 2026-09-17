@@ -111,9 +111,7 @@ pub const Client = struct {
             }) catch |err| return switch (err) {
                 error.UnsupportedUriScheme, error.UriMissingHost => error.BadUrl,
                 error.OutOfMemory, error.Canceled => err,
-                // The handshake ends before the request, so the server read no bytes here either.
-                error.TlsInitializationFailed => error.PreFlight,
-                // `request` only connects, so the server never read these bytes.
+                // `request` only connects or runs the handshake, so the server never read these bytes.
                 else => error.PreFlight,
             };
             // The connect ended, so the read timeout owns every later failure. A cancel during the

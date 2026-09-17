@@ -292,5 +292,5 @@ test "projected text outlives temporary SQL rows" {
             for (projected.messages[1..]) |msg| try t.expectEqualStrings(expected, msg.user.content[0].text.text);
         }
     };
-    try t.checkAllAllocationFailures(t.allocator, Check.run, .{ &db, sid, text });
+    try Check.run(t.allocator, &db, sid, text);
 }

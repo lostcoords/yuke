@@ -53,7 +53,7 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
     else
         Extra{};
     return .{
-        .output = out.dupe(u8, text) catch return fault(out, "out of memory"),
+        .output = out.dupe(u8, text) catch unreachable,
         .view = extra.view,
         .media = extra.media,
         .is_error = call.is_error,

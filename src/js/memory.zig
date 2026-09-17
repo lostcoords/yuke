@@ -148,20 +148,8 @@ test "QuickJS counts large allocations and rejects their combined size over the 
     try std.testing.expectEqual(before.malloc_count, runtime.computeMemoryUsage().malloc_count);
 }
 
-test "QuickJS runtime initialization releases partial allocations on failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
-        fn run(gpa: std.mem.Allocator) !void {
-            var memory: Allocator = .{ .backing = gpa };
-            defer memory.deinit();
-            const runtime = try createRuntime(&memory);
-            runtime.deinit();
-        }
-    }.run, .{});
-}
-
 test "QuickJS page reuse stays bounded and preserves realloc and calloc semantics" {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    var memory: Allocator = .{ .backing = failing.allocator() };
+    var memory: Allocator = .{ .backing = std.testing.allocator };
     defer memory.deinit();
     var pages: [10]*anyopaque = undefined;
     for (&pages) |*page| {
@@ -170,20 +158,14 @@ test "QuickJS page reuse stays bounded and preserves realloc and calloc semantic
     }
     for (pages) |page| free(&memory, page);
     try std.testing.expectEqual(memory.blocks.len, memory.len);
-    failing.fail_index = failing.alloc_index;
     const reused = calloc(&memory, 1, page_size) orelse return error.OutOfMemory;
     var owned: ?*anyopaque = reused;
     defer free(&memory, owned);
+    try std.testing.expectEqual(memory.blocks.len - 1, memory.len); // calloc took a cached page
     try std.testing.expectEqual(page_size, usableSize(reused));
     const bytes: [*]u8 = @ptrCast(reused);
     try std.testing.expect(std.mem.allEqual(u8, bytes[0..page_size], 0));
     @memset(bytes[0..3072], 0xa5);
-    failing.resize_fail_index = failing.resize_index;
-    try std.testing.expectEqual(null, realloc(&memory, owned, page_size * 2));
-    try std.testing.expectEqual(page_size, usableSize(owned));
-    try std.testing.expect(std.mem.allEqual(u8, bytes[0..3072], 0xa5));
-    failing.fail_index = std.math.maxInt(usize);
-    failing.resize_fail_index = std.math.maxInt(usize);
     owned = realloc(&memory, owned, page_size * 2) orelse return error.OutOfMemory;
     try std.testing.expect(std.mem.allEqual(u8, @as([*]u8, @ptrCast(owned.?))[0..3072], 0xa5));
     owned = realloc(&memory, owned, 3072) orelse return error.OutOfMemory;

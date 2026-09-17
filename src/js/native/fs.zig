@@ -138,9 +138,7 @@ fn readTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
 
     const text = local.readAll(arena.allocator(), req.path, max_read_bytes) catch |err|
         return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
-    const owned = host.gpa.dupe(u8, text) catch
-        return op.finish(.{ .failed = .{ .message = "out of memory" } });
-    op.finish(.{ .text = owned });
+    op.finish(.{ .text = host.gpa.dupe(u8, text) catch unreachable });
 }
 
 fn readRangeTask(host: *Host, op: *pending.Op, req: ReadRequest) void {

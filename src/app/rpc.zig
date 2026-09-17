@@ -30,14 +30,10 @@ const OwnedNotification = struct {
     arena: std.heap.ArenaAllocator,
     value: proto.rpc.Notification,
 
-    fn create(gpa: std.mem.Allocator, value: proto.rpc.Notification) ?*OwnedNotification {
-        const owned = gpa.create(OwnedNotification) catch return null;
+    fn create(gpa: std.mem.Allocator, value: proto.rpc.Notification) *OwnedNotification {
+        const owned = gpa.create(OwnedNotification) catch unreachable;
         owned.* = .{ .arena = std.heap.ArenaAllocator.init(gpa), .value = undefined };
-        owned.value = proto.clone.dupe(owned.arena.allocator(), value) catch {
-            owned.arena.deinit();
-            gpa.destroy(owned);
-            return null;
-        };
+        owned.value = proto.clone.dupe(owned.arena.allocator(), value) catch unreachable;
         return owned;
     }
 
@@ -150,10 +146,7 @@ pub const Rpc = struct {
     /// Queue one engine event without entering the owner or waiting on stdout.
     pub fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
         const self: *Rpc = @ptrCast(@alignCast(ctx));
-        const owned = OwnedNotification.create(self.gpa, note) orelse {
-            self.fail("out of memory while queueing a notification");
-            return;
-        };
+        const owned = OwnedNotification.create(self.gpa, note);
         self.notifications.append(owned) catch {
             owned.destroy(self.gpa);
             self.fail("notification queue is full");
@@ -599,17 +592,17 @@ test "notification queue is bounded and remains FIFO across wraparound" {
         .message = "queued",
     } } };
     for (0..queue_slots) |i| {
-        owned[i] = OwnedNotification.create(testing.allocator, note) orelse return error.OutOfMemory;
+        owned[i] = OwnedNotification.create(testing.allocator, note);
         try queue.append(owned[i].?);
     }
-    const overflow = OwnedNotification.create(testing.allocator, note) orelse return error.OutOfMemory;
+    const overflow = OwnedNotification.create(testing.allocator, note);
     try testing.expectError(error.Full, queue.append(overflow));
     overflow.destroy(testing.allocator);
 
     const first = queue.pop() orelse unreachable;
     first.destroy(testing.allocator);
     owned[0] = null;
-    owned[queue_slots] = OwnedNotification.create(testing.allocator, note) orelse return error.OutOfMemory;
+    owned[queue_slots] = OwnedNotification.create(testing.allocator, note);
     try queue.append(owned[queue_slots].?);
     try testing.expectEqual(@as(usize, queue_slots), queue.len);
     for (1..queue_slots + 1) |i| {
@@ -669,7 +662,7 @@ test "owner writes queued notifications before the response" {
         .source = "test",
         .message = "queued",
     } } };
-    try notifications.append(OwnedNotification.create(testing.allocator, note) orelse return error.OutOfMemory);
+    try notifications.append(OwnedNotification.create(testing.allocator, note));
 
     rpc.flushNotifications();
     try rpc.writeResult("r1", "{\"ok\":true}");

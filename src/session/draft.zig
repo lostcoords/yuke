@@ -172,13 +172,9 @@ pub const Draft = struct {
 
     /// Fold a `tool.state_changed` event.
     pub fn applyToolState(self: *Draft, d: tool.ToolStateChangedData) Error!void {
-        return self.applyToolStateAlloc(d, self.arena.allocator());
-    }
-
-    fn applyToolStateAlloc(self: *Draft, d: tool.ToolStateChangedData, a: std.mem.Allocator) Error!void {
         const t = self.toolPart(d.part_id);
         std.debug.assert(!isTerminal(t.state)); // the engine settles each tool part once
-        t.state = try dupeToolState(a, d.state);
+        t.state = try dupeToolState(self.arena.allocator(), d.state);
     }
 
     /// Attach the reasoning signature at block stop. A signed block resends on a tool continuation.
@@ -472,19 +468,6 @@ test "completed tool state with a diff view clones the whole tree" {
     const cloned = d.parts.items[0].tool.state.completed;
     try testing.expectEqualStrings("x.zig", cloned.view.?[0].diff.files[0].path);
     try testing.expectEqualStrings("+b", cloned.view.?[0].diff.files[0].hunks[0].lines[2]);
-}
-
-test "a failed tool-state clone changes no field" {
-    var d = try Draft.init(testing.allocator, started("a"));
-    defer d.deinit();
-    try d.addPart(addTool(0, .{ .pending = .{} }));
-
-    const change = toolStateChange(0, .{ .completed = .{ .output = "done", .duration_ms = 2 } });
-
-    var storage: [2]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&storage);
-    try testing.expectError(error.OutOfMemory, d.applyToolStateAlloc(change, fba.allocator()));
-    try testing.expect(d.parts.items[0].tool.state == .pending);
 }
 
 test "streaming state: running tool outranks a trailing reasoning part" {

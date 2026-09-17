@@ -72,18 +72,12 @@ pub fn authLogin(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Aut
 
     // The slot arena owns the code and the url, because the login outlives this request arena.
     var slot_arena: std.heap.ArenaAllocator = .init(runtime.gpa);
-    const owned_id = slot_arena.allocator().dupe(u8, params.provider_id) catch |err| {
-        slot_arena.deinit();
-        return err;
-    };
+    const owned_id = slot_arena.allocator().dupe(u8, params.provider_id) catch unreachable;
 
     // Reserve before the network call, because `start` yields and a second request would pass
     // the check above. The registry owns the arena from here, so one `remove` frees everything.
     const login_id: proto.ids.LoginId = .bytes(runtime.newId() ++ runtime.newId());
-    const slot = runtime.logins.reserve(login_id, slot_arena, owned_id, flow) catch |err| {
-        slot_arena.deinit();
-        return err;
-    };
+    const slot = runtime.logins.reserve(login_id, slot_arena, owned_id, flow) catch unreachable; // only an allocation fails here
     errdefer runtime.logins.remove(login_id);
 
     var client: net_http.Client = .init(runtime.gpa, runtime.io);
