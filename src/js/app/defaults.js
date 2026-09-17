@@ -111,18 +111,11 @@ plugins.use({
             " · obj " + mb(m.objects) + "/" + k(m.objectCount) + " · prop " + mb(m.properties) + "/" + k(m.propertyCount) +
             " · shape " + mb(m.shapes) + " · arr " + k(m.arrayCount));
         },
-        "chat:focus-toggle": () => withChat(c => {
-          c.view.focusRegion(c.view.focus === "transcript" ? "composer" : "transcript");
-          root.invalidate();
-        }),
       }, {
         "ui:sessions": { title: "Sessions", description: "open a session", slash: "sessions" },
         "chat:new": { title: "New chat", description: "leave the session and start empty", slash: "new" },
         "chat:paste-image": { title: "Paste image", description: "attach the image on the clipboard" },
       });
-
-      // Global commands live on ctrl strokes and window nav behind ctrl+k, which leaves ctrl+w for the composer word-erase.
-      ctx.tui.keymap({ tab: "chat:focus-toggle" }, "chat");
 
       // The nav keys drive whichever widget the focused layer offers, so any pane scrolls the same way.
       /** @param {(t: NavTarget) => void} fn @returns {() => boolean} */

@@ -35,14 +35,13 @@ if (!command.available("suspend")) fail.push("suspend-command");
   chat.view.focus = "composer";
   root.focusView(chat.view);
 }
-// Tab moves the region focus with no vim plugin loaded.
+// Tab keeps the composer focus without the Vim plugin.
 {
   const tab = { type: "key", code: "tab", char: "", text: "", event: "press", mods: 0 };
   if (chat.view.focus !== "composer") fail.push("boot-region");
   root.onEvent(tab);
-  if (chat.view.focus !== "transcript") fail.push("tab-to-transcript");
-  root.onEvent(tab);
-  if (chat.view.focus !== "composer") fail.push("tab-back");
+  if (chat.view.focus !== "composer") fail.push("tab-keeps-composer");
+  if (command.available("chat:focus-toggle")) fail.push("focus-toggle-without-vim");
 }
 command.perform("ui:palette");
 if (root.overlays.length !== 1) fail.push("palette");

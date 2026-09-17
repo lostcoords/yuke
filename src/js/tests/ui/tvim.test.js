@@ -1,6 +1,6 @@
 import { check } from "yuke:test";
 import { term } from "yuke:term";
-import { root, Node, keymap } from "yuke:core";
+import { root, Node, keymap, command } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ChatView } from "yuke:chat-view";
 import { transcriptVim } from "yuke:transcript-vim";
@@ -24,10 +24,20 @@ paint();
 const composerCaret = v.cursor();
 check("composer-caret", composerCaret && composerCaret.y === v.composer.rect.y);
 
+root.onEvent(key("tab"));
+check("tab-without-vim", v.focus === "composer" && v.cursor().y === composerCaret.y);
+const mouseRect = v.transcript.pager.rect();
+v.onMouse({ type: "mouse", col: mouseRect.x + 4, row: mouseRect.y, button: "left", event: "press", mods: 0 });
+check("click-without-vim", v.focus === "composer" && v.cursor().y === composerCaret.y);
+
 const off = plugins.use(transcriptVim);
 // The pane takes no cursor until the focus moves, so typing still works.
 check("still-composer", v.cursor().y === v.composer.rect.y);
-v.focusRegion("transcript");
+root.onEvent(key("tab"));
+check("tab-to-transcript", v.focus === "transcript");
+root.onEvent(key("tab"));
+check("tab-to-composer", v.focus === "composer" && v.cursor().y === composerCaret.y);
+root.onEvent(key("tab"));
 const c0 = v.cursor();
 check("transcript-caret", c0 && c0.visible && c0.y < v.composer.rect.y);
 
@@ -177,6 +187,9 @@ check("jump-composer", v.cursor() && v.cursor().y === v.composer.rect.y);
 v.focusRegion("transcript");
 off();
 check("unload-region", v.focus === "composer");
+check("unload-focus-command", !command.available("chat:focus-toggle"));
+root.onEvent(key("tab"));
+check("unload-tab", v.focus === "composer");
 check("unload-restores", (v.cursor() || {}).y === v.composer.rect.y);
 root.onEvent(key("char", "x"));
 check("unload-restores-typing", v.composer.input.text === before + "x");

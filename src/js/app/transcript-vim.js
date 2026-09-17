@@ -295,6 +295,16 @@ export const transcriptVim = {
   /** @param {Context} ctx */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
+      ctx.tui.command("chat", {
+        "chat:focus-toggle": () => {
+          const view = focusedChatView();
+          if (!view) return;
+          view.focusRegion(view.focus === "transcript" ? "composer" : "transcript");
+          root.invalidate();
+        },
+      });
+      ctx.tui.keymap({ tab: "chat:focus-toggle" }, "chat");
+
       // Normal keys reach the keymap only where the transcript holds the region focus.
       ctx.tui.route("keymap", TRANSCRIPT);
 
