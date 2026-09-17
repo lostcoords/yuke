@@ -26,8 +26,8 @@ pub const Request = struct {
 pub const AttemptInfo = struct {
     /// A parsed `retry-after-ms`, or `retry-after` converted to milliseconds.
     retry_after_ms: ?u64 = null,
-    /// `x-should-retry`. A false value vetoes a retry.
-    should_retry: ?bool = null,
+    /// The provider sent `x-should-retry: false`, which vetoes a retry.
+    no_retry: bool = false,
     /// The adapter sets this before the first body write. A later transport fault is then ambiguous.
     delivery: Delivery = .definitely_unsent,
 

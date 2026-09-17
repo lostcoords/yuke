@@ -195,21 +195,17 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
         streamer.reset();
         var info: ai.transport.AttemptInfo = .{};
         const terminal = streamAttempt(engine, arena, slot, streamer, &request.?, &info) catch |err| {
-            const decision = retry.decide(engine.deps.retry_policy, .{
+            const delay_ms = retry.decide(engine.deps.retry_policy, .{
                 .err = err,
                 .info = info,
-                // A published event outranks every other gate. The client already folded that output.
+                // The client already folded a published event, so a repeat must not send it again.
                 .saw_semantic = streamer.saw_semantic,
                 .number = number,
                 .budget_left = slot.retry_budget,
-            }, engine.jitter());
-            const delay_ms = switch (decision) {
-                .stop => {
-                    // The wire message names a class, not the cause. Record the cause before it is lost.
-                    std.log.warn("run {d} attempt {d} ended: {t}", .{ slot.runId(), number, err });
-                    return .{ .failed = failure(err) };
-                },
-                .retry_in_ms => |ms| ms,
+            }, engine.jitter()) orelse {
+                // The wire message names a class, not the cause. Record the cause before it is lost.
+                std.log.warn("run {d} attempt {d} ended: {t}", .{ slot.runId(), number, err });
+                return .{ .failed = failure(err) };
             };
 
             std.debug.assert(slot.retry_budget > 0); // the classifier refuses a retry at zero

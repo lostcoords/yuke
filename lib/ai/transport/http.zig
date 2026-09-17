@@ -211,9 +211,7 @@ fn readRetryHeaders(head: std.http.Client.Response.Head, info: *transport.Attemp
                 info.retry_after_ms = secs *| 1000;
             } else |_| {} // An HTTP-date form needs a clock, so the caller uses its own delay.
         } else if (std.ascii.eqlIgnoreCase(h.name, "x-should-retry")) {
-            const v = std.mem.trim(u8, h.value, " ");
-            if (std.ascii.eqlIgnoreCase(v, "true")) info.should_retry = true;
-            if (std.ascii.eqlIgnoreCase(v, "false")) info.should_retry = false;
+            if (std.ascii.eqlIgnoreCase(std.mem.trim(u8, h.value, " "), "false")) info.no_retry = true;
         }
     }
 }
