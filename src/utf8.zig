@@ -1,5 +1,4 @@
-//! Make arbitrary bytes safe for a transcript, a JSON string, and a JavaScript string.
-//! A command prints any bytes, but every consumer above this line reads text.
+//! Make arbitrary bytes safe for a transcript, a JSON string, and a JavaScript string; a command prints any bytes, but every consumer above this line reads text.
 
 const std = @import("std");
 

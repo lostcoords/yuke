@@ -1,13 +1,11 @@
-//! The device-code poll policy. This file holds no clock and performs no input or output.
-//! The caller supplies the time and executes the action, so every rule here is directly testable.
+//! The device-code poll policy holds no clock and performs no input or output; the caller supplies the time and executes the action, so every rule is directly testable.
 
 const std = @import("std");
 
 /// RFC 8628 adds this much to the interval after a `slow_down` reply.
 const slow_down_step_ms = 5_000;
 
-/// Hold one floor under the wait. RFC 8628 section 3.5 leaves the cadence itself to the server,
-/// and the deadline already bounds the login, so no ceiling belongs here.
+/// Hold one floor under the wait; RFC 8628 section 3.5 leaves the cadence to the server, and the deadline already bounds the login, so no ceiling belongs here.
 const min_interval_ms = 1_000;
 
 /// Bound the retry delay after a transient failure.
@@ -85,8 +83,7 @@ pub const Poller = struct {
         return .{ .wait_ms = @min(delay_ms, remaining_ms) };
     }
 
-    /// Take a server interval and reset the transient delay. An interval never falls,
-    /// so a later reply cannot undo a `slow_down` increase.
+    /// Take a server interval and reset the transient delay; an interval never falls, so a later reply cannot undo a `slow_down` increase.
     fn adopt(self: *Poller, server_s: ?u64) u64 {
         if (server_s) |seconds| {
             self.interval_ms = atLeastInterval(@max(self.interval_ms, seconds *| 1_000));

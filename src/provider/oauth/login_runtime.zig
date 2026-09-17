@@ -63,8 +63,7 @@ pub const Logins = struct {
         return null;
     }
 
-    /// Reserve the provider and take its arena, before any call that can yield.
-    /// The registry owns the arena from here, so the caller frees the slot only through `remove`.
+    /// Reserve the provider and take its arena before any call that can yield; the registry owns the arena from here, so the caller frees the slot only through `remove`.
     pub fn reserve(self: *Logins, id: proto.ids.LoginId, arena: std.heap.ArenaAllocator, provider_id: []const u8, flow: Flow) !*LoginSlot {
         const slot = try self.gpa.create(LoginSlot);
         errdefer self.gpa.destroy(slot);

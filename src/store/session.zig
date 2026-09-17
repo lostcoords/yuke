@@ -1,5 +1,4 @@
-//! The session registry stores the primary session state.
-//! The event log omits session.summary_changed, so this table is authoritative.
+//! The session registry stores the primary session state and is authoritative because the event log omits `session.summary_changed`.
 
 const std = @import("std");
 const sql = @import("sql");
@@ -21,8 +20,7 @@ pub const OpenRun = struct {
 /// Store one row of a session.list page. Every page variant selects the same columns.
 pub const PageRow = queries_gen.SessionPageRecent.Row;
 
-/// The session.list selector uses a filter only when its field has a value.
-/// The top_level filter keeps roots and forks.
+/// The session.list selector uses a filter only when its field has a value, and the top_level filter keeps roots and forks.
 pub const Selector = struct {
     parent_id: ?[16]u8 = null,
     top_level: bool = false,
@@ -230,12 +228,10 @@ pub fn clearOpenRun(db: *Database, arena: std.mem.Allocator, id: [16]u8, run_id:
     });
 }
 
-/// The first page seeks below this cursor. The schema bounds updated_at_ms to 2^53-1, so this
-/// timestamp exceeds every stored row. The row-value predicate keeps one seekable form and admits all.
+/// The first page seeks below this cursor; the schema bounds updated_at_ms to 2^53-1, so this timestamp exceeds every stored row, and the row-value predicate keeps one seekable form and admits all.
 const first_page: Cursor = .{ .updated_at_ms = std.math.maxInt(i64), .id = [_]u8{0xFF} ** 16 };
 
-/// Load one keyset page of the session list into `arena`, newest first. The result borrows `arena`.
-/// The selector picks the index-seek variant: parent scope or recent rows.
+/// Load one keyset page of the session list into `arena`, newest first; the result borrows `arena`, and the selector picks the parent-scope or recent-row index-seek variant.
 pub fn list(db: *Database, arena: std.mem.Allocator, sel: Selector, cursor: ?Cursor, limit: i64) ![]PageRow {
     if (limit < 0) return error.InvalidLimit; // SQLite treats a negative LIMIT as unbounded.
     const c = cursor orelse first_page;
@@ -551,8 +547,7 @@ test "each list variant seeks its index and never sorts" {
     try expectPlan(&db, queries_gen.SessionPageParent.sql, "sessions_by_parent");
 }
 
-/// Assert the planner SEARCHes `index` for the real generated query and adds no sort step.
-/// SEARCH proves a subset seek; a plain SCAN or a temp b-tree would mean the keyset does not hold.
+/// Assert that the planner SEARCHes `index` for the real generated query and adds no sort step; SEARCH proves a subset seek, while a plain SCAN or temp B-tree means the keyset does not hold.
 fn expectPlan(db: *Database, comptime query: [:0]const u8, index: []const u8) !void {
     var rows = try db.conn.rows("EXPLAIN QUERY PLAN " ++ query, .{});
     defer rows.deinit();

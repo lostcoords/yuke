@@ -916,8 +916,7 @@ function clampChildSize(size, total) {
   return Math.max(1, Math.min(size, total - 1));
 }
 
-// --- status bar ---------------------------------------------------------------------------
-// One row under the whole layout, where a segment renders to a string or to nothing, so an idle provider takes no space.
+// --- status bar --------------------------------------------------------------------------- One row under the whole layout; a segment renders to a string or to nothing, so an idle provider takes no space.
 export const status = {
   /** @type {StatusEntry[]} */
   _list: [],

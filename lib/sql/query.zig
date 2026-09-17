@@ -6,8 +6,7 @@ const c = zqlite.c;
 
 pub const Connection = zqlite.Conn;
 
-/// Report whether `conn` is inside an explicit transaction. A multi-statement store operation
-/// asserts this so a partial failure cannot leave a half-applied commit.
+/// Report whether `conn` is inside an explicit transaction; a multi-statement store operation asserts this so a partial failure cannot leave a half-applied commit.
 pub fn inTransaction(conn: Connection) bool {
     return c.sqlite3_get_autocommit(conn.conn) == 0;
 }
@@ -264,8 +263,7 @@ fn validateParamShape(comptime Expected: type, comptime Actual: type) void {
     }
 }
 
-/// Copy `params` into the declared parameter type. The caller must pass exactly its fields.
-/// Each assignment checks the field type.
+/// Copy `params` into the declared parameter type; the caller must pass exactly its fields, and each assignment checks the field type.
 fn coerceParams(comptime Expected: type, params: anytype) Expected {
     comptime validateParamShape(Expected, @TypeOf(params));
     var result: Expected = undefined;
@@ -653,8 +651,7 @@ fn bindValue(comptime T: type, statement: zqlite.Stmt, index: usize, value: T) !
 
 const ByteStorage = enum { text, blob };
 
-// SQLITE_TRANSIENT (-1 as a fn pointer) trips Zig's arm64 alignment check; a data pointer is
-// ABI-identical and SQLite only compares the sentinel, never calls it.
+// SQLITE_TRANSIENT (-1 as a function pointer) trips Zig's arm64 alignment check; a data pointer is ABI-identical, and SQLite only compares the sentinel, never calls it.
 const sqlite_transient: ?*const anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
 extern fn sqlite3_bind_text(?*c.sqlite3_stmt, c_int, [*c]const u8, c_int, ?*const anyopaque) c_int;
 extern fn sqlite3_bind_blob(?*c.sqlite3_stmt, c_int, ?*const anyopaque, c_int, ?*const anyopaque) c_int;

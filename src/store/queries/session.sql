@@ -35,8 +35,7 @@ INSERT INTO sessions(
 SELECT 1 AS present FROM sessions WHERE id = :id;
 
 -- name: SessionSnapshot :optional
--- Return the summary for the client and the open-run terminal marker for one id.
--- Omit the id allocation marks because callers allocate them in write transactions.
+-- Return the summary and open-run terminal marker for one id; omit id allocation marks because callers allocate them in write transactions.
 -- id: [16]u8!
 -- root: []const u8!
 -- origin: []const u8!
@@ -114,12 +113,10 @@ WHERE id = :id
   AND open_run_started_at_ms = :started_at_ms
 RETURNING 1 AS changed;
 
--- These are the session.list page columns. Every variant selects them in the same order, so the store
--- maps each generated row to one PageRow.
+-- These are the session.list page columns; every variant selects them in the same order, so the store maps each generated row to one PageRow.
 
 -- name: SessionPageRecent :many
--- Return a newest-first page. sessions_by_recent supplies the order and the cursor seek.
--- The top_level value filters the scan and keeps roots and forks.
+-- Return a newest-first page; sessions_by_recent supplies the order and cursor seek, and top_level filters the scan to roots and forks.
 -- top_level: bool!
 -- cursor_updated_at_ms: u64!
 -- cursor_id: [16]u8!

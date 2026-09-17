@@ -1,13 +1,4 @@
-//! The tools `index.js` registered. Each one owns a live JavaScript handler.
-//!
-//! The table stays sorted by name, so the load order of a plugin never moves the advertised prefix.
-//!
-//! The host owns this table, so a handler stays reachable for the life of the context.
-//! A plugin registers and withdraws a tool at any time, and the engine asks for the set.
-//!
-//! A turn task submits a `Call` and waits. The OWNER runs the handler, polls the Promise, and
-//! answers. No engine task ever enters QuickJS. The executor is cooperative and holds one thread,
-//! so a task mutates the queue only between suspension points, and the two sides never interleave.
+//! The tools `index.js` registered each own a live JavaScript handler; the table stays sorted by name, so plugin load order never moves the advertised prefix; the host owns this table, so a handler stays reachable for the life of the context, while a plugin can register or withdraw a tool at any time and the engine asks for the set; a turn task submits a `Call` and waits, the owner runs the handler, polls the Promise, and answers, no engine task enters QuickJS, and the cooperative executor holds one thread, so a task mutates the queue only between suspension points and the two sides never interleave.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -61,9 +52,7 @@ pub const Tools = struct {
         self.gpa.free(decl.input_schema);
     }
 
-    /// Add one tool. The table copies the text and takes the handler reference on success only.
-    ///
-    /// `JS_ToCStringLen` writes WTF-8 for a lone surrogate, so the copies become valid UTF-8 here, because a provider request accepts text only.
+    /// Add one tool; the table copies the text and takes the handler reference on success only; `JS_ToCStringLen` writes WTF-8 for a lone surrogate, so the copies become valid UTF-8 here because a provider request accepts text only.
     pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, handler: Value, flags: Flags) RegisterError!void {
         if (!validName(name)) return error.InvalidName;
         const slot = self.lookup(name);
@@ -119,9 +108,7 @@ pub const Tools = struct {
 /// What one call asks for. The kind selects the handler the owner runs and the answer it records.
 pub const Kind = enum { tool, hook, input };
 
-/// One call in flight. A turn task submits it and waits; the owner answers it.
-///
-/// The submitter touches no QuickJS value, so it never frees the Promise; it marks itself done and the owner sweeps the record.
+/// One call in flight; a turn task submits it and waits, and the owner answers it; the submitter touches no QuickJS value, so it never frees the Promise, marks itself done, and lets the owner sweep the record.
 pub const Call = struct {
     kind: Kind = .tool,
     /// The tool name, the hook point, or the input method. The submitter owns these bytes for the whole call.

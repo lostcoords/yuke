@@ -13,8 +13,7 @@ pub const Line = struct {
     text: []const u8,
 };
 
-/// One hunk. The start values are 1-based, as a unified difference states them. A side with no line
-/// has start 0 and count 0.
+/// One hunk has 1-based start values as a unified difference states them; a side with no line has start 0 and count 0.
 pub const Hunk = struct {
     old_start: u32,
     old_lines: u32,
@@ -30,9 +29,7 @@ const Record = struct {
     new_index: u32,
 };
 
-/// Build the hunks of `edits`. `context` sets how many unchanged lines stay on each side of a change.
-/// Two changes join into one hunk when at most `2 * context` unchanged lines separate them.
-/// The result borrows `arena`, `old_text`, and `new_text`.
+/// Build the hunks of `edits`; `context` sets unchanged lines on each side, two changes join when at most `2 * context` unchanged lines separate them, and the result borrows `arena`, `old_text`, and `new_text`.
 pub fn group(
     arena: std.mem.Allocator,
     edits: []const Edit,

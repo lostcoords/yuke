@@ -1,6 +1,4 @@
-//! The event log is authoritative. Projections rebuild from it.
-//! Call these primitives inside the caller's write transaction so the event and projection commit together.
-//! The input inbox owns idempotency for a retried request.
+//! The event log is authoritative and projections rebuild from it; call these primitives inside the caller's write transaction so each event and projection commit together, and let the input inbox own idempotency for a retried request.
 
 const std = @import("std");
 const sql = @import("sql");
@@ -17,8 +15,7 @@ pub const HighWater = struct {
     message_count: u64,
 };
 
-/// Allocate the next seq and append the event. Return the seq. Run inside a write transaction.
-/// The caller mints event_id (UUIDv7) and stamps committed_at_ms; both belong to the event envelope.
+/// Allocate the next seq, append the event, and return the seq inside a write transaction; the caller mints event_id (UUIDv7) and stamps committed_at_ms, and both fields belong to the event envelope.
 pub fn append(
     db: *Database,
     arena: std.mem.Allocator,

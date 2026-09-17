@@ -1,5 +1,4 @@
-//! Session commands. Each builds a wire result from the engine and the store.
-//! Each handler owns its write transaction.
+//! Session commands build wire results from the engine and the store, and each handler owns its write transaction.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -237,8 +236,7 @@ test "session list cursor round-trips and binds to its selector" {
     try std.testing.expectError(error.BadCursor, decodeCursor(different, encoded));
 }
 
-/// Handle initialize: report the engine snapshot. The session revision starts at 0 each run because
-/// it lives in memory. The catalog revision waits for the catalog slice.
+/// Handle initialize: report the engine snapshot; the session revision starts at 0 each run because it lives in memory, and the catalog revision waits for the catalog slice.
 pub fn initialize(engine: *Engine, _: std.mem.Allocator) !proto.misc.InitializeResult {
     return .{
         .protocol = proto.meta.protocol_version,
@@ -254,8 +252,7 @@ pub fn blobPut(engine: *Engine, arena: std.mem.Allocator, params: proto.blob.Blo
     return engine.deps.blobs.put(engine.deps.io, arena, params.path);
 }
 
-/// Handle session.config: return one config revision and the session's system prompt.
-/// Return the current config for a null config_rev. Return UnknownConfigRev for an absent revision.
+/// Handle session.config: return one config revision and the session's system prompt; return the current config for a null config_rev and UnknownConfigRev for an absent revision.
 pub fn sessionConfig(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionConfigParams) !proto.session.SessionConfigResult {
     const sid = params.session_id.raw;
     const snap = (try session_store.snapshot(engine.deps.db, arena, sid)) orelse return error.UnknownSession;
@@ -305,8 +302,7 @@ pub fn sessionPatch(engine: *Engine, arena: std.mem.Allocator, params: proto.ses
     return (try session_events.sessionItem(arena, patched)).session;
 }
 
-/// Handle session.history: return a page of committed messages oldest first, the configs those
-/// assistant turns reference, and whether older messages remain.
+/// Handle session.history: return a page of committed messages oldest first, the configs those assistant turns reference, and whether older messages remain.
 pub fn sessionHistory(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionHistoryParams) !proto.session.SessionHistoryResult {
     const sid = params.session_id.raw;
     if (!try session_store.exists(engine.deps.db, arena, sid)) return error.UnknownSession;
@@ -510,8 +506,7 @@ pub fn sessionRemove(engine: *Engine, arena: std.mem.Allocator, params: proto.se
         return error.SessionHasChildren;
 
     const doomed = try removalSet(engine, arena, sid, params.cascade_children);
-    // Check each session before the first delete, so a busy child leaves no partial removal.
-    // A pinned session is open in a view, and a removal would leave that view with no resident.
+    // Check each session before the first delete so a busy child leaves no partial removal; a pinned session is open in a view, and removal would leave that view without a resident.
     for (doomed) |id| {
         const rt = engine.sessions.get(.bytes(id)) orelse continue;
         if (rt.active_run != null or rt.pins != 0) return error.SessionBusy;

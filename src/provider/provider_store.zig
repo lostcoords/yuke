@@ -115,9 +115,7 @@ test "removing a credential keeps every route field and drops an entry that held
     try std.testing.expectEqualStrings("k2", swapped.auth.?.api_key.source.?.literal);
 }
 
-/// Drop one grant from the layer in memory, without a write. A rotation whose result cannot land on
-/// disk still spent its refresh token, so the engine must never send that token again.
-/// The file keeps the old grant, and only a restart reads it back.
+/// Drop one grant from the layer in memory without a write; a rotation whose result cannot reach disk still spent its refresh token, so the engine must never send it again, while the file keeps the old grant until a restart reads it back.
 pub fn forgetGrant(self: *@This(), provider_id: []const u8) void {
     const loaded = if (self.local) |*local| local else return;
     for (loaded.providers) |*p| {
@@ -141,8 +139,7 @@ fn install(self: *@This(), providers: []const provider.config.LocalProvider, pat
 
     var next = try provider.config.loadBytes(self.gpa, bytes);
     errdefer next.deinit();
-    // Build the replacement before the write. A later failure would leave the file ahead of memory,
-    // and the next edit would then serialize the stale layer back over the file.
+    // Build the replacement before the write; a later failure would leave the file ahead of memory, and the next edit would then serialize the stale layer back over the file.
     var next_merged = try self.load(&next);
     errdefer next_merged.deinit();
     try provider.config.writeFileBytes(self.io, path, bytes);

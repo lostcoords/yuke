@@ -1,5 +1,4 @@
-//! The session config projection. A config change writes one event and one revision row, and sets the
-//! session's current config. session.config reads a revision back directly. Replay rebuilds this.
+//! The session config projection writes one event and one revision row, sets the current config, lets `session.config` read the revision directly, and rebuilds it during replay.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -7,8 +6,7 @@ const sql = @import("sql");
 const Database = @import("store.zig").Database;
 const event = @import("event.zig");
 
-/// Append a config change, store its revision, and set the session's current config.
-/// Run inside a write transaction. The caller mints event_id.
+/// Append a config change, store its revision, and set the session's current config inside a write transaction; the caller mints event_id.
 pub fn appendConfig(
     db: *Database,
     arena: std.mem.Allocator,
@@ -40,8 +38,7 @@ pub fn appendConfig(
     return seq;
 }
 
-/// Record the birth config as revision 0 so every referenced revision resolves.
-/// Create calls this without a log event because the session row already carries the config.
+/// Record the birth config as revision 0 so every referenced revision resolves; Create calls this without a log event because the session row already carries the config.
 pub fn recordInitial(db: *Database, session_id: [16]u8, config: proto.run.RunConfig) !void {
     std.debug.assert(sql.inTransaction(db.conn)); // Create records this with the session in one commit.
     std.debug.assert(config.config_rev == 0); // The birth config is always revision 0.

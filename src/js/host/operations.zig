@@ -1,5 +1,4 @@
-//! The operation types that the built-in host tools share.
-//! `LocalHost` in `local.zig` implements every operation.
+//! The operation types that the built-in host tools share; `LocalHost` in `local.zig` implements every operation.
 
 /// The file system's native errors map into this closed set, so a tool never sees an OS error code.
 pub const HostError = error{

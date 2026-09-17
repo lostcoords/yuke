@@ -114,8 +114,7 @@ pub const Client = struct {
                 // `request` only connects or runs the handshake, so the server never read these bytes.
                 else => error.PreFlight,
             };
-            // The connect ended, so the read timeout owns every later failure. A cancel during the
-            // connect must leave this unset, or the parent reads a send that never happened.
+            // The connect ended, so the read timeout owns every later failure; a cancel during the connect must leave it unset, or the parent reads a send that never happened.
             leg.connected.set(io);
             break :request opened;
         };

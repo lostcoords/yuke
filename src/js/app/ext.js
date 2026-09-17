@@ -329,8 +329,7 @@ function isReserved(name) {
   return reserved.has(name);
 }
 
-// --- inject: hold a block for the capabilities it needs ---
-// The block owns a child scope, and a change of a named capability drops that scope and builds it again.
+// --- inject: hold a block for the capabilities it needs --- The block owns a child scope, and a change of a named capability drops that scope and builds it again.
 /** @template {string} K @param {Scope} parent @param {string} id @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
 function injectInto(parent, id, names, apply) {
   if (!Array.isArray(names) || names.length === 0) throw new TypeError("inject needs at least one capability name");
@@ -374,8 +373,7 @@ function injectInto(parent, id, names, apply) {
       child.effect(() => apply(/** @type {InjectContext<K>} */ (ctx)));
       // The block can drop its own dependency, so confirm the requirement before the block commits.
       if (satisfied() && !stopped && parent.alive) {
-        // The old block leaves only after the new one holds what it registered, so a shared
-        // resource such as an overlay passes from one block to the next without a gap.
+        // The old block leaves only after the new one holds what it registered, so a shared resource such as an overlay passes from one block to the next without a gap.
         drop();
         live = child;
       } else {
@@ -429,8 +427,7 @@ function injectInto(parent, id, names, apply) {
   });
 }
 
-// --- hooks: the points a plugin answers ---
-// A fact reads as `x.verbed` and needs no answer. A point reads as `x.verb` and the runtime waits.
+// --- hooks: the points a plugin answers --- A fact reads as `x.verbed` and needs no answer; a point reads as `x.verb` and the runtime waits.
 /** @type {Record<string, HookEntry[]>} */
 const HOOKS = Object.create(null);
 
@@ -534,8 +531,7 @@ installInputGate((params, method = "session.send_input") => (method === "session
   (e) => ({ failure: { code: e.code || "internal", message: e.message || String(e) } }),
 ));
 
-// --- interaction: the service a frontend installs ---
-// A frontend answers a question and shows a message. It is always present, so it gates no block.
+// --- interaction: the service a frontend installs --- A frontend answers a question and shows a message; it is always present, so it gates no block.
 
 /** @param {string} name @returns {Error} */
 function noAnswerer(name) {
@@ -589,8 +585,7 @@ function boundSurface(ctx) {
   return surface;
 }
 
-// --- plugin context: the register-through-me surface ---
-// Every registration is an effect on the scope, so an unload reverts all of them.
+// --- plugin context: the register-through-me surface --- Every registration is an effect on the scope, so an unload reverts all of them.
 export class Context {
   /** @param {Scope} scope @param {string} id */
   constructor(scope, id) {
@@ -652,8 +647,7 @@ export class Context {
   }
 }
 
-// --- plugin registry ---
-// A plugin is `{ name, apply }`. The name keys the registry and prefixes every command, so it is required.
+// --- plugin registry --- A plugin is `{ name, apply }`; the name keys the registry and prefixes every command, so it is required.
 /** @param {Plugin} plugin @returns {void} */
 function checkPlugin(plugin) {
   const ok = plugin !== null && typeof plugin === "object" && typeof plugin.apply === "function";

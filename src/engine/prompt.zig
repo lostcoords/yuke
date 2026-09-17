@@ -137,8 +137,7 @@ test "environment dates use the creation instant and escape workspace delimiters
 
 test "the prompt names the shell that was selected and never another one" {
     const a = std.testing.allocator;
-    // A fallback must never advertise Bash, and a Bash selection must render its exact path.
-    // A long path also proves the removed fixed buffer cannot come back.
+    // A fallback must never advertise Bash, a Bash selection must render its exact path, and a long path must prove that the removed fixed buffer stays removed.
     const long = "/opt/" ++ "d" ** 200 ++ "/bin/bash";
     for ([_][]const u8{ "/bin/sh", long }) |path| {
         const text = try environment(a, "/work", .{ .path = path }, 0);

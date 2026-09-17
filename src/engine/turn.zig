@@ -224,9 +224,7 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
 
 /// Record the wait on the slot, then publish it, so the wait shows as a retry and not a silent pause.
 fn publishRetrying(engine: *Engine, rt: *Session, slot: *RunSlot, number: u8, err: anyerror, delay_ms: u64) void {
-    // @todo(xyaman): log one line per attempt. Record the attempt number, provider, model, status, the
-    // normalized code, the provider request id, the delivery engine, the delay source, and the budget
-    // left. Never log the API key. A user report of odd retry behavior has nothing to read today.
+    // @todo(xyaman): log one line per attempt with the attempt number, provider, model, status, normalized code, provider request id, delivery engine, delay source, and remaining budget; never log the API key, so a user can inspect odd retry behavior.
     const detail = failure(err);
     std.debug.assert(slot.round == .waiting or slot.round == .streaming); // only a live attempt can fail
     slot.round = .{ .retrying = .{
@@ -564,8 +562,7 @@ const Streamer = struct {
         session_events.announceActivity(self.engine, self.session); // A closed reasoning part ends the reasoning phase.
     }
 
-    /// Open a pending tool part when its block stops. The provider is a peer, so cap the metadata sizes.
-    /// The part stays pending until the run settles it into a terminal state.
+    /// Open a pending tool part when its block stops; the provider is a peer, so cap metadata sizes, and the part stays pending until the run settles it into a terminal state.
     fn emitToolPart(self: *Streamer, part_id: ids.PartId, call: event.ToolCall) !void {
         try checkStreamCap(0, call.name.len);
         try checkStreamCap(0, call.call_id.len);

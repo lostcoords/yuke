@@ -1,7 +1,4 @@
-//! The port the engine calls to run a tool. The process supplies the implementation.
-//!
-//! The engine never names a tool. It sends `decls` to the provider and calls `run` for whichever
-//! name the provider chose. A built-in tool and a future extension tool both arrive through here.
+//! The process supplies the port that runs tools; the engine never names a tool: it sends `decls` to the provider and calls `run` with the name the provider chose, so a built-in tool and a future extension tool use the same path.
 
 const std = @import("std");
 const proto = @import("proto");

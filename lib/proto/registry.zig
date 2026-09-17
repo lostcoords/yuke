@@ -244,8 +244,7 @@ pub const numeric_enums = [_]EnumEntry{
     .{ .name = "ErrorCode", .ty = enums.ErrorCode },
 };
 
-/// Every enum in emission order: the string enums, with the one numeric enum after the second.
-/// The list derives from the two tables above, so adding or removing an enum needs no edit here.
+/// The emission order lists the string enums, then the one numeric enum after the second; the list derives from the two tables, so adding or removing an enum needs no edit here.
 pub const enum_order = blk: {
     const Ordered = struct { entry: EnumEntry, numeric: bool };
     var out: [string_enums.len + numeric_enums.len]Ordered = undefined;

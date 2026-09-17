@@ -1,7 +1,4 @@
-//! The native `yuke:exec` module: run one shell command and answer what it printed.
-//!
-//! A command has a real duration, so it always runs on its own task.
-//! The owner continues to paint, and the task writes plain JSON text the owner turns into a result.
+//! The native `yuke:exec` module runs one shell command and answers what it printed; a command has a real duration, so it always runs on its own task, the owner continues to paint, and the task writes plain JSON text that the owner turns into a result.
 
 const std = @import("std");
 const quickjs = @import("quickjs");

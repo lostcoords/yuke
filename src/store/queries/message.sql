@@ -1,6 +1,5 @@
 -- name: InsertMessage :exec
--- Store one metadata row for each committed message. Keep the full body in events.payload and join it
--- by session_id and seq.
+-- Store one metadata row for each committed message; keep the full body in events.payload and join it by session_id and seq.
 -- session_id: [16]u8!
 -- message_id: u64!
 -- seq: u64!
@@ -27,8 +26,7 @@ INSERT INTO messages(
 );
 
 -- name: AdvanceMessage :one
--- Raise the session summary when a message commits: count, token totals, the id mark, and the
--- projection seq. RETURNING yields no row for an absent session, so the caller sees NoRow.
+-- Raise the session summary when a message commits: count, token totals, the id mark, and projection seq; RETURNING yields no row for an absent session, so the caller sees NoRow.
 -- id: [16]u8!
 -- message_id: u64!
 -- seq: u64!
@@ -52,8 +50,7 @@ UPDATE sessions SET
 WHERE id = :id RETURNING 1 AS advanced;
 
 -- name: MessagePage :many
--- Return one backward page of committed messages, newest first; the caller reverses it to oldest-first.
--- The body lives in events.payload, joined by (session_id, seq). cursor_message_id is exclusive.
+-- Return one backward page of committed messages, newest first; the caller reverses it to oldest-first, and the body comes from events.payload joined by (session_id, seq) with cursor_message_id exclusive.
 -- session_id: [16]u8!
 -- cursor_message_id: u64!
 -- limit: i64!
@@ -80,8 +77,7 @@ FROM (
 ORDER BY t.message_id ASC;
 
 -- name: LastAssistantUsage :optional
--- Return the newest committed assistant usage for the live context gauge, or no row.
--- The session_context view serves the same value for a page.
+-- Return the newest committed assistant usage for the live context gauge, or no row; the session_context view serves the same value for a page.
 -- session_id: [16]u8!
 -- tokens_input: ?u64!
 -- tokens_output: ?u64!

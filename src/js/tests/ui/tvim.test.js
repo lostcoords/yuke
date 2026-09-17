@@ -84,8 +84,7 @@ press(v.composer.rect.y);
 check("click-outside-releases", v.focus === "composer");
 v.focusRegion("transcript");
 
-// "v" starts a selection that the motions extend. Vim visual holds both ends, so the
-// character under the cursor stays inside.
+// "v" starts a selection that the motions extend; Vim visual holds both ends, so the character under the cursor stays inside.
 root.onEvent(key("char", "g"));
 root.onEvent(key("char", "g"));
 root.onEvent(key("char", "v"));

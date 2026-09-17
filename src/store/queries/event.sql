@@ -1,6 +1,5 @@
 -- name: AllocSeq :one
--- Allocate the next seq for one session and return it.
--- SQLite applies the increment atomically; RETURNING avoids a separate read.
+-- Allocate the next seq for one session and return it; SQLite applies the increment atomically, and RETURNING avoids a separate read.
 -- id: [16]u8!
 -- seq_high: u64!
 UPDATE sessions SET seq_high = seq_high + 1 WHERE id = :id RETURNING seq_high;

@@ -1,9 +1,4 @@
-//! The native `yuke:engine` module: the JavaScript seam onto the one in-process engine.
-//! There is no transport and no replica. A view reads the engine's own session projection.
-//!
-//! Two rules hold this seam together. An event never re-enters JavaScript from an engine task;
-//! the sink marks a session dirty and `drain` delivers it on the owner. And a text read is paged,
-//! so one call copies a bounded number of bytes however large the message is.
+//! The native `yuke:engine` module is the JavaScript seam onto the one in-process engine; there is no transport or replica, so a view reads the engine's own session projection; two rules hold this seam together: an event never re-enters JavaScript from an engine task because the sink marks a session dirty and `drain` delivers it on the owner, and a text read is paged so one call copies a bounded number of bytes however large the message is.
 
 const std = @import("std");
 const execution = @import("../../execution.zig");

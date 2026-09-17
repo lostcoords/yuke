@@ -180,8 +180,7 @@ pub const SessionOriginFork = struct {
 /// This origin marks a user-created root session.
 pub const SessionOriginRoot = struct {};
 
-/// An absent field leaves the current value unchanged. The engine stores the system prompt at creation.
-/// The system prompt remains fixed, and the fields borrow their data.
+/// An absent field leaves the current value unchanged; the engine stores the system prompt at creation and keeps it fixed, and the fields borrow their data.
 pub const SessionPatch = struct {
     model: ?[]const u8 = null,
     reasoning: ?[]const u8 = null,

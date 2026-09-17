@@ -1,5 +1,4 @@
-//! Resolve the XDG paths for the engine and the TUI, and the files under them.
-//! Return owned paths. The caller frees them. Treat an empty environment value as unset under XDG rules.
+//! Resolve the XDG paths for the engine, the TUI, and their files; return owned paths that the caller frees, and treat an empty environment value as unset under XDG rules.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -25,8 +24,7 @@ fn envNonEmpty(env: *const Map, key: []const u8) ?[]const u8 {
     return if (value.len == 0) null else value;
 }
 
-/// Return the non-empty absolute value for `key`, or null.
-/// Ignore relative values because the XDG specification requires an absolute base directory.
+/// Return the non-empty absolute value for `key`, or null; ignore relative values because the XDG specification requires an absolute base directory.
 fn envBasePath(env: *const Map, key: []const u8) ?[]const u8 {
     const value = envNonEmpty(env, key) orelse return null;
     return if (std.fs.path.isAbsolute(value)) value else null;
@@ -47,8 +45,7 @@ pub fn appNameValid(name: []const u8) bool {
 
 pub const Error = error{InvalidAppName};
 
-/// Return the directory leaf under the platform roots. Use `app_dir` when `YUKE_APPNAME` is unset.
-/// An invalid `YUKE_APPNAME` is an error. The result borrows `env`.
+/// Return the directory leaf under platform roots; use `app_dir` when `YUKE_APPNAME` is unset, reject an invalid `YUKE_APPNAME`, and return a result that borrows `env`.
 pub fn appName(env: *const Map) Error![]const u8 {
     const value = envNonEmpty(env, app_name_env) orelse return app_dir;
     if (!appNameValid(value)) return error.InvalidAppName;
@@ -68,8 +65,7 @@ fn joinUnder(alloc: std.mem.Allocator, env: *const Map, base: []const u8, mid: [
     return try std.fs.path.join(alloc, parts[0 .. 2 + mid.len]);
 }
 
-/// Return the shared configuration directory. Use `APPDATA` on Windows, `XDG_CONFIG_HOME` elsewhere, or `~/.config` under home.
-/// Return null when no base exists. Return an error for an invalid profile. The caller frees the result.
+/// Return the shared configuration directory from `APPDATA` on Windows, `XDG_CONFIG_HOME` elsewhere, or `~/.config` under home; return null without a base, return an error for an invalid profile, and let the caller free the result.
 pub fn configDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
     if (builtin.os.tag == .windows) {
         const base = envBasePath(env, "APPDATA") orelse return null;
@@ -80,8 +76,7 @@ pub fn configDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
     return try joinUnder(alloc, env, home, &.{".config"});
 }
 
-/// Return the data directory. Use `LOCALAPPDATA` on Windows, `XDG_DATA_HOME` elsewhere, or `~/.local/share` under home.
-/// Return null when no base exists. Return an error for an invalid profile. The caller frees the result.
+/// Return the data directory from `LOCALAPPDATA` on Windows, `XDG_DATA_HOME` elsewhere, or `~/.local/share` under home; return null without a base, return an error for an invalid profile, and let the caller free the result.
 pub fn dataDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
     if (builtin.os.tag == .windows) {
         const base = envBasePath(env, "LOCALAPPDATA") orelse return null;
@@ -129,8 +124,7 @@ pub fn anchorAt(alloc: std.mem.Allocator, env: *const Map, root: []const u8, pat
 
 pub const WorkspaceError = error{RootNotAbsolute};
 
-/// Normalize a workspace root: expand a leading `~`, then resolve `.`/`..`.
-/// Reject a relative or empty root with `RootNotAbsolute`. The result is lexical. The caller frees it.
+/// Normalize a workspace root by expanding a leading `~` and resolving `.`/`..`; reject a relative or empty root with `RootNotAbsolute`, return a lexical result, and let the caller free it.
 pub fn canonicalizeWorkspace(alloc: std.mem.Allocator, env: *const Map, path: []const u8) (WorkspaceError || ExpandError)![]u8 {
     const expanded = try expandHome(alloc, env, path);
     defer alloc.free(expanded);

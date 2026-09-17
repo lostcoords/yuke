@@ -1,5 +1,4 @@
-//! Process commands: the provider catalog, credentials, and the filesystem picker.
-//! Each handler owns its write transaction.
+//! Process commands cover the provider catalog, credentials, and filesystem picker, and each handler owns its write transaction.
 
 const std = @import("std");
 const execution = @import("../execution.zig");
@@ -13,8 +12,7 @@ const login_runtime = @import("../provider/oauth/login_runtime.zig");
 const login_task = @import("../provider/oauth/login_task.zig");
 const net_http = @import("../net/http.zig");
 
-/// Handle catalog.list: return every configured provider and its models, or nothing when the
-/// client already holds this revision. A signed-out user with a local key still picks a model.
+/// Handle catalog.list: return every configured provider and its models, or nothing when the client already holds this revision; a signed-out user with a local key still picks a model.
 pub fn catalogList(runtime: *App, _: std.mem.Allocator, params: proto.catalog.CatalogListParams) !proto.catalog.CatalogListResult {
     const current = runtime.store.merged.revision;
     if (params.since_rev) |since| {
@@ -49,8 +47,7 @@ pub fn authList(runtime: *App, arena: std.mem.Allocator, _: proto.misc.Empty) !p
     return .{ .providers = out.items };
 }
 
-/// Handle auth.set_api_key: store one literal key and rebuild the snapshot.
-/// The entry keeps every other field, so a hand-written route survives a key change.
+/// Handle auth.set_api_key: store one literal key and rebuild the snapshot; the entry keeps every other field, so a hand-written route survives a key change.
 pub fn authSetApiKey(runtime: *App, arena: std.mem.Allocator, params: proto.auth.AuthSetApiKeyParams) !proto.misc.Empty {
     if (!proto.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
     if (params.api_key.len == 0) return error.BadApiKey;
@@ -74,8 +71,7 @@ pub fn authLogin(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Aut
     var slot_arena: std.heap.ArenaAllocator = .init(runtime.gpa);
     const owned_id = slot_arena.allocator().dupe(u8, params.provider_id) catch unreachable;
 
-    // Reserve before the network call, because `start` yields and a second request would pass
-    // the check above. The registry owns the arena from here, so one `remove` frees everything.
+    // Reserve before the network call because `start` yields and a second request could pass the check; the registry owns the arena from here, so one `remove` frees everything.
     const login_id: proto.ids.LoginId = .bytes(runtime.newId() ++ runtime.newId());
     const slot = runtime.logins.reserve(login_id, slot_arena, owned_id, flow) catch unreachable; // only an allocation fails here
     errdefer runtime.logins.remove(login_id);
@@ -107,8 +103,7 @@ pub fn authRemove(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Au
     return .{};
 }
 
-/// Report the flows one provider accepts. Only a catalog row naming a known flow offers one.
-/// Report which credential one entry holds. An entry that holds none reports null.
+/// Report the flows one provider accepts; only a catalog row naming a known flow offers one, and report which credential one entry holds, with null for an entry that holds none.
 fn localEntry(runtime: *const App, provider_id: []const u8) ?provider_config.LocalProvider {
     const loaded = runtime.store.local orelse return null;
     for (loaded.providers) |p| if (std.mem.eql(u8, p.id, provider_id)) return p;

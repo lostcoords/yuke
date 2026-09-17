@@ -1,7 +1,4 @@
-//! The native `yuke:tools` module: `defineTool` registers one tool the model can call.
-//!
-//! A refused registration THROWS. `index.js` is user input, never internal state, so this
-//! validates and reports; it never asserts. A throw at boot paints the fault and names the file.
+//! The native `yuke:tools` module: `defineTool` registers one tool the model can call; a refused registration THROWS; `index.js` is user input, never internal state, so this code validates and reports and never asserts; a throw at boot paints the fault and names the file.
 
 const std = @import("std");
 const quickjs = @import("quickjs");

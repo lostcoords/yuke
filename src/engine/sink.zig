@@ -1,5 +1,4 @@
-//! The engine hands each event to every in-process subscriber.
-//! One process has few readers, so an event travels as a value and never as JSON bytes.
+//! The engine hands each event to every in-process subscriber; one process has few readers, so an event travels as a value and never as JSON bytes.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -13,8 +12,7 @@ pub const Sink = struct {
 /// The frontends one process runs at once. The TUI takes one, and an RPC stream takes another.
 pub const max_sinks: usize = 4;
 
-/// Every subscriber of the engine. The engine owns one set and fans each event out to all of them.
-/// The set holds no allocation, because the count is small and bounded.
+/// Store every engine subscriber in one engine-owned set; the set has no allocation because the count is small and bounded.
 pub const Sinks = struct {
     entries: [max_sinks]Sink = undefined,
     len: usize = 0,
@@ -38,8 +36,7 @@ pub const Sinks = struct {
         self.len -= 1;
     }
 
-    /// Deliver one event to every subscriber. An empty set drops it, which is what a headless run wants.
-    /// The note borrows the caller's arena, so a subscriber must copy what it keeps.
+    /// Deliver one event to every subscriber; an empty set drops it for a headless run, and the note borrows the caller's arena so a subscriber must copy what it keeps.
     pub fn emit(self: *Sinks, note: proto.rpc.Notification) void {
         std.debug.assert(!self.emitting); // an event never re-enters the fan-out
         self.emitting = true;

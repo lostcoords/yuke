@@ -1,5 +1,4 @@
-//! Run the built-in file-system primitives natively over `std.Io`. Every tool runs here.
-//! There is no path confinement. The local user is trusted, so a tool reaches the whole file system.
+//! Run the built-in file-system primitives natively over `std.Io`; every tool runs here, and there is no path confinement because the local user is trusted, so a tool reaches the whole file system.
 
 const std = @import("std");
 const h = @import("operations.zig");

@@ -4,8 +4,7 @@ import { renderRows } from "yuke:test-markdown";
 const segsOf = (rows) => { const out = []; for (const r of rows) for (const s of r.segments) out.push(s); return out; };
 const find = (rows, group, text) => segsOf(rows).find((s) => s.group === group && s.text === text);
 
-// Every span stays inside the source and holds the text it rendered. A mark hides its markup,
-// so it is the one segment whose span does not contain the text.
+// Every span stays inside the source and holds the text it rendered; a mark hides its markup, so it is the one segment whose span does not contain the text.
 const mapsBack = (src, rows) => {
   for (const s of segsOf(rows)) {
     if (s.src == null) continue;

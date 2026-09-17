@@ -229,8 +229,7 @@ pub fn serialize(gpa: Allocator, providers: []const LocalProvider) ![]u8 {
     return gpa.dupe(u8, json.written());
 }
 
-/// Replace the absolute `path` with `bytes`. The caller renders and validates the document first.
-/// The parent directory is created when it is absent, so a first write on a clean machine works.
+/// Replace the absolute `path` with `bytes` after the caller renders and validates the document; create the parent directory when absent so a first write on a clean machine works.
 pub fn writeFileBytes(io: std.Io, path: []const u8, bytes: []const u8) !void {
     const parent = std.fs.path.dirname(path) orelse return error.BadPath;
     const name = std.fs.path.basename(path);

@@ -1,8 +1,4 @@
-//! The native `yuke:fs` module: the file-system primitives a tool or a view builds on.
-//!
-//! Every call answers a Promise, so a caller writes `await` once and never rewrites it. Today the
-//! work runs inline and the promise arrives settled; making one operation concurrent later changes
-//! no JavaScript. A failure rejects with an Error, so `try`/`catch` reads like any other module.
+//! The native `yuke:fs` module provides the file-system primitives that a tool or a view builds on; every call answers a Promise, so a caller writes `await` once and never rewrites it; today the work runs inline and the promise arrives settled, later concurrency changes no JavaScript, and a failure rejects with an Error, so `try`/`catch` reads like any other module.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -127,9 +123,7 @@ fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
     return host.startTask(ReadRequest, readRangeTask, .{ .path = path, .root = root, .range = range });
 }
 
-/// Read one file on a task. It writes bytes into the op and never enters JavaScript.
-///
-/// `Host.close` cancels this group and waits for it, so a task must reach a cancellation point; keep it to input and output.
+/// Read one file on a task; it writes bytes into the op and never enters JavaScript; `Host.close` cancels this group and waits for it, so a task must reach a cancellation point, and the task must stay within input and output.
 fn readTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer req.free(host.gpa);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);

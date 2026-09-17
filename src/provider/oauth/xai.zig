@@ -60,16 +60,14 @@ pub fn poll(arena: std.mem.Allocator, seam: oauth.Http, device_auth_id: []const 
         const obj = oauth.parseObject(arena, response.body) orelse return oauth.Error.BadResponse;
         return .{ .tokens = try tokensFrom(arena, obj, now_ms) };
     }
-    // The body code decides first. RFC 8628 sends `slow_down` with a 429, and the status alone
-    // would read that as a plain retry and drop the interval increase the server asked for.
+    // The body code decides first because RFC 8628 sends `slow_down` with a 429, and status alone would treat it as a plain retry and drop the interval increase the server requested.
     var buf: [64]u8 = undefined;
     const code = oauth.errorCode(response.body, arena, &buf);
     if (code) |name| {
         if (std.mem.eql(u8, name, "authorization_pending")) return .pending;
         if (std.mem.eql(u8, name, "slow_down")) return .slow_down;
     }
-    // The server throttled or failed without a documented code. `Transient` backs the poll off,
-    // where `pending` would reset the delay and keep one rate through the whole outage.
+    // The server throttled or failed without a documented code; `Transient` backs the poll off, while `pending` would reset the delay and keep one rate through the outage.
     if (response.status == 408 or response.status == 429 or response.status >= 500) return oauth.Error.Transient;
     // `access_denied` and `expired_token` end the login, and so does a code this flow cannot read.
     return oauth.Error.Permanent;

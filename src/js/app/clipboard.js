@@ -11,8 +11,7 @@ const TIMEOUT_MS = 5000;
 const NO_IMAGE = 1;
 const NO_TOOL = 3;
 
-// Chromium apps put only `public.png` on the clipboard, so the read uses NSPasteboard and not the legacy `PNGf` class.
-// A TIFF-only clipboard converts to PNG, because the blob store takes no TIFF.
+// Chromium apps put only `public.png` on the clipboard, so the read uses NSPasteboard and not the legacy `PNGf` class; a TIFF-only clipboard converts to PNG because the blob store takes no TIFF.
 const MAC_READ = [
   'ObjC.import("AppKit");',
   "function run(argv) {",
@@ -27,9 +26,7 @@ const MAC_READ = [
   "}",
 ].join("\n");
 
-// JavaScript reads no environment, so the shell picks its own branch: it alone knows the system and the tools on it.
-// `mktemp` names the file, so no other process can win a race for a name this one predicted.
-// The path prints before any work, so a failure still leaves the caller a file to remove.
+// JavaScript reads no environment, so the shell picks its own branch because it alone knows the system and its tools; `mktemp` names the file so no other process can win a predicted name; the path prints before work so a failure leaves the caller a file to remove.
 const READ_IMAGE = [
   'd=${TMPDIR:-/tmp}; d=${d%/}',
   'p=$(mktemp "$d/yuke-paste-XXXXXX") || exit 2',

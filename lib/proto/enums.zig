@@ -165,9 +165,7 @@ pub const ProviderState = enum {
     expired,
 };
 
-/// Workspace execution environment.
-/// Advertised engine capability.
-/// Numeric JSON-RPC and yuke error codes.
+/// Workspace execution environment; advertised engine capability; numeric JSON-RPC and yuke error codes.
 pub const ErrorCode = enum(i32) {
     bad_request = -32602,
     bad_protocol = -32600,

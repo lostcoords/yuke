@@ -1,8 +1,6 @@
--- The schema has mutable registry tables and an append-only activity log. Projections rebuild from the log.
--- STRICT types enforce storage; checks enforce domain rules; 2^53-1 keeps numbers safe for wire JSON.
+-- The schema has mutable registry tables and an append-only activity log; projections rebuild from the log, STRICT types enforce storage, checks enforce domain rules, and 2^53-1 keeps numbers safe for wire JSON.
 
--- The session registry holds primary state. The log does not derive this state. A rowid table suits this
--- wide, often updated row. Flatten Session_Origin; each arm's ids are non-null only for that arm.
+-- The session registry holds primary state that the log does not derive; a rowid table suits this wide, often updated row, and flattened Session_Origin keeps each arm's ids non-null only for that arm.
 CREATE TABLE sessions (
     id           BLOB NOT NULL UNIQUE CHECK (length(id) = 16), -- proto.SessionId; UUIDv7 for index locality
     root         TEXT NOT NULL CHECK (length(root) > 0), -- the canonical workspace directory
@@ -26,8 +24,7 @@ CREATE TABLE sessions (
 
     message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count BETWEEN 0 AND 9007199254740991), -- u64
 
-    -- Sum lifetime token usage for each committed assistant turn. A truncation leaves the total unchanged.
-    -- usage_input_total includes the cache subsets.
+    -- Sum lifetime token usage for each committed assistant turn; a truncation leaves the total unchanged, and usage_input_total includes the cache subsets.
     usage_input_total       INTEGER NOT NULL DEFAULT 0 CHECK (usage_input_total       BETWEEN 0 AND 9007199254740991), -- u64
     usage_output_total      INTEGER NOT NULL DEFAULT 0 CHECK (usage_output_total      BETWEEN 0 AND 9007199254740991), -- u64
     usage_reasoning_total   INTEGER NOT NULL DEFAULT 0 CHECK (usage_reasoning_total   BETWEEN 0 AND 9007199254740991), -- u64
@@ -47,8 +44,7 @@ CREATE TABLE sessions (
     -- The read model covers the log through this seq. A projection rebuild raises this value.
     projection_seq INTEGER NOT NULL DEFAULT 0 CHECK (projection_seq BETWEEN 0 AND 9007199254740991),
 
-    -- The recovery marker records an owed terminal event, not activity. A new start closes these fields
-    -- at the next restart. The terminal needs all three fields; null means no obligation.
+    -- The recovery marker records an owed terminal event, not activity; a new start closes these fields at the next restart, and the terminal needs all three fields while null means no obligation.
     open_run_id            INTEGER CHECK (open_run_id IS NULL OR open_run_id BETWEEN 1 AND 9007199254740991), -- proto.RunId
     open_run_kind          TEXT    CHECK (open_run_kind IS NULL OR open_run_kind IN ('turn', 'compaction')),
     open_run_started_at_ms INTEGER CHECK (open_run_started_at_ms IS NULL OR open_run_started_at_ms BETWEEN 0 AND 9007199254740991), -- u64
@@ -62,21 +58,18 @@ CREATE TABLE sessions (
     CHECK ((created_by_name IS NULL) = (created_by_version IS NULL)),
     CHECK (updated_at_ms >= created_at_ms),
 
-    -- Open-run columns move as a unit. Set all three while the database owes a terminal; clear all three
-    -- after it writes one.
+    -- Open-run columns move as a unit; set all three while the database owes a terminal and clear all three after it writes one.
     CHECK ((open_run_id IS NULL) = (open_run_kind IS NULL)),
     CHECK ((open_run_id IS NULL) = (open_run_started_at_ms IS NULL)),
     -- An open run reuses a minted id, so it never exceeds the run high-water mark.
     CHECK (open_run_id IS NULL OR open_run_id <= run_id_high)
 ) STRICT;
 
--- Every ORDER BY term uses DESC, and the id tiebreak follows it. An ASC id at the end costs a temp
--- B-tree on every session.list page.
+-- Every ORDER BY term uses DESC and the id tiebreak follows it; an ASC id at the end costs a temp B-tree on every session.list page.
 CREATE INDEX sessions_by_recent    ON sessions(updated_at_ms DESC, id DESC);
 CREATE INDEX sessions_by_parent    ON sessions(parent_id, updated_at_ms DESC, id DESC) WHERE parent_id IS NOT NULL;
 
--- The activity log stores full bodies in a rowid table. Keep payload last for overflow I/O.
--- event_id is a stable global id for export or sync; (session_id, seq) is the local stream order.
+-- The activity log stores full bodies in a rowid table with payload last for overflow I/O; event_id is a stable global id for export or sync, while (session_id, seq) is the local stream order.
 CREATE TABLE events (
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- proto.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
@@ -90,8 +83,7 @@ CREATE TABLE events (
 -- Name this index so the tail query keeps a stable plan name.
 CREATE UNIQUE INDEX events_by_session_seq ON events(session_id, seq);
 
--- Replay rebuilds this projection from events.payload joined by session_id and seq. The composite FK
--- keeps the pointer valid.
+-- Replay rebuilds this projection from events.payload joined by session_id and seq; the composite FK keeps the pointer valid.
 CREATE TABLE messages (
     -- Use a stable alias rowid so FTS5 external-content can index it and VACUUM can keep it fixed.
     search_id  INTEGER PRIMARY KEY,
@@ -129,16 +121,14 @@ CREATE TABLE messages (
 -- Index the FK child columns so a session or event cascade can seek instead of a message scan.
 CREATE INDEX messages_by_event ON messages(session_id, seq);
 
--- Index only rows with a recorded model. This supports the query for turns that used a model and adds
--- no cost before the engine records provenance.
+-- Index only rows with a recorded model; this supports the query for turns that used a model and adds no cost before the engine records provenance.
 CREATE INDEX messages_by_model ON messages(model, created_at_ms) WHERE model IS NOT NULL;
 
 -- Index only the turns that answer the context-usage lookup. The lookup then seeks the newest turn.
 CREATE INDEX messages_context_usage ON messages(session_id, message_id)
     WHERE role = 'assistant' AND tokens_input IS NOT NULL;
 
--- Join each session to the usage of its newest committed assistant turn: the live context gauge.
--- A truncation removes the newest messages, so re-read this instead of a store on the session row.
+-- Join each session to the usage of its newest committed assistant turn for the live context gauge; a truncation removes the newest messages, so re-read this instead of a value on the session row.
 CREATE VIEW session_context AS
 SELECT s.*,
        ctx.tokens_input       AS ctx_tokens_input,
@@ -154,8 +144,7 @@ LEFT JOIN messages ctx
            WHERE session_id = s.id AND role = 'assistant' AND tokens_input IS NOT NULL
            ORDER BY message_id DESC LIMIT 1);
 
--- Replay rebuilds this projection. Store each revision so session.config reads it directly instead of
--- a log scan from seq 1.
+-- Replay rebuilds this projection; store each revision so session.config reads it directly instead of scanning the log from seq 1.
 CREATE TABLE session_configs (
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- proto.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
@@ -167,8 +156,7 @@ CREATE TABLE session_configs (
     PRIMARY KEY (session_id, config_rev)
 ) STRICT, WITHOUT ROWID;
 
--- Store one prompt per session in a separate table. Create sets it once because the prompt has no fixed bound.
--- An absent row means null.
+-- Store one prompt per session in a separate table; Create sets it once because the prompt has no fixed bound, and an absent row means null.
 CREATE TABLE session_prompts (
     session_id BLOB PRIMARY KEY CHECK (length(session_id) = 16) -- proto.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,

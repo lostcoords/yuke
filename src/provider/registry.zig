@@ -177,9 +177,7 @@ pub const Registry = struct {
     }
 };
 
-/// Compose `providers.json` with the baked catalog. The file wins field by field.
-/// The catalog leads, so the row order holds whatever the file names.
-/// The result borrows `arena` and the sources.
+/// Compose `providers.json` with the baked catalog; the file wins field by field, the catalog sets row order, and the result borrows `arena` and the sources.
 pub fn resolve(arena: std.mem.Allocator, sources: Sources) ![]const Provider {
     var out: std.ArrayList(Provider) = .empty;
     for (sources.catalog) |*c| {

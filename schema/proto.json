@@ -3133,7 +3133,7 @@
     },
     {
       "name": "SessionPatch",
-      "doc": "An absent field leaves the current value unchanged. The engine stores the system prompt at creation. The system prompt remains fixed, and the fields borrow their data.",
+      "doc": "An absent field leaves the current value unchanged; the engine stores the system prompt at creation and keeps it fixed, and the fields borrow their data.",
       "fields": [
         {
           "name": "model",
@@ -4233,7 +4233,7 @@
     },
     {
       "name": "ErrorCode",
-      "doc": "Workspace execution environment. Advertised engine capability. Numeric JSON-RPC and yuke error codes.",
+      "doc": "Workspace execution environment; advertised engine capability; numeric JSON-RPC and yuke error codes.",
       "numeric": true,
       "values": [
         {

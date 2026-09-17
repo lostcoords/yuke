@@ -1,5 +1,4 @@
-//! Compare two texts line by line and return the changed hunks. The caller draws them; this module
-//! keeps no output format. The result borrows both input texts, so they must outlive it.
+//! Compare two texts line by line and return changed hunks; the caller draws them, this module keeps no output format, and the result borrows both input texts, which must outlive it.
 
 const std = @import("std");
 const lines = @import("lines.zig");
@@ -20,8 +19,7 @@ pub const Options = struct {
     max_edits: u32 = 1000,
 };
 
-/// Compare `old` and `new` and return their hunks. An equal pair gives an empty slice. The result
-/// borrows `arena`, `old`, and `new`, so all three must outlive it.
+/// Compare `old` and `new` and return their hunks; an equal pair gives an empty slice, and the result borrows `arena`, `old`, and `new`, which must all outlive it.
 pub fn compare(arena: std.mem.Allocator, old: []const u8, new: []const u8, options: Options) Error![]const Hunk {
     var table: lines.Table = .{};
     defer table.deinit(arena);

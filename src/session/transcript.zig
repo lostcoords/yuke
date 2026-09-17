@@ -64,8 +64,7 @@ pub const Transcript = struct {
         self.evict();
     }
 
-    /// Drop resident messages with an id at or above `first_removed_id`. Truncation removes them.
-    /// The transcript stays oldest-first, so the removed messages form the tail.
+    /// Drop resident messages with an id at or above `first_removed_id`; truncation removes them from the tail because the transcript stays oldest-first.
     pub fn trimFrom(self: *Transcript, first_removed_id: ids.MessageId) void {
         while (self.list.items.len > 0 and self.list.items[self.list.items.len - 1].message.id() >= first_removed_id) {
             var removed = self.list.pop().?;
@@ -74,16 +73,14 @@ pub const Transcript = struct {
         }
     }
 
-    /// Return the messages with the size each one measured on append. A reader that budgets by
-    /// size reads it here, because a second measurement would serialize every message again.
+    /// Return the messages with the size each one measured on append; a size-budget reader uses it because a second measurement would serialize every message again.
     pub fn sized(self: *const Transcript, scratch: std.mem.Allocator) Error![]const Sized {
         const out = try scratch.alloc(Sized, self.list.items.len);
         for (self.list.items, 0..) |*e, i| out[i] = .{ .message = e.message, .bytes = e.bytes };
         return out;
     }
 
-    // Drop the oldest messages until the transcript fits both bounds. Keep at least one message.
-    // The byte bound is soft. One message over `max_bytes` stays, so the newest tail always remains.
+    // Drop the oldest messages until both bounds fit, but keep one message when it exceeds `max_bytes` so the newest tail remains.
     fn evict(self: *Transcript) void {
         while (self.list.items.len > 1 and (self.list.items.len > self.max_messages or self.total_bytes > self.max_bytes)) {
             var oldest = self.list.orderedRemove(0);

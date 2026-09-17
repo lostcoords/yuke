@@ -24,8 +24,7 @@ pub const Input = struct {
 
     pub const capacity = 4096;
 
-    /// The paste keeps this many bytes. `Input` counts and discards the bytes after the cap.
-    /// A large log or a generated source file stays below this size.
+    /// The paste keeps at most this many bytes; `Input` counts and discards bytes after the cap, and a large log or generated source file stays below this size.
     pub const paste_max = 2 << 20;
 
     pub fn deinit(self: *Input) void {
@@ -48,8 +47,7 @@ pub const Input = struct {
         self.len += bytes.len;
     }
 
-    /// Read the next event from the TTY. The reactor waits when no event exists.
-    /// The Windows console gives decoded events, so a paste stays one key event per character.
+    /// Read the next event from the TTY; the reactor waits when no event exists, and the Windows console gives decoded events, so a paste stays one key event per character.
     pub fn readEvent(self: *Input, tty: *Tty) !Event {
         switch (builtin.os.tag) {
             .windows => {
@@ -68,8 +66,7 @@ pub const Input = struct {
         }
     }
 
-    /// Return the next complete event. Skip unknown sequences and keep incomplete bytes.
-    /// The paste markers stay inside `Input`. A bracketed paste becomes one `paste` event.
+    /// Return the next complete event; skip unknown sequences and keep incomplete bytes, and keep paste markers inside `Input` so a bracketed paste becomes one `paste` event.
     pub fn next(self: *Input) !?Event {
         while (self.len > 0) {
             if (self.in_paste) {
@@ -95,8 +92,7 @@ pub const Input = struct {
         return null;
     }
 
-    /// Copy the paste bytes up to the end marker. Return false when the buffer has no end marker.
-    /// Only the end marker ends a paste, so paste data can never decode as a key.
+    /// Copy paste bytes up to the end marker; return false when the buffer lacks one, and only the end marker ends a paste, so paste data can never decode as a key.
     fn collectPaste(self: *Input) !bool {
         std.debug.assert(self.in_paste);
         const buf = self.buffer[0..self.len];
@@ -146,8 +142,7 @@ pub const Input = struct {
     }
 };
 
-/// Replace CR and CRLF with LF, and drop the other control bytes.
-/// The renderer writes cell bytes to the terminal, so a control byte can damage the screen.
+/// Replace CR and CRLF with LF and drop other control bytes; the renderer writes cell bytes to the terminal, so a control byte can damage the screen.
 fn sanitize(buf: *std.ArrayList(u8)) void {
     var w: usize = 0;
     var i: usize = 0;

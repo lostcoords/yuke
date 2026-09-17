@@ -41,8 +41,7 @@ function withChat(fn) {
 
 const workspace = Node.leaf(chat.view);
 
-// A session finder: read the sessions, fuzzy-search them by title, then open one.
-// This is the only place the session list appears, so nothing keeps it on screen.
+// A session finder reads the sessions, fuzzy-searches them by title, then opens one; this is the only place the session list appears, so nothing keeps it on screen.
 /** @param {InjectContext} ctx @returns {null} */
 function openSessionFinder(ctx) {
   const feed = feedOf();

@@ -1,5 +1,4 @@
-//! Resolve the effective environment and the command shell once, at process startup.
-//! Every built-in child process, native path, and session prompt reads the answers this module installs.
+//! Resolve the effective environment and command shell once at process startup; every built-in child process, native path, and session prompt reads the answers this module installs.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -46,8 +45,7 @@ pub const Probe = struct {
     pub const native: Probe = .{ .home = nativeHome, .executable = nativeExecutable };
 };
 
-/// Normalize the home directory, then resolve the shell from the normalized environment.
-/// `arena` owns the shell path, so the result lives as long as `std.process.Init`.
+/// Normalize the home directory, then resolve the shell from the normalized environment; `arena` owns the shell path, so the result lives as long as `std.process.Init`.
 pub fn startup(arena: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, probe: Probe) Error!Context {
     try normalizeHome(arena, io, env, probe);
     const shell = try resolveShell(arena, io, env, probe);
@@ -56,8 +54,7 @@ pub fn startup(arena: std.mem.Allocator, io: std.Io, env: *std.process.Environ.M
     return .{ .env = env, .shell = shell };
 }
 
-/// Keep a valid inherited home directory, or recover one from the platform and install it.
-/// A failed recovery is not a startup failure; a container with no passwd entry is usually correct.
+/// Keep a valid inherited home directory, or recover and install one from the platform; failed recovery is not a startup failure because a container may have no passwd entry.
 fn normalizeHome(arena: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, probe: Probe) Error!void {
     // `paths.homeDir` already rejects an empty and a relative value, so a non-null answer is valid.
     if (paths.homeDir(env) != null) return;
@@ -101,8 +98,7 @@ fn bashOnPath(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Envi
     return null;
 }
 
-/// Read the home directory of the effective user from the platform user database.
-/// Use the reentrant call, which needs no lock, no helper process, and no shell output.
+/// Read the effective user's home directory from the platform user database; use the reentrant call because it needs no lock, helper process, or shell output.
 fn nativeHome(_: std.Io, arena: std.mem.Allocator) std.mem.Allocator.Error!?[]const u8 {
     if (builtin.os.tag == .windows) return null;
     var size: usize = 2048;
@@ -123,8 +119,7 @@ fn nativeHome(_: std.Io, arena: std.mem.Allocator) std.mem.Allocator.Error!?[]co
     return null;
 }
 
-/// Report whether the path names a regular file this process can run.
-/// `access` is the question we mean; mode bits alone accept a noexec mount and an ACL that denies.
+/// Report whether the path names a regular file this process can run; `access` answers this question because mode bits alone accept a noexec mount and a file that an ACL denies.
 fn nativeExecutable(io: std.Io, path: []const u8) bool {
     const info = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
     if (info.kind != .file) return false;

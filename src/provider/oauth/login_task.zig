@@ -133,9 +133,7 @@ pub fn refreshOnce(runtime: *App, margin_ms: u64) !bool {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // A rotating refresh token is spent exactly once. Several yuke processes may share this file,
-    // so the lock covers the whole refresh: the read from disk, the expiry check, the network
-    // call, and the write. A lock only around the write would still send the same token twice.
+    // A rotating refresh token is spent exactly once and several yuke processes may share this file, so the lock covers the whole refresh (disk read, expiry check, network call, write); a lock only around the write would still send the same token twice.
     const path = runtime.store.path orelse return false;
     const lock = CredentialLock.acquire(runtime.gpa, runtime.io, path) catch |err| {
         // Keep the cancel, so the scheduler leaves its wait loop.
@@ -145,9 +143,7 @@ pub fn refreshOnce(runtime: *App, margin_ms: u64) !bool {
     };
     defer if (lock) |held| held.release(runtime.io);
 
-    // Read the file again under the lock. Another process may have rotated this grant already,
-    // and the layer in memory would still name the token it spent.
-    // A stale layer could resend a token another process already spent, so a failed read ends the pass.
+    // Read the file again under the lock because another process may have rotated this grant while memory still names the spent token; a stale layer could resend it, so a failed read ends the pass.
     _ = runtime.store.reload() catch |err| {
         if (err == error.Canceled) return error.Canceled;
         std.log.warn("cannot reread providers.json: {t}", .{err});
@@ -194,8 +190,7 @@ fn moreDue(runtime: *App, arena: std.mem.Allocator, margin_ms: u64) bool {
     return next != null;
 }
 
-/// Write the rotated grant. A failed write returns no error, because a retry would spend it twice.
-/// The layer in memory then forgets the grant, so no later pass reads the token this call replaced.
+/// Write the rotated grant; a failed write returns no error because a retry would spend it twice, and the memory layer then forgets the grant so no later pass reads the replaced token.
 fn keep(runtime: *App, arena: std.mem.Allocator, due: Due, grant: provider.config.Grant) void {
     store(runtime, arena, due, grant) catch |err| {
         std.log.warn("cannot store the grant for {s}: {t}", .{ due.provider_id, err });

@@ -51,8 +51,7 @@ pub const Error = error{
     BadResponse,
 };
 
-/// The transport one flow uses. The engine backs it with `net.http.Client`; a test replays bytes.
-/// One call is the whole seam, so the function pointer is the interface.
+/// The transport for one flow uses `net.http.Client` in the engine and replays bytes in tests; one call is the whole seam, so the function pointer is the interface.
 pub const Http = struct {
     ctx: *anyopaque,
     post_fn: *const fn (ctx: *anyopaque, req: http.PostRequest) anyerror!http.Response,

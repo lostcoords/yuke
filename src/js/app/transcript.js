@@ -26,8 +26,7 @@ const ACTION_LABEL_W = 7;
 const ACTION_LABEL_INPUT = "input".padEnd(ACTION_LABEL_W);
 const ACTION_LABEL_OUTPUT = "output".padEnd(ACTION_LABEL_W);
 const ACTION_LABEL_NONE = " ".repeat(ACTION_LABEL_W);
-// One action packs its group size and its place in that group into a single number, so the plan retains no objects.
-// The low two bits mark the first and last action of a group; the count scales above them.
+// One action packs its group size and its place in that group into a single number, so the plan retains no objects; the low two bits mark the first and last action of a group, and the count scales above them.
 const ACTION_FIRST = 1;
 const ACTION_LAST = 2;
 const ACTION_SCALE = 4;

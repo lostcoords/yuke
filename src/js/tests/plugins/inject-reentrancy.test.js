@@ -10,8 +10,7 @@ services.provide("c", 1);
 check("no-orphan-build", log.join(",") === "");
 check("victim-gone", !plugins.get("victim"));
 
-// A block that drops its own dependency must not stay active.
-// The provider exists first, so the block builds at once and can withdraw it from inside.
+// A block that drops its own dependency must not stay active; the provider exists first, so the block builds at once and can withdraw it from inside.
 const seen = [];
 const offY = services.provide("y", 1);
 plugins.use({

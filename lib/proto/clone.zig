@@ -1,5 +1,4 @@
-//! This module deeply clones wire values. A reflective function keeps every wire type aligned.
-//! Copy each field and slice into `a`. The result owns the copies and borrows nothing from the source frame. OOM leaves partial data in `a`. Use an arena and free it as a whole.
+//! Deeply clone wire values with one reflective function, so every wire type stays aligned; the result owns its copies in `a` and borrows nothing from the source frame; OOM leaves partial data in `a`, so use an arena and free it as a whole.
 
 const std = @import("std");
 const registry = @import("registry.zig");

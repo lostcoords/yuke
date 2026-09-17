@@ -1,5 +1,4 @@
-//! The messages projection. A committed message writes one event (the full body in the payload) and
-//! one metadata row, and advances the session summary. Replay rebuilds this from the log.
+//! The messages projection writes one event with the full body, one metadata row, and one session summary update for each committed message; replay rebuilds it from the log.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -42,8 +41,7 @@ pub const Commit = struct {
     bytes: usize,
 };
 
-/// Append a committed message, store its body and metadata, and advance the session summary.
-/// Run inside a write transaction. The caller mints event_id.
+/// Append a committed message, store its body and metadata, and advance the session summary inside a write transaction; the caller mints event_id.
 pub fn appendCommittedMessage(
     db: *Database,
     arena: std.mem.Allocator,
@@ -215,8 +213,7 @@ pub fn tail(db: *Database, session_id: [16]u8, limit: usize) !Tail {
     return .{ .rows = try db.queries.message_tail.rows(.{ .session_id = session_id, .limit = @as(i64, @intCast(limit)) }) };
 }
 
-/// Read a backward page from the log and return it oldest first. before_message_id is exclusive;
-/// 0 means the newest page. The result borrows `arena`.
+/// Read a backward page from the log and return it oldest first; before_message_id is exclusive, 0 means the newest page, and the result borrows `arena`.
 pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, before_message_id: u64, limit: usize) !History {
     std.debug.assert(limit > 0); // The caller clamps the peer limit to at least 1.
     // A cursor of 0 means "no cursor". The sentinel exceeds every message id.
@@ -243,8 +240,7 @@ pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
     return .{ .messages = out, .has_more = has_more };
 }
 
-/// The token usage of the newest committed assistant turn. This is the live context gauge, not a
-/// lifetime total. A session with no such turn reports zero.
+/// Return the token usage of the newest committed assistant turn as the live context gauge, not a lifetime total; a session with no such turn reports zero.
 pub fn contextUsage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !proto.message.TokenUsage {
     const row = (try db.queries.last_assistant_usage.maybeOne(arena, .{ .session_id = session_id })) orelse return .{
         .input = 0,

@@ -2,15 +2,13 @@
 
 const std = @import("std");
 
-/// The lines of one text. `text[i]` holds the bytes of line `i` without the line feed. Two entries of
-/// `ids` are equal only when the two lines hold the same bytes. Both slices borrow the allocator.
+/// The lines of one text store `text[i]` without its line feed; two `ids` entries are equal only when the lines hold the same bytes, and both slices borrow the allocator.
 pub const Lines = struct {
     text: []const []const u8,
     ids: []const u32,
 };
 
-/// The intern table. It maps a line to one identifier across both texts, so the two identifier arrays
-/// compare directly. The keys borrow the input texts, so both texts must outlive the table.
+/// The intern table maps each line to one identifier across both texts so the identifier arrays compare directly; its keys borrow the input texts, so both texts must outlive the table.
 pub const Table = struct {
     map: std.StringHashMapUnmanaged(u32) = .empty,
     next: u32 = 0,
@@ -31,8 +29,7 @@ pub const Table = struct {
     }
 };
 
-/// Split `text` on a line feed and intern each line. A carriage return stays in the line, so a
-/// line-ending change shows as a changed line. A final line feed adds no empty last line.
+/// Split `text` on a line feed and intern each line; a carriage return stays in the line so a line-ending change shows as a changed line, and a final line feed adds no empty last line.
 pub fn split(gpa: std.mem.Allocator, table: *Table, text: []const u8) !Lines {
     var out_text: std.ArrayList([]const u8) = .empty;
     var out_ids: std.ArrayList(u32) = .empty;

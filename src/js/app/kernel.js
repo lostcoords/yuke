@@ -1,5 +1,4 @@
-// yuke:kernel — the frontend-neutral runtime: process configuration and the event bus.
-// This module must never import `yuke:term`, because a headless frontend loads it.
+// yuke:kernel — the frontend-neutral runtime: process configuration and the event bus; this module must never import `yuke:term` because a headless frontend loads it.
 import { native } from "yuke:engine-native";
 
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
@@ -10,8 +9,7 @@ import { native } from "yuke:engine-native";
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
 
-// --- config -------------------------------------------------------------------------------
-// Runtime configuration. A direct write bypasses validation; use `defineConfig`.
+// --- config ------------------------------------------------------------------------------- Runtime configuration; a direct write bypasses validation, so use `defineConfig`.
 /** @type {Config} */
 export const config = {
   // A null base selects the built-in prompt for new root sessions.
@@ -118,8 +116,7 @@ function applyConfigPatch(section, fields, src, label) {
   Object.assign(section, patch);
 }
 
-// The kernel declares only what neutral code emits, so each tier declares its own names.
-// `engine.drained` carries one whole digest; the engine names the rest, so no list can drift.
+// The kernel declares only what neutral code emits, so each tier declares its own names; `engine.drained` carries one whole digest, and the engine names the rest, so no list can drift.
 const CORE_EVENTS = new Set(["ext.error", "engine.drained", "jobs.changed", ...native.factNames()]);
 
 // True for an `owner:event` name. A plugin owns such a name, so no declaration can enumerate it.
@@ -238,8 +235,7 @@ export class Emitter {
 
 export const events = new Emitter(CORE_EVENTS);
 
-// The native drains engine events on the owner, and both tiers read them from here.
-// The digest coalesces, so a fact says that it happened and never how many times or with what.
+// The native drains engine events on the owner, and both tiers read them from here; the digest coalesces, so a fact says that it happened and never how many times or with what.
 native.setEventSink((ev) => {
   for (const fact of ev.facts) events.emit(fact, ev);
   events.emit("engine.drained", ev);

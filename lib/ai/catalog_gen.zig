@@ -1,5 +1,4 @@
-//! The provider catalog, generated from the yuke control plane.
-//! Do not edit. Run `zig build cataloggen` to regenerate this file.
+//! The provider catalog comes from the yuke control plane; do not edit it; run `zig build cataloggen` to regenerate it.
 
 const std = @import("std");
 const instance = @import("instance/instance.zig");

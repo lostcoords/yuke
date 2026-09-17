@@ -1,13 +1,4 @@
-//! One in-flight primitive call: a promise a task finishes and the owner settles.
-//!
-//! A task never touches JavaScript. It writes a plain result into its `Op` and wakes the owner,
-//! which is the only place that calls `resolve` or `reject`. This is the rule `Engine.onEvent`
-//! already follows for events, so a primitive and an event reach JavaScript by the same route.
-//!
-//! The executor is cooperative, so a task only runs while another task suspends. `settle` never
-//! suspends, which is why it can walk its own list safely and why one pass settles everything.
-//! The owner must therefore reach a suspension point for any of this to progress; `serve` does,
-//! because it ends each pass in `receive`.
+//! One in-flight primitive call is a promise that a task finishes and the owner settles; a task never touches JavaScript, writes a plain result into its `Op`, and wakes the owner, which alone calls `resolve` or `reject`, so a primitive and an event reach JavaScript by the same route; the executor is cooperative, so a task runs only while another task suspends, `settle` never suspends and can walk its own list safely, and one pass settles everything; the owner must reach a suspension point for progress, and `serve` does because it ends each pass in `receive`.
 
 const std = @import("std");
 const quickjs = @import("quickjs");

@@ -13,8 +13,7 @@ pub const Failure = struct {
     message: []const u8,
 };
 
-/// Decode `params_json`, run the command, and write its result as JSON into `out`.
-/// Return null on success. Return a `Failure` when a command refuses. Return an error for a bug.
+/// Decode `params_json`, run the command, and write its result as JSON into `out`; return null on success, a `Failure` when a command refuses, and an error for a bug.
 pub fn call(
     runtime: *App,
     arena: std.mem.Allocator,

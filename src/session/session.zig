@@ -229,8 +229,7 @@ pub const Session = struct {
         self.finalized_message_id = if (items.len > 0) items[items.len - 1].message.id() else 0;
     }
 
-    /// Fold one event the engine built. The engine is the only writer, so this trusts the event
-    /// and asserts the projection invariants.
+    /// Fold one event the engine built; the engine is the only writer, so this trusts the event and asserts the projection invariants.
     pub fn apply(self: *Session, bc: BroadcastData) Error!void {
         // The engine routes only its own session, so a mismatch is a routing bug.
         if (sessionOf(bc)) |s| std.debug.assert(std.meta.eql(s, self.id));
@@ -254,8 +253,7 @@ pub const Session = struct {
         };
     }
 
-    // Advance the durable cursor. A second process shares the store and takes seq values this
-    // projection never sees, so the cursor only grows. It never counts by one.
+    // Advance the durable cursor; another process can take unseen seq values, so the cursor only grows and never counts by one.
     fn advance(self: *Session, seq: ids.Seq) void {
         std.debug.assert(seq > self.base_seq);
         self.base_seq = seq;

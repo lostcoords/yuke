@@ -1,6 +1,4 @@
-//! Run one command natively over `std.Io`. The child leads a new session with no controlling terminal.
-//! A deadline or a cancel kills its process group, so a descendant of the shell does not survive the call.
-//! A descendant that calls `setsid` leaves the group.
+//! Run one command natively over `std.Io`; the child leads a new session with no controlling terminal, a deadline or cancel kills its process group so a shell descendant does not survive the call, and a descendant that calls `setsid` leaves the group.
 
 const std = @import("std");
 const spawn_c = @import("spawn_c");
@@ -176,8 +174,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     };
 }
 
-/// Spawn `argv` as the leader of a new session with no terminal; `argv[0]` is absolute, and a null `stdin` reads `/dev/null`.
-/// TODO: use a session flag from `std.process.SpawnOptions` when Zig std gains that flag, then delete `src/c/spawn.h`.
+/// Spawn `argv` as the leader of a new session with no terminal; `argv[0]` is absolute, and a null `stdin` reads `/dev/null`; TODO: use a session flag from `std.process.SpawnOptions` when Zig std gains that flag, then delete `src/c/spawn.h`.
 fn spawnArgv(scratch: std.mem.Allocator, env: *const std.process.Environ.Map, argv: []const []const u8, cwd: []const u8, stdin: ?std.posix.fd_t, stdout: std.posix.fd_t, stderr: std.posix.fd_t) h.HostError!std.process.Child {
     std.debug.assert(argv.len > 0 and std.fs.path.isAbsolute(argv[0]));
     std.debug.assert(std.fs.path.isAbsolute(cwd));
@@ -484,8 +481,7 @@ const testing = std.testing;
 /// The environment every command test borrows. An empty environment allocates nothing, so no test frees it.
 var test_env: std.process.Environ.Map = .init(testing.allocator);
 
-/// A behaviour test replaces the child environment, so it must name the PATH its utilities need.
-/// Every release target holds `cat`, `head`, `tr`, `sleep` and `yes` under these two directories.
+/// A behaviour test replaces the child environment, so it must name the PATH its utilities need; every release target holds `cat`, `head`, `tr`, `sleep` and `yes` under these two directories.
 fn utilityEnv() !std.process.Environ.Map {
     var env: std.process.Environ.Map = .init(testing.allocator);
     errdefer env.deinit();

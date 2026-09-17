@@ -19,8 +19,7 @@ check("absent", !services.has("cap"));
 const off1 = services.provide("cap", "T1");
 check("activated", log.join(",") === "apply,in:T1");
 
-// A second provider hides the first, so the block reads the new value.
-// The new block builds before the old one leaves, so a shared resource passes across.
+// A second provider hides the first, so the block reads the new value; the new block builds before the old one leaves, so a shared resource passes across.
 const off2 = services.provide("cap", "T2");
 check("restacked", log.join(",") === "apply,in:T1,in:T2,out");
 

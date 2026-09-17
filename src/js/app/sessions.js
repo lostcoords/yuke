@@ -8,9 +8,7 @@ import { client } from "yuke:client";
 /** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */
 /** @typedef {{ id: string, title: string, activity: FeedActivity, session: Wire.Session }} SessionRow */
 
-// --- session feed -------------------------------------------------------------------------
-// One engine, one feed. It keeps no parallel copy of the store: an index change makes it read
-// `session.list` again, and the drain coalesces a burst of changes into one read.
+// --- session feed ------------------------------------------------------------------------- One engine, one feed; it keeps no parallel copy of the store, so an index change makes it read `session.list` again and the drain coalesces a burst of changes into one read.
 export class SessionFeed {
   constructor() {
     /** @type {Map<string, FeedItem>} */

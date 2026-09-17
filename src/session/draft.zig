@@ -1,5 +1,4 @@
-//! Fold broadcast events in the engine and client. Copy bytes before `apply` returns.
-//! Keep the Draft address stable. Let `gpa` own streamed buffers and `arena` own write-once data.
+//! Fold broadcast events in the engine and client; copy bytes before `apply` returns and keep the Draft address stable while `gpa` owns stream buffers and `arena` owns write-once data.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -60,8 +59,7 @@ pub const Part = union(enum) {
         }
     }
 
-    /// Build an owned part from a wire part. `gpa` backs stream buffers. `arena` backs write-once data.
-    /// `deinit` frees the stream buffers. The caller keeps the arena.
+    /// Build an owned part from a wire part; `gpa` backs stream buffers, `deinit` frees them, and the caller keeps the arena for write-once data.
     pub fn initFrom(gpa: std.mem.Allocator, arena: std.mem.Allocator, p: message.AssistantPart) Error!Part {
         switch (p) {
             .text => |t| {
@@ -141,8 +139,7 @@ pub const Draft = struct {
         self.* = undefined;
     }
 
-    /// Append a part from `message.part_added`.
-    /// Reject an out-of-order id when a part event is absent.
+    /// Append a part from `message.part_added` and reject an out-of-order id when a part event is absent.
     pub fn addPart(self: *Draft, d: message.MessagePartAddedData) Error!void {
         return self.appendPart(d.part);
     }
@@ -195,8 +192,7 @@ pub const Draft = struct {
         part.redacted_reasoning.data = try a.dupe(u8, data);
     }
 
-    /// Give an active tool priority over reasoning after it.
-    /// Return `tool_name` from the draft. The draft keeps it valid until it changes.
+    /// Give an active tool priority over reasoning after it and return its `tool_name`, which stays valid until it changes.
     pub fn deriveStreamingState(self: *const Draft, run_started_at_ms: u64) activity.ActivityState {
         if (self.firstRunningTool()) |t| return .{ .running_tool = .{
             .run_id = self.run_id,
@@ -218,8 +214,7 @@ pub const Draft = struct {
         } };
     }
 
-    /// Project the draft to a `proto.ActiveDraft` and share its part payloads.
-    /// Encode the result before a change or deinit frees the draft.
+    /// Project the draft to a `proto.ActiveDraft` and share its part payloads; encode the result before a change or deinit frees the draft.
     pub fn toActiveDraft(self: *const Draft, scratch: std.mem.Allocator) Error!message.ActiveDraft {
         const content = try scratch.alloc(message.AssistantPart, self.parts.items.len);
         for (self.parts.items, 0..) |*p, i| content[i] = partToWire(p);
@@ -289,8 +284,7 @@ fn foldBytes(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), offset: u64, bytes
     try buf.appendSlice(gpa, bytes);
 }
 
-/// Return a wire view that shares an owned part's bytes.
-/// Include accumulated output for an active tool.
+/// Return a wire view that shares an owned part's bytes and includes accumulated output for an active tool.
 pub fn partToWire(p: *const Part) message.AssistantPart {
     return switch (p.*) {
         .text => |*t| .{ .text = .{ .id = t.id, .text = t.text.items } },
@@ -332,8 +326,7 @@ fn isTerminal(s: tool.ToolState) bool {
     };
 }
 
-/// Clone a tool state into the arena.
-/// Store active output in `Tool.output`, not in the state snapshot.
+/// Clone a tool state into the arena and store active output in `Tool.output`, not in the state snapshot.
 fn dupeToolState(a: std.mem.Allocator, s: tool.ToolState) Error!tool.ToolState {
     return switch (s) {
         .pending => .{ .pending = .{} },

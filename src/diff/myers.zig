@@ -1,12 +1,10 @@
-//! The Myers algorithm uses a greedy search over interned line identifiers. It returns the shortest
-//! edit script. Reference: Eugene W. Myers, "An O(ND) Difference Algorithm and Its Variations", 1986.
+//! The Myers algorithm greedily searches interned line identifiers and returns the shortest edit script; see Eugene W. Myers, "An O(ND) Difference Algorithm and Its Variations", 1986.
 
 const std = @import("std");
 
 pub const Op = enum { keep, delete, insert };
 
-/// One run of adjacent lines with the same operation. The indexes are 0-based. A `keep` run advances
-/// both sides. A `delete` run advances the old side. An `insert` run advances the new side.
+/// One run of adjacent lines with the same operation; indexes are 0-based, a `keep` run advances both sides, a `delete` run advances the old side, and an `insert` run advances the new side.
 pub const Edit = struct {
     op: Op,
     old_start: u32,
@@ -19,8 +17,7 @@ pub const Error = error{ TooDifferent, OutOfMemory };
 /// One step of the backtrack, before the runs join.
 const Step = struct { op: Op, old_index: u32, new_index: u32 };
 
-/// Return the shortest edit script from `old` to `new`. The trace costs about
-/// `max_edits * max_edits / 2` words, so `max_edits` bounds the memory. The result borrows `arena`.
+/// Return the shortest edit script from `old` to `new`; the trace costs about `max_edits * max_edits / 2` words, so `max_edits` bounds memory, and the result borrows `arena`.
 pub fn script(arena: std.mem.Allocator, old: []const u32, new: []const u32, max_edits: u32) Error![]const Edit {
     // The search adds both lengths, so the sum must also fit in a u32.
     std.debug.assert(old.len + new.len <= std.math.maxInt(u32));

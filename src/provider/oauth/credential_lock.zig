@@ -1,12 +1,4 @@
-//! An advisory lock over the credential file.
-//!
-//! Several yuke processes may share one `providers.json`. A rotating refresh token can be spent
-//! exactly once, so two processes must never send the same one: the provider rotates, and the
-//! loser's grant dies. The lock therefore covers the WHOLE refresh — the read from disk, the
-//! expiry check, the network call, and the write — not only the write.
-//!
-//! The lock lives on a sibling file, because a write to `providers.json` replaces its inode and
-//! would drop a lock held on the file itself.
+//! An advisory lock protects a shared `providers.json`; it covers the whole refresh—the disk read, expiry check, network call, and write—because a rotating refresh token is spent once, the provider rotates it, and the loser's grant dies, while a sibling lock file keeps the lock when `providers.json` replaces its inode.
 
 const std = @import("std");
 
@@ -19,8 +11,7 @@ const retry_ms: u64 = 25;
 
 file: std.Io.File,
 
-/// Take the lock beside `providers_path`. Return null when the file system gives no lock, and
-/// `error.Busy` when another process holds it for the whole wait.
+/// Take the lock beside `providers_path`; return null when the file system gives no lock, and `error.Busy` when another process holds it for the whole wait.
 pub fn acquire(gpa: std.mem.Allocator, io: std.Io, providers_path: []const u8) !?CredentialLock {
     return acquireFor(gpa, io, providers_path, wait_ms);
 }

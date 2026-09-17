@@ -1,5 +1,4 @@
-//! The engine database owns one SQLite connection and all prepared queries.
-//! A forward-only migration engine brings the schema to the latest version on open.
+//! The engine database owns one SQLite connection and all prepared queries; a forward-only migration engine brings the schema to the latest version on open.
 
 const std = @import("std");
 const sql = @import("sql");
@@ -54,8 +53,7 @@ pub const Database = struct {
     /// Private databases still exclude a second engine on the same connection.
     private_owners: std.AutoHashMapUnmanaged([16]u8, void) = .empty,
 
-    /// Take ownership of `conn`, migrate to the latest version, and prepare the queries.
-    /// Close the connection if any step fails.
+    /// Take ownership of `conn`, migrate to the latest version, and prepare the queries; close the connection if any step fails.
     pub fn open(conn: sql.Connection) !Database {
         errdefer conn.close();
         try migrate(conn);
@@ -134,10 +132,7 @@ fn migrate(conn: sql.Connection) !void {
 
 /// Set the durability and performance pragmas. A fresh file sets its page size before WAL.
 fn configurePragmas(conn: sql.Connection, fresh: bool) !void {
-    // Set the wait first, so every statement below it waits. `journal_mode = WAL` takes an
-    // exclusive lock, and a second yuke process opening the same file holds one.
-    // The wait blocks the one reactor thread, so it bounds a turn-start transaction, which is
-    // microseconds, against a first-open migration, which is not.
+    // Set the wait first so every statement waits; `journal_mode = WAL` takes an exclusive lock, and the wait bounds a microsecond turn-start transaction while another process opens the file and migrates it.
     try conn.busyTimeout(5000);
 
     // Set the page size before WAL starts because WAL fixes the page size.
@@ -149,8 +144,7 @@ fn configurePragmas(conn: sql.Connection, fresh: bool) !void {
     try conn.execNoArgs("PRAGMA wal_autocheckpoint = 1000");
     try conn.execNoArgs("PRAGMA cache_size = -32768"); // A negative value sets KiB rather than pages.
 
-    // Foreign keys enforce the projection pointers. Set the pragma outside a transaction because
-    // SQLite ignores it inside one, then confirm that the build supports it.
+    // Foreign keys enforce projection pointers; set the pragma outside a transaction because SQLite ignores it inside one, then confirm that the build supports it.
     try conn.execNoArgs("PRAGMA foreign_keys = ON");
     if (try scalarInt(conn, "PRAGMA foreign_keys") != 1) return error.ForeignKeysUnavailable;
 }
@@ -204,9 +198,7 @@ fn scalarInt(conn: sql.Connection, query: []const u8) !i64 {
 fn setWal(conn: sql.Connection) !void {
     if (try readsWal(conn)) return; // another connection already switched the file
 
-    // The switch to WAL takes an exclusive lock and does NOT honour `busy_timeout`: SQLite
-    // answers BUSY at once. A second yuke process opening the same file holds that lock for a
-    // moment, so this retries instead of failing the open.
+    // The switch to WAL takes an exclusive lock and does not honour `busy_timeout`, so SQLite answers BUSY at once while another process opens the file; retry instead of failing the open.
     var attempt: u8 = 0;
     while (attempt < wal_switch_attempts) : (attempt += 1) {
         if (conn.row("PRAGMA journal_mode = WAL", .{})) |maybe| {

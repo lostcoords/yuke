@@ -1,10 +1,8 @@
-//! Shared helpers for 16-byte IDs and the wall clock.
-//! It holds no engine state, so run.zig does not form an import cycle.
+//! Shared helpers for 16-byte IDs and the wall clock hold no engine state, so `run.zig` does not form an import cycle.
 
 const std = @import("std");
 
-/// Build a UUIDv7 from a millisecond timestamp and 10 random bytes. RFC 9562 defines a 48-bit big-endian timestamp.
-/// Write the version and variant fields over the random bits.
+/// Build a UUIDv7 from a millisecond timestamp and 10 random bytes; RFC 9562 defines a 48-bit big-endian timestamp, and the version and variant fields replace random bits.
 pub fn v7(ms: u64, rand: [10]u8) [16]u8 {
     std.debug.assert(ms <= std.math.maxInt(u48)); // A real epoch-ms clock never exceeds 48 bits.
     var out: [16]u8 = undefined;
@@ -15,8 +13,7 @@ pub fn v7(ms: u64, rand: [10]u8) [16]u8 {
     return out;
 }
 
-/// Return wall-clock milliseconds since the Unix epoch. Clamp a time before 1970 to 0.
-/// This clock is not monotonic. Do not use it for durations or timeouts.
+/// Return wall-clock milliseconds since the Unix epoch, clamp a time before 1970 to 0, and do not use this non-monotonic clock for durations or timeouts.
 pub fn nowMillis(io: std.Io) u64 {
     return @intCast(@max(std.Io.Timestamp.now(io, .real).toMilliseconds(), 0));
 }

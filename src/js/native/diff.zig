@@ -1,9 +1,4 @@
-//! The native `yuke:diff` module: describe one text change as unified hunks.
-//!
-//! A tool that writes a file calls this to build the view a reader sees.
-//! The model reads the tool text, never the view.
-//! The compare is bounded, so it stays on the owner.
-//! The call answers a Promise like every other primitive, so a later move to a task changes no JavaScript.
+//! The native `yuke:diff` module describes one text change as unified hunks; a tool that writes a file calls it to build the view a reader sees, the model reads the tool text and never the view, the compare is bounded so it stays on the owner, and the call answers a Promise like every other primitive so a later move to a task changes no JavaScript.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -28,11 +23,7 @@ pub fn install(host: *Host) void {
     });
 }
 
-/// Compare two texts and answer `{path, hunks}`. `path` only labels the result.
-///
-/// Answer no hunk for an equal pair, a side above the cap, or a change too large to describe; a caller drops the view in each case.
-///
-/// A value that is not a string rejects. A conversion would run a script the argument carries.
+/// Compare two texts and answer `{path, hunks}`; `path` only labels the result; answer no hunk for an equal pair, a side above the cap, or a change too large to describe, and let the caller drop the view in each case; reject a value that is not a string because conversion would run a script the argument carries.
 fn jsDiff(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 3) return rejected(ctx, "diff needs a path, an old text, and a new text");

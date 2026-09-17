@@ -921,7 +921,7 @@ export interface SessionOriginFork {
 /** This origin marks a user-created root session. */
 export type SessionOriginRoot = Record<string, never>;
 
-/** An absent field leaves the current value unchanged. The engine stores the system prompt at creation. The system prompt remains fixed, and the fields borrow their data. */
+/** An absent field leaves the current value unchanged; the engine stores the system prompt at creation and keeps it fixed, and the fields borrow their data. */
 export interface SessionPatch {
   readonly model?: string;
   readonly reasoning?: string;
@@ -1097,7 +1097,7 @@ export type AgentModelSlot =
   | "medium"
 ;
 
-/** Workspace execution environment. Advertised engine capability. Numeric JSON-RPC and yuke error codes. */
+/** Workspace execution environment; advertised engine capability; numeric JSON-RPC and yuke error codes. */
 export type ErrorCode =
   /** bad_request */
   | -32602
