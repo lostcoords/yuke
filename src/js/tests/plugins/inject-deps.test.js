@@ -25,7 +25,7 @@ check("no-revival", log.join(",") === "on,off");
 
 // A repeated name registers one watcher, so one change builds the block one time.
 const seen = [];
-plugins.use({ name: "dupe", apply: (ctx) => ctx.inject(["d", "d"], () => { seen.push("built"); }) });
+plugins.use({ name: "dupe", apply: (ctx) => { ctx.inject(["d", "d"], () => { seen.push("built"); }); } });
 services.provide("d", 1);
 check("built-once", seen.length === 1);
 

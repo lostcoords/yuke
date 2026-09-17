@@ -309,7 +309,7 @@ pub const Host = struct {
         if (self.phase != .open) return;
         self.phase = .stopping;
         const callback = self.plugin_lifecycle orelse return;
-        var guard: StopGuard = .{
+        var guard: DeadlineGuard = .{
             .host = self,
             .deadline = std.Io.Timestamp.now(self.io, .awake).addDuration(.fromMilliseconds(plugin_stop_timeout_ms)),
         };
@@ -358,11 +358,11 @@ pub const Host = struct {
         }
     }
 
-    const StopGuard = struct {
+    const DeadlineGuard = struct {
         host: *Host,
         deadline: std.Io.Timestamp,
 
-        pub fn onInterrupt(self: *StopGuard) bool {
+        pub fn onInterrupt(self: *DeadlineGuard) bool {
             return self.host.onInterrupt() or std.Io.Timestamp.now(self.host.io, .awake).nanoseconds >= self.deadline.nanoseconds;
         }
     };
@@ -396,11 +396,11 @@ pub const Host = struct {
         std.debug.assert(filename.len > 0);
         const name = std.fmt.allocPrintSentinel(self.gpa, "{s}{s}", .{ loader_mod.host_module_prefix, filename }, 0) catch unreachable;
         defer self.gpa.free(name);
-        try self.evalModuleSource(source, name);
+        try self.evalModuleSource(source, name, false);
     }
 
     /// Evaluate a module and drain its jobs; the filename determines its import access.
-    fn evalModuleSource(self: *Host, source: [:0]const u8, filename: [:0]const u8) Error!void {
+    fn evalModuleSource(self: *Host, source: [:0]const u8, filename: [:0]const u8, wait: bool) Error!void {
         std.debug.assert(self.phase == .open);
         std.debug.assert(filename.len > 0);
         self.enterSlice();
@@ -410,7 +410,43 @@ pub const Host = struct {
         };
         defer self.ctx.freeValue(value);
         try self.drainJobs();
+        if (wait) try self.awaitStartup(value);
         try self.checkModulePromise(value);
+    }
+
+    /// Pump native I/O while an entry module waits for plugin startup.
+    pub fn evalStartup(self: *Host, source: [:0]const u8, filename: [:0]const u8) Error!void {
+        const name = std.fmt.allocPrintSentinel(self.gpa, "{s}{s}", .{ loader_mod.host_module_prefix, filename }, 0) catch unreachable;
+        defer self.gpa.free(name);
+        try self.evalModuleSource(source, name, true);
+    }
+
+    fn awaitStartup(self: *Host, promise: quickjs.Value) Error!void {
+        std.debug.assert(self.phase == .open);
+        if (!self.ctx.isPromise(promise) or self.ctx.promiseState(promise) != .Pending) return;
+        var guard: DeadlineGuard = .{
+            .host = self,
+            .deadline = std.Io.Timestamp.now(self.io, .awake).addDuration(.fromSeconds(10)),
+        };
+        self.runtime.setInterruptHandler(&guard);
+        defer self.runtime.setInterruptHandler(self);
+        while (self.ctx.promiseState(promise) == .Pending) {
+            if (std.Io.Timestamp.now(self.io, .awake).nanoseconds >= guard.deadline.nanoseconds) {
+                self.fault_text_len = 0;
+                self.appendFaultText("plugin startup timed out");
+                return error.JavaScriptFault;
+            }
+            self.wake.reset();
+            try self.pump();
+            if (self.ctx.promiseState(promise) != .Pending) break;
+            if (self.hasPending()) continue;
+            const timer = self.timers.nextDeadline() orelse guard.deadline;
+            const due = if (timer.nanoseconds < guard.deadline.nanoseconds) timer else guard.deadline;
+            self.wake.waitTimeout(self.io, .{ .deadline = .{ .raw = due, .clock = .awake } }) catch |err| switch (err) {
+                error.Timeout => {},
+                error.Canceled => return error.JavaScriptFault,
+            };
+        }
     }
 
     /// Turn a rejected module promise into a fault, because QuickJS never throws it at the caller.
@@ -437,7 +473,7 @@ pub const Host = struct {
         std.debug.assert(self.phase == .open);
         const source = self.loader.readModule(path) orelse return false;
         defer self.gpa.free(source);
-        try self.evalModuleSource(source, path);
+        try self.evalModuleSource(source, path, true);
         return true;
     }
 

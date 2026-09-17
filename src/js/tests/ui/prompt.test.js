@@ -19,6 +19,6 @@ setComposerMode(v.composer, "normal");
 check("normal-again", v.composer._prompt() === "▪ ");
 
 // The unload removes the provider, so normal mode no longer changes the glyph.
-off();
+off.dispose();
 setComposerMode(v.composer, "normal");
 check("unload-restores", v.composer._prompt() === own);

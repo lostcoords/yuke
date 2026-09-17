@@ -12,6 +12,8 @@ export { client } from "yuke:client";
 /** @typedef {import("./types/ext.js").ToolDefinition} ToolDefinition */
 /** @typedef {import("./types/ext.js").ToolExecute} ToolExecute */
 /** @typedef {import("./types/ext.js").Plugin} Plugin */
+/** @typedef {import("./types/ext.js").PluginHandle} PluginHandle */
+/** @typedef {import("yuke:cancellation-native").CancellationSignal} CancellationSignal */
 /** @typedef {import("./types/ext.js").Disposer} Disposer */
 /** @typedef {import("./types/ext.js").AdviceWhere} AdviceWhere */
 /** @typedef {import("./types/ext.js").AdviceOptions} AdviceOptions */

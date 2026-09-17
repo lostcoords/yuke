@@ -5,7 +5,7 @@ import { transcriptVim } from "yuke:transcript-vim";
 
 // A view plugin holds its work behind `inject(["tui"])`, and no frontend provides that service here.
 let built = 0;
-plugins.use({ name: "probe", apply: (ctx) => ctx.inject(["tui"], () => { built += 1; }) });
+plugins.use({ name: "probe", apply: (ctx) => { ctx.inject(["tui"], () => { built += 1; }); } });
 check("no-tui-service", services.get("tui") === undefined);
 check("block-never-built", built === 0);
 

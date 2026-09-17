@@ -204,7 +204,7 @@ test "plugin stop faults still dispose every scope" {
     try support.pumpUntilTrue(host, "globalThis.stopDone");
 }
 
-test "shutdown permits process I/O and timers before scope disposal" {
+test "shutdown permits process I/O and timers before resource release" {
     const reactor = try @import("zio").Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer reactor.deinit();
     const host = support.createHostWith(reactor.io(), "/tmp");
@@ -216,7 +216,7 @@ test "shutdown permits process I/O and timers before scope disposal" {
         \\plugins.use({ name: "flush", apply(ctx) {
         \\  child = spawn(["/bin/cat"]);
         \\  child.onStdout(text => { globalThis.stopped += text; });
-        \\  ctx.effect(() => () => { child.kill(); globalThis.stopped += "disposed"; });
+        \\  ctx.own(() => { child.kill(); globalThis.stopped += "disposed"; });
         \\}, async stop() {
         \\  await import("yuke/ui");
         \\  await new Promise(resolve => setTimeout(resolve, 1));
@@ -268,4 +268,83 @@ test "shutdown bounds synchronous stop code and still disposes its scope" {
     try std.testing.expect(start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds() < 2500);
     try host.close();
     try support.expectString(host, "stopped", "disposed");
+}
+
+test "async plugin startup cancels, releases late resources, and isolates a replacement" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/plugins/start.test.js");
+    try support.pumpUntilTrue(host, "globalThis.startDone");
+    try support.expectString(host, "globalThis.startFailure || ''", "");
+    try std.testing.expectEqual(@as(usize, 0), host.signal_waiters.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
+}
+
+test "a capability withdrawal closes its child resource owner" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/plugins/resource-child.test.js");
+    try support.pumpUntilTrue(host, "globalThis.childDone");
+    try std.testing.expectEqual(@as(usize, 0), host.signal_waiters.items.len);
+}
+
+test "unload bounds startup that ignores cancellation" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/plugins/start-timeout.test.js");
+    try support.pumpUntilTrue(host, "globalThis.startDone");
+    try support.expectString(host, "globalThis.startFailure || ''", "");
+    try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
+}
+
+test "plugin unload cancels and drains native startup" {
+    const reactor = try @import("zio").Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer reactor.deinit();
+    const host = support.createHostWith(reactor.io(), "/tmp");
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { plugins, exec } from "yuke";
+        \\globalThis.startCanceled = false;
+        \\globalThis.disposed = false;
+        \\const handle = plugins.use({ name: "native-start", async apply(ctx) {
+        \\  try { await exec("sleep 30", { signal: ctx.signal }); }
+        \\  catch { globalThis.startCanceled = true; }
+        \\} });
+        \\handle.dispose().then(() => { globalThis.disposed = true; });
+    , "native-start.js");
+    try support.pumpUntilTrue(host, "globalThis.disposed");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.startCanceled ? 1 : 0"));
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.signal_waiters.items.len);
+}
+
+test "resource release is LIFO, idempotent, and safe under reentrant disposal" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/plugins/resource-release.test.js");
+    try support.pumpUntilTrue(host, "globalThis.resourcesDone");
+}
+
+test "plugin disposal joins native work from a withdrawn injection" {
+    const reactor = try @import("zio").Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer reactor.deinit();
+    const host = support.createHostWith(reactor.io(), "/tmp");
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { plugins, exec, services } from "yuke";
+        \\globalThis.childCanceled = false;
+        \\globalThis.disposed = false;
+        \\const withdraw = services.provide("child-resource", 1);
+        \\const handle = plugins.use({ name: "native-child", apply(ctx) {
+        \\  ctx.inject(["child-resource"], child => {
+        \\    exec("sleep 30", { signal: child.signal }).catch(() => { globalThis.childCanceled = true; });
+        \\  });
+        \\} });
+        \\withdraw();
+        \\handle.dispose().then(() => { globalThis.disposed = true; });
+    , "native-child.js");
+    try support.pumpUntilTrue(host, "globalThis.disposed");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.childCanceled ? 1 : 0"));
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.signal_waiters.items.len);
 }

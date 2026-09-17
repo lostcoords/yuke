@@ -7,14 +7,14 @@ services.provide("alpha", { tag: "A" });
 services.provide("beta", { tag: "B" });
 plugins.use({
   name: "reader",
-  apply: (ctx) => ctx.inject(["alpha"], (c) => { saw = { alpha: c.alpha, beta: c.beta }; }),
+  apply: (ctx) => { ctx.inject(["alpha"], (c) => { saw = { alpha: c.alpha, beta: c.beta }; }); },
 });
 check("bound-declared", saw && saw.alpha && saw.alpha.tag === "A");
 check("undeclared-absent", saw && saw.beta === undefined);
 
 // A replaced provider rebuilds the block, so the binding is never stale.
 const seen = [];
-plugins.use({ name: "watcher", apply: (ctx) => ctx.inject(["alpha"], (c) => { seen.push(c.alpha.tag); }) });
+plugins.use({ name: "watcher", apply: (ctx) => { ctx.inject(["alpha"], (c) => { seen.push(c.alpha.tag); }); } });
 const off = services.provide("alpha", { tag: "A2" });
 check("rebound", seen.join(",") === "A,A2");
 off();

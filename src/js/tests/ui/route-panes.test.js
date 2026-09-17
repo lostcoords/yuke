@@ -46,4 +46,4 @@ press("x");
 check("chat-again", t.text !== before);
 check("side-untouched", seen === 1);
 
-off();
+off.dispose();

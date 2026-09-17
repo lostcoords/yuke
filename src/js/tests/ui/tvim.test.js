@@ -185,7 +185,7 @@ check("jump-composer", v.cursor() && v.cursor().y === v.composer.rect.y);
 
 // An unload returns the region and the caret to the composer.
 v.focusRegion("transcript");
-off();
+off.dispose();
 check("unload-region", v.focus === "composer");
 check("unload-focus-command", !command.available("chat:focus-toggle"));
 root.onEvent(key("tab"));

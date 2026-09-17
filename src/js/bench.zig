@@ -47,13 +47,16 @@ pub const Phase = enum {
     jobs_output,
     timers_batch,
     tool_call,
+    plugin_sync,
+    plugin_async,
 
-    const Group = enum { transcript, colors, advice, agents, process, tools };
+    const Group = enum { transcript, colors, advice, agents, process, tools, plugins };
 
     fn group(self: Phase) Group {
         return switch (self) {
             .exec_short, .exec_bulk, .fs_read, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
             .tool_call => .tools,
+            .plugin_sync, .plugin_async => .plugins,
             .colors => .colors,
             .agents_open, .agents_activity, .agents_burst, .agents_structure => .agents,
             .advice_direct, .advice_before, .advice_around, .advice_mixed, .advice_churn => .advice,
@@ -118,6 +121,7 @@ pub const Harness = struct {
         try ctx.setPropertyStr(global, "FIXTURE", ctx.newString(fixture));
         try self.host.evalModule(switch (self.phase_group) {
             .tools => tool_source,
+            .plugins => plugin_source,
             .process => @embedFile("bench_process.js"),
             .agents => @embedFile("bench_agents.js"),
             .colors => @embedFile("bench_colors.js"),
@@ -184,6 +188,7 @@ pub const Harness = struct {
         if (phase == .colors or phase.group() == .agents) _ = try self.call(self.step_fn, &.{});
         if (phase.group() == .agents) _ = try self.host.evalInt("agentResetReads()");
         if (phase == .tool_call) try self.toolOnce();
+        if (phase.group() == .plugins) _ = try self.call(self.step_fn, &.{});
         self.host.runtime.runGC();
         self.output.clearRetainingCapacity();
         self.allocations.resetPeak();
@@ -207,6 +212,26 @@ pub const Harness = struct {
         host.interrupt_budget = std.math.maxInt(u32);
         try host.evalModule(boot_source, "boot.js");
     }
+
+    const plugin_source =
+        \\import { plugins } from "yuke:ext";
+        \\let mode, count = 0;
+        \\const sync = { name: "probe", apply(ctx) { ctx.effect(() => () => { count++; }); } };
+        \\const async = { name: "probe", async apply(ctx) {
+        \\  if (ctx.signal.aborted) throw new Error("fresh signal is aborted");
+        \\  await Promise.resolve();
+        \\  ctx.own(() => { count++; });
+        \\} };
+        \\globalThis.bench = {
+        \\  start(phase) { mode = phase; count = 0; return 1; },
+        \\  step() {
+        \\    const handle = plugins.use(mode === "plugin_sync" ? sync : async);
+        \\    if (mode === "plugin_sync") { plugins.dispose("probe"); return count; }
+        \\    return handle.ready.then(() => handle.dispose()).then(() => count);
+        \\  },
+        \\  verify() { if (plugins.names().length) throw new Error("plugin remains live"); return count; },
+        \\};
+    ;
 
     const tool_source =
         \\import { defineTool } from "yuke:tools";
@@ -303,7 +328,7 @@ pub const Harness = struct {
             std.log.err("benchmark: {s}", .{self.host.faultText()});
             return error.JavaScriptFault;
         }
-        if (self.phase_group == .process and ctx.isObject(result)) {
+        if ((self.phase_group == .process or self.phase_group == .plugins) and ctx.isObject(result)) {
             const deadline = std.Io.Clock.Timestamp.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake });
             while (ctx.promiseState(result) == .Pending) {
                 self.host.wake.reset();
@@ -316,7 +341,7 @@ pub const Harness = struct {
                 };
             }
         }
-        if (self.phase_group == .agents or self.phase_group == .process) {
+        if (self.phase_group == .agents or self.phase_group == .process or self.phase_group == .plugins) {
             if (self.phase_group == .agents) try self.settleAgents();
             if (ctx.isObject(result) and ctx.promiseState(result) == .Rejected) return error.AgentBenchmarkRejected;
             if (ctx.isObject(result) and ctx.promiseState(result) == .Fulfilled) {

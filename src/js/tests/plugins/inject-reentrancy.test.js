@@ -3,8 +3,8 @@ import { plugins, services, Scope } from "yuke:ext";
 
 // The killer registers its watcher first, so it runs before the victim in one change.
 const log = [];
-plugins.use({ name: "killer", apply: (ctx) => ctx.inject(["c"], () => { plugins.dispose("victim"); }) });
-plugins.use({ name: "victim", apply: (ctx) => ctx.inject(["c"], () => { log.push("on"); return () => log.push("off"); }) });
+plugins.use({ name: "killer", apply: (ctx) => { ctx.inject(["c"], () => { plugins.dispose("victim"); }); } });
+plugins.use({ name: "victim", apply: (ctx) => { ctx.inject(["c"], () => { log.push("on"); return () => log.push("off"); }); } });
 services.provide("c", 1);
 // The victim died during the same change, so its copied watcher must build nothing.
 check("no-orphan-build", log.join(",") === "");
@@ -15,11 +15,11 @@ const seen = [];
 const offY = services.provide("y", 1);
 plugins.use({
   name: "self-cut",
-  apply: (ctx) => ctx.inject(["y"], () => {
+  apply: (ctx) => { ctx.inject(["y"], () => {
     offY();
     seen.push("built");
     return () => seen.push("torn");
-  }),
+  }); },
 });
 check("dependency-gone", !services.has("y"));
 check("block-torn-down", seen.join(",") === "built,torn");

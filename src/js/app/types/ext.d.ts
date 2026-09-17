@@ -35,7 +35,7 @@ export interface AdviceInfo {
 
 export type EventHandler = Parameters<typeof import("../kernel.js").events.on>[1];
 export type EventOptions = Parameters<typeof import("../kernel.js").events.on>[2];
-export type PluginApply = (context: Context, config: unknown) => unknown;
+export type PluginApply = (context: Context, config: unknown) => void | Promise<void>;
 
 export type ToolExecute = (
   args: any,
@@ -60,6 +60,13 @@ export interface Capabilities {
 export type InjectContext<K extends string = "tui"> = Context & Pick<Capabilities, K>;
 export type InjectApply<K extends string = string> = (context: InjectContext<K>) => unknown;
 
+export interface PluginHandle {
+  /** Rejects on startup failure or cancellation. */
+  readonly ready: Promise<void>;
+  /** Withdraws registrations, cancels startup, stops the plugin, and drains its resources. */
+  dispose(): void | Promise<void>;
+}
+
 export interface Plugin {
   name: string;
   apply: PluginApply;
@@ -79,6 +86,18 @@ export interface HookAnswer {
 }
 
 export type HookDecision = { type: "block"; reason: string } | { type: "replace"; value: any };
+
+export interface OwnedResource {
+  release: Disposer | null;
+}
+
+export interface ResourceState {
+  active: boolean;
+  signal?: import("yuke:cancellation-native").CancellationSignal;
+  resources?: OwnedResource[];
+  children?: Set<Context>;
+  closed?: Promise<void>;
+}
 
 export interface ScopeEntry {
   owner: Scope | null;

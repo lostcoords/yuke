@@ -11,16 +11,16 @@ const off = plugins.use({
   stop(ctx) {
     calls++;
     equal(ctx.id, "async-stop");
-    check("scope stays live during stop", ctx.scope.alive);
+    check("registrations leave before stop", !ctx.scope.alive);
     nested = plugins.dispose(ctx.id);
     return new Promise(resolve => { finish = resolve; });
   },
 });
-const first = off();
+const first = off.dispose();
 equal(first, nested);
 equal(first, plugins.dispose("async-stop"));
 equal(calls, 1);
-equal(disposed, 0);
+equal(disposed, 1);
 let refused = false;
 try { plugins.use({ name: "async-stop", apply() {} }); } catch { refused = true; }
 check("replacement waits for stop", refused);
@@ -30,7 +30,7 @@ first.then(() => {
   equal(disposed, 1);
   equal(plugins.get("async-stop"), undefined);
   plugins.use({ name: "async-stop", apply() {} });
-  off();
+  off.dispose();
   check("old handle cannot stop replacement", plugins.get("async-stop"));
   plugins.dispose("async-stop");
   globalThis.stopDone = true;

@@ -1,6 +1,6 @@
 import { check } from "yuke:test";
 import { command } from "yuke:core";
-import { plugins, rootScope } from "yuke:ext";
+import { plugins } from "yuke:ext";
 import { tui } from "yuke:tui";
 
 // A plugin registers on use, reverts on dispose, and comes back on reload.
@@ -14,16 +14,6 @@ import { tui } from "yuke:tui";
   const back = !!command.map["demo9:act"];
   plugins.dispose("demo9");
   check("plugin-lifecycle", present && gone && back);
-}
-
-// A disposed plugin releases its root entry, so reloads do not retain one capture each.
-{
-  const held = rootScope._disposers.length;
-  for (let i = 0; i < 32; i++) {
-    plugins.use({ name: "short", apply() {} });
-    plugins.dispose("short");
-  }
-  check("plugin-root-entry-released", rootScope._disposers.length === held);
 }
 
 // A second use of a live name throws and leaves the first plugin live.
@@ -59,4 +49,11 @@ import { tui } from "yuke:tui";
   check("plugin-rejects-nameless", rejects({ apply(ctx) {} }));
   check("plugin-rejects-empty-name", rejects({ name: "", apply(ctx) {} }));
   check("plugin-rejects-no-apply", rejects({ name: "x" }));
+}
+
+// The registry key does not depend on a mutable context namespace.
+{
+  const handle = plugins.use({ name: "stable-key", apply(ctx) { ctx.id = "changed"; } });
+  handle.dispose();
+  check("registry-key-is-stable", !plugins.get("stable-key"));
 }

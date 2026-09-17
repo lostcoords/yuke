@@ -139,7 +139,7 @@ press("i");
 check("insert", composerMode(v.composer) === "insert");
 setComposerMode(v.composer, "normal");
 t.setText("");
-off();
+off.dispose();
 check("unloaded", composerMode(v.composer) === "insert");
 v.composer.onKey(key("z"));
 check("types-after-unload", t.text === "z");

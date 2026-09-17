@@ -11,5 +11,5 @@ const welcome = view.presentationViews.some(child => child.text === "new chat");
 view.transcript.setOutline([{ id: 1, type: "user" }], null);
 root.invalidate(); root.flush();
 const history = view.presentationViews.length === 0 && view.transcript.pager.rect() !== null;
-root.setActive(null); off();
+root.setActive(null); off.dispose();
 equal(welcome && history ? "ok" : [welcome, history].join(","), "ok");

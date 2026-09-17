@@ -13,7 +13,7 @@ let builds = 0;
 services.provide("gate", 1);
 plugins.use({
   name: "keeper",
-  apply: (ctx) => ctx.inject(["tui", "gate"], (c) => { builds += 1; c.tui.overlay(layer); }),
+  apply: (ctx) => { ctx.inject(["tui", "gate"], (c) => { builds += 1; c.tui.overlay(layer); }); },
 });
 check("claimed", builds === 1 && root.overlays.indexOf(layer) >= 0);
 

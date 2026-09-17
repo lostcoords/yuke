@@ -52,7 +52,7 @@ const run = (order) => {
   const len0 = v.composer.input.text.length;
   root.onEvent(key("h"));
   const typed = v.composer.input.text.length === len0 + 1;
-  for (const o of offs) o();
+  for (const o of offs) o.dispose();
   if (!both) return "not-both";
   if (!bareLost) return "unscoped-binding-won";
   if (leaked) return "composer-leaked";

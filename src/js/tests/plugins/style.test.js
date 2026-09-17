@@ -18,7 +18,7 @@ import { tui } from "yuke:tui";
 {
   const stop = plugins.use({ name: "theme", apply: (c) => { tui.bindTo(c).style({ PluginGroup: { fg: "fg", bold: true } }); } });
   const on = style.resolve("PluginGroup").bold === true;
-  stop();
+  stop.dispose();
   check("style-plugin", on && !("PluginGroup" in style.groups) && style.resolve("PluginGroup").bold === undefined);
 }
 
@@ -27,9 +27,9 @@ import { tui } from "yuke:tui";
   const first = { fg: "fg", bold: true };
   const stopA = plugins.use({ name: "thA", apply: (c) => { tui.bindTo(c).style({ Shared: first }); } });
   const stopB = plugins.use({ name: "thB", apply: (c) => { tui.bindTo(c).style({ Shared: { fg: "danger" } }); } });
-  stopA();
+  stopA.dispose();
   check("style-collision", style.groups.Shared === first && style.resolve("Shared").bold === true);
-  stopB();
+  stopB.dispose();
   check("style-collision-clean", !("Shared" in style.groups));
 }
 

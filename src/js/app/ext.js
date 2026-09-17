@@ -1,4 +1,5 @@
 // yuke:ext — the plugin runtime: a Scope owns revertible effects, a Context registers, and `advice` wraps methods.
+import * as cancellation from "yuke:cancellation-native";
 import { events } from "yuke:kernel";
 import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installInputGate, installLifecycle, setPoints } from "yuke:hooks";
@@ -26,7 +27,13 @@ export class Scope {
     if (!this.alive) throw new TypeError("effect on a disposed scope: " + this.name);
 
     const cleanup = fn();
-    if (typeof cleanup !== "function") return NOOP;
+    if (typeof cleanup !== "function") {
+      if (cleanup != null && typeof /** @type {any} */ (cleanup).then === "function") {
+        Promise.resolve(cleanup).catch(() => {});
+        throw new TypeError("scope effects must be synchronous");
+      }
+      return NOOP;
+    }
     // `fn` can dispose this scope re-entrantly, and the sweep already passed. Revert here instead.
     if (!this.alive) {
       cleanup();
@@ -104,7 +111,7 @@ export class Scope {
   }
 }
 
-// The parent of every plugin scope. A dispose here tears the whole tier down.
+// The owner of registrations outside a plugin.
 export const rootScope = new Scope("root");
 
 // --- advice: named, removable method wrapping ---
@@ -334,8 +341,9 @@ function isReserved(name) {
 }
 
 // --- inject: hold a block for the capabilities it needs --- The block owns a child scope, and a change of a named capability drops that scope and builds it again.
-/** @template {string} K @param {Scope} parent @param {string} id @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
-function injectInto(parent, id, names, apply) {
+/** @template {string} K @param {Context} parentContext @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
+function injectInto(parentContext, names, apply) {
+  const { scope: parent, id } = parentContext;
   if (!Array.isArray(names) || names.length === 0) throw new TypeError("inject needs at least one capability name");
   for (const n of names) {
     if (typeof n !== "string" || n === "") throw new TypeError("inject: a capability name must be a non-empty string");
@@ -367,10 +375,10 @@ function injectInto(parent, id, names, apply) {
       return false;
     }
 
-    // A bare Scope, not `parent.child()`: a child pushes one disposer per build and never drops it.
+    // The injection owns this scope until its dependencies change.
     const child = new Scope("inject:" + deps.join("+"));
     try {
-      const ctx = new Context(child, id);
+      const ctx = new Context(child, id, parentContext);
       // Each build reads the live provider, and a later change builds the block again.
       const bound = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (ctx));
       for (const n of deps) bound[n] = bindCapability(services.get(n), ctx);
@@ -589,12 +597,111 @@ function boundSurface(ctx) {
   return surface;
 }
 
+/** @param {Disposer} release */
+function releaseResource(release) {
+  const result = /** @type {unknown} */ (release());
+  if (result != null && typeof /** @type {any} */ (result).then === "function") {
+    Promise.resolve(result).catch(NOOP);
+    throw new TypeError("resource release must be synchronous");
+  }
+}
+
 // --- plugin context: the register-through-me surface --- Every registration is an effect on the scope, so an unload reverts all of them.
 export class Context {
-  /** @param {Scope} scope @param {string} id */
-  constructor(scope, id) {
+  /** @param {Scope} scope @param {string} id @param {Context} [parent] */
+  constructor(scope, id, parent) {
     this.scope = scope;
     this.id = id; // the plugin id; it namespaces commands and owns this plugin's advice
+    if (parent) {
+      /** @type {Context | undefined} */
+      this._parent = parent;
+    }
+  }
+
+  get _managed() { return false; }
+
+  /** @returns {import("./types/ext.js").ResourceState} */
+  _resources() {
+    if (!this._owner) {
+      const parent = this._parent?._resources();
+      /** @type {import("./types/ext.js").ResourceState | undefined} */
+      this._owner = { active: this.scope.alive && (parent?.active ?? true) };
+      if (parent) (parent.children ??= new Set()).add(this);
+      if (this._managed) plugins._needsStop = true;
+      if (!this.scope.alive) this._closeResources();
+      else if (!this._managed) this.scope.effect(() => () => { this._closeResources(); });
+    }
+    return this._owner;
+  }
+
+  // Unload cancels this signal before stop runs.
+  get signal() {
+    const owner = this._resources();
+    if (!owner.signal) {
+      owner.signal = cancellation.create();
+      if (!owner.active) cancellation.cancel(owner.signal);
+    }
+    return owner.signal;
+  }
+
+  // A late resource is released at once; normal release follows stop.
+  /** @param {Disposer} release @returns {Disposer} */
+  own(release) {
+    if (typeof release !== "function") throw new TypeError("a resource needs a release function");
+    const owner = this._resources();
+    if (!owner.active) {
+      releaseResource(release);
+      throw new TypeError("the resource owner is closed");
+    }
+    const resources = owner.resources ??= [];
+    const entry = /** @type {import("./types/ext.js").OwnedResource} */ ({ release });
+    resources.push(entry);
+    return () => {
+      const fn = entry.release;
+      if (!fn) return;
+      entry.release = null;
+      const at = resources.indexOf(entry);
+      if (at >= 0) resources.splice(at, 1);
+      releaseResource(fn);
+    };
+  }
+
+  _cancelResources() {
+    const owner = this._owner;
+    if (!owner?.active) return;
+    owner.active = false;
+    if (owner.signal) cancellation.cancel(owner.signal);
+    if (owner.children) for (const child of owner.children) child._cancelResources();
+  }
+
+  /** @returns {void | Promise<void>} */
+  _closeResources() {
+    const owner = this._owner;
+    if (!owner) return;
+    if (owner.closed) return owner.closed;
+    let resolve = NOOP;
+    owner.closed = new Promise(done => { resolve = done; });
+    this._cancelResources();
+    /** @type {Promise<void>[]} */
+    const pending = [];
+    if (owner.children) for (const child of owner.children) {
+      const result = child._closeResources();
+      if (result) pending.push(result);
+    }
+    const resources = owner.resources;
+    while (resources?.length) {
+      const entry = /** @type {import("./types/ext.js").OwnedResource} */ (resources.pop());
+      const release = entry.release;
+      entry.release = null;
+      try { if (release) releaseResource(release); } catch (error) { events.emit("ext.error", error, this.id); }
+    }
+    if (owner.signal) pending.push(cancellation.drain(owner.signal));
+    Promise.all(pending).then(() => {
+      this._parent?._owner?.children?.delete(this);
+      this._parent = undefined;
+      resolve();
+    });
+    return owner.closed;
   }
 
   /** @param {Effect} fn @returns {Disposer} */
@@ -641,7 +748,7 @@ export class Context {
   // Run `apply` only while every named capability exists, in a child scope a withdrawal reverts.
   /** @template {string} K @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
   inject(names, apply) {
-    return injectInto(this.scope, this.id, names, apply);
+    return injectInto(this, names, apply);
   }
 
   // The frontend seam. A service is always installed, so a plugin calls it without `inject`.
@@ -650,6 +757,11 @@ export class Context {
     return boundSurface(this);
   }
 }
+
+/** @type {Context | undefined} */
+Context.prototype._parent = undefined;
+/** @type {import("./types/ext.js").ResourceState | undefined} */
+Context.prototype._owner = undefined;
 
 // --- plugin registry --- A plugin is `{ name, apply }`; the name keys the registry and prefixes every command, so it is required.
 /** @param {Plugin} plugin @returns {Plugin["stop"]} */
@@ -663,127 +775,214 @@ function checkPlugin(plugin) {
   return stop;
 }
 
-/** @typedef {{ callback: () => void | Promise<void>, promise?: Promise<void>, finish?: () => void }} PluginStop */
+const readyNow = Promise.resolve();
+
+/** @param {unknown} result */
+function checkApplyResult(result) {
+  if (result !== undefined) throw new TypeError("plugin apply must return void or Promise<void>");
+}
+
+/** @returns {Error} */
+function startupCanceled() {
+  const error = new Error("plugin startup was canceled");
+  error.name = "AbortError";
+  return error;
+}
+
+/** @typedef {{ stop?: Plugin["stop"], ready?: Promise<void> | undefined, startup?: Promise<void> | undefined, cancelReady?: ((error: Error) => void) | undefined, dispose?: Promise<void> | undefined, force?: (() => void) | undefined }} AsyncPlugin */
+
+class PluginInstance extends Context {
+  /** @param {string} name @param {Plugin["stop"]} stop */
+  constructor(name, stop) {
+    super(new Scope("plugin:" + name), name);
+    this._name = name;
+    this._phase = "applying";
+    if (stop) {
+      /** @type {AsyncPlugin | undefined} */
+      this._async = { stop };
+    }
+  }
+
+  get _managed() { return true; }
+  get ready() { return this._async?.ready ?? readyNow; }
+
+  /** @param {unknown} error */
+  report(error) { events.emit("ext.error", error, this._name); }
+
+  finish() {
+    if (this._async) {
+      this._async.stop = undefined;
+      this._async.force = undefined;
+      this._async.cancelReady = undefined;
+      this._async.startup = undefined;
+    }
+    if (plugins._live[this._name] === this) delete plugins._live[this._name];
+  }
+
+  /** @returns {void | Promise<void>} */
+  dispose() {
+    if (this._phase === "stopping") return this._async?.dispose;
+    const applying = this._phase === "applying";
+    const asynchronous = applying || this._async?.startup || this._async?.stop || this._owner;
+    this._phase = "stopping";
+    if (!asynchronous) {
+      this.scope.dispose();
+      if (plugins._live[this._name] === this) delete plugins._live[this._name];
+      return;
+    }
+    const state = this._async ??= {};
+    let resolve = NOOP;
+    state.dispose = new Promise(done => { resolve = done; });
+    state.cancelReady?.(startupCanceled());
+    this._cancelResources();
+    this.scope.dispose();
+
+    let closed = false;
+    /** @type {number | undefined} */
+    let timer;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      clearTimeout(timer);
+      const drain = this._closeResources();
+      if (drain) drain.then(() => { this.finish(); resolve(); });
+      else { this.finish(); resolve(); }
+    };
+    state.force = () => {
+      if (!closed) this.report(new Error("plugin stop timed out"));
+      close();
+    };
+    if (!applying && !state.startup && !state.stop) {
+      close();
+      return state.dispose;
+    }
+    timer = setTimeout(state.force, stopTimeoutMs);
+    /** @type {void | Promise<void>} */
+    let stopped = undefined;
+    try { const stop = state.stop; stopped = stop?.(this); }
+    catch (error) { this.report(error); }
+    const stop = Promise.resolve(stopped).catch(error => { if (!closed) this.report(error); });
+    // A reentrant dispose can run before apply returns its promise.
+    const start = applying ? readyNow.then(() => state.startup) : state.startup ?? readyNow;
+    Promise.all([start.catch(() => {}), stop]).then(close);
+    return state.dispose;
+  }
+}
+
+/** @type {AsyncPlugin | undefined} */
+PluginInstance.prototype._async = undefined;
 
 export const plugins = {
-  /** @type {Record<string, Scope>} */
-  _live: Object.create(null), // name -> Scope
-  /** @type {Record<string, PluginStop> | null} */
-  _stops: null,
+  /** @type {Record<string, PluginInstance>} */
+  _live: Object.create(null),
   _closing: false,
+  _needsStop: false,
+  /** @type {{ error: unknown } | undefined} */
+  _startupFailure: undefined,
 
-  // Instantiate under a child of `rootScope`, where a throw in `apply` reverts the partial scope.
-  /** @param {Plugin} plugin @param {unknown} [config] @returns {() => void | Promise<void>} */
+  /** @param {Plugin} plugin @param {unknown} [config] @returns {import("./types/ext.js").PluginHandle} */
   use(plugin, config) {
     const stop = checkPlugin(plugin);
-    if (this._closing) throw new TypeError("the plugin registry is closed");
+    if (this._closing || !rootScope.alive) throw new TypeError("the plugin registry is closed");
     const name = plugin.name;
-    // A live plugin keeps its name, so a reload must dispose the old plugin first.
     if (this._live[name]) throw new TypeError("plugin `" + name + "` is already in use");
-
-    const scope = rootScope.child("plugin:" + name);
-    const ctx = new Context(scope, name);
-    this._live[name] = scope;
+    if (stop) this._needsStop = true;
+    const instance = new PluginInstance(name, stop);
+    this._live[name] = instance;
     try {
-      scope.effect(() => plugin.apply(ctx, config));
-    } catch (e) {
-      scope.dispose();
-      if (this._live[name] === scope) delete this._live[name];
-      throw e;
+      const result = plugin.apply(instance, config);
+      if (result != null && typeof /** @type {any} */ (result).then === "function") {
+        this._needsStop = true;
+        const state = instance._async ??= {};
+        let resolveReady = () => {};
+        /** @type {(error: unknown) => void} */
+        let rejectReady = () => {};
+        state.ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+        state.cancelReady = rejectReady;
+        state.ready.catch(() => {});
+        if (instance._phase === "stopping") rejectReady(startupCanceled());
+        state.startup = Promise.resolve(result).then(value => {
+          checkApplyResult(value);
+          resolveReady();
+        }).catch(error => {
+          rejectReady(error);
+          if (instance._phase !== "stopping") {
+            this._startupFailure ??= { error };
+            instance.report(error);
+            instance.dispose();
+          }
+        }).then(() => { state.cancelReady = undefined; state.startup = undefined; });
+      } else {
+        checkApplyResult(result);
+        if (instance._phase === "stopping") {
+          const state = instance._async ??= {};
+          state.ready = Promise.reject(startupCanceled());
+          state.ready.catch(() => {});
+        }
+      }
+    } catch (error) {
+      if (instance._phase === "applying") instance._phase = "active";
+      instance.dispose();
+      throw error;
     }
-    if (stop && this._live[name] === scope) (this._stops ??= Object.create(null))[name] = { callback: () => stop(ctx) };
-
-    // The disposer clears the slot only while current, so a stale handle cannot evict a reload.
-    return () => {
-      if (this._live[name] === scope) return this.dispose(name);
-    };
+    if (instance._phase === "applying") instance._phase = "active";
+    return instance;
   },
 
   /** @param {string} name @returns {Scope | undefined} */
-  get(name) {
-    return this._live[name];
-  },
+  get(name) { return this._live[name]?.scope; },
 
   /** @param {string} name @returns {void | Promise<void>} */
-  dispose(name) {
-    const scope = this._live[name];
-    if (!scope) return;
-    const stop = this._stops?.[name];
-    if (!stop) {
-      scope.dispose();
-      if (this._live[name] === scope) delete this._live[name];
-      return;
-    }
-    if (stop.promise) return stop.promise;
-
-    let resolve = () => {};
-    stop.promise = new Promise(done => { resolve = done; });
-    /** @type {number | undefined} */
-    let timer;
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      scope.dispose();
-      if (this._stops) delete this._stops[name];
-      if (this._live[name] === scope) delete this._live[name];
-      resolve();
-    };
-    stop.finish = finish;
-    try {
-      timer = setTimeout(() => {
-        events.emit("ext.error", new Error("plugin stop timed out"), name);
-        finish();
-      }, stopTimeoutMs);
-      Promise.resolve(stop.callback()).then(finish, error => {
-        if (!finished) events.emit("ext.error", error, name);
-        finish();
-      });
-    } catch (error) {
-      events.emit("ext.error", error, name);
-      finish();
-    }
-    return stop.promise;
-  },
+  dispose(name) { return this._live[name]?.dispose(); },
 
   /** @returns {string[]} */
-  names() {
-    return Object.keys(this._live);
+  names() { return Object.keys(this._live); },
+
+  /** @returns {Promise<void>} */
+  _cancelStartup() {
+    return Promise.all(Object.values(this._live).filter(entry => entry._async?.startup || entry._phase === "stopping").map(entry => entry.dispose())).then(() => {});
+  },
+
+  // Report a startup failure once, even after the failed plugin exits.
+  /** @returns {void | Promise<void>} */
+  ready() {
+    const failure = this._startupFailure;
+    this._startupFailure = undefined;
+    if (failure) return Promise.reject(failure.error);
+    const pending = Object.values(this._live).filter(entry => entry._async?.startup && entry._phase !== "stopping");
+    if (!pending.length) return;
+    return Promise.all(pending.map(entry => entry.ready)).then(() => this.ready(), error => {
+      this._startupFailure = undefined;
+      throw error;
+    });
   },
 };
 
-// The host awaits stop callbacks before it cancels I/O, then forces synchronous disposal.
 const stopTimeoutMs = installLifecycle(force => {
   plugins._closing = true;
-  if (!rootScope.alive) return;
-  if (!plugins._stops) {
-    rootScope.dispose();
+  if (!plugins._needsStop && !rootScope.alive) return;
+  const entries = Object.values(plugins._live);
+  if (!plugins._needsStop) {
+    for (let i = entries.length - 1; i >= 0; i--) /** @type {PluginInstance} */ (entries[i]).scope.dispose();
     plugins._live = Object.create(null);
+    rootScope.dispose();
     return;
   }
-  const names = plugins.names();
   if (force) {
-    for (let i = names.length - 1; i >= 0; i--) {
-      const name = /** @type {string} */ (names[i]);
-      const stop = plugins._stops?.[name];
-      if (stop?.finish) {
-        events.emit("ext.error", new Error("plugin stop did not complete"), name);
-        stop.finish();
-      } else {
-        plugins._live[name]?.dispose();
-        delete plugins._live[name];
-        if (plugins._stops) delete plugins._stops[name];
-      }
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = /** @type {PluginInstance} */ (entries[i]);
+      entry.dispose();
+      entry._async?.force?.();
     }
     rootScope.dispose();
     return;
   }
   const pending = [];
-  for (let i = names.length - 1; i >= 0; i--) {
-    const result = plugins.dispose(/** @type {string} */ (names[i]));
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const result = /** @type {PluginInstance} */ (entries[i]).dispose();
     if (result) pending.push(result);
   }
+  rootScope.dispose();
   return pending.length ? Promise.all(pending).then(() => {}) : undefined;
 });
 

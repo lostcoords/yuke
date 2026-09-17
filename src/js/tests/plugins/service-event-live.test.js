@@ -9,9 +9,9 @@ events.on("service:z", (v) => agreed.push(v === services.get("z")));
 // This watcher replaces the provider while the first change still runs.
 plugins.use({
   name: "chain",
-  apply: (ctx) => ctx.inject(["z"], () => {
+  apply: (ctx) => { ctx.inject(["z"], () => {
     if (services.get("z") === "B") services.provide("z", "C");
-  }),
+  }); },
 });
 services.provide("z", "B");
 

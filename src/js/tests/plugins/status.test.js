@@ -19,6 +19,6 @@ check("status-dispose", status.side("left") === "b");
 {
   const stop = plugins.use({ name: "seg", apply: (c) => { tui.bindTo(c).status({ side: "right", order: 9, render: () => "p" }); } });
   check("status-plugin", status.side("right") === "r · p");
-  stop();
+  stop.dispose();
   check("status-unload", status.side("right") === "r");
 }
