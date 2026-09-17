@@ -75,7 +75,7 @@ pub const Timers = struct {
 
     /// Run the timers that were due and set before this call, and answer whether a callback threw. A timer set in a callback waits for the next pump.
     pub fn fire(self: *Timers, host: *Host, now: std.Io.Timestamp) bool {
-        std.debug.assert(host.phase == .open);
+        std.debug.assert(host.acceptsIo());
         std.debug.assert(self.firing == null);
         const last_seq = self.last_seq;
         var faulted = false;
@@ -135,7 +135,7 @@ fn jsSetInterval(ctx: Context, _: Value, args: []const Value) Value {
 
 fn set(ctx: Context, args: []const Value, repeat: bool) Value {
     const host = Host.fromContext(ctx);
-    if (host.phase != .open) return ctx.throwTypeError("the host is closed");
+    if (!host.acceptsIo()) return ctx.throwTypeError("the host is closed");
     if (args.len == 0 or !ctx.isFunction(args[0])) return ctx.throwTypeError("the timer callback must be a function");
     // A firing interval left the table but re-arms after its callback, so it still counts.
     const firing: usize = if (host.timers.firing) |timer| @intFromBool(timer.interval_ms != null) else 0;
@@ -170,7 +170,7 @@ fn delayOf(ctx: Context, value: Value) ?u64 {
 
 fn jsClear(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.phase != .open or args.len == 0 or !ctx.isNumber(args[0])) return quickjs.UNDEFINED;
+    if (!host.acceptsIo() or args.len == 0 or !ctx.isNumber(args[0])) return quickjs.UNDEFINED;
     const id = ctx.toFloat64(args[0]) catch return quickjs.UNDEFINED;
     if (!(id >= 1 and id <= @as(f64, @floatFromInt(host.timers.last_id))) or @floor(id) != id) return quickjs.UNDEFINED;
     host.timers.clear(ctx, host.gpa, @intFromFloat(id));

@@ -97,7 +97,7 @@ pub const Procs = struct {
 
     /// Deliver output, settle `exited` after the last byte, and free a process with no work left. Answer whether a callback threw.
     pub fn drain(self: *Procs, host: *Host) bool {
-        std.debug.assert(host.phase == .open);
+        std.debug.assert(host.acceptsIo());
         var faulted = false;
         var i: usize = 0;
         // A callback can spawn another process, so the loop reads the length again.
@@ -332,7 +332,7 @@ fn closeInput(proc: *Proc) void {
 /// Start `argv` with no shell over pipes. Argument errors throw; an operating error rejects `exited`.
 fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.phase != .open) return ctx.throwTypeError("the host is closed");
+    if (!host.acceptsIo()) return ctx.throwTypeError("the host is closed");
     if (host.procs.live.items.len >= max_processes) return ctx.throwRangeError("the host runs 64 processes");
 
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
@@ -425,7 +425,7 @@ fn failStart(ctx: Context, handle: Value, funcs: *[2]Value, message: []const u8)
 /// Queue text for stdin. The promise resolves after the pipe accepts every byte.
 fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.phase != .open) return rejected(ctx, "the host is closed");
+    if (!host.acceptsIo()) return rejected(ctx, "the host is closed");
     const proc = procOf(ctx, host, args) orelse return rejected(ctx, "the process does not exist");
     if (args.len < 2 or !ctx.isString(args[1])) return rejected(ctx, "write needs text");
 
@@ -455,7 +455,7 @@ fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
 /// Close stdin after every queued write, so the child reads EOF.
 fn jsCloseStdin(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.phase != .open) return quickjs.UNDEFINED;
+    if (!host.acceptsIo()) return quickjs.UNDEFINED;
     const proc = procOf(ctx, host, args) orelse return quickjs.UNDEFINED;
     proc.writes_lock.lockUncancelable(host.io);
     defer proc.writes_lock.unlock(host.io);
@@ -466,7 +466,7 @@ fn jsCloseStdin(ctx: Context, _: Value, args: []const Value) Value {
 /// End the child group with TERM, then KILL after the grace period, on a task. Answer false when the child had already exited.
 fn jsKill(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.phase != .open) return quickjs.FALSE;
+    if (!host.acceptsIo()) return quickjs.FALSE;
     if (args.len == 0) return quickjs.FALSE;
     const id = module.integer(ctx, args[0], 1, std.math.maxInt(u32)) orelse return quickjs.FALSE;
     return ctx.newBool(kill(host, @intCast(id)));

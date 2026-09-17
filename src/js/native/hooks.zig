@@ -14,6 +14,7 @@ pub fn install(host: *Host) void {
     module.installFunctions(host, "yuke:hooks", &.{
         .{ .name = "installDispatcher", .arity = 1, .call = jsInstallDispatcher },
         .{ .name = "installInputGate", .arity = 1, .call = jsInstallInputGate },
+        .{ .name = "installLifecycle", .arity = 1, .call = jsInstallLifecycle },
         .{ .name = "setPoints", .arity = 1, .call = jsSetPoints },
     });
 }
@@ -58,4 +59,13 @@ fn jsSetPoints(ctx: Context, _: Value, args: []const Value) Value {
     }
     host.hooks.setPoints(points);
     return quickjs.UNDEFINED;
+}
+
+/// The host owns the lifecycle callback until the context closes.
+fn jsInstallLifecycle(ctx: Context, _: Value, args: []const Value) Value {
+    const host = Host.fromContext(ctx);
+    if (host.phase != .open or host.plugin_lifecycle != null) return ctx.throwTypeError("the plugin lifecycle is already installed or closed");
+    if (args.len != 1 or !ctx.isFunction(args[0])) return ctx.throwTypeError("installLifecycle needs a function");
+    host.plugin_lifecycle = ctx.dupValue(args[0]);
+    return ctx.newInt32(Host.plugin_stop_timeout_ms);
 }

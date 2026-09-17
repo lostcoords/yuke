@@ -1,7 +1,7 @@
 // yuke:ext — the plugin runtime: a Scope owns revertible effects, a Context registers, and `advice` wraps methods.
 import { events } from "yuke:kernel";
 import { defineTool, removeTool } from "yuke:tools";
-import { installDispatcher, installInputGate, setPoints } from "yuke:hooks";
+import { installDispatcher, installInputGate, installLifecycle, setPoints } from "yuke:hooks";
 import { native } from "yuke:engine-native";
 
 /** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Answerer, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, InjectApply, InjectContext, InteractionSurface, Plugin, ScopeEntry, ToolDefinition } from "./types/ext.js" */
@@ -89,9 +89,13 @@ export class Scope {
       if (parent) parent._takeEntry(parentEntry);
     }
 
-    for (const entry of this._disposers.splice(0).reverse()) {
+    while (this._disposers.length) {
+      const entry = /** @type {ScopeEntry} */ (this._disposers.pop());
+      const cleanup = entry.cleanup;
+      entry.owner = null;
+      entry.cleanup = null;
       try {
-        this._runEntry(entry);
+        if (cleanup) cleanup();
       } catch (e) {
         // A silent teardown failure hides a plugin bug, so report it on the shared bus.
         events.emit("ext.error", e, this.name);
@@ -648,40 +652,50 @@ export class Context {
 }
 
 // --- plugin registry --- A plugin is `{ name, apply }`; the name keys the registry and prefixes every command, so it is required.
-/** @param {Plugin} plugin @returns {void} */
+/** @param {Plugin} plugin @returns {Plugin["stop"]} */
 function checkPlugin(plugin) {
   const ok = plugin !== null && typeof plugin === "object" && typeof plugin.apply === "function";
   if (!ok || typeof plugin.name !== "string" || plugin.name === "")
     throw new TypeError("invalid plugin: expected { name, apply }");
+  const stop = plugin.stop;
+  if (stop !== undefined && typeof stop !== "function")
+    throw new TypeError("plugin stop must be a function");
+  return stop;
 }
+
+/** @typedef {{ callback: () => void | Promise<void>, promise?: Promise<void>, finish?: () => void }} PluginStop */
 
 export const plugins = {
   /** @type {Record<string, Scope>} */
   _live: Object.create(null), // name -> Scope
+  /** @type {Record<string, PluginStop> | null} */
+  _stops: null,
+  _closing: false,
 
   // Instantiate under a child of `rootScope`, where a throw in `apply` reverts the partial scope.
-  /** @param {Plugin} plugin @param {unknown} [config] @returns {Disposer} */
+  /** @param {Plugin} plugin @param {unknown} [config] @returns {() => void | Promise<void>} */
   use(plugin, config) {
-    checkPlugin(plugin);
+    const stop = checkPlugin(plugin);
+    if (this._closing) throw new TypeError("the plugin registry is closed");
     const name = plugin.name;
     // A live plugin keeps its name, so a reload must dispose the old plugin first.
     if (this._live[name]) throw new TypeError("plugin `" + name + "` is already in use");
 
     const scope = rootScope.child("plugin:" + name);
     const ctx = new Context(scope, name);
+    this._live[name] = scope;
     try {
       scope.effect(() => plugin.apply(ctx, config));
     } catch (e) {
       scope.dispose();
+      if (this._live[name] === scope) delete this._live[name];
       throw e;
     }
-
-    this._live[name] = scope;
+    if (stop && this._live[name] === scope) (this._stops ??= Object.create(null))[name] = { callback: () => stop(ctx) };
 
     // The disposer clears the slot only while current, so a stale handle cannot evict a reload.
     return () => {
-      if (this._live[name] === scope) delete this._live[name];
-      scope.dispose();
+      if (this._live[name] === scope) return this.dispose(name);
     };
   },
 
@@ -690,13 +704,47 @@ export const plugins = {
     return this._live[name];
   },
 
-  /** @param {string} name @returns {void} */
+  /** @param {string} name @returns {void | Promise<void>} */
   dispose(name) {
     const scope = this._live[name];
     if (!scope) return;
+    const stop = this._stops?.[name];
+    if (!stop) {
+      scope.dispose();
+      if (this._live[name] === scope) delete this._live[name];
+      return;
+    }
+    if (stop.promise) return stop.promise;
 
-    delete this._live[name];
-    scope.dispose();
+    let resolve = () => {};
+    stop.promise = new Promise(done => { resolve = done; });
+    /** @type {number | undefined} */
+    let timer;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      scope.dispose();
+      if (this._stops) delete this._stops[name];
+      if (this._live[name] === scope) delete this._live[name];
+      resolve();
+    };
+    stop.finish = finish;
+    try {
+      timer = setTimeout(() => {
+        events.emit("ext.error", new Error("plugin stop timed out"), name);
+        finish();
+      }, stopTimeoutMs);
+      Promise.resolve(stop.callback()).then(finish, error => {
+        if (!finished) events.emit("ext.error", error, name);
+        finish();
+      });
+    } catch (error) {
+      events.emit("ext.error", error, name);
+      finish();
+    }
+    return stop.promise;
   },
 
   /** @returns {string[]} */
@@ -704,6 +752,40 @@ export const plugins = {
     return Object.keys(this._live);
   },
 };
+
+// The host awaits stop callbacks before it cancels I/O, then forces synchronous disposal.
+const stopTimeoutMs = installLifecycle(force => {
+  plugins._closing = true;
+  if (!rootScope.alive) return;
+  if (!plugins._stops) {
+    rootScope.dispose();
+    plugins._live = Object.create(null);
+    return;
+  }
+  const names = plugins.names();
+  if (force) {
+    for (let i = names.length - 1; i >= 0; i--) {
+      const name = /** @type {string} */ (names[i]);
+      const stop = plugins._stops?.[name];
+      if (stop?.finish) {
+        events.emit("ext.error", new Error("plugin stop did not complete"), name);
+        stop.finish();
+      } else {
+        plugins._live[name]?.dispose();
+        delete plugins._live[name];
+        if (plugins._stops) delete plugins._stops[name];
+      }
+    }
+    rootScope.dispose();
+    return;
+  }
+  const pending = [];
+  for (let i = names.length - 1; i >= 0; i--) {
+    const result = plugins.dispose(/** @type {string} */ (names[i]));
+    if (result) pending.push(result);
+  }
+  return pending.length ? Promise.all(pending).then(() => {}) : undefined;
+});
 
 // The scope owns each tool until its disposer runs or the scope closes.
 /** @param {Scope} scope */

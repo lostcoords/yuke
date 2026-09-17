@@ -55,3 +55,14 @@ import { Scope } from "yuke:ext";
   try { s.effect(() => {}); } catch (e) { threw = true; }
   check("scope-dead-effect", threw);
 }
+
+// A disposer can remove an older effect and re-enter its scope without a second call.
+{
+  const order = [];
+  const scope = new Scope("reentrant");
+  const first = scope.effect(() => () => order.push("first"));
+  scope.effect(() => () => { first(); scope.dispose(); order.push("last"); });
+  scope.dispose();
+  first();
+  check("scope-reentrant-drain", order.join(",") === "first,last" && scope._disposers.length === 0);
+}

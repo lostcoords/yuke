@@ -288,7 +288,7 @@ fn jsGet(ctx: Context, _: Value, args: []const Value) Value {
 fn jsStop(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const job = jobOf(ctx, args) orelse return quickjs.NULL;
-    if (host.phase == .open) stop(host, job);
+    if (host.acceptsIo()) stop(host, job);
     return toValue(ctx, job);
 }
 

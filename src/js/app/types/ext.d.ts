@@ -63,6 +63,7 @@ export type InjectApply<K extends string = string> = (context: InjectContext<K>)
 export interface Plugin {
   name: string;
   apply: PluginApply;
+  stop?: (context: Context) => void | Promise<void>;
 }
 
 export type HookHandler = (payload: any) => unknown;

@@ -99,6 +99,10 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
     const ws = try tty.getWinsize();
     try render.resize(writer, ws);
     host.paint.bindRender(host.ctx, &render, writer);
+    defer {
+        host.stopPlugins();
+        host.paint.output = null;
+    }
     std.debug.assert(host.paint.output != null);
     host.paint.output.?.tty = &tty;
     if (extensions.user_entry_fault) report.paintFault(host);

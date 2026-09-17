@@ -16,7 +16,10 @@ pub fn installFunctions(host: *Host, comptime name: [:0]const u8, comptime fns: 
     std.debug.assert(host.phase == .open);
     const Init = struct {
         fn init(ctx: Context, m: Context.Module) c_int {
-            std.debug.assert(Host.fromContext(ctx).phase == .open);
+            if (!Host.fromContext(ctx).acceptsIo()) {
+                _ = ctx.throwTypeError("the host is closed");
+                return -1;
+            }
             inline for (fns) |f| ctx.setModuleExport(m, f.name, ctx.newFunction(f.name, f.arity, f.call)) catch return -1;
             return 0;
         }
@@ -37,7 +40,10 @@ pub fn installObject(
     const Init = struct {
         fn init(ctx: Context, m: Context.Module) c_int {
             const h = Host.fromContext(ctx);
-            std.debug.assert(h.phase == .open);
+            if (!h.acceptsIo()) {
+                _ = ctx.throwTypeError("the host is closed");
+                return -1;
+            }
             const obj = ctx.newObject();
             inline for (fns) |f| set(ctx, obj, f.name, ctx.newFunction(f.name, f.arity, f.call));
             if (extra) |add| add(h, ctx, obj);

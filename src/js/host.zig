@@ -100,7 +100,15 @@ pub const Host = struct {
     /// The background job table. A record outlives its process, and `close` frees it after the processes.
     jobs: jobs_module.Jobs = .{},
 
-    pub const Phase = enum { open, closing, drained };
+    plugin_lifecycle: ?quickjs.Value = null,
+
+    pub const Phase = enum { open, stopping, closing, drained };
+    pub const plugin_stop_timeout_ms = 1000;
+
+    /// Cleanup can use I/O until the host enters the close phase.
+    pub fn acceptsIo(self: *const Host) bool {
+        return self.phase == .open or self.phase == .stopping;
+    }
 
     /// Allocate a host and install its limits, interrupt handler, and loader.
     pub fn createWith(gpa: std.mem.Allocator, io: std.Io, opts: Options) *Host {
@@ -168,7 +176,10 @@ pub const Host = struct {
 
     /// Bind a primitive to a validated tool signal before its task can start.
     pub fn startTaskWithSignal(self: *Host, comptime Payload: type, comptime task: fn (*Host, *pending.Op, Payload) void, payload: Payload, signal: quickjs.Value) quickjs.Value {
-        std.debug.assert(self.phase == .open);
+        if (!self.acceptsIo()) {
+            payload.free(self.gpa);
+            return pending.rejected(self.ctx, "the host is closed");
+        }
         std.debug.assert(self.ctx.isUndefined(signal) or self.calls.acceptsSignal(self.ctx, signal));
         const started = self.ops.start(self.ctx) orelse {
             payload.free(self.gpa);
@@ -230,7 +241,7 @@ pub const Host = struct {
 
     /// Drain jobs, release QuickJS resources, and destroy the host.
     pub fn destroy(self: *Host) void {
-        if (self.phase == .open) {
+        if (self.acceptsIo()) {
             self.close() catch {};
         }
         self.finishDrain();
@@ -241,6 +252,7 @@ pub const Host = struct {
         self.calls.deinit(self.ctx);
         self.tools.deinit(self.ctx);
         self.hooks.deinit(self.ctx);
+        if (self.plugin_lifecycle) |callback| self.ctx.freeValue(callback);
         self.engine.destroy();
         self.paint.freeRoots(self.ctx);
         self.ctx.deinit();
@@ -251,7 +263,8 @@ pub const Host = struct {
 
     /// Stop JavaScript work, drain jobs, and close the host.
     pub fn close(self: *Host) Error!void {
-        std.debug.assert(self.phase == .open);
+        std.debug.assert(self.acceptsIo());
+        self.stopPlugins();
         self.phase = .closing;
         // Phase 1: stop event delivery so no engine task reaches a closing context.
         self.engine.detach();
@@ -277,6 +290,69 @@ pub const Host = struct {
         if (self.runtime.isJobPending()) return error.JavaScriptFault;
         self.phase = .drained;
     }
+
+    /// Stop plugins while I/O remains available, with one deadline for the whole registry.
+    pub fn stopPlugins(self: *Host) void {
+        if (self.phase != .open) return;
+        self.phase = .stopping;
+        const callback = self.plugin_lifecycle orelse return;
+        var guard: StopGuard = .{
+            .host = self,
+            .deadline = std.Io.Timestamp.now(self.io, .awake).addDuration(.fromMilliseconds(plugin_stop_timeout_ms)),
+        };
+        self.runtime.setInterruptHandler(&guard);
+        defer self.runtime.setInterruptHandler(self);
+        defer {
+            // Forced scope disposal gets a fresh CPU slice after the async deadline.
+            guard.deadline = std.Io.Timestamp.now(self.io, .awake).addDuration(.fromMilliseconds(100));
+            self.enterSlice();
+            const result = self.ctx.call(callback, quickjs.UNDEFINED, &.{quickjs.TRUE});
+            if (self.ctx.isException(result)) self.noteFault();
+            self.ctx.freeValue(result);
+        }
+        call_run.abortAll(self);
+        self.enterSlice();
+        const promise = self.ctx.call(callback, quickjs.UNDEFINED, &.{quickjs.FALSE});
+        defer self.ctx.freeValue(promise);
+        if (self.ctx.isException(promise)) return self.noteFault();
+        if (!self.ctx.isPromise(promise)) return;
+        while (self.ctx.promiseState(promise) == .Pending) {
+            if (std.Io.Timestamp.now(self.io, .awake).nanoseconds >= guard.deadline.nanoseconds) {
+                self.fault_text_len = 0;
+                self.appendFaultText("plugin shutdown timed out");
+                return;
+            }
+            self.wake.reset();
+            self.enterSlice();
+            if (self.procs.drain(self)) self.dropPendingException();
+            if (self.ops.settle(self.ctx)) self.dropPendingException();
+            if (self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) self.dropPendingException();
+            self.drainJobs() catch return;
+            if (self.ctx.promiseState(promise) != .Pending) break;
+            if (self.runtime.isJobPending() or self.ops.anyDone() or self.procs.hasWork()) continue;
+            const timer = self.timers.nextDeadline() orelse guard.deadline;
+            const due = if (timer.nanoseconds < guard.deadline.nanoseconds) timer else guard.deadline;
+            self.wake.waitTimeout(self.io, .{ .deadline = .{ .raw = due, .clock = .awake } }) catch |err| switch (err) {
+                error.Timeout => {},
+                error.Canceled => return,
+            };
+        }
+        if (self.ctx.promiseState(promise) == .Rejected) {
+            const reason = self.ctx.promiseResult(promise);
+            defer self.ctx.freeValue(reason);
+            self.fault_text_len = 0;
+            self.captureFault(reason);
+        }
+    }
+
+    const StopGuard = struct {
+        host: *Host,
+        deadline: std.Io.Timestamp,
+
+        pub fn onInterrupt(self: *StopGuard) bool {
+            return self.host.onInterrupt() or std.Io.Timestamp.now(self.host.io, .awake).nanoseconds >= self.deadline.nanoseconds;
+        }
+    };
 
     /// Request all child stops before `tasks.cancel`, so their grace periods overlap.
     pub fn endChildren(self: *Host) void {

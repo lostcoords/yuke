@@ -76,7 +76,7 @@ const Request = struct {
 /// Run one shell command. A refused argument rejects, so a caller reads one failure shape.
 fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.phase != .open) return rejected(ctx, "the host is closed");
+    if (!host.acceptsIo()) return rejected(ctx, "the host is closed");
     if (args.len == 0) return rejected(ctx, "exec needs a command");
 
     const options: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;

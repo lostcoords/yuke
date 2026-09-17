@@ -180,3 +180,92 @@ const KernelLoader = struct {
         return self.inner.onLoadModule(ctx, name);
     }
 };
+
+test "plugin stop shares its promise and holds its name until disposal" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/plugins/stop.test.js");
+    try support.pumpUntilTrue(host, "globalThis.stopDone");
+    try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
+}
+
+test "plugin stop timeout releases the scope and ignores late failure" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/plugins/stop-timeout.test.js");
+    try support.pumpUntilTrue(host, "globalThis.stopDone");
+    try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
+}
+
+test "plugin stop faults still dispose every scope" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/plugins/stop-fault.test.js");
+    try support.pumpUntilTrue(host, "globalThis.stopDone");
+}
+
+test "shutdown permits process I/O and timers before scope disposal" {
+    const reactor = try @import("zio").Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer reactor.deinit();
+    const host = support.createHostWith(reactor.io(), "/tmp");
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { plugins, spawn, client } from "yuke";
+        \\let child;
+        \\globalThis.stopped = "";
+        \\plugins.use({ name: "flush", apply(ctx) {
+        \\  child = spawn(["/bin/cat"]);
+        \\  child.onStdout(text => { globalThis.stopped += text; });
+        \\  ctx.effect(() => () => { child.kill(); globalThis.stopped += "disposed"; });
+        \\}, async stop() {
+        \\  await import("yuke/ui");
+        \\  await new Promise(resolve => setTimeout(resolve, 1));
+        \\  await child.write("flushed:");
+        \\  child.closeStdin();
+        \\  await child.exited;
+        \\  try { await client.sessionList(); } catch (error) {
+        \\    if (error.message === "the host is closed") globalThis.stopped += "refused:";
+        \\  }
+        \\} });
+    , "shutdown-io.js");
+    try host.close();
+    try support.expectString(host, "stopped", "flushed:refused:disposed");
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.procs.live.items.len);
+}
+
+test "shutdown has one deadline and forces disposal of stalled plugins" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { plugins } from "yuke";
+        \\globalThis.stopped = "";
+        \\for (const name of ["a", "b", "c"]) plugins.use({ name,
+        \\  apply(ctx) { ctx.effect(() => () => { globalThis.stopped += name; }); },
+        \\  stop() { return new Promise(() => {}); }
+        \\});
+    , "shutdown-stall.js");
+    const start = std.Io.Timestamp.now(host.io, .awake);
+    try host.close();
+    const elapsed = start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds();
+    try std.testing.expect(elapsed < 2500);
+    try support.expectString(host, "stopped", "cba");
+}
+
+test "shutdown bounds synchronous stop code and still disposes its scope" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { plugins } from "yuke";
+        \\globalThis.stopped = "";
+        \\plugins.use({ name: "spin",
+        \\  apply(ctx) { ctx.effect(() => () => { globalThis.stopped = "disposed"; }); },
+        \\  stop() { while (true) {} }
+        \\});
+    , "shutdown-spin.js");
+    const start = std.Io.Timestamp.now(host.io, .awake);
+    host.stopPlugins();
+    try std.testing.expect(start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds() < 2500);
+    try host.close();
+    try support.expectString(host, "stopped", "disposed");
+}
