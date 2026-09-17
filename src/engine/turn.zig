@@ -1240,6 +1240,26 @@ test "a run cancel interrupts either request hook before it settles" {
     }
 }
 
+test "an advertised output ceiling equal to context leaves a usable request budget" {
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const row = Resources.mockProvider(&.{}, .{ .protocol = .openai_chat });
+    const model: registry.ModelSpec = .{
+        .id = "model",
+        .upstream_id = "model",
+        .name = "Model",
+        .protocol = .openai_chat,
+        .limits = .{ .context_window = 500_000, .max_output_tokens = 500_000 },
+    };
+    const held = try round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model });
+    try std.testing.expectEqual(@as(u32, 8192), held.build.max_output_tokens);
+    try std.testing.expect(held.budget.input_ceiling > 0);
+}
+
 test "the final build hook obeys prompt and context limits without a new floor" {
     const hookset = @import("hookset.zig");
     const State = struct {

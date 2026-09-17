@@ -9,12 +9,34 @@ const registry = @import("../provider/registry.zig");
 const database = @import("../store/store.zig");
 const context = @import("context.zig");
 
-/// Use the configured output ceiling when it fits the request field.
+/// Use the advertised ceiling unless it reaches the known context, when yuke's safe default leaves room for input.
 pub fn outputLimit(model: *const registry.ModelSpec) u32 {
-    return if (model.limits.max_output_tokens) |limit|
-        std.math.cast(u32, limit) orelse context.default_max_output
-    else
-        context.default_max_output;
+    const advertised = model.limits.max_output_tokens orelse return context.default_max_output;
+    const limit = std.math.cast(u32, advertised) orelse context.default_max_output;
+    if (model.limits.context_window) |window| {
+        if (window > 0 and advertised >= window)
+            return @min(context.default_max_output, limit);
+    }
+    return limit;
+}
+
+test "an output ceiling at context leaves room for input" {
+    const t = std.testing;
+    var model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat };
+    const Case = struct { limits: @TypeOf(model.limits), want: u32 };
+    for ([_]Case{
+        .{ .limits = .{}, .want = context.default_max_output },
+        .{ .limits = .{ .context_window = 500_000, .max_output_tokens = 4_096 }, .want = 4_096 },
+        .{ .limits = .{ .context_window = 500_000, .max_output_tokens = 500_000 }, .want = context.default_max_output },
+        .{ .limits = .{ .context_window = 100_000, .max_output_tokens = 500_000 }, .want = context.default_max_output },
+        .{ .limits = .{ .context_window = 500_000, .max_output_tokens = 450_000 }, .want = 450_000 },
+        .{ .limits = .{ .context_window = 0, .max_output_tokens = 450_000 }, .want = 450_000 },
+        .{ .limits = .{ .context_window = 500_000, .max_output_tokens = 0 }, .want = 0 },
+        .{ .limits = .{ .max_output_tokens = @as(u64, std.math.maxInt(u32)) + 1 }, .want = context.default_max_output },
+    }) |case| {
+        model.limits = case.limits;
+        try t.expectEqual(case.want, outputLimit(&model));
+    }
 }
 
 /// Map a configured reasoning level onto one model. An empty level leaves the provider default.
