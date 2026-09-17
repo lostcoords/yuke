@@ -130,9 +130,9 @@ fn readTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer arena.deinit();
     var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
 
-    const text = local.readAll(arena.allocator(), req.path, max_read_bytes) catch |err|
+    const text = local.readAllInto(arena.allocator(), host.gpa, req.path, max_read_bytes) catch |err|
         return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
-    op.finish(.{ .text = host.gpa.dupe(u8, text) catch unreachable });
+    op.finish(.{ .text = text });
 }
 
 fn readRangeTask(host: *Host, op: *pending.Op, req: ReadRequest) void {

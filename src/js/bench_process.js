@@ -1,4 +1,5 @@
 import { exec } from "yuke:exec";
+import { fs } from "yuke:fs";
 import { spawn } from "yuke:spawn";
 import { JobOutput } from "yuke:jobs-ui";
 
@@ -9,6 +10,8 @@ let complete = null;
 let view = null;
 /** @type {import("./app/spawn.js").ChildProcess | null} */
 let child = null;
+const readFixturePath = "/tmp/yuke-bench-read-fixture";
+const readFixtureBytes = 3 * 1024 * 1024;
 const chunk = "x".repeat(4095) + "\n";
 /** @type {import("yuke:jobs-native").Job} */
 const job = { id: 1, state: "running", command: "bench", startedAt: 0, sessionId: null, cwd: "/tmp", log: "", code: null, signal: null, endedAt: null, stopRequested: false };
@@ -25,6 +28,7 @@ async function start(name, count) {
     child = spawn(["/bin/cat"], { workspaceRoot: "/tmp" });
     child.onStdout(output);
   }
+  if (phase === "fs_read") await fs.writeFile(readFixturePath, "x".repeat(readFixtureBytes));
   await step();
   await step();
   steps = 0;
@@ -42,6 +46,9 @@ async function step() {
     const command = phase === "exec_short" ? "printf ok" : `/usr/bin/head -c ${1048576 * scale} /dev/zero`;
     const result = await exec(command, { maxBytes: 65536 }, "/tmp");
     if (result.code !== 0 || (phase === "exec_bulk" && result.stdoutDropped === 0)) throw Error("exec result");
+  } else if (phase === "fs_read") {
+    const text = await fs.readFile(readFixturePath);
+    if (text.length !== readFixtureBytes) throw Error("file read bytes");
   } else if (phase === "process_echo" || phase === "process_echo_fresh") {
     if (phase === "process_echo_fresh") {
       received = 0;

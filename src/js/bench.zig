@@ -22,6 +22,7 @@ pub const Phase = enum {
     paint,
     colors,
     selection,
+    key_routing,
     preview,
     projection,
     gc,
@@ -40,6 +41,7 @@ pub const Phase = enum {
     advice_churn,
     exec_short,
     exec_bulk,
+    fs_read,
     process_echo,
     process_echo_fresh,
     jobs_output,
@@ -49,7 +51,7 @@ pub const Phase = enum {
 
     fn group(self: Phase) Group {
         return switch (self) {
-            .exec_short, .exec_bulk, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
+            .exec_short, .exec_bulk, .fs_read, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
             .colors => .colors,
             .agents_open, .agents_activity, .agents_burst, .agents_structure => .agents,
             .advice_direct, .advice_before, .advice_around, .advice_mixed, .advice_churn => .advice,

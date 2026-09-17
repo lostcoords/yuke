@@ -429,8 +429,8 @@ function currentDepths() {
 }
 
 // Rank the entries by the deepest atom the context matches, then by the newest registration.
-/** @template {{ context: ContextExpr | null, order: number }} T @param {T[]} entries @returns {T[]} */
-function rankByContext(entries) {
+/** @template {{ context: ContextExpr | null, order: number }} T @param {T[]} entries @param {boolean} [copy] @returns {T[]} */
+function rankByContext(entries, copy = true) {
   // An unscoped set needs no stack walk, which is the common stroke.
   let scoped = false;
   for (const e of entries) {
@@ -439,7 +439,7 @@ function rankByContext(entries) {
       break;
     }
   }
-  if (!scoped) return entries.slice();
+  if (!scoped) return copy ? entries.slice() : entries;
 
   const depths = currentDepths();
   /** @type {Array<{ entry: T, depth: number }>} */
@@ -636,7 +636,7 @@ export const route = {
   /** @returns {RouteWhere} */
   reader() {
     if (this._list.length === 0) return "view";
-    const hit = rankByContext(this._list)[0];
+    const hit = rankByContext(this._list, false)[0];
     return hit ? hit.where : "view";
   },
 };

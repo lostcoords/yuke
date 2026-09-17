@@ -1,6 +1,7 @@
 import { Transcript } from "yuke:transcript";
 import { term } from "yuke:term";
 import { client } from "yuke:client";
+import { route } from "yuke:core";
 
 /** @import { MessagePart, SessionOutline } from "yuke:engine-native" */
 /** @import { TranscriptRow } from "./app/types/pager.js" */
@@ -34,6 +35,8 @@ let nativeTextUnits = 0;
 let nativeInitialText = "";
 /** @type {MessagePart | null} */
 let projected = null;
+/** @type {(() => void) | null} */
+let routeOff = null;
 const activeId = 0;
 
 const PREVIEW_REPORT_ID = 1;
@@ -133,6 +136,8 @@ function start(name, scale, w, h) {
   iteration = 0;
   streamSuffixOffset = 0;
   projected = null;
+  if (routeOff) routeOff();
+  routeOff = null;
   outline = [];
   parts = new Map();
   texts = new Map();
@@ -162,11 +167,13 @@ function start(name, scale, w, h) {
   ];
   transcript = fresh();
   transcript.rowCount(width);
+  if (phase === "key_routing") routeOff = route.add("keymap");
   return outline.length;
 }
 
 function step() {
   const i = iteration++;
+  if (phase === "key_routing") return route.reader() === "keymap" ? 1 : 0;
   if (phase === "projection") {
     projected = client.sessionPart(globalThis.PROJECTION_SESSION, 1, 0);
     return projected?.type === "text" ? projected.text.length : 0;
@@ -222,6 +229,10 @@ function paint(view, followTail = false) {
 function verify() {
   // The boot phase drives no transcript, so it compares nothing.
   if (phase === "boot") return 0;
+  if (phase === "key_routing") {
+    if (route.reader() !== "keymap") throw new Error("key route changed");
+    return iteration;
+  }
   if (phase === "projection") {
     if (projected?.type !== "text" || projected.text !== globalThis.PROJECTION_TEXT)
       throw new Error("native projection lost text across a page boundary");

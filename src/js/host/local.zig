@@ -57,11 +57,18 @@ pub const LocalHost = struct {
     }
 
     pub fn readAll(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, max_bytes: u32) h.HostError![]const u8 {
+        return self.readAllInto(scratch, scratch, path, max_bytes);
+    }
+
+    pub fn readAllInto(self: *LocalHost, scratch: std.mem.Allocator, output: std.mem.Allocator, path: []const u8, max_bytes: u32) h.HostError![]u8 {
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         try requireRegularFile(self.io, full);
-        const text = std.Io.Dir.cwd().readFileAlloc(self.io, full, scratch, .limited(max_bytes)) catch |err| return mapError(err);
+        const text = std.Io.Dir.cwd().readFileAlloc(self.io, full, output, .limited(max_bytes)) catch |err| return mapError(err);
         // A caller may write the returned bytes. The local host validates every byte.
-        if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidUtf8;
+        if (!std.unicode.utf8ValidateSlice(text)) {
+            output.free(text);
+            return error.InvalidUtf8;
+        }
         return text;
     }
 
