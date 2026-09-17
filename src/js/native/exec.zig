@@ -83,8 +83,6 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     const signal = if (ctx.isObject(options)) ctx.getPropertyStr(options, "signal") else quickjs.UNDEFINED;
     defer ctx.freeValue(signal);
     if (ctx.isException(signal)) return rejected(ctx, "the exec signal could not be read");
-    if (!ctx.isUndefined(signal) and !host.calls.acceptsSignal(ctx, signal))
-        return rejected(ctx, "the exec signal does not belong to an active tool call");
 
     // The task cannot touch JavaScript, so every argument is copied before it starts.
     const wants_log = module.optionalBool(ctx, options, "log") catch return rejected(ctx, "log must be a boolean");

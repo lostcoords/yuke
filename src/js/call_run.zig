@@ -7,6 +7,7 @@ const Host = @import("host.zig").Host;
 const table = @import("tools.zig");
 const utf8 = @import("../utf8.zig");
 const pending = @import("pending.zig");
+const cancellation = @import("native/cancellation.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -15,9 +16,7 @@ const Value = quickjs.Value;
 pub fn abortLeft(host: *Host) void {
     for (host.calls.live.items) |call| {
         if (!call.submitter_done or !host.ctx.isObject(call.signal)) continue;
-        host.ops.abortSignal(host.ctx, call.signal);
-        host.ctx.setPropertyStr(call.signal, "aborted", quickjs.TRUE) catch {};
-        host.interactions.cancelSignal(host.ctx, call.signal);
+        cancellation.cancel(host, call.signal);
     }
 }
 
@@ -43,8 +42,7 @@ pub fn pollRunning(host: *Host) void {
 pub fn abortAll(host: *Host) void {
     for (host.calls.live.items) |call| {
         if (host.ctx.isObject(call.signal)) {
-            host.ops.abortSignal(host.ctx, call.signal);
-            host.ctx.setPropertyStr(call.signal, "aborted", quickjs.TRUE) catch {};
+            cancellation.cancel(host, call.signal);
         }
         if (call.state == .settled or call.submitter_done) continue;
         call.settle(host.io, null, true);
@@ -115,10 +113,9 @@ fn startTool(host: *Host, call: *table.Call) void {
     defer ctx.freeValue(parsed);
 
     // The handler reads `signal.aborted` between its awaits, so a canceled turn can stop early.
-    call.signal = ctx.newObject();
+    call.signal = cancellation.create(host);
     const context = ctx.newObject();
     if (!ctx.hasException()) {
-        ctx.setPropertyStr(call.signal, "aborted", quickjs.FALSE) catch {};
         ctx.setPropertyStr(context, "workspaceRoot", ctx.newString(call.workspace_root)) catch {};
         if (call.site) |site| {
             const id = std.fmt.bytesToHex(site.session_id.raw, .lower);
@@ -278,10 +275,12 @@ fn cstring(ctx: Context, value: Value) ?[:0]const u8 {
 
 /// Sanitize the answer as UTF-8 and wake the submitter.
 fn settleText(host: *Host, call: *table.Call, text: []const u8, is_error: bool) void {
+    if (host.ctx.isObject(call.signal)) cancellation.cancel(host, call.signal);
     call.settle(host.io, utf8.sanitize(host.gpa, text) catch unreachable, is_error);
 }
 
 fn settleTextAndExtra(host: *Host, call: *table.Call, text: []const u8, extra_json: []const u8) void {
+    if (host.ctx.isObject(call.signal)) cancellation.cancel(host, call.signal);
     call.settleExtra(host.io, utf8.sanitize(host.gpa, text) catch unreachable, utf8.sanitize(host.gpa, extra_json) catch unreachable);
 }
 
@@ -301,6 +300,21 @@ test "a settle after a spent interrupt slice still reads the answer" {
     try std.testing.expectEqualStrings("{\"ok\":true}", call.text.?);
     call.finish();
     try host.pump();
+}
+
+test "a tool signal aborts at settlement before its submitter leaves" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { defineTool } from "yuke:tools";
+        \\defineTool("probe", { description: "Probe", parameters: { type: "object", properties: {} }, execute: async (_, signal) => { await 0; globalThis.signal = signal; return "ok"; } });
+    , "settled-signal.js");
+    const invocation = host.calls.submit("probe", "{}", "");
+    try host.pump();
+    try std.testing.expect(invocation.state == .settled);
+    try std.testing.expect(!invocation.submitter_done);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.signal.aborted"));
+    try support.dropCall(host, invocation);
 }
 
 const support = @import("test_support.zig");

@@ -117,6 +117,7 @@ pub const Table = struct {
         std.debug.assert(request.session_id == null);
         request.session_id = session_id;
         request.op.signal = ctx.dupValue(signal);
+        @import("native/cancellation.zig").get(ctx, signal).?.retain();
     }
 
     pub fn cancelSignal(self: *Table, ctx: Context, signal: Value) void {

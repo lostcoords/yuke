@@ -4,8 +4,8 @@ declare module "yuke:exec" {
     cwd?: string;
     /** The default is 120000 and the maximum is 600000. */
     timeoutMs?: number;
-    /** The tool signal cancels this command when its call ends. */
-    signal?: { aborted: boolean };
+    /** A native signal cancels the command and refuses work after cancellation. */
+    signal?: import("yuke:cancellation-native").CancellationSignal;
     /** The cap for each stream. The default and the maximum are 65536. */
     maxBytes?: number;
     /** Write both streams to a private log, and keep it when a stream was cut. */

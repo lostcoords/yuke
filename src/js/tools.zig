@@ -129,7 +129,7 @@ pub const Call = struct {
     cancellation_reason: ?@import("proto").tool.ToolCancellationReason = null,
     /// The handler's Promise while it runs. Only the owner touches it.
     promise: Value = quickjs.UNDEFINED,
-    /// The signal the handler reads. The owner sets `aborted` on it when the submitter leaves.
+    /// The native signal remains readable after the call leaves the table.
     signal: Value = quickjs.UNDEFINED,
     state: State = .queued,
     /// True after the submitter read its answer or left. The record is then the owner's to free.
@@ -213,7 +213,7 @@ pub const Calls = struct {
         }
     }
 
-    /// Only a live call can authorize a native operation with its signal.
+    /// Only an active tool signal can authorize an interaction.
     pub fn acceptsSignal(self: *const Calls, ctx: Context, signal: Value) bool {
         return self.callForSignal(ctx, signal) != null;
     }
@@ -222,7 +222,9 @@ pub const Calls = struct {
         if (!ctx.isObject(signal)) return null;
         for (self.live.items) |call| {
             if (!ctx.isStrictEqual(call.signal, signal)) continue;
-            return if (!call.submitter_done and call.state != .settled) call else null;
+            if (call.submitter_done or call.state == .settled) return null;
+            const token = @import("native/cancellation.zig").get(ctx, signal).?;
+            return if (token.aborted) null else call;
         }
         return null;
     }
@@ -246,6 +248,7 @@ pub const Calls = struct {
 
     fn free(self: *Calls, ctx: Context, call: *Call) void {
         ctx.freeValue(call.promise);
+        if (@import("native/cancellation.zig").get(ctx, call.signal)) |signal| std.debug.assert(signal.aborted);
         ctx.freeValue(call.signal);
         if (call.text) |text| self.gpa.free(text);
         if (call.extra_json) |json| self.gpa.free(json);

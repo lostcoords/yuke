@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const quickjs = @import("quickjs");
+const cancellation = @import("native/cancellation.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -65,7 +66,7 @@ pub const Op = struct {
     /// Null while the task runs. The task writes it once, and the owner reads it once.
     result: ?Result = null,
     done: std.atomic.Value(bool) = .init(false),
-    /// The exact tool signal remains rooted until this op leaves the table.
+    /// The cancellation signal remains rooted until this op leaves the table.
     signal: Value = quickjs.UNDEFINED,
     /// Exec waits for either its worker result or a call abort on this token.
     cancel: @import("../cancel.zig").Cancel = .{},
@@ -107,6 +108,11 @@ pub const Ops = struct {
             std.debug.assert(op.work == null);
             ctx.freeValue(op.resolve);
             ctx.freeValue(op.reject);
+            if (!ctx.isUndefined(op.signal)) {
+                const signal = cancellation.get(ctx, op.signal).?;
+                std.debug.assert(signal.operations > 0);
+                signal.operations -= 1;
+            }
             ctx.freeValue(op.signal);
             if (op.result) |r| self.freeResult(r);
             self.gpa.destroy(op);
@@ -154,6 +160,9 @@ pub const Ops = struct {
             const result = op.result.?;
             _ = self.live.orderedRemove(i);
             if (call(ctx, op, result)) faulted = true;
+            if (!ctx.isUndefined(op.signal)) {
+                if (cancellation.get(ctx, op.signal).?.release(ctx)) faulted = true;
+            }
             self.freeResult(result);
             ctx.freeValue(op.resolve);
             ctx.freeValue(op.reject);

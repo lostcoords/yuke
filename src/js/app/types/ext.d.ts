@@ -39,7 +39,7 @@ export type PluginApply = (context: Context, config: unknown) => unknown;
 
 export type ToolExecute = (
   args: any,
-  signal: { aborted: boolean },
+  signal: import("yuke:cancellation-native").CancellationSignal,
   context: { workspaceRoot: string; sessionId?: string; messageId?: number; partId?: number },
 ) => Promise<unknown>;
 

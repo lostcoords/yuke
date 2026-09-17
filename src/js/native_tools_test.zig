@@ -59,6 +59,39 @@ test "yuke:fs reads, writes and stats a real directory through promises" {
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.done"));
 }
 
+test "a canceled live tool signal cannot admit an interaction" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/native_tools/canceled-interaction.test.js");
+    const call = host.calls.submit("probe", "{}", "");
+    try host.pump();
+    try support.pumpUntilIdle(host);
+    try std.testing.expect(call.state == .settled);
+    try std.testing.expect(!call.is_error);
+    try std.testing.expectEqualStrings("refused", call.text.?);
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.interactions.live.items.len);
+    try support.dropCall(host, call);
+}
+
+test "a native signal cancels and drains only its commands" {
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    const host = fixture.host;
+    try support.eval(host, "tests/native_tools/cancellation.test.js");
+    try std.testing.expectEqual(@as(usize, 3), host.ops.live.items.len);
+    const pids = try waitExecPids(host, fixture.tmp.?.dir);
+    try std.testing.expect(processExists(pids[0]));
+    try std.testing.expect(processExists(pids[1]));
+    try host.evalModule("globalThis.finishCancellation();", "cancel-signal.js");
+    try support.pumpUntilTrue(host, "globalThis.cancellationDone");
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.signal_waiters.items.len);
+    try std.testing.expect(!processExists(pids[0]));
+    try std.testing.expect(!processExists(pids[1]));
+    try std.testing.expectError(error.FileNotFound, fixture.tmp.?.dir.access(std.testing.io, "forbidden", .{}));
+}
+
 test "a hook fault in one result does not stop later handlers" {
     const host = support.createHost();
     defer support.destroyHost(host);
@@ -407,7 +440,7 @@ test "exec rejects forged and retained signals and aborts before process creatio
     try support.pumpUntilIdle(host);
     try std.testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.prelaunch"));
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.retained.aborted"));
-    try host.evalModule("globalThis.retained.aborted = false; globalThis.resume();", "late-exec.js");
+    try host.evalModule("try { globalThis.retained.aborted = false; } catch {} globalThis.resume();", "late-exec.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.late"));
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
     try std.testing.expectError(error.FileNotFound, fixture.tmp.?.dir.access(std.testing.io, "forbidden", .{}));

@@ -20,6 +20,7 @@ const hooks_table = @import("hooks.zig");
 const interactions_table = @import("interactions.zig");
 const call_run = @import("call_run.zig");
 const pending = @import("pending.zig");
+const cancellation = @import("native/cancellation.zig");
 const execution_mod = @import("../execution.zig");
 const Logs = @import("host/logs.zig").Logs;
 const timers_mod = @import("timers.zig");
@@ -101,6 +102,8 @@ pub const Host = struct {
     jobs: jobs_module.Jobs = .{},
 
     plugin_lifecycle: ?quickjs.Value = null,
+    signal_class_id: quickjs.ClassID = 0,
+    signal_waiters: std.ArrayList(cancellation.Waiter) = .empty,
 
     pub const Phase = enum { open, stopping, closing, drained };
     pub const plugin_stop_timeout_ms = 1000;
@@ -166,6 +169,7 @@ pub const Host = struct {
         tools_module.install(self);
         hooks_module.install(self);
         interaction_module.install(self);
+        cancellation.install(self);
         return self;
     }
 
@@ -174,18 +178,26 @@ pub const Host = struct {
         return self.startTaskWithSignal(Payload, task, payload, quickjs.UNDEFINED);
     }
 
-    /// Bind a primitive to a validated tool signal before its task can start.
+    /// Bind cancellation and retain tool provenance before the task can start.
     pub fn startTaskWithSignal(self: *Host, comptime Payload: type, comptime task: fn (*Host, *pending.Op, Payload) void, payload: Payload, signal: quickjs.Value) quickjs.Value {
         if (!self.acceptsIo()) {
             payload.free(self.gpa);
             return pending.rejected(self.ctx, "the host is closed");
         }
-        std.debug.assert(self.ctx.isUndefined(signal) or self.calls.acceptsSignal(self.ctx, signal));
+        const token = if (self.ctx.isUndefined(signal)) null else cancellation.get(self.ctx, signal) orelse {
+            payload.free(self.gpa);
+            return pending.rejected(self.ctx, "invalid cancellation signal");
+        };
+        if (token) |held| if (held.aborted) {
+            payload.free(self.gpa);
+            return pending.rejected(self.ctx, "the operation was canceled");
+        };
         const started = self.ops.start(self.ctx) orelse {
             payload.free(self.gpa);
             return self.ctx.throw(self.ctx.getException());
         };
         started.op.signal = self.ctx.dupValue(signal);
+        if (token) |held| held.retain();
         if (self.calls.callForSignal(self.ctx, signal)) |call| if (call.work) |work| {
             work.retain(&started.op.operation);
             started.op.work = work;
@@ -247,6 +259,7 @@ pub const Host = struct {
         self.finishDrain();
         std.debug.assert(self.phase == .drained);
         self.ops.deinit(self.ctx);
+        cancellation.deinit(self);
         self.logs.deinit(self.gpa, self.io);
         self.interactions.deinit();
         self.calls.deinit(self.ctx);

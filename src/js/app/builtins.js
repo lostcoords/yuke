@@ -12,7 +12,7 @@ import { byteLabel } from "yuke:format";
 /** @import { DiffFile as ParsedDiffFile } from "yuke:diff" */
 /** @import { RangeRead } from "yuke:fs" */
 /** @typedef {Record<string, unknown>} ToolArgs */
-/** @typedef {{ aborted: boolean }} ToolSignal */
+/** @typedef {import("yuke:cancellation-native").CancellationSignal} ToolSignal */
 /** @typedef {{ workspaceRoot: string, sessionId?: string, messageId?: number, partId?: number }} ToolContext */
 /** @typedef {{ old_start: number, old_lines: number, new_start: number, new_lines: number, lines: string[] }} DiffHunk */
 /** @typedef {{ path: string, hunks: DiffHunk[] }} DiffFile */
