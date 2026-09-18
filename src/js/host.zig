@@ -8,6 +8,7 @@ const loader_mod = @import("loader.zig");
 const term_module = @import("native/term.zig");
 const engine_module = @import("native/engine.zig");
 const fs_module = @import("native/fs.zig");
+const utf8_module = @import("native/utf8.zig");
 const env_module = @import("native/env.zig");
 const net_module = @import("native/net.zig");
 const exec_module = @import("native/exec.zig");
@@ -166,6 +167,7 @@ pub const Host = struct {
         engine_module.install(self);
         fs_module.install(self);
         env_module.install(self);
+        utf8_module.install(self);
         net_module.install(self);
         exec_module.install(self);
         timers_mod.install(self);

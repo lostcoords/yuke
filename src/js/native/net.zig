@@ -205,6 +205,8 @@ fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
     const options = Options.parse(host, if (args.len > 2) args[2] else quickjs.UNDEFINED, false) catch return invalid(ctx);
     defer ctx.freeValue(options.signal);
     if (args.len < 2) return invalid(ctx);
+    const kind = ctx.getTypedArrayType(args[1]) catch return invalid(ctx);
+    if (kind != .Uint8Array) return invalid(ctx);
     const bytes = ctx.getUint8Array(args[1]) catch return invalid(ctx);
     if (bytes.len > max_bytes) return invalid(ctx);
     const connection = connectionArg(host, args) orelse return pending.rejectedWith(ctx, closed);

@@ -62,3 +62,7 @@ test "socket benchmark scenarios verify reused and fresh connections" {
         try std.testing.expectEqual(@as(i32, 5), try harness.verify());
     }
 }
+
+test "JSON lines over sockets validate complete bounded UTF-8 frames" {
+    try run("tests/native_tools/net-json.test.js", .json_lines, false);
+}

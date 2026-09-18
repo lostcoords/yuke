@@ -10,7 +10,7 @@ pub const Peer = struct {
     tasks: std.Io.Group = .init,
     mode: Mode,
 
-    pub const Mode = enum { echo, stall, eof };
+    pub const Mode = enum { echo, stall, eof, json_lines };
 
     pub fn create(gpa: std.mem.Allocator, io: std.Io, mode: Mode) !*Peer {
         var random: [16]u8 = undefined;
@@ -51,6 +51,24 @@ pub const Peer = struct {
         switch (self.mode) {
             .stall => std.Io.sleep(self.io, .fromSeconds(60), .awake) catch {},
             .eof => {},
+            .json_lines => {
+                var reader = stream.reader(self.io, &.{});
+                var writer = stream.writer(self.io, &.{});
+                var request: [2]u8 = undefined;
+                reader.interface.readSliceAll(&request) catch return;
+                const responses = [_][]const u8{
+                    "{\"text\":\"世😀\"}\n{\"ok\":true}\n",
+                    "\"" ++ "a" ** 30 ++ "\"\n",
+                    "\"" ++ "a" ** 31 ++ "\"\n",
+                    "\"\xff\"\n",
+                    "{]\n",
+                    "{\"ok\":true}",
+                    "\"\xf0\x9f",
+                    "",
+                };
+                if (request[1] != '\n' or request[0] < '0' or request[0] >= '0' + responses.len) return;
+                writer.interface.writeAll(responses[request[0] - '0']) catch return;
+            },
             .echo => {
                 var reader = stream.reader(self.io, &.{});
                 var writer = stream.writer(self.io, &.{});

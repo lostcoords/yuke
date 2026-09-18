@@ -43,6 +43,8 @@ pub const Phase = enum {
     exec_short,
     exec_bulk,
     fs_read,
+    utf8_reused,
+    utf8_fresh,
     net_echo,
     net_echo_fresh,
     process_echo,
@@ -53,12 +55,13 @@ pub const Phase = enum {
     plugin_sync,
     plugin_async,
 
-    const Group = enum { transcript, colors, advice, agents, process, tools, plugins, net };
+    const Group = enum { transcript, colors, advice, agents, process, tools, plugins, net, utf8 };
 
     fn group(self: Phase) Group {
         return switch (self) {
             .exec_short, .exec_bulk, .fs_read, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
             .net_echo, .net_echo_fresh => .net,
+            .utf8_reused, .utf8_fresh => .utf8,
             .tool_call => .tools,
             .plugin_sync, .plugin_async => .plugins,
             .colors => .colors,
@@ -134,6 +137,7 @@ pub const Harness = struct {
             .plugins => plugin_source,
             .process => @embedFile("bench_process.js"),
             .net => @embedFile("bench_net.js"),
+            .utf8 => @embedFile("bench_utf8.js"),
             .agents => @embedFile("bench_agents.js"),
             .colors => @embedFile("bench_colors.js"),
             .advice => @embedFile("bench_advice.js"),

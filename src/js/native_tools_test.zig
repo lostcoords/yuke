@@ -834,3 +834,9 @@ test "an MCP stdio client port over spawn answers a tool call and shuts its serv
     try host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"mcp-proof\");", "mcp-dispose.js");
     try support.pumpUntilTrue(host, "proof.disposeExit === 0");
 }
+
+test "utf8 converts complete values and rejects malformed input" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/native_tools/utf8.test.js");
+}

@@ -15,7 +15,12 @@ async function run() {
   const socket = await net.connect({ path: socketPath });
   await refused(socket.read({ maxBytes: 0 }), "INVALID_ARGUMENT");
   await refused(socket.read({ maxBytes: 1048577 }), "INVALID_ARGUMENT");
-  await refused(socket.write("text"), "INVALID_ARGUMENT");
+  for (const bytes of [undefined, null, "text", [], new ArrayBuffer(2), new DataView(new ArrayBuffer(2)), new Uint16Array(2), new Uint8ClampedArray(2)]) {
+    await refused(socket.write(bytes), "INVALID_ARGUMENT");
+  }
+  const detached = new Uint8Array(2);
+  detached.buffer.transfer();
+  await refused(socket.write(detached), "INVALID_ARGUMENT");
   await refused(socket.write(new Uint8Array(1048577)), "INVALID_ARGUMENT");
   const first = socket.read({ maxBytes: 2 });
   await refused(socket.read(), "BUSY");
