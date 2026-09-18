@@ -1,4 +1,4 @@
-//! The native `yuke:fs` module provides the file-system primitives that a tool or a view builds on; every call answers a Promise, so a caller writes `await` once and never rewrites it; today the work runs inline and the promise arrives settled, later concurrency changes no JavaScript, and a failure rejects with an Error, so `try`/`catch` reads like any other module.
+//! File-system primitives return promises; read tasks perform I/O outside the JavaScript owner.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -126,21 +126,19 @@ fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
 /// Read one file on a task; it writes bytes into the op and never enters JavaScript; `Host.close` cancels this group and waits for it, so a task must reach a cancellation point, and the task must stay within input and output.
 fn readTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer req.free(host.gpa);
-    var arena: std.heap.ArenaAllocator = .init(host.gpa);
-    defer arena.deinit();
-    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
+    var call = Call.open(host, req.root);
+    defer call.close();
 
-    const text = local.readAllInto(arena.allocator(), host.gpa, req.path, max_read_bytes) catch |err|
+    const text = call.local.readAllInto(call.alloc(), host.gpa, req.path, max_read_bytes) catch |err|
         return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
     op.finish(.{ .text = text });
 }
 
 fn readRangeTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer req.free(host.gpa);
-    var arena: std.heap.ArenaAllocator = .init(host.gpa);
-    defer arena.deinit();
-    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
-    const got = local.readRange(arena.allocator(), req.path, req.range, read_limits) catch |err|
+    var call = Call.open(host, req.root);
+    defer call.close();
+    const got = call.local.readRange(call.alloc(), req.path, req.range, read_limits) catch |err|
         return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
     const json = encodeRange(host.gpa, got);
     op.finish(.{ .json = json });

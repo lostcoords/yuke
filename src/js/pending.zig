@@ -68,7 +68,7 @@ pub const Op = struct {
     done: std.atomic.Value(bool) = .init(false),
     /// The cancellation signal remains rooted until this op leaves the table.
     signal: Value = quickjs.UNDEFINED,
-    /// Exec waits for either its worker result or a call abort on this token.
+    /// The task uses this token to interrupt work after a call abort.
     cancel: @import("../cancel.zig").Cancel = .{},
     work: ?*@import("../session/work.zig") = null,
     io: std.Io,
@@ -204,7 +204,7 @@ pub const Ops = struct {
         switch (result) {
             .text => |text| self.gpa.free(text),
             .json => |bytes| self.gpa.free(bytes),
-            else => {}, // an int, a null, and a static message own nothing
+            else => {}, // The other result variants own no memory.
         }
     }
 };
