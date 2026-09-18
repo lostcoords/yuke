@@ -56,6 +56,13 @@ import { Scope } from "yuke:ext";
   check("scope-dead-effect", threw);
 }
 
+// Scope effects reject async callbacks.
+{
+  let refused = false;
+  try { new Scope("sync").effect(async () => {}); } catch { refused = true; }
+  check("scope effects refuse async callbacks", refused);
+}
+
 // A disposer can remove an older effect and re-enter its scope without a second call.
 {
   const order = [];

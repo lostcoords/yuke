@@ -56,6 +56,7 @@ pub const Loader = struct {
             _ = ctx.throwReferenceError("internal yuke module: use yuke, yuke/ui, or yuke/chat");
             return null;
         }
+        if (isBaked(name)) return dupJs(ctx, name);
         const source_base = if (std.mem.startsWith(u8, base, host_module_prefix)) base[host_module_prefix.len..] else base;
         const path = resolve(self.gpa, source_base, name) catch return null;
         defer self.gpa.free(path);

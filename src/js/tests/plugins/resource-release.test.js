@@ -1,5 +1,5 @@
 import { check, equal } from "yuke:test";
-import { plugins, events, Scope } from "yuke";
+import { plugins, events } from "yuke";
 
 const faults = [];
 const off = events.on("ext.error", (error, name) => { if (name === "release") faults.push(error.message); });
@@ -18,9 +18,6 @@ const closed = handle.dispose();
 equal(nested, closed);
 equal(order.join(","), "early,first,fault,last");
 equal(faults.join(","), "release failed");
-let refused = false;
-try { new Scope("sync").effect(async () => {}); } catch { refused = true; }
-check("scope effects refuse async callbacks", refused);
 globalThis.resourcesDone = false;
 closed.then(() => {
   check("resource fault releases the name", !plugins.get("release"));
