@@ -51,6 +51,8 @@ agents: @import("agent_config.zig").Store = .{},
 sessions: session.Registry,
 /// Every turn task. `close` cancels this group before the process closes the transport.
 turn_tasks: std.Io.Group = .init,
+/// Scheduled wakes and successor admission retain activity between run slots.
+continuations: usize = 0,
 /// Every subscriber that reads engine events. A frontend installs itself at startup.
 sinks: Sinks = .{},
 /// A null override selects the built-in base for new root sessions.
@@ -87,6 +89,28 @@ pub fn releaseRoot(self: *Engine, id: proto.ids.SessionId) void {
 
 pub fn init(deps: Deps) Engine {
     return .{ .deps = deps, .sessions = session.Registry.init(deps.gpa) };
+}
+
+/// A saved queue alone is idle when no task can resume it without user input.
+pub fn isBusy(self: *const Engine) bool {
+    if (self.continuations != 0) return true;
+    var residents = self.sessions.map.valueIterator();
+    while (residents.next()) |resident| {
+        if (resident.*.active_run != null) return true;
+    }
+    return false;
+}
+
+pub fn beginContinuation(self: *Engine) void {
+    std.debug.assert(self.continuations < std.math.maxInt(usize));
+    self.continuations += 1;
+    self.sinks.activityChanged();
+}
+
+pub fn endContinuation(self: *Engine) void {
+    std.debug.assert(self.continuations > 0);
+    self.continuations -= 1;
+    self.sinks.activityChanged();
 }
 
 /// Copy both validated prompts before the engine releases the old pair.
@@ -133,6 +157,7 @@ pub fn stopTurns(self: *Engine) void {
 /// Cancel every turn, then free the resident sessions. The process closes the store afterwards.
 pub fn close(self: *Engine) void {
     if (!self.closing) self.stopTurns();
+    std.debug.assert(self.continuations == 0);
     self.sessions.deinit();
     var guards = self.owners.valueIterator();
     while (guards.next()) |guard| guard.release(self.deps.io);
@@ -250,6 +275,9 @@ pub fn resumeWorkspace(self: *Engine, workspace: []const u8) !void {
         defer rows.deinit();
         while (try rows.next(arena)) |row| try candidates.append(arena, .bytes(row.value.id));
     }
+    if (candidates.items.len == 0) return;
+    self.beginContinuation();
+    defer self.endContinuation();
     var ready: std.ArrayList(proto.ids.SessionId) = .empty;
     for (candidates.items) |id| {
         self.own(id) catch |err| switch (err) {

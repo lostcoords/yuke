@@ -227,6 +227,8 @@ pub fn faultSlot(engine: *Engine, slot: *RunSlot, err: anyerror) void {
 }
 
 fn finishSlot(engine: *Engine, slot: *RunSlot) void {
+    engine.beginContinuation();
+    defer engine.endContinuation();
     const session_id = slot.sessionId();
     slot.work.drain(engine.deps.io);
     std.debug.assert(slot.body == null);
@@ -390,6 +392,55 @@ pub fn startPendingCompaction(engine: *Engine, rt: *Session) bool {
 const testing = std.testing;
 const zio = @import("zio");
 
+test "queued input and compaction retain process activity through successor admission" {
+    const Fixture = @import("test_resources.zig").Fixture;
+    const Probe = struct {
+        engine: *Engine,
+        last: bool = false,
+        changes: usize = 0,
+
+        fn onEvent(ctx: *anyopaque, _: proto.rpc.Notification) void {
+            onActivity(ctx);
+        }
+
+        fn onActivity(ctx: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            const busy = self.engine.isBusy();
+            if (self.last == busy) return;
+            self.last = busy;
+            self.changes += 1;
+        }
+    };
+    var f: Fixture = undefined;
+    try f.init(.{});
+    defer f.deinit();
+    var probe: Probe = .{ .engine = &f.engine };
+    f.engine.sinks.add(.{ .ctx = &probe, .on_event = Probe.onEvent, .on_activity = Probe.onActivity });
+    defer f.engine.sinks.remove(&probe);
+    try testing.expect(!f.engine.isBusy());
+    _ = try f.send(&.{.{ .text = .{ .text = "first" } }});
+    try testing.expect(f.engine.isBusy());
+    const resident = f.engine.sessions.get(Fixture.id).?;
+    try testing.expectEqual(@as(u32, 0), resident.pins);
+    var queued_gate: ?Launch = null;
+    const commands = @import("commands.zig");
+    _ = try commands.sessionSendInputForRpc(&f.engine, f.arena.allocator(), .{
+        .session_id = Fixture.id,
+        .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "second" } }} } },
+    }, &queued_gate, null);
+    try testing.expect(queued_gate == null);
+    const compact = try commands.sessionCompact(&f.engine, f.arena.allocator(), .{ .session_id = Fixture.id }, &queued_gate);
+    try testing.expectEqual(proto.enums.CompactStatus.queued, compact.status);
+    const slot = f.gate.?.slot;
+    f.gate = null;
+    slot.phase = .running;
+    try finishRunOpen(&f.engine, f.arena.allocator(), slot, .{ .turn = .{ .finish = .stop, .rounds = 0 } });
+    finishSlot(&f.engine, slot);
+    try @import("test_resources.zig").awaitLiveIdle(&f.engine, Fixture.id);
+    try testing.expect(!f.engine.isBusy());
+    try testing.expectEqual(@as(usize, 2), probe.changes);
+    try testing.expectEqual(@as(i64, 3), try eventCount(&f.db, "run.started"));
+}
 fn eventCount(db: *Database, name: []const u8) !i64 {
     const row = (try db.conn.row("SELECT count(*) FROM events WHERE name = ?1", .{name})) orelse return error.NoRow;
     defer row.deinit();
@@ -479,6 +530,7 @@ test "launch failure releases both run kinds and preserves a failed terminal tra
                 .compaction => try prepareCompaction(&f.engine, resident, .manual, null),
             };
             const run_id = slot.runId();
+            try testing.expect(f.engine.isBusy());
             if (reject_terminal) try f.db.conn.execNoArgs("CREATE TEMP TRIGGER refuse_done BEFORE INSERT ON events WHEN NEW.name = 'run.done' BEGIN SELECT RAISE(FAIL, 'test refusal'); END");
             var notice: Notice = .{ .session = resident };
             f.engine.sinks.add(.{ .ctx = &notice, .on_event = Notice.onEvent });
@@ -491,6 +543,7 @@ test "launch failure releases both run kinds and preserves a failed terminal tra
 
             try testing.expectError(error.ConcurrencyUnavailable, launch(&f.engine, slot));
             try testing.expect(resident.active_run == null);
+            try testing.expect(!f.engine.isBusy());
             try testing.expectEqual(reject_terminal, resident.faulted);
             try testing.expectEqual(reject_terminal, notice.seen);
             try testing.expectEqual(@as(usize, 0), f.capture.requests.items.len);

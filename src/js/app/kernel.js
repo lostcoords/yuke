@@ -117,7 +117,7 @@ function applyConfigPatch(section, fields, src, label) {
 }
 
 // The kernel declares only what neutral code emits, so each tier declares its own names; `engine.drained` carries one whole digest, and the engine names the rest, so no list can drift.
-const CORE_EVENTS = new Set(["ext.error", "engine.drained", "jobs.changed", "interaction.changed", ...native.factNames()]);
+const CORE_EVENTS = new Set(["ext.error", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", ...native.factNames()]);
 
 // True for an `owner:event` name. A plugin owns such a name, so no declaration can enumerate it.
 /** @param {string} name @returns {boolean} */
@@ -237,6 +237,10 @@ export const events = new Emitter(CORE_EVENTS);
 
 // The native drains engine events on the owner, and both tiers read them from here; the digest coalesces, so a fact says that it happened and never how many times or with what.
 native.setEventSink((ev) => {
+  if (ev.type === "activity") {
+    events.emit("engine.activity.changed");
+    return;
+  }
   for (const fact of ev.facts) events.emit(fact, ev);
   events.emit("engine.drained", ev);
 });

@@ -62,6 +62,8 @@ pub fn available(engine: *Engine, arena: std.mem.Allocator, root: proto.ids.Sess
 /// Drain without recursion when a synchronous launch failure frees a slot.
 pub fn drain(engine: *Engine, parent: proto.ids.SessionId) !void {
     if (engine.closing) return;
+    engine.beginContinuation();
+    defer engine.endContinuation();
     try engine.own(parent);
     var scratch: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer scratch.deinit();

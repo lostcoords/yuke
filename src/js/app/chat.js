@@ -1,6 +1,6 @@
 // yuke:chat — the chat pane, the session it drives, and the pickers that read its transcript.
 import { root, copy, command } from "yuke:core";
-import { config } from "yuke:kernel";
+import { config, events } from "yuke:kernel";
 import { term } from "yuke:term";
 import { ui, Text } from "yuke:ui";
 import { column, child, fixed, grow } from "yuke:layout";
@@ -43,6 +43,7 @@ function skillInput(invocation) {
 // One chat pane and the session it drives. Each pane owns its own view, transcript and session.
 export class Chat {
   constructor() {
+    // Use open or newChat to change the session and its native pin.
     /** @type {string | null} */
     this.sessionId = null;
     this.creating = false;
@@ -91,6 +92,7 @@ export class Chat {
     this.transcript.setOutline([], null);
     this.reload();
     this.checkContext(id);
+    notifyFocusedSession();
   }
 
   // Tell the user once per open when the files behind the stored snapshots changed. The user decides on /reload.
@@ -207,6 +209,7 @@ export class Chat {
     this.transcript.setOutline([], null);
     root.focusView(this.view);
     root.invalidate();
+    notifyFocusedSession();
   }
 
   // The engine lost the session. Clear the pane back to the placeholder.
@@ -214,6 +217,7 @@ export class Chat {
     this.sessionId = null;
     this.transcript.setOutline([], null);
     root.invalidate();
+    notifyFocusedSession();
   }
 
   // Drop this pane's pin. The engine counts pins, so a second pane on the same session keeps it.
@@ -233,6 +237,8 @@ export class Chat {
     this.release();
     this.sessionId = null;
     chats.delete(this);
+    CHAT_OF.delete(this.view);
+    notifyFocusedSession();
   }
 }
 
@@ -249,6 +255,26 @@ export function chatOf(view) {
   if (!view) return null;
   return CHAT_OF.get(/** @type {object} */ (view)) || null;
 }
+
+// Overlays retain the active pane; a non-chat pane has no focused session.
+/** @returns {string | null} */
+export function focusedSessionId() {
+  return chatOf(root.active)?.sessionId ?? null;
+}
+
+events.declare(["session.focused"]);
+/** @type {string | null} */
+let lastFocusedSession = null;
+
+function notifyFocusedSession() {
+  const id = focusedSessionId();
+  if (id === lastFocusedSession) return;
+  lastFocusedSession = id;
+  events.emit("session.focused");
+}
+
+events.on("pane.focused", notifyFocusedSession);
+events.on("pane.closed", notifyFocusedSession);
 
 // The focused view that `match` accepts, or the first one in the tree.
 /** @param {(v: any) => boolean} match @returns {any} */

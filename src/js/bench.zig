@@ -35,6 +35,8 @@ pub const Phase = enum {
     agents_activity,
     agents_burst,
     agents_structure,
+    engine_activity,
+    engine_activity_changed,
     advice_direct,
     advice_before,
     advice_around,
@@ -68,7 +70,7 @@ pub const Phase = enum {
             .tool_call => .tools,
             .plugin_sync, .plugin_async => .plugins,
             .colors => .colors,
-            .agents_open, .agents_activity, .agents_burst, .agents_structure => .agents,
+            .agents_open, .agents_activity, .agents_burst, .agents_structure, .engine_activity, .engine_activity_changed => .agents,
             .advice_direct, .advice_before, .advice_around, .advice_mixed, .advice_churn => .advice,
             else => .transcript,
         };
@@ -283,6 +285,15 @@ pub const Harness = struct {
         } else if (phase == .boot) {
             try self.bootOnce();
         } else {
+            if (phase == .engine_activity_changed) {
+                const engine = &self.tree.?.app.engine;
+                {
+                    engine.beginContinuation();
+                    defer engine.endContinuation();
+                    try self.host.pump();
+                }
+                try self.host.pump();
+            }
             if (phase == .stream_native) {
                 try (self.projection orelse unreachable).appendNative(self.native_step);
                 self.native_step += 1;

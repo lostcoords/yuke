@@ -162,12 +162,15 @@ pub fn faultNotice(engine: *Engine, session_id: proto.ids.SessionId, run_id: pro
 /// A failed wake leaves the durable report for the next input or workspace resume.
 pub fn requestWake(engine: *Engine, parent: proto.ids.SessionId) void {
     if (engine.closing) return;
+    engine.beginContinuation();
     engine.turn_tasks.concurrent(engine.deps.io, wakeParent, .{ engine, parent }) catch |err| {
+        defer engine.endContinuation();
         wakeFailed(engine, parent, err);
     };
 }
 
 fn wakeParent(engine: *Engine, parent: proto.ids.SessionId) void {
+    defer engine.endContinuation();
     wake(engine, parent) catch |err| {
         wakeFailed(engine, parent, err);
     };

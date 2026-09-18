@@ -7,6 +7,7 @@ const proto = @import("proto");
 pub const Sink = struct {
     ctx: *anyopaque,
     on_event: *const fn (ctx: *anyopaque, note: proto.rpc.Notification) void,
+    on_activity: ?*const fn (ctx: *anyopaque) void = null,
 };
 
 /// The frontends one process runs at once. The TUI takes one, and an RPC stream takes another.
@@ -47,6 +48,14 @@ pub const Sinks = struct {
     fn indexOf(self: *const Sinks, ctx: *anyopaque) ?usize {
         for (self.entries[0..self.len], 0..) |sink, i| if (sink.ctx == ctx) return i;
         return null;
+    }
+
+    /// Wake local readers after a task handoff that has no protocol event.
+    pub fn activityChanged(self: *Sinks) void {
+        std.debug.assert(!self.emitting);
+        self.emitting = true;
+        defer self.emitting = false;
+        for (self.entries[0..self.len]) |sink| if (sink.on_activity) |notify| notify(sink.ctx);
     }
 };
 

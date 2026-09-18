@@ -13,6 +13,7 @@ declare module "yuke:engine-native" {
 
   /** A drain names transcript work and broadcast facts; index overflow requires a full refresh for dropped session facts. */
   export type EngineEvent =
+    | { type: "activity" }
     | { type: "index"; overflow: boolean; facts: Wire.BroadcastName[]; auth?: AuthNote[]; notices?: Wire.Notice[] }
     | { type: "session"; session: string; kind: "quiet" | "active" | "reload" | "gone"; id?: number; part?: number; facts: Wire.BroadcastName[] };
 
@@ -38,6 +39,8 @@ declare module "yuke:engine-native" {
   };
 
   export const native: {
+    /** True through run cleanup and automatic continuation; false before engine attach. */
+    isBusy(): boolean;
     /** Every fact the engine can publish, so a bus declares them without drift. */
     factNames(): Wire.BroadcastName[];
     /** What the JavaScript runtime holds right now, separate from the process footprint. */

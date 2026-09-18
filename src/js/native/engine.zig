@@ -37,6 +37,7 @@ pub fn install(host: *Host) void {
         .{ .name = "setEventSink", .arity = 1, .call = jsSetEventSink },
         .{ .name = "factNames", .arity = 0, .call = jsFactNames },
         .{ .name = "memoryUsage", .arity = 0, .call = jsMemoryUsage },
+        .{ .name = "isBusy", .arity = 0, .call = jsIsBusy },
         .{ .name = "request", .arity = 2, .call = jsRequest },
         .{ .name = "sessionOpen", .arity = 1, .call = jsSessionOpen },
         .{ .name = "sessionClose", .arity = 1, .call = jsSessionClose },
@@ -50,6 +51,10 @@ pub fn install(host: *Host) void {
 }
 
 // ---------------------------------------------------------------- javascript seam
+
+fn jsIsBusy(ctx: Context, _: Value, _: []const Value) Value {
+    return ctx.newBool(Host.fromContext(ctx).engine.isBusy());
+}
 
 fn sidArg(ctx: Context, args: []const Value, idx: usize) ?SessionId {
     if (args.len <= idx) return null;
@@ -392,6 +397,75 @@ test "a request reaches a command and answers with its result" {
 }
 
 const support = @import("../test_support.zig");
+
+test "process activity uses live engine state and scoped coalesced notifications" {
+    const Tree = @import("../bench_agents.zig");
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const host = support.createHostWith(rt.io(), "");
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { client } from "yuke:client";
+        \\import { Context, Scope } from "yuke:ext";
+        \\globalThis.client = client;
+        \\globalThis.observer = new Context(new Scope("activity-test"), "activity-test");
+        \\globalThis.seen = [];
+        \\observer.on("engine.activity.changed", (...args) => {
+        \\  if (args.length !== 0) throw new Error("activity carries no payload");
+        \\  seen.push(client.isBusy());
+        \\});
+    , "activity.js");
+    try testing.expectEqual(@as(i32, 0), try host.evalInt("client.isBusy()"));
+    const tree = try Tree.create(host, 2, .wide);
+    defer tree.destroy();
+    defer host.engine.detach();
+    try host.pump();
+    try testing.expectEqual(@as(i32, 0), try host.evalInt("seen.length"));
+
+    // A child has no pane, but its prepared run already belongs to this process.
+    const sid = SessionId.bytes(std.mem.toBytes(@as(u128, 3)));
+    const resident = tree.app.engine.sessions.get(sid).?;
+    var prepared = try domain_session.RunSlot.prepare(host.gpa, "bench/model", "", "", null);
+    const slot = prepared.bind(.{
+        .input_id = 1,
+        .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },
+    }, .bytes(std.mem.toBytes(@as(u128, 1))), .{ .root = .bytes(std.mem.toBytes(@as(u128, 1))), .depth = 1 });
+    defer slot.destroy();
+    resident.active_run = slot;
+    defer resident.active_run = null;
+    try testing.expectEqual(@as(u32, 0), resident.pins);
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("client.isBusy()"));
+    tree.app.engine.sinks.emit(.{ .method = .@"run.started", .params = .{ .run_started_data = slot.handle.started } });
+    try testing.expect(host.engine.hasPending());
+    try host.pump();
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("seen.length === 1 && seen[0]"));
+
+    tree.app.engine.beginContinuation();
+    resident.active_run = null;
+    try host.pump();
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("client.isBusy() && seen.length === 1"));
+    tree.app.engine.endContinuation();
+    try testing.expectEqual(@as(i32, 0), try host.evalInt("client.isBusy()"));
+    try testing.expect(host.engine.hasPending());
+    try host.pump();
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("seen.length === 2 && seen[1] === false"));
+
+    tree.app.engine.beginContinuation();
+    tree.app.engine.endContinuation();
+    try host.pump();
+    try testing.expectEqual(@as(i32, 2), try host.evalInt("seen.length"));
+    tree.app.engine.beginContinuation();
+    try host.pump();
+    host.engine.detach();
+    try host.pump();
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("!client.isBusy() && seen.length === 4 && seen[3] === false"));
+    host.engine.attach(&tree.app);
+    try host.pump();
+    try host.evalModule("observer.scope.dispose();", "dispose.js");
+    tree.app.engine.endContinuation();
+    try host.pump();
+    try testing.expectEqual(@as(i32, 5), try host.evalInt("seen.length"));
+}
 
 test {
     _ = digest;

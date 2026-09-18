@@ -47,6 +47,10 @@ pub const Engine = struct {
     io: std.Io,
     /// An event sink threw. `drain` reports it so the owner can note the fault, as a key press does.
     faulted: bool = false,
+    /// Internal handoffs can change activity without a session fact.
+    activity_dirty: bool = false,
+    /// The last value delivered to the sink, never the query source.
+    busy: bool = false,
 
     pub fn create(gpa: std.mem.Allocator, ctx: Context, io: std.Io, wake: *std.Io.Event) !*Engine {
         const self = try gpa.create(Engine);
@@ -69,11 +73,12 @@ pub const Engine = struct {
         std.debug.assert(self.runtime == null); // one engine, one attach
         self.runtime = runtime;
         runtime.engine.sinks.add(self.eventSink());
+        onActivity(self);
     }
 
     /// Return the callback that records engine events for the owner drain.
     pub fn eventSink(self: *Engine) Sink {
-        return .{ .ctx = @ptrCast(self), .on_event = onEvent };
+        return .{ .ctx = @ptrCast(self), .on_event = onEvent, .on_activity = onActivity };
     }
 
     /// Stop event delivery before the state closes. Remove only this engine, so a detach never silences another frontend.
@@ -81,6 +86,17 @@ pub const Engine = struct {
         const runtime = self.runtime orelse return;
         runtime.engine.sinks.remove(@ptrCast(self));
         self.runtime = null;
+        onActivity(self);
+    }
+
+    pub fn isBusy(self: *const Engine) bool {
+        return if (self.runtime) |runtime| runtime.engine.isBusy() else false;
+    }
+
+    fn onActivity(ctx: *anyopaque) void {
+        const self: *Engine = @ptrCast(@alignCast(ctx));
+        self.activity_dirty = true;
+        self.wakeOwner();
     }
 
     /// Mark the event's session dirty. This runs on an engine task, so it must not enter JavaScript.
@@ -88,6 +104,7 @@ pub const Engine = struct {
         const self: *Engine = @ptrCast(@alignCast(ctx));
         // A job change names no session and moves no view, so it must not mark the index dirty.
         if (note.method == .@"job.changed") return;
+        self.activity_dirty = true;
         if (note.params == .session_removed_data) self.removed.append(self.gpa, note.params.session_removed_data.session_id) catch unreachable;
         const id = sessionOf(note) orelse {
             self.index_dirty = true;
@@ -103,7 +120,7 @@ pub const Engine = struct {
 
     /// Report whether `drain` has anything to deliver. The owner asks before it sleeps.
     pub fn hasPending(self: *const Engine) bool {
-        return self.index_dirty or self.dirty_overflow or self.dirty.count() != 0 or self.removed.items.len != 0;
+        return self.activity_dirty or self.index_dirty or self.dirty_overflow or self.dirty.count() != 0 or self.removed.items.len != 0;
     }
 
     /// Wake the owner so it drains this event on the next frame, not on the next keystroke.
@@ -257,6 +274,8 @@ pub fn sessionOf(note: proto.rpc.Notification) ?SessionId {
 
 /// Deliver the sessions that changed since the last call. Only the owner calls this, between frames. True when a sink threw.
 pub fn drain(engine: *Engine, ctx: Context) bool {
+    const activity = engine.activity_dirty;
+    engine.activity_dirty = false;
     // Take the batch before the first callback, because a sink can publish an event that writes the dirty map.
     var batch: [max_dirty_sessions]struct { id: SessionId, change: Change } = undefined;
     var count: usize = 0;
@@ -290,6 +309,16 @@ pub fn drain(engine: *Engine, ctx: Context) bool {
     engine.faulted = false;
     if (index) emitIndex(engine, ctx, index_facts, auth.items, notices.items, overflow);
     for (batch[0..count]) |entry| emitSession(engine, ctx, entry.id, entry.change);
+    if (activity) {
+        const busy = engine.isBusy();
+        if (busy != engine.busy) {
+            engine.busy = busy;
+            const ev = ctx.newObject();
+            defer ctx.freeValue(ev);
+            module.set(ctx, ev, "type", ctx.newString("activity"));
+            call(engine, ctx, ev);
+        }
+    }
     return engine.faulted;
 }
 

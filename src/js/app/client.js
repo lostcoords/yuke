@@ -345,6 +345,8 @@ function agentsGet() { return request("agents.get", {}); }
 function agentsUpdate(params) { return request("agents.update", params); }
 
 export const client = {
+  // Read all process-owned runs and continuations; engine.activity.changed coalesces changes on the owner drain.
+  isBusy: () => native.isBusy(),
   agentsGet,
   agentsUpdate,
   request,

@@ -3,6 +3,10 @@ const std = @import("std");
 const Paint = @import("test_paint.zig").Paint;
 const Host = @import("host.zig").Host;
 
+test "focused session identity follows pane and session lifetimes" {
+    try support.run("tests/app/focused-session.test.js");
+}
+
 test "yuke:client exposes the engine surface and answers a closed session" {
     try support.run("tests/app/c.test.js");
 }
