@@ -13,6 +13,7 @@ fn run(comptime file: [:0]const u8, mode: Peer.Mode, cleanup_checkpoint: bool) !
     const global = host.ctx.getGlobalObject();
     defer host.ctx.freeValue(global);
     try host.ctx.setPropertyStr(global, "socketPath", host.ctx.newString(peer.path));
+    try host.ctx.setPropertyStr(global, "socketPeerMode", host.ctx.newString(@tagName(mode)));
     try support.eval(host, file);
     if (cleanup_checkpoint) {
         try support.pumpUntilTrue(host, "globalThis.socketCleanupReady === true");
@@ -65,4 +66,12 @@ test "socket benchmark scenarios verify reused and fresh connections" {
 
 test "JSON lines over sockets validate complete bounded UTF-8 frames" {
     try run("tests/native_tools/net-json.test.js", .json_lines, false);
+}
+
+test "Herdr plugin reports and clears over real Unix sockets" {
+    try run("tests/plugins/herdr-socket.test.js", .herdr, false);
+}
+
+test "Herdr plugin bounds stalled reports and shutdown" {
+    try run("tests/plugins/herdr-socket.test.js", .stall, false);
 }
