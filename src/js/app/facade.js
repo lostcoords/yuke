@@ -3,6 +3,7 @@ export { defineConfig, config, events, Emitter } from "yuke:kernel";
 import { rootScope, toolRegistry } from "yuke:ext";
 export { plugins, Scope, Context, advice, services } from "yuke:ext";
 export { fs } from "yuke:fs";
+export { env } from "yuke:env";
 export { exec } from "yuke:exec";
 export { spawn, lines } from "yuke:spawn";
 export { jobs } from "yuke:jobs";

@@ -8,6 +8,7 @@ const loader_mod = @import("loader.zig");
 const term_module = @import("native/term.zig");
 const engine_module = @import("native/engine.zig");
 const fs_module = @import("native/fs.zig");
+const env_module = @import("native/env.zig");
 const exec_module = @import("native/exec.zig");
 const process_module = @import("native/process.zig");
 const jobs_module = @import("native/jobs.zig");
@@ -161,6 +162,7 @@ pub const Host = struct {
         term_module.install(self);
         engine_module.install(self);
         fs_module.install(self);
+        env_module.install(self);
         exec_module.install(self);
         timers_mod.install(self);
         process_module.install(self);

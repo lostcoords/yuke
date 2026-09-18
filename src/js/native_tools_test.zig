@@ -49,6 +49,18 @@ const ReactorHost = struct {
     }
 };
 
+test "env reads the effective host environment through the public facade" {
+    var env: std.process.Environ.Map = .init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("YUKE_ENV_VALUE", "hello 世界");
+    try env.put("YUKE_ENV_EMPTY", "");
+    try env.put("HOME", "/effective/home");
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    host.execution.env = &env;
+    try support.eval(host, "tests/native_tools/env.test.js");
+}
+
 test "yuke:fs reads, writes and stats a real directory through promises" {
     var fixture = try ReactorHost.initTmp(null);
     defer fixture.deinit();
