@@ -1,4 +1,6 @@
-import { check } from "yuke:test";
+import { check, equal } from "yuke:test";
+import { Context, Scope, plugins } from "yuke:ext";
+import { authPlugin } from "yuke:auth";
 import { command, root } from "yuke:core";
 import { events } from "yuke:kernel";
 import { client } from "yuke:client";
@@ -12,6 +14,7 @@ const finished = (login_id, outcome) => events.emit("auth.login_finished", { typ
   auth: [{ method: "auth.login_finished", params: { login_id, provider_id: "codex", outcome } }] });
 root.focusView(chat.view);
 const calls = [];
+const observer = new Context(new Scope("auth-observer"), "auth-observer");
 client.catalogReload = () => Promise.resolve({ changed: false });
 client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r1", models: [],
   providers: [{ id: "codex", name: "Codex", state: "needs_credential" }, { id: "minimax", name: "MiniMax", state: "ready" }] });
@@ -26,18 +29,21 @@ client.authRemove = (id) => { calls.push("remove:" + id); return Promise.resolve
 command.perform("auth:login");
 await settle();
 check("login-lists", root.overlays.length === 1);
+equal(observer.interaction.pending, 0);
 const picker = root.overlays[0].content;
 check("login-rows", picker.list.items.length === 2);
 check("login-state", picker.selectKey("codex") && picker.selected().state === "needs_credential");
 root.onEvent(key("enter"));
 await settle();
 check("device-dialog", root.overlays.length === 1 && calls.includes("login:codex"));
+equal(observer.interaction.pending, 1);
 // The outcome of another login leaves the dialog open; the outcome of this one closes it with its message.
 finished("L9", { type: "succeeded" });
 check("other-login-ignored", root.overlays.length === 1);
 finished("L1", { type: "failed", message: "denied" });
 await settle();
 check("failure-closes", root.overlays.length === 0 && notice.text === "login failed · denied");
+equal(observer.interaction.pending, 0);
 
 // An unknown name is a notice, not a list.
 command.perform("auth:login", "nope");
@@ -49,12 +55,14 @@ command.perform("auth:login", "codex");
 await settle();
 check("direct-opens-dialog", root.overlays.length === 1);
 root.onEvent(key("esc"));
+await settle();
 check("esc-cancels", root.overlays.length === 0 && calls.includes("cancel:L1"));
 
 // A key provider gets the masked prompt, and Enter stores the key.
 command.perform("auth:login", "minimax");
 await settle();
 check("key-prompt", root.overlays.length === 1);
+equal(observer.interaction.pending, 1);
 const prompt = root.overlays[0].content;
 root.onEvent(key("char", { char: "s", text: "s" }));
 root.onEvent({ type: "paste", text: "k" });
@@ -62,6 +70,7 @@ check("masked", prompt.input.text === "sk" && prompt.shown(prompt.input.text) ==
 root.onEvent(key("enter"));
 await settle();
 check("key-stored", root.overlays.length === 0 && calls.includes("key:minimax:sk"));
+equal(observer.interaction.pending, 0);
 
 // /logout lists only the provider that holds a credential.
 command.perform("auth:logout");
@@ -107,4 +116,28 @@ command.perform("model:pick", "codex/gpt");
 await settle();
 check("query-ready-uses-default", root.overlays.length === 0 && defaultModel().model === "codex/gpt" && defaultModel().reasoning === "high");
 
+// Disposal closes an active login and cancels its provider operation.
+command.perform("auth:login", "codex");
+await settle();
+equal(observer.interaction.pending, 1);
+const canceledBefore = calls.filter(call => call === "cancel:L1").length;
+plugins.dispose("auth");
+await settle();
+equal(observer.interaction.pending, 0);
+equal(root.overlays.length, 0);
+equal(calls.filter(call => call === "cancel:L1").length, canceledBefore + 1);
+
+// A late start response cannot open a dialog after its owner leaves.
+plugins.use(authPlugin);
+let finishStart;
+client.authLogin = () => new Promise(resolve => { finishStart = resolve; });
+command.perform("auth:login", "codex");
+await settle();
+plugins.dispose("auth");
+finishStart({ login_id: "late", verification_url: "https://example.com", user_code: "code" });
+await settle();
+equal(observer.interaction.pending, 0);
+equal(root.overlays.length, 0);
+check("late login canceled", calls.includes("cancel:late"));
+observer.scope.dispose();
 })();

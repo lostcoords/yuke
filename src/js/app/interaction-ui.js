@@ -1,151 +1,89 @@
-// yuke:interaction-ui — the terminal answerer for the shared interaction capability.
+// The terminal answerer presents requests; the shared lifecycle owns their disposal.
 import { native } from "yuke:interaction-native";
 import { DeviceDialog } from "yuke:auth";
 import { root } from "yuke:core";
 import { term } from "yuke:term";
 import { Prompt, Window, ui } from "yuke:ui";
-import { interaction } from "yuke:ext";
+import { interaction, watchCancellation } from "yuke:interaction";
 import { notice } from "yuke:notice";
-import { confirmRequest, inputRequest, noticeLevel, selectRequest, watchCancellation } from "yuke:interaction";
 /** @import { Context } from "yuke:ext" */
-/** @import { InjectContext, InteractionOptions } from "./types/ext.js" */
+/** @import { Answerer, InjectContext } from "./types/ext.js" */
 
-/** @typedef {() => void} Cancel */
-
-/** @param {InjectContext} frontend */
+/** @param {InjectContext} frontend @returns {Answerer} */
 function createAnswerer(frontend) {
-  /** @type {Set<Cancel>} */
-  const pending = new Set();
-  frontend.effect(() => () => {
-    for (const cancel of Array.from(pending)) cancel();
-  });
-
   return {
-    /** @param {Context} consumer */
-    surfaceFor(consumer) {
-      /** @type {Set<Cancel>} */
-      const owned = new Set();
-      consumer.effect(() => () => {
-        for (const cancel of Array.from(owned)) cancel();
-      });
-
-      /** @template T @param {(settle: (value: T | undefined) => void) => Cancel} open @param {InteractionOptions} [options] @returns {Promise<T | undefined>} */
-      const dialog = (open, options) => new Promise((resolve, reject) => {
-        if (options?.signal?.aborted) { resolve(undefined); return; }
-        let unwatch = () => {};
-        let done = false;
-        /** @type {Cancel} */
-        let cancel = () => {};
-        /** @param {T | undefined} value */
-        const settle = (value) => {
-          if (done) return;
-          done = true;
-          unwatch();
-          pending.delete(cancel);
-          owned.delete(cancel);
-          cancel();
-          resolve(value);
-        };
-        const close = open(settle);
-        cancel = () => {
-          close();
-          settle(undefined);
-        };
-        pending.add(cancel);
-        owned.add(cancel);
-        unwatch = watchCancellation(options?.signal, cancel, (error) => { reject(error); cancel(); });
-      });
-
-      /** @param {string} title @param {InteractionOptions | undefined} options */
-      const attributedTitle = (title, options) => {
-        const id = options?.signal ? native.sessionId(options.signal) : null;
-        return id ? "session " + id.slice(0, 8) + " · " + title : title;
-      };
-      return {
-        interactive: true,
-        /** @param {Wire.AuthLoginResult} start @param {Promise<Wire.AuthLoginOutcome>} outcome @param {InteractionOptions} [options] */
-        deviceLogin(start, outcome, options) {
-          return dialog((settle) => {
-            const device = new DeviceDialog(start);
-            device.onCancel = () => settle(undefined);
-            const win = new Window({ title: attributedTitle("Provider login", options), footer: "c copy code · o open browser · esc cancel", border: "rounded", width: max => Math.round(max * 0.7), contentHeight: 3, content: device });
-            root.pushOverlay(win);
-            outcome.then(settle);
-            return frontend.tui.overlay(win);
-          }, options);
-        },
-        /** @param {string} title @param {string} [message] @param {InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
-        confirm(title, message = "", options) {
-          const request = confirmRequest(title, message);
-          return dialog((settle) => {
-            const labels = options?.labels || {};
-            const width = () => Math.min(term.width, Math.max(8, Math.min(72, Math.round(term.width * 0.8))));
-            const picked = ui.select([true, false], {
-              title: attributedTitle(request.title, options),
-              footer: "↵ answer · pgup/pgdn scroll · esc cancel",
-              border: "rounded",
-              width,
-              body: request.message,
-              key: Number,
-              format: (answer) => answer ? labels.accept || "Yes" : labels.cancel || "No",
-              onAccept: settle,
-              onCancel: () => settle(undefined),
-            });
-            picked.win.opts.height = () => Math.min(term.height, picked.content.preferredHeight(width()));
-            return frontend.tui.overlay(picked.win);
-          }, options);
-        },
-
-        /** @param {string} title @param {string[]} choices @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
-        select(title, choices, options) {
-          const request = selectRequest(title, choices);
-          return dialog((settle) => {
-            const picked = ui.pick({
-              items: request.options,
-              title: attributedTitle(request.title, options),
-              footer: "↵ select · esc cancel",
-              border: "rounded",
-              width: max => Math.round(max * 0.6),
-              height: max => Math.round(max * 0.5),
-              onAccept: settle,
-              onCancel: () => settle(undefined),
-            });
-            return frontend.tui.overlay(picked.win);
-          }, options);
-        },
-
-        /** @param {string} title @param {string} [placeholder] @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
-        input(title, placeholder, options) {
-          const request = inputRequest(title, placeholder, options?.secret);
-          return dialog((settle) => {
-            const prompt = new Prompt({ placeholder: request.placeholder || "", mask: request.secret || false, settle });
-            const win = new Window({
-              title: attributedTitle(request.title, options),
-              footer: "↵ submit · esc cancel",
-              border: "rounded",
-              width: max => Math.round(max * 0.6),
-              contentHeight: 1,
-              content: prompt,
-            });
-            root.pushOverlay(win);
-            return frontend.tui.overlay(win);
-          }, options);
-        },
-
-        /** @param {string} message @param {"info" | "warn" | "error"} [level] @returns {void} */
-        notify(message, level = "info") {
-          noticeLevel(level);
-          notice.show(message);
-        },
-      };
+    interactive: true,
+    open(request, consumer, options, resolve, reject) {
+      const id = options?.signal ? native.sessionId(options.signal) : null;
+      const title = id ? "session " + id.slice(0, 8) + " · " + request.title : request.title;
+      const cancel = () => resolve(undefined);
+      /** @type {Window} */
+      let win;
+      switch (request.type) {
+        case "confirm": {
+          const labels = options?.labels || {};
+          const width = () => Math.min(term.width, Math.max(8, Math.min(72, Math.round(term.width * 0.8))));
+          const picked = ui.select([true, false], {
+            title,
+            footer: "↵ answer · pgup/pgdn scroll · esc cancel",
+            border: "rounded",
+            width,
+            body: request.message,
+            key: Number,
+            format: answer => answer ? labels.accept || "Yes" : labels.cancel || "No",
+            onAccept: resolve,
+            onCancel: cancel,
+          });
+          picked.win.opts.height = () => Math.min(term.height, picked.content.preferredHeight(width()));
+          win = picked.win;
+          break;
+        }
+        case "select": {
+          const picked = ui.pick({
+            items: request.options,
+            title,
+            footer: "↵ select · esc cancel",
+            border: "rounded",
+            width: max => Math.round(max * 0.6),
+            height: max => Math.round(max * 0.5),
+            onAccept: resolve,
+            onCancel: cancel,
+          });
+          win = picked.win;
+          break;
+        }
+        case "input": {
+          const prompt = new Prompt({ placeholder: request.placeholder || "", mask: request.secret || false, settle: resolve });
+          win = new Window({ title, footer: "↵ submit · esc cancel", border: "rounded", width: max => Math.round(max * 0.6), contentHeight: 1, content: prompt });
+          root.pushOverlay(win);
+          break;
+        }
+        case "device_login": {
+          const device = new DeviceDialog(request.start);
+          device.onCancel = cancel;
+          win = new Window({ title, footer: "c copy code · o open browser · esc cancel", border: "rounded", width: max => Math.round(max * 0.7), contentHeight: 3, content: device });
+          root.pushOverlay(win);
+          request.outcome.then(resolve, reject);
+          break;
+        }
+      }
+      const close = frontend.tui.overlay(win);
+      try {
+        const unwatch = watchCancellation(options?.signal, cancel, reject);
+        return () => { unwatch(); close(); };
+      } catch (error) {
+        close();
+        throw error;
+      }
     },
+    notify(owner, message, level) { notice.show(message); },
   };
 }
 
 export const tuiInteractionPlugin = {
   name: "tui-interaction",
-  /** @param {Context} ctx @returns {void} */
+  /** @param {Context} ctx */
   apply(ctx) {
-    ctx.inject(["tui"], (frontend) => interaction.install(createAnswerer(frontend)));
+    ctx.inject(["tui"], frontend => interaction.install(createAnswerer(frontend)));
   },
 };

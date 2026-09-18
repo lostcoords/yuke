@@ -139,8 +139,10 @@ test "tool cancellation stops its pending device login without child admission" 
     const call = host.calls.submit("spawn-test", "{}", "/work");
     try host.pump();
     try std.testing.expect(host.interactions.live.items.len > 0);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("interactionPending()"));
     try support.dropCall(host, call);
     try support.expectString(host, "result", "tool_cancelled");
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("interactionPending()"));
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("canceledLogin === 'login' ? 1 : 0"));
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("stats.creates + stats.saves"));
     try std.testing.expectEqual(@as(usize, 0), host.interactions.live.items.len);

@@ -85,7 +85,7 @@ test "the auth plugin logs in with a device code or a key, logs out, and guards 
     const host = support.createHost();
     defer support.destroyHost(host);
     host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
-    try support.eval(host, "tests/app/boot-3.test.js");
+    try host.evalModule(@import("driver.zig").boot, "auth-boot.js");
     // `client` is one object, so the test replaces the auth calls and drives the dialogs with keys.
     try support.eval(host, "tests/app/auth.test.js");
     try host.pump();
@@ -98,7 +98,7 @@ test "the auth device dialog closes for native completion before or after the lo
     const host = support.createHost();
     defer support.destroyHost(host);
     host.interrupt_budget = std.math.maxInt(u32);
-    try support.eval(host, "tests/app/auth-native-boot.test.js");
+    try host.evalModule(@import("driver.zig").boot, "auth-boot.js");
     try support.eval(host, "tests/app/auth-native.test.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.openCount()"));
 

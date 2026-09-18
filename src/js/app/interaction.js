@@ -1,8 +1,8 @@
-// yuke:interaction — the shared question contract and the RPC answerer.
-import { interaction } from "yuke:ext";
+// The shared interaction lifecycle owns each request until its answer or cancellation.
+import { events } from "yuke:kernel";
 import { native } from "yuke:interaction-native";
 /** @import { Context } from "yuke:ext" */
-/** @import { InteractionOptions } from "./types/ext.js" */
+/** @import { Answerer, Disposer, InteractionOptions, InteractionRequest, InteractionSurface } from "./types/ext.js" */
 
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
 let nextId = 1;
@@ -35,12 +35,12 @@ function text(value, name, empty = false) {
 }
 
 /** @param {string} title @param {string} message @returns {{ type: "confirm", title: string, message: string }} */
-export function confirmRequest(title, message) {
+function confirmRequest(title, message) {
   return { type: "confirm", title: text(title, "confirm title"), message: text(message, "confirm message", true) };
 }
 
 /** @param {string} title @param {string[]} options @returns {{ type: "select", title: string, options: string[] }} */
-export function selectRequest(title, options) {
+function selectRequest(title, options) {
   title = text(title, "select title");
   if (!Array.isArray(options) || options.length === 0 || options.length > native.maxOptions) {
     throw new TypeError("select options must be a non-empty bounded array");
@@ -51,7 +51,7 @@ export function selectRequest(title, options) {
 }
 
 /** @param {string} title @param {string | undefined} placeholder @param {boolean} [secret] @returns {{ type: "input", title: string, placeholder?: string, secret?: boolean }} */
-export function inputRequest(title, placeholder, secret = false) {
+function inputRequest(title, placeholder, secret = false) {
   const request = { type: /** @type {const} */ ("input"), title: text(title, "input title") };
   if (placeholder !== undefined) Object.assign(request, { placeholder: text(placeholder, "input placeholder", true) });
   if (secret) Object.assign(request, { secret: true });
@@ -59,7 +59,7 @@ export function inputRequest(title, placeholder, secret = false) {
 }
 
 /** @param {unknown} level @returns {"info" | "warn" | "error"} */
-export function noticeLevel(level) {
+function noticeLevel(level) {
   if (level !== "info" && level !== "warn" && level !== "error") throw new TypeError("notify level is invalid");
   return level;
 }
@@ -81,87 +81,146 @@ export function watchCancellation(signal, canceled, failed = () => canceled()) {
   return () => { alive = false; native.cancel(id); };
 }
 
-const rpcAnswerer = {
-  /** @param {Context} ctx */
-  surfaceFor(ctx) {
-    const live = new Set();
-    ctx.effect(() => () => {
-      for (const id of live) native.cancel(id);
-      live.clear();
-    });
+/** @typedef {{ answerer: Answerer, requests: Set<Disposer> }} Registration */
+/** @type {Registration[]} */
+const answerers = [];
+let pending = 0;
 
-    /** @param {object} request @param {InteractionOptions} [options] @returns {Promise<any>} */
-    const ask = (request, options) => {
-      const id = allocateId();
-      live.add(id);
-      return native.request(id, JSON.stringify(request), options?.signal).finally(() => live.delete(id));
-    };
+function unavailable() {
+  return Object.assign(new Error("no interaction answerer is installed"), { name: "InteractionUnavailable" });
+}
 
-    return {
-      interactive: true,
-      /** @param {string} title @param {string} [message] @param {InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
-      confirm(title, message = "", options) {
-        return ask(confirmRequest(title, message), options);
-      },
-      /** @param {string} title @param {string[]} choices @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
-      select(title, choices, options) {
-        return ask(selectRequest(title, choices), options);
-      },
-      /** @param {string} title @param {string} [placeholder] @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
-      input(title, placeholder, options) {
-        return ask(inputRequest(title, placeholder, options?.secret), options);
-      },
-      /** @param {string} message @param {"info" | "warn" | "error"} [level] @returns {void} */
-      notify(message, level = "info") {
-        native.notify(ctx.id, text(message, "notify message"), noticeLevel(level));
-      },
+export const interaction = {
+  /** @param {Answerer} answerer @returns {Disposer} */
+  install(answerer) {
+    if (!answerer || typeof answerer.interactive !== "boolean" || typeof answerer.notify !== "function" || (answerer.interactive && typeof answerer.open !== "function")) {
+      throw new TypeError("an answerer needs interactive, notify, and an open method for prompts");
+    }
+    /** @type {Registration} */
+    const entry = { answerer, requests: new Set() };
+    answerers.push(entry);
+    return () => {
+      const at = answerers.indexOf(entry);
+      if (at < 0) return;
+      answerers.splice(at, 1);
+      for (const cancel of entry.requests) cancel();
     };
   },
+};
+
+/** @param {Context} ctx @param {InteractionRequest} request @param {InteractionOptions} [options] @returns {Promise<any>} */
+function ask(ctx, request, options) {
+  return new Promise((resolve, reject) => {
+    if (options !== undefined && (options === null || typeof options !== "object" || Array.isArray(options))) throw new TypeError("interaction options must be an object");
+    if (options?.signal !== undefined) native.validateSignal(options.signal);
+    if (!ctx.scope.alive || options?.signal?.aborted) { resolve(undefined); return; }
+    const entry = answerers[answerers.length - 1];
+    if (!entry) { reject(unavailable()); return; }
+    if (!entry.answerer.interactive) {
+      entry.answerer.notify(ctx.id, "denied: " + request.title, "warn");
+      resolve(request.type === "confirm" ? false : undefined);
+      return;
+    }
+    let opening = true;
+    let done = false;
+    let counted = false;
+    let failed = false;
+    /** @type {unknown} */
+    let result;
+    let close = () => {};
+    let release = () => {};
+    const complete = () => {
+      entry.requests.delete(cancel);
+      release();
+      try { close(); } catch (error) { failed = true; result = error; }
+      if (counted) {
+        pending--;
+        events.emit("interaction.changed");
+      }
+      if (failed) reject(result);
+      else resolve(result);
+    };
+    /** @param {unknown} value @param {boolean} failure */
+    const finish = (value, failure) => {
+      if (done) return;
+      done = true;
+      result = value;
+      failed = failure;
+      if (!opening) complete();
+    };
+    const cancel = () => finish(undefined, false);
+    release = ctx.effect(() => cancel);
+    entry.requests.add(cancel);
+    try {
+      close = entry.answerer.open(request, ctx, options, value => finish(value, false), error => finish(error, true));
+      if (typeof close !== "function") throw new TypeError("an answerer must return a synchronous disposer");
+    } catch (error) {
+      close = typeof close === "function" ? close : () => {};
+      done = true;
+      failed = true;
+      result = error;
+    }
+    opening = false;
+    if (done) complete();
+    else {
+      counted = true;
+      pending++;
+      events.emit("interaction.changed");
+    }
+  });
+}
+
+/** @param {Context} ctx @returns {InteractionSurface} */
+export function bindInteraction(ctx) {
+  return {
+    get pending() { return pending; },
+    get interactive() { return ctx.scope.alive && (answerers[answerers.length - 1]?.answerer.interactive ?? false); },
+    confirm(title, message = "", options) { return ask(ctx, confirmRequest(title, message), options); },
+    select(title, choices, options) { return ask(ctx, selectRequest(title, choices), options); },
+    input(title, placeholder, options) { return ask(ctx, inputRequest(title, placeholder, options?.secret), options); },
+    deviceLogin(start, outcome, options) {
+      text(start?.verification_url, "verification URL");
+      text(start?.user_code, "user code");
+      if (!(outcome instanceof Promise)) throw new TypeError("the login outcome must be a promise");
+      return ask(ctx, { type: "device_login", title: "Provider login", start, outcome }, options);
+    },
+    notify(message, level = "info") {
+      text(message, "notify message");
+      noticeLevel(level);
+      if (!ctx.scope.alive) return;
+      const entry = answerers[answerers.length - 1];
+      if (!entry) throw unavailable();
+      entry.answerer.notify(ctx.id, message, level);
+    },
+  };
+}
+
+/** @type {Answerer} */
+const rpcAnswerer = {
+  interactive: true,
+  open(request, ctx, options, resolve, reject) {
+    if (request.type === "device_login") {
+      native.notify(ctx.id, "Sign in at " + request.start.verification_url + " with code " + request.start.user_code + ". Cancel the tool to stop setup.", "info");
+      request.outcome.then(resolve, reject);
+      return watchCancellation(options?.signal, () => resolve(undefined), reject);
+    }
+    const id = allocateId();
+    native.request(id, JSON.stringify(request), options?.signal).then(resolve, reject);
+    return () => { native.cancel(id); };
+  },
+  notify: (owner, message, level) => native.notify(owner, message, level),
 };
 
 export const rpcInteractionPlugin = {
   name: "rpc-interaction",
-  /** @param {Context} ctx @returns {void} */
-  apply(ctx) {
-    ctx.effect(() => interaction.install(rpcAnswerer));
-  },
-};
-
-// A print run has nobody to ask, so every question is denied and the denial is a notice.
-const printAnswerer = {
   /** @param {Context} ctx */
-  surfaceFor(ctx) {
-    /** @param {string} title @returns {void} */
-    const deny = (title) => native.notify(ctx.id, "denied: " + title, "warn");
-    return {
-      interactive: false,
-      /** @param {string} title @param {string} [message] @param {InteractionOptions} [options] @returns {Promise<boolean | undefined>} */
-      confirm(title, message = "", options) {
-        deny(confirmRequest(title, message).title);
-        return Promise.resolve(false);
-      },
-      /** @param {string} title @param {string[]} choices @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
-      select(title, choices, options) {
-        deny(selectRequest(title, choices).title);
-        return Promise.resolve(undefined);
-      },
-      /** @param {string} title @param {string} [placeholder] @param {InteractionOptions} [options] @returns {Promise<string | undefined>} */
-      input(title, placeholder, options) {
-        deny(inputRequest(title, placeholder).title);
-        return Promise.resolve(undefined);
-      },
-      /** @param {string} message @param {"info" | "warn" | "error"} [level] @returns {void} */
-      notify(message, level = "info") {
-        native.notify(ctx.id, text(message, "notify message"), noticeLevel(level));
-      },
-    };
-  },
+  apply(ctx) { ctx.effect(() => interaction.install(rpcAnswerer)); },
 };
 
 export const printInteractionPlugin = {
   name: "print-interaction",
-  /** @param {Context} ctx @returns {void} */
+  /** @param {Context} ctx */
   apply(ctx) {
-    ctx.effect(() => interaction.install(printAnswerer));
+    ctx.effect(() => interaction.install({ interactive: false, notify: rpcAnswerer.notify }));
   },
 };

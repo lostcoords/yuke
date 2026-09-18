@@ -6,6 +6,7 @@ test "RPC interaction answers correlated promises out of order" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "tests/interaction/interaction.test.js");
+    try std.testing.expectEqual(@as(i32, 2), try host.evalInt("interactionPending()"));
 
     // The host refuses an answer to a question the frontend has not seen.
     try std.testing.expectError(error.Unknown, host.interactions.respond(.{
@@ -36,6 +37,7 @@ test "RPC interaction answers correlated promises out of order" {
     });
     try host.pump();
     try support.expectString(host, "result", "[true,\"blue\"]");
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("interactionPending()"));
 }
 
 test "disposing an interaction consumer cancels only its pending dialog" {
@@ -47,6 +49,7 @@ test "disposing an interaction consumer cancels only its pending dialog" {
     try support.eval(host, "tests/interaction/interaction-dispose.test.js");
     try host.pump();
     try support.expectString(host, "result", "canceled");
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("interactionPending()"));
     try std.testing.expectError(error.Unknown, host.interactions.respond(.{
         .interaction_id = interaction_id,
         .response = .{ .input = .{ .value = "late" } },
@@ -65,6 +68,7 @@ test "the TUI interaction provider answers select and input dialogs" {
     try loop.step(host, .{ .key_press = .{ .codepoint = 'x' } });
     try loop.step(host, .{ .key_press = .{ .codepoint = '\r' } });
     try support.expectString(host, "result", "alpha:x");
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("interactionPending()"));
 }
 
 test "a composition with no answerer refuses every question" {
@@ -77,4 +81,22 @@ test "a composition with no answerer refuses every question" {
 
 test "an install replaces the answerer and its disposer restores the last one" {
     try support.run("tests/interaction/install-stack.test.js");
+}
+
+test "shared interactions own the count across request and frontend lifetimes" {
+    try support.run("tests/interaction/lifecycle.test.js");
+}
+
+test "TUI interactions close on owner disposal, frontend disposal, and login failure" {
+    var fixture = try support.PaintedHost.init(12, 50);
+    defer fixture.deinit();
+    try support.eval(fixture.host, "tests/interaction/tui-lifecycle.test.js");
+}
+
+test "RPC frontend disposal and device login share the interaction lifecycle" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "tests/interaction/rpc-lifecycle.test.js");
+    try host.pump();
+    try std.testing.expectEqual(@as(usize, 0), host.interactions.live.items.len);
 }

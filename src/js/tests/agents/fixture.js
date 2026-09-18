@@ -25,6 +25,7 @@ globalThis.ctx = { interaction: { interactive: true,
   confirm: async () => { stats.prompts++; return true; },
   select: async (_title, options) => options[0],
   input: async () => "key", notify: () => {},
+  deviceLogin: async (start, outcome) => outcome,
 } };
 globalThis.site = { sessionId: "parent", messageId: 2, partId: 0 };
 globalThis.result = "pending";

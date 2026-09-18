@@ -54,14 +54,17 @@ pub const Phase = enum {
     tool_call,
     plugin_sync,
     plugin_async,
+    interaction_reused,
+    interaction_fresh,
 
-    const Group = enum { transcript, colors, advice, agents, process, tools, plugins, net, utf8 };
+    const Group = enum { transcript, colors, advice, agents, process, tools, plugins, net, utf8, interaction };
 
     fn group(self: Phase) Group {
         return switch (self) {
             .exec_short, .exec_bulk, .fs_read, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
             .net_echo, .net_echo_fresh => .net,
             .utf8_reused, .utf8_fresh => .utf8,
+            .interaction_reused, .interaction_fresh => .interaction,
             .tool_call => .tools,
             .plugin_sync, .plugin_async => .plugins,
             .colors => .colors,
@@ -133,6 +136,7 @@ pub const Harness = struct {
         errdefer if (self.socket_peer) |peer| peer.destroy();
         if (self.socket_peer) |peer| try ctx.setPropertyStr(global, "SOCKET_PATH", ctx.newString(peer.path));
         try self.host.evalModule(switch (self.phase_group) {
+            .interaction => @embedFile("bench_interaction.js"),
             .tools => tool_source,
             .plugins => plugin_source,
             .process => @embedFile("bench_process.js"),
@@ -364,7 +368,7 @@ pub const Harness = struct {
             std.log.err("benchmark: {s}", .{self.host.faultText()});
             return error.JavaScriptFault;
         }
-        if ((self.phase_group == .process or self.phase_group == .net or self.phase_group == .plugins) and ctx.isObject(result)) {
+        if ((self.phase_group == .process or self.phase_group == .net or self.phase_group == .plugins or self.phase_group == .interaction) and ctx.isObject(result)) {
             const deadline = std.Io.Clock.Timestamp.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake });
             while (ctx.promiseState(result) == .Pending) {
                 self.host.wake.reset();
@@ -377,7 +381,7 @@ pub const Harness = struct {
                 };
             }
         }
-        if (self.phase_group == .agents or self.phase_group == .process or self.phase_group == .net or self.phase_group == .plugins) {
+        if (self.phase_group == .agents or self.phase_group == .process or self.phase_group == .net or self.phase_group == .plugins or self.phase_group == .interaction) {
             if (self.phase_group == .agents) try self.settleAgents();
             if (ctx.isObject(result) and ctx.promiseState(result) == .Rejected) return error.AgentBenchmarkRejected;
             if (ctx.isObject(result) and ctx.promiseState(result) == .Fulfilled) {

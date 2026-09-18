@@ -1,6 +1,6 @@
 import { equal } from "yuke:test";
 import { interaction, plugins } from "yuke:ext";
-const answerer = (tag) => ({ surfaceFor: () => ({ notify: (m) => { globalThis.heard.push(tag + ":" + m); } }) });
+const answerer = (tag) => ({ interactive: false, notify: (owner, m) => { globalThis.heard.push(tag + ":" + m); } });
 globalThis.heard = [];
 const first = interaction.install(answerer("first"));
 plugins.use({ name: "reporter", apply(ctx) { globalThis.say = (m) => ctx.interaction.notify(m); } });

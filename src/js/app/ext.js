@@ -1,11 +1,13 @@
 // yuke:ext — the plugin runtime: a Scope owns revertible effects, a Context registers, and `advice` wraps methods.
 import * as cancellation from "yuke:cancellation-native";
 import { events } from "yuke:kernel";
+import { bindInteraction } from "yuke:interaction";
+export { interaction } from "yuke:interaction";
 import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installInputGate, installLifecycle, setPoints } from "yuke:hooks";
 import { native } from "yuke:engine-native";
 
-/** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Answerer, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, InjectApply, InjectContext, InteractionSurface, Plugin, ScopeEntry, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, InjectApply, InjectContext, InteractionSurface, Plugin, ScopeEntry, ToolDefinition } from "./types/ext.js" */
 
 const NOOP = () => {};
 
@@ -543,60 +545,6 @@ installInputGate((params, method = "session.send_input") => (method === "session
   (e) => ({ failure: { code: e.code || "internal", message: e.message || String(e) } }),
 ));
 
-// --- interaction: the service a frontend installs --- A frontend answers a question and shows a message; it is always present, so it gates no block.
-
-/** @param {string} name @returns {Error} */
-function noAnswerer(name) {
-  const error = new Error("no interaction answerer is installed: " + name);
-  error.name = "InteractionUnavailable";
-  return error;
-}
-
-// The default answerer. A composition without a frontend fails loudly instead of denying in silence.
-/** @type {Answerer} */
-const unanswered = {
-  surfaceFor: () => ({
-    interactive: false,
-    confirm: () => Promise.reject(noAnswerer("confirm")),
-    select: () => Promise.reject(noAnswerer("select")),
-    input: () => Promise.reject(noAnswerer("input")),
-    notify: () => {
-      throw noAnswerer("notify");
-    },
-  }),
-};
-
-/** @type {{ answerer: Answerer }[]} */
-const answerers = [];
-
-/** @type {WeakMap<Context, { answerer: Answerer, surface: InteractionSurface }>} */
-const surfaces = new WeakMap();
-
-export const interaction = {
-  // The latest active registration supplies the answerer.
-  /** @param {Answerer} next @returns {Disposer} */
-  install(next) {
-    if (next == null || typeof next.surfaceFor !== "function") throw new TypeError("an answerer needs a surfaceFor method");
-    const entry = { answerer: next };
-    answerers.push(entry);
-    return () => {
-      const at = answerers.indexOf(entry);
-      if (at >= 0) answerers.splice(at, 1);
-    };
-  },
-};
-
-// One surface for each plugin, rebuilt after an install replaces the answerer.
-/** @param {Context} ctx @returns {InteractionSurface} */
-function boundSurface(ctx) {
-  const answerer = answerers[answerers.length - 1]?.answerer ?? unanswered;
-  const held = surfaces.get(ctx);
-  if (held && held.answerer === answerer) return held.surface;
-  const surface = answerer.surfaceFor(ctx);
-  surfaces.set(ctx, { answerer, surface });
-  return surface;
-}
-
 /** @param {Disposer} release */
 function releaseResource(release) {
   const result = /** @type {unknown} */ (release());
@@ -754,7 +702,9 @@ export class Context {
   // The frontend seam. A service is always installed, so a plugin calls it without `inject`.
   /** @returns {InteractionSurface} */
   get interaction() {
-    return boundSurface(this);
+    const surface = bindInteraction(this);
+    Object.defineProperty(this, "interaction", { value: surface });
+    return surface;
   }
 }
 

@@ -111,8 +111,10 @@ export interface InteractionOptions {
 }
 
 export interface InteractionSurface {
-  interactive?: boolean;
-  deviceLogin?: (
+  /** The process-wide pending count; interaction.changed has no payload and tells callers to read it again. */
+  readonly pending: number;
+  readonly interactive: boolean;
+  deviceLogin: (
     start: Wire.AuthLoginResult,
     outcome: Promise<Wire.AuthLoginOutcome>,
     options?: InteractionOptions,
@@ -123,6 +125,19 @@ export interface InteractionSurface {
   notify(message: string, level?: "info" | "warn" | "error"): void;
 }
 
-export interface Answerer {
-  surfaceFor: (context: Context) => InteractionSurface;
-}
+export type InteractionRequest = Exclude<Wire.InteractionRequest, { type: "select" }>
+  | (Extract<Wire.InteractionRequest, { type: "select" }> & { options: string[] })
+  | {
+    type: "device_login";
+    title: string;
+    start: Wire.AuthLoginResult;
+    outcome: Promise<Wire.AuthLoginOutcome>;
+  };
+
+export type Answerer = {
+  notify(owner: string, message: string, level: "info" | "warn" | "error"): void;
+} & ({
+  interactive: true;
+  open(request: InteractionRequest, context: Context, options: InteractionOptions | undefined,
+    resolve: (value: unknown) => void, reject: (error: unknown) => void): Disposer;
+} | { interactive: false });

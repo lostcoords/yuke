@@ -89,8 +89,7 @@ async function connect(ctx, provider, signal) {
       const start = await login.start;
       loginId = start.login_id;
       check(signal);
-      if (!ctx.interaction.deviceLogin) ctx.interaction.notify("Sign in at " + start.verification_url + " with code " + start.user_code + ". Cancel the tool to stop setup.");
-      const outcome = answer(await cancellable(ctx.interaction.deviceLogin ? ctx.interaction.deviceLogin(start, login.outcome, { signal }) : login.outcome, signal), signal);
+      const outcome = answer(await ctx.interaction.deviceLogin(start, login.outcome, { signal }), signal);
       finished = true;
       if (outcome.type !== "succeeded") throw failure(outcome.type === "canceled" ? "setup_canceled" : "auth_required", outcome.type === "failed" ? outcome.message : "Login was canceled.");
     } finally {

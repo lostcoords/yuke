@@ -16,6 +16,7 @@ pub fn install(host: *Host) void {
     module.installObject(host, "yuke:interaction-native", "native", &.{
         .{ .name = "watchCancellation", .arity = 2, .call = jsWatchCancellation },
         .{ .name = "sessionId", .arity = 1, .call = jsSessionId },
+        .{ .name = "validateSignal", .arity = 1, .call = jsValidateSignal },
         .{ .name = "request", .arity = 2, .call = jsRequest },
         .{ .name = "notify", .arity = 3, .call = jsNotify },
         .{ .name = "cancel", .arity = 1, .call = jsCancel },
@@ -36,6 +37,14 @@ fn jsWatchCancellation(ctx: Context, _: Value, args: []const Value) Value {
         error.Exception => module.throwPending(ctx),
         else => pending.rejected(ctx, errorMessage(err)),
     };
+}
+
+fn jsValidateSignal(ctx: Context, _: Value, args: []const Value) Value {
+    if (args.len != 1) return ctx.throwTypeError("the interaction needs a cancellation signal");
+    const token = @import("cancellation.zig").get(ctx, args[0]) orelse return ctx.throwTypeError("the interaction needs a cancellation signal");
+    if (!token.aborted and !Host.fromContext(ctx).calls.acceptsSignal(ctx, args[0]))
+        return ctx.throwTypeError("the interaction signal has no live call");
+    return quickjs.UNDEFINED;
 }
 
 fn jsSessionId(ctx: Context, _: Value, args: []const Value) Value {

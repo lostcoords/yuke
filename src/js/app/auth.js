@@ -1,8 +1,8 @@
 // yuke:auth — /login and /logout: the provider list, the device-code dialog, and the API key prompt.
-import { root, copy, text } from "yuke:core";
+import { copy, text } from "yuke:core";
 import { clip } from "yuke:text-input";
 import { strokeOf } from "yuke:keys";
-import { ui, Window, Prompt } from "yuke:ui";
+import { ui } from "yuke:ui";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { exec } from "yuke:exec";
@@ -104,75 +104,45 @@ function finishLogin(p, outcome) {
   else notice.show("login failed · " + outcome.message);
 }
 
-// Start the device flow, then hold the dialog until the engine reports the one terminal outcome.
-/** @param {Ctx} ctx @param {ProviderRow} p @returns {void} */
-function deviceLogin(ctx, p) {
+// The shared interaction owns the dialog; this call owns the provider login.
+/** @param {Ctx} ctx @param {ProviderRow} p @returns {Promise<void>} */
+async function deviceLogin(ctx, p) {
+  if (!ctx.scope.alive) return;
   const login = client.authLoginTracked(p.provider_id);
-  login.start.then((start) => {
-    /** @param {string} id */
-    const cancel = (id) => client.authCancelLogin(id).catch(() => {});
-    // The plugin left while the engine got the code, so nobody can show it and the poll must stop.
-    if (!ctx.scope.alive) {
-      login.dispose();
-      return cancel(start.login_id);
+  let loginId = "";
+  let finished = false;
+  const release = ctx.effect(() => login.dispose);
+  try {
+    const start = await login.start;
+    loginId = start.login_id;
+    if (!ctx.scope.alive) return;
+    const outcome = await ctx.interaction.deviceLogin(start, login.outcome);
+    finished = outcome !== undefined;
+    if (ctx.scope.alive) {
+      if (outcome) finishLogin(p, outcome);
+      else notice.show("login canceled");
     }
-    let settled = false;
-    // An unload with the dialog open stops the poll too, so the provider never completes a login nobody reads.
-    ctx.effect(() => () => {
-      login.dispose();
-      if (!settled) cancel(start.login_id);
-    });
-    const dialog = new DeviceDialog(start);
-    const win = new Window({
-      title: "login · " + p.provider_id,
-      footer: "o open · c copy code · esc cancel",
-      border: "rounded",
-      width: max => Math.round(max * 0.6),
-      contentHeight: 3,
-      content: dialog,
-    });
-    root.pushOverlay(win);
-    const release = ctx.tui.overlay(win);
-    login.outcome.then((outcome) => {
-      settled = true;
-      release();
-      finishLogin(p, outcome);
-    });
-    dialog.onCancel = () => {
-      settled = true;
-      login.dispose();
-      release();
-      cancel(start.login_id);
-      notice.show("login canceled");
-    };
-  }, (e) => {
-    notice.show("login failed · " + e.message);
-  });
+  } catch (error) {
+    if (ctx.scope.alive) notice.show("login failed · " + String(error));
+  } finally {
+    release();
+    if (loginId && !finished) await client.authCancelLogin(loginId).catch(() => {});
+  }
 }
 
-// Ask for a key behind a mask, then store it. The engine announces the catalog change on its own.
-/** @param {Ctx} ctx @param {ProviderRow} p @returns {void} */
-function keyLogin(ctx, p) {
-  /** @type {() => void} */
-  let release = () => {};
-  const prompt = new Prompt({
-    placeholder: "paste the API key",
-    mask: true,
-    settle: (value) => {
-      release();
-      if (!value) return;
-      client.authSetApiKey(p.provider_id, value).then(
-        () => {
-          notice.show("key saved · " + p.provider_id);
-          return loadCatalog();
-        },
-        (e) => notice.show("key rejected · " + e.message),
-      );
-    },
-  });
-  const win = new Window({ title: "api key · " + p.provider_id, footer: "↵ save · esc cancel", border: "rounded", width: max => Math.round(max * 0.6), contentHeight: 1, content: prompt });
-  root.pushOverlay(win);
-  release = ctx.tui.overlay(win);
+/** @param {Ctx} ctx @param {ProviderRow} p @returns {Promise<void>} */
+async function keyLogin(ctx, p) {
+  try {
+    const key = await ctx.interaction.input("api key · " + p.provider_id, "paste the API key", { secret: true });
+    if (!key || !ctx.scope.alive) return;
+    await client.authSetApiKey(p.provider_id, key);
+    if (ctx.scope.alive) {
+      notice.show("key saved · " + p.provider_id);
+      await loadCatalog();
+    }
+  } catch (error) {
+    if (ctx.scope.alive) notice.show("key rejected · " + String(error));
+  }
 }
 
 /** @param {Ctx} ctx @param {ProviderRow} p @returns {void} */
