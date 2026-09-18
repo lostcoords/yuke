@@ -40,13 +40,29 @@ pub const Cancel = struct {
 
     /// Run `f` in a child task, so a cancel can interrupt a blocked call.
     pub fn runChild(self: *Cancel, io: std.Io, comptime f: anytype, args: anytype) ChildResult {
+        return self.runChildTimeout(io, .none, f, args) catch unreachable;
+    }
+
+    /// A deadline cancels and joins the child before it returns Timeout.
+    pub fn runChildTimeout(self: *Cancel, io: std.Io, timeout: std.Io.Timeout, comptime f: anytype, args: anytype) error{Timeout}!ChildResult {
         self.event.reset();
 
         var child = io.concurrent(f, args) catch |err| return .{ .returned = err };
-        if (!self.isRequested()) self.event.wait(io) catch {
-            child.cancel(io) catch {}; // Shutdown canceled the owning task. Stop the child.
-            return .aborted;
-        };
+        const deadline = timeout.toDeadline(io);
+        while (!self.isRequested()) {
+            self.event.waitTimeout(io, deadline) catch |err| {
+                if (err == error.Timeout) {
+                    if (deadline == .none) continue;
+                    const due = deadline.deadline;
+                    if (std.Io.Timestamp.now(io, due.clock).nanoseconds < due.raw.nanoseconds) continue;
+                    child.cancel(io) catch {};
+                    return error.Timeout;
+                }
+                child.cancel(io) catch {};
+                return .aborted;
+            };
+            break;
+        }
 
         if (self.isRequested()) {
             child.cancel(io) catch {}; // Interrupt a blocked call, then join the child.

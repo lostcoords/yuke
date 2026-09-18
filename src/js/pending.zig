@@ -7,14 +7,26 @@ const cancellation = @import("native/cancellation.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
-/// What a finished task hands back. `text` and `json` are owned; `failed` names a closed error set, so it is static.
+/// A task transfers owned buffers to the owner; failure messages and codes are static.
 pub const Result = union(enum) {
+    bytes: struct { buffer: []u8, len: usize },
+    number: u32,
+    null_value,
     text: []u8,
     /// A structured answer, as the JSON text the owner parses. QuickJS reads it to the sentinel.
     json: [:0]u8,
     boolean: bool,
     undefined,
     failed: Failure,
+
+    pub fn deinit(self: Result, gpa: std.mem.Allocator) void {
+        switch (self) {
+            .bytes => |bytes| gpa.free(bytes.buffer),
+            .text => |text| gpa.free(text),
+            .json => |bytes| gpa.free(bytes),
+            else => {},
+        }
+    }
 };
 
 /// A static operation error with an optional code for command refusals.
@@ -114,7 +126,7 @@ pub const Ops = struct {
                 signal.operations -= 1;
             }
             ctx.freeValue(op.signal);
-            if (op.result) |r| self.freeResult(r);
+            if (op.result) |r| r.deinit(self.gpa);
             self.gpa.destroy(op);
         }
         self.live.deinit(self.gpa);
@@ -163,7 +175,7 @@ pub const Ops = struct {
             if (!ctx.isUndefined(op.signal)) {
                 if (cancellation.get(ctx, op.signal).?.release(ctx)) faulted = true;
             }
-            self.freeResult(result);
+            result.deinit(self.gpa);
             ctx.freeValue(op.resolve);
             ctx.freeValue(op.reject);
             ctx.freeValue(op.signal);
@@ -176,6 +188,9 @@ pub const Ops = struct {
     fn call(ctx: Context, op: *Op, result: Result) bool {
         const failed = result == .failed;
         const value = switch (result) {
+            .bytes => |bytes| ctx.newUint8ArrayCopy(bytes.buffer[0..bytes.len]),
+            .number => |number| ctx.newUint32(number),
+            .null_value => quickjs.NULL,
             .text => |text| ctx.newString(text),
             // A task builds this text, so a parse failure is our bug, not the caller's input.
             .json => |bytes| ctx.parseJSON(bytes, "yuke:primitive"),
@@ -198,13 +213,5 @@ pub const Ops = struct {
         const answer = ctx.call(target, quickjs.UNDEFINED, &argv);
         defer ctx.freeValue(answer);
         return ctx.isException(answer);
-    }
-
-    fn freeResult(self: *Ops, result: Result) void {
-        switch (result) {
-            .text => |text| self.gpa.free(text),
-            .json => |bytes| self.gpa.free(bytes),
-            else => {}, // The other result variants own no memory.
-        }
     }
 };

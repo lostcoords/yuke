@@ -11,6 +11,7 @@ const Tree = @import("bench_agents.zig");
 pub const TreeShape = Tree.Shape;
 const Commit = @import("bench_commit.zig");
 const Projection = @import("bench_projection.zig");
+const SocketPeer = @import("socket_peer.zig").Peer;
 pub const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
 pub const Phase = enum {
@@ -42,6 +43,8 @@ pub const Phase = enum {
     exec_short,
     exec_bulk,
     fs_read,
+    net_echo,
+    net_echo_fresh,
     process_echo,
     process_echo_fresh,
     jobs_output,
@@ -50,11 +53,12 @@ pub const Phase = enum {
     plugin_sync,
     plugin_async,
 
-    const Group = enum { transcript, colors, advice, agents, process, tools, plugins };
+    const Group = enum { transcript, colors, advice, agents, process, tools, plugins, net };
 
     fn group(self: Phase) Group {
         return switch (self) {
             .exec_short, .exec_bulk, .fs_read, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
+            .net_echo, .net_echo_fresh => .net,
             .tool_call => .tools,
             .plugin_sync, .plugin_async => .plugins,
             .colors => .colors,
@@ -79,6 +83,7 @@ pub const Harness = struct {
     projection: ?*Projection = null,
     commit: ?*Commit = null,
     tree: ?*Tree = null,
+    socket_peer: ?*SocketPeer = null,
     tree_shape: TreeShape = .wide,
     phase: ?Phase = null,
     native_step: usize = 0,
@@ -119,10 +124,16 @@ pub const Harness = struct {
         const global = ctx.getGlobalObject();
         defer ctx.freeValue(global);
         try ctx.setPropertyStr(global, "FIXTURE", ctx.newString(fixture));
+        if (self.phase_group == .net) {
+            self.socket_peer = try SocketPeer.create(gpa, io, .echo);
+        }
+        errdefer if (self.socket_peer) |peer| peer.destroy();
+        if (self.socket_peer) |peer| try ctx.setPropertyStr(global, "SOCKET_PATH", ctx.newString(peer.path));
         try self.host.evalModule(switch (self.phase_group) {
             .tools => tool_source,
             .plugins => plugin_source,
             .process => @embedFile("bench_process.js"),
+            .net => @embedFile("bench_net.js"),
             .agents => @embedFile("bench_agents.js"),
             .colors => @embedFile("bench_colors.js"),
             .advice => @embedFile("bench_advice.js"),
@@ -144,6 +155,7 @@ pub const Harness = struct {
         self.host.ctx.freeValue(self.step_fn);
         self.host.ctx.freeValue(self.api);
         self.host.destroy();
+        if (self.socket_peer) |peer| peer.destroy();
         self.render.deinit(&self.output.writer);
         std.debug.assert(self.allocations.liveBytes() == 0);
         std.debug.assert(self.allocations.liveCount() == 0);
@@ -189,6 +201,7 @@ pub const Harness = struct {
         if (phase.group() == .agents) _ = try self.host.evalInt("agentResetReads()");
         if (phase == .tool_call) try self.toolOnce();
         if (phase.group() == .plugins) _ = try self.call(self.step_fn, &.{});
+        if (phase.group() == .net) try self.drainClosedSockets();
         self.host.runtime.runGC();
         self.output.clearRetainingCapacity();
         self.allocations.resetPeak();
@@ -269,7 +282,26 @@ pub const Harness = struct {
             const rows = try self.call(self.step_fn, &.{});
             if (rows <= 0) return error.EmptyBenchmarkOutput;
         }
+        if (phase == .net_echo_fresh) try self.drainClosedSockets();
         return self.output.written().len;
+    }
+
+    fn drainClosedSockets(self: *Harness) !void {
+        const deadline = std.Io.Clock.Timestamp.fromNow(self.host.io, .{ .raw = .fromSeconds(5), .clock = .awake });
+        while (true) {
+            self.host.wake.reset();
+            self.host.net.reap(self.host.gpa);
+            var closing = false;
+            for (self.host.net.live.items) |connection| closing = closing or connection.closed;
+            if (!closing) return;
+            try self.host.pump();
+            self.host.wake.waitTimeout(self.host.io, .{ .deadline = deadline }) catch |err| switch (err) {
+                error.Timeout => {
+                    if (deadline.durationFromNow(self.host.io).raw.nanoseconds <= 0) return error.SocketBenchmarkTimeout;
+                },
+                else => return err,
+            };
+        }
     }
 
     pub fn verify(self: *Harness) !i32 {
@@ -328,7 +360,7 @@ pub const Harness = struct {
             std.log.err("benchmark: {s}", .{self.host.faultText()});
             return error.JavaScriptFault;
         }
-        if ((self.phase_group == .process or self.phase_group == .plugins) and ctx.isObject(result)) {
+        if ((self.phase_group == .process or self.phase_group == .net or self.phase_group == .plugins) and ctx.isObject(result)) {
             const deadline = std.Io.Clock.Timestamp.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake });
             while (ctx.promiseState(result) == .Pending) {
                 self.host.wake.reset();
@@ -341,7 +373,7 @@ pub const Harness = struct {
                 };
             }
         }
-        if (self.phase_group == .agents or self.phase_group == .process or self.phase_group == .plugins) {
+        if (self.phase_group == .agents or self.phase_group == .process or self.phase_group == .net or self.phase_group == .plugins) {
             if (self.phase_group == .agents) try self.settleAgents();
             if (ctx.isObject(result) and ctx.promiseState(result) == .Rejected) return error.AgentBenchmarkRejected;
             if (ctx.isObject(result) and ctx.promiseState(result) == .Fulfilled) {
@@ -359,7 +391,7 @@ test "benchmark scenarios preserve the transcript across updates and cache evict
     defer _ = pool.deinit();
     for (phases) |phase| {
         // Process phases use the single-executor benchmark runtime.
-        if (phase.group() == .process) continue;
+        if (phase.group() == .process or phase.group() == .net) continue;
         const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, phase);
         defer harness.destroy();
         // Scale 9 holds 18 messages, above the 16-message row cache, so eviction runs.

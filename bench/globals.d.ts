@@ -11,3 +11,5 @@ declare var AGENTS_ROOT: string;
 declare var AGENTS_TARGET: string;
 declare var agentReads: () => { gets: number; lists: number; updates: number };
 declare var agentResetReads: () => number;
+
+declare var SOCKET_PATH: string;

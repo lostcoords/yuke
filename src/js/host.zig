@@ -9,6 +9,7 @@ const term_module = @import("native/term.zig");
 const engine_module = @import("native/engine.zig");
 const fs_module = @import("native/fs.zig");
 const env_module = @import("native/env.zig");
+const net_module = @import("native/net.zig");
 const exec_module = @import("native/exec.zig");
 const process_module = @import("native/process.zig");
 const jobs_module = @import("native/jobs.zig");
@@ -102,6 +103,8 @@ pub const Host = struct {
     /// The background job table. A record outlives its process, and `close` frees it after the processes.
     jobs: jobs_module.Jobs = .{},
 
+    net: net_module.Connections = .{},
+
     plugin_lifecycle: ?quickjs.Value = null,
     signal_class_id: quickjs.ClassID = 0,
     signal_waiters: std.ArrayList(cancellation.Waiter) = .empty,
@@ -163,6 +166,7 @@ pub const Host = struct {
         engine_module.install(self);
         fs_module.install(self);
         env_module.install(self);
+        net_module.install(self);
         exec_module.install(self);
         timers_mod.install(self);
         process_module.install(self);
@@ -215,6 +219,7 @@ pub const Host = struct {
     pub fn pump(self: *Host) Error!void {
         std.debug.assert(self.phase == .open);
         self.enterSlice();
+        self.net.reap(self.gpa);
         // Engine events reach JavaScript here, on the owner, never from an engine task.
         if (engine_module.drain(self.engine, self.ctx)) return error.JavaScriptFault;
         call_run.abortLeft(self); // A continuation below must read a left call's signal as aborted.
@@ -286,8 +291,10 @@ pub const Host = struct {
         // A turn task may wait on a tool call. Answer each one, or that task never wakes.
         call_run.abortAll(self);
         self.endChildren();
+        self.net.closeAll();
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
+        self.net.deinit(self.gpa);
         self.timers.deinit(self.ctx, self.gpa);
         self.procs.deinit(self);
         self.jobs.deinit(self.gpa);
@@ -339,6 +346,7 @@ pub const Host = struct {
             }
             self.wake.reset();
             self.enterSlice();
+            self.net.reap(self.gpa);
             if (self.procs.drain(self)) self.dropPendingException();
             if (self.ops.settle(self.ctx)) self.dropPendingException();
             if (self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) self.dropPendingException();
@@ -978,6 +986,7 @@ test {
     _ = @import("ui_test.zig");
     _ = @import("plugins_test.zig");
     _ = @import("native_tools_test.zig");
+    _ = @import("net_test.zig");
     _ = @import("timers.zig");
     _ = @import("native/jobs.zig");
     _ = @import("interaction_test.zig");
