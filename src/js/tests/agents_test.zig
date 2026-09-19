@@ -38,7 +38,7 @@ fn hasTool(host: *Host, name: []const u8) bool {
 const tool_fixture =
     \\import { plugins } from "yuke:ext";
     \\import { agents } from "yuke:agents";
-    \\plugins.use(agents({ default: "small", agents: { small: { description: "Narrow research.", model: "p/family/model" }, review: { description: "Read-only review.", prompt: "Review only. Do not edit.", tools: ["read", "exec"] } } }));
+    \\plugins.use(agents({ default: "small", maxRounds: 7, agents: { small: { description: "Narrow research.", model: "p/family/model" }, review: { description: "Read-only review.", prompt: "Review only. Do not edit.", tools: ["read", "exec"] } } }));
     \\globalThis.child = { session: { id: "02".repeat(16), name: "small", root: "/work", model: "p/family/model", origin: { type: "child", site: { session_id: "01".repeat(16), message_id: 1, part_id: 0 } } }, activity: { state: { type: "idle" }, queued: 0 }, last_run: { type: "turn" } };
     \\client.sessionList = async (params) => { return { items: params.population.parent_id === "01".repeat(16) ? [child] : [], next_cursor: null, total: 1 }; };
     \\client.sessionGet = async (id) => id === child.session.id ? child : { session: { id, title: "Main conversation", root: "/work", model: "parent/large", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } };
@@ -81,6 +81,11 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
         defer std.testing.allocator.free(answer.text);
         try std.testing.expect(answer.is_error);
     }
+    // A call with no live parent site is refused before any create.
+    const orphan = host.calls.submit("spawn_agent", "{\"message\":\"task\"}", "/work");
+    for (0..4) |_| try host.pump();
+    try std.testing.expect(orphan.is_error);
+    orphan.finish();
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("stats.creates"));
     const Receipt = struct { session_id: []const u8, agent: []const u8, model: []const u8, state: []const u8 };
     const spawn = try invokeAgent(host, "spawn_agent", "{\"message\":\"task\"}");
@@ -92,7 +97,7 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     try std.testing.expectEqualStrings("p/family/model", receipt.value.model);
     try std.testing.expectEqualStrings("queued", receipt.value.state);
     try std.testing.expectEqualStrings(child_id, receipt.value.session_id);
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("created.child.name === 'small' && created.child.site.session_id === '01'.repeat(16) && created.child.site.message_id === 2 && created.model === 'p/family/model' && created.reasoning === undefined && created.max_rounds === 50 && Object.keys(created.child).length === 2 ? 1 : 0"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("created.child.name === 'small' && created.child.site.session_id === '01'.repeat(16) && created.child.site.message_id === 2 && created.child.site.part_id === 0 && created.model === 'p/family/model' && created.reasoning === undefined && created.max_rounds === 7 && Object.keys(created.child).length === 2 ? 1 : 0"));
     const inherited = try invokeAgent(host, "spawn_agent", "{\"message\":\"task\",\"agent\":\"review\"}");
     defer std.testing.allocator.free(inherited.text);
     try std.testing.expect(!inherited.is_error);
@@ -115,6 +120,15 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     const foreign = try invokeAgent(host, "stop_agent", "{\"child\":\"" ++ child_id ++ "\"}");
     defer std.testing.allocator.free(foreign.text);
     try std.testing.expect(foreign.is_error);
+    // A dispose withdraws the tools and the presenters it installed.
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\import { presenters } from "yuke:transcript";
+        \\plugins.dispose("agents");
+        \\globalThis.presentersGone = ["spawn_agent", "send_agent_input", "stop_agent"].every((name) => presenters[name] === undefined) ? 1 : 0;
+    , "dispose.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("presentersGone"));
+    for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent" }) |name| try std.testing.expect(!hasTool(host, name));
 }
 
 test "the plugin ends a root prompt with the rule and scopes a child by its row" {
@@ -139,14 +153,20 @@ test "the plugin ends a root prompt with the rule and scopes a child by its row"
     try std.testing.expectEqual(@as(usize, 2), child_build.value.value.tools.len);
     try std.testing.expectEqualStrings("read", child_build.value.value.tools[0].name);
     try std.testing.expectEqualStrings("exec", child_build.value.value.tools[1].name);
-    // A child outside the catalog and a row without a prompt or a tool list keep the round as it is.
+    // A child outside the catalog keeps the round as it is; a row without a prompt or a tool list answers the same round back.
     const ghost = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":[],\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"ghost\",\"workspace\":\"/w\"}}");
     defer std.testing.allocator.free(ghost);
-    try std.testing.expect(std.mem.indexOf(u8, ghost, "replace") == null);
+    // An empty answer is the proceed decision.
+    try std.testing.expectEqualStrings("", ghost);
+    const plain = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":" ++ tools ++ ",\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"small\",\"workspace\":\"/w\"}}");
+    defer std.testing.allocator.free(plain);
+    const plain_build = try std.json.parseFromSlice(Build, std.testing.allocator, plain, .{ .ignore_unknown_fields = true });
+    defer plain_build.deinit();
+    try std.testing.expectEqualStrings("base", plain_build.value.value.system);
+    try std.testing.expectEqual(@as(usize, 3), plain_build.value.value.tools.len);
     const blocked = try answerHook(host, "tool.before", "{\"name\":\"write\",\"arguments\":\"{}\",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"review\"}}");
     defer std.testing.allocator.free(blocked);
-    try std.testing.expect(std.mem.indexOf(u8, blocked, "\"type\":\"block\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, blocked, "write") != null);
+    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"The tool write is not available to this agent.\"}", blocked);
     for ([_][]const u8{
         "{\"name\":\"read\",\"arguments\":\"{}\",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"review\"}}",
         "{\"name\":\"write\",\"arguments\":\"{}\",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"small\"}}",
@@ -154,7 +174,7 @@ test "the plugin ends a root prompt with the rule and scopes a child by its row"
     }) |payload| {
         const passed = try answerHook(host, "tool.before", payload);
         defer std.testing.allocator.free(passed);
-        try std.testing.expect(std.mem.indexOf(u8, passed, "block") == null);
+        try std.testing.expectEqualStrings("", passed);
     }
 }
 

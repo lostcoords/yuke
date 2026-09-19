@@ -604,7 +604,7 @@ test "create with input shares the hook gate and a refusal leaves no session" {
     try std.testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.app.db, a, id.raw)).?.input_id_high);
 }
 
-test "the agents plugin sets the native limits from its options" {
+test "the agents plugin sets the native limits from its options and a dispose restores them" {
     var f: Fixture = undefined;
     try f.init(
         \\import { plugins } from "yuke";
@@ -614,6 +614,16 @@ test "the agents plugin sets the native limits from its options" {
     defer f.deinit();
     try std.testing.expectEqual(@as(u32, 2), f.app.engine.max_concurrent_children);
     try std.testing.expectEqual(@as(u32, 3), f.app.engine.max_agent_depth);
+    try f.extensions.host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"agents\");", "dispose.js");
+    try std.testing.expectEqual(@as(u32, 8), f.app.engine.max_concurrent_children);
+    try std.testing.expectEqual(@as(u32, 1), f.app.engine.max_agent_depth);
+}
+
+test "extensions install no agent tool without the agents plugin" {
+    var f: Fixture = undefined;
+    try f.init("", kernel_boot);
+    defer f.deinit();
+    for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent" }) |name| try std.testing.expect(f.extensions.host.tools.find(name) == null);
 }
 
 test "the skill tool answers a catalog body through skill.load" {

@@ -311,14 +311,12 @@ test "queued admission requires a closed reason" {
     try std.testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(SessionSendInputResult, std.testing.allocator, "{\"type\":\"queued\",\"input_id\":1,\"reason\":\"unknown\"}", .{}));
 }
 
-test "a child requires a closed explicit slot on the wire" {
+test "a child on the wire needs a site and a name" {
     const a = std.testing.allocator;
-    for ([_][]const u8{ "", ",\"slot\":null", ",\"slot\":\"large\"", ",\"slot\":\"provider/model\"" }) |suffix| {
-        const json = try std.fmt.allocPrint(a, "{{\"parent_id\":\"01010101010101010101010101010101\",\"parent_message_id\":2,\"parent_part_id\":0,\"name\":\"one\"{s}}}", .{suffix});
-        defer a.free(json);
-        if (std.json.parseFromSlice(ChildSession, a, json, .{})) |parsed| {
-            parsed.deinit();
-            return error.AcceptedInvalidChildSlot;
-        } else |_| {}
-    }
+    const site = "\"site\":{\"session_id\":\"01010101010101010101010101010101\",\"message_id\":2,\"part_id\":0}";
+    const parsed = try std.json.parseFromSlice(ChildSession, a, "{" ++ site ++ ",\"name\":\"one\"}", .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("one", parsed.value.name);
+    try std.testing.expectEqual(@as(u64, 2), parsed.value.site.message_id);
+    for ([_][]const u8{ "{\"name\":\"one\"}", "{" ++ site ++ "}" }) |json| try std.testing.expectError(error.MissingField, std.json.parseFromSlice(ChildSession, a, json, .{}));
 }

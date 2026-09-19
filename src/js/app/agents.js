@@ -32,7 +32,7 @@ function validate(raw) {
     for (const field of Object.keys(options)) if (!["default", "agents", ...Object.keys(LIMITS)].includes(field)) throw invalid("unknown option " + field);
     const rows = options.agents;
     if (!rows || typeof rows !== "object" || Array.isArray(rows)) throw invalid("agents must be an object of catalog rows");
-    const agents = /** @type {Record<string, AgentRow>} */ ({});
+    const agents = /** @type {Record<string, AgentRow>} */ (Object.create(null));
     for (const [key, row] of Object.entries(rows)) {
         if (!KEY.test(key) || key === "root") throw invalid("bad key " + JSON.stringify(key));
         if (!row || typeof row !== "object" || Array.isArray(row)) throw invalid("row " + key + " must be an object");
@@ -45,7 +45,7 @@ function validate(raw) {
     const keys = Object.keys(agents);
     if (!keys.length) throw invalid("the catalog needs at least one agent");
     const fallback = options.default === undefined && keys.length === 1 ? keys[0] : options.default;
-    if (typeof fallback !== "string" || !agents[fallback]) throw invalid("default must name a catalog key");
+    if (typeof fallback !== "string" || !Object.hasOwn(agents, fallback)) throw invalid("default must name a catalog key");
     /** @type {Catalog} */
     const catalog = { default: fallback, agents, ...LIMITS };
     for (const field of /** @type {const} */ (["maxConcurrent", "maxDepth", "maxRounds"])) {
@@ -96,7 +96,11 @@ export function agents(options) {
         name: "agents",
         /** @param {Context} ctx */
         apply(ctx) {
-            native.setAgentLimits(catalog.maxConcurrent, catalog.maxDepth);
+            // The engine limits are process state, so a dispose puts the previous pair back.
+            ctx.effect(() => {
+                const previous = native.setAgentLimits(catalog.maxConcurrent, catalog.maxDepth);
+                return () => { native.setAgentLimits(previous[0], previous[1]); };
+            });
 
             // The rule ends a root prompt. A child gets its row prompt and only its row tools.
             ctx.hook("request.build", (request) => {
@@ -157,17 +161,20 @@ export function agents(options) {
                 parameters: { type: "object", properties: { child: childField }, required: ["child"], additionalProperties: false },
                 execute: async (raw, _signal, context) => {
                     const args = argsOf(raw, ["child"]);
-                    if (!context.sessionId) throw failure("bad_request", "The tool has no parent session.");
-                    const child = await ownedChild(context.sessionId, required(args, "child"));
+                    const child = await ownedChild(site(context).session_id, required(args, "child"));
                     return client.sessionCancelRun(child.session.id, true);
                 },
             });
 
             ctx.effect(() => {
-                presenters.spawn_agent = { category: "agent", present: (o) => ({ verb: "Agent", subject: String(o.agent || "") + " · " + String(o.model || "") }) };
-                presenters.send_agent_input = { category: "agent", present: (o) => ({ verb: "Send", subject: String(o.child || "") }) };
-                presenters.stop_agent = { category: "agent", present: (o) => ({ verb: "Stop", subject: String(o.child || "") }) };
-                return () => { for (const name of ["spawn_agent", "send_agent_input", "stop_agent"]) delete presenters[name]; };
+                const own = {
+                    spawn_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Agent", subject: String(o.agent || "") + " · " + String(o.model || "") }) },
+                    send_agent_input: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Send", subject: String(o.child || "") }) },
+                    stop_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Stop", subject: String(o.child || "") }) },
+                };
+                const previous = Object.fromEntries(Object.keys(own).map((name) => [name, presenters[name]]));
+                Object.assign(presenters, own);
+                return () => { for (const name of Object.keys(own)) { if (previous[name] === undefined) delete presenters[name]; else presenters[name] = previous[name]; } };
             });
 
             ctx.inject(["tui"], (ctx) => {

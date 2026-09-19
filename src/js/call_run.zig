@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const quickjs = @import("quickjs");
-const proto = @import("proto");
 const Host = @import("host.zig").Host;
 const table = @import("tools.zig");
 const utf8 = @import("../utf8.zig");

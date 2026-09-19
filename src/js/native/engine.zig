@@ -468,9 +468,17 @@ fn jsSetAgentLimits(ctx: Context, _: Value, args: []const Value) Value {
     const runtime = Host.fromContext(ctx).engine.runtime orelse return quickjs.UNDEFINED;
     const max_concurrent = if (args.len > 0) module.integer(ctx, args[0], 1, std.math.maxInt(u32)) else null;
     const max_depth = if (args.len > 1) module.integer(ctx, args[1], 1, std.math.maxInt(u32)) else null;
+    const previous = [_]u32{ runtime.engine.max_concurrent_children, runtime.engine.max_agent_depth };
     runtime.engine.setAgentLimits(
         @intCast(max_concurrent orelse return ctx.throwTypeError("the maximum concurrent agents must be a positive 32-bit integer")),
         @intCast(max_depth orelse return ctx.throwTypeError("the maximum agent depth must be a positive 32-bit integer")),
     ) catch return ctx.throwPlainError("the agent scheduler could not start");
-    return quickjs.UNDEFINED;
+    // The caller keeps the previous pair, so a plugin dispose can put it back.
+    const pair = ctx.newArray();
+    for (previous, 0..) |limit, i| module.setIndex(ctx, pair, i, ctx.newInt32(@intCast(limit)));
+    if (ctx.hasException()) {
+        ctx.freeValue(pair);
+        return module.throwPending(ctx);
+    }
+    return pair;
 }

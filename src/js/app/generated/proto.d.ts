@@ -1115,12 +1115,6 @@ export type ErrorCode =
   | -31024
   /** unknown_job */
   | -31029
-  /** config_conflict */
-  | -31025
-  /** setup_required */
-  | -31026
-  /** setup_canceled */
-  | -31027
   /** auth_required */
   | -31028
   /** internal */
@@ -1561,7 +1555,7 @@ export type MessagePartDeltaData = PartDelta;
 /** The broadcast uses this shared tool-output delta payload. */
 export type ToolOutputDeltaData = PartDelta;
 
-/** This revision is the SHA-256 of the file: 32 raw bytes, 64 hexadecimal characters. This hash identifies the exact instruction file bytes. */
+/** The SHA-256 of one instruction file: 32 raw bytes, 64 hexadecimal characters on the wire. */
 export type InstructionHash = string;
 
 /** This hash is the SHA-256 of a stored blob: 32 raw bytes, 64 lowercase hexadecimal characters. */

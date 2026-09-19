@@ -4201,18 +4201,6 @@
           "wire": "-31029"
         },
         {
-          "name": "config_conflict",
-          "wire": "-31025"
-        },
-        {
-          "name": "setup_required",
-          "wire": "-31026"
-        },
-        {
-          "name": "setup_canceled",
-          "wire": "-31027"
-        },
-        {
           "name": "auth_required",
           "wire": "-31028"
         },
@@ -4791,7 +4779,7 @@
     {
       "name": "InstructionHash",
       "base": "[32]u8",
-      "doc": "This revision is the SHA-256 of the file: 32 raw bytes, 64 hexadecimal characters. This hash identifies the exact instruction file bytes."
+      "doc": "The SHA-256 of one instruction file: 32 raw bytes, 64 hexadecimal characters on the wire."
     },
     {
       "name": "BlobHash",

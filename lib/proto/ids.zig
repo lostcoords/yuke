@@ -55,8 +55,7 @@ pub fn HexId(comptime N: usize) type {
 pub const SessionId = HexId(16);
 /// This ID uses 32 raw bytes and 64 lowercase hexadecimal characters on the wire.
 pub const LoginId = HexId(32);
-/// This revision is the SHA-256 of the file: 32 raw bytes, 64 hexadecimal characters.
-/// This hash identifies the exact instruction file bytes.
+/// The SHA-256 of one instruction file: 32 raw bytes, 64 hexadecimal characters on the wire.
 pub const InstructionHash = HexId(32);
 /// This hash is the SHA-256 of a stored blob: 32 raw bytes, 64 lowercase hexadecimal characters.
 pub const BlobHash = HexId(32);
