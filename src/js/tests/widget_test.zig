@@ -1,12 +1,12 @@
-const support = @import("test_support.zig");
+const support = @import("support.zig");
 const std = @import("std");
-const Host = @import("host.zig").Host;
+const Host = @import("../host.zig").Host;
 
 test "text retains independent measurement and clipped visible rows" {
     var fixture = try support.PaintedHost.init(4, 12);
     defer fixture.deinit();
     const host = fixture.host;
-    try support.eval(host, "tests/widget/text-widget.test.js");
+    try support.eval(host, "widget/text-widget.test.js");
     const before = host.paint.counters;
     const repeated = try host.ctx.eval("globalThis.repeat()", "text-repeat.js", .{});
     host.ctx.freeValue(repeated);
@@ -16,5 +16,5 @@ test "text retains independent measurement and clipped visible rows" {
 }
 
 test "text updates invalidate once and clip an overwide grapheme to its bounds" {
-    try support.run("tests/widget/text-invalidate.test.js");
+    try support.run("widget/text-invalidate.test.js");
 }

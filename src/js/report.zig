@@ -73,5 +73,5 @@ test "paintFault does nothing without a recorded fault" {
     try testing.expectEqual(@as(usize, 0), paint.out.written().len);
 }
 
-const support = @import("test_support.zig");
-const TestPaint = @import("test_paint.zig").Paint;
+const support = @import("tests/support.zig");
+const TestPaint = @import("tests/paint.zig").Paint;

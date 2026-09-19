@@ -6,7 +6,6 @@ const Host = host_mod.Host;
 const Error = host_mod.Error;
 const term_mod = @import("native/term.zig");
 const module = @import("native/module.zig");
-const Paint = @import("test_paint.zig").Paint;
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -414,4 +413,5 @@ test "resize updates term.width before JS reads ev.w" {
     try std.testing.expectEqual(@as(i32, 8), try host.evalInt("globalThis.tw"));
 }
 
-const support = @import("test_support.zig");
+const support = @import("tests/support.zig");
+const Paint = @import("tests/paint.zig").Paint;

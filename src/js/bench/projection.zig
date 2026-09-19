@@ -1,14 +1,14 @@
 //! A resident session exercises the real native projection and client page reads.
 
 const std = @import("std");
-const app_fixture = @import("../app/fixture.zig");
+const app_fixture = @import("../../app/fixture.zig");
 const proto = @import("proto");
 const ai = @import("ai");
-const App = @import("../app/app.zig").App;
-const Database = @import("../store/store.zig").Database;
-const Host = @import("host.zig").Host;
-const paging = @import("native/engine/paging.zig");
-const Session = @import("../session/session.zig").Session;
+const App = @import("../../app/app.zig").App;
+const Database = @import("../../store/store.zig").Database;
+const Host = @import("../host.zig").Host;
+const paging = @import("../native/engine/paging.zig");
+const Session = @import("../../session/session.zig").Session;
 const Projection = @This();
 
 gpa: std.mem.Allocator,

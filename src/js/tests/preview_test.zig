@@ -1,9 +1,9 @@
 //! The preview workload pins visible content and source spans before a renderer change.
 
-const support = @import("test_support.zig");
+const support = @import("support.zig");
 const std = @import("std");
-const Host = @import("host.zig").Host;
-const Paint = @import("test_paint.zig").Paint;
+const Host = @import("../host.zig").Host;
+const Paint = @import("paint.zig").Paint;
 
 test "preview workload keeps bounded rows, full details, and source spans" {
     var paint: Paint = undefined;
@@ -12,10 +12,10 @@ test "preview workload keeps bounded rows, full details, and source spans" {
     const host = support.createHost();
     defer support.destroyHost(host);
     paint.bind(host);
-    try support.eval(host, "tests/preview/preview.test.js");
+    try support.eval(host, "preview/preview.test.js");
 
     host.paint.counters = .{};
-    try support.eval(host, "tests/preview/preview-budget.test.js");
+    try support.eval(host, "preview/preview-budget.test.js");
     try std.testing.expect(host.paint.counters.wrap_rows <= 32);
     try std.testing.expect(host.paint.counters.wrap_bytes >= 200_000);
 }

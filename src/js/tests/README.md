@@ -1,8 +1,8 @@
-The Zig tests run these files inside the yuke QuickJS host.
+The Zig tests in this directory run the JS files beside them inside the yuke QuickJS host.
 Each named Zig test owns a fresh host and its teardown.
 A file has no test entry point until a Zig test calls it.
 
-Use `test_support.eval` for an ES module.
+Use `support.eval` for an ES module. A path is relative to this directory.
 Use `check(name, condition)` or `equal(actual, expected)` from `yuke:test` for JS assertions.
 The helper reports the file path and the JS fault.
 Test modules stay outside the production module table.
@@ -10,7 +10,7 @@ Test modules stay outside the production module table.
 Use Zig assertions for native state, allocation, paint output, and resource ownership.
 A test with native I/O must pump the host until its operation settles.
 A JS module must not await native I/O before the Zig owner can pump it.
-Use `test_support.evalScript` for a script that shares globals with an earlier fixture.
+Use `support.evalScript` for a script that shares globals with an earlier fixture.
 Keep completion and cancellation checks in the Zig test for these scripts.
 
 The directories group files by contract.

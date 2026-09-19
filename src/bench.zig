@@ -3,7 +3,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const zio = @import("zio");
-const bench = @import("js/bench.zig");
+const bench = @import("js/bench/bench.zig");
 
 pub fn main(init: std.process.Init) !void {
     const gpa = std.heap.smp_allocator;

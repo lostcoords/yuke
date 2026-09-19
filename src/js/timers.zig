@@ -178,7 +178,7 @@ fn jsClear(ctx: Context, _: Value, args: []const Value) Value {
 }
 
 const testing = std.testing;
-const support = @import("test_support.zig");
+const support = @import("tests/support.zig");
 
 test "timers fire in order on a later pump, a zero delay set in a callback waits a pump, and a clear stops a timer" {
     const host = support.createHost();

@@ -6,7 +6,7 @@ import { client } from "yuke:client";
 import { Chat } from "yuke:chat";
 import { openAgents } from "yuke:agents-ui";
 
-/** @import { InjectContext } from "./app/types/ext.js" */
+/** @import { InjectContext } from "../app/types/ext.js" */
 /** @type {InjectContext} */
 let context;
 /** @type {Awaited<ReturnType<typeof openAgents>>} */

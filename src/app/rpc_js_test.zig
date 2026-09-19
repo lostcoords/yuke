@@ -211,4 +211,4 @@ test "a removed session stops its running jobs" {
     try testing.expectEqual(proto.job.JobState.exited, host.jobs.find(1).?.state);
 }
 
-const support = @import("../js/test_support.zig");
+const support = @import("../js/tests/support.zig");

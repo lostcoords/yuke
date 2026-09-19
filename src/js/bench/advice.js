@@ -1,6 +1,6 @@
 import { advice } from "yuke:ext";
 
-/** @import { AdviceWhere, AdviceFunction, Disposer } from "./app/types/ext.js" */
+/** @import { AdviceWhere, AdviceFunction, Disposer } from "../app/types/ext.js" */
 const BATCH = 1000;
 let phase = "", count = 0, calls = 0, hits = 0, sum = 0, steps = 0;
 /** @type {Disposer[]} */

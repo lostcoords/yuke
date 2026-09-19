@@ -596,4 +596,4 @@ test "a throwing event sink faults once and leaves no pending exception" {
     try testing.expect(!drain(host.engine, host.ctx));
 }
 
-const support = @import("../../test_support.zig");
+const support = @import("../../tests/support.zig");

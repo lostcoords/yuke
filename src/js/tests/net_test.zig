@@ -1,7 +1,7 @@
 const std = @import("std");
 const zio = @import("zio");
-const support = @import("test_support.zig");
-const Peer = @import("socket_peer.zig").Peer;
+const support = @import("support.zig");
+const Peer = @import("../socket_peer.zig").Peer;
 
 fn run(comptime file: [:0]const u8, mode: Peer.Mode, cleanup_checkpoint: bool) !void {
     const runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
@@ -37,19 +37,19 @@ fn run(comptime file: [:0]const u8, mode: Peer.Mode, cleanup_checkpoint: bool) !
 }
 
 test "socket streams preserve bytes and support full duplex" {
-    try run("tests/native_tools/net.test.js", .echo, false);
+    try run("native_tools/net.test.js", .echo, false);
 }
 
 test "socket timeouts and cancellation drain stalled operations" {
-    try run("tests/native_tools/net-cancel.test.js", .stall, true);
+    try run("native_tools/net-cancel.test.js", .stall, true);
 }
 
 test "socket EOF and host shutdown release open connections" {
-    try run("tests/native_tools/net-eof.test.js", .eof, false);
+    try run("native_tools/net-eof.test.js", .eof, false);
 }
 
 test "socket benchmark scenarios verify reused and fresh connections" {
-    const bench = @import("bench.zig");
+    const bench = @import("../bench/bench.zig");
     const runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer runtime.deinit();
     for ([_]bench.Phase{ .net_echo, .net_echo_fresh }) |phase| {
@@ -65,13 +65,13 @@ test "socket benchmark scenarios verify reused and fresh connections" {
 }
 
 test "JSON lines over sockets validate complete bounded UTF-8 frames" {
-    try run("tests/native_tools/net-json.test.js", .json_lines, false);
+    try run("native_tools/net-json.test.js", .json_lines, false);
 }
 
 test "Herdr plugin reports and clears over real Unix sockets" {
-    try run("tests/plugins/herdr-socket.test.js", .herdr, false);
+    try run("plugins/herdr-socket.test.js", .herdr, false);
 }
 
 test "Herdr plugin bounds stalled reports and shutdown" {
-    try run("tests/plugins/herdr-socket.test.js", .stall, false);
+    try run("plugins/herdr-socket.test.js", .stall, false);
 }

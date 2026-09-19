@@ -1,22 +1,22 @@
 //! Execute JavaScript cases with test-only modules and report their faults.
 
 const std = @import("std");
-const host_mod = @import("host.zig");
+const host_mod = @import("../host.zig");
 const Host = host_mod.Host;
-const tools_table = @import("tools.zig");
-const BakedModule = @import("loader.zig").BakedModule;
-const Paint = @import("test_paint.zig").Paint;
+const tools_table = @import("../tools.zig");
+const BakedModule = @import("../loader.zig").BakedModule;
+const Paint = @import("paint.zig").Paint;
 
 const modules = host_mod.default_baked ++ [_]BakedModule{
-    .{ .name = "yuke:test-herdr", .code = .{ .source = @embedFile("plugins/herdr.js") } },
-    .{ .name = "yuke:test-markdown", .code = .{ .source = @embedFile("tests/markdown.js") } },
-    .{ .name = "yuke:test", .code = .{ .source = @embedFile("tests/assert.js") } },
+    .{ .name = "yuke:test-herdr", .code = .{ .source = @embedFile("../plugins/herdr.js") } },
+    .{ .name = "yuke:test-markdown", .code = .{ .source = @embedFile("markdown.js") } },
+    .{ .name = "yuke:test", .code = .{ .source = @embedFile("assert.js") } },
 };
 
 const environment: std.process.Environ.Map = .init(std.testing.allocator);
 
 pub fn hostOptions(cwd: []const u8) host_mod.Options {
-    return .{ .cwd = cwd, .execution = @import("../execution.zig").testContext(&environment) };
+    return .{ .cwd = cwd, .execution = @import("../../execution.zig").testContext(&environment) };
 }
 
 /// A test allocator that records no stack traces, because QuickJS allocates on every JavaScript step.

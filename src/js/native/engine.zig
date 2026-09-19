@@ -396,10 +396,10 @@ test "a request reaches a command and answers with its result" {
     host.engine.detach();
 }
 
-const support = @import("../test_support.zig");
+const support = @import("../tests/support.zig");
 
 test "process activity uses live engine state and scoped coalesced notifications" {
-    const Tree = @import("../bench_agents.zig");
+    const Tree = @import("../bench/agents.zig");
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const host = support.createHostWith(rt.io(), "");

@@ -6,7 +6,7 @@ const term_pkg = @import("term");
 const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 const wrapping = @import("wrap.zig");
-const TestPaint = @import("../test_paint.zig").Paint;
+const TestPaint = @import("../tests/paint.zig").Paint;
 const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
 const Context = quickjs.Context;
@@ -530,7 +530,7 @@ test "style colors preserve defaults and propagate property faults" {
 }
 
 test "RGB styles reach all paint paths and preserve frame diffs" {
-    const PaintTest = @import("../test_paint.zig").Paint;
+    const PaintTest = @import("../tests/paint.zig").Paint;
     for (0..3) |mode| {
         var paint: PaintTest = undefined;
         try paint.setup(std.testing.allocator, 3, 4);
@@ -805,4 +805,4 @@ test "a failed endFrame keeps the frame dirty and retries" {
     try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "A") != null);
 }
 
-const support = @import("../test_support.zig");
+const support = @import("../tests/support.zig");

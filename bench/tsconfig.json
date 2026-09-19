@@ -1,14 +1,7 @@
 {
   "extends": "../src/js/app/tsconfig.json",
   "include": [
-    "../src/js/bench.js",
-    "../src/js/bench_colors.js",
-    "../src/js/bench_advice.js",
-    "../src/js/bench_process.js",
-    "../src/js/bench_net.js",
-    "../src/js/bench_utf8.js",
-    "../src/js/bench_interaction.js",
-    "../src/js/bench_agents.js",
+    "../src/js/bench/*.js",
     "../src/js/app/types/**/*.d.ts",
     "../src/js/app/generated/**/*.d.ts",
     "./globals.d.ts"

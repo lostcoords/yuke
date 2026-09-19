@@ -1,9 +1,9 @@
-const support = @import("test_support.zig");
+const support = @import("support.zig");
 const zio = @import("zio");
-const host_mod = @import("host.zig");
+const host_mod = @import("../host.zig");
 const std = @import("std");
-const Host = @import("host.zig").Host;
-const tools_table = @import("tools.zig");
+const Host = @import("../host.zig").Host;
+const tools_table = @import("../tools.zig");
 
 const ReactorHost = struct {
     rt: *zio.Runtime,
@@ -58,7 +58,7 @@ test "env reads the effective host environment through the public facade" {
     const host = support.createHost();
     defer support.destroyHost(host);
     host.execution.env = &env;
-    try support.eval(host, "tests/native_tools/env.test.js");
+    try support.eval(host, "native_tools/env.test.js");
 }
 
 test "yuke:fs reads, writes and stats a real directory through promises" {
@@ -66,7 +66,7 @@ test "yuke:fs reads, writes and stats a real directory through promises" {
     defer fixture.deinit();
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "hello.txt", .data = "one\ntwo\n" });
     const host = fixture.host;
-    try support.eval(host, "tests/native_tools/fsp.test.js");
+    try support.eval(host, "native_tools/fsp.test.js");
     try support.pumpUntilIdle(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.done"));
 }
@@ -74,7 +74,7 @@ test "yuke:fs reads, writes and stats a real directory through promises" {
 test "a canceled live tool signal cannot admit an interaction" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/native_tools/canceled-interaction.test.js");
+    try support.eval(host, "native_tools/canceled-interaction.test.js");
     const call = host.calls.submit("probe", "{}", "");
     try host.pump();
     try support.pumpUntilIdle(host);
@@ -90,7 +90,7 @@ test "a native signal cancels and drains only its commands" {
     var fixture = try ReactorHost.initTmp(null);
     defer fixture.deinit();
     const host = fixture.host;
-    try support.eval(host, "tests/native_tools/cancellation.test.js");
+    try support.eval(host, "native_tools/cancellation.test.js");
     try std.testing.expectEqual(@as(usize, 3), host.ops.live.items.len);
     const pids = try waitExecPids(host, fixture.tmp.?.dir);
     try std.testing.expect(processExists(pids[0]));
@@ -107,7 +107,7 @@ test "a native signal cancels and drains only its commands" {
 test "a hook fault in one result does not stop later handlers" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/native_tools/hook-fault.test.js");
+    try support.eval(host, "native_tools/hook-fault.test.js");
 
     const call = host.calls.submitHook("input.before", "{}");
     try support.pumpUntilSettled(host, call);
@@ -123,7 +123,7 @@ test "the owner runs an async handler and answers its resolved value" {
     const host = support.createHost();
     defer support.destroyHost(host);
 
-    try support.eval(host, "tests/native_tools/run.test.js");
+    try support.eval(host, "native_tools/run.test.js");
 
     // A synchronous callback violates the tool contract.
     {
@@ -162,7 +162,7 @@ test "a failed handler answers the model with an error it can read" {
     const host = support.createHost();
     defer support.destroyHost(host);
 
-    try support.eval(host, "tests/native_tools/fail.test.js");
+    try support.eval(host, "native_tools/fail.test.js");
 
     const cases = [_]struct { name: []const u8, want: []const u8 }{
         .{ .name = "throws", .want = "it broke" },
@@ -201,7 +201,7 @@ test "a handler that awaits a primitive answers when the task finishes" {
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "note.txt", .data = "from disk" });
     const host = fixture.host;
 
-    try support.eval(host, "tests/native_tools/await.test.js");
+    try support.eval(host, "native_tools/await.test.js");
 
     // The handler holds a task, not the owner, so the call settles only after the read finishes.
     const call = host.calls.submit("read_note", "{\"path\":\"note.txt\"}", "");
@@ -218,7 +218,7 @@ test "a handler reads the signal after the turn leaves" {
     const host = support.createHost();
     defer support.destroyHost(host);
 
-    try support.eval(host, "tests/native_tools/signal.test.js");
+    try support.eval(host, "native_tools/signal.test.js");
 
     const call = host.calls.submit("watch", "{\"city\":\"Tokyo\"}", "");
     try host.pump();
@@ -240,7 +240,7 @@ test "closing the host answers a call nobody would settle" {
     const host = support.createHost();
     defer support.destroyHost(host);
 
-    try support.eval(host, "tests/native_tools/hang.test.js");
+    try support.eval(host, "native_tools/hang.test.js");
 
     const call = host.calls.submit("hangs", "{\"city\":\"Tokyo\"}", "");
     try host.pump();
@@ -257,7 +257,7 @@ test "defineTool registers a tool and states its raw schema" {
     const host = support.createHost();
     defer support.destroyHost(host);
 
-    try support.eval(host, "tests/native_tools/tool.test.js");
+    try support.eval(host, "native_tools/tool.test.js");
 
     try std.testing.expectEqual(@as(usize, 1), host.tools.entries.items.len);
     const tool = host.tools.entries.items[host.tools.find("get_weather").?].decl;
@@ -277,7 +277,7 @@ test "defineTool refuses every definition a provider would reject" {
     defer support.destroyHost(host);
 
     // Each case must throw, because `index.js` is user input that has to fail loudly at boot.
-    try support.eval(host, "tests/native_tools/refuse.test.js");
+    try support.eval(host, "native_tools/refuse.test.js");
 
     // Only the one valid registration reached the table.
     try std.testing.expectEqual(@as(usize, 1), host.tools.entries.items.len);
@@ -288,10 +288,10 @@ test "a tool registers after boot and keeps the advertised order stable" {
     defer support.destroyHost(host);
 
     // Registration order is not the advertised order, so a load order change cannot move the prefix.
-    try support.eval(host, "tests/native_tools/boot-6.test.js");
+    try support.eval(host, "native_tools/boot-6.test.js");
 
     // A plugin may add a tool after boot, and it lands in the same sorted position.
-    try support.eval(host, "tests/native_tools/late.test.js");
+    try support.eval(host, "native_tools/late.test.js");
 
     var names: std.ArrayList(u8) = .empty;
     defer names.deinit(std.testing.allocator);
@@ -311,11 +311,11 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     defer std.testing.allocator.free(long_line);
     @memset(long_line, 'x');
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "long.txt", .data = long_line });
-    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "shot.png", .data = @import("../store/blob.zig").png_1x1 });
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "shot.png", .data = @import("../../store/blob.zig").png_1x1 });
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "blob.bin", .data = "\xff\xfe\x00\x01" });
     const root = fixture.root();
     const host = fixture.host;
-    try support.eval(host, "tests/native_tools/builtins-test.test.js");
+    try support.eval(host, "native_tools/builtins-test.test.js");
 
     try expectCall(host, "read", "{\"path\":\"a.txt\",\"start\":2,\"end\":3}", root, false, "2: two\n3: two");
     try expectCall(host, "read", "{\"path\":\"long.txt\"}", root, false, "[The tool cut 1 line(s) at 8000 bytes.]");
@@ -391,8 +391,8 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
 test "a user edit tool overrides the baked edit tool" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/native_tools/index.test.js");
-    try support.eval(host, "tests/native_tools/builtins.test.js");
+    try support.eval(host, "native_tools/index.test.js");
+    try support.eval(host, "native_tools/builtins.test.js");
 
     const call = host.calls.submit("edit", "{}", "");
     try support.pumpUntilSettled(host, call);
@@ -441,7 +441,7 @@ test "exec rejects forged and retained signals and aborts before process creatio
     defer fixture.deinit();
     const root = fixture.root();
     const host = fixture.host;
-    try support.eval(host, "tests/native_tools/exec-signal.test.js");
+    try support.eval(host, "native_tools/exec-signal.test.js");
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.refusals"));
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
     const call = host.calls.submit("probe", "{}", root);
@@ -463,7 +463,7 @@ test "exec completion detaches before call abort and host close rejects late exe
     defer fixture.deinit();
     const root = fixture.root();
     const host = fixture.host;
-    try support.eval(host, "tests/native_tools/exec-complete.test.js");
+    try support.eval(host, "native_tools/exec-complete.test.js");
     const call = host.calls.submit("probe", "{}", "/tmp");
     try host.pump();
     try support.pumpUntilIdle(host);
@@ -480,7 +480,7 @@ test "exec completion detaches before call abort and host close rejects late exe
     }
     try support.dropCall(host, race);
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
-    try support.eval(host, "tests/native_tools/exec-close.test.js");
+    try support.eval(host, "native_tools/exec-close.test.js");
     const pids = try waitExecPids(host, fixture.tmp.?.dir);
     const started: std.Io.Timestamp = .now(host.io, .awake);
     try host.close();
@@ -494,10 +494,10 @@ test "exec completion detaches before call abort and host close rejects late exe
 }
 
 test "session cancel reaches the builtin exec process group" {
-    const commands = @import("../engine/commands.zig");
-    const runs = @import("../engine/run.zig");
-    const provider = @import("../provider/provider.zig");
-    var f: @import("extensions.zig").Fixture = undefined;
+    const commands = @import("../../engine/commands.zig");
+    const runs = @import("../../engine/run.zig");
+    const provider = @import("../../provider/provider.zig");
+    var f: @import("../extensions.zig").Fixture = undefined;
     try f.init("", "import \"yuke:kernel\"; import \"yuke:ext\";");
     defer f.deinit();
     const host = f.extensions.host;
@@ -556,7 +556,7 @@ test "yuke:exec runs commands on tasks and reports each outcome" {
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "marker.txt", .data = "found\n" });
     const host = fixture.host;
 
-    try support.eval(host, "tests/native_tools/exec.test.js");
+    try support.eval(host, "native_tools/exec.test.js");
     try support.pumpUntilIdle(host);
     try support.expectString(host, "result", "ok");
 }
@@ -569,7 +569,7 @@ test "yuke:exec ends a command that passes its deadline" {
 
     // The deadline must stop the command and name the outcome. A failed kill would wait 30 seconds.
     const started: std.Io.Timestamp = .now(rt.io(), .awake);
-    try support.eval(host, "tests/native_tools/deadline.test.js");
+    try support.eval(host, "native_tools/deadline.test.js");
     // The command holds a task, not the owner: the promise is pending and the owner still runs.
     try std.testing.expectEqual(@as(usize, 1), host.ops.live.items.len);
     try std.testing.expectEqual(@as(i32, 7), try host.evalInt("3 + 4"));
@@ -584,7 +584,7 @@ test "yuke:diff describes a change, an equal pair, and a new file" {
     const host = support.createHost();
     defer support.destroyHost(host);
 
-    try support.eval(host, "tests/native_tools/diff.test.js");
+    try support.eval(host, "native_tools/diff.test.js");
     try host.drainJobs();
     try support.expectString(host, "result", "ok");
 }
@@ -595,7 +595,7 @@ test "a primitive stays pending until the owner lets its task run" {
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "x" });
     const host = fixture.host;
 
-    try support.eval(host, "tests/native_tools/pend.test.js");
+    try support.eval(host, "native_tools/pend.test.js");
 
     // The owner has not waited, so the task has not run and the promise is still pending.
     try host.drainJobs();
@@ -613,7 +613,7 @@ test "a throwing await handler faults once and leaves no pending exception" {
     const host = fixture.host;
 
     // A resolver that throws must not leave an exception for the next owner turn.
-    try support.eval(host, "tests/native_tools/throwy.test.js");
+    try support.eval(host, "native_tools/throwy.test.js");
 
     var rounds: u32 = 0;
     while (host.ops.live.items.len != 0) : (rounds += 1) {
@@ -636,7 +636,7 @@ test "run cleanup stops signaled exec without another owner pump" {
     const runtime = fixture.rt;
     const host = fixture.host;
     try host.evalModule("import \"yuke:builtins\";", "builtins.js");
-    var work: @import("../session/work.zig") = .{};
+    var work: @import("../../session/work.zig") = .{};
     const call = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
     , root);
@@ -655,7 +655,7 @@ test "run cleanup stops signaled exec without another owner pump" {
 test "tool site attributes a question and call completion cancels it" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/native_tools/ask.test.js");
+    try support.eval(host, "native_tools/ask.test.js");
     const call = host.calls.submit("ask", "{}", "/work");
     call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 4, .part_id = 2 };
     try host.pump();
@@ -670,7 +670,7 @@ test "tool site attributes a question and call completion cancels it" {
 test "a hidden cancellation watch is never listed and no peer can answer it" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/native_tools/wait.test.js");
+    try support.eval(host, "native_tools/wait.test.js");
     const call = host.calls.submit("wait", "{}", "/work");
     try host.pump();
     try std.testing.expect(host.interactions.takeNext() == null);
@@ -738,7 +738,7 @@ test "background jobs start, list, stop, and report a natural exit once to their
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
     const host = fixture.host;
-    try support.eval(host, "tests/native_tools/builtins-test.test.js");
+    try support.eval(host, "native_tools/builtins-test.test.js");
     try host.evalModule(
         \\import { client } from "yuke:client";
         \\globalThis.sent = [];
@@ -775,7 +775,7 @@ test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves it
     const setup = try std.fmt.allocPrintSentinel(std.testing.allocator, "globalThis.fixtureDir = \"{s}\";", .{dir}, 0);
     defer std.testing.allocator.free(setup);
     try host.eval(setup, "fixture.js");
-    try support.eval(host, "tests/native_tools/spawn.test.js");
+    try support.eval(host, "native_tools/spawn.test.js");
     try support.pumpUntilTrue(host, "globalThis.result !== \"pending\"");
     try support.expectString(host, "result", "ok");
 }
@@ -784,13 +784,13 @@ test "the jobs status segment and the /jobs list show, refresh, and stop backgro
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
     const host = fixture.host;
-    try support.eval(host, "tests/native_tools/jobs-ui.test.js");
+    try support.eval(host, "native_tools/jobs-ui.test.js");
     try support.pumpUntilTrue(host, "globalThis.result !== \"pending\"");
     try support.expectString(host, "result", "ok");
 }
 
 test "a yuke:spawn reader stops at the buffer cap until the owner drains it" {
-    const process_module = @import("native/process.zig");
+    const process_module = @import("../native/process.zig");
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
     const rt = fixture.rt;
@@ -807,7 +807,7 @@ test "a yuke:spawn reader stops at the buffer cap until the owner drains it" {
 }
 
 test "extension teardown ends a live child instead of waiting for it" {
-    var f: @import("extensions.zig").Fixture = undefined;
+    var f: @import("../extensions.zig").Fixture = undefined;
     try f.init("import { spawn } from \"yuke\"; spawn([\"/bin/sleep\", \"60\"]);", "import \"yuke:kernel\";\nimport \"yuke:ext\";");
     const pid = f.extensions.host.procs.live.items[0].pid;
     f.deinit();
@@ -818,7 +818,7 @@ test "an MCP stdio client port over spawn answers a tool call and shuts its serv
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
     const host = fixture.host;
-    try support.eval(host, "tests/native_tools/mcp-proof.test.js");
+    try support.eval(host, "native_tools/mcp-proof.test.js");
 
     for (0..2) |i| {
         const call = host.calls.submit("mcp_echo", "{}", "/tmp");
@@ -838,5 +838,5 @@ test "an MCP stdio client port over spawn answers a tool call and shuts its serv
 test "utf8 converts complete values and rejects malformed input" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/native_tools/utf8.test.js");
+    try support.eval(host, "native_tools/utf8.test.js");
 }

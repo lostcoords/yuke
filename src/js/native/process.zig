@@ -509,7 +509,7 @@ fn stringList(ctx: Context, a: std.mem.Allocator, value: Value) ?[]const []const
 
 test "a failed task admission preserves the child exit and releases its handle" {
     const testing = std.testing;
-    const support = @import("../test_support.zig");
+    const support = @import("../tests/support.zig");
     const Fail = struct {
         fn concurrent(_: ?*anyopaque, _: *std.Io.Group, _: []const u8, _: std.mem.Alignment, _: *const fn (*const anyopaque) void) std.Io.ConcurrentError!void {
             return error.ConcurrencyUnavailable;

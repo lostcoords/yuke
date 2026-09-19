@@ -1,51 +1,51 @@
 //! Setup tests replace the client boundary and keep the real promise coordinator.
 
-const support = @import("test_support.zig");
+const support = @import("support.zig");
 const std = @import("std");
-const Host = @import("host.zig").Host;
+const Host = @import("../host.zig").Host;
 const proto = @import("proto");
 
 test "child pages return a complete list or refuse" {
-    try support.run("tests/agents/pages.test.js");
+    try support.run("agents/pages.test.js");
 }
 
 test "setup coalesces both slots and continues one atomic spawn per caller" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/coalesce.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/coalesce.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "required slots headless setup and user cancellation have no child side effects" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/refusals.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/refusals.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "setup preserves concurrent slot choices and propagates a failed save" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/save-conflict.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/save-conflict.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "model repair changes a child without a new run or an implicit slot edit" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/repair.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/repair.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "tool cancellation removes the setup question and rejects a late answer" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/tool.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/tool.test.js");
     const call = host.calls.submit("spawn-test", "{}", "/work");
     call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
     try host.pump();
@@ -62,8 +62,8 @@ test "tool cancellation removes the setup question and rejects a late answer" {
 test "a canceled tool cannot spawn after its pending config save succeeds" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/late-save.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/late-save.test.js");
     const call = host.calls.submit("spawn-test", "{}", "/work");
     try host.pump();
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("typeof finishSave === 'function' ? 1 : 0"));
@@ -79,8 +79,8 @@ test "a canceled tool cannot spawn after its pending config save succeeds" {
 test "a live setup follower resumes after the lead tool is canceled" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/follower.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/follower.test.js");
     const lead = host.calls.submit("one", "{}", "/work");
     try host.pump();
     const old_question = host.interactions.takeNext().?;
@@ -109,8 +109,8 @@ test "a live setup follower resumes after the lead tool is canceled" {
 test "cancellation watch refusal is an operating error and does not retry setup" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/invalid-signal.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/invalid-signal.test.js");
     try support.expectString(host, "result", "runtime_failed");
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("stats.saves + stats.creates"));
 }
@@ -118,24 +118,24 @@ test "cancellation watch refusal is an operating error and does not retry setup"
 test "first use connects an API key provider with a secret prompt" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/api-key.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/api-key.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "shared credential repair handles a login result before the start response" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/shared-login.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/shared-login.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "tool cancellation stops its pending device login without child admission" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/cancel-login.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/cancel-login.test.js");
     const call = host.calls.submit("spawn-test", "{}", "/work");
     try host.pump();
     try std.testing.expect(host.interactions.live.items.len > 0);
@@ -155,7 +155,7 @@ fn invokeAgent(host: *Host, name: []const u8, args: []const u8) !ToolAnswer {
     defer call.finish();
     call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
     for (0..4) |_| try host.pump();
-    try std.testing.expectEqual(@import("tools.zig").Call.State.settled, call.state);
+    try std.testing.expectEqual(@import("../tools.zig").Call.State.settled, call.state);
     return .{ .text = try std.testing.allocator.dupe(u8, call.text orelse ""), .is_error = call.is_error };
 }
 
@@ -174,15 +174,15 @@ const tool_fixture =
 test "nested child spawn delegates depth and child identity to native" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/nested.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/nested.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "agent tools expose explicit slots and truthful reusable child receipts" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
+    try support.eval(host, "agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
     for (host.tools.entries.items) |entry| if (std.mem.eql(u8, entry.decl.name, "spawn_agent")) {
         const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, entry.decl.input_schema, .{});
@@ -227,24 +227,24 @@ test "agent tools expose explicit slots and truthful reusable child receipts" {
 test "report previews fold independently of their stored text and queue clear preserves reports" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/report-ui.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/report-ui.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "agent picker opens children stops one or all and retains focused interrupt scope" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
+    try support.eval(host, "agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
-    try support.eval(host, "tests/agents/agent-picker.test.js");
+    try support.eval(host, "agents/agent-picker.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "TUI tool questions show their owner and device login closes on completion" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/owner-question.test.js");
+    try support.eval(host, "agents/owner-question.test.js");
     const call = host.calls.submit("question", "{}", "/work");
     defer call.finish();
     call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
@@ -264,9 +264,9 @@ test "TUI tool questions show their owner and device login closes on completion"
 test "the top-level session picker excludes child sessions" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/finder-mocks.test.js");
-    try support.eval(host, "tests/agents/finder.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/finder-mocks.test.js");
+    try support.eval(host, "agents/finder.test.js");
     for (0..4) |_| try host.pump();
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("root.overlays.length"));
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("root.overlays[0].content.source.length"));
@@ -276,8 +276,8 @@ test "the top-level session picker excludes child sessions" {
 test "a user tool can replace a stock agent tool without a boot failure" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/custom-agent.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/custom-agent.test.js");
     try host.evalModule(tool_fixture, "tools.js");
     const result = try invokeAgent(host, "spawn_agent", "{}");
     defer std.testing.allocator.free(result.text);
@@ -288,22 +288,22 @@ test "a user tool can replace a stock agent tool without a boot failure" {
 test "JavaScript leaves child prompt composition to native admission" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/child-prompt.test.js");
+    try support.eval(host, "agents/child-prompt.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "setup cancellation rows are neutral and errors remain visible" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/cancellation-rows.test.js");
+    try support.eval(host, "agents/cancellation-rows.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "explicit model edits skip onboarding and change only the selected slot" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
-    try support.eval(host, "tests/agents/edit-slot.test.js");
+    try support.eval(host, "agents/fixture.js");
+    try support.eval(host, "agents/edit-slot.test.js");
     try support.expectString(host, "result", "ok");
 }
 
@@ -324,7 +324,7 @@ test "agent rows resolve the real root and include siblings and descendants" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try host.evalModule(tree_fixture, "tree-fixture.js");
-    try support.eval(host, "tests/agents/tree.test.js");
+    try support.eval(host, "agents/tree.test.js");
     try support.expectString(host, "result", "root:0,a:1,b:2,sibling:1");
 }
 
@@ -332,29 +332,29 @@ test "agent rows reject cyclic ancestry" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try host.evalModule(tree_fixture, "tree-fixture.js");
-    try support.eval(host, "tests/agents/cycle.test.js");
+    try support.eval(host, "agents/cycle.test.js");
     try support.expectString(host, "result", "The session ancestry contains a cycle.");
 }
 
 test "agent activity refresh retains selection and handles concurrent reload or close" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
+    try support.eval(host, "agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
-    try support.eval(host, "tests/agents/refresh.test.js");
+    try support.eval(host, "agents/refresh.test.js");
     try support.expectString(host, "result", "ok");
 }
 
 test "dirty overflow refreshes a picker even beside unrelated index facts" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    try support.eval(host, "tests/agents/fixture.js");
+    try support.eval(host, "agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
-    try support.eval(host, "tests/agents/overflow.test.js");
+    try support.eval(host, "agents/overflow.test.js");
     try support.expectString(host, "result", "ready");
     try host.evalModule("child.activity.state = { type: 'streaming' };", "changed.js");
     const sink = host.engine.eventSink();
-    for (0..@import("native/engine/digest.zig").max_dirty_sessions) |n| {
+    for (0..@import("../native/engine/digest.zig").max_dirty_sessions) |n| {
         sink.on_event(sink.ctx, .{ .method = .@"session.removed", .params = .{ .session_removed_data = .{
             .session_id = .bytes(std.mem.toBytes(@as(u128, n + 1000))),
             .revision = 1,

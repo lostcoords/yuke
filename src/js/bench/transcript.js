@@ -4,8 +4,8 @@ import { client } from "yuke:client";
 import { route } from "yuke:core";
 
 /** @import { MessagePart, SessionOutline } from "yuke:engine-native" */
-/** @import { TranscriptRow } from "./app/types/pager.js" */
-/** @import { MessageDescriptor, TranscriptOptions } from "./app/types/transcript.js" */
+/** @import { TranscriptRow } from "../app/types/pager.js" */
+/** @import { MessageDescriptor, TranscriptOptions } from "../app/types/transcript.js" */
 /** @typedef {{ type: MessageDescriptor["type"], text?: string, parts?: Wire.AssistantPart[] }} FixtureMessage */
 /** @type {FixtureMessage[]} */
 const sample = [

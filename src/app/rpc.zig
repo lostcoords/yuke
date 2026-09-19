@@ -526,7 +526,7 @@ fn trim(line: []const u8) []const u8 {
 }
 
 const testing = std.testing;
-const support = @import("../js/test_support.zig");
+const support = @import("../js/tests/support.zig");
 
 test "parse reads the envelope and keeps the parameters as a value" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

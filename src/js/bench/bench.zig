@@ -1,17 +1,17 @@
 //! The same transcript scenarios drive correctness tests and release benchmarks.
 
 const std = @import("std");
-const execution = @import("../execution.zig");
+const execution = @import("../../execution.zig");
 const quickjs = @import("quickjs");
 const term = @import("term");
-const Host = @import("host.zig").Host;
-const Allocations = @import("../allocations.zig");
-const native_term = @import("native/term.zig");
-const Tree = @import("bench_agents.zig");
+const Host = @import("../host.zig").Host;
+const Allocations = @import("../../allocations.zig");
+const native_term = @import("../native/term.zig");
+const Tree = @import("agents.zig");
 pub const TreeShape = Tree.Shape;
-const Commit = @import("bench_commit.zig");
-const Projection = @import("bench_projection.zig");
-const SocketPeer = @import("socket_peer.zig").Peer;
+const Commit = @import("commit.zig");
+const Projection = @import("projection.zig");
+const SocketPeer = @import("../socket_peer.zig").Peer;
 pub const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
 
 pub const Phase = enum {
@@ -138,16 +138,16 @@ pub const Harness = struct {
         errdefer if (self.socket_peer) |peer| peer.destroy();
         if (self.socket_peer) |peer| try ctx.setPropertyStr(global, "SOCKET_PATH", ctx.newString(peer.path));
         try self.host.evalModule(switch (self.phase_group) {
-            .interaction => @embedFile("bench_interaction.js"),
+            .interaction => @embedFile("interaction.js"),
             .tools => tool_source,
             .plugins => plugin_source,
-            .process => @embedFile("bench_process.js"),
-            .net => @embedFile("bench_net.js"),
-            .utf8 => @embedFile("bench_utf8.js"),
-            .agents => @embedFile("bench_agents.js"),
-            .colors => @embedFile("bench_colors.js"),
-            .advice => @embedFile("bench_advice.js"),
-            .transcript => @embedFile("bench.js"),
+            .process => @embedFile("process.js"),
+            .net => @embedFile("net.js"),
+            .utf8 => @embedFile("utf8.js"),
+            .agents => @embedFile("agents.js"),
+            .colors => @embedFile("colors.js"),
+            .advice => @embedFile("advice.js"),
+            .transcript => @embedFile("transcript.js"),
         }, "bench.js");
         self.api = ctx.getPropertyStr(global, "bench");
         self.step_fn = ctx.getPropertyStr(self.api, "step");
@@ -457,8 +457,8 @@ test "reused RGB and ANSI colors need no backing allocations after warmup" {
     }
 }
 
-const support = @import("test_support.zig");
-const paging = @import("native/engine/paging.zig");
+const support = @import("../tests/support.zig");
+const paging = @import("../native/engine/paging.zig");
 
 test "native part refresh validates the draft cursor across replacement and removal" {
     var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
@@ -469,7 +469,7 @@ test "native part refresh validates the draft cursor across replacement and remo
     const session = harness.projection.?.session;
     try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .reasoning = .{ .id = 1, .text = "why 世界", .signature = "" } } });
     try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .tool = .{ .id = 2, .name = "exec", .arguments = "{}", .state = .pending } } });
-    try support.eval(harness.host, "tests/app/part-refresh.test.js");
+    try support.eval(harness.host, "app/part-refresh.test.js");
     session.draft.?.deinit();
     session.draft = null;
     try session.apply(.{ .message_started_data = .{

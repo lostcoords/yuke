@@ -976,15 +976,15 @@ test {
     _ = @import("tools.zig");
     _ = @import("call_run.zig");
     _ = @import("hooks.zig");
-    _ = @import("app_test.zig");
-    _ = @import("ui_test.zig");
-    _ = @import("plugins_test.zig");
-    _ = @import("native_tools_test.zig");
-    _ = @import("net_test.zig");
+    _ = @import("tests/app_test.zig");
+    _ = @import("tests/ui_test.zig");
+    _ = @import("tests/plugins_test.zig");
+    _ = @import("tests/native_tools_test.zig");
+    _ = @import("tests/net_test.zig");
     _ = @import("timers.zig");
     _ = @import("native/jobs.zig");
-    _ = @import("interaction_test.zig");
+    _ = @import("tests/interaction_test.zig");
 }
 
-const support = @import("test_support.zig");
-const TestPaint = @import("test_paint.zig").Paint;
+const support = @import("tests/support.zig");
+const TestPaint = @import("tests/paint.zig").Paint;

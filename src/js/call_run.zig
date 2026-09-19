@@ -317,4 +317,4 @@ test "a tool signal aborts at settlement before its submitter leaves" {
     try support.dropCall(host, invocation);
 }
 
-const support = @import("test_support.zig");
+const support = @import("tests/support.zig");

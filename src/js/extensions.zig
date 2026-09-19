@@ -81,7 +81,7 @@ const ai = @import("ai");
 const database = @import("../store/store.zig");
 const tools_table = @import("tools.zig");
 const app_fixture = @import("../app/fixture.zig");
-const support = @import("test_support.zig");
+const support = @import("tests/support.zig");
 
 /// The boot a headless test host runs: the kernel and the plugin bus, and nothing of the view tier.
 const kernel_boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";

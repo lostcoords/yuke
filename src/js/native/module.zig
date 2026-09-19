@@ -185,4 +185,4 @@ test "session ids accept only lowercase hexadecimal text" {
     try std.testing.expectEqual(null, sessionId(host.ctx, upper));
 }
 
-const support = @import("../test_support.zig");
+const support = @import("../tests/support.zig");

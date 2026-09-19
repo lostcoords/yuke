@@ -1,5 +1,5 @@
 const std = @import("std");
-const Host = @import("host.zig").Host;
+const Host = @import("../host.zig").Host;
 const term_pkg = @import("term");
 
 pub const Paint = struct {

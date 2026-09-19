@@ -8,7 +8,7 @@ let phase = "", scale = 1, received = 0, steps = 0, expected = 0;
 let complete = null;
 /** @type {JobOutput | null} */
 let view = null;
-/** @type {import("./app/spawn.js").ChildProcess | null} */
+/** @type {import("../app/spawn.js").ChildProcess | null} */
 let child = null;
 const readFixturePath = "/tmp/yuke-bench-read-fixture";
 const readFixtureBytes = 3 * 1024 * 1024;

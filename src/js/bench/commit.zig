@@ -2,9 +2,9 @@
 
 const std = @import("std");
 const proto = @import("proto");
-const store = @import("../store/store.zig");
-const Draft = @import("../session/draft.zig").Draft;
-const transcript = @import("../session/transcript.zig");
+const store = @import("../../store/store.zig");
+const Draft = @import("../../session/draft.zig").Draft;
+const transcript = @import("../../session/transcript.zig");
 const Commit = @This();
 
 pub const Mode = enum { commit, commit_serialize, commit_size };

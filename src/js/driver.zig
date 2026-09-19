@@ -551,4 +551,4 @@ test "queued key text survives a later parse" {
     try std.testing.expectEqualStrings("a", buf.event().key_press.text.?);
 }
 
-const support = @import("test_support.zig");
+const support = @import("tests/support.zig");

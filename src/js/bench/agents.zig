@@ -3,10 +3,10 @@
 const std = @import("std");
 const proto = @import("proto");
 const ai = @import("ai");
-const fixture = @import("../app/fixture.zig");
-const App = @import("../app/app.zig").App;
-const Host = @import("host.zig").Host;
-const store = @import("../store/store.zig");
+const fixture = @import("../../app/fixture.zig");
+const App = @import("../../app/app.zig").App;
+const Host = @import("../host.zig").Host;
+const store = @import("../../store/store.zig");
 const Tree = @This();
 
 pub const Shape = enum { wide, balanced };

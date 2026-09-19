@@ -2,7 +2,7 @@ import { net } from "yuke:net";
 
 let fresh = false, steps = 0;
 let bytes = new Uint8Array();
-/** @type {import("./app/net.js").Socket | undefined} */
+/** @type {import("../app/net.js").Socket | undefined} */
 let connection;
 
 /** @param {string} name @param {number} scale */
