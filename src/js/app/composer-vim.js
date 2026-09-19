@@ -202,10 +202,12 @@ function normalKey(c, k) {
       return enter(c, start);
     case "x":
       return cut(c, t.caret, Math.min(nextGrapheme(text, t.caret), end), false);
-    case "s":
-      register.set(text.slice(t.caret, nextGrapheme(text, t.caret)), false);
-      t.replace(t.caret, nextGrapheme(text, t.caret), "");
+    case "s": {
+      const next = nextGrapheme(text, t.caret);
+      register.set(text.slice(t.caret, next), false);
+      t.replace(t.caret, next, "");
       return enter(c, t.caret);
+    }
     case "D":
       return cut(c, t.caret, end, false);
     case "C":

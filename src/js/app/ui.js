@@ -2,7 +2,7 @@
 import { term } from "yuke:term";
 import { text, fill, root, claimView, style, slot, isWheel } from "yuke:core";
 import { config, events } from "yuke:kernel";
-import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, wrapPreview, nextGrapheme } from "yuke:text-input";
+import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme } from "yuke:text-input";
 import { strokeOf } from "yuke:keys";
 import { fuzzyRank } from "yuke:fzy";
 
@@ -68,7 +68,7 @@ export const NAV_KEYS = Object.freeze(Object.assign(Object.create(null), /** @ty
 
 // A row from `format` may be a bare string or a record; fold both into one shape.
 /** @param {string | ListItem | null | undefined} cell @returns {ListItem} */
-export function normalizeCell(cell) {
+function normalizeCell(cell) {
   if (cell == null) return { text: "" };
   if (typeof cell === "string") return { text: cell };
   return { text: cell.text != null ? String(cell.text) : "", ...cell };
@@ -178,14 +178,27 @@ export class List {
 
   /** @param {number} delta @returns {void} */
   move(delta) {
-    const sel = this._selectable();
-    if (sel.length === 0) return;
-    let pos = sel.indexOf(this._selIndex());
-    pos = pos < 0 ? 0 : Math.min(Math.max(pos + delta, 0), sel.length - 1);
-    const index = /** @type {number} */ (sel[pos]);
+    const dir = delta < 0 ? -1 : 1;
+    let index = this._selIndex();
+    if (index < 0) index = this._stepSelectable(-1, 1);
+    if (index < 0) return;
+    // Walk the items from the selection, so a move allocates no index list.
+    for (let left = Math.abs(delta); left > 0; left--) {
+      const next = this._stepSelectable(index, dir);
+      if (next < 0) break;
+      index = next;
+    }
     const item = /** @type {T} */ (this.items[index]);
     this.selectedKey = this.key(item);
     if (this.onMove) this.onMove(item, index);
+  }
+
+  /** @param {number} index @param {number} dir @returns {number} */
+  _stepSelectable(index, dir) {
+    for (let i = index + dir; i >= 0 && i < this.items.length; i += dir) {
+      if (this.isSelectable(/** @type {T} */ (this.items[i]))) return i;
+    }
+    return -1;
   }
 
   /** @param {number} dir @returns {void} */
@@ -294,8 +307,9 @@ export class List {
   _drawLine(x, sy, w, spec, isSel) {
     let avail = w;
     if (spec.right) {
-      const r = clip(spec.right, w);
-      const rw = term.measure(r);
+      const fullW = term.measure(spec.right);
+      const r = fullW <= w ? spec.right : clip(spec.right, w, true, fullW);
+      const rw = r === spec.right ? fullW : term.measure(r);
       if (rw > 0 && rw + 1 < w) {
         const rg = isSel ? spec.rightSelGroup || this.dimSelGroup : spec.rightGroup || this.dimGroup;
         text(x + w - rw, sy, r, rg);
@@ -680,7 +694,7 @@ export class Text {
     this.text = opts.text || "";
     this.group = opts.group || "Normal";
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this._measurement = { text: "", width: 0, size: { w: 0, h: 0 } };
+    this._measurement = { text: "", width: 0, size: { w: 0, h: 0 }, rows: /** @type {WrapRow[]} */ ([]), widths: /** @type {number[]} */ ([]) };
     /** @type {{ text: string, width: number, height: number, rows: string[] }} */
     this._layoutCache = { text: "", width: 0, height: 0, rows: [] };
   }
@@ -699,10 +713,11 @@ export class Text {
     const cache = this._measurement;
     if (cache.width === width && cache.text === this.text) return cache.size;
     const rows = width > 0 ? wrapOffsets(this.text, width) : [];
+    const widths = rows.map((row) => term.measure(this.text.slice(row.start, row.end)));
     let w = 0;
-    for (const row of rows) w = Math.max(w, term.measure(this.text.slice(row.start, row.end)));
+    for (const rw of widths) w = Math.max(w, rw);
     const size = { w: Math.min(width, w), h: rows.length };
-    this._measurement = { text: this.text, width, size };
+    this._measurement = { text: this.text, width, size, rows, widths };
     return size;
   }
 
@@ -711,9 +726,14 @@ export class Text {
     this.rect = rect;
     const cache = this._layoutCache;
     if (cache.text === this.text && cache.width === rect.w && cache.height === rect.h) return;
-    const rows = rect.w > 0 && rect.h > 0 ? wrapPreview(this.text, rect.w, rect.h).rows : [];
-    this._layoutCache = { text: this.text, width: rect.w, height: rect.h,
-      rows: rows.map(row => clip(this.text.slice(row.start, row.end), rect.w, false)) };
+    // Reuse the measured rows at the same width. Measure the rows again when the width changes.
+    const m = this._measurement.text === this.text && this._measurement.width === rect.w ? this._measurement : null;
+    const rows = rect.w > 0 && rect.h > 0 ? (m ? m.rows : wrapOffsets(this.text, rect.w)).slice(0, rect.h) : [];
+    this._layoutCache = { text: this.text, width: rect.w, height: rect.h, rows: rows.map((row, i) => {
+      const line = this.text.slice(row.start, row.end);
+      const lw = m ? /** @type {number} */ (m.widths[i]) : term.measure(line);
+      return lw <= rect.w ? line : clip(line, rect.w, false, lw);
+    }) };
   }
 
   /** @param {boolean} [_focused] @returns {void} */

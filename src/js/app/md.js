@@ -644,7 +644,8 @@ function wrapSegments(segments, width, opts) {
     if (rows.length >= limit) return false;
     const prefix = rows.length === 0 ? first : cont;
     const segs = prefix ? [prefix].concat(line) : line.slice();
-    rows.push({ segments: segs.length ? segs : [{ text: "", group: o.emptyGroup || "MdText" }] });
+    const w = lineW + (rows.length === 0 ? firstW : contW);
+    rows.push({ segments: segs.length ? segs : [{ text: "", group: o.emptyGroup || "MdText" }], w });
     line = [];
     lineW = 0;
     return rows.length < limit;
@@ -879,13 +880,10 @@ function renderBlock(block, width, limit = Infinity) {
           const segs = /** @type {Segment[]} */ ([]);
           for (let c = 0; c < row.length; c++) {
             if (c > 0) segs.push({ text: TABLE_GAP, group: "MdTableBorder" });
-            let w = 0;
-            for (const s of (/** @type {Row[]} */ (lines[c])[k] || { segments: [] }).segments) {
-              segs.push(s);
-              w += term.measure(s.text);
-            }
+            const cell = /** @type {Row | undefined} */ (/** @type {Row[]} */ (lines[c])[k]);
+            if (cell) for (const s of cell.segments) segs.push(s);
             // The last column carries no padding, so a copied row ends at its text.
-            const pad = /** @type {number} */ (widths[c]) - w;
+            const pad = /** @type {number} */ (widths[c]) - (cell ? /** @type {number} */ (cell.w) : 0);
             if (c + 1 < row.length && pad > 0) segs.push({ text: " ".repeat(pad), group: "MdText" });
           }
           rows.push({ segments: segs });

@@ -258,12 +258,20 @@ function drawSegments(x, sy, w, segments) {
   // The last cell holds the ellipsis, and it takes the group of the run it cuts.
   const room = w - 1;
   let cutGroup;
-  for (const seg of segments) {
+  for (let i = 0; i < segments.length; i++) {
+    const seg = /** @type {Segment} */ (segments[i]);
     const avail = room - (cx - x);
     if (avail <= 0) break;
-    const t = clip(seg.text, avail, false);
-    if (t) text(cx, sy, t, seg.group);
-    cx += term.measure(t);
+    const cells = /** @type {number} */ (segmentWidths[i]);
+    // A run that fits keeps its measured width, so only the cut run measures again.
+    if (cells <= avail) {
+      if (seg.text) text(cx, sy, seg.text, seg.group);
+      cx += cells;
+    } else {
+      const t = clip(seg.text, avail, false, cells);
+      if (t) text(cx, sy, t, seg.group);
+      cx += term.measure(t);
+    }
     cutGroup = seg.group;
   }
   text(x + room, sy, "…", /** @type {string} */ (cutGroup));

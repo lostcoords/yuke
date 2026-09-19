@@ -347,9 +347,10 @@ function toolHeaderRow(part, expanded, width, label, tree) {
   const rightW = term.measure(right);
   const leftW = Math.max(1, contentW - (rightW > 0 ? rightW + 1 : 0));
   const segs = /** @type {Segment[]} */ ([]);
-  const nameT = clip(name, leftW);
+  const nameW = term.measure(name);
+  const nameT = nameW <= leftW ? name : clip(name, leftW, true, nameW);
   segs.push({ text: nameT, group: CATEGORY_GROUPS[label.category] || "TxToolName", src: 0, srcEnd: name.length });
-  let used = term.measure(nameT);
+  let used = nameT === name ? nameW : term.measure(nameT);
   if (summary && used + 1 < leftW) {
     const t = clip(summary, leftW - used - 1);
     segs.push({ text: " " + t, group: "TxToolMeta", src: name.length, srcEnd: name.length + 1 + summary.length });
@@ -1281,7 +1282,7 @@ export class Transcript {
     return plan;
   }
 
-  // Restale every message whose group changed. The old outline is the one to walk, because a message that left it still holds rows drawn against the old plan.
+  // Mark stale every message whose action group changed. Walk the old outline, because a message that left it still holds rows drawn against the old plan.
   /** @param {ActionPlan | null} oldPlan @param {MessageDescriptor[]} [oldMessages] @returns {void} */
   _refreshActionRows(oldPlan, oldMessages = this.messages()) {
     if (!oldPlan) return;
@@ -1597,9 +1598,10 @@ export class Transcript {
       let to = -1;
       for (let k = 0; k < rows.length; k++) {
         const row = /** @type {TranscriptRow} */ (rows[k]);
-        const r = this._rowRange(range, i, k, rowText(row).length);
+        const body = rowText(row);
+        const r = this._rowRange(range, i, k, body.length);
         if (!r) continue;
-        plain.push(rowText(row).slice(r.from, r.to));
+        plain.push(body.slice(r.from, r.to));
         const span = rowSourceSpan(row, r.from, r.to, rowSourceBase(cache, row));
         if (!span) continue;
         if (from < 0 || span.from < from) from = span.from;
@@ -1662,6 +1664,24 @@ export class Transcript {
     const out = this._messages.map((m) => ({ ...m }));
     if (this._active) out.push({ ...this._active });
     return out;
+  }
+
+  /** @returns {number} */
+  messageCount() {
+    return this._messages.length + (this._active ? 1 : 0);
+  }
+
+  /** @param {number} index @returns {number} */
+  messageIdAt(index) {
+    const m = this._at(index);
+    if (!m) throw new RangeError("message index out of range");
+    return m.id;
+  }
+
+  // The message order index of `id`, or -1.
+  /** @param {number} id @returns {number} */
+  messageIndex(id) {
+    return this._indexOf(id);
   }
 
   /** @param {Rect} rect @returns {void} */

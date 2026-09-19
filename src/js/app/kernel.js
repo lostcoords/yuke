@@ -1,4 +1,4 @@
-// yuke:kernel — the frontend-neutral runtime: process configuration and the event bus; this module must never import `yuke:term` because a headless frontend loads it.
+// The frontend-neutral runtime: process configuration and the event bus. A headless frontend loads it, so it never imports `yuke:term`.
 import { native } from "yuke:engine-native";
 
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
@@ -116,7 +116,7 @@ function applyConfigPatch(section, fields, src, label) {
   Object.assign(section, patch);
 }
 
-// The kernel declares only what neutral code emits, so each tier declares its own names; `engine.drained` carries one whole digest, and the engine names the rest, so no list can drift.
+// The kernel declares only the events that neutral code emits. Each tier declares its own names.
 const CORE_EVENTS = new Set(["ext.error", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", ...native.factNames()]);
 
 // True for an `owner:event` name. A plugin owns such a name, so no declaration can enumerate it.

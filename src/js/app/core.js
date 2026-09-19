@@ -916,7 +916,7 @@ function clampChildSize(size, total) {
   return Math.max(1, Math.min(size, total - 1));
 }
 
-// --- status bar --------------------------------------------------------------------------- One row under the whole layout; a segment renders to a string or to nothing, so an idle provider takes no space.
+// The status bar takes one row under the whole layout. A segment renders to a string or to nothing.
 export const status = {
   /** @type {StatusEntry[]} */
   _list: [],
@@ -979,6 +979,8 @@ export class RootView {
     this.activeLeaf = null;
     /** @type {Overlay[]} */
     this.overlays = [];
+    /** @type {Node[]} */
+    this._leafScratch = [];
     /** @type {TickableEntry[]} */
     this.tickables = [];
     /** @type {Node | null} */
@@ -1271,7 +1273,16 @@ export class RootView {
 
   /** @param {(layer: Overlay | Tickable, isTickable: boolean) => void} fn @returns {void} */
   _forEachTickable(fn) {
-    if (this.root_node) for (const leaf of this.root_node.leaves()) fn(leafView(leaf), false);
+    if (this.root_node) {
+      // One scratch list serves every draw. A nested pass takes a fresh list, and a throw still clears the scratch.
+      const scratch = this._leafScratch;
+      const leaves = this.root_node.leaves(scratch.length === 0 ? scratch : []);
+      try {
+        for (const leaf of leaves) fn(leafView(leaf), false);
+      } finally {
+        leaves.length = 0;
+      }
+    }
     for (const layer of this.overlays) fn(layer, false);
     for (const e of this.tickables.slice()) fn(e.tickable, true);
   }

@@ -8,10 +8,11 @@ import { strokeOf, textOf } from "yuke:keys";
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
 // Limit `s` to `max` cells. Add an ellipsis when one cell remains and `ellipsis` is true.
 /** @param {string} s @param {number} max @param {boolean} [ellipsis] @returns {string} */
-export function clip(s, max, ellipsis = true) {
+export function clip(s, max, ellipsis = true, width = -1) {
   if (max <= 0) return "";
   s = String(s);
-  if (term.measure(s) <= max) return s;
+  // A caller that measured `s` passes the width, so a fitted string costs no second measure.
+  if ((width >= 0 ? width : term.measure(s)) <= max) return s;
 
   const ell = ellipsis && max > 1 ? 1 : 0;
   const budget = max - ell;

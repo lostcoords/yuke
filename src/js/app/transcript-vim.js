@@ -48,11 +48,6 @@ function holdCol(t, s) {
   if (cursor.col >= body.length) s.cursor = { ...cursor, col: prevGrapheme(body, body.length) };
 }
 
-/** @param {Transcript} t @returns {number[]} */
-function idsOf(t) {
-  return t.messages().map((m) => m.id);
-}
-
 /** @param {Transcript} t @param {VimState} s @returns {void} */
 function anchor(t, s) {
   if (s.cursor) s.src = t.sourceAt(s.cursor);
@@ -109,24 +104,23 @@ function stepCol(t, s, d) {
 
 /** @param {Transcript} t @param {VimState} s @param {number} d @returns {boolean} */
 function stepRow(t, s, d) {
-  const ids = idsOf(t);
   const cursor = /** @type {Position} */ (s.cursor);
-  let i = ids.indexOf(cursor.id);
+  let i = t.messageIndex(cursor.id);
   if (i < 0) return false;
 
   let r = cursor.row + d;
-  let id = /** @type {number} */ (ids[i]);
+  let id = cursor.id;
   while (r < 0 || r >= t.rowCountOf(id)) {
     if (r < 0) {
       if (i === 0) return false;
       i--;
-      id = /** @type {number} */ (ids[i]);
+      id = t.messageIdAt(i);
       r += t.rowCountOf(id);
     } else {
-      if (i === ids.length - 1) return false;
+      if (i === t.messageCount() - 1) return false;
       r -= t.rowCountOf(id);
       i++;
-      id = /** @type {number} */ (ids[i]);
+      id = t.messageIdAt(i);
     }
   }
 
@@ -155,12 +149,11 @@ function wordStep(t, s, find, edge) {
 
 /** @param {Transcript} t @param {VimState} s @param {number} d @returns {boolean} */
 function blockStep(t, s, d) {
-  const ids = idsOf(t);
   const cursor = /** @type {Position} */ (s.cursor);
-  let i = ids.indexOf(cursor.id);
+  let i = t.messageIndex(cursor.id);
   if (i < 0) return false;
 
-  let id = /** @type {number} */ (ids[i]);
+  let id = cursor.id;
   let blocks = t.blocksOf(id);
   let here = t.sourceAt(cursor);
   for (let r = cursor.row - 1; here < 0 && r >= 0; r--) here = t.sourceAt({ ...cursor, row: r });
@@ -173,8 +166,8 @@ function blockStep(t, s, d) {
 
   while (k < 0 || k >= blocks.length) {
     i += d;
-    if (i < 0 || i >= ids.length) return false;
-    id = /** @type {number} */ (ids[i]);
+    if (i < 0 || i >= t.messageCount()) return false;
+    id = t.messageIdAt(i);
     blocks = t.blocksOf(id);
     k = d > 0 ? 0 : blocks.length - 1;
   }
@@ -188,9 +181,9 @@ function blockStep(t, s, d) {
 
 /** @param {Transcript} t @param {VimState} s @param {boolean} last @returns {boolean} */
 function toEnd(t, s, last) {
-  const ids = idsOf(t);
-  if (ids.length === 0) return false;
-  const id = /** @type {number} */ (last ? ids[ids.length - 1] : ids[0]);
+  const total = t.messageCount();
+  if (total === 0) return false;
+  const id = t.messageIdAt(last ? total - 1 : 0);
   const count = t.rowCountOf(id);
   if (count === 0) return false;
   let r = last ? count - 1 : 0;
@@ -254,8 +247,7 @@ function move(t, s, k) {
 /** @param {Transcript} t @param {Position} a @param {Position} b @returns {number} */
 function cmp(t, a, b) {
   if (a.id !== b.id) {
-    const ids = idsOf(t);
-    return ids.indexOf(a.id) - ids.indexOf(b.id);
+    return t.messageIndex(a.id) - t.messageIndex(b.id);
   }
   return a.row !== b.row ? a.row - b.row : a.col - b.col;
 }

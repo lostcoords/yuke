@@ -342,7 +342,7 @@ function isReserved(name) {
   return reserved.has(name);
 }
 
-// --- inject: hold a block for the capabilities it needs --- The block owns a child scope, and a change of a named capability drops that scope and builds it again.
+// `inject` holds a block for the capabilities it needs. A change of a named capability rebuilds the child scope of the block.
 /** @template {string} K @param {Context} parentContext @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
 function injectInto(parentContext, names, apply) {
   const { scope: parent, id } = parentContext;
