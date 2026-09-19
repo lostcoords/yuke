@@ -3,33 +3,17 @@
   "limits": {
     "default_page_size": 50,
     "default_session_list_page_size": 25,
-    "max_activity_retry_message_bytes": 1024,
-    "max_api_key_bytes": 65536,
-    "max_auth_providers": 64,
-    "max_auth_user_code_bytes": 128,
     "max_blob_bytes": 7340032,
-    "max_catalog_models": 4096,
-    "max_error_message_bytes": 4096,
     "max_input_images": 8,
-    "max_input_parts": 256,
-    "max_message_parts": 1024,
     "max_message_string_bytes": 1048576,
     "max_page_size": 500,
     "max_queued_inputs": 128,
     "max_reasoning_levels": 32,
-    "max_session_list_cursor_bytes": 256,
     "max_session_list_page_size": 100,
-    "max_snapshot_configs": 501,
-    "max_tool_output_stream_bytes": 1048576,
-    "max_view_bytes": 1048576,
-    "max_view_items": 1024,
-    "max_views_per_tool": 64
+    "max_tool_output_stream_bytes": 1048576
   },
   "constants": {
-    "MAX_REQUEST_ID_BYTES": 64,
-    "MAX_SESSION_REVISION": 9007199254740991,
-    "MAX_WIRE_INTEGER": 9007199254740991,
-    "PROTOCOL_VERSION": 1
+    "MAX_WIRE_INTEGER": 9007199254740991
   },
   "methods": [
     {
