@@ -665,9 +665,13 @@ function openDetails(title, sections) {
 
 const FIELD_UNREAD = "\n[the remaining field could not be read]";
 
-/** @param {{ type?: string, message?: string } | null | undefined} error @returns {string} */
+/** @param {{ type?: string, message?: string, status?: number, request_id?: string, detail?: string } | null | undefined} error @returns {string} */
 function errorLabel(error) {
-  return "⚠ " + ((error && error.message) || (error && error.type) || "run failed");
+  const parts = [(error && error.message) || (error && error.type) || "run failed"];
+  if (error?.status != null) parts.push("HTTP " + error.status);
+  if (error?.detail) parts.push(error.detail);
+  if (error?.request_id) parts.push("request " + error.request_id);
+  return "⚠ " + parts.join(" · ");
 }
 
 // The chat transcript: message descriptors, exact row counts, and a bounded cache of rendered rows.

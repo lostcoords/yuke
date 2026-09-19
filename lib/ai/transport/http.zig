@@ -100,10 +100,13 @@ pub const HttpTransport = struct {
             error.TooManyHttpRedirects => return Error.RedirectRefused, // Never follow a redirect.
             else => return err,
         };
-        readRetryHeaders(hb.response.head, info); // The reader below invalidates these slices.
+        try readHeaders(hb.response.head, arena, info); // The reader below invalidates these slices.
         if (hb.response.head.status != .ok) {
-            if (@intFromEnum(hb.response.head.status) == 429) return classify429(hb, arena);
-            return mapStatus(hb.response.head.status);
+            const status = hb.response.head.status;
+            info.status = @intFromEnum(status);
+            info.body = try readErrorBody(hb, arena);
+            if (@intFromEnum(status) == 429) return classify429(info.body orelse return Error.RateLimitUnknown, arena);
+            return mapStatus(status);
         }
 
         hb.reader = hb.response.reader(&hb.transfer_buffer); // This invalidates the head string slices.
@@ -193,10 +196,13 @@ const HttpBody = struct {
 };
 
 /// Read the retry headers before `response.reader()`, which invalidates every head string slice.
-fn readRetryHeaders(head: std.http.Client.Response.Head, info: *transport.AttemptInfo) void {
+/// Read the retry hints and the request id. The id is copied, because the body reader invalidates the head.
+fn readHeaders(head: std.http.Client.Response.Head, arena: Allocator, info: *transport.AttemptInfo) !void {
     var it = head.iterateHeaders();
     while (it.next()) |h| {
-        if (std.ascii.eqlIgnoreCase(h.name, "retry-after-ms")) {
+        if (std.ascii.eqlIgnoreCase(h.name, "request-id") or std.ascii.eqlIgnoreCase(h.name, "x-request-id")) {
+            if (info.request_id == null) info.request_id = try arena.dupe(u8, std.mem.trim(u8, h.value, " "));
+        } else if (std.ascii.eqlIgnoreCase(h.name, "retry-after-ms")) {
             // The millisecond form wins. Both SDK families read it first.
             if (std.fmt.parseInt(u64, std.mem.trim(u8, h.value, " "), 10)) |ms| info.retry_after_ms = ms else |_| {}
         } else if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
@@ -222,16 +228,16 @@ fn mapStatus(status: std.http.Status) Error {
     };
 }
 
-/// Classify a 429 from its body, because a spend cap and a rate limit share the status.
-fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
+/// Read the first bytes of an error body into `arena`. A read fault answers null; only a cancel propagates.
+fn readErrorBody(hb: *HttpBody, arena: Allocator) error{ OutOfMemory, Canceled }!?[]const u8 {
     hb.reader = hb.response.reader(&hb.transfer_buffer);
-    var buf: [2048]u8 = undefined;
+    var buf: [transport.AttemptInfo.max_error_body_bytes]u8 = undefined;
     var len: usize = 0;
-    // One peek can hold part of the body only. A part of the body names no failure class.
+    // One peek can hold part of the body only.
     while (len < buf.len) {
         const chunk = hb.peekWithIdleTimeout() catch |err| switch (err) {
             error.Canceled => return error.Canceled,
-            else => return Error.RateLimitUnknown,
+            else => return null,
         };
         if (chunk.len == 0) break;
         const take = @min(chunk.len, buf.len - len);
@@ -239,7 +245,11 @@ fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
         len += take;
         hb.reader.toss(take);
     }
-    const body = buf[0..len];
+    return try arena.dupe(u8, buf[0..len]);
+}
+
+/// Classify a 429 from its body, because a spend cap and a rate limit share the status.
+fn classify429(body: []const u8, arena: Allocator) anyerror {
     const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return Error.RateLimitUnknown;
     const err = json.fieldGet(value, "error") orelse return Error.RateLimitUnknown;
     if (bodyIsQuota(err)) return Error.QuotaExhausted;
@@ -286,6 +296,7 @@ const Server = struct {
     body: []const u8,
     status: std.http.Status,
     location: ?[]const u8 = null, // A redirect target. The client must never follow it.
+    request_id: ?[]const u8 = null, // Sent as `request-id` when set.
     stall: bool = false, // Send the body, then wait on `release`. Keep the stream open.
     release: ?*std.Io.Event = null,
     err: ?anyerror = null,
@@ -317,14 +328,19 @@ fn serveOnceInner(s: *Server) !void {
         s.user_agent_count += 1;
     };
 
-    var header_storage: [2]std.http.Header = .{
+    var header_storage: [3]std.http.Header = .{
         .{ .name = "content-type", .value = "text/event-stream" },
+        undefined,
         undefined,
     };
     var header_len: usize = 1;
     if (s.location) |loc| {
-        header_storage[1] = .{ .name = "location", .value = loc };
-        header_len = 2;
+        header_storage[header_len] = .{ .name = "location", .value = loc };
+        header_len += 1;
+    }
+    if (s.request_id) |id| {
+        header_storage[header_len] = .{ .name = "request-id", .value = id };
+        header_len += 1;
     }
 
     var body_buf: [1024]u8 = undefined;
@@ -349,6 +365,9 @@ const ClientOut = struct {
     release: ?*std.Io.Event = null, // Signal the stalled server to end after the read returns.
     bytes: std.ArrayList(u8) = .empty,
     err: ?anyerror = null,
+    status: ?u16 = null, // Copies of the attempt info, because its arena dies with the client task.
+    request_id: std.ArrayList(u8) = .empty,
+    error_body: std.ArrayList(u8) = .empty,
 };
 
 fn clientTask(out: *ClientOut) void {
@@ -372,7 +391,11 @@ fn runClient(out: *ClientOut) !void {
     };
     var request_body: [0]u8 = .{};
     var info: transport.AttemptInfo = .{};
-    const body = try http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = &request_body }, &info);
+    const opened = http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = &request_body }, &info);
+    out.status = info.status;
+    if (info.request_id) |id| try out.request_id.appendSlice(out.gpa, id);
+    if (info.body) |text| try out.error_body.appendSlice(out.gpa, text);
+    const body = try opened;
     defer body.deinit();
     while (true) {
         const chunk = try body.peek();
@@ -418,10 +441,31 @@ test "a non-200 status maps to a transport error" {
     var srv: Server = .{ .body = "", .status = .unauthorized };
     var out: ClientOut = .{};
     defer out.bytes.deinit(testing.allocator);
+    defer out.request_id.deinit(testing.allocator);
+    defer out.error_body.deinit(testing.allocator);
     try exchange(&srv, &out);
 
     try testing.expectEqual(@as(?anyerror, Error.AuthFailed), out.err);
     try testing.expectEqual(@as(usize, 0), out.bytes.items.len);
+    try testing.expectEqual(@as(?u16, 401), out.status);
+    try testing.expectEqual(@as(usize, 0), out.request_id.items.len);
+    try testing.expectEqual(@as(usize, 0), out.error_body.items.len);
+}
+
+test "a non-200 answer keeps its status, request id, and a bounded body" {
+    const long = "{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"" ++ "x" ** 5000 ++ "\"}}";
+    var srv: Server = .{ .body = long, .status = .bad_request, .request_id = "req_123" };
+    var out: ClientOut = .{};
+    defer out.bytes.deinit(testing.allocator);
+    defer out.request_id.deinit(testing.allocator);
+    defer out.error_body.deinit(testing.allocator);
+    try exchange(&srv, &out);
+
+    try testing.expectEqual(@as(?anyerror, Error.BadStatus), out.err);
+    try testing.expectEqual(@as(?u16, 400), out.status);
+    try testing.expectEqualStrings("req_123", out.request_id.items);
+    try testing.expectEqual(transport.AttemptInfo.max_error_body_bytes, out.error_body.items.len);
+    try testing.expectEqualStrings(long[0..transport.AttemptInfo.max_error_body_bytes], out.error_body.items);
 }
 
 test "a stalled stream returns an idle timeout" {
@@ -475,7 +519,11 @@ test "a 429 body distinguishes quota, rate limit, and unknown failures" {
         var srv: Server = .{ .body = case.body, .status = .too_many_requests };
         var out: ClientOut = .{};
         defer out.bytes.deinit(testing.allocator);
+        defer out.request_id.deinit(testing.allocator);
+        defer out.error_body.deinit(testing.allocator);
         try exchange(&srv, &out);
         try testing.expectEqual(@as(?anyerror, case.expected), out.err);
+        try testing.expectEqual(@as(?u16, 429), out.status);
+        try testing.expectEqualStrings(case.body, out.error_body.items);
     }
 }

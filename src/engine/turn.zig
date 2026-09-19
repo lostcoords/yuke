@@ -59,7 +59,7 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
         streamer.reset();
         std.debug.assert(slot.progress.current == null);
         std.debug.assert(rt.draft == null); // one draft per round
-        const terminal = streamRound(engine, slot, &streamer);
+        const terminal = streamRound(engine, boundary_arena, slot, &streamer);
         const live = if (rt.draft) |*live| live else {
             commitFinal(engine, boundary_arena, slot, null, false, streamer.usage, terminal);
             return;
@@ -117,7 +117,7 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
         const outcome: proto.run.RunOutcome = switch (terminal) {
             .success => unreachable,
             .canceled => .{ .canceled = .{} },
-            .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message } },
+            .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message, .status = item.status, .request_id = item.request_id, .detail = item.detail } },
         };
         slot.progress.current = null;
         run.finishRunOpen(engine, arena, slot, outcome) catch |err| run.faultSlot(engine, slot, err);
@@ -130,7 +130,8 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
 }
 
 /// Stream one round, and resend the same request while the classifier allows it.
-fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
+/// Run one round. `out` outlives the round; a failure copies the provider answer into it.
+fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) Terminal {
     // The request and its attempts die with this round, so a long run never accumulates them.
     var round_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer round_state.deinit();
@@ -188,14 +189,13 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
                 .number = number,
                 .budget_left = slot.retry_budget,
             }, engine.jitter()) orelse {
-                // The wire message names a class, not the cause. Record the cause before it is lost.
-                std.log.warn("run {d} attempt {d} ended: {t}", .{ slot.runId(), number, err });
-                return .{ .failed = failure(err) };
+                std.log.warn("run {d} attempt {d} ended: {t} (status {?d})", .{ slot.runId(), number, err, info.status });
+                return .{ .failed = attemptFailure(out, err, &info) };
             };
 
             std.debug.assert(slot.retry_budget > 0); // the classifier refuses a retry at zero
             slot.retry_budget -= 1;
-            publishRetrying(engine, rt, slot, number, err, delay_ms);
+            publishRetrying(engine, rt, slot, number, err, info.status, delay_ms);
             if (slot.cancel.holdFor(engine.deps.io, delay_ms) catch true) return .canceled;
             // The hold is over. The label must say `waiting` again, not the old countdown.
             std.debug.assert(slot.round == .retrying);
@@ -208,9 +208,9 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
 }
 
 /// Record the wait on the slot, then publish it, so the wait shows as a retry and not a silent pause.
-fn publishRetrying(engine: *Engine, rt: *Session, slot: *RunSlot, number: u8, err: anyerror, delay_ms: u64) void {
+fn publishRetrying(engine: *Engine, rt: *Session, slot: *RunSlot, number: u8, err: anyerror, status: ?u16, delay_ms: u64) void {
     const detail = failure(err);
-    std.log.info("run {d} attempt {d} ended with {t}; the next attempt starts in {d} ms with {d} retries left", .{ slot.runId(), number, err, delay_ms, slot.retry_budget });
+    std.log.info("run {d} attempt {d} ended with {t} (status {?d}); the next attempt starts in {d} ms with {d} retries left", .{ slot.runId(), number, err, status, delay_ms, slot.retry_budget });
     std.debug.assert(slot.round == .waiting or slot.round == .streaming); // only a live attempt can fail
     slot.round = .{ .retrying = .{
         .run_id = slot.runId(),
@@ -301,12 +301,24 @@ const Terminal = union(enum) {
 const Failure = struct {
     code: proto.enums.RunErrorCode,
     message: []const u8,
+    status: ?u16 = null,
+    request_id: ?[]const u8 = null,
+    detail: ?[]const u8 = null,
 };
 
 /// Map a run failure to its wire code and sentence. `provider.failure` holds the one error table.
 fn failure(err: anyerror) Failure {
     const detail = provider.failure.classify(err);
     return .{ .code = detail.code, .message = detail.message };
+}
+
+/// Map the final attempt, and copy what the provider answered into `out`, because the attempt arena dies with the round.
+fn attemptFailure(out: std.mem.Allocator, err: anyerror, info: *const ai.transport.AttemptInfo) Failure {
+    var result = failure(err);
+    result.status = info.status;
+    result.request_id = if (info.request_id) |id| out.dupe(u8, id) catch unreachable else null;
+    result.detail = if (info.body) |body| provider.failure.detailText(out, body) catch unreachable else null;
+    return result;
 }
 
 /// Commit the current round, and terminalize the run only when this is the final round.
@@ -345,7 +357,7 @@ fn commitRound(
         .failed => .@"error",
     };
     const message_error: ?message.MessageError = switch (terminal) {
-        .failed => |item| .{ .type = @tagName(item.code), .message = item.message },
+        .failed => |item| .{ .type = @tagName(item.code), .message = item.message, .status = item.status, .request_id = item.request_id, .detail = item.detail },
         else => null,
     };
     const committed: message.Message = .{ .assistant = .{
@@ -364,7 +376,7 @@ fn commitRound(
     const outcome: proto.run.RunOutcome = switch (terminal) {
         .success => |reason| .{ .turn = .{ .finish = reason, .rounds = rounds_committed } },
         .canceled => .{ .canceled = .{} },
-        .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message } },
+        .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message, .status = item.status, .request_id = item.request_id, .detail = item.detail } },
     };
     // The committed content borrows the draft. The commit fold frees the draft, so own a copy first.
     const owned = try proto.dupe(arena, committed);
@@ -1224,10 +1236,44 @@ test "a run cancel interrupts either request hook before it settles" {
         defer canceller.cancel(state.io) catch {};
         var streamer = f.streamer();
         defer streamer.blocks.deinit(std.testing.allocator);
-        try std.testing.expect(streamRound(&f.engine, f.slot, &streamer) == .canceled);
+        try std.testing.expect(streamRound(&f.engine, std.testing.allocator, f.slot, &streamer) == .canceled);
         try std.testing.expect(state.asked);
         try std.testing.expect(!state.timed_out);
     }
+}
+
+test "a failed attempt keeps the provider status, request id, and detail past its round" {
+    const Failing = struct {
+        fn open(_: *anyopaque, arena: std.mem.Allocator, _: ai.transport.Request, info: *ai.transport.AttemptInfo) anyerror!ai.transport.ResponseBody {
+            info.status = 400;
+            info.request_id = try arena.dupe(u8, "req_9");
+            info.body = try arena.dupe(u8, "{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"too long\"}}");
+            return ai.transport.HttpError.BadStatus;
+        }
+        const vtable: ai.transport.Transport.VTable = .{ .open = open };
+    };
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    f.slot.gpa.free(f.slot.config.model);
+    f.slot.config.model = try f.slot.gpa.dupe(u8, "mock/model");
+    f.slot.phase = .running;
+    f.resources.providers.merged.rows = &.{Resources.mockProvider(&.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .openai_chat }}, .{ .protocol = .openai_chat })};
+    var marker: u8 = 0;
+    f.engine.deps.route_transport = .{ .ctx = &marker, .vtable = &Failing.vtable };
+    f.slot.progress.current = null; // the round opens its own message and its own draft
+    if (f.session.draft) |*held| held.deinit();
+    f.session.draft = null;
+    var out: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer out.deinit();
+    var streamer = f.streamer();
+    defer streamer.blocks.deinit(std.testing.allocator);
+    const terminal = streamRound(&f.engine, out.allocator(), f.slot, &streamer);
+    try std.testing.expect(terminal == .failed);
+    try std.testing.expectEqual(proto.enums.RunErrorCode.provider, terminal.failed.code);
+    try std.testing.expectEqual(@as(?u16, 400), terminal.failed.status);
+    try std.testing.expectEqualStrings("req_9", terminal.failed.request_id.?);
+    try std.testing.expectEqualStrings("invalid_request_error: too long", terminal.failed.detail.?);
 }
 
 test "an advertised output ceiling equal to context leaves a usable request budget" {

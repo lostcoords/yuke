@@ -438,6 +438,12 @@ export interface MessageDiscardedData {
 export interface MessageError {
   readonly type: string;
   readonly message: string;
+  /** The HTTP status of the provider answer, when the failure came from one. */
+  readonly status?: number;
+  /** The provider request id, when the answer named one. */
+  readonly request_id?: string;
+  /** A bounded, control-free excerpt of the provider error, at most 512 bytes. */
+  readonly detail?: string;
 }
 
 /** This payload describes `message.part_added`. */
@@ -712,6 +718,12 @@ export interface RunOutcomeCompacted {
 export interface RunOutcomeFailed {
   readonly code: RunErrorCode;
   readonly message: string;
+  /** The HTTP status of the provider answer, when the failure came from one. */
+  readonly status?: number;
+  /** The provider request id, when the answer named one. */
+  readonly request_id?: string;
+  /** A bounded, control-free excerpt of the provider error, at most 512 bytes. */
+  readonly detail?: string;
 }
 
 /** The engine skipped a manual compaction without producing a summary. */

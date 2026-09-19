@@ -51,6 +51,69 @@ fn codeOf(reason: ai.failure.Reason) proto.enums.RunErrorCode {
     };
 }
 
+/// The bound of one detail line on the wire.
+pub const max_detail_bytes: usize = 512;
+
+/// Build the bounded detail from an error body: the JSON `error` fields when present, else the raw text.
+pub fn detailText(arena: std.mem.Allocator, body: []const u8) error{OutOfMemory}!?[]const u8 {
+    const trimmed = std.mem.trim(u8, body, " \t\r\n");
+    if (trimmed.len == 0) return null;
+    const line = (try jsonErrorLine(arena, trimmed)) orelse trimmed;
+    const clean = try sanitize(arena, line);
+    return if (clean.len == 0) null else clean;
+}
+
+/// Read `error.type: error.message (error.code)` from a provider JSON body, or `error` when it is a string.
+fn jsonErrorLine(arena: std.mem.Allocator, text: []const u8) error{OutOfMemory}!?[]const u8 {
+    const value = std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
+    const err = field(value, "error") orelse return null;
+    switch (err) {
+        .string => |s| return s,
+        .object => {},
+        else => return null,
+    }
+    const message = stringField(err, "message") orelse return null;
+    const kind = stringField(err, "type");
+    const code = stringField(err, "code");
+    var out: std.ArrayList(u8) = .empty;
+    if (kind) |k| try out.print(arena, "{s}: ", .{k});
+    try out.appendSlice(arena, message);
+    if (code) |c| try out.print(arena, " ({s})", .{c});
+    return try out.toOwnedSlice(arena);
+}
+
+fn field(value: std.json.Value, key: []const u8) ?std.json.Value {
+    return switch (value) {
+        .object => |o| o.get(key),
+        else => null,
+    };
+}
+
+fn stringField(value: std.json.Value, key: []const u8) ?[]const u8 {
+    return switch (field(value, key) orelse return null) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+/// Copy at most `max_detail_bytes` of valid UTF-8: a control byte becomes a space and an invalid byte becomes `?`.
+fn sanitize(arena: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]const u8 {
+    var out: std.ArrayList(u8) = try .initCapacity(arena, @min(text.len, max_detail_bytes));
+    var i: usize = 0;
+    while (i < text.len) {
+        const len = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
+        const valid = i + len <= text.len and std.unicode.utf8ValidateSlice(text[i .. i + len]);
+        const piece: []const u8 = if (!valid) "?" else if (len == 1 and (text[i] < 0x20 or text[i] == 0x7f)) " " else text[i .. i + len];
+        if (out.items.len + piece.len > max_detail_bytes) break;
+        try out.appendSlice(arena, piece);
+        i += if (valid) len else 1;
+    }
+    return try out.toOwnedSlice(arena);
+}
+
 const testing = std.testing;
 
 test "every transport class reports a network or timeout code" {
@@ -104,4 +167,28 @@ test "an oversized prompt reports a permanent runtime failure" {
     try testing.expectEqual(Class.permanent, detail.class);
     try testing.expectEqual(proto.enums.RunErrorCode.runtime, detail.code);
     try testing.expectEqualStrings("the system prompt exceeds the protocol string limit", detail.message);
+}
+
+test "the detail line reads the provider error fields and falls back to the raw text" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqualStrings("invalid_request_error: max_tokens is too large", (try detailText(a, "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"max_tokens is too large\"},\"request_id\":\"req_1\"}")).?);
+    try testing.expectEqualStrings("invalid_request_error: too long (context_length_exceeded)", (try detailText(a, "{\"error\":{\"message\":\"too long\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"context_length_exceeded\"}}")).?);
+    try testing.expectEqualStrings("boom", (try detailText(a, "{\"error\":\"boom\"}")).?);
+    try testing.expectEqualStrings("<html> 502 Bad Gateway </html>", (try detailText(a, "  <html>\n502 Bad\tGateway\n</html>\r\n")).?);
+    try testing.expectEqualStrings("{\"error\":{\"code\":42}}", (try detailText(a, "{\"error\":{\"code\":42}}")).?);
+    try testing.expectEqual(@as(?[]const u8, null), try detailText(a, " \n "));
+}
+
+test "the detail line is bounded on a UTF-8 boundary and never carries an invalid byte" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const long = "é" ** 300;
+    const cut = (try detailText(a, long)).?;
+    try testing.expectEqual(max_detail_bytes, cut.len);
+    try testing.expect(std.unicode.utf8ValidateSlice(cut));
+    try testing.expectEqualStrings("a?b", (try detailText(a, "a\xffb")).?);
+    try testing.expectEqualStrings("a b", (try detailText(a, "a\x1bb")).?);
 }

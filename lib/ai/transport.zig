@@ -23,8 +23,15 @@ pub const AttemptInfo = struct {
     no_retry: bool = false,
     /// The adapter sets this before the first body write. A later transport fault is then ambiguous.
     delivery: Delivery = .definitely_unsent,
+    /// The status of a non-200 answer. The transport fills these three in the attempt arena before it returns the error.
+    status: ?u16 = null,
+    /// The provider request id from `request-id` or `x-request-id`, when the answer names one.
+    request_id: ?[]const u8 = null,
+    /// The first bytes of a non-200 body, at most `max_error_body_bytes`; null when the body could not be read.
+    body: ?[]const u8 = null,
 
     pub const Delivery = enum { definitely_unsent, possibly_sent };
+    pub const max_error_body_bytes: usize = 4096;
 };
 
 /// Open one provider response through an injected transport, whose body borrows `arena`.

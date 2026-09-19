@@ -97,6 +97,12 @@ pub const MessageDiscardedData = struct {
 pub const MessageError = struct {
     type: []const u8,
     message: []const u8,
+    /// The HTTP status of the provider answer, when the failure came from one.
+    status: ?u16 = null,
+    /// The provider request id, when the answer named one.
+    request_id: ?[]const u8 = null,
+    /// A bounded, control-free excerpt of the provider error, at most 512 bytes.
+    detail: ?[]const u8 = null,
 };
 
 /// This payload describes `message.part_added`.

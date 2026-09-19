@@ -56,6 +56,12 @@ pub const RunOutcomeCompacted = struct {
 pub const RunOutcomeFailed = struct {
     code: enums.RunErrorCode,
     message: []const u8,
+    /// The HTTP status of the provider answer, when the failure came from one.
+    status: ?u16 = null,
+    /// The provider request id, when the answer named one.
+    request_id: ?[]const u8 = null,
+    /// A bounded, control-free excerpt of the provider error, at most 512 bytes.
+    detail: ?[]const u8 = null,
 };
 
 /// The engine skipped a manual compaction without producing a summary.
@@ -88,7 +94,7 @@ test "interrupted is a closed run failure category" {
     const parsed = try std.json.parseFromSlice(RunOutcome, testing.allocator, json, .{});
     defer parsed.deinit();
     try testing.expectEqual(enums.RunErrorCode.interrupted, parsed.value.failed.code);
-    const encoded = try std.json.Stringify.valueAlloc(testing.allocator, parsed.value, .{});
+    const encoded = try std.json.Stringify.valueAlloc(testing.allocator, parsed.value, .{ .emit_null_optional_fields = false });
     defer testing.allocator.free(encoded);
     try testing.expectEqualStrings(json, encoded);
     try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(RunOutcome, testing.allocator, "{\"type\":\"failed\",\"code\":\"unknown_failure\",\"message\":\"x\"}", .{}));

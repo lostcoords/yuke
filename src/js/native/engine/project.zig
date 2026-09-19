@@ -39,6 +39,15 @@ pub fn writeOutline(w: *std.Io.Writer, s: *domain_session.Session) !void {
             try std.json.Stringify.encodeJsonString(e.type, .{}, w);
             try w.writeAll(",\"message\":");
             try std.json.Stringify.encodeJsonString(e.message, .{}, w);
+            if (e.status) |status| try w.print(",\"status\":{d}", .{status});
+            if (e.request_id) |id| {
+                try w.writeAll(",\"request_id\":");
+                try std.json.Stringify.encodeJsonString(id, .{}, w);
+            }
+            if (e.detail) |detail| {
+                try w.writeAll(",\"detail\":");
+                try std.json.Stringify.encodeJsonString(detail, .{}, w);
+            }
             try w.writeByte('}');
         }
         try w.writeByte('}');
@@ -679,6 +688,35 @@ test "the outline carries report and skill identity without their bodies" {
     const request = try @import("../../../provider/request_builder.zig").build(a, &.{stored}, .{});
     defer a.free(request);
     try std.testing.expectEqualStrings(body, request[0].value.text);
+}
+
+test "the outline carries the provider answer of a failed run" {
+    const a = std.testing.allocator;
+    var session = domain_session.Session.init(a, .bytes([_]u8{1} ** 16));
+    defer session.deinit();
+    try session.apply(.{ .message_committed_data = .{
+        .session_id = session.id,
+        .seq = 1,
+        .message = .{ .assistant = .{
+            .id = 1,
+            .run_id = 1,
+            .config_rev = 0,
+            .agent = "root",
+            .content = &.{},
+            .finish = .@"error",
+            .time = .{ .created_at_ms = 1 },
+            .@"error" = .{ .type = "provider", .message = "the provider returned an unexpected status", .status = 400, .request_id = "req_1", .detail = "invalid_request_error: too long" },
+        } },
+    } });
+    var buffer: std.Io.Writer.Allocating = .init(a);
+    defer buffer.deinit();
+    try writeOutline(&buffer.writer, &session);
+    const parsed = try std.json.parseFromSlice(std.json.Value, a, buffer.written(), .{});
+    defer parsed.deinit();
+    const err = parsed.value.object.get("messages").?.array.items[0].object.get("error").?.object;
+    try std.testing.expectEqual(@as(i64, 400), err.get("status").?.integer);
+    try std.testing.expectEqualStrings("req_1", err.get("request_id").?.string);
+    try std.testing.expectEqualStrings("invalid_request_error: too long", err.get("detail").?.string);
 }
 
 test "a user message projects its content parts, and a position names each one" {

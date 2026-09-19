@@ -1649,6 +1649,24 @@
           "name": "message",
           "type": "string",
           "presence": "required"
+        },
+        {
+          "name": "status",
+          "doc": "The HTTP status of the provider answer, when the failure came from one.",
+          "type": "u16",
+          "presence": "optional"
+        },
+        {
+          "name": "request_id",
+          "doc": "The provider request id, when the answer named one.",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "detail",
+          "doc": "A bounded, control-free excerpt of the provider error, at most 512 bytes.",
+          "type": "string",
+          "presence": "optional"
         }
       ]
     },
@@ -2507,6 +2525,24 @@
           "name": "message",
           "type": "string",
           "presence": "required"
+        },
+        {
+          "name": "status",
+          "doc": "The HTTP status of the provider answer, when the failure came from one.",
+          "type": "u16",
+          "presence": "optional"
+        },
+        {
+          "name": "request_id",
+          "doc": "The provider request id, when the answer named one.",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "detail",
+          "doc": "A bounded, control-free excerpt of the provider error, at most 512 bytes.",
+          "type": "string",
+          "presence": "optional"
         }
       ]
     },

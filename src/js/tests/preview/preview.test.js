@@ -55,3 +55,9 @@ check("view-details", t.openTool("answer", 2) && root.overlays[0].content.sectio
 root.popOverlay(root.overlays[0]);
 check("reasoning-details", t.openReasoning("answer", 9) && root.overlays[0].content.sections[0].text === reasoning);
 root.popOverlay(root.overlays[0]);
+
+{
+  const rowsOf = (error) => { const e = new Transcript({ textOf: () => "" }); e.setOutline([{ id: 1, type: "assistant", error }], null); return e.rows(160, 0, e.rowCount(160)).map(rowText).join("\n"); };
+  check("error-row-every-part", rowsOf({ type: "provider", message: "the provider returned an unexpected status", status: 400, request_id: "req_1", detail: "invalid_request_error: too long" }).includes("⚠ the provider returned an unexpected status · HTTP 400 · invalid_request_error: too long · request req_1"));
+  check("error-row-sentence-only", rowsOf({ type: "provider", message: "the provider stream timed out" }).includes("⚠ the provider stream timed out") && !rowsOf({ type: "provider", message: "x" }).includes("HTTP"));
+}
