@@ -8,8 +8,8 @@ import { openAgents } from "yuke:agents-ui";
 
 /** @import { Context } from "yuke:ext" */
 /** @typedef {{ description?: string, model?: string, prompt?: string, tools?: string[] }} AgentRow */
-/** @typedef {{ default?: string, agents: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} AgentsOptions */
-/** @typedef {{ default: string, agents: Record<string, AgentRow>, maxConcurrent: number, maxDepth: number, maxRounds: number }} Catalog */
+/** @typedef {{ default?: string, catalog: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} AgentsOptions */
+/** @typedef {{ default: string, rows: Record<string, AgentRow>, maxConcurrent: number, maxDepth: number, maxRounds: number }} Catalog */
 /** @typedef {{ sessionId?: string | null, messageId?: number | null, partId?: number | null }} ToolContext */
 
 /** A catalog key is a child label; "root" is reserved. */
@@ -29,25 +29,25 @@ function invalid(message) { return new TypeError("agents: " + message); }
 function validate(raw) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw invalid("the options must be an object");
     const options = /** @type {Record<string, unknown>} */ (raw);
-    for (const field of Object.keys(options)) if (!["default", "agents", ...Object.keys(LIMITS)].includes(field)) throw invalid("unknown option " + field);
-    const rows = options.agents;
-    if (!rows || typeof rows !== "object" || Array.isArray(rows)) throw invalid("agents must be an object of catalog rows");
-    const agents = /** @type {Record<string, AgentRow>} */ (Object.create(null));
-    for (const [key, row] of Object.entries(rows)) {
+    for (const field of Object.keys(options)) if (!["default", "catalog", ...Object.keys(LIMITS)].includes(field)) throw invalid("unknown option " + field);
+    const given = options.catalog;
+    if (!given || typeof given !== "object" || Array.isArray(given)) throw invalid("catalog must be an object of rows");
+    const rows = /** @type {Record<string, AgentRow>} */ (Object.create(null));
+    for (const [key, row] of Object.entries(given)) {
         if (!KEY.test(key) || key === "root") throw invalid("bad key " + JSON.stringify(key));
         if (!row || typeof row !== "object" || Array.isArray(row)) throw invalid("row " + key + " must be an object");
         for (const field of Object.keys(row)) if (!["description", "model", "prompt", "tools"].includes(field)) throw invalid("row " + key + " has an unknown field " + field);
         for (const field of /** @type {const} */ (["description", "model", "prompt"])) if (row[field] !== undefined && (typeof row[field] !== "string" || !row[field].trim())) throw invalid("row " + key + " needs a nonempty string " + field);
         const tools = row.tools;
         if (tools !== undefined && (!Array.isArray(tools) || !tools.length || new Set(tools).size !== tools.length || tools.some((t) => !BUILTIN_TOOLS.includes(t)))) throw invalid("row " + key + " tools must be a nonempty unique subset of " + BUILTIN_TOOLS.join(", "));
-        agents[key] = { ...row };
+        rows[key] = { ...row };
     }
-    const keys = Object.keys(agents);
+    const keys = Object.keys(rows);
     if (!keys.length) throw invalid("the catalog needs at least one agent");
     const fallback = options.default === undefined && keys.length === 1 ? keys[0] : options.default;
-    if (typeof fallback !== "string" || !Object.hasOwn(agents, fallback)) throw invalid("default must name a catalog key");
+    if (typeof fallback !== "string" || !Object.hasOwn(rows, fallback)) throw invalid("default must name a catalog key");
     /** @type {Catalog} */
-    const catalog = { default: fallback, agents, ...LIMITS };
+    const catalog = { default: fallback, rows, ...LIMITS };
     for (const field of /** @type {const} */ (["maxConcurrent", "maxDepth", "maxRounds"])) {
         const value = options[field];
         if (value === undefined) continue;
@@ -59,7 +59,7 @@ function validate(raw) {
 
 /** @param {Catalog} catalog */
 function spawnDescription(catalog) {
-    const rows = Object.entries(catalog.agents).map(([key, row]) => "- `" + key + "`" + (row.description ? ": " + row.description : ""));
+    const rows = Object.entries(catalog.rows).map(([key, row]) => "- `" + key + "`" + (row.description ? ": " + row.description : ""));
     return "Start a child on one self-contained task. Give a complete brief: goal, files or areas, and the result to return. This call returns when the child starts. The report comes later as a new message. " + RULE + "\n\nAgents:\n" + rows.join("\n");
 }
 
@@ -106,7 +106,7 @@ export function agents(options) {
             ctx.hook("request.build", (request) => {
                 const key = request.context.parent_id ? request.context.agent_name : null;
                 if (key === null) return { replace: { ...request, system: request.system + "\n\n" + RULE } };
-                const row = catalog.agents[key];
+                const row = catalog.rows[key];
                 if (!row) return null;
                 const system = row.prompt ? request.system + "\n\n" + row.prompt : request.system;
                 const tools = row.tools ? request.tools.filter((/** @type {{ name: string }} */ tool) => row.tools?.includes(tool.name)) : request.tools;
@@ -114,7 +114,7 @@ export function agents(options) {
             });
             // A child that names a tool outside its row is stopped before the process runs it.
             ctx.hook("tool.before", (call) => {
-                const row = call.context.parent_id ? catalog.agents[call.context.agent_name] : null;
+                const row = call.context.parent_id ? catalog.rows[call.context.agent_name] : null;
                 if (!row?.tools || row.tools.includes(call.name)) return null;
                 return { block: "The tool " + call.name + " is not available to this agent." };
             });
@@ -123,7 +123,7 @@ export function agents(options) {
                 name: "spawn_agent", description: spawnDescription(catalog), spawnsAgents: true,
                 parameters: {
                     type: "object", properties: {
-                        agent: { type: "string", enum: Object.keys(catalog.agents), description: "A catalog key from the list. Omit it for the default agent." },
+                        agent: { type: "string", enum: Object.keys(catalog.rows), description: "A catalog key from the list. Omit it for the default agent." },
                         message: { type: "string", minLength: 1, description: "The full task for the child." },
                     }, required: ["message"], additionalProperties: false
                 },
@@ -131,7 +131,7 @@ export function agents(options) {
                     const args = argsOf(raw, ["agent", "message"]);
                     const parentSite = site(context);
                     const key = args.agent === undefined ? catalog.default : required(args, "agent");
-                    const row = catalog.agents[key];
+                    const row = catalog.rows[key];
                     if (!row) throw failure("bad_request", "Unknown agent: " + key);
                     const parent = await client.sessionGet(parentSite.session_id);
                     const result = await client.sessionCreate({

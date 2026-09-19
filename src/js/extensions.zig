@@ -609,7 +609,7 @@ test "the agents plugin sets the native limits from its options and a dispose re
     try f.init(
         \\import { plugins } from "yuke";
         \\import { agents } from "yuke/chat";
-        \\plugins.use(agents({ agents: { only: {} }, maxConcurrent: 2, maxDepth: 3 }));
+        \\plugins.use(agents({ catalog: { only: {} }, maxConcurrent: 2, maxDepth: 3 }));
     , kernel_boot);
     defer f.deinit();
     try std.testing.expectEqual(@as(u32, 2), f.app.engine.max_concurrent_children);
