@@ -167,10 +167,12 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
         return .{ .failed = failure(err) };
     };
     std.debug.assert(request != null);
+    // The build state dies here, so the projected transcript and the blob bytes do not stay live while the stream runs.
+    _ = round_state.reset(.free_all);
 
     const rt = streamer.session;
     const session_id = slot.sessionId();
-    beginRound(engine, slot) catch |err| return .{ .failed = failure(err) };
+    beginRound(engine, arena, slot) catch |err| return .{ .failed = failure(err) };
     const created_at = slot.progress.current.?.created_at_ms;
     const started_note: proto.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = .{
         .session_id = session_id,
@@ -193,6 +195,7 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
     var number: u8 = 1;
     while (true) : (number += 1) {
         streamer.reset();
+        _ = round_state.reset(.retain_capacity); // The storage of one attempt dies with it.
         var info: ai.transport.AttemptInfo = .{};
         const terminal = streamAttempt(engine, arena, slot, streamer, &request.?, &info) catch |err| {
             const delay_ms = retry.decide(engine.deps.retry_policy, .{
@@ -224,8 +227,8 @@ fn streamRound(engine: *Engine, slot: *RunSlot, streamer: *Streamer) Terminal {
 
 /// Record the wait on the slot, then publish it, so the wait shows as a retry and not a silent pause.
 fn publishRetrying(engine: *Engine, rt: *Session, slot: *RunSlot, number: u8, err: anyerror, delay_ms: u64) void {
-    // @todo(xyaman): log one line per attempt with the attempt number, provider, model, status, normalized code, provider request id, delivery engine, delay source, and remaining budget; never log the API key, so a user can inspect odd retry behavior.
     const detail = failure(err);
+    std.log.info("run {d} attempt {d} ended with {t}; the next attempt starts in {d} ms with {d} retries left", .{ slot.runId(), number, err, delay_ms, slot.retry_budget });
     std.debug.assert(slot.round == .waiting or slot.round == .streaming); // only a live attempt can fail
     slot.round = .{ .retrying = .{
         .run_id = slot.runId(),
@@ -280,7 +283,7 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !ai.P
     const held = try round_request.snapshot(arena, engine, slot, resolved);
     const projected = request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget) catch |err| switch (err) {
         error.ContextHistoryTooLarge => blk: {
-            try @import("compaction.zig").compactForRequest(engine, arena, slot, held.budget);
+            try @import("compaction.zig").compactForRequest(engine, arena, slot, held);
             break :blk try request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget);
         },
         else => return err,
@@ -344,8 +347,9 @@ fn commitRound(
     const session_id = slot.sessionId();
     var tx = try engine.deps.db.begin();
     defer tx.deinit();
-    const pending = try database.input.count(engine.deps.db, arena, session_id.raw);
-    const wants_next = result == .success and (has_tools or pending > 0);
+    // Only a success can continue, so only a success reads the queue, and one read serves the count and the consume.
+    const queued: []const database.input.Entry = if (result == .success) try database.input.list(engine.deps.db, arena, session_id.raw) else &.{};
+    const wants_next = result == .success and (has_tools or queued.len > 0);
     const capped = wants_next and if (slot.config.max_rounds) |cap| slot.progress.rounds_committed >= cap -| 1 else false;
     const terminal: Terminal = if (capped) .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } } else result;
     const final = !wants_next or capped;
@@ -391,7 +395,7 @@ fn commitRound(
         .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
         .outcome = outcome,
     }) else null;
-    const inputs = if (!final) try run.consumeQueued(engine.deps.db, engine.deps.io, arena, session_id.raw) else &.{};
+    const inputs = if (!final) try run.consumeEntries(engine.deps.db, engine.deps.io, arena, session_id.raw, queued) else &.{};
     try tx.commit();
     slot.progress.rounds_committed = rounds_committed;
     slot.progress.current = null;
@@ -406,13 +410,11 @@ fn commitRound(
 }
 
 /// Allocate the next round: allocate a message id, then advance the progress state.
-fn beginRound(engine: *Engine, slot: *RunSlot) !void {
+fn beginRound(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void {
     std.debug.assert(slot.progress.current == null);
-    var arena_state = std.heap.ArenaAllocator.init(engine.deps.gpa);
-    defer arena_state.deinit();
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
-    const message_id = try event_store.allocMessageId(engine.deps.db, arena_state.allocator(), slot.sessionId().raw);
+    const message_id = try event_store.allocMessageId(engine.deps.db, arena, slot.sessionId().raw);
     try tx.commit();
     slot.progress.current = .{ .message_id = message_id, .created_at_ms = engine.nowMillis() };
 }

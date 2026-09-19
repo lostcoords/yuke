@@ -98,8 +98,12 @@ pub fn beginQueuedTurnInTransaction(db: *Database, io: std.Io, arena: std.mem.Al
 
 /// Append pending inputs in FIFO order and remove them in the caller's transaction.
 pub fn consumeQueued(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8) ![]const message_store.Commit {
+    return consumeEntries(db, io, arena, session_id, try input_store.list(db, arena, session_id));
+}
+
+/// Commit the listed inputs as user messages inside the caller's transaction.
+pub fn consumeEntries(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, queued: []const input_store.Entry) ![]const message_store.Commit {
     std.debug.assert(@import("sql").inTransaction(db.conn));
-    const queued = try input_store.list(db, arena, session_id);
     const commits = try arena.alloc(message_store.Commit, queued.len);
     const now = util.nowMillis(io);
 

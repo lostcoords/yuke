@@ -27,23 +27,19 @@ pub const Response = struct {
     finish_reason: ai.FinishReason,
 };
 
-/// Run one call within the caller's cancelable task.
-pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, match: registry.Match, request: Request) !Response {
+/// Run one call in the caller's cancelable task with the caller-owned route and model.
+pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, held_route: registry.Route, spec: *const registry.ModelSpec, request: Request) !Response {
     std.debug.assert(request.blocks.len > 0);
     std.debug.assert(request.max_output_tokens > 0);
     try cancel.check(engine.deps.io); // A cancel that already landed reports no other refusal.
 
-    // A provider the merge could not complete has no route, so it cannot serve a call.
-    const live_route = registry.routeFor(match) orelse return error.UnknownModel;
-    // The registry can rebuild while this call runs, so the call holds its own copies.
-    var route = try proto.dupe(arena, live_route);
-    const spec = try proto.dupe(arena, match.model.*);
     // One call repeats no prefix, so it writes no cache breakpoint that it can never read back.
+    var route = held_route;
     route.route.cache = null;
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on this call.
     const secret = registry.credential(route.credential, engine.deps.execution.env, engine.nowMillis()) orelse return error.MissingCredential;
-    const ceiling = request_config.outputLimit(&spec);
+    const ceiling = request_config.outputLimit(spec);
     const limit = @min(request.max_output_tokens, ceiling);
     if (limit == 0) return error.ContextTooLarge;
 
@@ -55,7 +51,7 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
         .dialect = spec.dialect,
     };
 
-    const control = try request_config.reasoningFor(&spec, request.reasoning, limit);
+    const control = try request_config.reasoningFor(spec, request.reasoning, limit);
     // A budget shares the output ceiling, and this call sets a small ceiling for its answer alone.
     const reasoning: ai.ir.ReasoningControl = if (control == .budget) .default else control;
 
@@ -122,7 +118,8 @@ const Fixture = struct {
     }
 
     fn callWith(self: *Fixture, cancel: *Cancel, match: registry.Match, request: Request) !Response {
-        var handle = try self.resources.runtime.spawn(generateWith, .{ &self.engine, self.arena.allocator(), cancel, match, request });
+        const route = registry.routeFor(match) orelse return error.UnknownModel;
+        var handle = try self.resources.runtime.spawn(generateWith, .{ &self.engine, self.arena.allocator(), cancel, route, match.model, request });
         return handle.join();
     }
 };

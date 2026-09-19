@@ -5,6 +5,7 @@ const proto = @import("proto");
 const database = @import("../store/store.zig");
 const context = @import("context.zig");
 const request_config = @import("request_config.zig");
+const round_request = @import("request.zig");
 
 /// How much recent history one compaction keeps, in estimated tokens.
 pub const default_keep_recent_tokens: u64 = 20_000;
@@ -182,12 +183,12 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
 fn summarizeChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?proto.run.RunOutcome) !void {
     defer slot.cancel.finish(engine.deps.io);
     try slot.cancel.check(engine.deps.io);
-    const budget = try request_config.budgetFor(arena, engine, slot);
-    out.* = try summarize(engine, arena, slot, budget);
+    const match = engine.deps.providers.merged.resolveModel(slot.config.model) orelse return error.UnknownModel;
+    out.* = try summarize(engine, arena, slot, try round_request.snapshot(arena, engine, slot, match));
 }
 
 /// Compact an oversized context; the caller must project the new checkpoint before a request.
-pub fn compactForRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, budget: context.Budget) !void {
+pub fn compactForRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot) !void {
     std.debug.assert(slot.handle.started.kind == .turn);
     const rt = engine.sessions.get(slot.sessionId()) orelse return error.UnknownSession;
     std.debug.assert(rt.active_run == slot and slot.progress.current == null);
@@ -198,62 +199,49 @@ pub fn compactForRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSl
         slot.compacting = false;
         session_events.announceActivity(engine, rt);
     }
-    const outcome = try summarize(engine, arena, slot, budget);
+    const outcome = try summarize(engine, arena, slot, held);
     if (outcome != .compacted) return error.ContextHistoryTooLarge;
 }
 
-/// Write the instruction that trails the covered range. The turn system prompt leads the request.
-fn summaryInstruction(arena: std.mem.Allocator, merges: bool) ![]const u8 {
-    return std.mem.concat(arena, u8, &.{
-        summarizer_system_prompt,
-        "\n\n",
-        if (merges) merge_instructions else summarize_instructions,
-    });
-}
+/// The instruction that trails the covered range. The turn system prompt leads the request.
+const summarize_prompt = summarizer_system_prompt ++ "\n\n" ++ summarize_instructions;
+const merge_prompt = summarizer_system_prompt ++ "\n\n" ++ merge_instructions;
 
-/// Summarize the covered range and commit the checkpoint. A range with no work is a skip.
-fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, request_budget: context.Budget) !proto.run.RunOutcome {
+/// Summarize the covered range with the request snapshot of the turn, then commit the checkpoint.
+fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot) !proto.run.RunOutcome {
     try slot.cancel.check(engine.deps.io);
     const sid = slot.sessionId().raw;
     const db = engine.deps.db;
-    // The registry can rebuild across a file read, so each step reads the window it needs and holds no row.
-    const window = blk: {
-        const row = engine.deps.providers.merged.resolveModel(slot.config.model) orelse return error.UnknownModel;
-        break :blk row.model.limits.context_window orelse context.default_context_window;
-    };
+    const window = held.model.limits.context_window orelse context.default_context_window;
     const head = try context.readHead(engine.deps.gpa, arena, db, sid);
     var cut = (try selectCut(engine.deps.gpa, db, sid, if (head) |h| h.from_id else 0, tailTarget(window))) orelse
         return .{ .skipped = .{ .reason = .too_few_messages } };
     if (head) |h| cut.tokens_before += context.summaryTokens(h.message.compaction.summary);
-    if (cut.tokens_kept >= request_budget.input_ceiling) return error.TurnTooLarge;
-    // The merged registry can rebuild, so the resolve and the call stay in one step.
-    const match = engine.deps.providers.merged.resolveModel(slot.config.model) orelse return error.UnknownModel;
-    const live_route = registry.routeFor(match) orelse return error.UnknownModel;
-    // The summary repeats the system prompt and the tools of the turn, so it reuses the cached prefix.
-    const tools = try engine.deps.tools.getDecls(engine.deps.tools.ctx, arena, try request_config.selectionFor(engine, arena, slot));
+    if (cut.tokens_kept >= held.budget.input_ceiling) return error.TurnTooLarge;
     // `context.project` refuses a history above the budget, and a compaction runs only above it.
     const covered = try context.collect(engine.deps.gpa, arena, db, sid, head, cut.first_kept_id);
     // The summary reads no blob, so a text-only modality set turns every attachment into its note.
     const built = try provider.request_builder.build(arena, covered, .{
-        .target = .{ .protocol = live_route.route.protocol, .model = slot.config.model },
+        .target = .{ .protocol = held.route.route.protocol, .model = slot.config.model },
         .modalities = .{ .input = &.{.text} },
     });
     if (built.len == 0) return .{ .skipped = .{ .reason = .nothing_to_summarize } };
 
-    const budget = try context.Budget.forRequest(window, summary_output_tokens, slot.config.system_prompt, tools);
+    // The summary repeats the system prompt and the tools of the turn, so it reuses the cached prefix.
+    const budget = try context.Budget.forRequest(window, summary_output_tokens, held.build.system, held.build.tools);
     // No chunked summary exists, so a range above the window fails and never covers a part.
     if (cut.tokens_before > budget.input_ceiling) return error.CompactionSourceTooLarge;
 
     // The instruction trails the covered range, so every block above it repeats the turn prefix.
     const blocks = try arena.alloc(ai.ir.Block, built.len + 1);
     @memcpy(blocks[0..built.len], built);
-    blocks[built.len] = .{ .role = .user, .value = .{ .text = try summaryInstruction(arena, head != null) } };
+    blocks[built.len] = .{ .role = .user, .value = .{ .text = if (head != null) merge_prompt else summarize_prompt } };
 
     const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
-    const answer = try model_call.generateWith(engine, arena, &slot.cancel, match, .{
-        .system = slot.config.system_prompt,
+    const answer = try model_call.generateWith(engine, arena, &slot.cancel, held.route, &held.model, .{
+        .system = held.build.system,
         .blocks = blocks,
-        .tools = tools,
+        .tools = held.build.tools,
         .max_output_tokens = summary_output_tokens,
         .reasoning = slot.config.reasoning,
         .session_id = &session_hex,
@@ -261,7 +249,7 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, request_
     if (answer.finish_reason != .stop) return error.IncompleteSummary;
     if (std.mem.trim(u8, answer.text, " \t\r\n").len == 0) return error.EmptySummary;
     const after = cut.tokens_kept + context.summaryTokens(answer.text);
-    if (after > request_budget.input_ceiling or after >= cut.tokens_before) return error.CompactionDidNotFit;
+    if (after > held.budget.input_ceiling or after >= cut.tokens_before) return error.CompactionDidNotFit;
     try slot.cancel.check(engine.deps.io);
     return commit(engine, arena, slot, cut, answer.text);
 }

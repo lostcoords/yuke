@@ -138,14 +138,6 @@ pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, mo
     return build;
 }
 
-/// Manual compaction uses the same prompt, tools, output, and build hook as a turn.
-pub fn budgetFor(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot) !context.Budget {
-    const resolved = engine.deps.providers.merged.resolveModel(slot.config.model) orelse return error.UnknownModel;
-    const model = try proto.dupe(arena, resolved.model.*);
-    const build = try buildConfig(arena, engine, slot, &model);
-    return context.Budget.forRequest(model.limits.context_window, build.max_output_tokens, build.system, build.tools);
-}
-
 /// The build hook omits transcript blocks to avoid copies of attachment data.
 pub const RequestBuild = struct {
     model: []const u8,
