@@ -44,7 +44,7 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
     const model = held.model;
     const build = held.build;
     var blobs: BlobReader = .{ .arena = arena, .io = engine.deps.io, .store = engine.deps.blobs };
-    const request_ir = try provider.request_builder.build(arena, projected.messages, .{
+    const blocks = try provider.request_builder.build(arena, projected.messages, .{
         .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
         .modalities = model.modalities,
         .blobs = blobs.lookup(),
@@ -61,7 +61,7 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
         .caps = model.caps,
         .dialect = model.dialect,
     }, .{
-        .blocks = request_ir.blocks,
+        .blocks = blocks,
         .system = build.system,
         .tools = build.tools,
         .options = .{
@@ -103,7 +103,7 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
 /// The serialized request one round sends. A `request.send` handler may replace any field.
 const RequestSend = struct {
     url: []const u8,
-    headers: []const ai.instance.Header,
+    headers: []const ai.route.Header,
     body: []const u8,
 };
 

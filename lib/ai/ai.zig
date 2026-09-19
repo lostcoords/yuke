@@ -1,46 +1,51 @@
-//! This AI module exposes provider-neutral calls for three closed wire protocols.
+//! Provider-neutral model calls over three closed wire protocols.
 
 const std = @import("std");
+const call = @import("call.zig");
+const types = @import("types.zig");
 
-pub const types = @import("types.zig");
 pub const Protocol = types.Protocol;
 pub const FinishReason = types.FinishReason;
 pub const Usage = types.Usage;
-pub const ModelIdentity = types.ModelIdentity;
+pub const Modality = types.Modality;
+pub const Modalities = types.Modalities;
 pub const MediaSource = types.MediaSource;
-pub const Route = instance.Route;
-pub const Credential = resolve.Credential;
+pub const ModelIdentity = types.ModelIdentity;
+pub const limits = types.limits;
 
-pub const event = @import("stream/event.zig");
-
-pub const ir = @import("request/ir.zig");
-
-pub const model = @import("model.zig");
-/// The baked provider table. It needs no network and no control-plane account.
-pub const catalog = @import("catalog.zig");
-pub const instance = @import("instance/instance.zig");
-pub const resolve = @import("instance/resolve.zig");
-pub const failure = @import("failure.zig");
-pub const retry = @import("retry.zig");
-pub const transport = @import("transport.zig");
-pub const http_transport = @import("transport/http.zig");
-pub const call = @import("call.zig");
 pub const Client = call.Client;
 pub const Model = call.Model;
 pub const Request = call.Request;
 pub const Options = call.Options;
-pub const PreparedRequest = call.PreparedRequest;
 pub const Result = call.Result;
 pub const Content = call.Content;
-pub const Block = ir.Block;
-pub const Tool = ir.Tool;
-pub const OutputSchema = ir.OutputSchema;
-pub const ReasoningControl = ir.ReasoningControl;
+pub const PreparedRequest = call.PreparedRequest;
+pub const prepare = call.prepare;
+pub const consume = call.consume;
 pub const generateWithTransport = call.generateWithTransport;
 pub const generateTextWithTransport = call.generateTextWithTransport;
 pub const streamWithTransport = call.streamWithTransport;
-pub const prepare = call.prepare;
-pub const consume = call.consume;
+
+pub const Route = route.Route;
+pub const Credential = route.Credential;
+pub const Header = route.Header;
+
+/// The request blocks, tools, and reasoning controls.
+pub const ir = @import("request/ir.zig");
+/// The neutral stream events one call emits.
+pub const event = @import("stream/event.zig");
+/// The model vocabulary every provider source shares.
+pub const model = @import("model.zig");
+/// How one request reaches a provider, and the credential headers it presents.
+pub const route = @import("route.zig");
+/// The baked provider table. It needs no network and no control-plane account.
+pub const catalog = @import("catalog.zig");
+/// The transport contract, and the HTTP transport that fulfils it.
+pub const transport = @import("transport.zig");
+pub const failure = @import("failure.zig");
+pub const retry = @import("retry.zig");
+/// Canned transports for a test.
+pub const testing = @import("testing.zig");
 
 test {
     std.testing.refAllDecls(@This());

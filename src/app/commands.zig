@@ -134,7 +134,7 @@ test "auth.list reports the providers the environment offers, not only the file"
     defer env.deinit();
     try env.put("ANTHROPIC_API_KEY", "sk-env");
 
-    var transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+    var transport = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
     var blobs = std.testing.tmpDir(.{});
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
@@ -172,7 +172,7 @@ test "catalog.reload reads the file again and reports whether the revision moved
 
     var env: std.process.Environ.Map = .init(testing.allocator);
     defer env.deinit();
-    var transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+    var transport = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
     var blobs = std.testing.tmpDir(.{});
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;

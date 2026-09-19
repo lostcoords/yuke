@@ -28,11 +28,11 @@ pub fn Adapter(comptime protocol: types.Protocol) type {
 }
 
 /// Validate and serialize one request into `arena`, which must outlive the returned body.
-pub fn serialize(arena: std.mem.Allocator, protocol: types.Protocol, request: ir.Request, request_ir: ir.RequestIr) ![]u8 {
-    try ir.validate(arena, request, request_ir);
+pub fn serialize(arena: std.mem.Allocator, protocol: types.Protocol, request: ir.Request, blocks: []const ir.Block) ![]u8 {
+    try ir.validate(arena, request, blocks);
     var body: std.Io.Writer.Allocating = .init(arena);
     switch (protocol) {
-        inline else => |value| try Adapter(value).serialize(&body.writer, request, request_ir),
+        inline else => |value| try Adapter(value).serialize(&body.writer, request, blocks),
     }
     return body.written();
 }

@@ -1,7 +1,7 @@
 //! The provider catalog comes from the yuke control plane; do not edit it; run `zig build cataloggen` to regenerate it.
 
 const std = @import("std");
-const instance = @import("instance/instance.zig");
+const route = @import("route.zig");
 const model = @import("model.zig");
 
 /// One provider this library can call, and the models it serves.
@@ -12,10 +12,10 @@ pub const Provider = struct {
     auth: Auth,
     base_url: []const u8,
     /// The pinned headers. A live grant adds its identity headers at run time.
-    headers: []const instance.Header = &.{},
-    session_header: instance.SessionHeader = .none,
+    headers: []const route.Header = &.{},
+    session_header: route.SessionHeader = .none,
     /// One entry per protocol the host serves. Every model names one of them.
-    endpoints: []const instance.Endpoint,
+    endpoints: []const route.Endpoint,
     models: []const model.ModelSpec,
 };
 

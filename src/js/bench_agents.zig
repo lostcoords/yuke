@@ -12,7 +12,7 @@ const Tree = @This();
 pub const Shape = enum { wide, balanced };
 gpa: std.mem.Allocator,
 app: App,
-transport: ai.transport.CannedTransport,
+transport: ai.testing.CannedTransport,
 
 fn id(n: u64) proto.ids.SessionId {
     return .bytes(std.mem.toBytes(@as(u128, n + 1)));

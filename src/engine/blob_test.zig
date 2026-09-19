@@ -12,7 +12,7 @@ const toolset = @import("toolset.zig");
 const blob_store = database.blob;
 
 const png = blob_store.png_1x1;
-const vision: ai.types.Modalities = .{ .input = &.{ .text, .image } };
+const vision: ai.Modalities = .{ .input = &.{ .text, .image } };
 
 /// Write an image under the blob test directory and put it. The path is absolute.
 fn putImage(f: *Fixture, name: []const u8, data: []const u8) !proto.content.MediaBlob {
@@ -103,7 +103,7 @@ const ImageTool = struct {
 
 test "a tool image commits as media with a ref, and a ref the store lacks becomes a tool error" {
     var f: Fixture = undefined;
-    try f.init(.{ .modalities = vision, .replies = &.{ Resources.tool_reply, ai.transport.canned_reply, Resources.tool_reply, ai.transport.canned_reply } });
+    try f.init(.{ .modalities = vision, .replies = &.{ Resources.tool_reply, ai.testing.canned_reply, Resources.tool_reply, ai.testing.canned_reply } });
     defer f.deinit();
     const a = f.arena.allocator();
     const blob = try putImage(&f, "shot.png", png);
@@ -140,7 +140,7 @@ test "a tool image commits as media with a ref, and a ref the store lacks become
 
 test "removing the last session that names a blob unlinks it" {
     var f: Fixture = undefined;
-    try f.init(.{ .modalities = vision, .replies = &.{ ai.transport.canned_reply, ai.transport.canned_reply } });
+    try f.init(.{ .modalities = vision, .replies = &.{ ai.testing.canned_reply, ai.testing.canned_reply } });
     defer f.deinit();
     const a = f.arena.allocator();
 
@@ -165,7 +165,7 @@ test "a blob sync failure rejects input and converts tool media into an error" {
         }
     };
     var f: Fixture = undefined;
-    try f.init(.{ .replies = &.{ Resources.tool_reply, ai.transport.canned_reply } });
+    try f.init(.{ .replies = &.{ Resources.tool_reply, ai.testing.canned_reply } });
     defer f.deinit();
     const blob = try putImage(&f, "shot.png", png);
     const original = f.engine.deps.io;

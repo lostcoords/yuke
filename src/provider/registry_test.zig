@@ -5,7 +5,6 @@ const ai = @import("ai");
 const proto = @import("proto");
 const provider = @import("provider.zig");
 const registry = @import("registry.zig");
-const instance = ai.instance;
 const catalog = ai.catalog;
 
 const resolve = registry.resolve;
@@ -80,8 +79,8 @@ test "an id and a key alone resolve a full route from the catalog" {
 
     const route = routeOf(&rows[0]);
     try testing.expectEqualStrings("https://api.example/v1", route.route.base_url);
-    try testing.expectEqual(instance.Protocol.openai_chat, route.route.protocol);
-    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
+    try testing.expectEqual(ai.route.Protocol.openai_chat, route.route.protocol);
+    try testing.expectEqual(ai.route.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
     try testing.expectEqualStrings("sk-minimal", route.credential.literal);
     try testing.expectEqualStrings("x-catalog-version", route.route.headers[0].name);
 
@@ -104,7 +103,7 @@ test "a local field beats the catalog field by field" {
     const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})}, .env = &no_env });
     const route = routeOf(&rows[0]);
     try testing.expectEqualStrings("https://pinned.example/v1", route.route.base_url);
-    try testing.expectEqual(instance.Protocol.openai_chat, route.route.protocol);
+    try testing.expectEqual(ai.route.Protocol.openai_chat, route.route.protocol);
     try testing.expectEqual(@as(usize, 0), route.route.headers.len);
 }
 
@@ -156,9 +155,9 @@ test "a local codex grant routes with a bearer and its account header" {
     const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")}, .env = &no_env });
     const route = routeOf(&rows[0]);
     // The file stores only the grant, so the catalog row is what selects this shape.
-    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
-    try testing.expectEqual(instance.ResponsesDialect.codex, route.route.responses_dialect);
-    try testing.expectEqual(instance.SessionHeader.session_id, route.route.session_header);
+    try testing.expectEqual(ai.route.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
+    try testing.expectEqual(ai.route.ResponsesDialect.codex, route.route.responses_dialect);
+    try testing.expectEqual(ai.route.SessionHeader.session_id, route.route.session_header);
     try testing.expectEqualStrings("tok", route.credential.oauth.grant.access_token);
     try testing.expectEqualStrings("ChatGPT-Account-ID", route.credential.oauth.grant.headers[0].name);
     try testing.expectEqualStrings("acct", route.credential.oauth.grant.headers[0].value);
@@ -273,7 +272,7 @@ test "a gateway routes each model to the path it names, and the key header follo
     const row = &rows[0];
     try testing.expectEqual(@as(usize, 3), row.models.len);
 
-    const expected = [_]struct { id: []const u8, protocol: instance.Protocol, header: instance.ApiKeyHeader, cache: ?instance.CachePolicy }{
+    const expected = [_]struct { id: []const u8, protocol: ai.route.Protocol, header: ai.route.ApiKeyHeader, cache: ?ai.route.CachePolicy }{
         .{ .id = "msg", .protocol = .anthropic_messages, .header = .x_api_key, .cache = .anthropic_breakpoint },
         .{ .id = "chat", .protocol = .openai_chat, .header = .authorization_bearer, .cache = .automatic },
         .{ .id = "resp", .protocol = .openai_responses, .header = .authorization_bearer, .cache = null },
@@ -285,7 +284,7 @@ test "a gateway routes each model to the path it names, and the key header follo
         try testing.expectEqual(want.header, route.route.auth.api_key);
         try testing.expectEqual(want.cache, route.route.cache);
         // The host fields are the same on every path.
-        try testing.expectEqual(instance.SessionHeader.x_opencode_session, route.route.session_header);
+        try testing.expectEqual(ai.route.SessionHeader.x_opencode_session, route.route.session_header);
         try testing.expectEqualStrings("https://gateway.example/v1", route.route.base_url);
         try testing.expectEqualStrings("sk-gw", route.credential.literal);
     }

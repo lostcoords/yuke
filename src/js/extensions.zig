@@ -93,7 +93,7 @@ pub const Fixture = struct {
     root_buf: [std.fs.max_path_bytes]u8,
     reactor: *zio.Runtime,
     env: std.process.Environ.Map,
-    canned: ai.transport.CannedTransport,
+    canned: ai.testing.CannedTransport,
     app: App,
     extensions: Extensions,
 
@@ -104,7 +104,7 @@ pub const Fixture = struct {
         const root = self.root_buf[0..try self.tmp.dir.realPath(std.testing.io, &self.root_buf)];
         self.reactor = try zio.Runtime.init(self.gpa.allocator(), .{ .executors = .exact(1) });
         self.env = .init(self.gpa.allocator());
-        self.canned = .{ .bytes = ai.transport.canned_reply };
+        self.canned = .{ .bytes = ai.testing.canned_reply };
         // One context, so a split between the two owners is a test failure and not a silent drift.
         const context = execution.testContext(&self.env);
         try app_fixture.init(&self.app, self.gpa.allocator(), self.reactor.io(), root, context, self.canned.transport());

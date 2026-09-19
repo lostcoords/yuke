@@ -98,7 +98,7 @@ test "removing a credential keeps every route field and drops an entry that held
     try std.testing.expect(applyTo(.{ .id = "p", .auth = .{ .oauth = .{ .access_token = "t", .expires_at_ms = 1 } } }, .remove_credential) == null);
 
     // Each route field is configuration the user wrote, so the entry stays and only the value goes.
-    const endpoints = [_]ai.instance.Endpoint{.{ .protocol = .openai_chat }};
+    const endpoints = [_]ai.route.Endpoint{.{ .protocol = .openai_chat }};
     const kept = [_]provider.config.LocalProvider{
         .{ .id = "p", .auth = key, .base_url = "https://p.example/v1" },
         .{ .id = "p", .auth = key, .session_header = .x_opencode_session },

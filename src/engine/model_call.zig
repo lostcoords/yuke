@@ -24,7 +24,7 @@ pub const Request = struct {
 /// What one call returned. The text lives in the arena the caller passed.
 pub const Response = struct {
     text: []const u8,
-    finish_reason: ai.types.FinishReason,
+    finish_reason: ai.FinishReason,
 };
 
 /// Run one call within the caller's cancelable task.
@@ -186,7 +186,7 @@ test "a call carries the session id in the header the host names" {
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.testing.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
 
     var match = try mockMatch(a, .{ .literal = "secret" });

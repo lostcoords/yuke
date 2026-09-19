@@ -116,7 +116,7 @@ test "child reuse reports only the current run and preserves source through prom
     try testing.expectEqual(@as(u64, 1), history.messages[0].user.source.?.child_report.run_id);
     try testing.expectEqual(@as(u64, 2), history.messages[1].user.source.?.child_report.run_id);
     const request = try @import("../provider/request_builder.zig").build(a, history.messages, .{});
-    try testing.expectEqualStrings(second_text, request.blocks[1].value.text);
+    try testing.expectEqualStrings(second_text, request[1].value.text);
 }
 
 test "a full user queue cannot block a terminal report or clear protected input" {

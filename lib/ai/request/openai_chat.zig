@@ -7,7 +7,7 @@ const request_testing = @import("testing.zig");
 const types = @import("../types.zig");
 
 /// Write the OpenAI Chat Completions request body to `w`.
-pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr) !void {
+pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) !void {
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
 
@@ -56,12 +56,12 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     }
 
     var block_index: usize = 0;
-    while (block_index < request_ir.blocks.len) {
-        const block = request_ir.blocks[block_index];
+    while (block_index < blocks.len) {
+        const block = blocks[block_index];
         switch (block.value) {
             .tool_result => {
                 // A tool message holds text only, so the images of a run of results follow the run in one user message.
-                const results = request_ir.blocks[block_index..toolRunEnd(request_ir.blocks, block_index)];
+                const results = blocks[block_index..toolRunEnd(blocks, block_index)];
                 var has_media = false;
                 for (results) |result| {
                     std.debug.assert(result.role == .user and result.value == .tool_result);
@@ -72,19 +72,19 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                 block_index += results.len;
                 if (!has_media) continue;
                 // A strict host refuses two user messages in a row, so the images join the user text that follows.
-                const user_end = if (block_index < request_ir.blocks.len and request_ir.blocks[block_index].role == .user) userMessageEnd(request_ir.blocks, block_index) else block_index;
-                try writeUserMessage(&jw, results, request_ir.blocks[block_index..user_end]);
+                const user_end = if (block_index < blocks.len and blocks[block_index].role == .user) userMessageEnd(blocks, block_index) else block_index;
+                try writeUserMessage(&jw, results, blocks[block_index..user_end]);
                 block_index = user_end;
             },
             else => switch (block.role) {
                 .user => {
-                    const end_index = userMessageEnd(request_ir.blocks, block_index);
-                    try writeUserMessage(&jw, &.{}, request_ir.blocks[block_index..end_index]);
+                    const end_index = userMessageEnd(blocks, block_index);
+                    try writeUserMessage(&jw, &.{}, blocks[block_index..end_index]);
                     block_index = end_index;
                 },
                 .assistant => {
-                    const end_index = assistantMessageEnd(request_ir.blocks, block_index);
-                    try writeAssistantMessage(&jw, request_ir.blocks[block_index..end_index], request.reasoning_replay);
+                    const end_index = assistantMessageEnd(blocks, block_index);
+                    try writeAssistantMessage(&jw, blocks[block_index..end_index], request.reasoning_replay);
                     block_index = end_index;
                 },
             },
@@ -386,7 +386,7 @@ test "a host with no replay drops the reasoning block instead of failing" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -400,13 +400,13 @@ test "a replay host carries the reasoning back on the assistant message" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}],"reasoning_content":"ponder"}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning_content },
-        .{ .blocks = &blocks },
+        &blocks,
     );
     try expectJson(
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}],"reasoning":"ponder"}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -420,7 +420,7 @@ test "reasoning_details replays nothing rather than send a string" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning_details },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -434,7 +434,7 @@ test "a replayed reasoning text is escaped and joined across blocks" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"ok"}],"reasoning_content":"say \"hi\"\nthen stop"}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning_content },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -447,7 +447,7 @@ test "a reasoning block with no text leaves content null" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":null,"reasoning_content":"only"}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning_content },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -458,7 +458,7 @@ test "the output-token member follows the host" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_completion_tokens":8,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .max_tokens_field = .max_completion_tokens },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -482,7 +482,7 @@ test "each host dialect spells the reasoning control its own way" {
             .max_output_tokens = 8,
             .reasoning = .{ .effort = .high },
             .thinking_format = case.format,
-        }, .{ .blocks = &blocks });
+        }, &blocks);
         try testing.expect(std.mem.indexOf(u8, buf.written(), case.expected) != null);
     }
 }
@@ -503,7 +503,7 @@ test "off disables thinking in the dialect that has a switch" {
             .max_output_tokens = 8,
             .reasoning = .off,
             .thinking_format = case.format,
-        }, .{ .blocks = &blocks });
+        }, &blocks);
         try testing.expect(std.mem.indexOf(u8, buf.written(), case.expected) != null);
     }
     var deepseek: std.Io.Writer.Allocating = .init(testing.allocator);
@@ -513,7 +513,7 @@ test "off disables thinking in the dialect that has a switch" {
         .max_output_tokens = 8,
         .reasoning = .off,
         .thinking_format = .deepseek,
-    }, .{ .blocks = &blocks });
+    }, &blocks);
     try testing.expect(std.mem.indexOf(u8, deepseek.written(), "\"reasoning_effort\"") == null);
 }
 
@@ -523,7 +523,7 @@ test "no dialect writes no control" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning = .{ .effort = .high }, .thinking_format = .none },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -533,7 +533,7 @@ test "a plain user turn with a system prompt" {
         \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":1024,"messages":[{"role":"system","content":"be brief"},{"role":"user","content":[{"type":"text","text":"hello"}]}]}
     ,
         .{ .model = "gpt", .system = "be brief", .max_output_tokens = 1024 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -547,7 +547,7 @@ test "an assistant tool call has a JSON string and its result is standalone" {
         \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":64,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"}],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{\"c\":1}"}}]},{"role":"tool","tool_call_id":"call_1","content":"ok"}]}
     ,
         .{ .model = "gpt", .max_output_tokens = 64 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -566,7 +566,7 @@ test "tool images follow the whole run of tool messages, or join the user text t
     };
     try expectJson(
         \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{}"}},{"id":"call_2","type":"function","function":{"name":"read","arguments":"{}"}},{"id":"call_3","type":"function","function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"text"},{"role":"tool","tool_call_id":"call_2","content":"PNG image"},{"role":"tool","tool_call_id":"call_3","content":"text"},{"role":"user","content":[{"type":"text","text":"Image from tool call call_2:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,YWI="}}]},{"role":"assistant","content":[{"type":"text","text":"three files"}]}]}
-    , request, .{ .blocks = &run });
+    , request, &run);
 
     // A canceled turn ends on the result, so the next user text takes the image instead of a second user message.
     const merged = [_]ir.Block{
@@ -576,7 +576,7 @@ test "tool images follow the whole run of tool messages, or join the user text t
     };
     try expectJson(
         \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"PNG image"},{"role":"user","content":[{"type":"text","text":"Image from tool call call_1:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,YWI="}},{"type":"text","text":"what is it"}]}]}
-    , request, .{ .blocks = &merged });
+    , request, &merged);
 }
 
 test "tools declare a raw input schema and strict mode" {
@@ -586,7 +586,7 @@ test "tools declare a raw input schema and strict mode" {
         \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"tools":[{"type":"function","function":{"name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
         .{ .model = "gpt", .tools = &tools, .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -596,7 +596,7 @@ test "a schema constrains the response through response_format" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"response_format":{"type":"json_schema","json_schema":{"name":"person","schema":{"type":"object"},"strict":true}},"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}" } },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 
     // A caller that turns strict mode off must reach the wire, or the schema stops being a guarantee.
@@ -604,7 +604,7 @@ test "a schema constrains the response through response_format" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"response_format":{"type":"json_schema","json_schema":{"name":"person","schema":{"type":"object"},"strict":false}},"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}", .strict = false } },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -614,7 +614,7 @@ test "each attachment kind reaches its own content part" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,YWI="}}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8 },
-        .{ .blocks = &image },
+        &image,
     );
 
     const document = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "application/pdf", .filename = "a.pdf" } } }};
@@ -622,7 +622,7 @@ test "each attachment kind reaches its own content part" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"file","file":{"file_data":"data:application/pdf;base64,YWI=","filename":"a.pdf"}}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8 },
-        .{ .blocks = &document },
+        &document,
     );
 
     const sound = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "audio/mpeg" } } }};
@@ -630,7 +630,7 @@ test "each attachment kind reaches its own content part" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"YWI=","format":"mp3"}}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8 },
-        .{ .blocks = &sound },
+        &sound,
     );
 }
 
@@ -649,7 +649,7 @@ test "a part refuses a source its shape cannot carry" {
         const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = media } }};
         var buf: std.Io.Writer.Allocating = .init(testing.allocator);
         defer buf.deinit();
-        try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "m", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
+        try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "m", .max_output_tokens = 8 }, &blocks));
     }
 }
 
@@ -659,6 +659,6 @@ test "sampling members reach the chat request" {
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"temperature":1.5,"top_p":0.1,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .temperature = 1.5, .top_p = 0.1 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }

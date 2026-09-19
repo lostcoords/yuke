@@ -400,7 +400,7 @@ const Fixture = struct {
     root: []const u8,
     reactor: *zio.Runtime,
     env: std.process.Environ.Map,
-    canned: ai.transport.CannedTransport,
+    canned: ai.testing.CannedTransport,
     app: App,
     extensions: Extensions,
 
@@ -411,7 +411,7 @@ const Fixture = struct {
         self.reactor = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
         self.env = .init(testing.allocator);
         try self.env.put("ANTHROPIC_API_KEY", "sk-test");
-        self.canned = .{ .bytes = ai.transport.canned_reply };
+        self.canned = .{ .bytes = ai.testing.canned_reply };
         // One context, so a split between the two owners is a test failure and not a silent drift.
         const context = execution.testContext(&self.env);
         try app_fixture.init(&self.app, testing.allocator, self.reactor.io(), self.root, context, self.canned.transport());

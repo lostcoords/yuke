@@ -27,7 +27,7 @@ pub const App = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
     /// The HTTP client outlives the app tasks, because they read through it.
-    http_transport: ai.http_transport.HttpTransport,
+    http_transport: ai.transport.HttpTransport,
     db: database.Database,
     /// The blob directory the app owns. The engine borrows it as `deps.blobs.dir`.
     blob_dir: []const u8,
@@ -56,7 +56,7 @@ pub const App = struct {
         self.* = .{
             .gpa = gpa,
             .io = io,
-            .http_transport = ai.http_transport.HttpTransport.init(gpa, io, provider_idle_timeout, user_agent),
+            .http_transport = ai.transport.HttpTransport.init(gpa, io, provider_idle_timeout, user_agent),
             .db = undefined,
             .blob_dir = blob_dir,
             .logins = .init(gpa),
@@ -201,7 +201,7 @@ pub fn ensureDataDir(io: std.Io, dir: []const u8) !void {
 /// The test dependencies. An empty environment allocates nothing, so no test frees it.
 const app_fixture = @import("fixture.zig");
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
-var test_transport = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+var test_transport = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
 
 test "an environment with no base for the store stops startup instead of losing every session" {
     const testing = std.testing;

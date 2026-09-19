@@ -17,7 +17,7 @@ const Resources = @This();
 runtime: *zio.Runtime,
 env: std.process.Environ.Map,
 providers: ProviderStore,
-transport: ai.transport.CannedTransport,
+transport: ai.testing.CannedTransport,
 blobs: testing.TmpDir,
 blob_dir_buf: [std.fs.max_path_bytes]u8,
 blob_dir: []const u8,
@@ -27,7 +27,7 @@ pub fn init(self: *Resources) !void {
     self.runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     self.env = .init(std.testing.allocator);
     self.providers = .init(std.testing.allocator, self.runtime.io(), &self.env);
-    self.transport = .{ .bytes = ai.transport.canned_reply };
+    self.transport = .{ .bytes = ai.testing.canned_reply };
     self.blobs = testing.tmpDir(.{});
     self.blob_dir = self.blob_dir_buf[0..try self.blobs.dir.realPath(testing.io, &self.blob_dir_buf)];
     std.debug.assert(self.providers.env == &self.env);
@@ -94,8 +94,8 @@ pub const MockProviderOptions = struct {
     id: []const u8 = "mock",
     name: []const u8 = "Mock",
     base_url: []const u8 = "https://example.test",
-    protocol: ai.types.Protocol = .anthropic_messages,
-    headers: []const ai.transport.Header = &.{},
+    protocol: ai.Protocol = .anthropic_messages,
+    headers: []const ai.Header = &.{},
     credential: registry.CredentialSource = .none,
     authenticated: bool = false,
 };
@@ -103,17 +103,17 @@ pub const MockProviderOptions = struct {
 pub fn mockProvider(models: []const registry.ModelSpec, options: MockProviderOptions) registry.Provider {
     const endpoints = switch (options.protocol) {
         .anthropic_messages => if (options.authenticated)
-            &[_]ai.instance.Endpoint{.{ .protocol = .anthropic_messages, .key_header = .x_api_key }}
+            &[_]ai.route.Endpoint{.{ .protocol = .anthropic_messages, .key_header = .x_api_key }}
         else
-            &[_]ai.instance.Endpoint{.{ .protocol = .anthropic_messages }},
+            &[_]ai.route.Endpoint{.{ .protocol = .anthropic_messages }},
         .openai_chat => if (options.authenticated)
-            &[_]ai.instance.Endpoint{.{ .protocol = .openai_chat, .key_header = .authorization_bearer }}
+            &[_]ai.route.Endpoint{.{ .protocol = .openai_chat, .key_header = .authorization_bearer }}
         else
-            &[_]ai.instance.Endpoint{.{ .protocol = .openai_chat }},
+            &[_]ai.route.Endpoint{.{ .protocol = .openai_chat }},
         .openai_responses => if (options.authenticated)
-            &[_]ai.instance.Endpoint{.{ .protocol = .openai_responses, .key_header = .authorization_bearer }}
+            &[_]ai.route.Endpoint{.{ .protocol = .openai_responses, .key_header = .authorization_bearer }}
         else
-            &[_]ai.instance.Endpoint{.{ .protocol = .openai_responses }},
+            &[_]ai.route.Endpoint{.{ .protocol = .openai_responses }},
     };
     return .{
         .id = options.id,
@@ -169,7 +169,7 @@ pub const Capture = struct {
     arena: std.mem.Allocator,
     replies: []const []const u8,
     requests: std.ArrayList([]const u8) = .empty,
-    headers: std.ArrayList([]const ai.transport.Header) = .empty,
+    headers: std.ArrayList([]const ai.Header) = .empty,
 
     pub fn transport(self: *Capture) ai.transport.Transport {
         return .{ .ctx = self, .vtable = &.{ .open = open } };
@@ -179,11 +179,11 @@ pub const Capture = struct {
         const self: *Capture = @ptrCast(@alignCast(ctx));
         const index = self.requests.items.len;
         try self.requests.append(self.arena, try self.arena.dupe(u8, request.body));
-        const copied = try self.arena.alloc(ai.transport.Header, request.headers.len);
+        const copied = try self.arena.alloc(ai.Header, request.headers.len);
         for (request.headers, 0..) |h, i| copied[i] = try h.cloneLeaky(self.arena);
         try self.headers.append(self.arena, copied);
         if (index >= self.replies.len) return error.UnexpectedRequest;
-        const reader = try arena.create(ai.transport.ReplayReader);
+        const reader = try arena.create(ai.testing.ReplayReader);
         reader.* = .{ .bytes = self.replies[index] };
         return reader.body();
     }
@@ -203,8 +203,8 @@ pub const Fixture = struct {
     pub const id: proto.ids.SessionId = .bytes([_]u8{74} ** 16);
 
     pub const Options = struct {
-        modalities: ai.types.Modalities = .{},
-        replies: []const []const u8 = &.{ai.transport.canned_reply},
+        modalities: ai.Modalities = .{},
+        replies: []const []const u8 = &.{ai.testing.canned_reply},
     };
 
     pub fn init(self: *Fixture, options: Options) !void {

@@ -303,7 +303,7 @@ test "a request reaches a command and answers with its result" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     var env: std.process.Environ.Map = .init(testing.allocator);
-    var canned = ai.transport.CannedTransport{ .bytes = ai.transport.canned_reply };
+    var canned = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
     var blobs = testing.tmpDir(.{});
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;

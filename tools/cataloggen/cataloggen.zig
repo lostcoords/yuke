@@ -19,7 +19,7 @@ const preamble =
     \\//! The provider catalog comes from the yuke control plane; do not edit it; run `zig build cataloggen` to regenerate it.
     \\
     \\const std = @import("std");
-    \\const instance = @import("instance/instance.zig");
+    \\const route = @import("route.zig");
     \\const model = @import("model.zig");
     \\
     \\/// One provider this library can call, and the models it serves.
@@ -30,10 +30,10 @@ const preamble =
     \\    auth: Auth,
     \\    base_url: []const u8,
     \\    /// The pinned headers. A live grant adds its identity headers at run time.
-    \\    headers: []const instance.Header = &.{},
-    \\    session_header: instance.SessionHeader = .none,
+    \\    headers: []const route.Header = &.{},
+    \\    session_header: route.SessionHeader = .none,
     \\    /// One entry per protocol the host serves. Every model names one of them.
-    \\    endpoints: []const instance.Endpoint,
+    \\    endpoints: []const route.Endpoint,
     \\    models: []const model.ModelSpec,
     \\};
     \\
@@ -135,7 +135,7 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
     }
     try w.print("        .base_url = \"{f}\",\n", .{std.zig.fmtString(try string(provider, "base_url"))});
     try w.print("        .session_header = .{s},\n", .{
-        try routingName(vocab.instance.SessionHeader, try string(provider, "session_header")),
+        try routingName(vocab.route.SessionHeader, try string(provider, "session_header")),
     });
 
     try w.writeAll("        .headers = &.{");
@@ -182,7 +182,7 @@ fn emitEndpoint(run: *Run, endpoint: std.json.ObjectMap, scheme: vocab.model.Aut
     // Every grant presents a bearer, so an OAuth path names no header and an API-key path must name one.
     const header = switch (scheme) {
         .oauth => if (key_header == .null) "authorization_bearer" else return Error.InvalidDocument,
-        .api_key => try routingName(vocab.instance.ApiKeyHeader, try text(key_header)),
+        .api_key => try routingName(vocab.route.ApiKeyHeader, try text(key_header)),
     };
     const dialect = try routingName(vocab.ir.ResponsesDialect, try string(endpoint, "responses_dialect"));
     // The dialect is a Responses body rule, so another path cannot carry it.
@@ -192,7 +192,7 @@ fn emitEndpoint(run: *Run, endpoint: std.json.ObjectMap, scheme: vocab.model.Aut
     // A null policy means the control plane has not verified this path, so the route marks nothing.
     const cache = try member(endpoint, "cache");
     if (cache != .null) {
-        try w.print(", .cache = .{s}", .{try routingName(vocab.instance.CachePolicy, try text(cache))});
+        try w.print(", .cache = .{s}", .{try routingName(vocab.route.CachePolicy, try text(cache))});
     }
     try w.writeAll(" },\n");
     return tag;

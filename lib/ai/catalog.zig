@@ -3,9 +3,8 @@
 const std = @import("std");
 const generated = @import("catalog_gen.zig");
 const call = @import("call.zig");
-const credentials = @import("instance/resolve.zig");
-const instance = @import("instance/instance.zig");
 const model = @import("model.zig");
+const route = @import("route.zig");
 
 pub const Provider = generated.Provider;
 pub const Auth = generated.Auth;
@@ -31,7 +30,7 @@ pub fn split(selector: []const u8) Error!Selector {
 }
 
 /// Resolve `provider/model` against the baked table, which lives for the whole program.
-pub fn resolve(selector: []const u8, credential: credentials.Credential) Error!call.Model {
+pub fn resolve(selector: []const u8, credential: route.Credential) Error!call.Model {
     const parts = try split(selector);
     const provider = find(parts.provider) orelse return Error.UnknownProvider;
     for (provider.models) |*spec| {
@@ -49,14 +48,14 @@ pub fn resolve(selector: []const u8, credential: credentials.Credential) Error!c
 }
 
 /// Compose the route one model calls. The generator proves that each baked model names a declared endpoint with a credential.
-pub fn routeFor(provider: *const Provider, spec: *const model.ModelSpec) instance.Route {
-    const endpoint = instance.findEndpoint(provider.endpoints, spec.protocol).?;
+fn routeFor(provider: *const Provider, spec: *const model.ModelSpec) route.Route {
+    const endpoint = route.findEndpoint(provider.endpoints, spec.protocol).?;
     std.debug.assert(endpoint.key_header != null);
     return endpoint.route(provider.base_url, provider.headers, provider.session_header);
 }
 
 /// Bind this provider's key from the variable the catalog names, or answer null when it names none.
-pub fn envCredential(provider: *const Provider, env: *const std.process.Environ.Map) ?credentials.Credential {
+pub fn envCredential(provider: *const Provider, env: *const std.process.Environ.Map) ?route.Credential {
     // A grant needs a login flow, which this library never runs, so only an API key reads a variable.
     const name = switch (provider.auth) {
         .oauth => return null,
@@ -127,18 +126,18 @@ test "a route takes the host fields from the provider and the path fields from t
 
     // Two models on one host reach two paths, and the key header follows the path.
     const messages = routeFor(&gateway, &gateway.models[0]);
-    try testing.expectEqual(instance.Protocol.anthropic_messages, messages.protocol);
-    try testing.expectEqual(instance.ApiKeyHeader.x_api_key, messages.auth.api_key);
-    try testing.expectEqual(@as(?instance.CachePolicy, .anthropic_breakpoint), messages.cache);
+    try testing.expectEqual(route.Protocol.anthropic_messages, messages.protocol);
+    try testing.expectEqual(route.ApiKeyHeader.x_api_key, messages.auth.api_key);
+    try testing.expectEqual(@as(?route.CachePolicy, .anthropic_breakpoint), messages.cache);
     const chat = routeFor(&gateway, &gateway.models[1]);
-    try testing.expectEqual(instance.Protocol.openai_chat, chat.protocol);
-    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, chat.auth.api_key);
-    try testing.expectEqual(@as(?instance.CachePolicy, .automatic), chat.cache);
+    try testing.expectEqual(route.Protocol.openai_chat, chat.protocol);
+    try testing.expectEqual(route.ApiKeyHeader.authorization_bearer, chat.auth.api_key);
+    try testing.expectEqual(@as(?route.CachePolicy, .automatic), chat.cache);
 
-    for ([_]instance.Route{ messages, chat }) |route| {
-        try testing.expectEqualStrings("https://gateway.test/v1", route.base_url);
-        try testing.expectEqual(instance.SessionHeader.x_opencode_session, route.session_header);
-        try testing.expectEqualStrings("x-pinned", route.headers[0].name);
+    for ([_]route.Route{ messages, chat }) |composed| {
+        try testing.expectEqualStrings("https://gateway.test/v1", composed.base_url);
+        try testing.expectEqual(route.SessionHeader.x_opencode_session, composed.session_header);
+        try testing.expectEqualStrings("x-pinned", composed.headers[0].name);
     }
 
     // Every baked provider composes without a gap, so a table with a model on no endpoint cannot ship.

@@ -1,26 +1,19 @@
 //! The transport pulls response bytes from a `ResponseBody` and sends them to the SSE parser.
 
 const std = @import("std");
-const instance = @import("instance/instance.zig");
+const http = @import("transport/http.zig");
+const route = @import("route.zig");
 const sse = @import("stream/sse.zig");
 const event = @import("stream/event.zig");
 const types = @import("types.zig");
 
+pub const HttpTransport = http.HttpTransport;
+pub const HttpError = http.Error;
+
 /// Cap the whole response so one turn cannot grow memory without bound.
 const max_response_bytes = types.limits.max_response_bytes;
 
-/// A direct caller fills all fields; a route resolver can fill the URL and headers.
-pub const Header = instance.Header;
-
-pub fn headersValid(headers: []const Header) bool {
-    return instance.validHeaders(headers);
-}
-pub const Request = struct {
-    url: []const u8 = "",
-    headers: []const Header = &.{},
-    /// An HTTP writer sends the body from this buffer and shifts it on a partial write, so it mutates.
-    body: []u8,
-};
+pub const Request = route.Request;
 
 /// What one attempt learned. The adapter fills it; the retry classifier reads it after a failure.
 pub const AttemptInfo = struct {
@@ -84,29 +77,19 @@ pub fn stream(
     defer parser.deinit();
     var scratch: std.heap.ArenaAllocator = .init(gpa);
     defer scratch.deinit();
-    // The reducer appends events with its own gpa, so it owns this backing memory.
     var events: std.ArrayList(event.StreamEvent) = .empty;
-    defer events.deinit(reducer.gpa);
+    defer events.deinit(gpa);
 
     var saw_done = false;
     // The parser owns the payload until the next call, so the decode and the emit run first.
     while (try parser.next(body)) |data| {
         events.clearRetainingCapacity();
-        try decodeFrame(reducer, data, scratch.allocator(), &events);
+        try reducer.decode(data, scratch.allocator(), &events);
         try emit(events.items, &saw_done, ctx, onEvent);
         _ = scratch.reset(.retain_capacity);
     }
 
     if (!saw_done) return error.IncompleteStream; // Treat a stream without the terminal done event as truncated.
-}
-
-fn decodeFrame(
-    reducer: anytype,
-    data: []const u8,
-    scratch: std.mem.Allocator,
-    events: *std.ArrayList(event.StreamEvent),
-) !void {
-    return reducer.decode(data, scratch, events);
 }
 
 /// Hand each event to the callback. Reject an event after the terminal done.
@@ -123,78 +106,10 @@ fn emit(
     }
 }
 
-/// Replay canned bytes as one response body. A `chunk_size` of 0 fills the caller buffer.
-pub const ReplayReader = struct {
-    bytes: []const u8,
-    chunk_size: usize = 0,
-    offset: usize = 0,
-    /// The read fails with this error after it delivers every byte.
-    after: ?anyerror = null,
-
-    pub fn body(self: *ReplayReader) ResponseBody {
-        return .{ .ctx = self, .vtable = &vtable };
-    }
-
-    const vtable: ResponseBody.VTable = .{ .peek = peek, .toss = toss, .deinit = deinitNoop };
-
-    fn peek(ctx: *anyopaque) anyerror![]const u8 {
-        const self: *ReplayReader = @ptrCast(@alignCast(ctx));
-        const remaining = self.bytes[self.offset..];
-        if (remaining.len == 0) return if (self.after) |err| err else "";
-        if (self.chunk_size == 0) return remaining;
-        return remaining[0..@min(self.chunk_size, remaining.len)];
-    }
-    fn toss(ctx: *anyopaque, count: usize) void {
-        const self: *ReplayReader = @ptrCast(@alignCast(ctx));
-        std.debug.assert(count <= self.bytes.len - self.offset); // A toss never passes the last peek.
-        self.offset += count;
-    }
-    fn deinitNoop(_: *anyopaque) void {}
-};
-
-/// Wrap a JSON event body as one SSE event.
-pub fn sseFrame(comptime json: []const u8) []const u8 {
-    return "data: " ++ json ++ "\n\n";
-}
-
-/// A test uses this canned reply. The real path uses `HttpTransport`.
-pub const canned_reply =
-    sseFrame(
-        \\{"type":"message_start","message":{"usage":{"input_tokens":0}}}
-    ) ++ sseFrame(
-        \\{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-    ) ++ sseFrame(
-        \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from the yuke mock provider."}}
-    ) ++ sseFrame(
-        \\{"type":"content_block_stop","index":0}
-    ) ++ sseFrame(
-        \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}
-    ) ++ sseFrame(
-        \\{"type":"message_stop"}
-    );
-
-/// Replay one fixed reply for every open. A test uses it.
-pub const CannedTransport = struct {
-    bytes: []const u8,
-
-    pub fn transport(self: *CannedTransport) Transport {
-        return .{ .ctx = self, .vtable = &vtable };
-    }
-
-    const vtable: Transport.VTable = .{ .open = open };
-
-    /// Allocate a fresh reader in `arena`. Concurrent runs then share no offset state.
-    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) anyerror!ResponseBody {
-        _ = .{ request, info };
-        const self: *CannedTransport = @ptrCast(@alignCast(ctx));
-        const reader = try arena.create(ReplayReader);
-        reader.* = .{ .bytes = self.bytes };
-        return reader.body();
-    }
-};
-
 const testing = std.testing;
 const anthropic = @import("stream/anthropic.zig");
+const ReplayReader = @import("testing.zig").ReplayReader;
+const sseFrame = @import("testing.zig").sseFrame;
 
 const canned_text_turn =
     sseFrame(

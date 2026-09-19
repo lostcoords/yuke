@@ -238,16 +238,16 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, request_
         .target = .{ .protocol = live_route.route.protocol, .model = slot.config.model },
         .modalities = .{ .input = &.{.text} },
     });
-    if (built.blocks.len == 0) return .{ .skipped = .{ .reason = .nothing_to_summarize } };
+    if (built.len == 0) return .{ .skipped = .{ .reason = .nothing_to_summarize } };
 
     const budget = try context.Budget.forRequest(window, summary_output_tokens, slot.config.system_prompt, tools);
     // No chunked summary exists, so a range above the window fails and never covers a part.
     if (cut.tokens_before > budget.input_ceiling) return error.CompactionSourceTooLarge;
 
     // The instruction trails the covered range, so every block above it repeats the turn prefix.
-    const blocks = try arena.alloc(ai.ir.Block, built.blocks.len + 1);
-    @memcpy(blocks[0..built.blocks.len], built.blocks);
-    blocks[built.blocks.len] = .{ .role = .user, .value = .{ .text = try summaryInstruction(arena, head != null) } };
+    const blocks = try arena.alloc(ai.ir.Block, built.len + 1);
+    @memcpy(blocks[0..built.len], built);
+    blocks[built.len] = .{ .role = .user, .value = .{ .text = try summaryInstruction(arena, head != null) } };
 
     const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
     const answer = try model_call.generateWith(engine, arena, &slot.cancel, match, .{
@@ -628,7 +628,7 @@ test "a request inside its budget reads the checkpoint and context sizes once" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.testing.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
     const c = @import("zqlite").c;
     const statements = .{
@@ -655,7 +655,7 @@ test "automatic compaction preserves the exact tail and the next assistant id" {
     try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 30_000);
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 7000);
-    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ ai.transport.canned_reply, ai.transport.canned_reply } };
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ ai.testing.canned_reply, ai.testing.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try sendAndWait(&f, a, "keep the exact tail");
     try testing.expectEqual(@as(usize, 2), capture.requests.items.len);
@@ -702,7 +702,7 @@ test "the summary call repeats the prefix of the turn and refuses a tool" {
     };
     var tool_ctx: u8 = 0;
     f.engine.installTools(.{ .ctx = &tool_ctx, .getDecls = Tools.decls });
-    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.testing.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
 
     _ = try f.run(.manual);
@@ -737,7 +737,7 @@ test "the summary call omits an image on a vision model and never reads the stor
     try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
-    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.testing.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
 
     const outcome = try f.run(.manual);
@@ -757,7 +757,7 @@ test "the summary call reasons at the session level" {
     const a = arena.allocator();
     f.models[0].reasoning_levels = &.{.{ .named = "high" }};
     try seedCompactableHistory(&f.db, a);
-    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.testing.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
 
     _ = try f.run(.manual);
@@ -777,7 +777,7 @@ test "a budget control never rides the summary call, because it would spend the 
     // This ceiling sits under the summary output limit, so a budget would take most of the answer.
     f.models[0].dialect.reasoning_budget = .{ .range = .{ .max = 2000 } };
     try seedCompactableHistory(&f.db, a);
-    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.transport.canned_reply} };
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.testing.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
 
     _ = try f.run(.manual);
@@ -798,7 +798,7 @@ test "an incomplete or empty summary leaves the checkpoint unchanged" {
         f.session = try f.engine.activate(.bytes(TaskFixture.sid));
         try seedMessage(&f.db, a, TaskFixture.sid, 6, .user, 300);
         try seedMessage(&f.db, a, TaskFixture.sid, 7, .assistant, 70_000);
-        const changed = try std.mem.replaceOwned(u8, a, ai.transport.canned_reply, "end_turn", stop);
+        const changed = try std.mem.replaceOwned(u8, a, ai.testing.canned_reply, "end_turn", stop);
         f.resources.transport.bytes = if (std.mem.eql(u8, stop, "end_turn"))
             try std.mem.replaceOwned(u8, a, changed, "Hello from the yuke mock provider.", "   ")
         else
@@ -852,7 +852,7 @@ test "a tool round can compact and resume within the same run" {
         }
     };
     f.engine.installTools(.{ .run = Tool.run });
-    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ Resources.tool_reply, ai.transport.canned_reply, ai.transport.canned_reply } };
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ Resources.tool_reply, ai.testing.canned_reply, ai.testing.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try sendAndWait(&f, a, "continue after the tool");
     try testing.expectEqual(@as(usize, 3), capture.requests.items.len);
@@ -877,7 +877,7 @@ test "a summary that grows the context does not replace the checkpoint" {
     defer arena.deinit();
     const a = arena.allocator();
     try seedCompactableHistory(&f.db, a);
-    f.resources.transport.bytes = try std.mem.replaceOwned(u8, a, ai.transport.canned_reply, "Hello from the yuke mock provider.", "x" ** 6000);
+    f.resources.transport.bytes = try std.mem.replaceOwned(u8, a, ai.testing.canned_reply, "Hello from the yuke mock provider.", "x" ** 6000);
     const outcome = try f.run(.manual);
     try testing.expect(outcome == .failed);
     try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, outcome.failed.code);
@@ -945,7 +945,7 @@ test "repeated compaction merges the prior summary and charges only the active c
     defer arena.deinit();
     const a = arena.allocator();
     try seedCompactableHistory(&f.db, a);
-    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ ai.transport.canned_reply, ai.transport.canned_reply } };
+    var capture: Resources.Capture = .{ .arena = a, .replies = &.{ ai.testing.canned_reply, ai.testing.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try testing.expect(try f.run(.manual) == .compacted);
     f.session = try f.engine.activate(.bytes(TaskFixture.sid));
@@ -997,7 +997,7 @@ test "a smaller summary that still exceeds the request budget does not commit" {
     try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 30_000);
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 7000);
-    const reply = try std.mem.replaceOwned(u8, a, ai.transport.canned_reply, "Hello from the yuke mock provider.", "x" ** 1800);
+    const reply = try std.mem.replaceOwned(u8, a, ai.testing.canned_reply, "Hello from the yuke mock provider.", "x" ** 1800);
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{reply} };
     f.engine.deps.route_transport = capture.transport();
     const outcome = try f.run(.manual);

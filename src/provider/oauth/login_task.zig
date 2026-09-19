@@ -253,7 +253,7 @@ const Probe = struct {
     blob_dir: [std.fs.max_path_bytes]u8 = undefined,
     slot: *login_runtime.LoginSlot = undefined,
     canned: oauth.CannedHttp,
-    transport: ai.transport.CannedTransport = .{ .bytes = ai.transport.canned_reply },
+    transport: ai.testing.CannedTransport = .{ .bytes = ai.testing.canned_reply },
     outcome: ?proto.auth.AuthLoginOutcome = null,
 
     fn init(self: *Probe, io: std.Io, replies: []const oauth.CannedHttp.Reply) !void {

@@ -1,6 +1,7 @@
 //! Stream one SSE response through `std.http.Client` with caller-supplied `std.Io`.
 
 const std = @import("std");
+const route = @import("../route.zig");
 const transport = @import("../transport.zig");
 const json = @import("../stream/json.zig");
 
@@ -29,9 +30,9 @@ pub const HttpTransport = struct {
     /// The client sends this value on every request, so a gateway can identify the agent.
     user_agent: []const u8,
 
-    /// The client dials and reads through `io`, which controls cancellation and concurrency.
+    /// The client dials and reads through `io`, and borrows `user_agent` until `deinit`.
     pub fn init(gpa: Allocator, io: std.Io, idle_timeout: ?std.Io.Duration, user_agent: []const u8) HttpTransport {
-        std.debug.assert(transport.headersValid(&.{.{ .name = "user-agent", .value = user_agent }}));
+        std.debug.assert(route.validHeaders(&.{.{ .name = "user-agent", .value = user_agent }}));
         return .{ .client = .{ .allocator = gpa, .io = io }, .idle_timeout = idle_timeout, .user_agent = user_agent };
     }
 
@@ -48,7 +49,7 @@ pub const HttpTransport = struct {
 
     fn open(ctx: *anyopaque, arena: Allocator, request: transport.Request, info: *transport.AttemptInfo) anyerror!transport.ResponseBody {
         const self: *HttpTransport = @ptrCast(@alignCast(ctx));
-        if (!transport.headersValid(request.headers)) return Error.InvalidHeaders;
+        if (!route.validHeaders(request.headers)) return Error.InvalidHeaders;
         const uri = std.Uri.parse(request.url) catch return Error.BadUrl;
 
         // The provider sends SSE, so request it. The transport owns Accept and User-Agent, so a route copy is dropped.
@@ -365,7 +366,7 @@ fn runClient(out: *ClientOut) !void {
     var url_buf: [64]u8 = undefined;
     const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/messages", .{out.port});
     // A route that pins its own User-Agent must not produce a second header line.
-    const headers = [_]transport.Header{
+    const headers = [_]route.Header{
         .{ .name = "x-api-key", .value = "test-key" },
         .{ .name = "User-Agent", .value = "pinned/9" },
     };

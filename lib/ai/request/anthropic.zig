@@ -7,8 +7,8 @@ const request_testing = @import("testing.zig");
 const types = @import("../types.zig");
 
 /// Write the request JSON to `w`.
-pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr) !void {
-    std.debug.assert(request_ir.blocks.len != 0); // Anthropic needs at least one message.
+pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) !void {
+    std.debug.assert(blocks.len != 0); // Anthropic needs at least one message.
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
 
@@ -55,12 +55,12 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     }
 
     // A thinking block cannot carry the marker. Mark the last eligible block.
-    const cache_index = if (cache) lastCacheable(request_ir.blocks) else null;
+    const cache_index = if (cache) lastCacheable(blocks) else null;
 
     try jw.objectField("messages");
     try jw.beginArray();
     var role: ?ir.Role = null;
-    for (request_ir.blocks, 0..) |block, i| {
+    for (blocks, 0..) |block, i| {
         if (role == null or role.? != block.role) {
             if (role != null) try endMessage(&jw);
             try beginMessage(&jw, block.role);
@@ -254,7 +254,7 @@ test "a plain user turn with a system prompt" {
         \\{"model":"claude","max_tokens":1024,"stream":true,"system":[{"type":"text","text":"be brief"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}
     ,
         .{ .model = "claude", .system = "be brief", .max_output_tokens = 1024 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -264,7 +264,7 @@ test "adaptive thinking rides on the request" {
         \\{"model":"MiniMax-M3","max_tokens":8,"stream":true,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
         .{ .model = "MiniMax-M3", .max_output_tokens = 8, .reasoning = .adaptive },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -274,7 +274,7 @@ test "a token budget writes the enabled shape" {
         \\{"model":"claude","max_tokens":8192,"stream":true,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8192, .reasoning = .{ .budget = 4096 } },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -284,13 +284,13 @@ test "off writes disabled and the default omits the member" {
         \\{"model":"claude","max_tokens":8,"stream":true,"thinking":{"type":"disabled"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8, .reasoning = .off },
-        .{ .blocks = &blocks },
+        &blocks,
     );
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8, .reasoning = .default },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -300,7 +300,7 @@ test "a named effort rides on output_config, not on thinking" {
         \\{"model":"claude","max_tokens":8,"stream":true,"output_config":{"effort":"high"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -314,7 +314,7 @@ test "a tool call and its result coalesce by role" {
         \\{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"tool_use","id":"toolu_1","name":"run","input":{"c":1}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 64 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -327,7 +327,7 @@ test "a tool result with an image writes a content array and keeps the marker on
     };
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"PNG image"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}}],"is_error":false},{"type":"tool_result","tool_use_id":"toolu_2","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}}],"is_error":false,"cache_control":{"type":"ephemeral"}}]}]}
-    , .{ .model = "claude", .max_output_tokens = 8, .cache = .anthropic }, .{ .blocks = &blocks });
+    , .{ .model = "claude", .max_output_tokens = 8, .cache = .anthropic }, &blocks);
 }
 
 test "tools declare a raw input schema" {
@@ -337,7 +337,7 @@ test "tools declare a raw input schema" {
         \\{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"run","description":"run a command","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
         .{ .model = "claude", .tools = &tools, .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -350,7 +350,7 @@ test "cache marks the system block and the last content block" {
         \\{"model":"claude","max_tokens":8,"stream":true,"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"one"},{"type":"text","text":"two","cache_control":{"type":"ephemeral"}}]}]}
     ,
         .{ .model = "claude", .system = "sys", .max_output_tokens = 8, .cache = .anthropic },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -363,7 +363,7 @@ test "cache skips a trailing thinking block and marks the last eligible block" {
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer","cache_control":{"type":"ephemeral"}},{"type":"thinking","thinking":"ponder","signature":"sig"}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8, .cache = .anthropic },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -377,7 +377,7 @@ test "an image and a document reach their own block shapes" {
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}},{"type":"document","source":{"type":"url","url":"https://x.test/a.pdf"}},{"type":"image","source":{"type":"file","file_id":"file_1"}}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -386,7 +386,7 @@ test "anthropic reads no sound and no moving picture" {
         const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = mime } } }};
         var buf: std.Io.Writer.Allocating = .init(testing.allocator);
         defer buf.deinit();
-        try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
+        try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, &blocks));
     }
 }
 
@@ -396,7 +396,7 @@ test "a schema constrains the response through output_config" {
         \\{"model":"claude","max_tokens":8,"stream":true,"output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8, .output_schema = .{ .schema = "{\"type\":\"object\"}" } },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -411,7 +411,7 @@ test "an effort and a schema share the one output_config" {
             .reasoning = .{ .effort = .high },
             .output_schema = .{ .schema = "{\"type\":\"object\"}" },
         },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -421,14 +421,14 @@ test "a plain-text document rides in a text source, and an unknown type is refus
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"note"}}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8 },
-        .{ .blocks = &text_doc },
+        &text_doc,
     );
 
     // A document is a PDF or plain text; anything else has no source shape and must not be mislabelled.
     const spreadsheet = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "application/zip" } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, .{ .blocks = &spreadsheet }));
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, &spreadsheet));
 }
 
 test "sampling members ride beside the token ceiling" {
@@ -437,7 +437,7 @@ test "sampling members ride beside the token ceiling" {
         \\{"model":"claude","max_tokens":8,"stream":true,"temperature":0.7,"top_p":0.9,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8, .temperature = 0.7, .top_p = 0.9 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 
     // A null value leaves the endpoint default, so the member never reaches the wire.
@@ -445,6 +445,6 @@ test "sampling members ride beside the token ceiling" {
         \\{"model":"claude","max_tokens":8,"stream":true,"temperature":0,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
         .{ .model = "claude", .max_output_tokens = 8, .temperature = 0 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }

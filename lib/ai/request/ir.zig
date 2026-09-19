@@ -62,10 +62,6 @@ pub fn modalityOf(mime: []const u8) types.Modality {
     return .pdf;
 }
 
-pub const RequestIr = struct {
-    blocks: []const Block,
-};
-
 /// A tool definition for the provider. `input_schema` holds raw JSON Schema text.
 pub const Tool = struct {
     name: []const u8,
@@ -138,7 +134,7 @@ pub const Request = struct {
     max_tokens_field: MaxTokensField = .max_tokens,
     /// Only Responses reads this field. The bound credential selects it, not the model.
     responses_dialect: ResponsesDialect = .standard,
-    /// The marker this request writes. The instance cache policy selects it.
+    /// The marker this request writes. The route cache policy selects it.
     cache: types.CacheMarker = .none,
     /// Only Responses reads this field. One stable key per session routes a repeated prefix to one cache.
     cache_key: []const u8 = "",
@@ -156,12 +152,12 @@ pub const Request = struct {
 pub const ToolChoice = enum { auto, none };
 
 /// Check one request, and bound the input bytes it carries before a serializer reads it.
-pub fn validate(arena: std.mem.Allocator, request: Request, request_ir: RequestIr) !void {
+pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Block) !void {
     if (request.model.len == 0 or request.model.len > types.limits.max_string_bytes) return error.InvalidRequest;
     if (request.system.len > types.limits.max_string_bytes) return error.InvalidRequest;
     if (request.cache_key.len > types.limits.max_cache_key_bytes or !stringValid(request.cache_key)) return error.InvalidRequest;
     if (request.max_output_tokens == 0) return error.InvalidRequest;
-    if (request_ir.blocks.len == 0 or request_ir.blocks.len > types.limits.max_blocks) return error.InvalidRequest;
+    if (blocks.len == 0 or blocks.len > types.limits.max_blocks) return error.InvalidRequest;
     if (request.tools.len > types.limits.max_blocks) return error.InvalidRequest;
 
     // A saturating total needs no overflow branch, because the cap rejects the saturated value.
@@ -183,7 +179,7 @@ pub fn validate(arena: std.mem.Allocator, request: Request, request_ir: RequestI
         try validateObject(arena, output.schema);
         total +|= output.name.len +| output.schema.len;
     }
-    for (request_ir.blocks) |block| {
+    for (blocks) |block| {
         try validateBlock(arena, block);
         total +|= blockBytes(block);
         if (total > types.limits.max_request_bytes) return error.RequestTooLarge;
@@ -269,26 +265,26 @@ test "request validation rejects role mismatches and malformed raw JSON" {
     const base: Request = .{ .model = "m", .max_output_tokens = 1 };
 
     const bad_role = [_]Block{.{ .role = .user, .value = .{ .reasoning = .{ .text = "why", .signature = "sig" } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &bad_role }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_role));
 
     const bad_json = [_]Block{.{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call", .name = "tool", .arguments = "[1]" } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &bad_json }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_json));
 
     const empty_image = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call", .content = "", .is_error = false, .media = &.{.{ .source = .{ .bytes = "" }, .mime = "image/png" }} } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &empty_image }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &empty_image));
 
     const bad_result_role = [_]Block{.{ .role = .assistant, .value = .{ .tool_result = .{ .call_id = "call", .content = "ok", .is_error = false } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &bad_result_role }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_result_role));
 
     const bad_media_role = [_]Block{.{ .role = .assistant, .value = .{ .media = .{ .source = .{ .url = "https://example.test/image.png" }, .mime = "image/png" } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &bad_media_role }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_media_role));
 
     const invalid_utf8 = [_]u8{0xff};
     const bad_text = [_]Block{.{ .role = .user, .value = .{ .text = &invalid_utf8 } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &bad_text }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_text));
 
     const empty_media = [_]Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "" }, .mime = "image/png" } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &empty_media }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &empty_media));
 }
 
 test "request validation enforces count, size, and token boundaries" {
@@ -298,40 +294,40 @@ test "request validation enforces count, size, and token boundaries" {
     const block = [_]Block{.{ .role = .user, .value = .{ .text = "hi" } }};
     const base: Request = .{ .model = "m", .max_output_tokens = 1 };
 
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &.{} }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &.{}));
 
     var no_tokens = base;
     no_tokens.max_output_tokens = 0;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), no_tokens, .{ .blocks = &block }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), no_tokens, &block));
 
     const too_long = "x" ** (types.limits.max_string_bytes + 1);
     var long_model = base;
     long_model.model = too_long;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), long_model, .{ .blocks = &block }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), long_model, &block));
 
     // The host refuses a key over the cap, so a caller learns it here and not from a 400.
     var long_key = base;
     long_key.cache_key = "k" ** (types.limits.max_cache_key_bytes + 1);
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), long_key, .{ .blocks = &block }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), long_key, &block));
     var full_key = base;
     full_key.cache_key = "k" ** types.limits.max_cache_key_bytes;
-    try validate(arena.allocator(), full_key, .{ .blocks = &block });
+    try validate(arena.allocator(), full_key, &block);
 
     var too_many_blocks: [types.limits.max_blocks + 1]Block = undefined;
     for (&too_many_blocks) |*item| item.* = block[0];
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, .{ .blocks = &too_many_blocks }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &too_many_blocks));
 
     var too_many_tools: [types.limits.max_blocks + 1]Tool = undefined;
     for (&too_many_tools) |*tool| tool.* = .{ .name = "tool", .description = "", .input_schema = "{}" };
     var many_tools = base;
     many_tools.tools = &too_many_tools;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), many_tools, .{ .blocks = &block }));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), many_tools, &block));
 
     // The byte total is its own bound, because a legal block count still carries any size of text.
     const chunk = "x" ** types.limits.max_string_bytes;
     var oversized: [types.limits.max_request_bytes / chunk.len]Block = undefined;
     for (&oversized) |*item| item.* = .{ .role = .user, .value = .{ .text = chunk } };
-    try testing.expectError(error.RequestTooLarge, validate(arena.allocator(), base, .{ .blocks = &oversized }));
+    try testing.expectError(error.RequestTooLarge, validate(arena.allocator(), base, &oversized));
 }
 
 test "an output schema must name a JSON object" {
@@ -339,22 +335,21 @@ test "an output schema must name a JSON object" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const blocks = [_]Block{.{ .role = .user, .value = .{ .text = "hi" } }};
-    const request_ir: RequestIr = .{ .blocks = &blocks };
     const base: Request = .{ .model = "m", .max_output_tokens = 1 };
-    try validate(arena.allocator(), base, request_ir);
+    try validate(arena.allocator(), base, &blocks);
 
     var not_an_object = base;
     not_an_object.output_schema = .{ .schema = "[1]" };
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), not_an_object, request_ir));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), not_an_object, &blocks));
 
     // An empty schema constrains nothing, so it is a mistake rather than a default.
     var empty = base;
     empty.output_schema = .{ .schema = "" };
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), empty, request_ir));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), empty, &blocks));
 
     var unnamed = base;
     unnamed.output_schema = .{ .name = "", .schema = "{}" };
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), unnamed, request_ir));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), unnamed, &blocks));
 }
 
 test "a sampling value outside its domain is refused" {
@@ -362,24 +357,23 @@ test "a sampling value outside its domain is refused" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const blocks = [_]Block{.{ .role = .user, .value = .{ .text = "hi" } }};
-    const request_ir: RequestIr = .{ .blocks = &blocks };
     const base: Request = .{ .model = "m", .max_output_tokens = 1 };
 
     var hot = base;
     hot.temperature = -0.1;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), hot, request_ir));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), hot, &blocks));
 
     // A non-finite value serializes to text no JSON parser accepts.
     var nan = base;
     nan.temperature = std.math.nan(f64);
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), nan, request_ir));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), nan, &blocks));
 
     var mass = base;
     mass.top_p = 1.5;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), mass, request_ir));
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), mass, &blocks));
 
     var ok = base;
     ok.temperature = 2;
     ok.top_p = 1;
-    try validate(arena.allocator(), ok, request_ir);
+    try validate(arena.allocator(), ok, &blocks);
 }

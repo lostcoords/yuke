@@ -13,7 +13,7 @@ const Projection = @This();
 
 gpa: std.mem.Allocator,
 app: App,
-transport: ai.transport.CannedTransport,
+transport: ai.testing.CannedTransport,
 session: *Session,
 session_id: proto.ids.SessionId,
 stream_offset: usize = 0,

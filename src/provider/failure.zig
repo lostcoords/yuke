@@ -60,7 +60,7 @@ test "every transport class reports a network or timeout code" {
         error.NetworkUnreachable,
         error.NameServerFailure,
         error.IncompleteStream,
-        ai.http_transport.Error.IdleTimeout,
+        ai.transport.HttpError.IdleTimeout,
     }) |err| {
         const detail = classify(err);
         try testing.expectEqual(Class.transport, detail.class);

@@ -6,7 +6,6 @@ const proto = @import("proto");
 const provider = @import("provider.zig");
 const catalog = ai.catalog;
 
-const instance = ai.instance;
 const model = ai.model;
 pub const ModelSpec = model.ModelSpec;
 
@@ -14,23 +13,23 @@ const EnvMap = std.process.Environ.Map;
 
 /// This route holds every value that one request needs, and names its credential source.
 pub const Route = struct {
-    route: instance.Route,
+    route: ai.route.Route,
     credential: CredentialSource,
 };
 
 /// The host fields one ready provider holds. A route composes from these and the endpoint a model names.
 pub const Host = struct {
     base_url: []const u8,
-    headers: []const instance.Header,
-    session_header: instance.SessionHeader,
+    headers: []const ai.route.Header,
+    session_header: ai.route.SessionHeader,
     /// Every entry presents the credential the source names, and every model of the row names one entry.
-    endpoints: []const instance.Endpoint,
+    endpoints: []const ai.route.Endpoint,
     credential: CredentialSource,
 };
 
 /// A run reads the stored grant and its expiry, so it needs no catalog rebuild.
 pub const OAuthSource = struct {
-    grant: ai.resolve.Credential.OAuth,
+    grant: ai.Credential.OAuth,
     /// The expiry uses Unix milliseconds, and a run at or past it reports a missing credential.
     expires_at_ms: ?u64 = null,
 };
@@ -44,7 +43,7 @@ pub const CredentialSource = union(enum) {
 };
 
 /// Resolve the credential of one run. A named variable the process lost gives null.
-pub fn credential(source: CredentialSource, env: *const EnvMap, now_ms: u64) ?ai.resolve.Credential {
+pub fn credential(source: CredentialSource, env: *const EnvMap, now_ms: u64) ?ai.Credential {
     return switch (source) {
         .none => .none,
         .env => |name| blk: {
@@ -112,7 +111,7 @@ pub fn routeFor(match: Match) ?Route {
         .unavailable => return null,
     };
     // A ready row proves that each of its models names one of its endpoints.
-    const endpoint = instance.findEndpoint(host.endpoints, match.model.protocol).?;
+    const endpoint = ai.route.findEndpoint(host.endpoints, match.model.protocol).?;
     return .{ .route = endpoint.route(host.base_url, host.headers, host.session_header), .credential = host.credential };
 }
 
@@ -217,7 +216,7 @@ fn providerRow(
     env: *const EnvMap,
 ) !Provider {
     // A file list replaces the catalog list as a whole, so a model names a path from one list only.
-    const endpoints: []const instance.Endpoint = p.endpoints orelse (if (from_catalog) |c| c.endpoints else &.{});
+    const endpoints: []const ai.route.Endpoint = p.endpoints orelse (if (from_catalog) |c| c.endpoints else &.{});
     const baked: []const ModelSpec = if (from_catalog) |c| c.models else &.{};
     // A file model on no declared path cannot be shaped, so the row keeps the baked list and cannot serve a turn.
     const merged = mergedModels(arena, p, baked, endpoints) catch |err| switch (err) {
@@ -247,7 +246,7 @@ fn mergedModels(
     arena: std.mem.Allocator,
     p: provider.config.LocalProvider,
     baked: []const ModelSpec,
-    endpoints: []const instance.Endpoint,
+    endpoints: []const ai.route.Endpoint,
 ) ![]const ModelSpec {
     // The baked models already hold the effective shape, so only a file entry allocates.
     if (p.models.len == 0) return baked;
@@ -272,7 +271,7 @@ fn localAvailability(
     p: provider.config.LocalProvider,
     from_catalog: ?*const catalog.Provider,
     env: *const EnvMap,
-    declared: []const instance.Endpoint,
+    declared: []const ai.route.Endpoint,
     models: []const ModelSpec,
 ) !Availability {
     const base_url = p.base_url orelse (if (from_catalog) |c| c.base_url else null) orelse return .{ .unavailable = .needs_route };
@@ -314,16 +313,16 @@ fn localAvailability(
     };
 
     // A grant pins its own identity header, and a run refuses the whole request when one collides.
-    const pinned: []const instance.Header = switch (source) {
+    const pinned: []const ai.route.Header = switch (source) {
         .oauth => |stored| stored.grant.headers,
         else => &.{},
     };
     // The catalog can name the header, so check the composed set that the loader could not.
-    const endpoints: []const instance.Endpoint = if (source == .env or source == .literal) blk: {
+    const endpoints: []const ai.route.Endpoint = if (source == .env or source == .literal) blk: {
         for (declared) |e| if (e.key_header == null) return .{ .unavailable = .needs_route };
         break :blk declared;
     } else blk: {
-        const out = try arena.alloc(instance.Endpoint, declared.len);
+        const out = try arena.alloc(ai.route.Endpoint, declared.len);
         for (declared, 0..) |e, i| {
             out[i] = e;
             out[i].key_header = switch (source) {
@@ -336,13 +335,13 @@ fn localAvailability(
         break :blk out;
     };
     for (endpoints) |e| {
-        if (ai.resolve.headerConflict(e.mechanism().headerName(), pinned, headers)) {
+        if (ai.route.headerConflict(e.mechanism().headerName(), pinned, headers)) {
             return .{ .unavailable = .needs_route };
         }
     }
-    if (ai.resolve.headerConflict(session_header.name(), pinned, headers)) return .{ .unavailable = .needs_route };
+    if (ai.route.headerConflict(session_header.name(), pinned, headers)) return .{ .unavailable = .needs_route };
     // A baked model always names a baked path, but a file list can drop the path a baked model needs.
-    for (models) |m| if (instance.findEndpoint(endpoints, m.protocol) == null) return .{ .unavailable = .needs_route };
+    for (models) |m| if (ai.route.findEndpoint(endpoints, m.protocol) == null) return .{ .unavailable = .needs_route };
 
     return .{ .ready = .{
         .base_url = base_url,
@@ -369,7 +368,7 @@ fn oauthSource(
     if (std.mem.eql(u8, flow, "codex")) {
         // Codex names the account on every request, so a grant without one is half a credential.
         const account = account_id orelse return .{ .unavailable = .needs_credential };
-        const headers = try arena.dupe(instance.Header, &.{.{ .name = "ChatGPT-Account-ID", .value = account }});
+        const headers = try arena.dupe(ai.route.Header, &.{.{ .name = "ChatGPT-Account-ID", .value = account }});
         return .{ .ready = .{ .oauth = .{ .grant = .{ .access_token = access_token, .headers = headers }, .expires_at_ms = expires_at_ms } } };
     }
     if (std.mem.eql(u8, flow, "xai")) {

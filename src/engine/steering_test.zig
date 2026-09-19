@@ -116,7 +116,7 @@ const Fixture = struct {
         const body = try arena.create(Body);
         body.* = .{
             .fixture = self,
-            .bytes = if (self.stage == .tool and index == 0) tool_reply else ai.transport.canned_reply,
+            .bytes = if (self.stage == .tool and index == 0) tool_reply else ai.testing.canned_reply,
             .gated = self.stage == .stream and index == 0,
             .cut = self.stage == .retry_stream and index == 0,
         };

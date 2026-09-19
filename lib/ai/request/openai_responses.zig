@@ -9,8 +9,8 @@ const types = @import("../types.zig");
 /// The Codex backend refuses a request that folds in no system prompt.
 const default_instructions = "You are a helpful assistant.";
 
-/// Write the OpenAI Responses request body for `request` and `request_ir`.
-pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr) !void {
+/// Write the OpenAI Responses request body for `request` and `blocks`.
+pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) !void {
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
 
@@ -23,7 +23,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     if (request.cache_key.len != 0) try json.field(&jw, "prompt_cache_key", request.cache_key);
 
     // An explicit breakpoint pins the last user text; the implicit one still tracks the tail of a tool loop.
-    const cache_index = if (request.cache == .openai) lastUserText(request_ir.blocks) else null;
+    const cache_index = if (request.cache == .openai) lastUserText(blocks) else null;
 
     // The Codex backend refuses the sampling limits an API key accepts.
     switch (request.responses_dialect) {
@@ -65,7 +65,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.objectField("input");
     try jw.beginArray();
     var message: ?Message = null;
-    for (request_ir.blocks, 0..) |block, index| {
+    for (blocks, 0..) |block, index| {
         switch (block.value) {
             .text => |text| switch (block.role) {
                 .user => {
@@ -271,7 +271,7 @@ test "a plain user turn with a system prompt" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":1024,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .system = "be brief", .max_output_tokens = 1024 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -282,7 +282,7 @@ test "the codex dialect omits the output ceiling" {
         \\{"model":"gpt-5","stream":true,"store":false,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .responses_dialect = .codex },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -293,7 +293,7 @@ test "only the codex dialect injects an instruction when none is given" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 
     // The ChatGPT backend refuses a request with no instructions, so only it gets the default.
@@ -301,7 +301,7 @@ test "only the codex dialect injects an instruction when none is given" {
         \\{"model":"gpt-5","stream":true,"store":false,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .responses_dialect = .codex },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -311,7 +311,7 @@ test "a named effort rides on the responses request" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"high","summary":"auto"},"include":["reasoning.encrypted_content"],"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -322,7 +322,7 @@ test "off asks for no reasoning rather than omitting the control" {
         \\{"model":"gpt-5.2","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"none"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5.2", .max_output_tokens = 8, .reasoning = .off },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -337,7 +337,7 @@ test "assistant reasoning text and tool call precede a tool result" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 64 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -349,7 +349,7 @@ test "a tool result with an image writes an output array" {
     };
     try expectJson(
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"PNG image"},{"type":"input_image","image_url":"data:image/png;base64,YWI=","detail":"auto"}]}]}
-    , .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks });
+    , .{ .model = "gpt-5", .max_output_tokens = 8 }, &blocks);
 }
 
 test "a reasoning block with no signature is omitted" {
@@ -361,7 +361,7 @@ test "a reasoning block with no signature is omitted" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -372,7 +372,7 @@ test "tools declare a flat raw schema with strict mode" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
     ,
         .{ .model = "gpt-5", .tools = &tools, .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -382,7 +382,7 @@ test "a schema constrains the response through the text format" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"text":{"format":{"type":"json_schema","name":"person","schema":{"type":"object"},"strict":true}},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}" } },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 
     // A caller that turns strict mode off must reach the wire, or the schema stops being a guarantee.
@@ -390,7 +390,7 @@ test "a schema constrains the response through the text format" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"text":{"format":{"type":"json_schema","name":"person","schema":{"type":"object"},"strict":false}},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .output_schema = .{ .name = "person", .schema = "{\"type\":\"object\"}", .strict = false } },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -399,7 +399,7 @@ test "this api reads no sound, so audio never reaches an input part" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "audio/wav" } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }));
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, &blocks));
 }
 
 test "each attachment kind reaches its own input part" {
@@ -412,7 +412,7 @@ test "each attachment kind reaches its own input part" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,YWI=","detail":"auto"},{"type":"input_image","file_id":"file_1","detail":"auto"},{"type":"input_file","file_url":"https://x.test/a.pdf"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }
 
@@ -426,20 +426,20 @@ test "an explicit breakpoint marks the last user text and never disables the imp
         \\{"model":"gpt-5.6","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"one"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}
     ,
         .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 
     // Explicit mode would drop the implicit breakpoint, and a tool loop needs it to reach the tail.
     var explicit: std.Io.Writer.Allocating = .init(testing.allocator);
     defer explicit.deinit();
-    try serialize(&explicit.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai }, .{ .blocks = &blocks });
+    try serialize(&explicit.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai }, &blocks);
     try testing.expect(std.mem.indexOf(u8, explicit.written(), "prompt_cache_options") == null);
 
     // A route that marks nothing, or marks another protocol's shape, writes neither member.
     inline for (.{ types.CacheMarker.none, types.CacheMarker.anthropic }) |marker| {
         var buf: std.Io.Writer.Allocating = .init(testing.allocator);
         defer buf.deinit();
-        try serialize(&buf.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = marker }, .{ .blocks = &blocks });
+        try serialize(&buf.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = marker }, &blocks);
         try testing.expect(std.mem.indexOf(u8, buf.written(), "prompt_cache") == null);
     }
 }
@@ -451,13 +451,13 @@ test "a cache key rides every dialect and does not need a breakpoint marker" {
         \\{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_key":"0123456789abcdef","instructions":"You are a helpful assistant.","input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}
     ,
         .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .none, .cache_key = "0123456789abcdef", .responses_dialect = .codex },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 
     // An empty key writes no member, so a route that never sets one keeps its old body.
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try serialize(&buf.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai }, .{ .blocks = &blocks });
+    try serialize(&buf.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai }, &blocks);
     try testing.expect(std.mem.indexOf(u8, buf.written(), "prompt_cache_key") == null);
 }
 
@@ -466,7 +466,7 @@ test "a turn with no user text carries no breakpoint" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c1", .content = "ok", .is_error = false } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try serialize(&buf.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai }, .{ .blocks = &blocks });
+    try serialize(&buf.writer, .{ .model = "gpt-5.6", .max_output_tokens = 8, .cache = .openai }, &blocks);
     try testing.expect(std.mem.indexOf(u8, buf.written(), "prompt_cache") == null);
 }
 
@@ -476,7 +476,7 @@ test "the codex dialect refuses the sampling members too" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"temperature":0.7,"top_p":0.9,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .temperature = 0.7, .top_p = 0.9 },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 
     // The ChatGPT backend refuses every sampling limit, exactly as it refuses the token ceiling.
@@ -484,6 +484,6 @@ test "the codex dialect refuses the sampling members too" {
         \\{"model":"gpt-5","stream":true,"store":false,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .temperature = 0.7, .top_p = 0.9, .responses_dialect = .codex },
-        .{ .blocks = &blocks },
+        &blocks,
     );
 }

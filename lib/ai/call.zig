@@ -3,10 +3,9 @@
 const std = @import("std");
 const adapter = @import("adapter.zig");
 const event = @import("stream/event.zig");
-const http_transport = @import("transport/http.zig");
-const instance = @import("instance/instance.zig");
 const ir = @import("request/ir.zig");
-const resolve = @import("instance/resolve.zig");
+const route = @import("route.zig");
+const testing_transport = @import("testing.zig");
 const transport = @import("transport.zig");
 const types = @import("types.zig");
 
@@ -14,8 +13,8 @@ const model_types = @import("model.zig");
 
 pub const Model = struct {
     id: []const u8,
-    route: instance.Route,
-    credential: resolve.Credential,
+    route: route.Route,
+    credential: route.Credential,
     /// What this model states it can do. An unknown capability is never a refusal.
     caps: model_types.Caps = .{},
     dialect: model_types.Dialect = .{},
@@ -94,7 +93,7 @@ pub const PreparedRequest = struct {
 };
 
 pub const Client = struct {
-    http: http_transport.HttpTransport,
+    http: transport.HttpTransport,
 
     pub const InitOptions = struct {
         idle_timeout: ?std.Io.Duration = null,
@@ -160,8 +159,8 @@ pub fn prepare(gpa: std.mem.Allocator, model: Model, request: Request) !Prepared
     const arena = call_arena.allocator();
 
     const body_bytes = try requestBody(arena, model, request);
-    // `resolve.request` copies the URL and every header, so the route and the credential may change.
-    const http_request = try resolve.request(arena, &model.route, model.credential, request.options.session_id, body_bytes);
+    // `route.request` copies the URL and every header, so the route and the credential may change.
+    const http_request = try route.request(arena, &model.route, model.credential, request.options.session_id, body_bytes);
     return .{
         .arena = call_arena,
         .protocol = model.route.protocol,
@@ -203,14 +202,14 @@ fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
         .reasoning_replay = model.dialect.reasoning_replay,
         .max_tokens_field = model.dialect.max_tokens_field,
         .responses_dialect = model.route.responses_dialect,
-        .cache = instance.CachePolicy.markerFor(model.route.cache, model.caps.cache_breakpoint),
+        .cache = route.CachePolicy.markerFor(model.route.cache, model.caps.cache_breakpoint),
         .cache_key = options.cache_key,
         .output_schema = options.output_schema,
         .temperature = options.temperature,
         .top_p = options.top_p,
         .tool_choice = options.tool_choice,
     };
-    return adapter.serialize(arena, model.route.protocol, value, .{ .blocks = request.blocks });
+    return adapter.serialize(arena, model.route.protocol, value, request.blocks);
 }
 
 /// Use `gpa` for scratch until return; the caller retains ownership of the borrowed response body.
@@ -365,7 +364,7 @@ const LifecycleTransport = struct {
     }
 
     const Body = struct {
-        reader: transport.ReplayReader,
+        reader: testing_transport.ReplayReader,
         owner: *LifecycleTransport,
 
         fn responseBody(self: *Body) transport.ResponseBody {
@@ -411,27 +410,27 @@ fn testModel(protocol: types.Protocol) Model {
 }
 
 test "generate dispatches every protocol through its serializer and reducer" {
-    const chat_reply = comptime transport.sseFrame(
+    const chat_reply = comptime testing_transport.sseFrame(
         \\{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}]}
     ) ++ "data: [DONE]\n\n";
-    const responses_reply = comptime transport.sseFrame(
+    const responses_reply = comptime testing_transport.sseFrame(
         \\{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"response.output_text.delta","output_index":0,"delta":"Hello"}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"response.output_text.done","output_index":0}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}
     );
 
     inline for (.{
-        .{ types.Protocol.anthropic_messages, transport.canned_reply, "Hello from the yuke mock provider.", 8 },
+        .{ types.Protocol.anthropic_messages, testing_transport.canned_reply, "Hello from the yuke mock provider.", 8 },
         .{ types.Protocol.openai_chat, chat_reply, "Hello", 0 },
         .{ types.Protocol.openai_responses, responses_reply, "Hello", 1 },
     }) |case| {
-        var canned = transport.CannedTransport{ .bytes = case[1] };
+        var canned = testing_transport.CannedTransport{ .bytes = case[1] };
         var result_value = try generateTextWithTransport(std.testing.allocator, canned.transport(), testModel(case[0]), "hello", .{});
         defer result_value.deinit();
         try std.testing.expectEqualStrings(case[2], result_value.text);
@@ -441,7 +440,7 @@ test "generate dispatches every protocol through its serializer and reducer" {
 }
 
 test "generate rejects an empty request before transport I/O" {
-    var lifecycle = LifecycleTransport{ .bytes = transport.canned_reply };
+    var lifecycle = LifecycleTransport{ .bytes = testing_transport.canned_reply };
     try std.testing.expectError(error.EmptyRequest, generateWithTransport(std.testing.allocator, lifecycle.transportFor(), testModel(.openai_chat), .{
         .blocks = &.{},
         .options = .{ .max_output_tokens = 1 },
@@ -452,7 +451,7 @@ test "generate rejects an empty request before transport I/O" {
 
 test "stream releases the response body after success" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    var lifecycle = LifecycleTransport{ .bytes = transport.canned_reply };
+    var lifecycle = LifecycleTransport{ .bytes = testing_transport.canned_reply };
     var event_count: usize = 0;
     const Counter = struct {
         fn onEvent(count: *usize, _: event.StreamEvent) !void {
@@ -470,7 +469,7 @@ test "stream releases the response body after success" {
 }
 
 test "prepare and consume split request lifecycle" {
-    var canned = transport.CannedTransport{ .bytes = transport.canned_reply };
+    var canned = testing_transport.CannedTransport{ .bytes = testing_transport.canned_reply };
     var prepared = try prepare(std.testing.allocator, testModel(.anthropic_messages), .{
         .blocks = &.{.{ .role = .user, .value = .{ .text = "hello" } }},
         .options = .{ .max_output_tokens = 1 },
@@ -528,7 +527,7 @@ test "prepare owns route and credential strings" {
 
 test "stream releases the response body after a callback error" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    var lifecycle = LifecycleTransport{ .bytes = transport.canned_reply };
+    var lifecycle = LifecycleTransport{ .bytes = testing_transport.canned_reply };
     const Reject = struct {
         fn onEvent(_: void, _: event.StreamEvent) !void {
             return error.CallbackRejected;
@@ -545,7 +544,7 @@ test "stream releases the response body after a callback error" {
 
 test "stream releases the response body after a truncated response" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    var lifecycle = LifecycleTransport{ .bytes = transport.sseFrame(
+    var lifecycle = LifecycleTransport{ .bytes = testing_transport.sseFrame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
     ) };
     const Ignore = struct {
@@ -561,26 +560,26 @@ test "stream releases the response body after a truncated response" {
 }
 
 test "generate preserves reasoning and joins every text block" {
-    const reply = comptime transport.sseFrame(
+    const reply = comptime testing_transport.sseFrame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":4}}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"why","signature":"sig"}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"content_block_stop","index":0}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"A"}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"content_block_stop","index":1}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"content_block_start","index":2,"content_block":{"type":"text","text":"B"}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"content_block_stop","index":2}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"message_stop"}
     );
-    var canned = transport.CannedTransport{ .bytes = reply };
+    var canned = testing_transport.CannedTransport{ .bytes = reply };
     var result_value = try generateTextWithTransport(std.testing.allocator, canned.transport(), testModel(.anthropic_messages), "hello", .{});
     defer result_value.deinit();
 
@@ -594,20 +593,20 @@ test "generate preserves reasoning and joins every text block" {
 }
 
 test "generate preserves a completed tool call" {
-    const reply = comptime transport.sseFrame(
+    const reply = comptime testing_transport.sseFrame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":8}}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"run"}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"zig test\"}"}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"content_block_stop","index":0}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":9}}
-    ) ++ transport.sseFrame(
+    ) ++ testing_transport.sseFrame(
         \\{"type":"message_stop"}
     );
-    var canned = transport.CannedTransport{ .bytes = reply };
+    var canned = testing_transport.CannedTransport{ .bytes = reply };
     var result_value = try generateTextWithTransport(std.testing.allocator, canned.transport(), testModel(.anthropic_messages), "hello", .{});
     defer result_value.deinit();
 
