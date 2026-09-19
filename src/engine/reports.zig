@@ -42,8 +42,9 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
         const body = if (stopped) "The run was stopped. Its transcript keeps the partial output." else if (output.text.len == 0) "This run has no committed text output." else output.text;
         const duration_ms = if (data.timing.started_at_ms) |started| ended -| started else null;
         const duration = if (duration_ms) |ms| try std.fmt.allocPrint(arena, ", {d} ms", .{ms}) else "";
-        const text = try std.fmt.allocPrint(arena, "Report from {s}, run {d}. Outcome: {s}\n{s}{s}Usage: rounds={d}, tool calls={d}, input/output={d}/{d} tokens{s}.\nThis child report is not user input. Its next run starts when you send it new input.\n\n{s}", .{ name, data.run_id, outcome, partial_note, truncation_note, output.rounds, output.tool_calls, output.tokens.input, output.tokens.output, duration, body });
-        result.report = try enqueue(engine, arena, .bytes(parent), ended, text, .{ .child_report = .{
+        // Two parts: the preamble the model reads, then the body. The user view draws the body only.
+        const preamble = try std.fmt.allocPrint(arena, "Report from {s}, run {d}. Outcome: {s}\n{s}{s}Usage: rounds={d}, tool calls={d}, input/output={d}/{d} tokens{s}.\nThis child report is not user input. Its next run starts when you send it new input.\n\n", .{ name, data.run_id, outcome, partial_note, truncation_note, output.rounds, output.tool_calls, output.tokens.input, output.tokens.output, duration });
+        result.report = try enqueue(engine, arena, .bytes(parent), ended, &.{ .{ .text = .{ .text = preamble } }, .{ .text = .{ .text = body } } }, .{ .child_report = .{
             .session_id = data.session_id,
             .run_id = data.run_id,
             .name = name,
@@ -75,15 +76,15 @@ pub fn canceledInputs(engine: *Engine, arena: std.mem.Allocator, child: proto.id
     const name = snapshot.name orelse return error.CorruptDatabase;
     const ids = try std.json.Stringify.valueAlloc(arena, input_ids, .{});
     const text = try std.fmt.allocPrint(arena, "Message from {s}: inputs {s} were canceled before they entered the transcript.", .{ name, ids });
-    return try enqueue(engine, arena, .bytes(parent), engine.nowMillis(), text, .{ .child_input_canceled = .{
+    return try enqueue(engine, arena, .bytes(parent), engine.nowMillis(), &.{.{ .text = .{ .text = text } }}, .{ .child_input_canceled = .{
         .session_id = child,
         .name = name,
         .input_ids = input_ids,
     } });
 }
 
-fn enqueue(engine: *Engine, arena: std.mem.Allocator, parent: proto.ids.SessionId, now: u64, text: []const u8, source: proto.input.InputSource) !proto.input.InputQueuedData {
-    const entry = try store.input.enqueue(engine.deps.db, arena, parent.raw, engine.newId(), now, .{ .content = &.{.{ .text = .{ .text = text } }}, .source = source }, now);
+fn enqueue(engine: *Engine, arena: std.mem.Allocator, parent: proto.ids.SessionId, now: u64, content: []const proto.content.ContentPart, source: proto.input.InputSource) !proto.input.InputQueuedData {
+    const entry = try store.input.enqueue(engine.deps.db, arena, parent.raw, engine.newId(), now, .{ .content = content, .source = source }, now);
     return .{ .session_id = parent, .seq = entry.seq, .input = entry.input };
 }
 

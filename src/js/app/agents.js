@@ -168,7 +168,7 @@ export function agents(options) {
 
             ctx.effect(() => {
                 const own = {
-                    spawn_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Agent", subject: String(o.agent || "") + " · " + String(o.model || "") }) },
+                    spawn_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Agent", subject: String(o.agent || "default") }) },
                     send_agent_input: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Send", subject: String(o.child || "") }) },
                     stop_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Stop", subject: String(o.child || "") }) },
                 };

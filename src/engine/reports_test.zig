@@ -95,17 +95,18 @@ test "child reuse reports only the current run and preserves source through prom
     try testing.expectEqual(@as(u64, 1), usage.tool_calls);
     try testing.expectEqual(@as(u64, 10), usage.tokens.input);
     try testing.expect(usage.duration_ms != null);
+    try testing.expectEqual(@as(usize, 2), first.report.?.input.content.len);
     const first_text = first.report.?.input.content[0].text.text;
     try testing.expect(std.mem.indexOf(u8, first_text, "Usage: rounds=1, tool calls=1, input/output=10/5 tokens, ") != null);
     try testing.expect(std.mem.indexOf(u8, first_text, "not user input") != null);
-    try testing.expect(std.mem.endsWith(u8, first_text, "\n\nold answer"));
+    try testing.expect(std.mem.endsWith(u8, first_text, "\n\n"));
+    try testing.expectEqualStrings("old answer", first.report.?.input.content[1].text.text);
     const second = try f.terminal(try f.start(), &.{}, .{ .failed = .{ .code = .provider, .message = "provider failed" } });
     const stored_child = try commands.sessionGet(&f.engine, a, .{ .session_id = child });
     try testing.expectEqual(proto.enums.RunErrorCode.provider, stored_child.last_run.?.failed.code);
     const listed = try commands.sessionList(&f.engine, a, .{ .population = .{ .children = .{ .parent_id = root } } });
     try testing.expectEqual(proto.enums.RunErrorCode.provider, listed.items[0].last_run.?.failed.code);
-    const second_text = second.report.?.input.content[0].text.text;
-    try testing.expect(std.mem.indexOf(u8, second_text, "old answer") == null);
+    try testing.expectEqualStrings("This run has no committed text output.", second.report.?.input.content[1].text.text);
     try testing.expect(second.report.?.input.source.?.child_report.partial);
     const resident = try f.engine.activate(root);
     try testing.expectEqual(@as(usize, 2), resident.queueDepth());
@@ -115,8 +116,11 @@ test "child reuse reports only the current run and preserves source through prom
     const history = try database.message.historyPage(&f.db, a, root.raw, 0, 10);
     try testing.expectEqual(@as(u64, 1), history.messages[0].user.source.?.child_report.run_id);
     try testing.expectEqual(@as(u64, 2), history.messages[1].user.source.?.child_report.run_id);
+    // Each report projects as two user blocks: the preamble, then the body.
     const request = try @import("../provider/request_builder.zig").build(a, history.messages, .{});
-    try testing.expectEqualStrings(second_text, request[1].value.text);
+    try testing.expectEqual(@as(usize, 4), request.len);
+    try testing.expectEqualStrings(second.report.?.input.content[0].text.text, request[2].value.text);
+    try testing.expectEqualStrings("This run has no committed text output.", request[3].value.text);
 }
 
 test "a full user queue cannot block a terminal report or clear protected input" {
@@ -275,7 +279,7 @@ test "report output has a UTF-8 byte bound and a failure keeps its partial outpu
     const result = try f.terminal(try f.start(), &.{text}, .{ .failed = .{ .code = .provider, .message = "provider failed" } });
     const source = result.report.?.input.source.?.child_report;
     try testing.expect(source.partial and source.truncated);
-    const body = result.report.?.input.content[0].text.text;
+    const body = result.report.?.input.content[1].text.text;
     try testing.expect(std.unicode.utf8ValidateSlice(body));
     try testing.expect(body.len < reports.max_output_bytes + 512);
 }
@@ -288,9 +292,8 @@ test "a stopped run reports its usage and no body" {
     const source = result.report.?.input.source.?.child_report;
     try testing.expect(source.partial and !source.truncated);
     try testing.expectEqual(@as(u64, 1), source.usage.rounds);
-    const body = result.report.?.input.content[0].text.text;
-    try testing.expect(std.mem.indexOf(u8, body, "half an answer") == null);
-    try testing.expect(std.mem.endsWith(u8, body, "\n\nThe run was stopped. Its transcript keeps the partial output."));
+    try testing.expectEqualStrings("The run was stopped. Its transcript keeps the partial output.", result.report.?.input.content[1].text.text);
+    try testing.expect(std.mem.indexOf(u8, result.report.?.input.content[0].text.text, "half an answer") == null);
 }
 
 test "compaction does not produce a child turn report" {
@@ -397,5 +400,5 @@ test "a report sums every round and takes the newest text as its body" {
     try testing.expectEqual(@as(u64, 2), usage.rounds);
     try testing.expectEqual(@as(u64, 2), usage.tool_calls);
     try testing.expectEqual(@as(u64, 10), usage.tokens.input);
-    try testing.expect(std.mem.endsWith(u8, multi.report.?.input.content[0].text.text, "\n\nnewest answer"));
+    try testing.expectEqualStrings("newest answer", multi.report.?.input.content[1].text.text);
 }

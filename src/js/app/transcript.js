@@ -38,7 +38,12 @@ export const ROLE_TEXT = 2;
 /** @param {Wire.InputSource | undefined | null} source @returns {string} */
 export function inputSourceLabel(source) {
   if (!source || source.type === "parent_instruction") return "";
-  if (source.type === "child_report") return "Message from " + source.name + " · " + (source.outcome.type === "turn" ? "completed" : source.outcome.type) + (source.partial ? " · partial" : "") + (source.truncated ? " · model report truncated" : "");
+  if (source.type === "child_report") {
+    const usage = source.usage;
+    const seconds = usage.duration_ms == null ? "" : " · " + (usage.duration_ms / 1000).toFixed(1) + "s";
+    return "Message from " + source.name + " · " + (source.outcome.type === "turn" ? "completed" : source.outcome.type) + (source.partial ? " · partial" : "") + (source.truncated ? " · model report truncated" : "")
+      + " · " + usage.rounds + (usage.rounds === 1 ? " round" : " rounds") + " · " + usage.tool_calls + (usage.tool_calls === 1 ? " tool" : " tools") + " · " + usage.tokens.input + "/" + usage.tokens.output + " tokens" + seconds;
+  }
   if (source.type === "child_input_canceled") return "Message from " + source.name + " · queued work canceled";
   return "Engine notice · run " + source.run_id + " interrupted";
 }
@@ -1132,6 +1137,7 @@ export class Transcript {
     if (m.type === "user") {
       source = this.textOf(m.id) || "";
       if (m.skill_name || (m.source && m.source.type !== "parent_instruction")) {
+        if (m.source?.type === "child_report") source = this._reportBody(m.id, source);
         const expanded = this._expand.get(this._expandKey(m.id, -1)) === true;
         const body = wrapBody(source, Math.max(1, width - TX_GUTTER), "TxToolBody", expanded ? Infinity : REPORT_PREVIEW_LINES + 1);
         const shown = expanded ? body : body.slice(0, m.skill_name ? 0 : REPORT_PREVIEW_LINES);
@@ -1167,6 +1173,20 @@ export class Transcript {
     this._rows.set(key, { w: width, rows, source, partBases, doc });
     this._counts.set(key, rows.length);
     return rows;
+  }
+
+  // A child report is two text parts. The user reads the body; the preamble is the model's and stays out of the rows.
+  /** @param {number} id @param {string} text @returns {string} */
+  _reportBody(id, text) {
+    if (!this.partsOf) return text;
+    let parts = /** @type {readonly MessagePart[]} */ ([]);
+    try {
+      const read = /** @type {PartsOf} */ (this.partsOf)(id);
+      if (Array.isArray(read)) parts = read;
+    } catch (_) {}
+    const texts = parts.filter((part) => part.type === "text");
+    const last = texts.length >= 2 ? texts[texts.length - 1] : undefined;
+    return last && last.type === "text" ? last.text : text;
   }
 
   // A user message with an attachment draws each label where its part sits. The wire carries no file name.

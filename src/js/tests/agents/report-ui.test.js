@@ -3,8 +3,13 @@ import { clearWorkQueue, queuedText } from "yuke:queue";
 (async () => {
   const source = { type: "child_report", name: "one", outcome: { type: "turn" }, partial: false, truncated: false, usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } } };
   const full = Array.from({ length: 200 }, (_, i) => "line " + i).join("\n");
-  const t = new Transcript({ textOf: () => full });
+  const preamble = "Report from one, run 1. Outcome: turn\nThis child report is not user input.\n\n";
+  const t = new Transcript({ textOf: () => preamble + full, partsOf: () => [{ type: "text", id: 0, text: preamble }, { type: "text", id: 1, text: full }] });
   t.setOutline([{ id: 1, type: "user", source }], null);
+  const rowText = (row) => row.text || (row.segments || []).map((segment) => segment.text).join("");
+  const drawn = () => t.rows(80, 0, t.rowCount(80)).map(rowText).join("\n");
+  if (drawn().includes("not user input") || !drawn().includes("line 0")) throw new Error("preamble drawn or body missing");
+  if (!inputSourceLabel(source).includes("1 round · 0 tools · 0/0 tokens")) throw new Error("usage missing from the header");
   if (t.rowCount(80) > 15 || !inputSourceLabel(source).includes("one")) throw new Error("unfolded report");
   t.togglePart(1, -1);
   if (t.rowCount(80) < 200) throw new Error("lost full report");
