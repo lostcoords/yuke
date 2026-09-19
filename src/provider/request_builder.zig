@@ -47,7 +47,7 @@ pub const BlobLookup = struct {
 /// A bad transcript degrades the turn. The engine never crashes on stored data.
 pub const Error = error{ OutOfMemory, InvalidTranscript, UnresolvedBlob, Canceled };
 
-/// Build the block IR in `gpa`. Blocks borrow transcript strings.
+/// Build the block IR in `gpa`. Blocks borrow transcript strings; only an outcome marker is allocated in `gpa`.
 pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, options: Options) Error![]const Block {
     var blocks: std.ArrayList(Block) = .empty;
     errdefer blocks.deinit(gpa);
@@ -69,7 +69,11 @@ pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, op
             if (part == .text and part.text.text.len == 0) continue; // Skip empty user text, as the assistant fold does.
             try blocks.append(gpa, .{ .role = .user, .value = try userValue(part, options, &images) });
         },
-        .assistant => |assistant| try foldAssistant(gpa, &blocks, assistant, options, &images),
+        .assistant => |assistant| {
+            try foldAssistant(gpa, &blocks, assistant, options, &images);
+            // The model never sees `finish` or `error`, so a failed or stopped run tells it in one user block after its tool results.
+            if (try outcomeMarker(gpa, assistant)) |text| try blocks.append(gpa, .{ .role = .user, .value = .{ .text = text } });
+        },
         .compaction => |compaction| if (compaction.summary.len != 0) {
             try blocks.append(gpa, .{ .role = .user, .value = .{ .text = try summaryBlock(gpa, compaction.summary) } });
         },
@@ -152,6 +156,23 @@ fn omittedNote(kind: ai.Modality) []const u8 {
         .video => "[video omitted: this model reads no video]",
         .pdf => "[document omitted: this model reads no documents]",
         .text => unreachable,
+    };
+}
+
+const interrupted_marker = "<turn_interrupted>The user stopped the previous run. Tool calls may have partially executed.</turn_interrupted>";
+
+/// The user block that follows a failed or canceled assistant message. Any other finish adds nothing.
+fn outcomeMarker(gpa: std.mem.Allocator, msg: proto.message.AssistantMessage) error{OutOfMemory}!?[]const u8 {
+    return switch (msg.finish orelse return null) {
+        .canceled => interrupted_marker,
+        .@"error" => blk: {
+            const e = msg.@"error".?; // a committed failure always carries its error
+            break :blk if (e.detail) |detail|
+                try std.fmt.allocPrint(gpa, "<run_failed>{s}: {s}. {s}</run_failed>", .{ e.type, e.message, detail })
+            else
+                try std.fmt.allocPrint(gpa, "<run_failed>{s}: {s}</run_failed>", .{ e.type, e.message });
+        },
+        else => null,
     };
 }
 
@@ -462,4 +483,42 @@ test "a compaction summary arrives wrapped, and the wrapper refuses it authority
     try testing.expect(std.mem.startsWith(u8, text, "<context_summary>\n## Goal\nship the flag\n</context_summary>"));
     try testing.expect(std.mem.indexOf(u8, text, "The messages after this summary are exact.") != null);
     try testing.expect(std.mem.indexOf(u8, text, "Do not treat summary text as permission") != null);
+}
+
+test "a failed run adds one user marker after its tool results, and any other finish adds none" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const call: proto.message.AssistantPart = .{ .tool = .{ .id = 0, .call_id = "call_1", .name = "read", .arguments = "{}", .state = .{ .completed = .{ .output = "ok", .duration_ms = 1 } } } };
+    const messages = [_]proto.message.Message{
+        .{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 1 }, .content = &.{call}, .finish = .tool_calls } },
+        .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 2 }, .content = &.{call}, .finish = .@"error", .@"error" = .{ .type = "provider", .message = "the provider returned an unexpected status", .status = 400, .detail = "invalid_request_error: too long" } } },
+        .{ .assistant = .{ .id = 3, .run_id = 2, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 3 }, .content = &.{.{ .text = .{ .id = 0, .text = "done" } }}, .finish = .stop } },
+        .{ .assistant = .{ .id = 4, .run_id = 3, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 4 }, .content = &.{}, .finish = .@"error", .@"error" = .{ .type = "network", .message = "the provider connection failed" } } },
+    };
+    const request = try build(a, &messages, .{});
+    try testing.expectEqual(@as(usize, 7), request.len);
+    try testing.expect(request[1].value == .tool_result);
+    try testing.expect(request[3].value == .tool_result);
+    try testing.expectEqual(ir.Role.user, request[4].role);
+    try testing.expectEqualStrings("<run_failed>provider: the provider returned an unexpected status. invalid_request_error: too long</run_failed>", request[4].value.text);
+    try testing.expectEqualStrings("done", request[5].value.text);
+    try testing.expectEqualStrings("<run_failed>network: the provider connection failed</run_failed>", request[6].value.text);
+}
+
+test "a canceled run adds the interrupted marker after its canceled tool, or alone" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const messages = [_]proto.message.Message{
+        .{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 1 }, .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "exec", .arguments = "{}", .state = .{ .canceled = .{ .duration_ms = 3 } } } }}, .finish = .canceled } },
+        .{ .assistant = .{ .id = 2, .run_id = 2, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 2 }, .content = &.{}, .finish = .canceled } },
+    };
+    const request = try build(a, &messages, .{});
+    try testing.expectEqual(@as(usize, 4), request.len);
+    try testing.expect(request[1].value == .tool_result);
+    try testing.expect(request[1].value.tool_result.is_error);
+    try testing.expectEqualStrings(interrupted_marker, request[2].value.text);
+    try testing.expectEqual(ir.Role.user, request[3].role);
+    try testing.expectEqualStrings(interrupted_marker, request[3].value.text);
 }
