@@ -67,11 +67,3 @@ test "socket benchmark scenarios verify reused and fresh connections" {
 test "JSON lines over sockets validate complete bounded UTF-8 frames" {
     try run("native_tools/net-json.test.js", .json_lines, false);
 }
-
-test "Herdr plugin reports and clears over real Unix sockets" {
-    try run("plugins/herdr-socket.test.js", .herdr, false);
-}
-
-test "Herdr plugin bounds stalled reports and shutdown" {
-    try run("plugins/herdr-socket.test.js", .stall, false);
-}

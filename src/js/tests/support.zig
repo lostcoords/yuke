@@ -8,7 +8,6 @@ const BakedModule = @import("../loader.zig").BakedModule;
 const Paint = @import("paint.zig").Paint;
 
 const modules = host_mod.default_baked ++ [_]BakedModule{
-    .{ .name = "yuke:test-herdr", .code = .{ .source = @embedFile("../plugins/herdr.js") } },
     .{ .name = "yuke:test-markdown", .code = .{ .source = @embedFile("markdown.js") } },
     .{ .name = "yuke:test", .code = .{ .source = @embedFile("assert.js") } },
 };

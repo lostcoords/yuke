@@ -348,10 +348,3 @@ test "plugin disposal joins native work from a withdrawn injection" {
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
     try std.testing.expectEqual(@as(usize, 0), host.signal_waiters.items.len);
 }
-
-test "Herdr plugin isolates reports, retries, and cleanup" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try support.eval(host, "plugins/herdr.test.js");
-    try support.pumpUntilTrue(host, "globalThis.herdrDone === true");
-}
