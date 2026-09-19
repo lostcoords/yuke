@@ -3,8 +3,8 @@ import { native } from "yuke:engine-native";
 
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
 /** @typedef {{ chordMs: number }} KeymapConfig */
-/** @typedef {{ systemPrompt?: string | null, childInstructions?: string | null, mouse: MouseConfig, keymap: KeymapConfig }} Config */
-/** @typedef {{ systemPrompt?: string | null, childInstructions?: string | null, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig> }} ConfigPatch */
+/** @typedef {{ systemPrompt?: string | null, mouse: MouseConfig, keymap: KeymapConfig }} Config */
+/** @typedef {{ systemPrompt?: string | null, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig> }} ConfigPatch */
 /** @typedef {(value: unknown) => true | string} ConfigValidator */
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -14,7 +14,6 @@ import { native } from "yuke:engine-native";
 export const config = {
   // A null base selects the built-in prompt for new root sessions.
   systemPrompt: null,
-  childInstructions: null,
   // A child run stops after maxRounds and reports partial output; the parent keeps no budget.
   // Mouse reporting is always on; `scrollLines` counts screen lines, so a wheel step moves the same in every widget.
   mouse: {
@@ -35,7 +34,7 @@ export function defineConfig(partial) {
     throw new TypeError("defineConfig expects a config object");
   }
   for (const key of Object.keys(partial)) {
-    if (key !== "systemPrompt" && key !== "childInstructions" && key !== "mouse" && key !== "keymap") {
+    if (key !== "systemPrompt" && key !== "mouse" && key !== "keymap") {
       throw new TypeError("defineConfig: unknown key " + key);
     }
   }
@@ -43,22 +42,15 @@ export function defineConfig(partial) {
   if (systemPrompt !== undefined && systemPrompt !== null && typeof systemPrompt !== "string") {
     throw new TypeError("defineConfig.systemPrompt must be a string or null");
   }
-  const childInstructions = partial.childInstructions;
-  if (childInstructions !== undefined && childInstructions !== null && typeof childInstructions !== "string") {
-    throw new TypeError("defineConfig.childInstructions must be a string or null");
-  }
   const mouse = partial.mouse;
   const nextMouse = { ...config.mouse };
   if (mouse !== undefined) applyConfigPatch(nextMouse, MOUSE_FIELDS, /** @type {Record<string, unknown>} */ (mouse), "mouse");
   const km = partial.keymap;
   const nextKeymap = { ...config.keymap };
   if (km !== undefined) applyConfigPatch(nextKeymap, KEYMAP_FIELDS, /** @type {Record<string, unknown>} */ (km), "keymap");
-  if (systemPrompt !== undefined || childInstructions !== undefined) native.setPromptConfig(systemPrompt, childInstructions);
   if (systemPrompt !== undefined) {
+    native.setPromptConfig(systemPrompt);
     config.systemPrompt = systemPrompt;
-  }
-  if (childInstructions !== undefined) {
-    config.childInstructions = childInstructions;
   }
   Object.assign(config.mouse, nextMouse);
   Object.assign(config.keymap, nextKeymap);

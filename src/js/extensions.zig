@@ -141,7 +141,7 @@ test "headless extensions pump an async JavaScript tool" {
     var f: Fixture = undefined;
     try f.init(
         \\import { defineConfig, tools } from "yuke";
-        \\defineConfig({ systemPrompt: "configured by JavaScript", childInstructions: "child policy" });
+        \\defineConfig({ systemPrompt: "configured by JavaScript" });
         \\import { fs } from "yuke";
         \\tools.define({
         \\  name: "read_note",
@@ -165,42 +165,35 @@ test "headless extensions pump an async JavaScript tool" {
     } else false;
     try std.testing.expect(found);
     try std.testing.expectEqualStrings("configured by JavaScript", app_runtime.engine.default_system_prompt.?);
-    try std.testing.expectEqualStrings("child policy", app_runtime.engine.child_instructions.?);
     try extensions.host.evalModule(
         \\import { defineConfig } from "yuke";
-        \\defineConfig({ systemPrompt: null, childInstructions: null });
+        \\defineConfig({ systemPrompt: null });
     , "clear-config.js");
     try std.testing.expect(app_runtime.engine.default_system_prompt == null);
-    try std.testing.expect(app_runtime.engine.child_instructions == null);
     try extensions.host.evalModule(
         \\import { defineConfig } from "yuke";
         \\let rejected = false;
-        \\try { defineConfig({ systemPrompt: "must not apply", childInstructions: "é".repeat(524289) }); } catch { rejected = true; }
+        \\try { defineConfig({ systemPrompt: "é".repeat(524289) }); } catch { rejected = true; }
         \\globalThis.configRejected = rejected;
     , "bad-config.js");
     try std.testing.expectEqual(@as(i32, 1), try extensions.host.evalInt("globalThis.configRejected"));
     try std.testing.expect(app_runtime.engine.default_system_prompt == null);
-    try std.testing.expect(app_runtime.engine.child_instructions == null);
 
     try extensions.host.evalModule(
         \\import { defineConfig } from "yuke";
-        \\defineConfig({ systemPrompt: "😀", childInstructions: "policy" });
-        \\for (const key of ["systemPrompt", "childInstructions"]) {
-        \\  for (const value of ["\ud800", "\udfff"]) {
-        \\    let rejected = false;
-        \\    try { defineConfig({ systemPrompt: "must not apply", [key]: value }); } catch (e) { rejected = e instanceof TypeError; }
-        \\    if (!rejected) throw new Error("invalid Unicode accepted");
-        \\  }
+        \\defineConfig({ systemPrompt: "😀" });
+        \\for (const value of ["\ud800", "\udfff"]) {
+        \\  let rejected = false;
+        \\  try { defineConfig({ systemPrompt: value }); } catch (e) { rejected = e instanceof TypeError; }
+        \\  if (!rejected) throw new Error("invalid Unicode accepted");
         \\}
     , "unicode-config.js");
     try std.testing.expectEqualStrings("😀", app_runtime.engine.default_system_prompt.?);
-    try std.testing.expectEqualStrings("policy", app_runtime.engine.child_instructions.?);
     try extensions.host.evalModule(
         \\import { defineConfig } from "yuke";
-        \\defineConfig({ childInstructions: "" });
+        \\defineConfig({ mouse: { scrollLines: 3 } });
     , "partial-config.js");
     try std.testing.expectEqualStrings("😀", app_runtime.engine.default_system_prompt.?);
-    try std.testing.expectEqualStrings("", app_runtime.engine.child_instructions.?);
 
     const call = extensions.host.calls.submit("read_note", "{\"path\":\"note.txt\"}", "");
     try support.pumpUntilSettled(extensions.host, call);

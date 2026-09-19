@@ -603,7 +603,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         try prompts.expand(arena, text, prompt_context)
     else
         prompts.default_system_prompt;
-    const child_prompt = if (parent != null) try prompts.expand(arena, engine.child_instructions orelse prompts.default_child_instructions, prompt_context) else null;
+    const child_prompt = if (parent != null) try prompts.expand(arena, prompts.child_policy, prompt_context) else null;
     const sources = if (parent) |pid| try session_store.instructionSnapshots(engine.deps.db, arena, pid.raw) else try instructions.load(arena, engine.deps.io, engine.deps.execution.env, root, diagnostic);
     const now = engine.nowMillis();
     const environment = try prompts.environment(arena, root, engine.deps.execution.shell, now);
