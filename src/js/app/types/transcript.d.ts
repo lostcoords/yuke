@@ -7,7 +7,7 @@ export interface MessageDescriptor {
   type: "user" | "assistant" | "compaction";
   source?: Wire.InputSource;
   skill_name?: string;
-  error?: { type: string; message: string; status?: number; request_id?: string; detail?: string };
+  error?: Wire.MessageError;
 }
 
 export interface Position {

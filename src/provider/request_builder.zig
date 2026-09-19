@@ -162,11 +162,12 @@ fn omittedNote(kind: ai.Modality) []const u8 {
 const interrupted_marker = "<turn_interrupted>The user stopped the previous run. Tool calls may have partially executed.</turn_interrupted>";
 
 /// The user block that follows a failed or canceled assistant message. Any other finish adds nothing.
-fn outcomeMarker(gpa: std.mem.Allocator, msg: proto.message.AssistantMessage) error{OutOfMemory}!?[]const u8 {
+fn outcomeMarker(gpa: std.mem.Allocator, msg: proto.message.AssistantMessage) Error!?[]const u8 {
     return switch (msg.finish orelse return null) {
         .canceled => interrupted_marker,
         .@"error" => blk: {
-            const e = msg.@"error".?; // a committed failure always carries its error
+            // A committed transcript pairs a failed finish with its error, as it pairs a tool with a terminal state.
+            const e = msg.@"error" orelse return error.InvalidTranscript;
             break :blk if (e.detail) |detail|
                 try std.fmt.allocPrint(gpa, "<run_failed>{s}: {s}. {s}</run_failed>", .{ e.type, e.message, detail })
             else
@@ -504,6 +505,11 @@ test "a failed run adds one user marker after its tool results, and any other fi
     try testing.expectEqualStrings("<run_failed>provider: the provider returned an unexpected status. invalid_request_error: too long</run_failed>", request[4].value.text);
     try testing.expectEqualStrings("done", request[5].value.text);
     try testing.expectEqualStrings("<run_failed>network: the provider connection failed</run_failed>", request[6].value.text);
+}
+
+test "a failed finish without its error is a bad transcript" {
+    const messages = [_]proto.message.Message{.{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 1 }, .content = &.{}, .finish = .@"error" } }};
+    try testing.expectError(error.InvalidTranscript, build(testing.allocator, &messages, .{}));
 }
 
 test "a canceled run adds the interrupted marker after its canceled tool, or alone" {

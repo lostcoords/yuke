@@ -59,7 +59,7 @@ pub fn detailText(arena: std.mem.Allocator, body: []const u8) error{OutOfMemory}
     const trimmed = std.mem.trim(u8, body, " \t\r\n");
     if (trimmed.len == 0) return null;
     const line = (try jsonErrorLine(arena, trimmed)) orelse trimmed;
-    const clean = try sanitize(arena, line);
+    const clean = std.mem.trim(u8, try sanitize(arena, line), " ");
     return if (clean.len == 0) null else clean;
 }
 
@@ -99,14 +99,15 @@ fn stringField(value: std.json.Value, key: []const u8) ?[]const u8 {
     };
 }
 
-/// Copy at most `max_detail_bytes` of valid UTF-8: a control byte becomes a space and an invalid byte becomes `?`.
+/// Copy at most `max_detail_bytes` of valid UTF-8: a C0, DEL, or C1 control becomes a space and an invalid byte becomes `?`.
 fn sanitize(arena: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]const u8 {
     var out: std.ArrayList(u8) = try .initCapacity(arena, @min(text.len, max_detail_bytes));
     var i: usize = 0;
     while (i < text.len) {
         const len = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
         const valid = i + len <= text.len and std.unicode.utf8ValidateSlice(text[i .. i + len]);
-        const piece: []const u8 = if (!valid) "?" else if (len == 1 and (text[i] < 0x20 or text[i] == 0x7f)) " " else text[i .. i + len];
+        const control = (len == 1 and (text[i] < 0x20 or text[i] == 0x7f)) or (len == 2 and text[i] == 0xc2 and text[i + 1] < 0xa0);
+        const piece: []const u8 = if (!valid) "?" else if (control) " " else text[i .. i + len];
         if (out.items.len + piece.len > max_detail_bytes) break;
         try out.appendSlice(arena, piece);
         i += if (valid) len else 1;
@@ -191,4 +192,7 @@ test "the detail line is bounded on a UTF-8 boundary and never carries an invali
     try testing.expect(std.unicode.utf8ValidateSlice(cut));
     try testing.expectEqualStrings("a?b", (try detailText(a, "a\xffb")).?);
     try testing.expectEqualStrings("a b", (try detailText(a, "a\x1bb")).?);
+    try testing.expectEqualStrings("a b", (try detailText(a, "a\xc2\x85b")).?);
+    try testing.expectEqualStrings("aé", (try detailText(a, "a\xc2\xa9"[0..1] ++ "é")).?);
+    try testing.expectEqual(@as(?[]const u8, null), try detailText(a, "\x1b\x00"));
 }

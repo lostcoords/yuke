@@ -281,7 +281,7 @@ test "report output has a UTF-8 byte bound and a failure keeps its partial outpu
     try testing.expect(source.partial and source.truncated);
     const body = result.report.?.input.content[1].text.text;
     try testing.expect(std.unicode.utf8ValidateSlice(body));
-    try testing.expect(body.len < reports.max_output_bytes + 512);
+    try testing.expect(body.len <= reports.max_output_bytes);
 }
 
 test "a stopped run reports its usage and no body" {

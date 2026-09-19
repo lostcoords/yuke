@@ -195,7 +195,6 @@ const HttpBody = struct {
     }
 };
 
-/// Read the retry headers before `response.reader()`, which invalidates every head string slice.
 /// Read the retry hints and the request id. The id is copied, because the body reader invalidates the head.
 fn readHeaders(head: std.http.Client.Response.Head, arena: Allocator, info: *transport.AttemptInfo) !void {
     var it = head.iterateHeaders();

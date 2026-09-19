@@ -120,6 +120,14 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     const foreign = try invokeAgent(host, "stop_agent", "{\"child\":\"" ++ child_id ++ "\"}");
     defer std.testing.allocator.free(foreign.text);
     try std.testing.expect(foreign.is_error);
+    try host.evalModule(
+        \\import { presenters } from "yuke:transcript";
+        \\const spawn = presenters.spawn_agent.present({ agent: "review", message: "x" });
+        \\const fallback = presenters.spawn_agent.present({ message: "x" });
+        \\const send = presenters.send_agent_input.present({ child: "abc" });
+        \\globalThis.presented = spawn.verb === "Agent" && spawn.subject === "review" && fallback.subject === "default" && send.verb === "Send" && send.subject === "abc" ? 1 : 0;
+    , "present.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("presented"));
     // A dispose withdraws the tools and the presenters it installed.
     try host.evalModule(
         \\import { plugins } from "yuke:ext";

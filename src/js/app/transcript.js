@@ -670,7 +670,7 @@ function openDetails(title, sections) {
 
 const FIELD_UNREAD = "\n[the remaining field could not be read]";
 
-/** @param {{ type?: string, message?: string, status?: number, request_id?: string, detail?: string } | null | undefined} error @returns {string} */
+/** @param {Wire.MessageError | null | undefined} error @returns {string} */
 function errorLabel(error) {
   const parts = [(error && error.message) || (error && error.type) || "run failed"];
   if (error?.status != null) parts.push("HTTP " + error.status);
@@ -1184,7 +1184,7 @@ export class Transcript {
       const read = /** @type {PartsOf} */ (this.partsOf)(id);
       if (Array.isArray(read)) parts = read;
     } catch (_) {}
-    const texts = parts.filter((part) => part.type === "text");
+    const texts = parts.filter((part) => part && part.type === "text");
     const last = texts.length >= 2 ? texts[texts.length - 1] : undefined;
     return last && last.type === "text" ? last.text : text;
   }
