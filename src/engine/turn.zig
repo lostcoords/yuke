@@ -69,13 +69,13 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
         const has_tools = hasToolPart(live);
         if (has_tools) {
             if (terminal == .success and terminal.success == .tool_calls) {
-                settlePendingTools(engine, boundary_arena, slot, &streamer, slot.config.root, live) catch |err| {
+                settlePendingTools(engine, boundary_arena, slot, &streamer, .run, live) catch |err| {
                     run.faultSlot(engine, slot, err);
                     return;
                 };
             } else {
                 // Cancel any pending tool part; a canceled/failed stream or a malformed tool_use lands here.
-                settlePendingTools(engine, boundary_arena, slot, &streamer, null, live) catch |err| {
+                settlePendingTools(engine, boundary_arena, slot, &streamer, .cancel, live) catch |err| {
                     run.faultSlot(engine, slot, err);
                     return;
                 };
@@ -588,25 +588,28 @@ fn hasToolPart(live: *const draft.Draft) bool {
 /// One pending tool call. A snapshot frees the tool call from the draft parts array.
 const PendingTool = struct { part_id: proto.ids.PartId, name: []const u8, arguments: []const u8 };
 
+/// A round that ended with tool calls runs them; any other end cancels the parts it left pending.
+const Settle = enum { run, cancel };
+
 /// Settle pending tools in part order, which is the order the blocks stopped, not the item order.
-fn settlePendingTools(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, workspace_root: ?[]const u8, live: *const draft.Draft) !void {
+fn settlePendingTools(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, settle: Settle, live: *const draft.Draft) !void {
     var pending: std.ArrayList(PendingTool) = .empty;
     for (live.parts.items) |*p| {
         if (p.* != .tool or std.meta.activeTag(p.tool.state) != .pending) continue;
         try pending.append(arena, .{ .part_id = p.tool.id, .name = p.tool.name, .arguments = p.tool.arguments });
     }
     for (pending.items) |pt| {
-        if (workspace_root == null or slot.cancel.isRequested()) {
+        if (settle == .cancel or slot.cancel.isRequested()) {
             try streamer.emitToolState(pt.part_id, .{ .canceled = .{} });
             continue;
         }
-        try runOneTool(engine, slot, streamer, workspace_root.?, pt);
+        try runOneTool(engine, slot, streamer, pt);
     }
 }
 
 /// Run one tool in a child task, so a cancel can interrupt a blocked call.
-fn runOneTool(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_root: []const u8, pt: PendingTool) !void {
-    return switch (slot.cancel.runChild(engine.deps.io, toolChild, .{ engine, slot, streamer, workspace_root, pt })) {
+fn runOneTool(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTool) !void {
+    return switch (slot.cancel.runChild(engine.deps.io, toolChild, .{ engine, slot, streamer, pt })) {
         .canceled => {}, // The child settled its part canceled. The next part still settles.
         .aborted => error.Canceled,
         .returned => |result| result,
@@ -614,7 +617,7 @@ fn runOneTool(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_ro
 }
 
 /// Run one tool and emit exactly one terminal state despite cancellation.
-fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_root: []const u8, pt: PendingTool) !void {
+fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTool) !void {
     std.debug.assert(slot.phase == .running); // the run loop owns the slot for this round
     std.debug.assert(slot.progress.current != null); // the round opened the message
     defer slot.cancel.finish(engine.deps.io);
@@ -627,7 +630,7 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_roo
     // The session folds the state before this arena releases the tool result.
     var scratch_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer scratch_state.deinit();
-    const res = runHooked(engine, scratch_state.allocator(), slot, pt, workspace_root) catch {
+    const res = runHooked(engine, scratch_state.allocator(), slot, pt) catch {
         const cancel_old = engine.deps.io.swapCancelProtection(.blocked);
         defer _ = engine.deps.io.swapCancelProtection(cancel_old);
         try streamer.emitToolState(pt.part_id, .{ .canceled = .{ .duration_ms = engine.nowMillis() -| started } });
@@ -697,11 +700,11 @@ test "tool rewrites obey the current depth limit before dispatch" {
     var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer scratch.deinit();
     const pending: PendingTool = .{ .part_id = 0, .name = "read", .arguments = "{}" };
-    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, "/w");
+    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending);
     try std.testing.expect(refused.is_error);
     try std.testing.expectEqual(@as(usize, 0), state.calls);
     try f.engine.setAgentLimits(8, 2);
-    const accepted = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, "/w");
+    const accepted = try runHooked(&f.engine, scratch.allocator(), f.slot, pending);
     try std.testing.expect(!accepted.is_error);
     try std.testing.expectEqual(@as(usize, 1), state.calls);
 }
@@ -738,19 +741,19 @@ test "a tool.after replacement is the whole result, and the engine admits the me
     defer scratch.deinit();
     const pending: PendingTool = .{ .part_id = 0, .name = "read", .arguments = "{}" };
     // The replacement omits the media, so the bad ref is gone before admission.
-    const replaced = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, "/w");
+    const replaced = try runHooked(&f.engine, scratch.allocator(), f.slot, pending);
     try std.testing.expect(!replaced.is_error);
     try std.testing.expectEqualStrings("clean", replaced.output);
     try std.testing.expectEqual(@as(usize, 0), replaced.media.len);
     // Without the replacement, the ref the store lacks turns the result into an error.
     state.replace = false;
-    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, "/w");
+    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending);
     try std.testing.expect(refused.is_error);
     try std.testing.expect(std.mem.indexOf(u8, refused.output, "does not hold") != null);
 }
 
 /// Run one tool through its hooks. A block answers the model, and the process runs nothing.
-fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: PendingTool, workspace_root: []const u8) !toolset.Outcome {
+fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: PendingTool) !toolset.Outcome {
     const hooks = engine.deps.hooks;
     var call: ToolCall = .{ .name = pt.name, .arguments = pt.arguments };
     const payload: ToolCallPayload = .{ .name = pt.name, .arguments = pt.arguments, .context = .{ .session_id = slot.sessionId(), .parent_id = slot.parent_id, .agent_name = slot.config.name orelse "root" } };
@@ -770,7 +773,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
         return .{ .output = "The tool is unavailable in this session.", .is_error = true };
     }
     const res = tools.run(tools.ctx, arena, call.name, call.arguments, .{
-        .workspace_root = workspace_root,
+        .workspace_root = slot.config.root,
         .site = .{ .session_id = slot.sessionId(), .message_id = slot.progress.current.?.message_id, .part_id = pt.part_id },
         .work = &slot.work,
     });
@@ -1106,9 +1109,7 @@ test "a build hook can discard the live registry and tools before the request se
             std.debug.assert(context.get("parent_id").? == .null);
             std.debug.assert(context.get("workspace").?.string.len > 0);
             std.debug.assert(std.mem.eql(u8, "root", context.get("agent_name").?.string));
-            const parts = std.json.parseFromValueLeaky(database.session.PromptParts, arena, context.get("prompt").?, .{}) catch unreachable;
-            const rebuilt = parts.render(arena) catch unreachable;
-            std.debug.assert(std.mem.eql(u8, value.object.get("system").?.string, rebuilt));
+            std.debug.assert(context.get("prompt") == null);
             self.source.deinit();
             self.tools = &.{};
             self.discarded = true;

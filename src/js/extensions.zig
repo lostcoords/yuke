@@ -623,46 +623,6 @@ test "the agents plugin sets the native limits from its options" {
     try std.testing.expectEqual(@as(u32, 3), f.app.engine.max_agent_depth);
 }
 
-test "a JavaScript build hook reconstructs exact prompt components" {
-    var f: Fixture = undefined;
-    try f.init(
-        \\import { plugins } from "yuke";
-        \\plugins.use({ name: "prompt-parts", apply(ctx) {
-        \\  ctx.hook("request.build", (request) => {
-        \\    const { base, instructions, skills, child_policy, environment } = request.context.prompt;
-        \\    const join = (parts) => parts.filter((text) => text != null && text.length > 0).join("\n\n");
-        \\    if (join([base, instructions, skills, child_policy, environment]) !== request.system) return { block: "prompt mismatch" };
-        \\    return { replace: { ...request, system: join(["custom base", instructions, skills, child_policy, environment]) } };
-        \\  });
-        \\} });
-    , kernel_boot);
-    defer f.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const environment = "<environment>\nworkspace: /work\n</environment>";
-    const Parts = @import("../session/prompt.zig").Parts;
-    const cases = [_]struct { parts: Parts, system: []const u8, expected: []const u8 }{
-        .{ .parts = .{ .base = "base\n\nwith separators", .instructions = "project rules", .child_policy = "child policy", .environment = environment }, .system = "base\n\nwith separators\n\nproject rules\n\nchild policy\n\n" ++ environment, .expected = "custom base\n\nproject rules\n\nchild policy\n\n" ++ environment },
-        .{ .parts = .{ .base = "", .child_policy = null, .environment = environment }, .system = environment, .expected = "custom base\n\n" ++ environment },
-        .{ .parts = .{ .base = "base", .instructions = "rules", .skills = "<available_skills/>", .child_policy = null, .environment = environment }, .system = "base\n\nrules\n\n<available_skills/>\n\n" ++ environment, .expected = "custom base\n\nrules\n\n<available_skills/>\n\n" ++ environment },
-    };
-    for (cases) |case| {
-        const payload = try std.json.Stringify.valueAlloc(a, .{
-            .model = "m",
-            .system = case.system,
-            .tools = .{},
-            .max_output_tokens = 64,
-            .context = .{ .prompt = case.parts },
-        }, .{});
-        const result = try settleHook(&f.extensions, "request.build", payload);
-        defer std.testing.allocator.free(result);
-        const parsed = try std.json.parseFromSliceLeaky(std.json.Value, a, result, .{});
-        try std.testing.expectEqualStrings("replace", parsed.object.get("type").?.string);
-        try std.testing.expectEqualStrings(case.expected, parsed.object.get("value").?.object.get("system").?.string);
-    }
-}
-
 test "the skill tool answers a catalog body through skill.load" {
     const commands = @import("../engine/commands.zig");
     var f: Fixture = undefined;

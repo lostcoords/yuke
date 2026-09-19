@@ -117,7 +117,6 @@ pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, mo
                 .parent_id = slot.parent_id,
                 .workspace = slot.config.root,
                 .agent_name = slot.config.name orelse "root",
-                .prompt = try database.session.promptParts(engine.deps.db, arena, slot.sessionId().raw),
             },
         };
         switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", hook_payload)) {

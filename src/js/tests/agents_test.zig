@@ -124,14 +124,14 @@ test "the plugin ends a root prompt with the rule and scopes a child by its row"
     try host.evalModule(tool_fixture, "tools.js");
     const tools = "[{\"name\":\"read\"},{\"name\":\"exec\"},{\"name\":\"write\"}]";
     const Build = struct { type: []const u8, value: struct { system: []const u8, tools: []const struct { name: []const u8 } } };
-    const root_text = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":" ++ tools ++ ",\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ root_id ++ "\",\"parent_id\":null,\"agent_name\":\"root\",\"workspace\":\"/w\",\"prompt\":{}}}");
+    const root_text = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":" ++ tools ++ ",\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ root_id ++ "\",\"parent_id\":null,\"agent_name\":\"root\",\"workspace\":\"/w\"}}");
     defer std.testing.allocator.free(root_text);
     const root_build = try std.json.parseFromSlice(Build, std.testing.allocator, root_text, .{ .ignore_unknown_fields = true });
     defer root_build.deinit();
     try std.testing.expectEqualStrings("replace", root_build.value.type);
     try std.testing.expect(std.mem.startsWith(u8, root_build.value.value.system, "base\n\nDo not spawn a child unless the user asks"));
     try std.testing.expectEqual(@as(usize, 3), root_build.value.value.tools.len);
-    const child_text = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":" ++ tools ++ ",\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"review\",\"workspace\":\"/w\",\"prompt\":{}}}");
+    const child_text = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":" ++ tools ++ ",\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"review\",\"workspace\":\"/w\"}}");
     defer std.testing.allocator.free(child_text);
     const child_build = try std.json.parseFromSlice(Build, std.testing.allocator, child_text, .{ .ignore_unknown_fields = true });
     defer child_build.deinit();
@@ -140,7 +140,7 @@ test "the plugin ends a root prompt with the rule and scopes a child by its row"
     try std.testing.expectEqualStrings("read", child_build.value.value.tools[0].name);
     try std.testing.expectEqualStrings("exec", child_build.value.value.tools[1].name);
     // A child outside the catalog and a row without a prompt or a tool list keep the round as it is.
-    const ghost = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":[],\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"ghost\",\"workspace\":\"/w\",\"prompt\":{}}}");
+    const ghost = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":[],\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"ghost\",\"workspace\":\"/w\"}}");
     defer std.testing.allocator.free(ghost);
     try std.testing.expect(std.mem.indexOf(u8, ghost, "replace") == null);
     const blocked = try answerHook(host, "tool.before", "{\"name\":\"write\",\"arguments\":\"{}\",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"review\"}}");
