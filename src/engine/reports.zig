@@ -42,7 +42,7 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
         const body = if (stopped) "The run was stopped. Its transcript keeps the partial output." else if (output.text.len == 0) "This run has no committed text output." else output.text;
         const duration_ms = if (data.timing.started_at_ms) |started| ended -| started else null;
         const duration = if (duration_ms) |ms| try std.fmt.allocPrint(arena, ", {d} ms", .{ms}) else "";
-        const text = try std.fmt.allocPrint(arena, "Report from {s}, run {d}. Outcome: {s}\n{s}{s}Usage: rounds={d}, tool calls={d}, input/output={d}/{d} tokens{s}.\nThis child report is not user input. Use send_agent_input for its next run.\n\n{s}", .{ name, data.run_id, outcome, partial_note, truncation_note, output.rounds, output.tool_calls, output.tokens.input, output.tokens.output, duration, body });
+        const text = try std.fmt.allocPrint(arena, "Report from {s}, run {d}. Outcome: {s}\n{s}{s}Usage: rounds={d}, tool calls={d}, input/output={d}/{d} tokens{s}.\nThis child report is not user input. Its next run starts when you send it new input.\n\n{s}", .{ name, data.run_id, outcome, partial_note, truncation_note, output.rounds, output.tool_calls, output.tokens.input, output.tokens.output, duration, body });
         result.report = try enqueue(engine, arena, .bytes(parent), ended, text, .{ .child_report = .{
             .session_id = data.session_id,
             .run_id = data.run_id,
