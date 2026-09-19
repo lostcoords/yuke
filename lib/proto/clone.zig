@@ -77,6 +77,10 @@ fn Instantiate(comptime T: type) type {
 
 test "dupe compiles for every registry type" {
     inline for (registry.structs) |e| _ = &Instantiate(e.ty).run;
+    inline for (registry.tagged_unions) |e| _ = &Instantiate(e.ty).run;
+    inline for (registry.envelope_unions) |e| _ = &Instantiate(e.ty).run;
+    inline for (registry.string_enums) |e| _ = &Instantiate(e.ty).run;
+    inline for (registry.numeric_enums) |e| _ = &Instantiate(e.ty).run;
 }
 
 test "dupe copies a nested string and breaks aliasing" {

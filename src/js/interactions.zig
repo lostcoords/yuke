@@ -128,8 +128,15 @@ pub const Table = struct {
                 i += 1;
                 continue;
             }
-            std.debug.assert(self.cancel(request.id));
+            self.removeAt(i, .undefined);
         }
+    }
+
+    /// Take the request out of the live list, settle its promise, and free it.
+    fn removeAt(self: *Table, index: usize, result: pending.Result) void {
+        const request = self.live.orderedRemove(index); // `takeNext` reads the list in request order.
+        request.op.finish(result);
+        self.destroy(request);
     }
 
     /// Settle one question. Bad peer input leaves the original question pending.
@@ -137,18 +144,13 @@ pub const Table = struct {
         const index = self.indexOf(params.interaction_id) orelse return error.Unknown;
         const request = self.live.items[index];
         if (!request.sent or request.hidden) return error.Unknown;
-        const result = try self.resultFor(request, params.response);
-        _ = self.live.orderedRemove(index);
-        request.op.finish(result);
-        self.destroy(request);
+        self.removeAt(index, try self.resultFor(request, params.response));
     }
 
     /// Cancel one consumer-owned question. A late frontend answer becomes unknown.
     pub fn cancel(self: *Table, id: proto.ids.InteractionId) bool {
         const index = self.indexOf(id) orelse return false;
-        const request = self.live.orderedRemove(index);
-        request.op.finish(.undefined);
-        self.destroy(request);
+        self.removeAt(index, .undefined);
         return true;
     }
 

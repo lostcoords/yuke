@@ -5,10 +5,10 @@ import { NAME, check, failure, spawnAgent } from "yuke:agents";
 
 /** @import { Context } from "yuke:ext" */
 
-/** @param {unknown} value @param {string[]} fields @returns {Record<string, any>} */
+/** @param {unknown} value @param {Record<string, unknown>} fields @returns {Record<string, any>} */
 function argsOf(value, fields) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw failure("bad_request", "The arguments must be an object.");
-    for (const field of Object.keys(value)) if (!fields.includes(field)) throw failure("bad_request", "Unknown argument: " + field);
+    for (const field of Object.keys(value)) if (!Object.prototype.hasOwnProperty.call(fields, field)) throw failure("bad_request", "Unknown argument: " + field);
     return value;
 }
 /** @param {Record<string, any>} args @param {string} key @returns {string} */
@@ -54,7 +54,7 @@ export const agentToolsPlugin = {
                 spawnsAgents: definition.name === "spawn_agent",
                 parameters: { type: "object", properties: definition.fields, required: definition.required, additionalProperties: false },
                 execute: async (raw, signal, context) => {
-                    const args = argsOf(raw, Object.keys(definition.fields));
+                    const args = argsOf(raw, definition.fields);
                     const parentId = context.sessionId;
                     if (!parentId) throw failure("bad_request", "The tool has no parent session.");
                     check(signal);

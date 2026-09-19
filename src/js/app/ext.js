@@ -387,7 +387,7 @@ function injectInto(parentContext, names, apply) {
       child.effect(() => apply(/** @type {InjectContext<K>} */ (ctx)));
       // The block can drop its own dependency, so confirm the requirement before the block commits.
       if (satisfied() && !stopped && parent.alive) {
-        // The old block leaves only after the new one holds what it registered, so a shared resource such as an overlay passes from one block to the next without a gap.
+        // The old block leaves after the new one registered, so a shared resource passes over without a gap.
         drop();
         live = child;
       } else {

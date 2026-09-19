@@ -108,7 +108,6 @@ pub fn Statement(comptime statement_sql: [:0]const u8) type {
 
         /// Bind once and stream owned rows until exhaustion or `deinit`. Do not copy the iterator.
         pub fn rows(self: *Self, comptime Row: type, params: anytype) !Rows(Row) {
-            comptime validateRecord(Row, .scan);
             std.debug.assert(!self.active);
 
             var result: Rows(Row) = .{
@@ -248,8 +247,10 @@ pub fn prepare(conn: zqlite.Conn, comptime statement_sql: [:0]const u8) !Stateme
     return .{ .statement = try prepareStatement(conn, statement_sql) };
 }
 
+/// The typed wrappers declare their own `prepare`, so they reach this one under another name.
+const prepareTyped = prepare;
+
 pub fn ExecQuery(comptime statement_sql: [:0]const u8, comptime ParamsType: type) type {
-    comptime validateRecord(ParamsType, .bind);
     return struct {
         const Self = @This();
 
@@ -259,7 +260,7 @@ pub fn ExecQuery(comptime statement_sql: [:0]const u8, comptime ParamsType: type
         statement: Statement(statement_sql),
 
         pub fn prepare(conn: zqlite.Conn) !Self {
-            return .{ .statement = try queryPrepare(conn, statement_sql) };
+            return .{ .statement = try prepareTyped(conn, statement_sql) };
         }
 
         pub fn deinit(self: *Self) void {
@@ -308,10 +309,6 @@ fn RowQuery(
     comptime ParamsType: type,
     comptime RowType: type,
 ) type {
-    comptime {
-        validateRecord(ParamsType, .bind);
-        validateRecord(RowType, .scan);
-    }
     return struct {
         const Self = @This();
 
@@ -323,7 +320,7 @@ fn RowQuery(
         statement: Statement(statement_sql),
 
         pub fn prepare(conn: zqlite.Conn) !Self {
-            return .{ .statement = try queryPrepare(conn, statement_sql) };
+            return .{ .statement = try prepareTyped(conn, statement_sql) };
         }
 
         pub fn deinit(self: *Self) void {
@@ -346,10 +343,6 @@ fn RowQuery(
             return self.statement.rows(Row, params);
         }
     };
-}
-
-fn queryPrepare(conn: zqlite.Conn, comptime statement_sql: [:0]const u8) !Statement(statement_sql) {
-    return prepare(conn, statement_sql);
 }
 
 /// Prepare every generated query field, unwinding completed fields on failure.

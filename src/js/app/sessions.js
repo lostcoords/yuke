@@ -8,7 +8,7 @@ import { client } from "yuke:client";
 /** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */
 /** @typedef {{ id: string, title: string, activity: FeedActivity, session: Wire.Session }} SessionRow */
 
-// --- session feed ------------------------------------------------------------------------- One engine, one feed; it keeps no parallel copy of the store, so an index change makes it read `session.list` again and the drain coalesces a burst of changes into one read.
+// One engine, one feed. The feed keeps no copy of the store, so an index change makes it read `session.list` again.
 class SessionFeed {
   constructor() {
     /** @type {Map<string, FeedItem>} */
@@ -17,7 +17,6 @@ class SessionFeed {
       () => client.sessionList().then((r) => this.seed(r)),
       () => root.invalidate(),
     );
-    this.loaded = false;
   }
 
   get loading() {
@@ -30,7 +29,6 @@ class SessionFeed {
     this.items.clear();
     const items = listResult && listResult.items ? listResult.items : [];
     for (const it of items) if (it && it.session) this.items.set(it.session.id, it);
-    this.loaded = true;
   }
 
   // Read the list again. A burst shares one read and one follow-up catches changes during it.
@@ -43,7 +41,6 @@ class SessionFeed {
   clear() {
     feedsRev++;
     this.items.clear();
-    this.loaded = false;
   }
 
   /** @returns {SessionRow[]} */

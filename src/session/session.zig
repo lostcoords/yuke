@@ -228,8 +228,8 @@ pub const Session = struct {
         return switch (bc) {
             .message_started_data => |d| self.onStarted(d),
             .message_part_added_data => |d| self.onPartAdded(d),
-            .message_part_delta_data => |d| self.onDelta(d, .text),
-            .tool_output_delta_data => |d| self.onDelta(d, .tool),
+            .message_part_delta_data => |d| self.activeDraft(d.message_id).applyPartDelta(d),
+            .tool_output_delta_data => |d| self.activeDraft(d.message_id).applyToolOutputDelta(d),
             .message_part_finalized_data => |d| self.onFinalized(d),
             .tool_state_changed_data => |d| self.onToolState(d),
             .message_discarded_data => |d| self.onDiscarded(d),
@@ -268,16 +268,6 @@ pub const Session = struct {
 
     fn onPartAdded(self: *Session, d: message.MessagePartAddedData) Error!void {
         try self.activeDraft(d.message_id).addPart(d);
-    }
-
-    const DeltaKind = enum { text, tool };
-
-    fn onDelta(self: *Session, d: message.PartDelta, kind: DeltaKind) Error!void {
-        const dr = self.activeDraft(d.message_id);
-        return switch (kind) {
-            .text => dr.applyPartDelta(d),
-            .tool => dr.applyToolOutputDelta(d),
-        };
     }
 
     fn onFinalized(self: *Session, d: message.MessagePartFinalizedData) Error!void {

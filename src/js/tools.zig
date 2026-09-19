@@ -1,4 +1,4 @@
-//! The tools `index.js` registered each own a live JavaScript handler; the table stays sorted by name, so plugin load order never moves the advertised prefix; the host owns this table, so a handler stays reachable for the life of the context, while a plugin can register or withdraw a tool at any time and the engine asks for the set; a turn task submits a `Call` and waits, the owner runs the handler, polls the Promise, and answers, no engine task enters QuickJS, and the cooperative executor holds one thread, so a task mutates the queue only between suspension points and the two sides never interleave.
+//! The tool table the plugins fill, sorted by name and owned by the host; a turn task submits a `Call`, and only the owner runs the handler, so no engine task enters QuickJS.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -52,7 +52,7 @@ pub const Tools = struct {
         self.gpa.free(decl.input_schema);
     }
 
-    /// Add one tool; the table copies the text and takes the handler reference on success only; `JS_ToCStringLen` writes WTF-8 for a lone surrogate, so the copies become valid UTF-8 here because a provider request accepts text only.
+    /// Add one tool: copy the text as valid UTF-8 and take the handler reference on success only.
     pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, handler: Value, flags: Flags) RegisterError!void {
         if (!validName(name)) return error.InvalidName;
         const slot = self.lookup(name);
@@ -108,7 +108,7 @@ pub const Tools = struct {
 /// What one call asks for. The kind selects the handler the owner runs and the answer it records.
 pub const Kind = enum { tool, hook, input };
 
-/// One call in flight; a turn task submits it and waits, and the owner answers it; the submitter touches no QuickJS value, so it never frees the Promise, marks itself done, and lets the owner sweep the record.
+/// One call in flight; the submitter waits and touches no QuickJS value, so the owner alone frees the Promise and sweeps the record.
 pub const Call = struct {
     kind: Kind = .tool,
     /// The tool name, the hook point, or the input method. The submitter owns these bytes for the whole call.
@@ -207,8 +207,8 @@ pub const Calls = struct {
                 i += 1;
                 continue;
             }
-            // `orderedRemove` shifts the tail left, so `i` must NOT advance here.
-            _ = self.live.orderedRemove(i);
+            // `swapRemove` moves the last record into `i`, so `i` must NOT advance here.
+            _ = self.live.swapRemove(i);
             self.free(ctx, call);
         }
     }

@@ -67,6 +67,8 @@ const Run = struct {
     w: *std.Io.Writer,
     stats: Stats = .{},
     unknown: std.ArrayList([]const u8) = .empty,
+    /// The generated `find` answers the first row, so a repeated id would hide a provider.
+    provider_ids: std.StringHashMapUnmanaged(void) = .empty,
 
     /// Record a name this generator does not know. The field keeps its default.
     fn degrade(self: *Run, field: []const u8, name: []const u8) !void {
@@ -116,8 +118,10 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
     const auth = try object(try member(provider, "auth"));
     const scheme = std.meta.stringToEnum(vocab.model.AuthKind, try string(auth, "kind")) orelse return Error.InvalidDocument;
 
+    const id = try string(provider, "id");
+    if ((try run.provider_ids.getOrPut(run.arena, id)).found_existing) return Error.InvalidDocument;
     try w.print("    .{{\n        .id = \"{f}\",\n        .name = \"{f}\",\n", .{
-        std.zig.fmtString(try string(provider, "id")),
+        std.zig.fmtString(id),
         std.zig.fmtString(try string(provider, "name")),
     });
 
@@ -140,12 +144,18 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
 
     try w.writeAll("        .headers = &.{");
     const headers = try array(provider, "headers");
-    for (headers, 0..) |item, i| {
+    const checked = try run.arena.alloc(vocab.route.Header, headers.len);
+    for (headers, checked) |item, *h| {
         const header = try object(item);
+        h.* = .{ .name = try string(header, "name"), .value = try string(header, "value") };
+    }
+    // The route refuses these headers at request time, so the table refuses them now.
+    if (!vocab.route.validHeaders(checked)) return Error.InvalidDocument;
+    for (checked, 0..) |h, i| {
         try w.print("{s} .{{ .name = \"{f}\", .value = \"{f}\" }}", .{
             if (i == 0) "" else ",",
-            std.zig.fmtString(try string(header, "name")),
-            std.zig.fmtString(try string(header, "value")),
+            std.zig.fmtString(h.name),
+            std.zig.fmtString(h.value),
         });
     }
     try w.writeAll(if (headers.len == 0) "},\n" else " },\n");
@@ -162,8 +172,11 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
     }
     try w.writeAll("        },\n        .models = &.{\n");
 
+    var model_ids: std.StringHashMapUnmanaged(void) = .empty;
     for (try array(provider, "models")) |item| {
         const spec = try object(item);
+        // The generated `findModel` answers the first row, so a repeated id would hide a model.
+        if ((try model_ids.getOrPut(run.arena, try string(spec, "id"))).found_existing) return Error.InvalidDocument;
         // A model on a path the host does not serve could never be called, so the table refuses it.
         const protocol = std.meta.stringToEnum(vocab.types.Protocol, try string(spec, "protocol")) orelse return Error.InvalidDocument;
         if (!served.contains(protocol)) return Error.InvalidDocument;
@@ -275,7 +288,11 @@ fn emitDialect(run: *Run, flags: std.json.ObjectMap, protocol: []const u8) !void
     if (min == null and max == null) return;
     try w.writeAll(" .reasoning_budget = .{ .range = .{");
     if (min) |value| try w.print(" .min = {d},", .{try number(value)});
-    if (max) |value| try w.print(" .max = {d},", .{try number(value)});
+    if (max) |value| {
+        const budget = try number(value);
+        if (budget < 0) return Error.InvalidDocument; // The field is unsigned, so a negative value would not compile.
+        try w.print(" .max = {d},", .{budget});
+    }
     try w.writeAll(" } },");
 }
 
@@ -332,15 +349,11 @@ fn emitOptionalFloat(w: *std.Io.Writer, map: std.json.ObjectMap, key: []const u8
     } });
 }
 
-// ── The routing sets. An unknown name fails the run, because no request can be built without it. ──
-
 /// Name the tag `name` selects, or fail: these decide the route, so they have no working default.
 fn routingName(comptime Vocabulary: type, name: []const u8) ![]const u8 {
     const tag = std.meta.stringToEnum(Vocabulary, name) orelse return Error.InvalidDocument;
     return @tagName(tag);
 }
-
-// ── Strict readers. Every one fails on a shape the document does not state. ──
 
 fn object(value: std.json.Value) !std.json.ObjectMap {
     return if (value == .object) value.object else Error.InvalidDocument;

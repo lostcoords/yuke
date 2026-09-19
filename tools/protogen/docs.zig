@@ -46,9 +46,8 @@ fn putFieldDoc(
     if (try docComment(a, tree, field.firstToken())) |doc| try docs.put(key, doc);
 }
 
-fn extractSource(a: std.mem.Allocator, docs: *DocMap, source: []const u8) !void {
-    const source_z = try a.dupeZ(u8, source);
-    var tree = try std.zig.Ast.parse(a, source_z, .zig);
+fn extractSource(a: std.mem.Allocator, docs: *DocMap, source: [:0]const u8) !void {
+    var tree = try std.zig.Ast.parse(a, source, .zig);
     defer tree.deinit(a);
 
     var container_buffer: [2]std.zig.Ast.Node.Index = undefined;
@@ -78,7 +77,8 @@ pub fn load(a: std.mem.Allocator, io: std.Io) !DocMap {
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zig")) continue;
-        const source = try dir.readFileAlloc(io, entry.name, a, .unlimited);
+        // The parser needs a sentinel, so the read appends it and no second copy exists.
+        const source = try dir.readFileAllocOptions(io, entry.name, a, .unlimited, .of(u8), 0);
         try extractSource(a, &docs, source);
     }
 

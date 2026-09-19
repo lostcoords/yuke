@@ -173,8 +173,7 @@ export function openOutput(ctx, job) {
 /** @param {Context} ctx */
 export function openJobs(ctx) {
   const current = focusedChat()?.sessionId;
-  const rows = () => list();
-  let items = rows();
+  let items = list();
   const picker = ui.select(items, {
     title: summary(items), footer: "↵ output · x stop · X stop all · esc close",
     border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.6),
@@ -192,7 +191,7 @@ export function openJobs(ctx) {
   });
   const release = ctx.tui.overlay(picker.win);
   const offChanged = ctx.on("jobs.changed", () => {
-    items = rows();
+    items = list();
     picker.win.opts.title = summary(items);
     picker.content.setSource(items);
     root.invalidate();

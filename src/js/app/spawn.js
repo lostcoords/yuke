@@ -30,11 +30,17 @@ export function lines(onLine) {
   let rest = "";
   return (text) => {
     rest += text;
+    // Walk with a cursor and cut the tail once, so a chunk with many lines copies the tail one time.
+    let start = 0;
     let end;
-    while ((end = rest.indexOf("\n")) >= 0) {
-      const line = rest.slice(0, end);
-      rest = rest.slice(end + 1);
-      onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+    try {
+      while ((end = rest.indexOf("\n", start)) >= 0) {
+        const line = rest.slice(start, end);
+        start = end + 1;
+        onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+      }
+    } finally {
+      rest = rest.slice(start);
     }
   };
 }

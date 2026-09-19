@@ -26,8 +26,10 @@ pub fn HexId(comptime N: usize) type {
         }
 
         pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !Self {
-            const value = try std.json.Value.jsonParse(a, s, o);
-            return jsonParseFromValue(a, value, o);
+            // A fixed-length array decodes on the stack, so an id costs no allocation; only a string may fill it.
+            if (try s.peekNextTokenType() != .string) return error.UnexpectedToken;
+            const text = try std.json.innerParse([N * 2]u8, a, s, o);
+            return fromHex(&text);
         }
 
         pub fn jsonParseFromValue(_: std.mem.Allocator, value: std.json.Value, _: std.json.ParseOptions) !Self {
@@ -36,6 +38,11 @@ pub fn HexId(comptime N: usize) type {
                 else => return error.UnexpectedToken,
             };
             if (text.len != N * 2) return error.LengthMismatch;
+            return fromHex(text);
+        }
+
+        fn fromHex(text: []const u8) !Self {
+            std.debug.assert(text.len == N * 2);
             if (!isLowerHex(text)) return error.InvalidCharacter; // The wire accepts lowercase hexadecimal only.
             var self: Self = undefined;
             _ = std.fmt.hexToBytes(&self.raw, text) catch return error.InvalidCharacter;
@@ -169,4 +176,6 @@ test "HexId encodes lowercase hex and rejects uppercase or a wrong length" {
 
     try std.testing.expectError(error.InvalidCharacter, std.json.parseFromSlice(Id, std.testing.allocator, "\"ABCD0123\"", .{}));
     try std.testing.expectError(error.LengthMismatch, std.json.parseFromSlice(Id, std.testing.allocator, "\"abcd\"", .{}));
+    // A byte array has the right length but is not the wire form of an id.
+    try std.testing.expectError(error.UnexpectedToken, std.json.parseFromSlice(Id, std.testing.allocator, "[97,98,99,100,48,49,50,51]", .{}));
 }

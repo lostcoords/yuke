@@ -305,14 +305,14 @@ pub fn emit(a: std.mem.Allocator, w: *std.Io.Writer, queries: []const Resolved) 
         });
         try writeSql(w, query.definition.sql);
         try w.writeAll(",\n");
-        try writeStruct(w, query.params);
+        try writeStruct(w, query.params, true);
         if (query.definition.cardinality != .exec) {
             try w.writeAll(",\n");
             if (query.definition.row_from) |source| {
                 try w.writeAll("    ");
                 try writeTitleName(w, source);
                 try w.writeAll(".Row");
-            } else try writeStruct(w, query.row);
+            } else try writeStruct(w, query.row, false);
         }
         try w.writeAll(",\n);\n");
     }
@@ -383,7 +383,8 @@ fn writeSql(w: *std.Io.Writer, source: []const u8) !void {
     while (lines.next()) |line| try w.print("    \\\\{s}\n", .{line});
 }
 
-fn writeStruct(w: *std.Io.Writer, fields: []const Field) !void {
+/// Write one record type. A parameter struct gives each optional field a null default, so a caller may omit it.
+fn writeStruct(w: *std.Io.Writer, fields: []const Field, defaults: bool) !void {
     if (fields.len == 0) return w.writeAll("    struct {}");
     try w.writeAll("    struct {\n");
     for (fields) |field| {
@@ -392,7 +393,7 @@ fn writeStruct(w: *std.Io.Writer, fields: []const Field) !void {
         try w.writeAll(": ");
         if (!field.required) try w.writeByte('?');
         try w.writeAll(field.zig_type);
-        if (field.zig_type[0] == '?') try w.writeAll(" = null"); // A caller may omit an optional parameter.
+        if (defaults and (!field.required or field.zig_type[0] == '?')) try w.writeAll(" = null");
         try w.writeAll(",\n");
     }
     try w.writeAll("    ");

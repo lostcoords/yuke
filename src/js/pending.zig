@@ -1,4 +1,4 @@
-//! One in-flight primitive call is a promise that a task finishes and the owner settles; a task never touches JavaScript, writes a plain result into its `Op`, and wakes the owner, which alone calls `resolve` or `reject`, so a primitive and an event reach JavaScript by the same route; the executor is cooperative, so a task runs only while another task suspends, `settle` never suspends and can walk its own list safely, and one pass settles everything; the owner must reach a suspension point for progress, and `serve` does because it ends each pass in `receive`.
+//! One in-flight primitive call: a task writes a plain result into its `Op` and wakes the owner, and only the owner settles the promise.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -159,7 +159,7 @@ pub const Ops = struct {
         return false;
     }
 
-    /// Settle every finished op and answer whether a resolver threw. A settle can start another op, so the loop re-reads the length and holds `i` after a removal.
+    /// Settle every finished op and report whether a resolver threw; a settle can start another op, so the loop re-reads the length.
     pub fn settle(self: *Ops, ctx: Context) bool {
         var faulted = false;
         var i: usize = 0;

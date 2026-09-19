@@ -10,7 +10,8 @@ import { modelOf, contextWindowOf, defaultModel, tokenLabel } from "yuke:catalog
 
 const BAR_CELLS = 6;
 // The full and the empty glyph. Block Elements by default, because the terminal draws them and a font glyph can bleed.
-const BAR_GLYPHS = "█░";
+/** @type {readonly [string, string]} */
+const BAR_GLYPHS = ["█", "░"];
 /** @type {Wire.TokenUsage} */
 const NO_TOKENS = { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 };
 
@@ -31,15 +32,15 @@ export function reading() {
 }
 
 // A bar of `cells` glyphs in proportion. `glyphs` holds the full glyph, then the empty one.
-/** @param {number} used @param {number} window @param {number} [cells] @param {string} [glyphs] @returns {string} */
+/** @param {number} used @param {number} window @param {number} [cells] @param {string | readonly [string, string]} [glyphs] @returns {string} */
 export function contextBar(used, window, cells = BAR_CELLS, glyphs = BAR_GLYPHS) {
   const full = window > 0 ? Math.round(Math.min(1, used / window) * cells) : 0;
-  const pair = Array.from(glyphs);
+  const pair = typeof glyphs === "string" ? Array.from(glyphs) : glyphs;
   return "[" + String(pair[0]).repeat(full) + String(pair[1]).repeat(cells - full) + "]";
 }
 
 // The status words: the bar and the share of the window, or a token count for a model with no known window.
-/** @param {Reading} r @param {string} [glyphs] @returns {string} */
+/** @param {Reading} r @param {readonly [string, string]} [glyphs] @returns {string} */
 function contextLine(r, glyphs = BAR_GLYPHS) {
   const used = r.usage.input;
   const window = contextWindowOf(r.model);
@@ -100,7 +101,9 @@ export const contextPlugin = {
   apply(ctx, config) {
     const cfg = /** @type {ContextConfig} */ (config || {});
     // Two glyphs, or the default. A user with a font that fits the parallelograms passes "▰▱" from index.js.
-    const glyphs = typeof cfg.bar === "string" && Array.from(cfg.bar).length === 2 ? cfg.bar : BAR_GLYPHS;
+    // Normalize the pair once here, so a status render allocates nothing for it.
+    const custom = typeof cfg.bar === "string" ? Array.from(cfg.bar) : null;
+    const glyphs = custom && custom.length === 2 ? /** @type {[string, string]} */ ([custom[0], custom[1]]) : BAR_GLYPHS;
     ctx.inject(["tui"], (ctx) => {
       ctx.tui.status({ side: "right", order: 20, render: () => contextLine(reading(), glyphs) });
 

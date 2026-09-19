@@ -37,9 +37,10 @@ export function cacheRows(session, children = []) {
   const t = session.usage_total;
   const model = modelOf(session.model);
   const fresh = Math.max(0, t.input - t.cache_read - t.cache_write);
+  const rate = hitRate(t);
   /** @type {[string, string][]} */
   const rows = [
-    ["hit", contextBar(hitRate(t), 1, 10) + " " + percent(hitRate(t))],
+    ["hit", contextBar(rate, 1, 10) + " " + percent(rate)],
     ["cached", tokenLabel(t.cache_read)],
     ["fresh", tokenLabel(fresh)],
   ];

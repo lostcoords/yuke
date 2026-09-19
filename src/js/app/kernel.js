@@ -9,7 +9,7 @@ import { native } from "yuke:engine-native";
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
 
-// --- config ------------------------------------------------------------------------------- Runtime configuration; a direct write bypasses validation, so use `defineConfig`.
+// Runtime configuration. A direct write bypasses validation, so use `defineConfig`.
 /** @type {Config} */
 export const config = {
   // A null base selects the built-in prompt for new root sessions.
@@ -235,7 +235,7 @@ export class Emitter {
 
 export const events = new Emitter(CORE_EVENTS);
 
-// The native drains engine events on the owner, and both tiers read them from here; the digest coalesces, so a fact says that it happened and never how many times or with what.
+// The native drains engine events on the owner. The digest coalesces, so a fact says that it happened and never how many times.
 native.setEventSink((ev) => {
   if (ev.type === "activity") {
     events.emit("engine.activity.changed");

@@ -63,7 +63,7 @@ fn malloc(opaque_ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque {
                 const block = memory.blocks[i];
                 if (block.len != total) continue;
                 memory.len -= 1;
-                std.mem.copyForwards(@TypeOf(block), memory.blocks[i..memory.len], memory.blocks[i + 1 .. memory.len + 1]);
+                memory.blocks[i] = memory.blocks[memory.len]; // The cache has no order, so the last block fills the gap.
                 break :blk block;
             }
         }
@@ -99,7 +99,7 @@ fn free(opaque_ptr: ?*anyopaque, ptr: ?*anyopaque) callconv(.c) void {
         if (memory.len == memory.blocks.len) {
             memory.backing.free(memory.blocks[0]);
             memory.len -= 1;
-            std.mem.copyForwards(@TypeOf(bytes), memory.blocks[0..memory.len], memory.blocks[1 .. memory.len + 1]);
+            memory.blocks[0] = memory.blocks[memory.len];
         }
         memory.blocks[memory.len] = bytes;
         memory.len += 1;

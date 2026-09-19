@@ -106,8 +106,6 @@ pub fn build(b: *std.Build) void {
     });
     const run_cataloggen = b.addRunArtifact(cataloggen_exe);
     run_cataloggen.setCwd(b.path("."));
-    // This run reads the control plane, so it must never answer from the build cache.
-    run_cataloggen.has_side_effects = true;
     if (b.args) |args| run_cataloggen.addArgs(args);
     const cataloggen_step = b.step("cataloggen", "Fetch the provider catalog and bake it into the AI module");
     cataloggen_step.dependOn(&run_cataloggen.step);
@@ -204,8 +202,8 @@ pub fn build(b: *std.Build) void {
     run_gen_dts.addFileArg(schema_output);
     const dts_output = run_gen_dts.captureStdOut(.{});
     const generator_tests = b.step("test-protogen", "Test the protocol generators");
-    generator_tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = dts_module })).step);
-    generator_tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = gen_schema.root_module })).step);
+    generator_tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = dts_module, .filters = test_filters })).step);
+    generator_tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = gen_schema.root_module, .filters = test_filters })).step);
 
     const exe = b.addExecutable(.{
         .name = "yuke",
@@ -309,7 +307,7 @@ fn listFiles(b: *std.Build, dir_path: []const u8, suffix: []const u8) []const []
     return names.items;
 }
 
-/// The modules `src/js/native` installs in every host. The bake stubs these and rejects any other unknown import.
+/// The modules that `src/js/native` installs in every host. The bake stubs them and rejects any other unknown import.
 const native_js = "yuke:cancellation-native,yuke:diff,yuke:engine-native,yuke:env,yuke:exec,yuke:fs,yuke:hooks,yuke:interaction-native,yuke:jobs-native,yuke:net-native,yuke:process,yuke:term,yuke:tools,yuke:utf8";
 
 fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.builtin.OptimizeMode) *std.Build.Module {

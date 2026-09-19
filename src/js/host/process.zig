@@ -174,7 +174,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     };
 }
 
-/// Spawn `argv` as the leader of a new session with no terminal; `argv[0]` is absolute, and a null `stdin` reads `/dev/null`; TODO: use a session flag from `std.process.SpawnOptions` when Zig std gains that flag, then delete `src/c/spawn.h`.
+/// Spawn `argv` as the leader of a new session with no terminal; a null `stdin` reads `/dev/null`, and TODO.md tracks the std session flag.
 fn spawnArgv(scratch: std.mem.Allocator, env: *const std.process.Environ.Map, argv: []const []const u8, cwd: []const u8, stdin: ?std.posix.fd_t, stdout: std.posix.fd_t, stderr: std.posix.fd_t) h.HostError!std.process.Child {
     std.debug.assert(argv.len > 0 and std.fs.path.isAbsolute(argv[0]));
     std.debug.assert(std.fs.path.isAbsolute(cwd));
