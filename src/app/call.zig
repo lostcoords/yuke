@@ -55,8 +55,6 @@ pub fn call(
 }
 
 const bindings = struct {
-    pub const @"agents.get" = @import("../engine/agent_config.zig").get;
-    pub const @"agents.update" = @import("../engine/agent_config.zig").update;
     pub const initialize = commands.initialize;
     pub const @"session.list" = commands.sessionList;
     pub const @"session.get" = commands.sessionGet;
@@ -106,12 +104,6 @@ fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, param
 /// Map a refusal to its wire code. An error absent from this table is a bug and propagates.
 fn failureFor(err: anyerror) ?Failure {
     return switch (err) {
-        error.AgentConfigDirectoryMissing => .{ .code = .setup_required, .message = "no profile config directory is available for agents.json" },
-        error.BadAgentConfig => .{ .code = .bad_request, .message = "agents.json is invalid; repair the file before setup" },
-        error.AgentConfigConflict => .{ .code = .config_conflict, .message = "agents.json changed; resolve the slot or read the current revision before retry" },
-        error.AgentConfigReadFailed => .{ .code = .runtime_failed, .message = "cannot read agents.json" },
-        error.AgentConfigSaveFailed => .{ .code = .runtime_failed, .message = "cannot save agents.json; the previous live config remains active" },
-        error.AgentSetupRequired => .{ .code = .setup_required, .message = "the requested subagent model slot needs setup" },
         error.NoModel => .{ .code = .bad_request, .message = "a session must name a model" },
         error.EmptyPatch => .{ .code = .invalid_patch, .message = "the patch names no field to change" },
         error.ModelUnknown => .{ .code = .unsupported_model, .message = "the catalog names no model with this selector" },
@@ -123,7 +115,6 @@ fn failureFor(err: anyerror) ?Failure {
         error.ChildReasoningDerived => .{ .code = .bad_request, .message = "a child takes the reasoning level of its parent; it cannot name one" },
         error.AgentDepthLimit => .{ .code = .bad_request, .message = "the parent has reached the agent depth limit" },
         error.BadChildName => .{ .code = .bad_request, .message = "the child name is invalid" },
-        error.DuplicateChildName => .{ .code = .bad_request, .message = "the parent already has a child with this name" },
         error.BadToolSite => .{ .code = .bad_request, .message = "the parent tool site is not active" },
         error.UnknownSession => .{ .code = .unknown_session, .message = "unknown session" },
         error.ProtectedInput => .{ .code = .bad_request, .message = "engine reports and notices cannot be canceled" },

@@ -159,7 +159,7 @@ fn terminalToolResult(gpa: std.mem.Allocator, call_id: []const u8, state: proto.
     return switch (state) {
         .completed => |c| completedResult(gpa, call_id, c, options, images),
         .@"error" => |e| .{ .call_id = call_id, .content = e.@"error", .is_error = true },
-        .canceled => |c| .{ .call_id = call_id, .content = if (c.reason) |reason| reason.modelText() else "The tool call was canceled. It may have produced side effects before it stopped.", .is_error = c.reason == null },
+        .canceled => .{ .call_id = call_id, .content = "The tool call was canceled. It may have produced side effects before it stopped.", .is_error = true },
         // A committed transcript holds only terminal tools.
         .pending, .running => error.InvalidTranscript,
     };
@@ -427,19 +427,19 @@ test "canceled tools state possible side effects and assistant diagnostics stay 
     try testing.expect(std.mem.indexOf(u8, result.content, "private diagnostic") == null);
 }
 
-test "setup cancellation becomes a non-error provider result" {
+test "a canceled tool becomes an error provider result that names the side effects" {
     const messages = [_]proto.message.Message{.{ .assistant = .{
         .id = 1,
         .run_id = 1,
         .config_rev = 0,
         .agent = "test",
         .time = .{ .created_at_ms = 1 },
-        .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "spawn", .arguments = "{}", .state = .{ .canceled = .{ .reason = .setup_declined } } } }},
+        .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "spawn", .arguments = "{}", .state = .{ .canceled = .{ .duration_ms = 3 } } } }},
     } }};
     const request = try build(testing.allocator, &messages, .{});
     defer testing.allocator.free(request);
-    try testing.expect(!request[1].value.tool_result.is_error);
-    try testing.expectEqualStrings(proto.tool.ToolCancellationReason.setup_declined.modelText(), request[1].value.tool_result.content);
+    try testing.expect(request[1].value.tool_result.is_error);
+    try testing.expectEqualStrings("The tool call was canceled. It may have produced side effects before it stopped.", request[1].value.tool_result.content);
 }
 
 test "a compaction summary arrives wrapped, and the wrapper refuses it authority" {

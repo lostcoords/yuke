@@ -97,8 +97,6 @@ pub const SessionHistoryResult = struct {
 /// These are the parameters for `session.get`.
 pub const SessionGetParams = struct {
     session_id: ids.SessionId,
-    /// Select a direct child of session_id by name.
-    child_name: ?[]const u8 = null,
     /// Compare the stored AGENTS.md and skill snapshots with the files on disk.
     check_files: bool = false,
 };
@@ -238,9 +236,8 @@ pub const SessionResult = struct {
     input: ?SessionSendInputResult = null,
 };
 
-/// The live parent tool site and the stable name of a new child.
+/// The live parent tool site and the label of a new child. Two children may share a name.
 pub const ChildSession = struct {
-    slot: @import("agents.zig").AgentModelSlot,
     site: input.ToolSite,
     name: []const u8,
 };

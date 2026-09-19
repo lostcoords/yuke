@@ -39,8 +39,6 @@ pub const Extensions = struct {
         // Load built-ins last so a user tool with the same name wins.
         try host.evalModule("import \"yuke:builtins\";", "builtins.js");
 
-        try host.evalModule("import { plugins } from \"yuke:ext\"; import { agentToolsPlugin } from \"yuke:agent-tools\"; plugins.use(agentToolsPlugin);", "agent-tools.js");
-
         app.engine.installTools(port.toolSet(host));
         app.engine.installHooks(port.hookSet(host));
     }
@@ -228,8 +226,6 @@ test "tool declarations and dispatch enforce per-session spawn visibility" {
 
     const host = f.extensions.host;
     const installed = f.app.engine.deps.tools;
-    const spawn_index = host.tools.find("spawn_agent") orelse unreachable;
-    try std.testing.expect(host.tools.entries.items[spawn_index].flags.spawns_agents);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.malformedRejected"));
     try std.testing.expect(host.tools.find("bad_metadata") == null);
 
@@ -238,9 +234,7 @@ test "tool declarations and dispatch enforce per-session spawn visibility" {
     const hidden = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = false });
     const visible = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = true });
     try std.testing.expect(findDecl(hidden, "normal_tool"));
-    try std.testing.expect(!findDecl(hidden, "spawn_agent"));
     try std.testing.expect(!findDecl(hidden, "spawn_alias"));
-    try std.testing.expect(findDecl(visible, "spawn_agent"));
     try std.testing.expect(findDecl(visible, "spawn_alias"));
     // The skill tool and any tool that needs a catalog stay out of a session that lists no skill.
     try std.testing.expect(!findDecl(visible, "skill"));
@@ -265,37 +259,6 @@ test "tool declarations and dispatch enforce per-session spawn visibility" {
     try std.testing.expect(host.tools.find("spawn_alias") == null);
     const normal_index = host.tools.find("normal_tool") orelse unreachable;
     try std.testing.expect(!host.tools.entries.items[normal_index].flags.spawns_agents);
-}
-
-test "tool rejection codes cross the native bridge as cancellation reasons" {
-    const proto = @import("proto");
-    var f: Fixture = undefined;
-    try f.init(
-        \\import { tools } from "yuke";
-        \\const parameters = { type: "object", properties: {} };
-        \\tools.define({ name: "declined", description: "declined", parameters, execute: async () => { throw Object.assign(new Error("declined"), { code: "setup_declined" }); } });
-        \\tools.define({ name: "dismissed", description: "dismissed", parameters, execute: async () => { throw Object.assign(new Error("dismissed"), { code: "setup_canceled" }); } });
-        \\tools.define({ name: "ordinary", description: "ordinary", parameters, execute: async () => { throw new Error("ordinary"); } });
-        \\tools.define({ name: "getter", description: "getter", parameters, execute: async () => { const error = new Error("getter"); Object.defineProperty(error, "code", { get: () => { throw new Error("code getter"); } }); throw error; } });
-    , kernel_boot);
-    defer f.deinit();
-    const host = f.extensions.host;
-    const cases = [_]struct { name: []const u8, reason: ?proto.tool.ToolCancellationReason }{
-        .{ .name = "declined", .reason = .setup_declined },
-        .{ .name = "dismissed", .reason = .setup_dismissed },
-        .{ .name = "ordinary", .reason = null },
-        .{ .name = "getter", .reason = null },
-    };
-    for (cases) |case| {
-        const call = host.calls.submit(case.name, "{}", "");
-        defer call.finish();
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expectEqual(case.reason, call.cancellation_reason);
-        try std.testing.expect(call.is_error);
-        try std.testing.expectEqualStrings(case.name, call.text.?);
-        try std.testing.expect(!host.ctx.hasException());
-    }
-    try host.pump();
 }
 
 fn findDecl(decls: []const @import("ai").ir.Tool, name: []const u8) bool {
@@ -648,35 +611,16 @@ test "create with input shares the hook gate and a refusal leaves no session" {
     try std.testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.app.db, a, id.raw)).?.input_id_high);
 }
 
-test "agent config validates before it changes the native limits" {
+test "the agents plugin sets the native limits from its options" {
     var f: Fixture = undefined;
-    try f.init("", kernel_boot);
+    try f.init(
+        \\import { plugins } from "yuke";
+        \\import { agents } from "yuke/chat";
+        \\plugins.use(agents({ agents: { only: {} }, maxConcurrent: 2, maxDepth: 3 }));
+    , kernel_boot);
     defer f.deinit();
-    const host = f.extensions.host;
-    try host.evalModule(
-        \\import { config, defineConfig } from "yuke:kernel";
-        \\globalThis.defaultDepth = config.agents.maxDepth;
-        \\defineConfig({ agents: { maxConcurrent: 2, maxDepth: 3 } });
-        \\globalThis.changed = config.agents.maxConcurrent === 2 && config.agents.maxDepth === 3 ? 1 : 0;
-        \\defineConfig({ agents: { maxDepth: 4 } });
-        \\globalThis.preserved = config.agents.maxConcurrent === 2 && config.agents.maxDepth === 4 ? 1 : 0;
-        \\globalThis.refusedLimits = 0;
-        \\for (const maxConcurrent of [0, -1, 1.5, null, "2", 4294967296, NaN]) {
-        \\  try { defineConfig({ agents: { maxConcurrent } }); } catch { globalThis.refusedLimits++; }
-        \\}
-        \\for (const maxDepth of [0, -1, 1.5, null, "2", 4294967296, NaN]) {
-        \\  try { defineConfig({ agents: { maxDepth } }); } catch { globalThis.refusedLimits++; }
-        \\}
-        \\try { defineConfig({ agents: { unknown: 1 } }); } catch { globalThis.refusedLimits++; }
-        \\globalThis.unchanged = config.agents.maxConcurrent === 2 && config.agents.maxDepth === 4 ? 1 : 0;
-    , "limits.js");
-    try std.testing.expectEqual(@as(i32, 15), try host.evalInt("globalThis.refusedLimits"));
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.defaultDepth"));
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.changed"));
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.preserved"));
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.unchanged"));
     try std.testing.expectEqual(@as(u32, 2), f.app.engine.max_concurrent_children);
-    try std.testing.expectEqual(@as(u32, 4), f.app.engine.max_agent_depth);
+    try std.testing.expectEqual(@as(u32, 3), f.app.engine.max_agent_depth);
 }
 
 test "a JavaScript build hook reconstructs exact prompt components" {

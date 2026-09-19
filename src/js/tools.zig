@@ -126,7 +126,6 @@ pub const Call = struct {
     /// One JSON object holds the view and the media of a tool result. The submitter decodes it in its turn arena.
     extra_json: ?[]u8 = null,
     is_error: bool = false,
-    cancellation_reason: ?@import("proto").tool.ToolCancellationReason = null,
     /// The handler's Promise while it runs. Only the owner touches it.
     promise: Value = quickjs.UNDEFINED,
     /// The native signal remains readable after the call leaves the table.

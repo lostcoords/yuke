@@ -6,7 +6,6 @@ const database = @import("../store/store.zig");
 const Engine = @import("Engine.zig");
 const commands = @import("commands.zig");
 const admission = @import("admission.zig");
-const config = @import("agent_config.zig");
 const runs = @import("run.zig");
 const Draft = @import("../session/draft.zig").Draft;
 const testing = std.testing;
@@ -45,8 +44,6 @@ const Fixture = struct {
         errdefer self.arena.deinit();
         self.engine = self.resources.makeEngine(&self.db);
         errdefer self.engine.close();
-        const empty = try config.get(&self.engine, self.arena.allocator());
-        _ = try config.update(&self.engine, self.arena.allocator(), .{ .revision = empty.revision, .config = .{ .models = .{ .small = .{ .model = "test/model" } } } });
         const root = try commands.sessionCreate(&self.engine, self.arena.allocator(), .{ .workspace_path = "/work", .model = "test/model", .system_prompt = base_prompt });
         self.parent = root.session.id;
         var launch: ?runs.Launch = null;
@@ -68,7 +65,7 @@ const Fixture = struct {
     }
 
     fn params(self: *Fixture, name: []const u8) proto.misc.CreateSession {
-        return .{ .workspace_path = "/work", .model = "test/model", .initial_input = input(), .child = .{ .slot = .small, .site = .{ .session_id = self.parent, .message_id = 2, .part_id = 0 }, .name = name } };
+        return .{ .workspace_path = "/work", .model = "test/model", .initial_input = input(), .child = .{ .site = .{ .session_id = self.parent, .message_id = 2, .part_id = 0 }, .name = name } };
     }
 
     fn child(self: *Fixture, name: []const u8, launch: *?runs.Launch) !proto.session.SessionResult {
@@ -206,8 +203,11 @@ test "atomic creation binds its receipt and rejects invalid child sites without 
     try testing.expectEqual(first.input.?.started.input_id, history.messages[0].user.input_id);
     try testing.expectEqual(f.parent, history.messages[0].user.source.?.parent_instruction.session_id);
     try testing.expectEqual(@as(u64, 2), history.messages[0].user.source.?.parent_instruction.message_id);
+    var shared: ?runs.Launch = null;
+    const second = try f.child("research", &shared);
+    try testing.expectEqualStrings("research", second.session.name.?);
+    try testing.expect(!std.mem.eql(u8, &first.session.id.raw, &second.session.id.raw));
     var refused: ?runs.Launch = null;
-    try testing.expectError(error.DuplicateChildName, f.child("research", &refused));
     for ([_][]const u8{ "root", "Research", "../escape", "two words", "", "9start", "a" ** 65 }) |name| try testing.expectError(error.BadChildName, f.child(name, &refused));
     var bad = f.params("invalid");
     bad.child.?.site.message_id = 999;
@@ -218,7 +218,7 @@ test "atomic creation binds its receipt and rejects invalid child sites without 
     bad = f.params("empty");
     bad.initial_input = null;
     try testing.expectError(error.BadChild, commands.sessionCreateForRpc(&f.engine, a, bad, &refused, null));
-    try testing.expectEqual(@as(u64, 2), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
+    try testing.expectEqual(@as(u64, 3), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
     try testing.expect(refused == null);
 }
 
@@ -483,19 +483,16 @@ test "a canceled active child emits one terminal report" {
     try testing.expectEqual(@as(u64, 1), queue[0].input.source.?.child_report.run_id);
 }
 
-test "native child admission enforces the slot and preserves parent instruction sources" {
+test "native child admission derives the level and preserves parent instruction sources" {
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
     var gate: ?runs.Launch = null;
     var params = f.params("guarded");
-    params.child.?.slot = .medium;
-    try testing.expectError(error.AgentSetupRequired, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
-    params = f.params("guarded");
-    params.model = "parent/large";
-    try testing.expectError(error.AgentConfigConflict, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
     params.model = null;
+    try testing.expectError(error.NoModel, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
+    params = f.params("guarded");
     params.reasoning = "high";
     try testing.expectError(error.ChildReasoningDerived, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
     try testing.expectEqual(@as(u64, 1), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);

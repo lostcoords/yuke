@@ -1,7 +1,6 @@
 //! RPC request, response, and notification envelopes.
 
 const std = @import("std");
-const agents = @import("agents.zig");
 const auth = @import("auth.zig");
 const blob = @import("blob.zig");
 const catalog = @import("catalog.zig");
@@ -26,7 +25,6 @@ fn stringifyPayload(self: anytype, jw: *std.json.Stringify) !void {
 
 /// This union carries client request parameters.
 pub const RequestParams = union(enum) {
-    agents_update_params: agents.AgentsUpdateParams,
     session_list_params: session.SessionListParams,
     session_get_params: session.SessionGetParams,
     create_session: misc.CreateSession,
@@ -62,7 +60,6 @@ pub const RequestParams = union(enum) {
 
 /// This union carries server response results.
 pub const ResponseResult = union(enum) {
-    agents_get_result: agents.AgentsGetResult,
     initialize_result: misc.InitializeResult,
     session_list_result: session.SessionListResult,
     session_list_item: session.SessionListItem,
@@ -133,8 +130,6 @@ pub const MethodSpec = struct {
 
 /// This table maps each RPC method to its wire types.
 pub const methods = [_]MethodSpec{
-    .{ .name = .@"agents.get", .params = misc.Empty, .result = agents.AgentsGetResult, .params_optional = true },
-    .{ .name = .@"agents.update", .params = agents.AgentsUpdateParams, .result = agents.AgentsGetResult, .params_optional = false },
     .{ .name = .initialize, .params = misc.Empty, .result = misc.InitializeResult, .params_optional = true },
     .{ .name = .@"session.list", .params = session.SessionListParams, .result = session.SessionListResult, .params_optional = true },
     .{ .name = .@"session.get", .params = session.SessionGetParams, .result = session.SessionListItem, .params_optional = false },

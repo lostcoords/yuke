@@ -5,6 +5,7 @@ export { Transcript, presentation, presenters, ROLE_NONE, ROLE_ACTION, ROLE_TEXT
 export { attachPath, attachClipboard } from "yuke:attach";
 export { composerVim, composerMode, setComposerMode } from "yuke:composer-vim";
 export { transcriptVim } from "yuke:transcript-vim";
+export { agents } from "yuke:agents";
 
 /** @typedef {import("yuke:chat-view").PresentationContext} PresentationContext */
 /** @typedef {import("yuke:chat-view").ChatViewOptions} ChatViewOptions */

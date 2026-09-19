@@ -36,11 +36,6 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
     const rt = engine.sessions.get(session_id) orelse unreachable;
     std.debug.assert(rt.active_run == slot);
 
-    // The workspace path must outlive every round.
-    var arena_state = std.heap.ArenaAllocator.init(engine.deps.gpa);
-    defer arena_state.deinit();
-    const run_arena = arena_state.allocator();
-
     // Clear a live draft on an early return. A commit fold nulls it first on the normal path.
     defer if (rt.draft != null) {
         rt.draft.?.deinit();
@@ -49,10 +44,6 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
 
     var streamer: Streamer = .{ .engine = engine, .slot = slot, .session = rt };
     defer streamer.blocks.deinit(engine.deps.gpa);
-
-    // The workspace cannot change during a run, so resolve its root once and only when a tool runs.
-    var workspace_root: ?[]const u8 = null;
-    var root_resolved = false;
 
     var boundary_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer boundary_state.deinit();
@@ -78,19 +69,10 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
         const has_tools = hasToolPart(live);
         if (has_tools) {
             if (terminal == .success and terminal.success == .tool_calls) {
-                // Resolve the session root once, then pass it to each asynchronous tool call.
-                if (!root_resolved) {
-                    workspace_root = workspaceRoot(engine, run_arena, session_id.raw) catch null;
-                    root_resolved = true;
-                }
-                settlePendingTools(engine, boundary_arena, slot, &streamer, workspace_root, live) catch |err| {
+                settlePendingTools(engine, boundary_arena, slot, &streamer, slot.config.root, live) catch |err| {
                     run.faultSlot(engine, slot, err);
                     return;
                 };
-                if (workspace_root == null) {
-                    commitFinal(engine, boundary_arena, slot, live, has_tools, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
-                    return;
-                }
             } else {
                 // Cancel any pending tool part; a canceled/failed stream or a malformed tool_use lands here.
                 settlePendingTools(engine, boundary_arena, slot, &streamer, null, live) catch |err| {
@@ -597,11 +579,6 @@ const Streamer = struct {
 };
 
 /// Return the canonical workspace root for a session. The built-in tools resolve paths against it.
-fn workspaceRoot(engine: *Engine, arena: std.mem.Allocator, session_id: [16]u8) ![]const u8 {
-    const snap = (try session_store.snapshot(engine.deps.db, arena, session_id)) orelse return error.UnknownSession;
-    return snap.root;
-}
-
 /// True when the draft holds any tool part.
 fn hasToolPart(live: *const draft.Draft) bool {
     for (live.parts.items) |*p| if (p.* == .tool) return true;
@@ -661,8 +638,6 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_roo
     defer _ = engine.deps.io.swapCancelProtection(old);
     const settled: proto.tool.ToolState = if (slot.cancel.isRequested())
         .{ .canceled = .{ .duration_ms = duration } }
-    else if (res.cancellation_reason) |reason|
-        .{ .canceled = .{ .duration_ms = duration, .reason = reason } }
     else if (res.is_error)
         .{ .@"error" = .{ .@"error" = res.output, .view = res.view, .duration_ms = duration } }
     else
@@ -674,6 +649,13 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, workspace_roo
 const ToolCall = struct {
     name: []const u8,
     arguments: []const u8,
+};
+
+/// The call and the session it runs in. The context is read-only; a replace answers a `ToolCall`.
+const ToolCallPayload = struct {
+    name: []const u8,
+    arguments: []const u8,
+    context: struct { session_id: proto.ids.SessionId, parent_id: ?proto.ids.SessionId, agent_name: []const u8 },
 };
 
 test "tool rewrites obey the current depth limit before dispatch" {
@@ -695,8 +677,12 @@ test "tool rewrites obey the current depth limit before dispatch" {
             return point == .@"tool.before";
         }
 
-        fn ask(_: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, _: []const u8) @import("hookset.zig").Decision {
+        fn ask(_: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) @import("hookset.zig").Decision {
             std.debug.assert(point == .@"tool.before");
+            const sent = std.json.parseFromSliceLeaky(std.json.Value, arena, payload, .{}) catch unreachable;
+            const context = sent.object.get("context").?.object;
+            std.debug.assert(context.get("parent_id").? == .null);
+            std.debug.assert(std.mem.eql(u8, "root", context.get("agent_name").?.string));
             const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"name\":\"delegate\",\"arguments\":\"{}\"}", .{}) catch unreachable;
             return .{ .replace = value };
         }
@@ -767,10 +753,14 @@ test "a tool.after replacement is the whole result, and the engine admits the me
 fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: PendingTool, workspace_root: []const u8) !toolset.Outcome {
     const hooks = engine.deps.hooks;
     var call: ToolCall = .{ .name = pt.name, .arguments = pt.arguments };
-    switch (hooks.askIfHeld(arena, .@"tool.before", call)) {
+    const payload: ToolCallPayload = .{ .name = pt.name, .arguments = pt.arguments, .context = .{ .session_id = slot.sessionId(), .parent_id = slot.parent_id, .agent_name = slot.config.name orelse "root" } };
+    switch (hooks.askIfHeld(arena, .@"tool.before", payload)) {
         .proceed => {},
         // A handler that answers an unreadable call keeps the one the model chose.
-        .replace => |value| call = std.json.parseFromValueLeaky(ToolCall, arena, value, .{ .ignore_unknown_fields = true }) catch call,
+        .replace => |value| call = std.json.parseFromValueLeaky(ToolCall, arena, value, .{ .ignore_unknown_fields = true }) catch blk: {
+            std.log.warn("run {d} tool.before answered an unreadable call; the process keeps the original", .{slot.runId()});
+            break :blk call;
+        },
         .block => |reason| return .{ .output = reason, .is_error = true },
         .canceled => return error.Canceled,
     }
@@ -795,11 +785,10 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
     });
     const outcome: toolset.Outcome = switch (after) {
         .proceed => res,
-        // A replacement is the whole result, so a field it omits is gone. The cancel reason is not its to change.
-        .replace => |value| blk: {
-            var changed = std.json.parseFromValueLeaky(toolset.Outcome, arena, value, .{ .ignore_unknown_fields = true }) catch break :blk res;
-            changed.cancellation_reason = res.cancellation_reason;
-            break :blk changed;
+        // A replacement is the whole result, so a field it omits is gone.
+        .replace => |value| std.json.parseFromValueLeaky(toolset.Outcome, arena, value, .{ .ignore_unknown_fields = true }) catch blk: {
+            std.log.warn("run {d} tool.after answered an unreadable result; the process keeps the original", .{slot.runId()});
+            break :blk res;
         },
         .block => |reason| return .{ .output = reason, .is_error = true },
         .canceled => return error.Canceled,
@@ -815,12 +804,10 @@ fn admitMedia(engine: *Engine, arena: std.mem.Allocator, outcome: toolset.Outcom
         error.BlobStoreFailed => return .{
             .output = "The engine could not persist the tool image.",
             .is_error = true,
-            .cancellation_reason = outcome.cancellation_reason,
         },
         error.BlobMissing, error.BlobMismatch, error.BlobTooManyImages, error.BlobUnsupportedPart => return .{
             .output = "The tool answered an image the engine does not hold.",
             .is_error = true,
-            .cancellation_reason = outcome.cancellation_reason,
         },
     };
     return outcome;
@@ -893,7 +880,7 @@ const StreamerFixture = struct {
         self.engine = self.resources.makeEngine(&self.db);
         errdefer self.engine.close();
         self.session = try self.engine.activate(.bytes(session_id));
-        var prepared = try RunSlot.prepare(std.testing.allocator, "mock", "", system, null);
+        var prepared = try RunSlot.prepare(std.testing.allocator, .{ .model = "mock", .system_prompt = system, .root = "/w" });
         errdefer prepared.deinit();
         self.slot = prepared.bind(
             .{ .input_id = 1, .started = .{ .session_id = .bytes(session_id), .seq = 2, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 } },

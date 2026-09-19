@@ -17,20 +17,6 @@
   },
   "methods": [
     {
-      "name": "agents.get",
-      "params": "Empty",
-      "result": "AgentsGetResult",
-      "direction": "clientToServer",
-      "paramsOptional": true
-    },
-    {
-      "name": "agents.update",
-      "params": "AgentsUpdateParams",
-      "result": "AgentsGetResult",
-      "direction": "clientToServer",
-      "paramsOptional": false
-    },
-    {
       "name": "initialize",
       "doc": "Establish the connection and negotiate the protocol version.",
       "params": "Empty",
@@ -404,77 +390,6 @@
     }
   ],
   "structures": [
-    {
-      "name": "AgentModel",
-      "doc": "A child inherits its reasoning level from its parent session.",
-      "fields": [
-        {
-          "name": "model",
-          "type": "string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "AgentModels",
-      "fields": [
-        {
-          "name": "small",
-          "type": "AgentModel",
-          "presence": "optional"
-        },
-        {
-          "name": "medium",
-          "type": "AgentModel",
-          "presence": "optional"
-        }
-      ]
-    },
-    {
-      "name": "AgentsConfig",
-      "fields": [
-        {
-          "name": "models",
-          "type": "AgentModels",
-          "presence": "defaulted"
-        }
-      ]
-    },
-    {
-      "name": "AgentsGetResult",
-      "fields": [
-        {
-          "name": "path",
-          "type": "string",
-          "presence": "optional"
-        },
-        {
-          "name": "revision",
-          "type": "AgentConfigRev",
-          "presence": "required"
-        },
-        {
-          "name": "config",
-          "type": "AgentsConfig",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "AgentsUpdateParams",
-      "fields": [
-        {
-          "name": "revision",
-          "type": "AgentConfigRev",
-          "presence": "required"
-        },
-        {
-          "name": "config",
-          "type": "AgentsConfig",
-          "presence": "required"
-        }
-      ]
-    },
     {
       "name": "Client",
       "doc": "This type identifies the client connection.",
@@ -2457,11 +2372,6 @@
           "presence": "required"
         },
         {
-          "name": "agent",
-          "type": "string",
-          "presence": "optional"
-        },
-        {
           "name": "name",
           "type": "string",
           "presence": "optional"
@@ -2894,12 +2804,6 @@
           "presence": "required"
         },
         {
-          "name": "child_name",
-          "doc": "Select a direct child of session_id by name.",
-          "type": "string",
-          "presence": "optional"
-        },
-        {
           "name": "check_files",
           "doc": "Compare the stored AGENTS.md and skill snapshots with the files on disk.",
           "type": "bool",
@@ -3245,13 +3149,8 @@
     },
     {
       "name": "ChildSession",
-      "doc": "The live parent tool site and the stable name of a new child.",
+      "doc": "The live parent tool site and the label of a new child. Two children may share a name.",
       "fields": [
-        {
-          "name": "slot",
-          "type": "AgentModelSlot",
-          "presence": "required"
-        },
         {
           "name": "site",
           "type": "ToolSite",
@@ -3356,11 +3255,6 @@
         {
           "name": "duration_ms",
           "type": "u64",
-          "presence": "optional"
-        },
-        {
-          "name": "reason",
-          "type": "ToolCancellationReason",
           "presence": "optional"
         }
       ]
@@ -3932,9 +3826,6 @@
       "discriminator": "",
       "arms": [
         {
-          "type": "AgentsUpdateParams"
-        },
-        {
           "type": "SessionListParams"
         },
         {
@@ -4022,9 +3913,6 @@
       "doc": "This union carries server response results.",
       "discriminator": "",
       "arms": [
-        {
-          "type": "AgentsGetResult"
-        },
         {
           "type": "InitializeResult"
         },
@@ -4202,16 +4090,16 @@
       ]
     },
     {
-      "name": "AgentModelSlot",
+      "name": "InputQueueReason",
       "numeric": false,
       "values": [
         {
-          "name": "small",
-          "wire": "small"
+          "name": "session_busy",
+          "wire": "session_busy"
         },
         {
-          "name": "medium",
-          "wire": "medium"
+          "name": "concurrency_limit",
+          "wire": "concurrency_limit"
         }
       ]
     },
@@ -4335,20 +4223,6 @@
         {
           "name": "overloaded",
           "wire": "-31021"
-        }
-      ]
-    },
-    {
-      "name": "InputQueueReason",
-      "numeric": false,
-      "values": [
-        {
-          "name": "session_busy",
-          "wire": "session_busy"
-        },
-        {
-          "name": "concurrency_limit",
-          "wire": "concurrency_limit"
         }
       ]
     },
@@ -4554,14 +4428,6 @@
       "name": "MethodName",
       "numeric": false,
       "values": [
-        {
-          "name": "agents.get",
-          "wire": "agents.get"
-        },
-        {
-          "name": "agents.update",
-          "wire": "agents.update"
-        },
         {
           "name": "initialize",
           "wire": "initialize",
@@ -4888,20 +4754,6 @@
       ]
     },
     {
-      "name": "ToolCancellationReason",
-      "numeric": false,
-      "values": [
-        {
-          "name": "setup_declined",
-          "wire": "setup_declined"
-        },
-        {
-          "name": "setup_dismissed",
-          "wire": "setup_dismissed"
-        }
-      ]
-    },
-    {
       "name": "JobState",
       "numeric": false,
       "values": [
@@ -4937,14 +4789,9 @@
       "doc": "The broadcast uses this shared tool-output delta payload."
     },
     {
-      "name": "AgentConfigRev",
-      "base": "[32]u8",
-      "doc": "This revision is the SHA-256 of the file: 32 raw bytes, 64 hexadecimal characters."
-    },
-    {
       "name": "InstructionHash",
       "base": "[32]u8",
-      "doc": "This hash identifies the exact instruction file bytes."
+      "doc": "This revision is the SHA-256 of the file: 32 raw bytes, 64 hexadecimal characters. This hash identifies the exact instruction file bytes."
     },
     {
       "name": "BlobHash",

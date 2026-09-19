@@ -88,9 +88,9 @@ function sessionActivity(sessionId) {
 }
 
 // One session with the activity the engine holds now, open or not.
-/** @param {string} sessionId @param {string} [childName] @returns {Promise<Wire.SessionListItem>} */
-function sessionGet(sessionId, childName) {
-  return request("session.get", { session_id: sessionId, ...(childName ? { child_name: childName } : {}) });
+/** @param {string} sessionId @returns {Promise<Wire.SessionListItem>} */
+function sessionGet(sessionId) {
+  return request("session.get", { session_id: sessionId });
 }
 
 // Read the session with `context_changes` set. The flags say whether AGENTS.md or the skill roots differ from the stored snapshots.
@@ -339,16 +339,10 @@ function authRemove(providerId) {
 }
 
 // One object carries the whole surface, so a test or a plugin can replace a single method.
-/** @returns {Promise<Wire.AgentsGetResult>} */
-function agentsGet() { return request("agents.get", {}); }
-/** @param {Wire.AgentsUpdateParams} params @returns {Promise<Wire.AgentsGetResult>} */
-function agentsUpdate(params) { return request("agents.update", params); }
 
 export const client = {
   // Read all process-owned runs and continuations; engine.activity.changed coalesces changes on the owner drain.
   isBusy: () => native.isBusy(),
-  agentsGet,
-  agentsUpdate,
   request,
   sessionList,
   sessionOpen,

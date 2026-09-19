@@ -80,7 +80,6 @@ pub fn sessionItem(arena: std.mem.Allocator, row: anytype) !proto.session.Sessio
             .updated_at_ms = row.updated_at_ms,
             .created_by = created_by,
             .origin = try sessionOrigin(row),
-            .agent = if (row.agent) |text| try arena.dupe(u8, text) else null,
             .name = if (row.name) |text| try arena.dupe(u8, text) else null,
         },
         .activity = .{

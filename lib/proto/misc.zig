@@ -93,7 +93,6 @@ pub const Session = struct {
     updated_at_ms: u64,
     created_by: ?initialize.Client = null,
     origin: session.SessionOrigin,
-    agent: ?[]const u8 = null,
     name: ?[]const u8 = null,
 };
 

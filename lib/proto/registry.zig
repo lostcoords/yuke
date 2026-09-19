@@ -1,7 +1,6 @@
 //! The protocol type registry for the oracle and generator.
 
 const instructions = @import("instructions.zig");
-const agents = @import("agents.zig");
 const activity = @import("activity.zig");
 const auth = @import("auth.zig");
 const blob = @import("blob.zig");
@@ -26,12 +25,6 @@ pub const EnumEntry = struct { name: []const u8, ty: type };
 pub const AliasEntry = struct { name: []const u8, base: []const u8 };
 
 pub const structs = [_]TypeEntry{
-    .{ .name = "AgentModel", .ty = agents.AgentModel },
-    .{ .name = "AgentModels", .ty = agents.AgentModels },
-    .{ .name = "AgentsConfig", .ty = agents.AgentsConfig },
-    .{ .name = "AgentsGetResult", .ty = agents.AgentsGetResult },
-    .{ .name = "AgentsUpdateParams", .ty = agents.AgentsUpdateParams },
-
     .{ .name = "Client", .ty = initialize.Client },
     .{ .name = "ContentText", .ty = content.ContentText },
     .{ .name = "ContentImage", .ty = content.ContentImage },
@@ -221,7 +214,6 @@ pub const envelope_unions = [_]TypeEntry{
 
 pub const string_enums = [_]EnumEntry{
     .{ .name = "InstructionScope", .ty = instructions.InstructionScope },
-    .{ .name = "AgentModelSlot", .ty = agents.AgentModelSlot },
     .{ .name = "InputQueueReason", .ty = session.InputQueueReason },
     .{ .name = "AuthCredentialKind", .ty = enums.AuthCredentialKind },
     .{ .name = "BroadcastName", .ty = enums.BroadcastName },
@@ -236,7 +228,6 @@ pub const string_enums = [_]EnumEntry{
     .{ .name = "CompactionReason", .ty = enums.CompactionReason },
     .{ .name = "ProviderProtocol", .ty = enums.ProviderProtocol },
     .{ .name = "ProviderState", .ty = enums.ProviderState },
-    .{ .name = "ToolCancellationReason", .ty = tool.ToolCancellationReason },
     .{ .name = "JobState", .ty = job.JobState },
 };
 
@@ -248,7 +239,6 @@ pub const aliases = [_]AliasEntry{
     .{ .name = "ProviderId", .base = "string" },
     .{ .name = "MessagePartDeltaData", .base = "PartDelta" },
     .{ .name = "ToolOutputDeltaData", .base = "PartDelta" },
-    .{ .name = "AgentConfigRev", .base = "[32]u8" },
     .{ .name = "InstructionHash", .base = "[32]u8" },
     .{ .name = "BlobHash", .base = "[32]u8" },
     .{ .name = "CatalogRev", .base = "[64]u8" },

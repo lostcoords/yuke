@@ -25,7 +25,6 @@ pub const Outcome = struct {
     /// The images beside the output. Tool output is peer input, so the engine admits each blob before it commits the result.
     media: []const proto.content.MediaBlob = &.{},
     is_error: bool,
-    cancellation_reason: ?proto.tool.ToolCancellationReason = null,
 };
 
 pub const ToolSet = struct {

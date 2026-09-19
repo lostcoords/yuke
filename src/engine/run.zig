@@ -285,7 +285,7 @@ pub fn prepareContext(engine: *Engine, arena: std.mem.Allocator, rt: *Session, e
 pub fn prepareSlot(engine: *Engine, arena: std.mem.Allocator, rt: *Session, context: Preparation, kind: proto.enums.RunKind) !RunSlot.Prepared {
     std.debug.assert(rt.active_run == null);
     const prompt = (try session_store.prompt(engine.deps.db, arena, rt.id.raw)) orelse "";
-    return RunSlot.prepare(engine.deps.gpa, context.snapshot.model, context.snapshot.reasoning, prompt, if (kind == .turn) context.snapshot.max_rounds else null);
+    return RunSlot.prepare(engine.deps.gpa, .{ .model = context.snapshot.model, .reasoning = context.snapshot.reasoning, .system_prompt = prompt, .max_rounds = if (kind == .turn) context.snapshot.max_rounds else null, .root = context.snapshot.root, .name = context.snapshot.name });
 }
 
 /// Bind a durable start to the prepared slot.

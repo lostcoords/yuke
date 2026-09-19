@@ -16,11 +16,15 @@ const content = proto.content;
 const input = proto.input;
 const misc = proto.misc;
 
+/// The session facts a run reads on every round. They cannot change under a run, so the slot owns one copy.
 pub const Config = struct {
     model: []const u8,
     reasoning: []const u8 = "",
     system_prompt: []const u8,
     max_rounds: ?u64 = null,
+    root: []const u8,
+    /// The child label, or null on a root session.
+    name: ?[]const u8 = null,
 };
 
 pub const RunHandle = struct {
@@ -93,9 +97,7 @@ pub const RunSlot = struct {
 
         pub fn deinit(self: *Prepared) void {
             const slot = self.slot orelse return;
-            self.gpa.free(self.config.model);
-            self.gpa.free(self.config.reasoning);
-            self.gpa.free(self.config.system_prompt);
+            freeConfig(self.gpa, self.config);
             self.gpa.destroy(slot);
             self.slot = null;
         }
@@ -106,15 +108,26 @@ pub const RunSlot = struct {
         depth: u32,
     };
 
-    pub fn prepare(gpa: std.mem.Allocator, model: []const u8, reasoning: []const u8, system_prompt: []const u8, max_rounds: ?u64) !Prepared {
-        const model_copy = try gpa.dupe(u8, model);
-        errdefer gpa.free(model_copy);
-        const reasoning_copy = try gpa.dupe(u8, reasoning);
-        errdefer gpa.free(reasoning_copy);
-        const prompt_copy = try gpa.dupe(u8, system_prompt);
-        errdefer gpa.free(prompt_copy);
+    /// Copy the borrowed strings of `source` once; the slot frees them when the run ends.
+    pub fn prepare(gpa: std.mem.Allocator, source: Config) !Prepared {
+        std.debug.assert(source.root.len > 0);
+        var config: Config = .{ .model = &.{}, .system_prompt = &.{}, .max_rounds = source.max_rounds, .root = &.{} };
+        errdefer freeConfig(gpa, config);
+        config.model = try gpa.dupe(u8, source.model);
+        config.reasoning = try gpa.dupe(u8, source.reasoning);
+        config.system_prompt = try gpa.dupe(u8, source.system_prompt);
+        config.root = try gpa.dupe(u8, source.root);
+        config.name = if (source.name) |name| try gpa.dupe(u8, name) else null;
         const slot = try gpa.create(RunSlot);
-        return .{ .gpa = gpa, .slot = slot, .config = .{ .model = model_copy, .reasoning = reasoning_copy, .system_prompt = prompt_copy, .max_rounds = max_rounds } };
+        return .{ .gpa = gpa, .slot = slot, .config = config };
+    }
+
+    fn freeConfig(gpa: std.mem.Allocator, config: Config) void {
+        gpa.free(config.model);
+        gpa.free(config.reasoning);
+        gpa.free(config.system_prompt);
+        gpa.free(config.root);
+        if (config.name) |name| gpa.free(name);
     }
 
     pub fn sessionId(self: *const RunSlot) ids.SessionId {
@@ -129,9 +142,7 @@ pub const RunSlot = struct {
         std.debug.assert(self.body == null);
         std.debug.assert(self.round == .none); // every round closes before the run ends
         std.debug.assert(self.work.pending == 0);
-        self.gpa.free(self.config.model);
-        self.gpa.free(self.config.reasoning);
-        self.gpa.free(self.config.system_prompt);
+        freeConfig(self.gpa, self.config);
         self.gpa.destroy(self);
     }
 };

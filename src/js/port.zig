@@ -57,7 +57,6 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
         .view = extra.view,
         .media = extra.media,
         .is_error = call.is_error,
-        .cancellation_reason = call.cancellation_reason,
     };
 }
 

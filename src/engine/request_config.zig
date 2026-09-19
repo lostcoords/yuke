@@ -107,7 +107,6 @@ pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, mo
         .max_output_tokens = outputLimit(model),
     };
     if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"request.build")) {
-        const snapshot = (try database.session.snapshot(engine.deps.db, arena, slot.sessionId().raw)) orelse return error.UnknownSession;
         const hook_payload = .{
             .model = build.model,
             .system = build.system,
@@ -116,15 +115,18 @@ pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, mo
             .context = .{
                 .session_id = slot.sessionId(),
                 .parent_id = slot.parent_id,
-                .workspace = snapshot.root,
-                .agent_name = snapshot.name orelse "root",
+                .workspace = slot.config.root,
+                .agent_name = slot.config.name orelse "root",
                 .prompt = try database.session.promptParts(engine.deps.db, arena, slot.sessionId().raw),
             },
         };
         switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", hook_payload)) {
             .proceed => {},
             // A handler that answers an unreadable request keeps the one this round already holds.
-            .replace => |value| build = std.json.parseFromValueLeaky(RequestBuild, arena, value, .{ .ignore_unknown_fields = true }) catch build,
+            .replace => |value| build = std.json.parseFromValueLeaky(RequestBuild, arena, value, .{ .ignore_unknown_fields = true }) catch blk: {
+                std.log.warn("run {d} request.build answered an unreadable request; the round keeps its own", .{slot.runId()});
+                break :blk build;
+            },
             .block => |reason| {
                 // The wire message names a class, so record the reason before the error loses it.
                 std.log.warn("run {d} stopped at request.build: {s}", .{ slot.runId(), reason });

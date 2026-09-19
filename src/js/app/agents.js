@@ -1,244 +1,178 @@
-// yuke:agents — model setup and admission over the native slot contract.
+// yuke:agents — child sessions from a user catalog. Native stays policy-free; this plugin owns every rule.
 import { client } from "yuke:client";
-import { watchCancellation } from "yuke:interaction";
-import { config } from "yuke:kernel";
+import { native } from "yuke:engine-native";
+import { presenters } from "yuke:transcript";
+import { focusedChat } from "yuke:chat";
+import { notice } from "yuke:notice";
+import { openAgents } from "yuke:agents-ui";
 
 /** @import { Context } from "yuke:ext" */
-/** @typedef {{ aborted: boolean }} Signal */
-/** @typedef {{ sessionId: string, messageId: number, partId: number }} Site */
-/** @type {Map<string, Promise<void>>} */
-const setups = new Map();
-/** @type {Map<string, Promise<void>>} */
-const connections = new Map();
+/** @typedef {{ description?: string, model?: string, prompt?: string, tools?: string[] }} AgentRow */
+/** @typedef {{ default?: string, agents: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} AgentsOptions */
+/** @typedef {{ default: string, agents: Record<string, AgentRow>, maxConcurrent: number, maxDepth: number, maxRounds: number }} Catalog */
+/** @typedef {{ sessionId?: string | null, messageId?: number | null, partId?: number | null }} ToolContext */
 
-/** A child name is unique per parent; "root" is reserved. */
-export const NAME = /^[a-z][a-z0-9_-]{0,63}$/;
+/** A catalog key is a child label; "root" is reserved. */
+const KEY = /^[a-z][a-z0-9_-]{0,63}$/;
+const SESSION_ID = /^[0-9a-f]{32}$/;
+const BUILTIN_TOOLS = ["read", "write", "edit", "exec", "skill"];
+const LIMITS = { maxConcurrent: 8, maxDepth: 1, maxRounds: 50 };
+/** The last system prompt section of a root session. Constant text keeps the cached prefix intact. */
+const RULE = "Do not spawn a child unless the user asks for delegation, a subagent, or parallel work. A request for depth or research is not permission. After you start a child, end your turn. Its report arrives as a new message.";
 
 /** @param {string} code @param {string} message */
-export function failure(code, message) { return Object.assign(new Error(message), { name: "AgentError", code }); }
-/** @param {unknown} error @returns {string | undefined} */
-function codeOf(error) { return /** @type {{ code?: string }} */ (error)?.code; }
-/** @param {Signal | undefined} signal */
-export function check(signal) { if (signal?.aborted) throw failure("tool_cancelled", "The tool call was canceled."); }
-// Share one in-flight promise per key, so concurrent callers see one setup and one login.
-/** @template T @param {Map<string, Promise<T>>} map @param {string} key @param {() => Promise<T>} make @returns {Promise<T>} */
-function shared(map, key, make) {
-  let pending = map.get(key);
-  if (!pending) {
-    pending = make();
-    map.set(key, pending);
-    const held = pending;
-    pending.finally(() => { if (map.get(key) === held) map.delete(key); }).catch(() => {});
+function failure(code, message) { return Object.assign(new Error(message), { name: "AgentError", code }); }
+/** @param {string} message */
+function invalid(message) { return new TypeError("agents: " + message); }
+
+/** @param {unknown} raw @returns {Catalog} */
+function validate(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw invalid("the options must be an object");
+  const options = /** @type {Record<string, unknown>} */ (raw);
+  for (const field of Object.keys(options)) if (!["default", "agents", ...Object.keys(LIMITS)].includes(field)) throw invalid("unknown option " + field);
+  const rows = options.agents;
+  if (!rows || typeof rows !== "object" || Array.isArray(rows)) throw invalid("agents must be an object of catalog rows");
+  const agents = /** @type {Record<string, AgentRow>} */ ({});
+  for (const [key, row] of Object.entries(rows)) {
+    if (!KEY.test(key) || key === "root") throw invalid("bad key " + JSON.stringify(key));
+    if (!row || typeof row !== "object" || Array.isArray(row)) throw invalid("row " + key + " must be an object");
+    for (const field of Object.keys(row)) if (!["description", "model", "prompt", "tools"].includes(field)) throw invalid("row " + key + " has an unknown field " + field);
+    for (const field of /** @type {const} */ (["description", "model", "prompt"])) if (row[field] !== undefined && (typeof row[field] !== "string" || !row[field].trim())) throw invalid("row " + key + " needs a nonempty string " + field);
+    const tools = row.tools;
+    if (tools !== undefined && (!Array.isArray(tools) || !tools.length || new Set(tools).size !== tools.length || tools.some((t) => !BUILTIN_TOOLS.includes(t)))) throw invalid("row " + key + " tools must be a nonempty unique subset of " + BUILTIN_TOOLS.join(", "));
+    agents[key] = { ...row };
   }
-  return pending;
+  const keys = Object.keys(agents);
+  if (!keys.length) throw invalid("the catalog needs at least one agent");
+  const fallback = options.default === undefined && keys.length === 1 ? keys[0] : options.default;
+  if (typeof fallback !== "string" || !agents[fallback]) throw invalid("default must name a catalog key");
+  /** @type {Catalog} */
+  const catalog = { default: fallback, agents, ...LIMITS };
+  for (const field of /** @type {const} */ (["maxConcurrent", "maxDepth", "maxRounds"])) {
+    const value = options[field];
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 0xffffffff) throw invalid(field + " must be a positive 32-bit integer");
+    catalog[field] = value;
+  }
+  return catalog;
 }
-/** @param {Context} ctx */
-function interactive(ctx) { if (ctx.interaction.interactive !== true) throw failure("setup_required", "Agent model setup requires an interactive frontend. No agent was created. Do not retry agent setup in this frontend. Continue without delegation, or ask the user to configure agent models."); }
-/** @template T @param {Promise<T>} promise @param {Signal | undefined} signal @returns {Promise<T>} */
-async function cancellable(promise, signal) {
-  check(signal);
-  let dispose = () => {};
-  const canceled = new Promise((_, reject) => { dispose = watchCancellation(signal, () => reject(failure("tool_cancelled", "The tool call was canceled.")), (error) => reject(failure("runtime_failed", "Cannot observe tool cancellation: " + String(error)))); });
-  try { return /** @type {T} */ (await Promise.race([promise, canceled])); }
-  finally { dispose(); }
+
+/** @param {Catalog} catalog */
+function spawnDescription(catalog) {
+  const rows = Object.entries(catalog.agents).map(([key, row]) => "- `" + key + "`" + (row.description ? ": " + row.description : ""));
+  return "Start a child on one self-contained task. Give a complete brief: goal, files or areas, and the result to return. This call returns when the child starts. The report comes later as a new message. " + RULE + "\n\nAgents:\n" + rows.join("\n");
 }
-/** @template T @param {T | undefined} value @param {Signal | undefined} signal @returns {T} */
-function answer(value, signal) {
-  check(signal);
-  if (value === undefined) throw failure("setup_canceled", "Subagent setup was canceled.");
+
+/** @param {unknown} value @param {string[]} fields @returns {Record<string, any>} */
+function argsOf(value, fields) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw failure("bad_request", "The arguments must be an object.");
+  for (const field of Object.keys(value)) if (!fields.includes(field)) throw failure("bad_request", "Unknown argument: " + field);
   return value;
 }
-/** @param {Wire.ModelInfo} model @returns {string} */
-function modelLabel(model) {
-  const price = model.cost.input == null || model.cost.output == null ? "price unknown" : "$" + model.cost.input + "/$" + model.cost.output + " per 1M input/output tokens";
-  return model.selector + " · ready · tools · " + (model.supports_vision ? "vision · " : "") + price;
+/** @param {Record<string, any>} args @param {string} key @returns {string} */
+function required(args, key) {
+  if (typeof args[key] !== "string" || !args[key].trim()) throw failure("bad_request", key + " must be a nonempty string.");
+  return args[key];
 }
-/** @param {Context} ctx @param {string} title @param {string[]} labels @param {Signal | undefined} signal @returns {Promise<string>} */
-async function select(ctx, title, labels, signal) {
-  let page = 0;
-  while (true) {
-    const items = labels.slice(page * 60, (page + 1) * 60);
-    if (page > 0) items.push("← Previous page");
-    if ((page + 1) * 60 < labels.length) items.push("Next page →");
-    const value = answer(await ctx.interaction.select(title, items, { signal }), signal);
-    if (value === "Next page →") page += 1;
-    else if (value === "← Previous page") page -= 1;
-    else { if (!items.includes(value)) throw failure("bad_request", "The picker returned an unknown option."); return value; }
-  }
+/** @param {ToolContext} context */
+function site(context) {
+  if (!context.sessionId) throw failure("bad_request", "The tool has no parent session.");
+  if (context.messageId == null || context.partId == null) throw failure("bad_request", "The tool has no live parent site.");
+  return { session_id: context.sessionId, message_id: context.messageId, part_id: context.partId };
 }
-/** @returns {Promise<Wire.CatalogListResultFull>} */
-async function catalog() {
-  const result = await client.catalogList(null);
-  if (result.type !== "full") throw failure("runtime_failed", "The catalog did not return its models.");
-  return result;
+/** @param {string} parentId @param {string} target @returns {Promise<Wire.SessionListItem>} */
+async function ownedChild(parentId, target) {
+  if (!SESSION_ID.test(target)) throw failure("bad_request", "child must be a child session ID.");
+  const child = await client.sessionGet(target);
+  if (child.session.origin.type !== "child" || child.session.origin.site.session_id !== parentId) throw failure("bad_request", "The child belongs to another parent.");
+  return child;
 }
 
-/** @param {Context} ctx @param {Wire.AuthProvider} provider @param {Signal | undefined} signal */
-async function connect(ctx, provider, signal) {
-  interactive(ctx);
-  if (!provider.can_login) {
-    const key = answer(await ctx.interaction.input("API key · " + provider.provider_id, "paste the API key", { signal, secret: true }), signal);
-    if (!key) throw failure("setup_canceled", "No API key was supplied.");
-    await client.authSetApiKey(provider.provider_id, key);
-  } else {
-    const login = client.authLoginTracked(provider.provider_id);
-    let loginId = "";
-    let finished = false;
-    try {
-      check(signal);
-      const start = await login.start;
-      loginId = start.login_id;
-      check(signal);
-      const outcome = answer(await ctx.interaction.deviceLogin(start, login.outcome, { signal }), signal);
-      finished = true;
-      if (outcome.type !== "succeeded") throw failure(outcome.type === "canceled" ? "setup_canceled" : "auth_required", outcome.type === "failed" ? outcome.message : "Login was canceled.");
-    } finally {
-      login.dispose();
-      if (loginId && !finished) await client.authCancelLogin(loginId).catch(() => {});
-    }
-  }
-  check(signal);
-  await client.catalogReload();
-}
+/** @param {AgentsOptions} options */
+export function agents(options) {
+  const catalog = validate(options);
+  const childField = { type: "string", pattern: SESSION_ID.source, description: "Child session ID." };
+  return {
+    name: "agents",
+    /** @param {Context} ctx */
+    apply(ctx) {
+      native.setAgentLimits(catalog.maxConcurrent, catalog.maxDepth);
 
-/** @param {Context} ctx @param {Signal | undefined} signal @param {string} [providerId] */
-async function setupProvider(ctx, signal, providerId) {
-  const providers = (await client.authList()).providers;
-  if (!providers.length) throw failure("setup_required", "Add a provider to providers.json before model setup.");
-  const id = providerId || await select(ctx, "Connect a provider", providers.map((provider) => provider.provider_id), signal);
-  const provider = providers.find((item) => item.provider_id === id);
-  if (!provider) throw failure("auth_required", "The provider is unavailable for setup.");
-  if ((await catalog()).providers.find((item) => item.id === id)?.state === "needs_route") throw failure("setup_required", "Repair the route for " + id + " in providers.json before model setup.");
-  while (true) {
-    try { await cancellable(shared(connections, id, () => connect(ctx, provider, signal)), signal); return; }
-    catch (error) { check(signal); if (codeOf(error) !== "tool_cancelled") throw error; }
-  }
-}
+      // The rule ends a root prompt. A child gets its row prompt and only its row tools.
+      ctx.hook("request.build", (request) => {
+        const key = request.context.parent_id ? request.context.agent_name : null;
+        if (key === null) return { replace: { ...request, system: request.system + "\n\n" + RULE } };
+        const row = catalog.agents[key];
+        if (!row) return null;
+        const system = row.prompt ? request.system + "\n\n" + row.prompt : request.system;
+        const tools = row.tools ? request.tools.filter((/** @type {{ name: string }} */ tool) => row.tools?.includes(tool.name)) : request.tools;
+        return { replace: { ...request, system, tools } };
+      });
+      // A child that names a tool outside its row is stopped before the process runs it.
+      ctx.hook("tool.before", (call) => {
+        const row = call.context.parent_id ? catalog.agents[call.context.agent_name] : null;
+        if (!row?.tools || row.tools.includes(call.name)) return null;
+        return { block: "The tool " + call.name + " is not available to this agent." };
+      });
 
-/** @param {Context} ctx @param {string} slot @param {Signal | undefined} signal @returns {Promise<Wire.AgentModel>} */
-async function pickModel(ctx, slot, signal) {
-  while (true) {
-    check(signal);
-    const current = await catalog();
-    const ready = new Set(current.providers.filter((provider) => provider.state === "ready").map((provider) => provider.id));
-    const models = current.models.filter((model) => ready.has(model.provider) && model.supports_tools === true);
-    if (!models.length) {
-      if (!answer(await ctx.interaction.confirm("Connect a provider", "No ready model with known tool support is available. Connect a provider?", { signal }), signal)) throw failure("setup_declined", "The user declined provider setup for agents.");
-      await setupProvider(ctx, signal);
-      continue;
-    }
-    const providers = [...new Set(models.map((model) => model.provider))];
-    const provider = providers.length === 1 ? providers[0] : await select(ctx, "Provider · " + slot, providers, signal);
-    const choices = models.filter((model) => model.provider === provider);
-    const label = await select(ctx, "Model · " + slot, choices.map(modelLabel), signal);
-    const model = choices.find((item) => modelLabel(item) === label);
-    if (!model) throw failure("bad_request", "The picker returned an unknown model.");
-    // A slot names no level. A child takes the level of its parent session.
-    return { model: model.selector };
-  }
-}
+      ctx.tools.define({
+        name: "spawn_agent", description: spawnDescription(catalog), spawnsAgents: true,
+        parameters: { type: "object", properties: {
+          agent: { type: "string", enum: Object.keys(catalog.agents), description: "A catalog key from the list. Omit it for the default agent." },
+          message: { type: "string", minLength: 1, description: "The full task for the child." },
+        }, required: ["message"], additionalProperties: false },
+        execute: async (raw, _signal, context) => {
+          const args = argsOf(raw, ["agent", "message"]);
+          const parentSite = site(context);
+          const key = args.agent === undefined ? catalog.default : required(args, "agent");
+          const row = catalog.agents[key];
+          if (!row) throw failure("bad_request", "Unknown agent: " + key);
+          const parent = await client.sessionGet(parentSite.session_id);
+          const result = await client.sessionCreate({
+            workspace_path: parent.session.root,
+            model: row.model ?? parent.session.model,
+            max_rounds: catalog.maxRounds,
+            initial_input: { type: "content", content: client.textContent(required(args, "message")) },
+            child: { name: key, site: parentSite },
+          });
+          if (!result.input) throw failure("runtime_failed", "The child session has no initial run.");
+          return { session_id: result.session.id, agent: key, model: result.session.model, state: result.input.type };
+        },
+      });
+      ctx.tools.define({
+        name: "send_agent_input", description: "Send one child a follow-up. The child keeps its transcript, so refer to earlier work. Its next report comes as a new message, so end your turn and wait.",
+        parameters: { type: "object", properties: { child: childField, message: { type: "string", minLength: 1 } }, required: ["child", "message"], additionalProperties: false },
+        execute: async (raw, _signal, context) => {
+          const args = argsOf(raw, ["child", "message"]);
+          const parentSite = site(context);
+          const child = await ownedChild(parentSite.session_id, required(args, "child"));
+          const result = await client.sessionSendInput(child.session.id, client.textContent(required(args, "message")), parentSite);
+          return { state: result.type };
+        },
+      });
+      ctx.tools.define({
+        name: "stop_agent", description: "Stop a child's current run; drop its queued input. The transcript stays; completed side effects are not undone.",
+        parameters: { type: "object", properties: { child: childField }, required: ["child"], additionalProperties: false },
+        execute: async (raw, _signal, context) => {
+          const args = argsOf(raw, ["child"]);
+          if (!context.sessionId) throw failure("bad_request", "The tool has no parent session.");
+          const child = await ownedChild(context.sessionId, required(args, "child"));
+          return client.sessionCancelRun(child.session.id, true);
+        },
+      });
 
-/** @param {Context} ctx @param {Wire.AgentModelSlot} slot @param {Wire.AgentsGetResult} current @param {Signal | undefined} signal @param {boolean} [editing] */
-async function setup(ctx, slot, current, signal, editing = false) {
-  interactive(ctx);
-  if (!current.path) throw failure("setup_required", "No profile config directory is available.");
-  if (!editing) {
-    const replace = current.config.models?.[slot] != null;
-    const introduction = "Agents handle separate tasks and return their results here.\n\nSmall: narrow research and simple edits.\nMedium: broader work and review.\n\nChoose models from your providers. One model can serve both slots. No download is required. Provider charges may apply. Change these choices with /agent-models.\n\n";
-    const message = introduction + (replace ? "The " + slot + " slot needs a different model. Choose it now?" : "Subagent model slot " + slot + " is not configured. Set it up?");
-    if (!answer(await ctx.interaction.confirm("Agent models", message, { signal, labels: { accept: "Configure models", cancel: "Later" } }), signal)) throw failure("setup_declined", "The user declined agent model setup.");
-  }
-  /** @type {Partial<Record<Wire.AgentModelSlot, Wire.AgentModel>>} */
-  const choices = { [slot]: await pickModel(ctx, slot, signal) };
-  const other = slot === "small" ? "medium" : "small";
-  if (!editing && !current.config.models?.[other]) {
-    const same = answer(await ctx.interaction.confirm("Both model slots", "Use this model for both small and medium?", { signal }), signal);
-    choices[other] = same ? /** @type {Wire.AgentModel} */ (choices[slot]) : await pickModel(ctx, other, signal);
-  }
-  for (let attempt = 0; attempt < 4; attempt++) {
-    check(signal);
-    const latest = await client.agentsGet();
-    const models = { ...latest.config.models };
-    for (const key of /** @type {Wire.AgentModelSlot[]} */ (Object.keys(choices))) {
-      if (latest.revision !== current.revision && JSON.stringify(latest.config.models?.[key]) !== JSON.stringify(current.config.models?.[key])) continue;
-      const choice = choices[key];
-      if (choice) models[key] = choice;
-    }
-    check(signal);
-    try { await client.agentsUpdate({ revision: latest.revision, config: { models } }); return; }
-    catch (error) { if (codeOf(error) !== "config_conflict") throw error; }
-  }
-  throw failure("config_conflict", "agents.json changed repeatedly. Setup saved no stale update.");
-}
+      ctx.effect(() => {
+        presenters.spawn_agent = { category: "agent", present: (o) => ({ verb: "Agent", subject: String(o.agent || "") + " · " + String(o.model || "") }) };
+        presenters.send_agent_input = { category: "agent", present: (o) => ({ verb: "Send", subject: String(o.child || "") }) };
+        presenters.stop_agent = { category: "agent", present: (o) => ({ verb: "Stop", subject: String(o.child || "") }) };
+        return () => { for (const name of ["spawn_agent", "send_agent_input", "stop_agent"]) delete presenters[name]; };
+      });
 
-/** @template T @param {Context} ctx @param {Wire.AgentModelSlot} slot @param {Signal | undefined} signal @param {() => Promise<T>} attempt @returns {Promise<T>} */
-async function withSlot(ctx, slot, signal, attempt) {
-  while (true) {
-    check(signal);
-    try { return await attempt(); }
-    catch (error) {
-      const code = codeOf(error);
-      if (!["setup_required", "auth_required", "unsupported_model", "unsupported_reasoning"].includes(code || "")) throw error;
-      interactive(ctx);
-      const current = await client.agentsGet();
-      if (code === "auth_required") {
-        const selected = (await catalog()).models.find((model) => model.selector === current.config.models?.[slot]?.model);
-        if (!selected) throw error;
-        await setupProvider(ctx, signal, selected.provider);
-      } else {
-        try { await cancellable(shared(setups, current.path || "", () => setup(ctx, slot, current, signal)), signal); }
-        catch (error) { check(signal); if (codeOf(error) !== "tool_cancelled") throw error; }
-      }
-    }
-  }
-}
-
-const spawn_note = "Child started. The report comes later as a new message. After you start every child, end your turn and wait. Do not redo this task.";
-
-/** @param {Context} ctx @param {{ name: string, message: string, model: Wire.AgentModelSlot }} args @param {Signal} signal @param {Site} site */
-export async function spawnAgent(ctx, args, signal, site) {
-  if (!args || (args.model !== "small" && args.model !== "medium")) throw failure("bad_request", "model must be small or medium; it has no default.");
-  if (typeof args.name !== "string" || !NAME.test(args.name) || args.name === "root") throw failure("bad_request", "The child name is invalid.");
-  if (typeof args.message !== "string" || !args.message.trim()) throw failure("bad_request", "The child needs a task message.");
-  check(signal);
-  const parent = await client.sessionGet(site.sessionId);
-  const result = await withSlot(ctx, args.model, signal, () => client.sessionCreate({
-    workspace_path: parent.session.root,
-    max_rounds: config.agents.maxRounds,
-    initial_input: { type: "content", content: client.textContent(args.message) },
-    child: { slot: args.model, site: { session_id: site.sessionId, message_id: site.messageId, part_id: site.partId }, name: args.name },
-  }));
-  if (!result.input) throw failure("runtime_failed", "The child session has no initial run.");
-  return { name: args.name, session_id: result.session.id, model: result.session.model, state: result.input.type, note: spawn_note };
-}
-
-/** @param {Context} ctx @param {string} childId @param {Wire.AgentModelSlot | undefined} slot @param {Signal | undefined} signal */
-export async function recoverAgent(ctx, childId, slot, signal) {
-  interactive(ctx);
-  const action = await select(ctx, "Subagent needs attention", ["Retry with the saved model", "Repair provider credentials", "Change this child's model"], signal);
-  const child = await client.sessionGet(childId);
-  if (action === "Repair provider credentials") {
-    const model = (await catalog()).models.find((item) => item.selector === child.session.model);
-    await setupProvider(ctx, signal, model?.provider);
-  } else if (action === "Change this child's model") {
-    const model = await pickModel(ctx, slot || "child", signal);
-    check(signal);
-    await client.sessionPatch(childId, { model: model.model });
-    if (answer(await ctx.interaction.confirm("Slot default", "Save this model for future children too?", { signal }), signal)) {
-      const target = slot || answer(await ctx.interaction.select("Slot default", ["small", "medium"], { signal }), signal);
-      if (target !== "small" && target !== "medium") throw failure("bad_request", "The slot is invalid.");
-      const current = await client.agentsGet();
-      check(signal);
-      await client.agentsUpdate({ revision: current.revision, config: { models: { ...current.config.models, [target]: model } } });
-    }
-  }
-  check(signal);
-}
-
-/** @param {Context} ctx @param {Wire.AgentModelSlot} slot */
-export async function editSlot(ctx, slot) {
-  if (slot !== "small" && slot !== "medium") throw failure("bad_request", "The slot is invalid.");
-  const current = await client.agentsGet();
-  try { await shared(setups, current.path || "", () => setup(ctx, slot, current, undefined, true)); }
-  catch (error) { if (codeOf(error) !== "setup_canceled" && codeOf(error) !== "setup_declined") throw error; }
+      ctx.inject(["tui"], (ctx) => {
+        ctx.tui.command(() => focusedChat()?.sessionId != null, {
+          "agents:open": () => { const id = focusedChat()?.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + (error?.message || String(error)))); },
+        }, { "agents:open": { title: "Agents", description: "open or stop child agents", slash: "agents" } });
+      });
+    },
+  };
 }

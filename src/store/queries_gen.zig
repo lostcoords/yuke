@@ -462,11 +462,11 @@ pub const NewestCompaction = sql.OptionalQuery(
 pub const InsertSession = sql.ExecQuery(
     \\INSERT INTO sessions(
     \\    id, root, origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
+    \\    profile, model, reasoning, config_rev, max_rounds, title, name,
     \\    created_by_name, created_by_version, created_at_ms, updated_at_ms
     \\) VALUES (
     \\    :id, :root, :origin, :parent_id, :parent_message_id, :parent_part_id, :source_id,
-    \\    :profile, :model, :reasoning, :config_rev, :max_rounds, :title, :agent, :name,
+    \\    :profile, :model, :reasoning, :config_rev, :max_rounds, :title, :name,
     \\    :created_by_name, :created_by_version, :created_at_ms, :updated_at_ms
     \\);
 ,
@@ -484,7 +484,6 @@ pub const InsertSession = sql.ExecQuery(
         config_rev: u64,
         max_rounds: ?u64 = null,
         title: []const u8,
-        agent: ?[]const u8 = null,
         name: ?[]const u8 = null,
         created_by_name: ?[]const u8 = null,
         created_by_version: ?[]const u8 = null,
@@ -508,7 +507,7 @@ pub const SessionSnapshot = sql.OptionalQuery(
     \\SELECT
     \\    id, root,
     \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
+    \\    profile, model, reasoning, config_rev, max_rounds, title, name,
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -535,7 +534,6 @@ pub const SessionSnapshot = sql.OptionalQuery(
         config_rev: u64,
         max_rounds: ?u64,
         title: []const u8,
-        agent: ?[]const u8,
         name: ?[]const u8,
         created_by_name: ?[]const u8,
         created_by_version: ?[]const u8,
@@ -603,7 +601,7 @@ pub const SessionPageRecent = sql.ManyQuery(
     \\SELECT
     \\    id, root,
     \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
+    \\    profile, model, reasoning, config_rev, max_rounds, title, name,
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -635,7 +633,6 @@ pub const SessionPageRecent = sql.ManyQuery(
         config_rev: u64,
         max_rounds: ?u64,
         title: []const u8,
-        agent: ?[]const u8,
         name: ?[]const u8,
         created_by_name: ?[]const u8,
         created_by_version: ?[]const u8,
@@ -659,7 +656,7 @@ pub const SessionPageParent = sql.ManyQuery(
     \\SELECT
     \\    id, root,
     \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
+    \\    profile, model, reasoning, config_rev, max_rounds, title, name,
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -804,18 +801,6 @@ pub const ChildAdmissionCandidates = sql.ManyQuery(
 ,
     struct {
         parent_id: [16]u8,
-    },
-    struct {
-        id: [16]u8,
-    },
-);
-
-pub const ChildByName = sql.OptionalQuery(
-    \\SELECT id FROM sessions WHERE parent_id = :parent_id AND name = :name;
-,
-    struct {
-        parent_id: [16]u8,
-        name: []const u8,
     },
     struct {
         id: [16]u8,
@@ -1003,7 +988,6 @@ pub const Queries = struct {
     session_child_ids: SessionChildIds,
     session_recovery_candidates: SessionRecoveryCandidates,
     child_admission_candidates: ChildAdmissionCandidates,
-    child_by_name: ChildByName,
     select_prompt_parts: SelectPromptParts,
     delete_instructions: DeleteInstructions,
     insert_skill: InsertSkill,

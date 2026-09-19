@@ -46,7 +46,6 @@ pub const Deps = struct {
 };
 
 deps: Deps,
-agents: @import("agent_config.zig").Store = .{},
 /// Live per-session state, keyed by session id. A pane pins the session it shows.
 sessions: session.Registry,
 /// Every turn task. `close` cancels this group before the process closes the transport.

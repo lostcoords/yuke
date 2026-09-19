@@ -80,8 +80,6 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "SessionSendInputResultStarted", .field = "run_id", .alias = "RunId" },
     .{ .owner = "SessionSendInputResultQueued", .field = "input_id", .alias = "InputId" },
     .{ .owner = "InstructionSource", .field = "content_hash", .alias = "InstructionHash" },
-    .{ .owner = "AgentsGetResult", .field = "revision", .alias = "AgentConfigRev" },
-    .{ .owner = "AgentsUpdateParams", .field = "revision", .alias = "AgentConfigRev" },
     .{ .owner = "InteractionRequestedData", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionCancelInputParams", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionGetParams", .field = "session_id", .alias = "SessionId" },

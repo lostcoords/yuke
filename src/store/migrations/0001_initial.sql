@@ -17,8 +17,7 @@ CREATE TABLE sessions (
     config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991), -- proto.ConfigRev
     max_rounds INTEGER CHECK (max_rounds IS NULL OR max_rounds BETWEEN 0 AND 9007199254740991), -- u64
     title      TEXT NOT NULL CHECK (length(title) <= 256),
-    agent      TEXT CHECK (agent IS NULL OR length(agent) <= 64),
-    -- A child carries its direct name, which is unique under its parent; a non-child carries none.
+    -- A child carries its label, which two children may share; a non-child carries none.
     name       TEXT CHECK ((name IS NULL) = (parent_id IS NULL) AND (name IS NULL OR (length(name) BETWEEN 1 AND 64
         AND name GLOB '[a-z]*' AND name NOT GLOB '*[^a-z0-9_-]*' AND name <> 'root'))),
 
@@ -190,8 +189,6 @@ CREATE TABLE session_skills (
     PRIMARY KEY (session_id, name),
     UNIQUE (session_id, canonical_path)
 ) STRICT, WITHOUT ROWID;
-
-CREATE UNIQUE INDEX sessions_child_name ON sessions(parent_id, name) WHERE name IS NOT NULL;
 
 -- Durable pending inputs point to their input.queued event.
 CREATE TABLE pending_inputs (

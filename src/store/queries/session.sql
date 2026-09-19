@@ -13,7 +13,6 @@
 -- config_rev: u64!
 -- max_rounds: ?u64!
 -- title: []const u8!
--- agent: ?[]const u8!
 -- name: ?[]const u8!
 -- created_by_name: ?[]const u8!
 -- created_by_version: ?[]const u8!
@@ -21,11 +20,11 @@
 -- updated_at_ms: u64!
 INSERT INTO sessions(
     id, root, origin, parent_id, parent_message_id, parent_part_id, source_id,
-    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
+    profile, model, reasoning, config_rev, max_rounds, title, name,
     created_by_name, created_by_version, created_at_ms, updated_at_ms
 ) VALUES (
     :id, :root, :origin, :parent_id, :parent_message_id, :parent_part_id, :source_id,
-    :profile, :model, :reasoning, :config_rev, :max_rounds, :title, :agent, :name,
+    :profile, :model, :reasoning, :config_rev, :max_rounds, :title, :name,
     :created_by_name, :created_by_version, :created_at_ms, :updated_at_ms
 );
 
@@ -49,7 +48,6 @@ SELECT 1 AS present FROM sessions WHERE id = :id;
 -- config_rev: u64!
 -- max_rounds: ?u64!
 -- title: []const u8!
--- agent: ?[]const u8!
 -- name: ?[]const u8!
 -- created_by_name: ?[]const u8!
 -- created_by_version: ?[]const u8!
@@ -72,7 +70,7 @@ SELECT 1 AS present FROM sessions WHERE id = :id;
 SELECT
     id, root,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
-    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
+    profile, model, reasoning, config_rev, max_rounds, title, name,
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -134,7 +132,6 @@ RETURNING 1 AS changed;
 -- config_rev: u64!
 -- max_rounds: ?u64!
 -- title: []const u8!
--- agent: ?[]const u8!
 -- name: ?[]const u8!
 -- created_by_name: ?[]const u8!
 -- created_by_version: ?[]const u8!
@@ -154,7 +151,7 @@ RETURNING 1 AS changed;
 SELECT
     id, root,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
-    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
+    profile, model, reasoning, config_rev, max_rounds, title, name,
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -178,7 +175,7 @@ LIMIT :limit;
 SELECT
     id, root,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
-    profile, model, reasoning, config_rev, max_rounds, title, agent, name,
+    profile, model, reasoning, config_rev, max_rounds, title, name,
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -274,12 +271,6 @@ SELECT s.id FROM sessions s
     JOIN pending_inputs p ON p.session_id = s.id
     JOIN events e ON e.session_id = p.session_id AND e.seq = p.seq
 GROUP BY s.id ORDER BY min(e.rowid);
-
--- name: ChildByName :optional
--- parent_id: [16]u8!
--- name: []const u8!
--- id: [16]u8!
-SELECT id FROM sessions WHERE parent_id = :parent_id AND name = :name;
 
 -- name: SelectPromptParts :optional
 -- session_id: [16]u8!

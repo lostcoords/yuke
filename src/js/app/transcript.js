@@ -135,10 +135,6 @@ presenters.write = { category: "write", present: (o) => ({ verb: "Write", subjec
 presenters.edit = { category: "write", present: (o) => ({ verb: "Edit", subject: shortPath(o.path) + (o.replace_all ? " (all)" : "") }) };
 presenters.exec = { category: "run", present: (o) => ({ verb: "Run", subject: shortCommand(o.command) }) };
 presenters.skill = { category: "other", present: (o) => ({ verb: "Skill", subject: String(o.name || "") }) };
-presenters.spawn_agent = { category: "agent", present: (o) => ({ verb: "Agent", subject: String(o.name || "") + " · " + String(o.model || "") }) };
-presenters.send_agent_input = { category: "agent", present: (o) => ({ verb: "Send", subject: String(o.child || "") }) };
-presenters.stop_agent = { category: "agent", present: (o) => ({ verb: "Stop", subject: String(o.child || "") }) };
-presenters.list_agents = { category: "read", present: () => ({ verb: "Agents", subject: "" }) };
 
 // The transcript presentation policy. Every member is a method, so `ctx.advise` reaches it and a plugin reload reverts it.
 export const presentation = {
@@ -309,8 +305,6 @@ function toolStateLabel(state) {
   const t = toolStateKind(state);
   // A completed call needs no word, because the absence of an error already says it.
   if (t === "completed") return "";
-  if (state?.type === "canceled" && state.reason === "setup_declined") return "setup declined";
-  if (state?.type === "canceled" && state.reason === "setup_dismissed") return "setup incomplete";
   return t;
 }
 
@@ -403,8 +397,6 @@ function toolHeaderSame(before, fresh) {
 function toolBodyText(part) {
   const s = part.state || {};
   if (s.type === "error") return s.error || "";
-  if (s.type === "canceled" && s.reason === "setup_declined") return "Setup declined · No agent created";
-  if (s.type === "canceled" && s.reason === "setup_dismissed") return "Setup incomplete · No agent created";
   const output = /** @type {{ output?: string }} */ (s);
   if (output.output) return output.output;
   return "";

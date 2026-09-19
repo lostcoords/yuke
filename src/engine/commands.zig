@@ -105,11 +105,7 @@ fn liveSessionItem(engine: *Engine, arena: std.mem.Allocator, row: anytype) !pro
 
 /// Handle session.get. The result is one `session.list` item with the activity the engine holds now.
 pub fn sessionGet(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionGetParams) !proto.session.SessionListItem {
-    const session_id = if (params.child_name) |name| blk: {
-        if (!admission.validName(name)) return error.BadChildName;
-        const child = (try engine.deps.db.queries.child_by_name.maybeOne(arena, .{ .parent_id = params.session_id.raw, .name = name })) orelse return error.UnknownSession;
-        break :blk proto.ids.SessionId.bytes(child.value.id);
-    } else params.session_id;
+    const session_id = params.session_id;
     const snapshot = (try session_store.snapshot(engine.deps.db, arena, session_id.raw)) orelse return error.UnknownSession;
     var item = try liveSessionItem(engine, arena, snapshot);
     item.instruction_sources = try session_store.instructionSources(engine.deps.db, arena, session_id.raw);
@@ -578,11 +574,8 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         const row = (try session_store.snapshot(engine.deps.db, arena, child.site.session_id.raw)) orelse return error.UnknownSession;
         if (!std.mem.eql(u8, row.root, root)) return error.BadChild;
         parent_tree = try admission.location(engine, arena, child.site.session_id);
-        if ((try engine.deps.db.queries.child_by_name.maybeOne(arena, .{ .parent_id = child.site.session_id.raw, .name = child.name })) != null) return error.DuplicateChildName;
-        const slot_model = try @import("agent_config.zig").slotModel(engine, arena, child.slot);
-        selected = try model_config.validate(engine, arena, slot_model, .{ .inherit = row.reasoning });
+        selected = try model_config.validate(engine, arena, params.model orelse return error.NoModel, .{ .inherit = row.reasoning });
         if (parent_tree.?.depth >= engine.max_agent_depth) return error.AgentDepthLimit;
-        if (params.model) |model| if (!std.mem.eql(u8, model, selected.?.model)) return error.AgentConfigConflict;
         try validateParentSite(engine, child.site);
     }
     const id: proto.ids.SessionId = .bytes(engine.newId());
@@ -643,7 +636,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
             .updated_at_ms = now,
         });
         const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, .{ .base = base_prompt, .child_policy = child_prompt, .environment = environment, .sources = sources, .skills = catalog.entries });
-        if (available) prepared = try run.RunSlot.prepare(engine.deps.gpa, model, reasoning, system_prompt, params.max_rounds);
+        if (available) prepared = try run.RunSlot.prepare(engine.deps.gpa, .{ .model = model, .reasoning = reasoning, .system_prompt = system_prompt, .max_rounds = params.max_rounds, .root = root, .name = if (params.child) |child| child.name else null });
         try config_store.recordInitial(engine.deps.db, id.raw, birth_config);
         if (content) |parts| queued = try input_store.enqueue(engine.deps.db, arena, id.raw, engine.newId(), now, .{ .content = parts, .source = if (params.child) |child| .{ .parent_instruction = child.site } else null, .skill_name = if (params.initial_input.? == .skill) params.initial_input.?.skill.name else null }, now);
         if (prepared != null) started = try run.beginQueuedTurnInTransaction(engine.deps.db, engine.deps.io, arena, id.raw, 0);
@@ -729,7 +722,7 @@ test "session.get and session.queue read the durable queue, resident or not" {
     try std.testing.expectEqual(@as(u64, 1), resident.activity.queued);
 
     // A bound run slot makes the read report the live run, where the durable row says idle.
-    var prepared = try run.RunSlot.prepare(std.testing.allocator, "mock", "", "", null);
+    var prepared = try run.RunSlot.prepare(std.testing.allocator, .{ .model = "mock", .system_prompt = "", .root = "/boot" });
     const slot = prepared.bind(
         .{ .input_id = 1, .started = .{ .session_id = id, .seq = 1, .run_id = 7, .kind = .turn, .config_rev = 0, .started_at_ms = 5 } },
         null,
@@ -773,10 +766,8 @@ test "session.get and session.queue read the durable queue, resident or not" {
         .created_at_ms = 1,
         .updated_at_ms = 1,
     });
-    try std.testing.expectEqual(child_id, (try sessionGet(&engine, arena, .{ .session_id = id, .child_name = "research" })).session.id.raw);
-    try std.testing.expectEqual(other_child, (try sessionGet(&engine, arena, .{ .session_id = .bytes(other_root), .child_name = "research" })).session.id.raw);
-    try std.testing.expectError(error.UnknownSession, sessionGet(&engine, arena, .{ .session_id = id, .child_name = "missing" }));
-    try std.testing.expectError(error.BadChildName, sessionGet(&engine, arena, .{ .session_id = id, .child_name = "../research" }));
+    try std.testing.expectEqual(child_id, (try sessionGet(&engine, arena, .{ .session_id = .bytes(child_id) })).session.id.raw);
+    try std.testing.expectEqual(other_child, (try sessionGet(&engine, arena, .{ .session_id = .bytes(other_child) })).session.id.raw);
 
     try std.testing.expectError(error.UnknownSession, sessionGet(&engine, arena, .{ .session_id = .bytes([_]u8{9} ** 16) }));
     try std.testing.expectError(error.UnknownSession, sessionQueue(&engine, arena, .{ .session_id = .bytes([_]u8{9} ** 16) }));

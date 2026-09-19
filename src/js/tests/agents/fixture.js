@@ -1,31 +1,7 @@
 import { client } from "yuke:client";
-import { spawnAgent, recoverAgent } from "yuke:agents";
 globalThis.client = client;
-globalThis.spawnAgent = spawnAgent;
-globalThis.recoverAgent = recoverAgent;
-globalThis.map = { path: "/config/agents.json", revision: "1", config: { models: {} } };
-globalThis.stats = { prompts: 0, saves: 0, creates: 0, gets: 0, changes: 0 };
-const clone = (value) => JSON.parse(JSON.stringify(value));
-client.agentsGet = async () => clone(globalThis.map);
-client.agentsUpdate = async (next) => {
-  if (next.revision !== map.revision) throw Object.assign(new Error("stale"), { code: "config_conflict" });
-  stats.saves++; map = { ...map, revision: String(Number(map.revision) + 1), config: clone(next.config) }; return clone(map);
-};
-// The engine resolves the slot inside session.create, so the fixture does it there too.
-globalThis.resolveSlot = async (slot) => {
-  const entry = map.config.models[slot];
-  if (!entry) throw Object.assign(new Error("setup"), { code: "setup_required" });
-  return entry.model;
-};
-client.catalogList = async () => ({ type: "full", providers: [{ id: "p", state: "ready" }], models: [{ provider: "p", selector: "p/family/model", name: "model", supports_tools: true, reasoning_levels: ["low", "medium", "high"], default_reasoning: "medium", cost: { input: 1, output: 2 } }] });
-client.sessionGet = async () => { stats.gets++; return { session: { id: "parent", root: "/work", model: "parent/large", origin: { type: "root" } } }; };
-client.sessionCreate = async (params) => { const model = await resolveSlot(params.child.slot); stats.creates++; globalThis.created = params; return { session: { id: "child", model }, input: { type: "queued", input_id: 1, reason: "concurrency_limit" } }; };
-client.sessionPatch = async (id, patch) => { stats.changes++; globalThis.patched = { id, patch }; return { id, model: patch.model, reasoning: "medium", config_rev: 1 }; };
-globalThis.ctx = { interaction: { interactive: true,
-  confirm: async () => { stats.prompts++; return true; },
-  select: async (_title, options) => options[0],
-  input: async () => "key", notify: () => {},
-  deviceLogin: async (start, outcome) => outcome,
-} };
-globalThis.site = { sessionId: "parent", messageId: 2, partId: 0 };
+globalThis.stats = { creates: 0, gets: 0 };
+globalThis.parent = { session: { id: "01".repeat(16), root: "/work", model: "parent/large", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } };
+client.sessionGet = async () => { stats.gets++; return parent; };
+client.sessionCreate = async (params) => { stats.creates++; globalThis.created = params; return { session: { id: "02".repeat(16), model: params.model }, input: { type: "queued", input_id: 1, reason: "concurrency_limit" } }; };
 globalThis.result = "pending";
