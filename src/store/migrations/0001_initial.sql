@@ -18,6 +18,9 @@ CREATE TABLE sessions (
     max_rounds INTEGER CHECK (max_rounds IS NULL OR max_rounds BETWEEN 0 AND 9007199254740991), -- u64
     title      TEXT NOT NULL CHECK (length(title) <= 256),
     agent      TEXT CHECK (agent IS NULL OR length(agent) <= 64),
+    -- A child carries its direct name, which is unique under its parent; a non-child carries none.
+    name       TEXT CHECK ((name IS NULL) = (parent_id IS NULL) AND (name IS NULL OR (length(name) BETWEEN 1 AND 64
+        AND name GLOB '[a-z]*' AND name NOT GLOB '*[^a-z0-9_-]*' AND name <> 'root'))),
 
     created_by_name    TEXT CHECK (created_by_name    IS NULL OR length(created_by_name)    <= 64),
     created_by_version TEXT CHECK (created_by_version IS NULL OR length(created_by_version) <= 32),
@@ -121,9 +124,6 @@ CREATE TABLE messages (
 -- Index the FK child columns so a session or event cascade can seek instead of a message scan.
 CREATE INDEX messages_by_event ON messages(session_id, seq);
 
--- Index only rows with a recorded model; this supports the query for turns that used a model and adds no cost before the engine records provenance.
-CREATE INDEX messages_by_model ON messages(model, created_at_ms) WHERE model IS NOT NULL;
-
 -- Index only the turns that answer the context-usage lookup. The lookup then seeks the newest turn.
 CREATE INDEX messages_context_usage ON messages(session_id, message_id)
     WHERE role = 'assistant' AND tokens_input IS NOT NULL;
@@ -190,3 +190,30 @@ CREATE TABLE session_skills (
     PRIMARY KEY (session_id, name),
     UNIQUE (session_id, canonical_path)
 ) STRICT, WITHOUT ROWID;
+
+CREATE UNIQUE INDEX sessions_child_name ON sessions(parent_id, name) WHERE name IS NOT NULL;
+
+-- Durable pending inputs point to their input.queued event.
+CREATE TABLE pending_inputs (
+    session_id   BLOB NOT NULL CHECK (length(session_id) = 16)
+        REFERENCES sessions(id) ON DELETE CASCADE,
+    input_id     INTEGER NOT NULL CHECK (input_id BETWEEN 1 AND 9007199254740991),
+    seq          INTEGER NOT NULL CHECK (seq BETWEEN 1 AND 9007199254740991),
+    queued_at_ms INTEGER NOT NULL CHECK (queued_at_ms BETWEEN 0 AND 9007199254740991),
+    payload      TEXT NOT NULL CHECK (length(payload) > 0),
+
+    PRIMARY KEY (session_id, input_id),
+    UNIQUE (session_id, seq),
+    FOREIGN KEY (session_id, seq) REFERENCES events(session_id, seq) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+
+-- Each session names the blobs in its inputs. A removal can unlink a blob no session names.
+CREATE TABLE blob_refs (
+    session_id BLOB NOT NULL CHECK (length(session_id) = 16)
+        REFERENCES sessions(id) ON DELETE CASCADE,
+    hash       BLOB NOT NULL CHECK (length(hash) = 32),
+    bytes      INTEGER NOT NULL CHECK (bytes BETWEEN 0 AND 9007199254740991),
+
+    PRIMARY KEY (session_id, hash)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX blob_refs_hash ON blob_refs(hash);

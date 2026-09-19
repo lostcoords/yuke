@@ -24,10 +24,6 @@ const Migration = struct { version: i64, sql: [:0]const u8 };
 /// Apply the migrations in order. Entry i sets version i+1.
 const migrations = [_]Migration{
     .{ .version = 1, .sql = @embedFile("migrations/0001_initial.sql") },
-    .{ .version = 2, .sql = @embedFile("migrations/0002_pending_inputs.sql") },
-    .{ .version = 3, .sql = @embedFile("migrations/0003_child_admission.sql") },
-    .{ .version = 4, .sql = @embedFile("migrations/0004_child_report_name.sql") },
-    .{ .version = 5, .sql = @embedFile("migrations/0005_blob_refs.sql") },
 };
 
 comptime {
@@ -247,37 +243,6 @@ test "migrate is idempotent on reopen" {
     try migrate(conn);
     try migrate(conn); // The database is current, so apply no step and recheck hashes.
     try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
-}
-
-test "migrate renames persisted child report paths" {
-    const conn = try zqlite.open(":memory:", test_flags);
-    defer conn.close();
-    try conn.execNoArgs(@embedFile("migrations/0001_initial.sql"));
-    try conn.execNoArgs(@embedFile("migrations/0002_pending_inputs.sql"));
-    try conn.execNoArgs(@embedFile("migrations/0003_child_admission.sql"));
-    try conn.execNoArgs("INSERT INTO sessions(id, root, origin, profile, model, reasoning, config_rev, title, created_at_ms, updated_at_ms) VALUES (x'01010101010101010101010101010101', '/work', 'root', 'default', 'mock', '', 0, 'root', 1, 1)");
-    try conn.execNoArgs("INSERT INTO events(session_id, seq, event_id, committed_at_ms, name, payload) VALUES (x'01010101010101010101010101010101', 1, x'02020202020202020202020202020202', 1, 'message.committed', '{\"type\":\"user\",\"source\":{\"type\":\"child_report\",\"path\":\"/root/a/b\"}}')");
-    try conn.execNoArgs("INSERT INTO events(session_id, seq, event_id, committed_at_ms, name, payload) VALUES (x'01010101010101010101010101010101', 2, x'03030303030303030303030303030303', 1, 'input.queued', '{\"session_id\":\"01010101010101010101010101010101\",\"seq\":2,\"input\":{\"content\":[],\"source\":{\"type\":\"child_report\",\"path\":\"/root/a/b\"}}}')");
-    try conn.execNoArgs("INSERT INTO pending_inputs(session_id, input_id, seq, queued_at_ms, payload) VALUES (x'01010101010101010101010101010101', 1, 2, 1, '{\"content\":[],\"source\":{\"type\":\"child_report\",\"path\":\"/root/a/b\"}}')");
-    try conn.execNoArgs("PRAGMA application_id = 0x79756B65");
-    try conn.execNoArgs("PRAGMA user_version = 3");
-    try conn.execNoArgs(migration_hash_ddl);
-    for (migrations[0..3]) |migration| {
-        const hash = migrationHash(migration.sql);
-        try conn.exec("INSERT INTO migration_hash(version, hash) VALUES (?1, ?2)", .{ migration.version, &hash });
-    }
-    try migrate(conn);
-    try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(conn, "PRAGMA user_version"));
-    for ([_][]const u8{
-        "SELECT json_extract(payload, '$.source.name'), json_type(payload, '$.source.path') IS NULL FROM events WHERE seq = 1",
-        "SELECT json_extract(payload, '$.input.source.name'), json_type(payload, '$.input.source.path') IS NULL FROM events WHERE seq = 2",
-        "SELECT json_extract(payload, '$.source.name'), json_type(payload, '$.source.path') IS NULL FROM pending_inputs",
-    }) |query| {
-        const row = (try conn.row(query, .{})).?;
-        defer row.deinit();
-        try std.testing.expectEqualStrings("b", row.text(0));
-        try std.testing.expectEqual(@as(i64, 1), row.int(1));
-    }
 }
 
 test "migrate rejects a version from the future" {
