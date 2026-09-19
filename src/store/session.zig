@@ -29,28 +29,8 @@ pub const Selector = struct {
 /// The cursor stores the last row that a page returned.
 pub const Cursor = struct { updated_at_ms: u64, id: [16]u8 };
 
-/// The create operation sets these fields. Their names match the InsertSession parameters.
-pub const CreateParams = struct {
-    id: [16]u8,
-    root: []const u8,
-    origin: []const u8,
-    parent_id: ?[16]u8 = null,
-    parent_message_id: ?u64 = null,
-    parent_part_id: ?u64 = null,
-    source_id: ?[16]u8 = null,
-    profile: []const u8,
-    model: []const u8,
-    reasoning: []const u8,
-    config_rev: u64,
-    max_rounds: ?u64 = null,
-    title: []const u8,
-    agent: ?[]const u8 = null,
-    name: ?[]const u8 = null,
-    created_by_name: ?[]const u8 = null,
-    created_by_version: ?[]const u8 = null,
-    created_at_ms: u64,
-    updated_at_ms: u64,
-};
+/// The generated insert type, which gives every optional column a null default.
+pub const CreateParams = queries_gen.InsertSession.Params;
 
 /// Insert a new session row. The schema accepts an origin only with its related id set.
 pub fn create(db: *Database, params: CreateParams) !void {

@@ -26,6 +26,7 @@ pub fn appendSanitized(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), raw: []c
 
 /// Answer a valid UTF-8 copy of `raw`. The caller owns the result.
 pub fn sanitize(gpa: std.mem.Allocator, raw: []const u8) error{OutOfMemory}![]u8 {
+    if (std.unicode.utf8ValidateSlice(raw)) return gpa.dupe(u8, raw); // Valid text needs one copy and no scan per codepoint.
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(gpa);
     try appendSanitized(gpa, &buf, raw);

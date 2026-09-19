@@ -93,23 +93,29 @@ pub fn blobDirIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
 
 pub const ExpandError = error{HomeUnavailable} || std.mem.Allocator.Error;
 
-/// Expand a bare `~` or a `~/...` path against an absolute home directory, or return `HomeUnavailable`; `~alice` stays literal and the caller frees the result.
-pub fn expandHome(alloc: std.mem.Allocator, env: *const Map, path: []const u8) ExpandError![]u8 {
+/// Expand a bare `~` or a `~/...` path against an absolute home directory, or return null when `path` starts with no such tilde.
+fn homeExpansion(alloc: std.mem.Allocator, env: *const Map, path: []const u8) ExpandError!?[]u8 {
     const sep = std.fs.path.sep;
-    if (path.len == 0 or path[0] != '~') return alloc.dupe(u8, path);
-    if (path.len > 1 and path[1] != sep) return alloc.dupe(u8, path);
+    if (path.len == 0 or path[0] != '~') return null;
+    if (path.len > 1 and path[1] != sep) return null; // `~alice` stays literal.
 
     // A tilde that survives expansion would anchor under the workspace root and name the wrong file.
     const home = homeDir(env) orelse return error.HomeUnavailable;
     const rest = std.mem.trimStart(u8, path[1..], &.{sep});
-    if (rest.len == 0) return alloc.dupe(u8, home);
-    return std.fs.path.join(alloc, &.{ home, rest });
+    if (rest.len == 0) return try alloc.dupe(u8, home);
+    return try std.fs.path.join(alloc, &.{ home, rest });
+}
+
+/// Expand a leading `~` or copy the path into caller-owned memory.
+pub fn expandHome(alloc: std.mem.Allocator, env: *const Map, path: []const u8) ExpandError![]u8 {
+    return (try homeExpansion(alloc, env, path)) orelse try alloc.dupe(u8, path);
 }
 
 /// Anchor a tool path: expand an initial `~`, then resolve it against `root`. There is no confinement.
 pub fn anchorAt(alloc: std.mem.Allocator, env: *const Map, root: []const u8, path: []const u8) ExpandError![]const u8 {
-    const expanded = try expandHome(alloc, env, path);
-    defer alloc.free(expanded);
+    const owned = try homeExpansion(alloc, env, path);
+    defer if (owned) |o| alloc.free(o);
+    const expanded = owned orelse path;
     if (std.fs.path.isAbsolute(expanded)) return std.fs.path.resolve(alloc, &.{expanded});
     return std.fs.path.resolve(alloc, &.{ root, expanded });
 }
@@ -118,8 +124,9 @@ pub const WorkspaceError = error{RootNotAbsolute};
 
 /// Normalize a workspace root by expanding a leading `~` and resolving `.`/`..`; reject a relative or empty root with `RootNotAbsolute`, return a lexical result, and let the caller free it.
 pub fn canonicalizeWorkspace(alloc: std.mem.Allocator, env: *const Map, path: []const u8) (WorkspaceError || ExpandError)![]u8 {
-    const expanded = try expandHome(alloc, env, path);
-    defer alloc.free(expanded);
+    const owned = try homeExpansion(alloc, env, path);
+    defer if (owned) |o| alloc.free(o);
+    const expanded = owned orelse path;
     const resolved = try std.fs.path.resolve(alloc, &.{expanded});
     errdefer alloc.free(resolved);
     if (!std.fs.path.isAbsolute(resolved)) return WorkspaceError.RootNotAbsolute;

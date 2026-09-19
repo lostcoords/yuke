@@ -162,22 +162,14 @@ pub const Host = struct {
         ctx.setContextOpaque(self);
         runtime.setInterruptHandler(self);
         runtime.setModuleLoader(&self.loader);
-        // A host with no renderer still installs the module, because every draw call refuses a null render.
-        term_module.install(self);
-        engine_module.install(self);
-        fs_module.install(self);
-        env_module.install(self);
-        utf8_module.install(self);
-        net_module.install(self);
-        exec_module.install(self);
-        timers_mod.install(self);
-        process_module.install(self);
-        jobs_module.install(self);
-        diff_module.install(self);
-        tools_module.install(self);
-        hooks_module.install(self);
-        interaction_module.install(self);
-        cancellation.install(self);
+        // A host with no renderer still installs the term module, because every draw call refuses a null render.
+        const installers = [_]*const fn (*Host) void{
+            term_module.install,    engine_module.install,      fs_module.install,    env_module.install,
+            utf8_module.install,    net_module.install,         exec_module.install,  timers_mod.install,
+            process_module.install, jobs_module.install,        diff_module.install,  tools_module.install,
+            hooks_module.install,   interaction_module.install, cancellation.install,
+        };
+        for (installers) |install| install(self);
         return self;
     }
 
@@ -217,7 +209,7 @@ pub const Host = struct {
         return started.promise;
     }
 
-    /// Settle every finished primitive and run what it wakes. The owner calls this between frames, and one pass is enough because nothing here suspends.
+    /// Settle finished operations and run the jobs they wake in two ordered phases, because the first phase settles a promise a handler awaited and the second runs what that handler queued.
     pub fn pump(self: *Host) Error!void {
         std.debug.assert(self.phase == .open);
         self.enterSlice();

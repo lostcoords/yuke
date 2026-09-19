@@ -51,7 +51,7 @@ function formatRow(e, col) {
 
 // Parse the slash word and the rest of a composer text; null for a message or a path such as `/tmp/x`.
 /** @param {string} text @returns {SlashLine | null} */
-export function parseSlash(text) {
+function parseSlash(text) {
   const line = text.trimStart();
   if (line[0] !== "/") return null;
   const end = line.search(/\s/);

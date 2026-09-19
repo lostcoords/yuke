@@ -75,11 +75,11 @@ fn jsNotify(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
     const runtime = engine.runtime orelse return ctx.throwPlainError("the engine is not ready");
     if (args.len < 3) return ctx.throwTypeError("interaction.notify needs a source, a message and a level");
-    const source = ctx.toCStringLen(args[0]) catch return ctx.throwTypeError("the notice source must be a string");
+    const source = module.string(ctx, args[0]) orelse return ctx.throwTypeError("the notice source must be a string");
     defer ctx.freeCString(source.ptr);
-    const message = ctx.toCStringLen(args[1]) catch return ctx.throwTypeError("the notice message must be a string");
+    const message = module.string(ctx, args[1]) orelse return ctx.throwTypeError("the notice message must be a string");
     defer ctx.freeCString(message.ptr);
-    const level_text = ctx.toCStringLen(args[2]) catch return ctx.throwTypeError("the notice level must be a string");
+    const level_text = module.string(ctx, args[2]) orelse return ctx.throwTypeError("the notice level must be a string");
     defer ctx.freeCString(level_text.ptr);
     const level = std.meta.stringToEnum(proto.enums.NoticeLevel, level_text) orelse
         return ctx.throwTypeError("the notice level is unknown");

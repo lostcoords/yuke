@@ -56,10 +56,6 @@ pub const LocalHost = struct {
         return .{ .text = text, .next = start + cut, .size = size, .start = start, .complete = complete and start + cut == size };
     }
 
-    pub fn readAll(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, max_bytes: u32) h.HostError![]const u8 {
-        return self.readAllInto(scratch, scratch, path, max_bytes);
-    }
-
     pub fn readAllInto(self: *LocalHost, scratch: std.mem.Allocator, output: std.mem.Allocator, path: []const u8, max_bytes: u32) h.HostError![]u8 {
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         try requireRegularFile(self.io, full);
@@ -587,7 +583,7 @@ test "LocalHost does not confine reads to the workspace" {
     try testing.expectEqualStrings("secret\n", got.text.text);
 }
 
-test "LocalHost readAll returns exact bytes and reports the size limit" {
+test "LocalHost readAllInto returns exact bytes and reports the size limit" {
     var f: Fixture = undefined;
     try f.init("one\ntwo");
     defer f.deinit();
@@ -597,21 +593,21 @@ test "LocalHost readAll returns exact bytes and reports the size limit" {
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
 
     // The bytes must be exact. `readRange` cuts long lines, so a write-back needs this path.
-    try testing.expectEqualStrings("one\ntwo", try local.readAll(a, "a.txt", 1024));
+    try testing.expectEqualStrings("one\ntwo", try local.readAllInto(a, a, "a.txt", 1024));
     // `readFileAlloc` reports the limit as StreamTooLong. The caller must see the size.
-    try testing.expectError(error.TooLarge, local.readAll(a, "a.txt", 3));
-    try testing.expectError(error.NotFound, local.readAll(a, "nope.txt", 1024));
-    try testing.expectError(error.NotAFile, local.readAll(a, ".", 1024));
+    try testing.expectError(error.TooLarge, local.readAllInto(a, a, "a.txt", 3));
+    try testing.expectError(error.NotFound, local.readAllInto(a, a, "nope.txt", 1024));
+    try testing.expectError(error.NotAFile, local.readAllInto(a, a, ".", 1024));
 }
 
-test "LocalHost readAll refuses a file it cannot decode as UTF-8" {
+test "LocalHost readAllInto refuses a file it cannot decode as UTF-8" {
     var f: Fixture = undefined;
     try f.init("\xff\xfe\n");
     defer f.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
-    try testing.expectError(error.InvalidUtf8, local.readAll(arena.allocator(), "a.txt", 1024));
+    try testing.expectError(error.InvalidUtf8, local.readAllInto(arena.allocator(), arena.allocator(), "a.txt", 1024));
 }
 
 test "LocalHost writeFile replaces a file and keeps its permissions" {
@@ -631,7 +627,7 @@ test "LocalHost writeFile replaces a file and keeps its permissions" {
 
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
     try local.writeFile(a, "a.txt", "new content\n");
-    try testing.expectEqualStrings("new content\n", try local.readAll(a, "a.txt", 1024));
+    try testing.expectEqualStrings("new content\n", try local.readAllInto(a, a, "a.txt", 1024));
 
     // The replacement keeps the old permissions. `openat` applies the umask, so the write restores them.
     const after = (try f.tmp.dir.statFile(testing.io, "a.txt", .{})).permissions;
@@ -648,7 +644,7 @@ test "LocalHost writeFile creates a file that does not exist" {
 
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
     try local.writeFile(a, "fresh.txt", "hello\n");
-    try testing.expectEqualStrings("hello\n", try local.readAll(a, "fresh.txt", 1024));
+    try testing.expectEqualStrings("hello\n", try local.readAllInto(a, a, "fresh.txt", 1024));
 }
 
 test "LocalHost writeFile and removeFile refuse a target that is not a regular file" {
@@ -668,7 +664,7 @@ test "LocalHost writeFile and removeFile refuse a target that is not a regular f
     // removeFile refuses the link, so the file that the link names stays.
     try testing.expectError(error.NotAFile, local.removeFile(a, "link.txt"));
     // The target keeps its content.
-    try testing.expectEqualStrings("target\n", try local.readAll(a, "a.txt", 1024));
+    try testing.expectEqualStrings("target\n", try local.readAllInto(a, a, "a.txt", 1024));
 }
 
 /// Build a directory tree for the directory-page tests. The fixture holds the root path.

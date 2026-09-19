@@ -41,7 +41,7 @@ export function queuedText(input) {
 }
 
 /** @param {Wire.QueuedInput} input @returns {boolean} */
-export function protectedInput(input) { return input.source != null && input.source.type !== "parent_instruction"; }
+function protectedInput(input) { return input.source != null && input.source.type !== "parent_instruction"; }
 
 /** @param {string} sessionId */
 export async function clearWorkQueue(sessionId) {
@@ -54,7 +54,7 @@ export async function clearWorkQueue(sessionId) {
 
 // Read the queue again. Each call is a new generation, so the newest read is the one that lands.
 /** @param {string} sessionId @returns {Promise<void>} */
-export function refreshQueue(sessionId) {
+function refreshQueue(sessionId) {
   const gen = (gens.get(sessionId) || 0) + 1;
   gens.set(sessionId, gen);
   return client

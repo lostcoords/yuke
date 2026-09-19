@@ -23,7 +23,7 @@ function integer(value, fallback, min, max) {
     return value;
 }
 /** @param {string} parentId @param {string} target @returns {Promise<Wire.SessionListItem>} */
-export async function ownedChild(parentId, target) {
+async function ownedChild(parentId, target) {
     const byId = /^[0-9a-f]{32}$/.test(target);
     if (!byId && !NAME.test(target)) throw failure("bad_request", "Use an owned child ID or name.");
     const child = await (byId ? client.sessionGet(target) : client.sessionGet(parentId, target));
@@ -31,7 +31,7 @@ export async function ownedChild(parentId, target) {
     return child;
 }
 /** @param {Wire.SessionListItem} item */
-export function agentRow(item) {
+function agentRow(item) {
     return { name: item.session.name, session_id: item.session.id, model: item.session.model, reasoning: item.session.reasoning, activity: item.activity, last_run: item.last_run ?? null };
 }
 /** @type {Record<string, unknown>} */

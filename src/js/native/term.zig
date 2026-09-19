@@ -177,7 +177,7 @@ fn jsText(ctx: Context, _: Value, args: []const Value) Value {
     if (x < 0 or y < 0) return quickjs.UNDEFINED;
     if (x > std.math.maxInt(i17) or y > std.math.maxInt(i17)) return quickjs.UNDEFINED;
 
-    const s = ctx.toCStringLen(args[2]) catch return rethrow(ctx);
+    const s = module.string(ctx, args[2]) orelse return ctx.throwTypeError("term.text: the text must be a string");
     defer ctx.freeCString(s.ptr);
 
     const style = parseStyle(ctx, if (args.len > 3) args[3] else null) catch return rethrow(ctx);
@@ -198,7 +198,7 @@ fn jsText(ctx: Context, _: Value, args: []const Value) Value {
 
 fn jsMeasure(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len < 1) return ctx.throwTypeError("term.measure(s)");
-    const s = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
+    const s = module.string(ctx, args[0]) orelse return ctx.throwTypeError("term.measure: s must be a string");
     defer ctx.freeCString(s.ptr);
     if (metrics_enabled) {
         const host = Host.fromContext(ctx);
@@ -211,7 +211,7 @@ fn jsMeasure(ctx: Context, _: Value, args: []const Value) Value {
 fn jsGraphemes(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 1) return ctx.throwTypeError("term.graphemes(s)");
-    const s = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
+    const s = module.string(ctx, args[0]) orelse return ctx.throwTypeError("term.graphemes: s must be a string");
     defer ctx.freeCString(s.ptr);
     if (metrics_enabled) {
         host.paint.counters.grapheme_calls += 1;
@@ -240,7 +240,7 @@ fn jsWrap(ctx: Context, _: Value, args: []const Value) Value {
     const head = if (args.len > 2) module.integer(ctx, args[2], 0, std.math.maxInt(i32)) orelse return ctx.throwTypeError("term.wrap: invalid head limit") else 0;
     const tail = if (args.len > 3) module.integer(ctx, args[3], 0, std.math.maxInt(i32)) orelse return ctx.throwTypeError("term.wrap: invalid tail limit") else 0;
     if (head == 0 and tail != 0) return ctx.throwTypeError("term.wrap: a tail needs a positive head");
-    const source = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
+    const source = module.string(ctx, args[0]) orelse return ctx.throwTypeError("term.wrap: the text must be a string");
     defer ctx.freeCString(source.ptr);
     var wrapped = wrapping.wrap(host.gpa, source, width, @intCast(head), @intCast(tail)) catch return ctx.throwOutOfMemory();
     defer wrapped.rows.deinit(host.gpa);
@@ -297,8 +297,8 @@ fn jsCopy(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const output = host.paint.output orelse return ctx.throwTypeError("term.copy: no host");
     const render = output.render;
-    if (args.len < 1 or !ctx.isString(args[0])) return ctx.throwTypeError("term.copy(text): text is a string");
-    const payload = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
+    if (args.len < 1) return ctx.throwTypeError("term.copy(text)");
+    const payload = module.string(ctx, args[0]) orelse return ctx.throwTypeError("term.copy: text must be a string");
     defer ctx.freeCString(payload.ptr);
     render.copyToClipboard(output.writer, payload) catch |err| switch (err) {
         error.ClipboardTooLarge => return ctx.newInt32(-1),

@@ -18,7 +18,7 @@ pub fn call(
     runtime: *App,
     arena: std.mem.Allocator,
     method_name: []const u8,
-    params_json: []const u8,
+    params_in: anytype,
     out: *std.Io.Writer,
 ) !?Failure {
     const method = std.meta.stringToEnum(proto.enums.MethodName, method_name) orelse
@@ -31,9 +31,13 @@ pub fn call(
     inline for (proto.rpc.methods) |spec| {
         if (method == spec.name) {
             if (comptime @hasDecl(bindings, @tagName(spec.name))) {
-                const params = std.json.parseFromSliceLeaky(spec.params, arena, params_json, .{
-                    .ignore_unknown_fields = true,
-                }) catch return Failure{ .code = .bad_request, .message = "bad parameters" };
+                // The RPC frontend holds a parsed value and the JavaScript host holds text.
+                const options: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+                const decoded = if (comptime @TypeOf(params_in) == std.json.Value)
+                    std.json.parseFromValueLeaky(spec.params, arena, params_in, options)
+                else
+                    std.json.parseFromSliceLeaky(spec.params, arena, params_in, options);
+                const params = decoded catch return Failure{ .code = .bad_request, .message = "bad parameters" };
 
                 var diagnostic: ?[]const u8 = null;
                 const result = invoke(spec, runtime, arena, params, &launch, &diagnostic) catch |err| {

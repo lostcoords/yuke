@@ -22,7 +22,7 @@ import { pasteAttaches } from "yuke:attach";
 
 // `/skill:<name> [arguments]`: the name ends at the first whitespace character, and the trimmed rest is the arguments text.
 /** @param {string} text @returns {{ name: string, args: string } | null} */
-export function parseSkillLine(text) {
+function parseSkillLine(text) {
   const match = /^\/skill:([a-z0-9-]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
   const name = match?.[1];
   return name ? { name, args: (match[2] || "").trim() } : null;

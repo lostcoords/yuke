@@ -99,7 +99,10 @@ pub const Rpc = struct {
             if (request.id) |id| self.writeFailure(id, .queue_full, "too many requests are pending") catch |err| self.failWrite(err);
             return;
         }
-        const params = self.gpa.dupe(u8, request.params) catch unreachable;
+        // The JavaScript gate reads text, so only this path serializes the value.
+        var text: std.Io.Writer.Allocating = .init(self.gpa);
+        std.json.Stringify.value(request.params, .{ .emit_null_optional_fields = false }, &text.writer) catch unreachable;
+        const params = text.toOwnedSlice() catch unreachable;
         const id = if (request.id) |value| self.gpa.dupe(u8, value) catch unreachable else null;
         self.inputs.append(self.gpa, .{ .id = id, .params = params, .call = self.host.calls.submitInputMethod(request.method, params) }) catch unreachable;
     }
@@ -422,7 +425,7 @@ fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
     }
     // A hooked input waits on JavaScript, so it leaves the owner and answers later.
     const needs_gate = if (std.mem.eql(u8, request.method, "session.send_input")) true else if (std.mem.eql(u8, request.method, "session.create")) blk: {
-        const params = std.json.parseFromSliceLeaky(proto.misc.CreateSession, arena, request.params, .{ .ignore_unknown_fields = true }) catch break :blk false;
+        const params = std.json.parseFromValueLeaky(proto.misc.CreateSession, arena, request.params, .{ .ignore_unknown_fields = true }) catch break :blk false;
         break :blk params.initial_input != null;
     } else false;
     if (needs_gate and rpc.host.hooks.holds(.@"input.before")) {
@@ -464,7 +467,7 @@ fn serveJob(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
 }
 
 fn serveInteraction(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
-    const params = std.json.parseFromSliceLeaky(
+    const params = std.json.parseFromValueLeaky(
         proto.interaction.InteractionRespondParams,
         arena,
         request.params,
@@ -493,11 +496,11 @@ fn serveInteraction(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
 const Line = struct {
     id: ?[]const u8,
     method: []const u8,
-    /// The raw parameter object. `call` decodes it against the method's own type.
-    params: []const u8,
+    /// The parameter object that `call` decodes against the method type.
+    params: std.json.Value,
 };
 
-/// Read the envelope and keep the parameters as text. The transport never decodes a payload itself.
+/// Read the envelope and keep the parameters as one JSON value for `call`.
 fn parse(arena: std.mem.Allocator, line: []const u8) !Line {
     const value = try std.json.parseFromSliceLeaky(std.json.Value, arena, line, .{});
     const obj = switch (value) {
@@ -514,11 +517,7 @@ fn parse(arena: std.mem.Allocator, line: []const u8) !Line {
         else => return error.BadId,
     } else null;
     // An absent params object is an empty one. `call` still decodes it against the method type.
-    const params = if (obj.get("params")) |value_params| blk: {
-        var text: std.Io.Writer.Allocating = .init(arena);
-        try std.json.Stringify.value(value_params, .{ .emit_null_optional_fields = false }, &text.writer);
-        break :blk text.written();
-    } else "{}";
+    const params = obj.get("params") orelse std.json.Value{ .object = .{} };
     return .{ .id = id, .method = method, .params = params };
 }
 
@@ -529,7 +528,7 @@ fn trim(line: []const u8) []const u8 {
 const testing = std.testing;
 const support = @import("../js/test_support.zig");
 
-test "parse reads the envelope and keeps the parameters as text" {
+test "parse reads the envelope and keeps the parameters as a value" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const line = try parse(arena.allocator(),
@@ -537,7 +536,7 @@ test "parse reads the envelope and keeps the parameters as text" {
     );
     try testing.expectEqualStrings("r1", line.id.?);
     try testing.expectEqualStrings("session.list", line.method);
-    try testing.expectEqualStrings("{\"limit\":5}", line.params);
+    try testing.expectEqual(@as(i64, 5), line.params.object.get("limit").?.integer);
 }
 
 test "parse accepts an absent id and absent parameters" {
@@ -547,7 +546,7 @@ test "parse accepts an absent id and absent parameters" {
         \\{"method":"initialize"}
     );
     try testing.expect(line.id == null);
-    try testing.expectEqualStrings("{}", line.params);
+    try testing.expectEqual(@as(usize, 0), line.params.object.count());
 }
 
 test "parse rejects a line that carries no request" {

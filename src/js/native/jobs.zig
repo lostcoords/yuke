@@ -149,12 +149,12 @@ pub fn isMethod(method: []const u8) bool {
 }
 
 /// Answer one `job.*` RPC method from the table and write its result JSON to `out`.
-pub fn answer(a: std.mem.Allocator, host: *Host, method: []const u8, params: []const u8, out: *std.Io.Writer) ?Failure {
+pub fn answer(a: std.mem.Allocator, host: *Host, method: []const u8, params: std.json.Value, out: *std.Io.Writer) ?Failure {
     const bad: Failure = .{ .code = .bad_request, .message = "bad parameters" };
     const unknown: Failure = .{ .code = .unknown_job, .message = "unknown job" };
     const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
     if (std.mem.eql(u8, method, "job.list")) {
-        const p = if (std.mem.eql(u8, params, "null")) proto.job.JobListParams{} else std.json.parseFromSliceLeaky(proto.job.JobListParams, a, params, opts) catch return bad;
+        const p = if (params == .null) proto.job.JobListParams{} else std.json.parseFromValueLeaky(proto.job.JobListParams, a, params, opts) catch return bad;
         var jobs: std.ArrayList(proto.job.Job) = .empty;
         const items = host.jobs.list.items;
         for (0..items.len) |i| {
@@ -164,12 +164,12 @@ pub fn answer(a: std.mem.Allocator, host: *Host, method: []const u8, params: []c
         }
         write(out, proto.job.JobListResult{ .jobs = jobs.items });
     } else if (std.mem.eql(u8, method, "job.stop")) {
-        const p = std.json.parseFromSliceLeaky(proto.job.JobStopParams, a, params, opts) catch return bad;
+        const p = std.json.parseFromValueLeaky(proto.job.JobStopParams, a, params, opts) catch return bad;
         const job = host.jobs.find(p.id) orelse return unknown;
         stop(host, job);
         write(out, proto.job.JobStopResult{ .job = wire(job) });
     } else if (std.mem.eql(u8, method, "job.read")) {
-        const p = std.json.parseFromSliceLeaky(proto.job.JobReadParams, a, params, opts) catch return bad;
+        const p = std.json.parseFromValueLeaky(proto.job.JobReadParams, a, params, opts) catch return bad;
         if (p.max_bytes < 4 or p.max_bytes > max_read_bytes or (p.offset orelse 0) > proto.meta.constants.MAX_WIRE_INTEGER) return bad;
         const job = host.jobs.find(p.id) orelse return unknown;
         var local: LocalHost = .{ .io = host.io, .root = "/", .env = host.execution.env };

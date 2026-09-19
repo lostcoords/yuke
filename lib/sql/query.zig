@@ -248,31 +248,6 @@ pub fn prepare(conn: zqlite.Conn, comptime statement_sql: [:0]const u8) !Stateme
     return .{ .statement = try prepareStatement(conn, statement_sql) };
 }
 
-/// Validate that `Actual` has exactly the fields in `Expected`. Report a mismatch as a compile error.
-fn validateParamShape(comptime Expected: type, comptime Actual: type) void {
-    const actual = switch (@typeInfo(Actual)) {
-        .@"struct" => |info| info,
-        else => @compileError("SQL parameters must be a struct, got " ++ @typeName(Actual)),
-    };
-    if (actual.is_tuple and actual.fields.len != 0) @compileError("SQL parameters must be a named struct");
-    const expected = @typeInfo(Expected).@"struct".fields;
-    if (actual.fields.len != expected.len) @compileError("wrong SQL parameter count for " ++ @typeName(Expected));
-    // Equal counts plus every expected field present proves the two field sets match.
-    inline for (expected) |field| {
-        if (!@hasField(Actual, field.name)) @compileError("missing SQL parameter field: " ++ field.name);
-    }
-}
-
-/// Copy `params` into the declared parameter type; the caller must pass exactly its fields, and each assignment checks the field type.
-fn coerceParams(comptime Expected: type, params: anytype) Expected {
-    comptime validateParamShape(Expected, @TypeOf(params));
-    var result: Expected = undefined;
-    inline for (@typeInfo(Expected).@"struct".fields) |field| {
-        @field(result, field.name) = @field(params, field.name);
-    }
-    return result;
-}
-
 pub fn ExecQuery(comptime statement_sql: [:0]const u8, comptime ParamsType: type) type {
     comptime validateRecord(ParamsType, .bind);
     return struct {
@@ -292,8 +267,8 @@ pub fn ExecQuery(comptime statement_sql: [:0]const u8, comptime ParamsType: type
             self.* = undefined;
         }
 
-        pub fn exec(self: *Self, params: anytype) !void {
-            return self.statement.exec(coerceParams(Params, params));
+        pub fn exec(self: *Self, params: Params) !void {
+            return self.statement.exec(params);
         }
     };
 }
@@ -356,19 +331,19 @@ fn RowQuery(
             self.* = undefined;
         }
 
-        pub fn one(self: *Self, allocator: std.mem.Allocator, params: anytype) !Owned(Row) {
+        pub fn one(self: *Self, allocator: std.mem.Allocator, params: Params) !Owned(Row) {
             if (cardinality != .one) @compileError("one requires sql.OneQuery");
-            return self.statement.one(allocator, Row, coerceParams(Params, params));
+            return self.statement.one(allocator, Row, params);
         }
 
-        pub fn maybeOne(self: *Self, allocator: std.mem.Allocator, params: anytype) !?Owned(Row) {
+        pub fn maybeOne(self: *Self, allocator: std.mem.Allocator, params: Params) !?Owned(Row) {
             if (cardinality != .optional) @compileError("maybeOne requires sql.OptionalQuery");
-            return self.statement.maybeOne(allocator, Row, coerceParams(Params, params));
+            return self.statement.maybeOne(allocator, Row, params);
         }
 
-        pub fn rows(self: *Self, params: anytype) !Statement(statement_sql).Rows(Row) {
+        pub fn rows(self: *Self, params: Params) !Statement(statement_sql).Rows(Row) {
             if (cardinality != .many) @compileError("rows requires sql.ManyQuery");
-            return self.statement.rows(Row, coerceParams(Params, params));
+            return self.statement.rows(Row, params);
         }
     };
 }
@@ -825,28 +800,6 @@ test "typed query binds by name and owns a strict row" {
 
     const missing = try select.maybeOne(testing.allocator, Row, .{ .name = "missing" });
     try testing.expect(missing == null);
-}
-
-test "generated-query wrappers accept a matching named struct" {
-    const conn = try testConnection();
-    defer conn.tryClose() catch unreachable;
-    try conn.execNoArgs("CREATE TABLE item (id INTEGER NOT NULL, name TEXT NOT NULL)");
-
-    const Insert = ExecQuery("INSERT INTO item (id, name) VALUES (:id, :name)", struct { id: i64, name: []const u8 });
-    const Get = OneQuery("SELECT name FROM item WHERE id = :id", struct { id: i64 }, struct { name: []const u8 });
-
-    var insert = try Insert.prepare(conn);
-    defer insert.deinit();
-    var get = try Get.prepare(conn);
-    defer get.deinit();
-
-    // A domain struct distinct from the generated Params type binds by field name.
-    const Domain = struct { id: i64, name: []const u8 };
-    try insert.exec(Domain{ .id = 1, .name = "alpha" });
-
-    var row = try get.one(testing.allocator, .{ .id = 1 });
-    defer row.deinit();
-    try testing.expectEqualStrings("alpha", row.value.name);
 }
 
 test "operations reject open parameter and row shapes" {

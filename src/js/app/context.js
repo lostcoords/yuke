@@ -40,7 +40,7 @@ export function contextBar(used, window, cells = BAR_CELLS, glyphs = BAR_GLYPHS)
 
 // The status words: the bar and the share of the window, or a token count for a model with no known window.
 /** @param {Reading} r @param {string} [glyphs] @returns {string} */
-export function contextLine(r, glyphs = BAR_GLYPHS) {
+function contextLine(r, glyphs = BAR_GLYPHS) {
   const used = r.usage.input;
   const window = contextWindowOf(r.model);
   if (window > 0) return contextBar(used, window, BAR_CELLS, glyphs) + " " + Math.round((used / window) * 100) + "% context";
@@ -68,7 +68,7 @@ export function money(n) {
 
 // Build the label and value rows of the breakdown window. The cost row needs the model in the catalog.
 /** @param {Reading} r @param {ReadonlyArray<Wire.InstructionSource>} [sources] @param {ReadonlyArray<Wire.SkillInfo>} [skills] @returns {[string, string][]} */
-export function contextRows(r, sources = [], skills = []) {
+function contextRows(r, sources = [], skills = []) {
   const u = r.usage;
   const t = r.total;
   const model = modelOf(r.model);

@@ -392,6 +392,7 @@ fn writeStruct(w: *std.Io.Writer, fields: []const Field) !void {
         try w.writeAll(": ");
         if (!field.required) try w.writeByte('?');
         try w.writeAll(field.zig_type);
+        if (field.zig_type[0] == '?') try w.writeAll(" = null"); // A caller may omit an optional parameter.
         try w.writeAll(",\n");
     }
     try w.writeAll("    ");

@@ -25,7 +25,7 @@ export function childState(child) {
   return label + (queued ? " · " + queued + " queued" : "");
 }
 /** @param {Wire.SessionListItem[]} items */
-export function agentSummary(items) {
+function agentSummary(items) {
   let active = 0, queued = 0;
   for (const child of items) {
     if (child.activity.state.type !== "idle") active++;

@@ -1,9 +1,9 @@
-//! Deeply clone wire values with one reflective function, so every wire type stays aligned; the result owns its copies in `a` and borrows nothing from the source frame; OOM leaves partial data in `a`, so use an arena and free it as a whole.
+//! Deep-clone any wire value into `a` with one reflective function, so the copy borrows nothing from the source.
 
 const std = @import("std");
 const registry = @import("registry.zig");
 
-/// Copy `value` into `a` and infer its type. The result owns all bytes in `a`.
+/// Copy `value` into `a`, which must be an arena, because an OOM leaves partial data in it.
 pub fn dupe(a: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!@TypeOf(value) {
     const T = @TypeOf(value);
     if (comptime !hasPointers(T)) return value;

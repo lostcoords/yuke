@@ -7,7 +7,7 @@ import { strokeOf } from "yuke:keys";
 /** @import { InjectContext } from "./types/ext.js" */
 
 // A two-column information panel shares the cache and context window layout.
-export class InfoPanel {
+class InfoPanel {
   /** @param {[string, string][]} rows @param {() => void} onClose */
   constructor(rows, onClose) {
     this.rows = rows;
