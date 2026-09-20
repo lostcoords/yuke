@@ -35,7 +35,7 @@ export interface AdviceInfo {
 
 export type EventHandler = Parameters<typeof import("../kernel.js").events.on>[1];
 export type EventOptions = Parameters<typeof import("../kernel.js").events.on>[2];
-export type PluginApply = (context: Context, config: unknown) => void | Promise<void>;
+export type PluginApply = (context: Context) => void | Promise<void>;
 
 export type ToolExecute = (
   args: any,

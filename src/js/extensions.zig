@@ -140,15 +140,14 @@ test "one execution context reaches both the engine and the JavaScript host" {
 test "headless extensions pump an async JavaScript tool" {
     var f: Fixture = undefined;
     try f.init(
-        \\import { defineConfig, tools } from "yuke";
+        \\import { defineConfig, plugins, fs } from "yuke";
         \\defineConfig({ systemPrompt: "configured by JavaScript" });
-        \\import { fs } from "yuke";
-        \\tools.define({
+        \\plugins.use({ name: "notes", apply(ctx) { ctx.tools.define({
         \\  name: "read_note",
         \\  description: "Read the note.",
         \\  parameters: { type: "object", properties: { path: { type: "string" } } },
         \\  execute: async ({ path }) => ({ text: await fs.readFile(path) }),
-        \\});
+        \\}); } });
     , kernel_boot);
     defer f.deinit();
     try f.tmp.dir.writeFile(std.testing.io, .{ .sub_path = "note.txt", .data = "from rpc" });
@@ -207,10 +206,12 @@ test "headless extensions pump an async JavaScript tool" {
 test "the tool port lists names in table order and answers only the declarations a run allows" {
     var f: Fixture = undefined;
     try f.init(
-        \\import { tools } from "yuke";
+        \\import { plugins } from "yuke";
         \\const parameters = { type: "object", properties: {} };
-        \\tools.define({ name: "normal_tool", description: "normal", parameters, execute: async () => "normal" });
-        \\tools.define({ name: "hidden_tool", description: "hidden", parameters, execute: async () => "hidden" });
+        \\plugins.use({ name: "pair", apply(ctx) {
+        \\  ctx.tools.define({ name: "normal_tool", description: "normal", parameters, execute: async () => "normal" });
+        \\  ctx.tools.define({ name: "hidden_tool", description: "hidden", parameters, execute: async () => "hidden" });
+        \\} });
     , kernel_boot);
     defer f.deinit();
     const host = f.extensions.host;
@@ -284,6 +285,7 @@ test "a hook chain replaces a payload and the first block ends it" {
         \\  ctx.hook("tool.after", async (ev) => ({ replace: { output: ev.output + "!", is_error: false } }));
         \\  ctx.hook("request.build", (ev) => ({ replace: { ...ev, system: "from the chain" } }));
         \\  ctx.hook("input.before", (ev) => (ev.content[0].text === "no" ? { block: "refused" } : undefined));
+        \\  ctx.hook("request.send", () => { throw new Error("boom"); });
         \\  ctx.on("run.started", (ev) => { globalThis.sawRun = ev.session; });
         \\}});
     , kernel_boot);
@@ -296,8 +298,15 @@ test "a hook chain replaces a payload and the first block ends it" {
     try std.testing.expect(extensions.host.hooks.holds(.@"tool.after"));
     try std.testing.expect(extensions.host.hooks.holds(.@"request.build"));
     try std.testing.expect(extensions.host.hooks.holds(.@"input.before"));
-    // A point no handler holds must cost nothing, so the set answers false for it.
-    try std.testing.expect(!extensions.host.hooks.holds(.@"request.send"));
+    // A point no handler holds must cost nothing, so the set answers false for it. The skills plugin holds tools.select until it goes.
+    try std.testing.expect(extensions.host.hooks.holds(.@"tools.select"));
+    try extensions.host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"skills\");", "drop-skills.js");
+    try std.testing.expect(!extensions.host.hooks.holds(.@"tools.select"));
+    // A throwing handler fails closed: the point answers a block, never a pass.
+    const failed = try settleHook(extensions, "request.send", "{\"url\":\"u\",\"headers\":[],\"body\":\"{}\"}");
+    defer std.testing.allocator.free(failed);
+    try std.testing.expect(std.mem.indexOf(u8, failed, "\"type\":\"block\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, failed, "gate plugin failed at request.send") != null);
 
     // A published run must reach a headless handler through the digest, because the bus carried no engine fact before.
     const proto = @import("proto");

@@ -1,5 +1,6 @@
 import { check, equal } from "yuke:test";
-import { plugins, events } from "yuke";
+import { plugins } from "yuke";
+import { events } from "yuke:kernel";
 import { services } from "yuke:ext";
 
 const faults = [];

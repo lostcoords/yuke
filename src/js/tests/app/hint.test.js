@@ -1,10 +1,10 @@
 import { check } from "yuke:test";
 import { command, keymap, root } from "yuke:core";
 import { plugins } from "yuke:ext";
-import { commandUiPlugin } from "yuke:command-ui";
+import { commandUi } from "yuke:command-ui";
 import { tuiPlugin } from "yuke:tui";
 plugins.use(tuiPlugin);
-plugins.use(commandUiPlugin);
+plugins.use(commandUi());
 
 const meta = { title: "t", description: "d" };
 const offCmd = command.add(null, {

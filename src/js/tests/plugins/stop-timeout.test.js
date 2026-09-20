@@ -1,5 +1,6 @@
 import { check, equal } from "yuke:test";
-import { plugins, events } from "yuke";
+import { plugins } from "yuke";
+import { events } from "yuke:kernel";
 
 let reject;
 let disposed = 0;

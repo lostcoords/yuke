@@ -104,7 +104,7 @@ test "a native signal cancels and drains only its commands" {
     try std.testing.expectError(error.FileNotFound, fixture.tmp.?.dir.access(std.testing.io, "forbidden", .{}));
 }
 
-test "a hook fault in one result does not stop later handlers" {
+test "a hook fault fails the point closed before any later handler runs" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "native_tools/hook-fault.test.js");
@@ -112,9 +112,9 @@ test "a hook fault in one result does not stop later handlers" {
     const call = host.calls.submitHook("input.before", "{}");
     try support.pumpUntilSettled(host, call);
     try std.testing.expect(!call.is_error);
-    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"accepted\"}", call.text.?);
+    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"the getter plugin failed at input.before\"}", call.text.?);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
-        \\globalThis.faults.join(",") === "getter:getter,convert:convert" ? 1 : 0
+        \\globalThis.faults.join(",") === "getter:getter" ? 1 : 0
     ));
     try support.dropCall(host, call);
 }

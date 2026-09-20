@@ -95,11 +95,12 @@ function contextRows(r, sources = [], skills = []) {
 }
 
 
-export const contextPlugin = {
+/** @param {ContextConfig} [cfg] */
+export function contextUsage(cfg = {}) {
+  return {
   name: "context",
-  /** @param {Context} ctx @param {unknown} config @returns {void} */
-  apply(ctx, config) {
-    const cfg = /** @type {ContextConfig} */ (config || {});
+  /** @param {Context} ctx @returns {void} */
+  apply(ctx) {
     // Two glyphs, or the default. A user with a font that fits the parallelograms passes "▰▱" from index.js.
     // Normalize the pair once here, so a status render allocates nothing for it.
     const custom = typeof cfg.bar === "string" ? Array.from(cfg.bar) : null;
@@ -119,4 +120,5 @@ export const contextPlugin = {
       });
     });
   },
-};
+  };
+}

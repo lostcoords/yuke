@@ -79,11 +79,12 @@ function run(e, rest) {
   return command.perform(e.name, ...(rest ? [rest] : []));
 }
 
-export const commandUiPlugin = {
+/** @param {CommandUiConfig} [cfg] */
+export function commandUi(cfg = {}) {
+  return {
   name: "command-ui",
-  /** @param {Context} ctx @param {unknown} [config] @returns {void} */
-  apply(ctx, config) {
-    const cfg = /** @type {CommandUiConfig} */ (config || {});
+  /** @param {Context} ctx @returns {void} */
+  apply(ctx) {
     const rows = cfg.rows || 6;
     const border = cfg.border || "none";
     const format = cfg.format || formatRow;
@@ -209,4 +210,5 @@ export const commandUiPlugin = {
       ctx.tui.keymap({ "ctrl+p": "ui:palette" });
     });
   },
-};
+  };
+}

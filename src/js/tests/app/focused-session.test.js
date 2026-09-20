@@ -1,5 +1,6 @@
 import { check, equal } from "yuke:test";
-import { client, Context, Scope } from "yuke";
+import { client } from "yuke";
+import { Context, Scope } from "yuke:ext";
 import { Chat, focusedChat, focusedSessionId } from "yuke/chat";
 import { focusedSessionId as internalQuery } from "yuke:chat";
 import { root, Node } from "yuke:core";

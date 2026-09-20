@@ -1,10 +1,10 @@
 import { check, equal } from "yuke:test";
 import { command, root } from "yuke:core";
 import { plugins } from "yuke:ext";
-import { commandUiPlugin } from "yuke:command-ui";
+import { commandUi } from "yuke:command-ui";
 import { tuiPlugin } from "yuke:tui";
 plugins.use(tuiPlugin);
-plugins.use(commandUiPlugin);
+plugins.use(commandUi());
 
 const off = command.add(null, { "test:shown": () => {}, "test:plumbing": () => {}, "test:first": () => {}, "test:prefix": () => {} }, {
   "test:shown": { title: "opencode-responses", description: "the last one" },

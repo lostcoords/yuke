@@ -118,12 +118,13 @@ export function tokenLabel(n) {
 }
 
 // The model reading on the right of the status bar. `yuke:context` shows the usage beside it.
-export const catalogPlugin = {
+/** @param {CatalogConfig} [cfg] */
+export function modelCatalog(cfg = {}) {
+  return {
   name: "catalog",
-  /** @param {Context} ctx @param {unknown} config @returns {void} */
-  apply(ctx, config) {
+  /** @param {Context} ctx @returns {void} */
+  apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      const cfg = /** @type {CatalogConfig} */ (config || {});
       const entry = cfg.entry || (() => null);
 
       // The engine is in this process, so the catalog is readable at once and needs no connect event.
@@ -149,4 +150,5 @@ export const catalogPlugin = {
       });
       });
 },
-};
+  };
+}

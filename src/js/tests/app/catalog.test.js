@@ -2,12 +2,12 @@ import { check } from "yuke:test";
 import { status, root } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { notice, noticePlugin } from "yuke:notice";
-import { catalogPlugin, catalogOf, chooseModel, tokenLabel, contextWindowOf } from "yuke:catalog";
+import { modelCatalog, catalogOf, chooseModel, tokenLabel, contextWindowOf } from "yuke:catalog";
 import { tuiPlugin } from "yuke:tui";
 plugins.use(tuiPlugin);
 
 let open = null;
-plugins.use(catalogPlugin, { entry: () => open });
+plugins.use(modelCatalog({ entry: () => open }));
 
 // With no session the reading falls back to the default model.
 check("empty-without-session", status.side("right") === "");

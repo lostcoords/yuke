@@ -3,9 +3,9 @@ import { keymap, Node, root } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, NAV_KEYS } from "yuke:ui";
 import { notice, noticePlugin } from "yuke:notice";
-import { commandUiPlugin } from "yuke:command-ui";
+import { commandUi } from "yuke:command-ui";
 import { explorerPlugin } from "yuke:explorer";
-import { catalogPlugin } from "yuke:catalog";
+import { modelCatalog } from "yuke:catalog";
 import { jobsUiPlugin } from "yuke:jobs-ui";
 import { authPlugin } from "yuke:auth";
 import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
@@ -15,7 +15,7 @@ import { activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
 import { activityOf, activityPlugin } from "yuke:activity";
 import { indicatorPlugin } from "yuke:indicator";
 import { queuePlugin } from "yuke:queue";
-import { contextPlugin } from "yuke:context";
+import { contextUsage } from "yuke:context";
 import { cachePlugin } from "yuke:cache";
 /** @import { NavTarget } from "./types/core.js" */
 /** @import { InjectContext } from "./types/ext.js" */
@@ -154,9 +154,9 @@ plugins.use({
 });
 
 plugins.use(noticePlugin);
-plugins.use(commandUiPlugin);
+plugins.use(commandUi());
 plugins.use(explorerPlugin);
-plugins.use(catalogPlugin, { entry: chatEntry });
+plugins.use(modelCatalog({ entry: chatEntry }));
 plugins.use(authPlugin);
 plugins.use(jobsUiPlugin);
 plugins.use(chatPlugin);
@@ -164,7 +164,7 @@ plugins.use(sessionsPlugin);
 plugins.use(activityPlugin);
 plugins.use(indicatorPlugin);
 plugins.use(queuePlugin);
-plugins.use(contextPlugin);
+plugins.use(contextUsage());
 plugins.use(cachePlugin);
 
 root.setRoot(workspace);

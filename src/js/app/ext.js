@@ -500,8 +500,9 @@ async function dispatch(point, payload) {
         replaced = true;
       }
     } catch (e) {
-      // A throwing handler is a plugin bug, not a decision, so the chain goes on without it.
+      // A throwing handler is a plugin bug. The point fails closed, so a broken policy never lets an action through.
       events.emit("ext.error", e, entry.owner);
+      return { type: "block", reason: "the " + entry.owner + " plugin failed at " + point };
     }
   }
 
@@ -830,8 +831,8 @@ export const plugins = {
   /** @type {{ error: unknown } | undefined} */
   _startupFailure: undefined,
 
-  /** @param {Plugin} plugin @param {unknown} [config] @returns {import("./types/ext.js").PluginHandle} */
-  use(plugin, config) {
+  /** @param {Plugin} plugin @returns {import("./types/ext.js").PluginHandle} */
+  use(plugin) {
     const stop = checkPlugin(plugin);
     if (this._closing || !rootScope.alive) throw new TypeError("the plugin registry is closed");
     const name = plugin.name;
@@ -840,7 +841,7 @@ export const plugins = {
     const instance = new PluginInstance(name, stop);
     this._live[name] = instance;
     try {
-      const result = plugin.apply(instance, config);
+      const result = plugin.apply(instance);
       if (result != null && typeof /** @type {any} */ (result).then === "function") {
         this._needsStop = true;
         const state = instance._async ??= {};

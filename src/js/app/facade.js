@@ -1,7 +1,6 @@
-// The public root has no UI dependency or default plugin activation.
-export { defineConfig, config, events, Emitter } from "yuke:kernel";
-import { rootScope, toolRegistry } from "yuke:ext";
-export { plugins, Scope, Context, advice, services } from "yuke:ext";
+// The public root has no UI dependency or default plugin activation. Every registration goes through a plugin context.
+export { defineConfig, config } from "yuke:kernel";
+export { plugins, services } from "yuke:ext";
 export { fs } from "yuke:fs";
 export { env } from "yuke:env";
 export { utf8 } from "yuke:utf8";
@@ -24,4 +23,3 @@ export { client } from "yuke:client";
 /** @typedef {import("yuke:kernel").ConfigPatch} ConfigPatch */
 /** @typedef {import("yuke:jobs").Job} Job */
 
-export const tools = toolRegistry(rootScope);
