@@ -37,11 +37,14 @@ export const ROLE_TEXT = 2;
 
 /** @param {Wire.InputSource | undefined | null} source @returns {string} */
 export function inputSourceLabel(source) {
-  if (!source || source.type === "parent_instruction") return "";
+  if (!source) return "";
+  if (source.type === "parent_instruction") return "From the parent session";
   if (source.type === "child_report") {
     const usage = source.usage;
+    const outcome = source.outcome;
     const seconds = usage.duration_ms == null ? "" : " · " + (usage.duration_ms / 1000).toFixed(1) + "s";
-    return "Message from " + source.name + " · " + (source.outcome.type === "turn" ? "completed" : source.outcome.type) + (source.partial ? " · partial" : "") + (source.truncated ? " · model report truncated" : "")
+    const failure = outcome.type === "failed" ? " · " + outcome.message + (outcome.detail ? " · " + outcome.detail : "") : "";
+    return "Message from " + source.name + " · " + (outcome.type === "turn" ? "completed" : outcome.type) + failure + (source.partial ? " · partial" : "") + (source.truncated ? " · model report truncated" : "")
       + " · " + usage.rounds + (usage.rounds === 1 ? " round" : " rounds") + " · " + usage.tool_calls + (usage.tool_calls === 1 ? " tool" : " tools") + " · " + usage.tokens.input + "/" + usage.tokens.output + " tokens" + seconds;
   }
   if (source.type === "child_input_canceled") return "Message from " + source.name + " · queued work canceled";
@@ -1147,6 +1150,8 @@ export class Transcript {
       } else {
         source = this._userBody(m.id, source);
         rows = messageRows(m.id, source, width, "user");
+        // A parent-sent task reads like user input, so one meta row says where it came from.
+        if (m.source?.type === "parent_instruction") rows.unshift({ text: inputSourceLabel(m.source), group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id });
       }
     } else if (m.type === "compaction") {
       source = this.textOf(m.id) || "";
