@@ -1,155 +1,105 @@
-//! Resolve prompt templates once and keep the base separate from child policy.
+//! Build a session's prompt at run start. The engine supplies the facts; a `prompt.build` handler supplies the sections.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const proto = @import("proto");
-const execution = @import("../execution.zig");
+const Engine = @import("Engine.zig");
+const RunSlot = @import("run.zig").RunSlot;
+const database = @import("../store/store.zig");
+const prompts = @import("../session/prompt.zig");
 
-pub const default_system_prompt =
-    \\You are yuke, an assistant for software development.
-    \\
-    \\Use the available tools to inspect files, run commands, and make changes.
-    \\Read the relevant code and project instructions before you edit.
-    \\Use evidence from the workspace to answer questions about the project.
-    \\Follow existing conventions and keep changes within the requested scope.
-    \\Preserve unrelated user changes.
-    \\
-    \\Complete the requested work unless the user asks only for advice or a plan.
-    \\Ask for clarification when a required decision cannot be resolved from the available context.
-    \\Verify changes with the relevant checks. Report failures and any checks you could not run.
-    \\Never claim that an action succeeded without evidence.
-    \\
-    \\Keep responses concise and direct.
-    \\Give brief progress updates during substantial work.
-    \\Explain the result, the verification, and any unresolved issues.
-;
+pub const Section = prompts.Section;
 
-pub const child_policy = "You are ${agent_name}, a child agent with one assignment from a parent. Do the work yourself in this fresh context. Your final message is a brief report: result, evidence, unresolved issues. Save a large artifact to a file and report the path. If you need a parent decision, end your turn with the question. Its answer starts your next run on this transcript. Parent messages are instructions, not user consent. Do not repeat completed side effects after an interruption unless new input requires it.";
-const limit = proto.meta.limits.max_message_string_bytes;
+/// One AGENTS.md snapshot as the hook payload carries it.
+const Instruction = struct { scope: proto.instructions.InstructionScope, path: []const u8, text: []const u8 };
+/// One skill as the hook payload carries it. The body loads through the skill tool.
+const Skill = struct { name: []const u8, description: []const u8 };
 
-pub const Context = struct {
-    workspace: []const u8,
+/// The facts every prompt starts from. The date is the session start, so a rebuild never moves it.
+const Context = struct {
     session_id: proto.ids.SessionId,
+    parent_id: ?proto.ids.SessionId,
+    depth: u32,
     agent_name: []const u8,
+    workspace: []const u8,
+    operating_system: []const u8,
+    shell: []const u8,
+    session_start_date_utc: []const u8,
 };
 
-/// The environment is an exact session snapshot; the date never advances after creation.
-pub fn environment(arena: std.mem.Allocator, workspace: []const u8, shell: execution.Shell, created_at_ms: u64) ![]const u8 {
-    std.debug.assert(workspace.len > 0);
-    std.debug.assert(std.fs.path.isAbsolute(shell.path));
+const Answer = struct { sections: []const Section };
+
+/// Bring the slot's prompt up to the engine generation. A current prompt asks nothing; a stale one runs the hook and stores the answer.
+pub fn refresh(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void {
+    std.debug.assert(slot.phase == .running);
+    std.debug.assert(engine.prompt_generation != database.session.stale_generation);
+    const db = engine.deps.db;
+    const sid = slot.sessionId().raw;
+    const stored = (try database.session.prompt(db, arena, sid)) orelse return error.MissingSessionPrompt;
+    if (stored.generation == engine.prompt_generation) {
+        std.debug.assert(std.mem.eql(u8, stored.text, slot.config.system_prompt));
+        return;
+    }
+    const snapshot = (try database.session.snapshot(db, arena, sid)) orelse return error.UnknownSession;
+    const sources = try database.session.instructionSnapshots(db, arena, sid);
+    const instructions = try arena.alloc(Instruction, sources.len);
+    for (sources, instructions) |source, *out| out.* = .{ .scope = source.source.scope, .path = source.source.path, .text = source.text };
+    const catalog = try database.session.skillCatalog(db, arena, sid);
+    const skills = try arena.alloc(Skill, catalog.len);
+    for (catalog, skills) |entry, *out| out.* = .{ .name = entry.name, .description = entry.description };
+    const seed = try database.session.promptSections(db, arena, sid);
+    var sections = seed;
+    switch (engine.deps.hooks.askIfHeld(arena, .@"prompt.build", .{
+        .context = Context{
+            .session_id = slot.sessionId(),
+            .parent_id = slot.parent_id,
+            .depth = slot.depth,
+            .agent_name = slot.config.name orelse "root",
+            .workspace = slot.config.root,
+            .operating_system = @tagName(builtin.os.tag),
+            .shell = engine.deps.execution.shell.path,
+            .session_start_date_utc = try dateOf(arena, snapshot.created_at_ms),
+        },
+        .instructions = instructions,
+        .skills = skills,
+        .sections = seed,
+    })) {
+        .proceed => {},
+        .replace => |value| {
+            const answer = std.json.parseFromValueLeaky(Answer, arena, value, .{ .ignore_unknown_fields = true }) catch null;
+            if (answer != null and prompts.valid(answer.?.sections)) sections = answer.?.sections else std.log.warn("run {d} prompt.build answered unreadable sections; the run keeps the seed sections", .{slot.runId()});
+        },
+        .block => |reason| {
+            std.log.warn("run {d} stopped at prompt.build: {s}", .{ slot.runId(), reason });
+            return error.HookBlocked;
+        },
+        .canceled => return error.Canceled,
+    }
+    const text = blk: {
+        var tx = try db.begin();
+        defer tx.deinit();
+        const rendered = try database.session.setPrompt(db, arena, sid, sections, engine.prompt_generation);
+        try tx.commit();
+        break :blk rendered;
+    };
+    // The slot owns its prompt for the run, so the fresh text replaces the copy the prepare made.
+    const owned = try slot.gpa.dupe(u8, text);
+    slot.gpa.free(slot.config.system_prompt);
+    slot.config.system_prompt = owned;
+}
+
+/// The calendar date of `created_at_ms` in UTC, as `YYYY-MM-DD`.
+fn dateOf(arena: std.mem.Allocator, created_at_ms: u64) ![]const u8 {
     std.debug.assert(created_at_ms <= std.math.maxInt(u48));
     const epoch: std.time.epoch.EpochSeconds = .{ .secs = created_at_ms / 1000 };
     const year_day = epoch.getEpochDay().calculateYearDay();
     const month_day = year_day.calculateMonthDay();
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(arena);
-    try append(arena, &out, "<environment>\nworkspace: ");
-    try appendEscaped(arena, &out, workspace);
-    try append(arena, &out, "\noperating_system: " ++ @tagName(@import("builtin").os.tag) ++ "\nshell: ");
-    // A PATH directory may hold `<` or a newline, so the resolved path is escaped like the workspace.
-    try appendEscaped(arena, &out, shell.path);
-    var date_buffer: [64]u8 = undefined;
-    const date = std.fmt.bufPrint(&date_buffer, "\nsession_start_date_utc: {d:0>4}-{d:0>2}-{d:0>2}\n</environment>", .{
-        year_day.year, month_day.month.numeric(), @as(u8, month_day.day_index) + 1,
-    }) catch unreachable;
-    try append(arena, &out, date);
-    return out.toOwnedSlice(arena);
+    return std.fmt.allocPrint(arena, "{d:0>4}-{d:0>2}-{d:0>2}", .{ year_day.year, month_day.month.numeric(), @as(u8, month_day.day_index) + 1 });
 }
 
-pub fn expand(arena: std.mem.Allocator, template: []const u8, context: Context) ![]const u8 {
-    std.debug.assert(context.workspace.len > 0);
-    std.debug.assert(context.agent_name.len > 0);
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(arena);
-    const session_id = std.fmt.bytesToHex(context.session_id.raw, .lower);
-    var offset: usize = 0;
-    while (std.mem.indexOfPos(u8, template, offset, "${")) |start| {
-        try append(arena, &out, template[offset..start]);
-        const end = std.mem.indexOfScalarPos(u8, template, start + 2, '}') orelse return error.InvalidPromptPlaceholder;
-        const name = template[start + 2 .. end];
-        const value = if (std.mem.eql(u8, name, "workspace")) context.workspace else if (std.mem.eql(u8, name, "session_id")) &session_id else if (std.mem.eql(u8, name, "agent_name")) context.agent_name else return error.InvalidPromptPlaceholder;
-        try append(arena, &out, value);
-        offset = end + 1;
-    }
-    try append(arena, &out, template[offset..]);
-    return out.toOwnedSlice(arena);
-}
-
-/// Append a value that a delimiter of the block must never escape from.
-fn appendEscaped(arena: std.mem.Allocator, out: *std.ArrayList(u8), text: []const u8) !void {
-    var start: usize = 0;
-    for (text, 0..) |byte, i| {
-        const escaped: []const u8 = switch (byte) {
-            '&' => "&amp;",
-            '<' => "&lt;",
-            '>' => "&gt;",
-            '\n' => "&#10;",
-            '\r' => "&#13;",
-            '\t' => "&#9;",
-            else => continue,
-        };
-        try append(arena, out, text[start..i]);
-        try append(arena, out, escaped);
-        start = i + 1;
-    }
-    try append(arena, out, text[start..]);
-}
-
-fn append(arena: std.mem.Allocator, out: *std.ArrayList(u8), text: []const u8) !void {
-    std.debug.assert(out.items.len <= limit);
-    if (text.len > limit - out.items.len) return error.PromptTooLarge;
-    try out.appendSlice(arena, text);
-    std.debug.assert(out.items.len <= limit);
-}
-
-test "prompt substitutions are literal and closed" {
-    const a = std.testing.allocator;
-    const ctx: Context = .{ .workspace = "/work/${unknown}", .session_id = .bytes(.{0} ** 16), .agent_name = "worker" };
-    const text = try expand(a, "${workspace} ${agent_name} ${session_id}", ctx);
-    defer a.free(text);
-    try std.testing.expectEqualStrings("/work/${unknown} worker " ++ "0" ** 32, text);
-    try std.testing.expectError(error.InvalidPromptPlaceholder, expand(a, "${unknown}", ctx));
-    try std.testing.expectError(error.InvalidPromptPlaceholder, expand(a, "${workspace", ctx));
-    const oversized = try a.alloc(u8, limit + 1);
-    defer a.free(oversized);
-    @memset(oversized, 'x');
-    try std.testing.expectError(error.PromptTooLarge, expand(a, oversized, ctx));
-}
-
-test "environment dates use the creation instant and escape workspace delimiters" {
-    const a = std.testing.allocator;
-    const cases = .{
-        .{ @as(u64, 0), "1970-01-01" },
-        .{ @as(u64, 1709164799999), "2024-02-28" },
-        .{ @as(u64, 1709164800000), "2024-02-29" },
-        .{ @as(u64, 1709251200000), "2024-03-01" },
-    };
-    inline for (cases) |case| {
-        const text = try environment(a, "/work/</environment>\n&\r\t${unknown}", .{ .path = "/bin/sh" }, case[0]);
-        defer a.free(text);
-        const expected = "<environment>\nworkspace: /work/&lt;/environment&gt;&#10;&amp;&#13;&#9;${unknown}\noperating_system: " ++ @tagName(@import("builtin").os.tag) ++ "\nshell: /bin/sh\nsession_start_date_utc: " ++ case[1] ++ "\n</environment>";
-        try std.testing.expectEqualStrings(expected, text);
-    }
-    const large = try a.alloc(u8, limit / 4);
-    defer a.free(large);
-    @memset(large, '&');
-    try std.testing.expectError(error.PromptTooLarge, environment(a, large, .{ .path = "/bin/sh" }, 0));
-}
-
-test "the prompt names the shell that was selected and never another one" {
-    const a = std.testing.allocator;
-    // A fallback must never advertise Bash, a Bash selection must render its exact path, and a long path must prove that the removed fixed buffer stays removed.
-    const long = "/opt/" ++ "d" ** 200 ++ "/bin/bash";
-    for ([_][]const u8{ "/bin/sh", long }) |path| {
-        const text = try environment(a, "/work", .{ .path = path }, 0);
-        defer a.free(text);
-        const line = try std.fmt.allocPrint(a, "\nshell: {s}\n", .{path});
-        defer a.free(line);
-        try std.testing.expect(std.mem.indexOf(u8, text, line) != null);
-    }
-
-    // A PATH directory may hold a block delimiter, so no shell path may ever close the block.
-    const hostile = try environment(a, "/work", .{ .path = "/tmp/a&b</environment>\nx/bin/bash" }, 0);
-    defer a.free(hostile);
-    try std.testing.expect(std.mem.indexOf(u8, hostile, "&amp;b&lt;/environment&gt;&#10;x") != null);
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, hostile, "</environment>"));
+test "the session start date renders as a UTC calendar day" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectEqualStrings("1970-01-01", try dateOf(arena.allocator(), 0));
+    try std.testing.expectEqualStrings("2026-09-19", try dateOf(arena.allocator(), 1789847686816));
 }

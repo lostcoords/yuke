@@ -48,10 +48,7 @@ export function defineConfig(partial) {
   const km = partial.keymap;
   const nextKeymap = { ...config.keymap };
   if (km !== undefined) applyConfigPatch(nextKeymap, KEYMAP_FIELDS, /** @type {Record<string, unknown>} */ (km), "keymap");
-  if (systemPrompt !== undefined) {
-    native.setPromptConfig(systemPrompt);
-    config.systemPrompt = systemPrompt;
-  }
+  if (systemPrompt !== undefined) config.systemPrompt = systemPrompt;
   Object.assign(config.mouse, nextMouse);
   Object.assign(config.keymap, nextKeymap);
   return partial;

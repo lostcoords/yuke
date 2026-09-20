@@ -97,6 +97,9 @@ pub fn seedSession(db: *Database, id: [16]u8, options: SessionOptions) !void {
         .created_at_ms = options.created_at_ms,
         .updated_at_ms = options.updated_at_ms,
     });
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    _ = try database.session.setPrompt(db, arena.allocator(), id, &.{}, database.session.stale_generation);
 }
 
 pub const MockProviderOptions = struct {
@@ -227,7 +230,6 @@ pub const Fixture = struct {
         self.capture = .{ .arena = self.arena.allocator(), .replies = options.replies };
         self.engine.deps.route_transport = self.capture.transport();
         try seedSession(&self.db, id.raw, .{ .root = "/work" });
-        _ = try database.session.setPrompt(&self.db, self.arena.allocator(), id.raw, .{ .base = "", .child_policy = null, .environment = "" });
     }
 
     pub fn deinit(self: *Fixture) void {

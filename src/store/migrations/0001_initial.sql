@@ -156,15 +156,23 @@ CREATE TABLE session_configs (
 ) STRICT, WITHOUT ROWID;
 
 -- Store one prompt per session in a separate table; Create sets it once because the prompt has no fixed bound, and an absent row means null.
+-- The rendered prompt and the engine prompt generation it was built under; zero means stale.
 CREATE TABLE session_prompts (
     session_id BLOB PRIMARY KEY CHECK (length(session_id) = 16) -- proto.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
     prompt TEXT NOT NULL,
-    base_prompt TEXT NOT NULL,
-    instructions TEXT NOT NULL,
-    skills TEXT NOT NULL,
-    child_policy TEXT,
-    environment TEXT NOT NULL
+    generation INTEGER NOT NULL CHECK (generation BETWEEN 0 AND 9007199254740991) -- u64
+) STRICT, WITHOUT ROWID;
+
+-- The sections a prompt.build handler answered, in render order. Two blank lines separate them in `prompt`.
+CREATE TABLE session_prompt_sections (
+    session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- proto.SessionId
+        REFERENCES sessions(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 9007199254740991), -- u64
+    key TEXT NOT NULL CHECK (length(key) BETWEEN 1 AND 64),
+    text TEXT NOT NULL,
+    PRIMARY KEY (session_id, position),
+    UNIQUE (session_id, key)
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE session_instructions (

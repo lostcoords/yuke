@@ -4,6 +4,7 @@ const std = @import("std");
 const sql = @import("sql");
 const Database = @import("store.zig").Database;
 const instructions = @import("../session/instructions.zig");
+const prompt_mod = @import("../session/prompt.zig");
 const skills = @import("../session/skills.zig");
 const instruction_types = @import("proto").instructions;
 const queries_gen = @import("queries_gen.zig");
@@ -52,45 +53,50 @@ pub fn childIds(db: *Database, arena: std.mem.Allocator, parent_id: [16]u8) ![]c
     return out.items;
 }
 
-pub const PromptParts = @import("../session/prompt.zig").Parts;
-pub const PromptInput = struct {
-    base: []const u8,
-    child_policy: ?[]const u8,
-    environment: []const u8,
-    sources: []const instructions.Snapshot = &.{},
-    skills: []const skills.Entry = &.{},
-};
+pub const Section = prompt_mod.Section;
+pub const StoredPrompt = struct { text: []const u8, generation: u64 };
 
-pub fn promptParts(db: *Database, arena: std.mem.Allocator, id: [16]u8) !PromptParts {
-    const row = (try db.queries.select_prompt_parts.maybeOne(arena, .{ .session_id = id })) orelse return error.MissingSessionPrompt;
-    std.debug.assert(row.value.environment.len <= @import("proto").meta.limits.max_message_string_bytes);
-    return .{ .base = row.value.base_prompt, .instructions = row.value.instructions, .skills = row.value.skills, .child_policy = row.value.child_policy, .environment = row.value.environment };
+/// The stale generation. A run builds the prompt again when the stored value differs from the engine's.
+pub const stale_generation: u64 = 0;
+
+pub fn prompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?StoredPrompt {
+    const row = (try db.queries.select_prompt.maybeOne(arena, .{ .session_id = id })) orelse return null;
+    return .{ .text = row.value.prompt, .generation = row.value.generation };
 }
 
-/// Render and store the exact parts; the caller owns the returned text.
-pub fn setPrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8, parts: PromptInput) ![]const u8 {
-    const resolved: PromptParts = .{ .base = parts.base, .instructions = try instructions.render(arena, parts.sources), .skills = try skills.render(arena, parts.skills), .child_policy = parts.child_policy, .environment = parts.environment };
-    const text = try resolved.render(arena);
+pub fn promptSections(db: *Database, arena: std.mem.Allocator, id: [16]u8) ![]const Section {
+    var rows = try db.queries.select_prompt_sections.rows(.{ .session_id = id });
+    defer rows.deinit();
+    var result: std.ArrayList(Section) = .empty;
+    while (try rows.next(arena)) |row| try result.append(arena, .{ .key = row.value.key, .text = row.value.text });
+    return result.items;
+}
+
+/// Render and store the sections under `generation`; the caller owns the returned text.
+pub fn setPrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8, sections: []const Section, generation: u64) ![]const u8 {
+    std.debug.assert(prompt_mod.valid(sections));
+    const text = try prompt_mod.render(arena, sections);
     errdefer arena.free(text);
-    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text, .base_prompt = parts.base, .instructions = resolved.instructions, .skills = resolved.skills, .child_policy = parts.child_policy, .environment = parts.environment });
-    try insertSources(db, id, parts.sources);
-    try insertSkills(db, id, parts.skills);
+    try db.queries.replace_prompt.exec(.{ .session_id = id, .prompt = text, .generation = generation });
+    try db.queries.delete_prompt_sections.exec(.{ .session_id = id });
+    for (sections, 0..) |section, position| try db.queries.insert_prompt_section.exec(.{ .session_id = id, .position = position, .key = section.key, .text = section.text });
     return text;
 }
 
-/// Replace the two file-derived snapshots and recompose the prompt. Run inside one transaction.
-pub fn reloadContext(db: *Database, arena: std.mem.Allocator, id: [16]u8, sources: []const instructions.Snapshot, catalog: []const skills.Entry) ![]const u8 {
+/// Store the file snapshots a new session starts from. Run inside the creation transaction.
+pub fn setContext(db: *Database, id: [16]u8, sources: []const instructions.Snapshot, catalog: []const skills.Entry) !void {
+    try insertSources(db, id, sources);
+    try insertSkills(db, id, catalog);
+}
+
+/// Replace the two file snapshots and mark the prompt stale, so the next run builds it again. Run inside one transaction.
+pub fn reloadContext(db: *Database, id: [16]u8, sources: []const instructions.Snapshot, catalog: []const skills.Entry) !void {
     std.debug.assert(sql.inTransaction(db.conn));
-    var parts = try promptParts(db, arena, id);
-    parts.instructions = try instructions.render(arena, sources);
-    parts.skills = try skills.render(arena, catalog);
-    const text = try parts.render(arena);
-    try db.queries.update_prompt_context.exec(.{ .session_id = id, .prompt = text, .instructions = parts.instructions, .skills = parts.skills });
     try db.queries.delete_instructions.exec(.{ .session_id = id });
     try db.queries.delete_skills.exec(.{ .session_id = id });
     try insertSources(db, id, sources);
     try insertSkills(db, id, catalog);
-    return text;
+    try db.queries.stale_prompt.exec(.{ .session_id = id });
 }
 
 fn insertSources(db: *Database, id: [16]u8, sources: []const instructions.Snapshot) !void {
@@ -156,16 +162,6 @@ fn instructionSource(row: anytype) instruction_types.InstructionSource {
 }
 
 /// Read the session's system prompt into `arena`, or return null when no prompt exists.
-pub fn prompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?[]const u8 {
-    const row = (try db.queries.select_prompt.maybeOne(arena, .{ .session_id = id })) orelse return null;
-    return row.value.prompt;
-}
-
-pub fn basePrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) ![]const u8 {
-    const row = (try db.queries.select_base_prompt.maybeOne(arena, .{ .session_id = id })) orelse return error.MissingSessionPrompt;
-    return row.value.base_prompt;
-}
-
 /// Report whether a session with `id` exists.
 pub fn exists(db: *Database, arena: std.mem.Allocator, id: [16]u8) !bool {
     var row = (try db.queries.session_exists.maybeOne(arena, .{ .id = id })) orelse return false;
@@ -381,8 +377,9 @@ test "prompt reads a set prompt and null when absent" {
     try create(&db, rootParams(id, "/w"));
 
     try testing.expect((try prompt(&db, a, id)) == null); // No prompt row exists yet.
-    _ = try setPrompt(&db, a, id, .{ .base = "be helpful", .child_policy = null, .environment = "" });
-    try testing.expectEqualStrings("be helpful", (try prompt(&db, a, id)).?);
+    _ = try setPrompt(&db, a, id, &.{.{ .key = "base", .text = "be helpful" }}, 3);
+    try testing.expectEqualStrings("be helpful", (try prompt(&db, a, id)).?.text);
+    try testing.expectEqual(@as(u64, 3), (try prompt(&db, a, id)).?.generation);
 }
 
 test "an open run cannot exceed the run high-water mark" {
@@ -542,7 +539,7 @@ fn expectPlan(db: *Database, comptime query: [:0]const u8, index: []const u8) !v
     try testing.expect(seeks_index);
 }
 
-test "prompt components and the composed text survive a database restart" {
+test "prompt sections and the composed text survive a database restart, and a reload marks them stale" {
     const zqlite = @import("zqlite");
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -553,30 +550,36 @@ test "prompt components and the composed text survive a database restart" {
     const directory = path_buffer[0..try tmp.dir.realPath(testing.io, &path_buffer)];
     const path = try std.fmt.allocPrintSentinel(a, "{s}/session.db", .{directory}, 0);
     const id = [_]u8{9} ** 16;
-    const parts: PromptParts = .{ .base = "base\n\nwith separators", .child_policy = "policy", .environment = "<environment>\nsession_start_date_utc: 2026-09-08\n</environment>" };
+    const sections = [_]Section{ .{ .key = "base", .text = "base\n\nwith separators" }, .{ .key = "agent", .text = "policy" }, .{ .key = "environment", .text = "<environment>\nsession_start_date_utc: 2026-09-08\n</environment>" } };
     const sources = [_]instructions.Snapshot{.{ .source = .{ .scope = .workspace, .path = "/w/AGENTS.md", .canonical_path = "/w/AGENTS.md", .content_hash = .bytes(.{42} ** 32) }, .text = "literal ${workspace}" }};
-    var expected = parts;
-    expected.instructions = try instructions.render(a, &sources);
-    const text = try expected.render(a);
+    const text = try prompt_mod.render(a, &sections);
     {
         var db = try Database.open(try zqlite.open(path, zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex));
         defer db.deinit();
         var tx = try db.begin();
         defer tx.deinit();
         try create(&db, rootParams(id, "/w"));
-        try testing.expectEqualStrings(text, try setPrompt(&db, a, id, .{ .base = parts.base, .child_policy = parts.child_policy, .environment = parts.environment, .sources = &sources }));
+        try setContext(&db, id, &sources, &.{});
+        try testing.expectEqualStrings(text, try setPrompt(&db, a, id, &sections, 7));
         try tx.commit();
     }
     var db = try Database.open(try zqlite.open(path, zqlite.OpenFlags.NoMutex));
     defer db.deinit();
-    const saved = try promptParts(&db, a, id);
-    try testing.expectEqualStrings(parts.base, saved.base);
-    try testing.expectEqualStrings(parts.child_policy.?, saved.child_policy.?);
-    try testing.expectEqualStrings(parts.environment, saved.environment);
-    try testing.expectEqualStrings(text, (try prompt(&db, a, id)).?);
-    try testing.expectEqualStrings(expected.instructions, saved.instructions);
+    const saved = try promptSections(&db, a, id);
+    try testing.expectEqual(@as(usize, 3), saved.len);
+    try testing.expectEqualStrings("agent", saved[1].key);
+    try testing.expectEqualStrings("policy", saved[1].text);
+    try testing.expectEqualStrings(text, (try prompt(&db, a, id)).?.text);
+    try testing.expectEqual(@as(u64, 7), (try prompt(&db, a, id)).?.generation);
     const restored = try instructionSnapshots(&db, a, id);
     try testing.expectEqual(@as(usize, 1), restored.len);
     try testing.expectEqualStrings(sources[0].text, restored[0].text);
-    try testing.expectEqual(sources[0].source.content_hash, restored[0].source.content_hash);
+    {
+        var tx = try db.begin();
+        defer tx.deinit();
+        try reloadContext(&db, id, &.{}, &.{});
+        try tx.commit();
+    }
+    try testing.expectEqual(stale_generation, (try prompt(&db, a, id)).?.generation);
+    try testing.expectEqual(@as(usize, 0), (try instructionSnapshots(&db, a, id)).len);
 }

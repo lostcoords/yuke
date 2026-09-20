@@ -205,37 +205,41 @@ SELECT count(*) AS total FROM sessions
 WHERE parent_id = :filter_parent_id
   AND (NOT :top_level OR origin IN ('root', 'fork'));
 
--- name: InsertPrompt :exec
--- Create snapshots the system prompt. An absent row reads back as null.
+-- name: ReplacePrompt :exec
+-- Store the rendered prompt under the generation it was built for. A row exists from creation on.
 -- session_id: [16]u8!
 -- prompt: []const u8!
--- base_prompt: []const u8!
--- instructions: []const u8!
--- skills: []const u8!
--- child_policy: []const u8
--- environment: []const u8!
-INSERT INTO session_prompts(session_id, prompt, base_prompt, instructions, skills, child_policy, environment)
-VALUES (:session_id, :prompt, :base_prompt, :instructions, :skills, :child_policy, :environment);
+-- generation: u64!
+INSERT OR REPLACE INTO session_prompts(session_id, prompt, generation) VALUES (:session_id, :prompt, :generation);
 
--- name: UpdatePromptContext :exec
--- A reload replaces the two file-derived components and the composed prompt of one session.
+-- name: StalePrompt :exec
+-- A context reload marks the prompt stale, so the next run builds it again.
 -- session_id: [16]u8!
--- prompt: []const u8!
--- instructions: []const u8!
--- skills: []const u8!
-UPDATE session_prompts SET prompt = :prompt, instructions = :instructions, skills = :skills
-WHERE session_id = :session_id;
+UPDATE session_prompts SET generation = 0 WHERE session_id = :session_id;
 
 -- name: SelectPrompt :optional
--- Read the session's system prompt. An absent row reads back as null.
+-- Read the session's system prompt and its generation. An absent row reads back as null.
 -- session_id: [16]u8!
 -- prompt: []const u8!
-SELECT prompt FROM session_prompts WHERE session_id = :session_id;
+-- generation: u64!
+SELECT prompt, generation FROM session_prompts WHERE session_id = :session_id;
 
--- name: SelectBasePrompt :optional
+-- name: DeletePromptSections :exec
 -- session_id: [16]u8!
--- base_prompt: []const u8!
-SELECT base_prompt FROM session_prompts WHERE session_id = :session_id;
+DELETE FROM session_prompt_sections WHERE session_id = :session_id;
+
+-- name: InsertPromptSection :exec
+-- session_id: [16]u8!
+-- position: u64!
+-- key: []const u8!
+-- text: []const u8!
+INSERT INTO session_prompt_sections(session_id, position, key, text) VALUES (:session_id, :position, :key, :text);
+
+-- name: SelectPromptSections :many
+-- session_id: [16]u8!
+-- key: []const u8!
+-- text: []const u8!
+SELECT key, text FROM session_prompt_sections WHERE session_id = :session_id ORDER BY position;
 
 -- name: DeleteSession :exec
 -- Remove one session row. Each child table cascades. parent_id and source_id hold no key.
@@ -271,15 +275,6 @@ SELECT s.id FROM sessions s
     JOIN pending_inputs p ON p.session_id = s.id
     JOIN events e ON e.session_id = p.session_id AND e.seq = p.seq
 GROUP BY s.id ORDER BY min(e.rowid);
-
--- name: SelectPromptParts :optional
--- session_id: [16]u8!
--- base_prompt: []const u8!
--- instructions: []const u8!
--- skills: []const u8!
--- child_policy: []const u8
--- environment: []const u8!
-SELECT base_prompt, instructions, skills, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
 
 -- name: DeleteInstructions :exec
 -- session_id: [16]u8!

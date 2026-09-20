@@ -114,7 +114,7 @@ export class Scope {
 }
 
 // The owner of registrations outside a plugin.
-export const rootScope = new Scope("root");
+const rootScope = new Scope("root");
 
 // --- advice: named, removable method wrapping ---
 const WHERE = { before: 1, after: 1, around: 1, filterArgs: 1, filterReturn: 1 };
@@ -939,7 +939,7 @@ const stopTimeoutMs = installLifecycle(force => {
 
 // The scope owns each tool until its disposer runs or the scope closes.
 /** @param {Scope} scope */
-export function toolRegistry(scope) {
+function toolRegistry(scope) {
   return {
     /** @param {ToolDefinition} definition @returns {Disposer} */
     define(definition) {

@@ -500,11 +500,11 @@ test "native child admission derives the level and preserves parent instruction 
     params.system_prompt = "custom child prompt";
     const child = try commands.sessionCreateForRpc(&f.engine, a, params, &gate, null);
     try testing.expectEqualStrings("test/model", child.session.model);
-    const prompt = (try database.session.prompt(&f.db, a, child.session.id.raw)).?;
-    const prompts = @import("prompt.zig");
-    const policy = try prompts.expand(a, prompts.child_policy, .{ .workspace = child.session.root, .session_id = child.session.id, .agent_name = "guarded" });
-    try testing.expect(std.mem.indexOf(u8, policy, "You are guarded,") != null);
-    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "custom child prompt\n\n{s}\n\n{s}", .{ policy, (try database.session.promptParts(&f.db, a, child.session.id.raw)).environment }), prompt);
+    // Creation keeps the requested base as a stale seed; the first run builds the prompt from it.
+    const stored = (try database.session.prompt(&f.db, a, child.session.id.raw)).?;
+    try testing.expectEqualStrings("custom child prompt", stored.text);
+    try testing.expectEqual(database.session.stale_generation, stored.generation);
+    try testing.expectEqualStrings("system_prompt", (try database.session.promptSections(&f.db, a, child.session.id.raw))[0].key);
     var next: ?runs.Launch = null;
     var followup: proto.session.SessionSendInputParams = .{ .session_id = child.session.id, .input = input(), .parent_tool = .{ .session_id = f.parent, .message_id = 999, .part_id = 0 } };
     try testing.expectError(error.BadToolSite, commands.sessionSendInputForRpc(&f.engine, a, followup, &next, null));
@@ -515,88 +515,45 @@ test "native child admission derives the level and preserves parent instruction 
     try testing.expectEqual(@as(u64, 2), queue.items[0].source.?.parent_instruction.message_id);
 }
 
-test "child prompts inherit the saved base and snapshot their own policy" {
+test "a seed waits for the first run, a child inherits it, and a reload marks the prompt stale" {
     var f: Fixture = undefined;
     try f.initWithPrompt("parent base");
     defer f.deinit();
     const a = f.arena.allocator();
-    try f.engine.setPromptConfig("new process default");
+    const prompt_build = @import("prompt.zig");
+    const parent_prompt = (try database.session.prompt(&f.db, a, f.parent.raw)).?;
+    try testing.expectEqualStrings("parent base", parent_prompt.text);
+    try testing.expectEqual(database.session.stale_generation, parent_prompt.generation);
     f.engine.max_agent_depth = 2;
     var launch: ?runs.Launch = null;
     const child = try f.child("worker", &launch);
-    const saved = try commands.sessionConfig(&f.engine, a, .{ .session_id = child.session.id });
-    const child_parts = try database.session.promptParts(&f.db, a, child.session.id.raw);
-    const prompts = @import("prompt.zig");
-    const worker_policy = try prompts.expand(a, prompts.child_policy, .{ .workspace = "/work", .session_id = child.session.id, .agent_name = "worker" });
-    try testing.expectEqualStrings(worker_policy, child_parts.child_policy.?);
-    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "parent base\n\n{s}\n\n{s}", .{ worker_policy, child_parts.environment }), saved.system_prompt.?);
-    try testing.expectEqualStrings(saved.system_prompt.?, launch.?.slot.config.system_prompt);
-    try testing.expectEqualStrings("parent base", try database.session.basePrompt(&f.db, a, child.session.id.raw));
-    const site = try f.toolSite(child.session.id);
-    var grand_params = f.params("grandchild");
-    grand_params.child.?.site = site;
-    var grand_launch: ?runs.Launch = null;
-    const grandchild = try commands.sessionCreateForRpc(&f.engine, a, grand_params, &grand_launch, null);
-    const grand_parts = try database.session.promptParts(&f.db, a, grandchild.session.id.raw);
-    const grand_policy = try prompts.expand(a, prompts.child_policy, .{ .workspace = "/work", .session_id = grandchild.session.id, .agent_name = "grandchild" });
-    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "parent base\n\n{s}\n\n{s}", .{ grand_policy, grand_parts.environment }), (try database.session.prompt(&f.db, a, grandchild.session.id.raw)).?);
-    try testing.expectEqualStrings(saved.system_prompt.?, (try database.session.prompt(&f.db, a, child.session.id.raw)).?);
-    var explicit = f.params("explicit");
-    explicit.system_prompt = "${agent_name}";
-    var explicit_launch: ?runs.Launch = null;
-    const custom = try commands.sessionCreateForRpc(&f.engine, a, explicit, &explicit_launch, null);
-    const custom_parts = try database.session.promptParts(&f.db, a, custom.session.id.raw);
-    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "explicit\n\n{s}\n\n{s}", .{ custom_parts.child_policy.?, custom_parts.environment }), (try database.session.prompt(&f.db, a, custom.session.id.raw)).?);
-}
-
-test "root templates resolve once and invalid templates create no session" {
-    var f: Fixture = undefined;
-    try f.init();
-    defer f.deinit();
-    const a = f.arena.allocator();
-    try f.engine.setPromptConfig("${agent_name} ${workspace} ${session_id}");
-    const root = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model" });
-    const hex = std.fmt.bytesToHex(root.session.id.raw, .lower);
-    const parts = try database.session.promptParts(&f.db, a, root.session.id.raw);
-    const expected = try std.fmt.allocPrint(a, "root /work {s}\n\n{s}", .{ hex, parts.environment });
-    try testing.expectEqualStrings(expected, (try database.session.prompt(&f.db, a, root.session.id.raw)).?);
-    try f.engine.setPromptConfig("changed");
-    var launch: ?runs.Launch = null;
-    _ = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = root.session.id, .input = input() }, &launch, null);
-    try testing.expectEqualStrings(expected, launch.?.slot.config.system_prompt);
-    try testing.expectError(error.InvalidPromptPlaceholder, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .system_prompt = "${missing}" }));
-    try testing.expectEqual(@as(u64, 2), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
-}
-
-test "default and empty bases retain the environment and reject oversized composition atomically" {
-    var f: Fixture = undefined;
-    try f.init();
-    defer f.deinit();
-    const a = f.arena.allocator();
-    const prompts = @import("prompt.zig");
-    const original = try database.session.promptParts(&f.db, a, f.parent.raw);
-    try testing.expectEqualStrings(prompts.default_system_prompt, original.base);
-    try testing.expect(original.child_policy == null);
-    try testing.expectEqualStrings(try original.render(a), (try database.session.prompt(&f.db, a, f.parent.raw)).?);
-
-    try f.engine.setPromptConfig("configured");
-    const configured = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model" });
-    try testing.expectEqualStrings("configured", (try database.session.promptParts(&f.db, a, configured.session.id.raw)).base);
-    const explicit = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .system_prompt = "" });
-    const empty = try database.session.promptParts(&f.db, a, explicit.session.id.raw);
-    try testing.expectEqualStrings("", empty.base);
-    try testing.expectEqualStrings(empty.environment, (try database.session.prompt(&f.db, a, explicit.session.id.raw)).?);
-
-    try f.engine.setPromptConfig("");
-    const disabled = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model" });
-    try testing.expectEqualStrings("", (try database.session.promptParts(&f.db, a, disabled.session.id.raw)).base);
-    try f.engine.setPromptConfig(null);
-    const restored = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model" });
-    try testing.expectEqualStrings(prompts.default_system_prompt, (try database.session.promptParts(&f.db, a, restored.session.id.raw)).base);
-    try testing.expectEqualStrings(original.environment, (try database.session.promptParts(&f.db, a, f.parent.raw)).environment);
-
+    const seed = try database.session.promptSections(&f.db, a, child.session.id.raw);
+    try testing.expectEqual(@as(usize, 1), seed.len);
+    try testing.expectEqualStrings("system_prompt", seed[0].key);
+    try testing.expectEqualStrings("parent base", seed[0].text);
+    // With no handler on the point, the first run builds the prompt from the seed and records the engine generation.
+    const slot = launch.?.slot;
+    slot.phase = .running;
+    try prompt_build.refresh(&f.engine, a, slot);
+    try testing.expectEqualStrings("parent base", slot.config.system_prompt);
+    try testing.expectEqual(f.engine.prompt_generation, (try database.session.prompt(&f.db, a, child.session.id.raw)).?.generation);
+    // A current prompt asks nothing and changes nothing.
+    try prompt_build.refresh(&f.engine, a, slot);
+    try testing.expectEqualStrings("parent base", slot.config.system_prompt);
+    // A reload marks the prompt stale, and the next run builds it again.
+    {
+        var tx = try f.db.begin();
+        defer tx.deinit();
+        try database.session.reloadContext(&f.db, child.session.id.raw, &.{}, &.{});
+        try tx.commit();
+    }
+    try testing.expectEqual(database.session.stale_generation, (try database.session.prompt(&f.db, a, child.session.id.raw)).?.generation);
+    f.engine.prompt_generation += 1;
+    try prompt_build.refresh(&f.engine, a, slot);
+    try testing.expectEqual(f.engine.prompt_generation, (try database.session.prompt(&f.db, a, child.session.id.raw)).?.generation);
+    // An oversized seed is refused at creation, and no session row survives it.
     const count = (try commands.sessionList(&f.engine, a, .{})).total;
-    const oversized = try a.alloc(u8, proto.meta.limits.max_message_string_bytes);
+    const oversized = try a.alloc(u8, proto.meta.limits.max_message_string_bytes + 1);
     @memset(oversized, 'x');
     try testing.expectError(error.PromptTooLarge, commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .system_prompt = oversized }));
     try testing.expectEqual(count, (try commands.sessionList(&f.engine, a, .{})).total);
@@ -615,9 +572,9 @@ test "instruction snapshots survive file edits and child creation" {
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = original });
     var root_launch: ?runs.Launch = null;
     const root = try commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model", .initial_input = input(), .system_prompt = "custom" }, &root_launch, null);
-    const root_parts = try database.session.promptParts(&f.db, a, root.session.id.raw);
-    try testing.expectEqualStrings("custom", root_parts.base);
-    try testing.expect(std.mem.indexOf(u8, root_parts.instructions, original) != null);
+    try testing.expectEqualStrings("custom", (try database.session.promptSections(&f.db, a, root.session.id.raw))[0].text);
+    const root_sources = try database.session.instructionSnapshots(&f.db, a, root.session.id.raw);
+    try testing.expectEqualStrings(original, root_sources[0].text);
     const metadata = (try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id })).instruction_sources.?;
     try testing.expectEqual(@as(usize, 1), metadata.len);
     try testing.expectEqual(.workspace, metadata[0].scope);
@@ -630,18 +587,15 @@ test "instruction snapshots survive file edits and child creation" {
     params.system_prompt = "";
     var child_launch: ?runs.Launch = null;
     const child = try commands.sessionCreateForRpc(&f.engine, a, params, &child_launch, null);
-    const child_parts = try database.session.promptParts(&f.db, a, child.session.id.raw);
-    try testing.expectEqualStrings("", child_parts.base);
-    try testing.expectEqualStrings(root_parts.instructions, child_parts.instructions);
+    try testing.expectEqualStrings("", (try database.session.promptSections(&f.db, a, child.session.id.raw))[0].text);
     const sources = try database.session.instructionSnapshots(&f.db, a, child.session.id.raw);
     try testing.expectEqualStrings(original, sources[0].text);
     params.child.?.site = try f.toolSite(child.session.id);
     params.child.?.name = "grandchild";
     var grand_launch: ?runs.Launch = null;
     const grandchild = try commands.sessionCreateForRpc(&f.engine, a, params, &grand_launch, null);
-    const grand_parts = try database.session.promptParts(&f.db, a, grandchild.session.id.raw);
-    try testing.expectEqualStrings(root_parts.instructions, grand_parts.instructions);
-    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, grand_launch.?.slot.config.system_prompt, original));
+    try testing.expectEqualStrings(original, (try database.session.instructionSnapshots(&f.db, a, grandchild.session.id.raw))[0].text);
+    try testing.expectEqualStrings("", grand_launch.?.slot.config.system_prompt);
     const count = (try commands.sessionList(&f.engine, a, .{})).total;
     var refused: ?runs.Launch = null;
     var diagnostic: ?[]const u8 = null;
@@ -653,7 +607,7 @@ test "instruction snapshots survive file edits and child creation" {
     const fresh = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model" });
     const fresh_sources = try database.session.instructionSnapshots(&f.db, a, fresh.session.id.raw);
     try testing.expectEqualStrings("new rules", fresh_sources[0].text);
-    try testing.expectEqualStrings(root_parts.instructions, (try database.session.promptParts(&f.db, a, root.session.id.raw)).instructions);
+    try testing.expectEqualStrings(original, (try database.session.instructionSnapshots(&f.db, a, root.session.id.raw))[0].text);
 }
 
 const NoticeLog = struct {
@@ -700,10 +654,10 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
 
     var root_launch: ?runs.Launch = null;
     const root = try commands.sessionCreateForRpc(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model", .initial_input = input() }, &root_launch, null);
-    const parts = try database.session.promptParts(&f.db, a, root.session.id.raw);
-    try testing.expect(std.mem.indexOf(u8, parts.skills, "<name>pdf</name>") != null);
-    try testing.expect(std.mem.indexOf(u8, parts.skills, "Handle PDFs &amp; forms") != null);
-    try testing.expect(std.mem.indexOf(u8, (try database.session.prompt(&f.db, a, root.session.id.raw)).?, parts.skills) != null);
+    const stored_catalog = try database.session.skillCatalog(&f.db, a, root.session.id.raw);
+    try testing.expectEqual(@as(usize, 1), stored_catalog.len);
+    try testing.expectEqualStrings("pdf", stored_catalog[0].name);
+    try testing.expectEqualStrings("Handle PDFs & forms", stored_catalog[0].description);
     try testing.expectEqual(@as(usize, 1), notices.count);
     try testing.expect(std.mem.indexOf(u8, notices.last(), "bad/SKILL.md") != null);
     try testing.expect(std.mem.indexOf(u8, notices.last(), "description is missing") != null);
@@ -738,7 +692,7 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
     const inherited = try database.session.skillCatalog(&f.db, a, child.session.id.raw);
     try testing.expectEqual(@as(usize, 1), inherited.len);
     try testing.expectEqualStrings("pdf", inherited[0].name);
-    try testing.expectEqualStrings(parts.skills, (try database.session.promptParts(&f.db, a, child.session.id.raw)).skills);
+    try testing.expectEqualStrings("Handle PDFs & forms", inherited[0].description);
     try testing.expectError(error.SkillUnreadable, commands.skillLoad(&f.engine, a, .{ .session_id = child.session.id, .name = "pdf" }, &unused, &diagnostic));
     try testing.expect(std.mem.indexOf(u8, diagnostic.?, "pdf/SKILL.md") != null);
     const checked = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id, .check_files = true });
@@ -785,12 +739,10 @@ test "reload replaces both snapshots of an idle session and the stale check trac
     const reloaded = try commands.sessionReloadContext(&f.engine, a, .{ .session_id = root.session.id }, &unused, &diagnostic);
     try testing.expectEqual(@as(usize, 1), reloaded.instruction_sources.len);
     try testing.expectEqualStrings("Handle PDFs v2", reloaded.skills[0].description);
-    const parts = try database.session.promptParts(&f.db, a, root.session.id.raw);
-    try testing.expect(std.mem.indexOf(u8, parts.skills, "Handle PDFs v2") != null);
-    try testing.expect(std.mem.indexOf(u8, parts.instructions, "project rules") != null);
-    const prompt = (try database.session.prompt(&f.db, a, root.session.id.raw)).?;
-    try testing.expect(std.mem.indexOf(u8, prompt, parts.skills) != null);
-    try testing.expect(std.mem.indexOf(u8, prompt, parts.instructions).? < std.mem.indexOf(u8, prompt, parts.skills).?);
+    // The reload replaces both snapshots and marks the prompt stale for the next run.
+    try testing.expectEqualStrings("Handle PDFs v2", (try database.session.skillCatalog(&f.db, a, root.session.id.raw))[0].description);
+    try testing.expect(std.mem.indexOf(u8, (try database.session.instructionSnapshots(&f.db, a, root.session.id.raw))[0].text, "project rules") != null);
+    try testing.expectEqual(database.session.stale_generation, (try database.session.prompt(&f.db, a, root.session.id.raw)).?.generation);
     const settled = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id, .check_files = true });
     try testing.expect(!settled.context_changes.?.skills and !settled.context_changes.?.instructions);
     try testing.expectEqual(@as(usize, 1), settled.instruction_sources.?.len);
@@ -799,10 +751,9 @@ test "reload replaces both snapshots of an idle session and the stale check trac
     try tmp.dir.deleteTree(testing.io, ".agents");
     const emptied = try commands.sessionReloadContext(&f.engine, a, .{ .session_id = root.session.id }, &unused, &diagnostic);
     try testing.expectEqual(@as(usize, 0), emptied.skills.len);
-    try testing.expectEqualStrings("", (try database.session.promptParts(&f.db, a, root.session.id.raw)).skills);
     try testing.expect(!try database.session.hasSkills(&f.db, a, root.session.id.raw));
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = "\xff" });
     try testing.expectError(error.InvalidInstructions, commands.sessionReloadContext(&f.engine, a, .{ .session_id = root.session.id }, &unused, &diagnostic));
     try testing.expect(std.mem.indexOf(u8, diagnostic.?, "AGENTS.md") != null);
-    try testing.expect(std.mem.indexOf(u8, (try database.session.promptParts(&f.db, a, root.session.id.raw)).instructions, "project rules") != null);
+    try testing.expect(std.mem.indexOf(u8, (try database.session.instructionSnapshots(&f.db, a, root.session.id.raw))[0].text, "project rules") != null);
 }

@@ -705,52 +705,64 @@ pub const SessionCountParent = sql.OneQuery(
     },
 );
 
-pub const InsertPrompt = sql.ExecQuery(
-    \\INSERT INTO session_prompts(session_id, prompt, base_prompt, instructions, skills, child_policy, environment)
-    \\VALUES (:session_id, :prompt, :base_prompt, :instructions, :skills, :child_policy, :environment);
+pub const ReplacePrompt = sql.ExecQuery(
+    \\INSERT OR REPLACE INTO session_prompts(session_id, prompt, generation) VALUES (:session_id, :prompt, :generation);
 ,
     struct {
         session_id: [16]u8,
         prompt: []const u8,
-        base_prompt: []const u8,
-        instructions: []const u8,
-        skills: []const u8,
-        child_policy: ?[]const u8 = null,
-        environment: []const u8,
+        generation: u64,
     },
 );
 
-pub const UpdatePromptContext = sql.ExecQuery(
-    \\UPDATE session_prompts SET prompt = :prompt, instructions = :instructions, skills = :skills
-    \\WHERE session_id = :session_id;
+pub const StalePrompt = sql.ExecQuery(
+    \\UPDATE session_prompts SET generation = 0 WHERE session_id = :session_id;
 ,
     struct {
-        prompt: []const u8,
-        instructions: []const u8,
-        skills: []const u8,
         session_id: [16]u8,
     },
 );
 
 pub const SelectPrompt = sql.OptionalQuery(
-    \\SELECT prompt FROM session_prompts WHERE session_id = :session_id;
+    \\SELECT prompt, generation FROM session_prompts WHERE session_id = :session_id;
 ,
     struct {
         session_id: [16]u8,
     },
     struct {
         prompt: []const u8,
+        generation: u64,
     },
 );
 
-pub const SelectBasePrompt = sql.OptionalQuery(
-    \\SELECT base_prompt FROM session_prompts WHERE session_id = :session_id;
+pub const DeletePromptSections = sql.ExecQuery(
+    \\DELETE FROM session_prompt_sections WHERE session_id = :session_id;
+,
+    struct {
+        session_id: [16]u8,
+    },
+);
+
+pub const InsertPromptSection = sql.ExecQuery(
+    \\INSERT INTO session_prompt_sections(session_id, position, key, text) VALUES (:session_id, :position, :key, :text);
+,
+    struct {
+        session_id: [16]u8,
+        position: u64,
+        key: []const u8,
+        text: []const u8,
+    },
+);
+
+pub const SelectPromptSections = sql.ManyQuery(
+    \\SELECT key, text FROM session_prompt_sections WHERE session_id = :session_id ORDER BY position;
 ,
     struct {
         session_id: [16]u8,
     },
     struct {
-        base_prompt: []const u8,
+        key: []const u8,
+        text: []const u8,
     },
 );
 
@@ -804,21 +816,6 @@ pub const ChildAdmissionCandidates = sql.ManyQuery(
     },
     struct {
         id: [16]u8,
-    },
-);
-
-pub const SelectPromptParts = sql.OptionalQuery(
-    \\SELECT base_prompt, instructions, skills, child_policy, environment FROM session_prompts WHERE session_id = :session_id;
-,
-    struct {
-        session_id: [16]u8,
-    },
-    struct {
-        base_prompt: []const u8,
-        instructions: []const u8,
-        skills: []const u8,
-        child_policy: ?[]const u8,
-        environment: []const u8,
     },
 );
 
@@ -980,15 +977,16 @@ pub const Queries = struct {
     session_page_parent: SessionPageParent,
     session_count_recent: SessionCountRecent,
     session_count_parent: SessionCountParent,
-    insert_prompt: InsertPrompt,
-    update_prompt_context: UpdatePromptContext,
+    replace_prompt: ReplacePrompt,
+    stale_prompt: StalePrompt,
     select_prompt: SelectPrompt,
-    select_base_prompt: SelectBasePrompt,
+    delete_prompt_sections: DeletePromptSections,
+    insert_prompt_section: InsertPromptSection,
+    select_prompt_sections: SelectPromptSections,
     delete_session: DeleteSession,
     session_child_ids: SessionChildIds,
     session_recovery_candidates: SessionRecoveryCandidates,
     child_admission_candidates: ChildAdmissionCandidates,
-    select_prompt_parts: SelectPromptParts,
     delete_instructions: DeleteInstructions,
     insert_skill: InsertSkill,
     select_skills: SelectSkills,

@@ -284,7 +284,7 @@ pub fn prepareContext(engine: *Engine, arena: std.mem.Allocator, rt: *Session, e
 /// Copy the session configuration into a slot before its start transaction.
 pub fn prepareSlot(engine: *Engine, arena: std.mem.Allocator, rt: *Session, context: Preparation, kind: proto.enums.RunKind) !RunSlot.Prepared {
     std.debug.assert(rt.active_run == null);
-    const prompt = (try session_store.prompt(engine.deps.db, arena, rt.id.raw)) orelse "";
+    const prompt = if (try session_store.prompt(engine.deps.db, arena, rt.id.raw)) |stored| stored.text else "";
     return RunSlot.prepare(engine.deps.gpa, .{ .model = context.snapshot.model, .reasoning = context.snapshot.reasoning, .system_prompt = prompt, .max_rounds = if (kind == .turn) context.snapshot.max_rounds else null, .root = context.snapshot.root, .name = context.snapshot.name });
 }
 

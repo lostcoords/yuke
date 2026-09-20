@@ -427,25 +427,6 @@ pub fn wrap(arena: std.mem.Allocator, name: []const u8, body: Body) ![]const u8 
     return out.toOwnedSlice(arena);
 }
 
-const catalog_lead = "Available skills provide specialized instructions for specific tasks. Use the skill tool when a task matches a skill description. Pass the skill name to load its full instructions.\n\n<available_skills>\n";
-
-/// Render the prompt component. An empty catalog renders nothing.
-pub fn render(arena: std.mem.Allocator, entries: []const Entry) ![]const u8 {
-    if (entries.len == 0) return "";
-    var out: std.ArrayList(u8) = .empty;
-    try out.appendSlice(arena, catalog_lead);
-    for (entries) |entry| {
-        std.debug.assert(nameFault(entry.name) == null);
-        try out.appendSlice(arena, "  <skill>\n    <name>");
-        try out.appendSlice(arena, entry.name);
-        try out.appendSlice(arena, "</name>\n    <description>");
-        try appendEscaped(arena, &out, entry.description);
-        try out.appendSlice(arena, "</description>\n  </skill>\n");
-    }
-    try out.appendSlice(arena, "</available_skills>");
-    return out.toOwnedSlice(arena);
-}
-
 fn appendEscaped(arena: std.mem.Allocator, out: *std.ArrayList(u8), text: []const u8) !void {
     for (text) |byte| {
         const escaped: ?[]const u8 = switch (byte) {
@@ -656,15 +637,6 @@ test "the scan reads only the head of a file and the body read validates the who
     const again = try r.load();
     try testing.expectEqual(@as(usize, 1), again.entries.len);
     try testing.expectEqualStrings("the file has no frontmatter", again.skipped[0].reason);
-}
-
-test "the prompt component escapes descriptions and vanishes for an empty catalog" {
-    const a = testing.allocator;
-    try testing.expectEqualStrings("", try render(a, &.{}));
-    const entries = [_]Entry{.{ .name = "pdf", .description = "a <b> & \"c\"", .scope = .global, .path = "/p", .canonical_path = "/p" }};
-    const text = try render(a, &entries);
-    defer a.free(text);
-    try testing.expectEqualStrings(catalog_lead ++ "  <skill>\n    <name>pdf</name>\n    <description>a &lt;b&gt; &amp; &quot;c&quot;</description>\n  </skill>\n</available_skills>", text);
 }
 
 test "name rules follow the specification" {

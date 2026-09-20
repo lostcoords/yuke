@@ -143,29 +143,34 @@ test "the plugin ends a root prompt with the rule and scopes a child by its row"
     defer support.destroyHost(host);
     try support.eval(host, "agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
-    const tools = "[{\"name\":\"read\"},{\"name\":\"exec\"},{\"name\":\"write\"}]";
-    const Build = struct { type: []const u8, value: struct { system: []const u8, tools: []const struct { name: []const u8 } } };
-    const root_text = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":" ++ tools ++ ",\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ root_id ++ "\",\"parent_id\":null,\"agent_name\":\"root\",\"workspace\":\"/w\"}}");
+    const Build = struct { type: []const u8, value: struct { sections: []const struct { key: []const u8, text: []const u8 } } };
+    const seed = "\"instructions\":[],\"skills\":[],\"sections\":[{\"key\":\"base\",\"text\":\"base\"}]";
+    const root_text = try answerHook(host, "prompt.build", "{" ++ seed ++ ",\"context\":{\"session_id\":\"" ++ root_id ++ "\",\"parent_id\":null,\"depth\":0,\"agent_name\":\"root\",\"workspace\":\"/w\"}}");
     defer std.testing.allocator.free(root_text);
     const root_build = try std.json.parseFromSlice(Build, std.testing.allocator, root_text, .{ .ignore_unknown_fields = true });
     defer root_build.deinit();
     try std.testing.expectEqualStrings("replace", root_build.value.type);
-    try std.testing.expect(std.mem.startsWith(u8, root_build.value.value.system, "base\n\nDo not spawn a child unless the user asks"));
-    try std.testing.expectEqual(@as(usize, 3), root_build.value.value.tools.len);
-    const child_text = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":" ++ tools ++ ",\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"review\",\"workspace\":\"/w\"}}");
+    const root_sections = root_build.value.value.sections;
+    try std.testing.expectEqual(@as(usize, 2), root_sections.len);
+    try std.testing.expectEqualStrings("base", root_sections[0].text);
+    try std.testing.expectEqualStrings("delegation", root_sections[1].key);
+    try std.testing.expect(std.mem.startsWith(u8, root_sections[1].text, "Do not spawn a child unless the user asks"));
+    const child_text = try answerHook(host, "prompt.build", "{" ++ seed ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"review\",\"workspace\":\"/w\"}}");
     defer std.testing.allocator.free(child_text);
     const child_build = try std.json.parseFromSlice(Build, std.testing.allocator, child_text, .{ .ignore_unknown_fields = true });
     defer child_build.deinit();
-    try std.testing.expectEqualStrings("base\n\nReview only. Do not edit.", child_build.value.value.system);
-    try std.testing.expectEqual(@as(usize, 3), child_build.value.value.tools.len);
-    // A child outside the catalog, or a row without a prompt, keeps the round as it is.
-    const ghost = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":[],\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"ghost\",\"workspace\":\"/w\"}}");
+    const child_sections = child_build.value.value.sections;
+    try std.testing.expectEqual(@as(usize, 2), child_sections.len);
+    try std.testing.expectEqualStrings("agent", child_sections[1].key);
+    try std.testing.expect(std.mem.startsWith(u8, child_sections[1].text, "You are review,"));
+    try std.testing.expect(std.mem.endsWith(u8, child_sections[1].text, "\n\nReview only. Do not edit."));
+    // A child outside the catalog, or a row without a prompt, gets the policy alone.
+    const ghost = try answerHook(host, "prompt.build", "{" ++ seed ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"ghost\",\"workspace\":\"/w\"}}");
     defer std.testing.allocator.free(ghost);
-    // An empty answer is the proceed decision.
-    try std.testing.expectEqualStrings("", ghost);
-    const plain = try answerHook(host, "request.build", "{\"model\":\"m\",\"system\":\"base\",\"tools\":" ++ tools ++ ",\"max_output_tokens\":1,\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"agent_name\":\"small\",\"workspace\":\"/w\"}}");
-    defer std.testing.allocator.free(plain);
-    try std.testing.expectEqualStrings("", plain);
+    const ghost_build = try std.json.parseFromSlice(Build, std.testing.allocator, ghost, .{ .ignore_unknown_fields = true });
+    defer ghost_build.deinit();
+    try std.testing.expect(std.mem.startsWith(u8, ghost_build.value.value.sections[1].text, "You are ghost,"));
+    try std.testing.expect(std.mem.endsWith(u8, ghost_build.value.value.sections[1].text, "unless new input requires it."));
     // tools.select runs once per run: a child at the depth limit keeps only its row tools, and agent tools never reach it.
     const Select = struct { type: []const u8, value: struct { tools: []const []const u8 } };
     const every = "\"tools\":[\"edit\",\"exec\",\"read\",\"send_agent_input\",\"spawn_agent\",\"stop_agent\",\"write\"]";

@@ -47,8 +47,6 @@ declare module "yuke:engine-native" {
     memoryUsage(): MemoryUsage;
     /** Set the child run concurrency and nesting depth limits. */
     setAgentLimits(maxConcurrent: number, maxDepth: number): [number, number];
-    /** Undefined preserves a field; null clears the base or selects the built-in child policy; empty text removes that policy. */
-    setPromptConfig(base: string | null): void;
     /** Install the one sink. `drain` calls it on the owner, never from an engine task. */
     setEventSink(fn: (ev: EngineEvent) => void): void;
     /** Resolve with the response JSON, or reject with an error that carries the refusal code. */

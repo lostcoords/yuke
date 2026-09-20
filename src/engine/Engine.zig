@@ -54,8 +54,8 @@ turn_tasks: std.Io.Group = .init,
 continuations: usize = 0,
 /// Every subscriber that reads engine events. A frontend installs itself at startup.
 sinks: Sinks = .{},
-/// A null override selects the built-in base for new root sessions.
-default_system_prompt: ?[]const u8 = null,
+/// Random per process and bumped on every prompt handler change, so a stored prompt from another process or handler set is always stale.
+prompt_generation: u64,
 /// The in-memory session index revision. A restart clears it.
 session_revision: u64 = 0,
 /// Set while the engine closes, so a finished turn starts no successor.
@@ -86,7 +86,10 @@ pub fn releaseRoot(self: *Engine, id: proto.ids.SessionId) void {
 }
 
 pub fn init(deps: Deps) Engine {
-    return .{ .deps = deps, .sessions = session.Registry.init(deps.gpa) };
+    var generation: u64 = undefined;
+    deps.io.random(std.mem.asBytes(&generation));
+    // The store checks the generation as a 53-bit integer, so the value stays inside that range.
+    return .{ .deps = deps, .sessions = session.Registry.init(deps.gpa), .prompt_generation = (generation & std.math.maxInt(u53)) | 1 };
 }
 
 /// A saved queue alone is idle when no task can resume it without user input.
@@ -109,18 +112,6 @@ pub fn endContinuation(self: *Engine) void {
     std.debug.assert(self.continuations > 0);
     self.continuations -= 1;
     self.sinks.activityChanged();
-}
-
-/// Copy the validated base prompt before the engine releases the old one.
-pub fn setPromptConfig(self: *Engine, base: ?[]const u8) !void {
-    std.debug.assert(!self.closing);
-    if (base) |text| {
-        std.debug.assert(text.len <= proto.meta.limits.max_message_string_bytes);
-        std.debug.assert(std.unicode.utf8ValidateSlice(text));
-    }
-    const base_copy = if (base) |text| try self.deps.gpa.dupe(u8, text) else null;
-    if (self.default_system_prompt) |old| self.deps.gpa.free(old);
-    self.default_system_prompt = base_copy;
 }
 
 /// Give the engine its tools. The set answers live, so a plugin can add or drop one at any time.
@@ -154,7 +145,6 @@ pub fn close(self: *Engine) void {
     var guards = self.owners.valueIterator();
     while (guards.next()) |guard| guard.release(self.deps.io);
     self.owners.deinit(self.deps.gpa);
-    if (self.default_system_prompt) |prompt| self.deps.gpa.free(prompt);
     self.* = undefined;
 }
 

@@ -53,6 +53,17 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
         commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = failure(err) });
         return;
     };
+    // The prompt is built here and not at creation, because only a run task can await a hook.
+    switch (slot.cancel.runChild(engine.deps.io, promptChild, .{ engine, boundary_arena, slot })) {
+        .canceled, .aborted => {
+            commitFinal(engine, boundary_arena, slot, null, false, null, .canceled);
+            return;
+        },
+        .returned => |result| result catch |err| {
+            commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = failure(err) });
+            return;
+        },
+    }
 
     while (true) {
         _ = boundary_state.reset(.retain_capacity);
@@ -661,6 +672,12 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTo
     try streamer.emitToolState(pt.part_id, settled);
 }
 
+fn promptChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void {
+    defer slot.cancel.finish(engine.deps.io);
+    try slot.cancel.check(engine.deps.io);
+    try @import("prompt.zig").refresh(engine, arena, slot);
+}
+
 /// One tool call the model asked for. A `tool.before` handler may replace either field.
 const ToolCall = struct {
     name: []const u8,
@@ -877,10 +894,10 @@ const StreamerFixture = struct {
     } };
 
     fn init(self: *StreamerFixture) !void {
-        return self.initWithPrompt(.{ .base = "", .child_policy = null, .environment = "" });
+        return self.initWithPrompt(&.{});
     }
 
-    fn initWithPrompt(self: *StreamerFixture, parts: session_store.PromptInput) !void {
+    fn initWithPrompt(self: *StreamerFixture, sections: []const session_store.Section) !void {
         var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
         defer arena.deinit();
         try self.resources.init();
@@ -888,7 +905,7 @@ const StreamerFixture = struct {
         self.db = try database.Database.openTest();
         errdefer self.db.deinit();
         try Resources.seedSession(&self.db, session_id, .{ .model = "mock", .title = "t" });
-        const system = try session_store.setPrompt(&self.db, arena.allocator(), session_id, parts);
+        const system = try session_store.setPrompt(&self.db, arena.allocator(), session_id, sections, 1);
         {
             var tx = try self.db.begin();
             defer tx.deinit();
@@ -1135,7 +1152,7 @@ test "a build hook can discard the live registry and tools before the request se
         }
     };
     var f: StreamerFixture = undefined;
-    try f.initWithPrompt(.{ .base = "base\n\nwith separators", .child_policy = "child policy", .environment = "<environment>\nworkspace: /w\n</environment>" });
+    try f.initWithPrompt(&.{ .{ .key = "base", .text = "base\n\nwith separators" }, .{ .key = "agent", .text = "child policy" }, .{ .key = "environment", .text = "<environment>\nworkspace: /w\n</environment>" } });
     defer f.deinit();
     var state: State = .{ .source = .init(std.testing.allocator), .tools = &.{}, .session_id = f.slot.sessionId() };
     defer if (!state.discarded) state.source.deinit();

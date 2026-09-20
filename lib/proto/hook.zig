@@ -18,6 +18,8 @@ pub const Point = enum {
     @"input.before",
     /// Once per run, over the tool names the session may see. The engine keeps the answer for the run.
     @"tools.select",
+    /// At a run start whose stored prompt is stale, over the prompt sections. The engine stores the answer.
+    @"prompt.build",
 
     /// Report the wire name, which is the point itself.
     pub fn wireName(self: Point) []const u8 {

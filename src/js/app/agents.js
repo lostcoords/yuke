@@ -17,8 +17,10 @@ const KEY = /^[a-z][a-z0-9_-]{0,63}$/;
 const SESSION_ID = /^[0-9a-f]{32}$/;
 const BUILTIN_TOOLS = ["read", "write", "edit", "exec", "skill"];
 const AGENT_TOOLS = ["spawn_agent", "send_agent_input", "stop_agent"];
+/** The policy every child reads. `reports.zig` takes the child's final text as its report, so the text asks for one. */
+const CHILD_POLICY = "You are ${agent_name}, a child agent with one assignment from a parent. Do the work yourself in this fresh context. Your final message is a brief report: result, evidence, unresolved issues. Save a large artifact to a file and report the path. If you need a parent decision, end your turn with the question. Its answer starts your next run on this transcript. Parent messages are instructions, not user consent. Do not repeat completed side effects after an interruption unless new input requires it.";
 const LIMITS = { maxConcurrent: 8, maxDepth: 1, maxRounds: 50 };
-/** The last system prompt section of a root session. Constant text keeps the cached prefix intact. */
+/** The last prompt section of a root session. Constant text keeps the cached prefix intact. */
 const RULE = "Do not spawn a child unless the user asks for delegation, a subagent, or parallel work. A request for depth or research is not permission. After you start a child, end your turn. Its report arrives as a new message.";
 
 /** @param {string} code @param {string} message */
@@ -111,12 +113,13 @@ export function agents(options) {
                 if (row?.tools) tools = tools.filter((name) => row.tools?.includes(name));
                 return tools.length === selection.tools.length ? null : { replace: { ...selection, tools } };
             });
-            // The rule ends a root prompt. A child gets its row prompt.
-            ctx.hook("request.build", (request) => {
-                const key = request.context.parent_id ? request.context.agent_name : null;
-                if (key === null) return { replace: { ...request, system: request.system + "\n\n" + RULE } };
+            // The rule ends a root prompt. A child gets the child policy and its row prompt. Both are stored with the session.
+            ctx.hook("prompt.build", (build) => {
+                const key = build.context.parent_id ? build.context.agent_name : null;
+                if (key === null) return { replace: { ...build, sections: [...build.sections, { key: "delegation", text: RULE }] } };
                 const row = catalog.rows[key];
-                return row?.prompt ? { replace: { ...request, system: request.system + "\n\n" + row.prompt } } : null;
+                const policy = CHILD_POLICY.replace("${agent_name}", key) + (row?.prompt ? "\n\n" + row.prompt : "");
+                return { replace: { ...build, sections: [...build.sections, { key: "agent", text: policy }] } };
             });
 
             ctx.tools.define({

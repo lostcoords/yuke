@@ -27,13 +27,10 @@ pub const Engine = digest.Engine;
 pub const drain = digest.drain;
 
 /// The default prompt uses the protocol string limit.
-pub const max_system_prompt_bytes: usize = @intCast(proto.meta.limits.max_message_string_bytes);
-
 /// Register `yuke:engine-native` and its one `native` object.
 pub fn install(host: *Host) void {
     module.installObject(host, "yuke:engine-native", "native", &.{
         .{ .name = "setAgentLimits", .arity = 2, .call = jsSetAgentLimits },
-        .{ .name = "setPromptConfig", .arity = 1, .call = jsSetPromptConfig },
         .{ .name = "setEventSink", .arity = 1, .call = jsSetEventSink },
         .{ .name = "factNames", .arity = 0, .call = jsFactNames },
         .{ .name = "memoryUsage", .arity = 0, .call = jsMemoryUsage },
@@ -254,23 +251,6 @@ fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
         return pending.rejected(ctx, "internal error");
     if (failure) |refused| return pending.rejectedWith(ctx, .{ .message = refused.message, .code = @tagName(refused.code) });
     return pending.resolved(ctx, ctx.newString(out.written()));
-}
-
-/// Null clears the configured base prompt; a string replaces it.
-fn jsSetPromptConfig(ctx: Context, _: Value, args: []const Value) Value {
-    const runtime = Host.fromContext(ctx).engine.runtime orelse return ctx.throwPlainError("the engine is not ready");
-    if (args.len != 1) return ctx.throwTypeError("prompt config expects one field");
-    if (ctx.isNull(args[0])) {
-        runtime.engine.setPromptConfig(null) catch unreachable;
-        return quickjs.UNDEFINED;
-    }
-    if (!ctx.isString(args[0])) return ctx.throwTypeError("the prompt must be a string or null");
-    const text = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
-    defer ctx.freeCString(text.ptr);
-    if (text.len > max_system_prompt_bytes) return ctx.throwTypeError("prompt exceeds the protocol string limit");
-    if (!std.unicode.utf8ValidateSlice(text)) return ctx.throwTypeError("prompt must contain valid Unicode");
-    runtime.engine.setPromptConfig(text) catch unreachable;
-    return quickjs.UNDEFINED;
 }
 
 const app_fixture = @import("../../app/fixture.zig");

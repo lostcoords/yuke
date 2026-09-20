@@ -56,20 +56,6 @@ fn refuse(arena: std.mem.Allocator, diagnostic: ?*?[]const u8, path: []const u8,
     return error.InvalidInstructions;
 }
 
-pub fn render(arena: std.mem.Allocator, snapshots: []const Snapshot) ![]const u8 {
-    std.debug.assert(snapshots.len <= 2);
-    if (snapshots.len == 0) return "";
-    var sections: [5][]const u8 = undefined;
-    sections[0] = "Project instructions follow. Explicit user instructions take precedence. Workspace instructions override global instructions where they conflict.";
-    for (snapshots, 0..) |snapshot, i| {
-        std.debug.assert(snapshot.text.len <= max_file_bytes);
-        const escaped = try std.json.Stringify.valueAlloc(arena, snapshot.source.path, .{});
-        sections[i * 2 + 1] = try std.fmt.allocPrint(arena, "\n\n## AGENTS.md ({s})\nScope: {s}.\n\n", .{ escaped[1 .. escaped.len - 1], @tagName(snapshot.source.scope) });
-        sections[i * 2 + 2] = snapshot.text;
-    }
-    return std.mem.concat(arena, u8, sections[0 .. snapshots.len * 2 + 1]);
-}
-
 test "instruction roots preserve literal text and omit nested files" {
     const a = std.testing.allocator;
     var arena: std.heap.ArenaAllocator = .init(a);
@@ -98,9 +84,8 @@ test "instruction roots preserve literal text and omit nested files" {
     try std.testing.expectEqual(@as(usize, 2), both.len);
     try std.testing.expectEqual(.global, both[0].source.scope);
     try std.testing.expectEqual(.workspace, both[1].source.scope);
-    const text = try render(scratch, both);
-    try std.testing.expect(std.mem.indexOf(u8, text, global[0].text).? < std.mem.indexOf(u8, text, "local ${unknown}").?);
-    try std.testing.expect(std.mem.indexOf(u8, text, "nested must not load") == null);
+    try std.testing.expectEqualStrings(global[0].text, both[0].text);
+    try std.testing.expectEqualStrings("local ${unknown}", both[1].text);
     var hash: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash("local ${unknown}", &hash, .{});
     try std.testing.expectEqualSlices(u8, &hash, &both[1].source.content_hash.raw);

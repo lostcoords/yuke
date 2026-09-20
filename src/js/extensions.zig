@@ -33,6 +33,8 @@ pub const Extensions = struct {
         host.interrupt_budget = std.math.maxInt(u32);
         try host.evalModule(opts.boot, "boot.js");
         host.interrupt_budget = host_mod.default_interrupt_budget;
+        // The prompt plugin loads before the user entry, so a user handler runs after it in every prompt.build chain.
+        try host.evalModule("import \"yuke:prompt\";", "prompt.js");
         evalUserEntry(host, opts.config_dir) catch {
             self.user_entry_fault = true;
         };
@@ -140,8 +142,9 @@ test "one execution context reaches both the engine and the JavaScript host" {
 test "headless extensions pump an async JavaScript tool" {
     var f: Fixture = undefined;
     try f.init(
-        \\import { defineConfig, plugins, fs } from "yuke";
+        \\import { defineConfig, config, plugins, fs } from "yuke";
         \\defineConfig({ systemPrompt: "configured by JavaScript" });
+        \\globalThis.configured = config.systemPrompt;
         \\plugins.use({ name: "notes", apply(ctx) { ctx.tools.define({
         \\  name: "read_note",
         \\  description: "Read the note.",
@@ -164,37 +167,6 @@ test "headless extensions pump an async JavaScript tool" {
         if (std.mem.eql(u8, d.name, "read_note")) break true;
     } else false;
     try std.testing.expect(found);
-    try std.testing.expectEqualStrings("configured by JavaScript", app_runtime.engine.default_system_prompt.?);
-    try extensions.host.evalModule(
-        \\import { defineConfig } from "yuke";
-        \\defineConfig({ systemPrompt: null });
-    , "clear-config.js");
-    try std.testing.expect(app_runtime.engine.default_system_prompt == null);
-    try extensions.host.evalModule(
-        \\import { defineConfig } from "yuke";
-        \\let rejected = false;
-        \\try { defineConfig({ systemPrompt: "é".repeat(524289) }); } catch { rejected = true; }
-        \\globalThis.configRejected = rejected;
-    , "bad-config.js");
-    try std.testing.expectEqual(@as(i32, 1), try extensions.host.evalInt("globalThis.configRejected"));
-    try std.testing.expect(app_runtime.engine.default_system_prompt == null);
-
-    try extensions.host.evalModule(
-        \\import { defineConfig } from "yuke";
-        \\defineConfig({ systemPrompt: "😀" });
-        \\for (const value of ["\ud800", "\udfff"]) {
-        \\  let rejected = false;
-        \\  try { defineConfig({ systemPrompt: value }); } catch (e) { rejected = e instanceof TypeError; }
-        \\  if (!rejected) throw new Error("invalid Unicode accepted");
-        \\}
-    , "unicode-config.js");
-    try std.testing.expectEqualStrings("😀", app_runtime.engine.default_system_prompt.?);
-    try extensions.host.evalModule(
-        \\import { defineConfig } from "yuke";
-        \\defineConfig({ mouse: { scrollLines: 3 } });
-    , "partial-config.js");
-    try std.testing.expectEqualStrings("😀", app_runtime.engine.default_system_prompt.?);
-
     const call = extensions.host.calls.submit("read_note", "{\"path\":\"note.txt\"}", "");
     try support.pumpUntilSettled(extensions.host, call);
     try std.testing.expect(!call.is_error);
@@ -273,6 +245,47 @@ test "a plugin notice reaches every attached frontend" {
     try std.testing.expectEqual(proto.enums.NoticeLevel.warn, capture.level);
     try std.testing.expectEqualStrings("reporter", capture.source[0..capture.source_len]);
     try std.testing.expectEqualStrings("build failed", capture.message[0..capture.message_len]);
+}
+
+test "the prompt plugin writes the default sections, and a user handler appends after it" {
+    var f: Fixture = undefined;
+    try f.init(
+        \\import { plugins, defineConfig } from "yuke";
+        \\defineConfig({ systemPrompt: "Base for ${agent_name} in ${workspace}" });
+        \\plugins.use({ name: "tail", apply(ctx) {
+        \\  ctx.hook("prompt.build", (build) => ({ replace: { ...build, sections: [...build.sections, { key: "tail", text: "the end" }] } }));
+        \\} });
+    , kernel_boot);
+    defer f.deinit();
+    const payload =
+        \\{"context":{"session_id":"01010101010101010101010101010101","parent_id":null,"depth":0,"agent_name":"root","workspace":"/w","operating_system":"macos","shell":"/bin/sh","session_start_date_utc":"2026-09-19"},
+        \\ "instructions":[{"scope":"workspace","path":"/w/AGENTS.md","text":"rules"}],"skills":[{"name":"pdf","description":"Handle PDFs & forms"}],"sections":[]}
+    ;
+    const answer = try settleHook(&f.extensions, "prompt.build", payload);
+    defer std.testing.allocator.free(answer);
+    const Answer = struct { type: []const u8, value: struct { sections: []const struct { key: []const u8, text: []const u8 } } };
+    const parsed = try std.json.parseFromSlice(Answer, std.testing.allocator, answer, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    const sections = parsed.value.value.sections;
+    try std.testing.expectEqual(@as(usize, 5), sections.len);
+    try std.testing.expectEqualStrings("base", sections[0].key);
+    try std.testing.expectEqualStrings("Base for root in /w", sections[0].text);
+    try std.testing.expectEqualStrings("instructions", sections[1].key);
+    try std.testing.expect(std.mem.startsWith(u8, sections[1].text, "Project instructions follow."));
+    try std.testing.expect(std.mem.indexOf(u8, sections[1].text, "## AGENTS.md (/w/AGENTS.md)\nScope: workspace.\n\nrules") != null);
+    try std.testing.expectEqualStrings("skills", sections[2].key);
+    try std.testing.expect(std.mem.indexOf(u8, sections[2].text, "<description>Handle PDFs &amp; forms</description>") != null);
+    try std.testing.expectEqualStrings("environment", sections[3].key);
+    try std.testing.expectEqualStrings("<environment>\nworkspace: /w\noperating_system: macos\nshell: /bin/sh\nsession_start_date_utc: 2026-09-19\n</environment>", sections[3].text);
+    try std.testing.expectEqualStrings("tail", sections[4].key);
+    // A seeded request base wins over the configured one and keeps its key.
+    const seeded = try settleHook(&f.extensions, "prompt.build", "{\"context\":{\"session_id\":\"01010101010101010101010101010101\",\"parent_id\":null,\"depth\":0,\"agent_name\":\"root\",\"workspace\":\"/w\",\"operating_system\":\"macos\",\"shell\":\"/bin/sh\",\"session_start_date_utc\":\"2026-09-19\"},\"instructions\":[],\"skills\":[],\"sections\":[{\"key\":\"system_prompt\",\"text\":\"custom\"}]}");
+    defer std.testing.allocator.free(seeded);
+    const seeded_answer = try std.json.parseFromSlice(Answer, std.testing.allocator, seeded, .{ .ignore_unknown_fields = true });
+    defer seeded_answer.deinit();
+    try std.testing.expectEqual(@as(usize, 3), seeded_answer.value.value.sections.len);
+    try std.testing.expectEqualStrings("system_prompt", seeded_answer.value.value.sections[0].key);
+    try std.testing.expectEqualStrings("custom", seeded_answer.value.value.sections[0].text);
 }
 
 test "a hook chain replaces a payload and the first block ends it" {

@@ -1,0 +1,63 @@
+// yuke:prompt — the default prompt sections. The engine supplies the facts at run start; this plugin writes the text.
+import { plugins } from "yuke:ext";
+import { config } from "yuke:kernel";
+
+/** @typedef {{ key: string, text: string }} Section */
+/** @typedef {{ session_id: string, parent_id: string | null, depth: number, agent_name: string, workspace: string, operating_system: string, shell: string, session_start_date_utc: string }} PromptContext */
+/** @typedef {{ context: PromptContext, instructions: { scope: string, path: string, text: string }[], skills: { name: string, description: string }[], sections: Section[] }} PromptBuild */
+
+const DEFAULT_BASE = [
+  "You are yuke, an assistant for software development.",
+  "",
+  "Use the available tools to inspect files, run commands, and make changes.",
+  "Read the relevant code and project instructions before you edit.",
+  "Use evidence from the workspace to answer questions about the project.",
+  "Follow existing conventions and keep changes within the requested scope.",
+  "Preserve unrelated user changes.",
+  "",
+  "Complete the requested work unless the user asks only for advice or a plan.",
+  "Ask for clarification when a required decision cannot be resolved from the available context.",
+  "Verify changes with the relevant checks. Report failures and any checks you could not run.",
+  "Never claim that an action succeeded without evidence.",
+  "",
+  "Keep responses concise and direct.",
+  "Give brief progress updates during substantial work.",
+  "Explain the result, the verification, and any unresolved issues.",
+].join("\n");
+const INSTRUCTIONS_LEAD = "Project instructions follow. Explicit user instructions take precedence. Workspace instructions override global instructions where they conflict.";
+const SKILLS_LEAD = "Available skills provide specialized instructions for specific tasks. Use the skill tool when a task matches a skill description. Pass the skill name to load its full instructions.";
+
+// A value inside a delimited block must never close the block, so the delimiters and line breaks are escaped.
+/** @param {string} text @returns {string} */
+export function escape(text) {
+  return text.replace(/[&<>\n\r\t]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\n": "&#10;", "\r": "&#13;", "\t": "&#9;" })[c] || c);
+}
+
+// `${workspace}`, `${session_id}`, and `${agent_name}` in a base prompt read the session facts. Any other placeholder stays as written.
+/** @param {string} template @param {PromptContext} context @returns {string} */
+export function expand(template, context) {
+  return template.replace(/\$\{(workspace|session_id|agent_name)\}/g, (_, name) => String(context[/** @type {"workspace" | "session_id" | "agent_name"} */ (name)]));
+}
+
+/** @param {PromptBuild} build @returns {Section[]} */
+export function sections(build) {
+  const ctx = build.context;
+  const seeded = build.sections.find((section) => section.key === "system_prompt");
+  const base = seeded ? { key: "system_prompt", text: expand(seeded.text, ctx) } : { key: "base", text: expand(config.systemPrompt ?? DEFAULT_BASE, ctx) };
+  const out = [base];
+  if (build.instructions.length) {
+    const blocks = build.instructions.map((source) => "## AGENTS.md (" + JSON.stringify(source.path).slice(1, -1) + ")\nScope: " + source.scope + ".\n\n" + source.text);
+    out.push({ key: "instructions", text: INSTRUCTIONS_LEAD + "\n\n" + blocks.join("\n\n") });
+  }
+  if (build.skills.length) {
+    const rows = build.skills.map((skill) => "  <skill>\n    <name>" + skill.name + "</name>\n    <description>" + escape(skill.description) + "</description>\n  </skill>\n");
+    out.push({ key: "skills", text: SKILLS_LEAD + "\n\n<available_skills>\n" + rows.join("") + "</available_skills>" });
+  }
+  out.push({ key: "environment", text: "<environment>\nworkspace: " + escape(ctx.workspace) + "\noperating_system: " + ctx.operating_system + "\nshell: " + escape(ctx.shell) + "\nsession_start_date_utc: " + ctx.session_start_date_utc + "\n</environment>" });
+  return out;
+}
+
+// The plugin loads before the user entry, so a user handler runs after it and may append or replace by key.
+plugins.use({ name: "prompt", apply(ctx) {
+  ctx.hook("prompt.build", (/** @type {PromptBuild} */ build) => ({ replace: { ...build, sections: sections(build) } }));
+} });

@@ -103,6 +103,13 @@ fn liveSessionItem(engine: *Engine, arena: std.mem.Allocator, row: anytype) !pro
     return item;
 }
 
+/// A child starts from the seed its parent was created with, so a requested base reaches every descendant.
+fn inheritedSeed(engine: *Engine, arena: std.mem.Allocator, parent: [16]u8) ![]const session_store.Section {
+    const sections = try session_store.promptSections(engine.deps.db, arena, parent);
+    for (sections) |section| if (std.mem.eql(u8, section.key, "system_prompt")) return try arena.dupe(session_store.Section, &.{section});
+    return &.{};
+}
+
 /// Handle session.get. The result is one `session.list` item with the activity the engine holds now.
 pub fn sessionGet(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionGetParams) !proto.session.SessionListItem {
     const session_id = params.session_id;
@@ -162,7 +169,7 @@ pub fn sessionReloadContext(engine: *Engine, arena: std.mem.Allocator, params: p
     {
         var tx = try engine.deps.db.begin();
         defer tx.deinit();
-        _ = try session_store.reloadContext(engine.deps.db, arena, sid, sources, catalog.entries);
+        try session_store.reloadContext(engine.deps.db, sid, sources, catalog.entries);
         try tx.commit();
     }
     emitNotices(engine, notices);
@@ -256,7 +263,7 @@ pub fn sessionConfig(engine: *Engine, arena: std.mem.Allocator, params: proto.se
         (try config_store.byRevision(engine.deps.db, arena, sid, rev)) orelse return error.UnknownConfigRev
     else
         .{ .config_rev = snap.config_rev, .model = snap.model, .reasoning = snap.reasoning, .max_rounds = snap.max_rounds };
-    return .{ .config = config, .system_prompt = try session_store.prompt(engine.deps.db, arena, sid) };
+    return .{ .config = config, .system_prompt = if (try session_store.prompt(engine.deps.db, arena, sid)) |stored| stored.text else null };
 }
 
 /// Handle session.patch: settle the named fields into one config revision and publish it.
@@ -593,20 +600,15 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     const model = resolved.model;
     const reasoning = resolved.reasoning;
     const birth_config: proto.run.RunConfig = .{ .config_rev = 0, .model = model, .reasoning = reasoning, .max_rounds = params.max_rounds };
-    const prompts = @import("prompt.zig");
-    const prompt_context: prompts.Context = .{ .workspace = root, .session_id = id, .agent_name = if (params.child) |child| child.name else "root" };
-    const base_prompt = if (params.system_prompt) |text|
-        try prompts.expand(arena, text, prompt_context)
+    // The prompt is built at the first run. Creation keeps only a seed: the requested base, or the parent's seed.
+    const seed: []const session_store.Section = if (params.system_prompt) |text|
+        &.{.{ .key = "system_prompt", .text = text }}
     else if (parent) |pid|
-        try session_store.basePrompt(engine.deps.db, arena, pid.raw)
-    else if (engine.default_system_prompt) |text|
-        try prompts.expand(arena, text, prompt_context)
+        try inheritedSeed(engine, arena, pid.raw)
     else
-        prompts.default_system_prompt;
-    const child_prompt = if (parent != null) try prompts.expand(arena, prompts.child_policy, prompt_context) else null;
+        &.{};
     const sources = if (parent) |pid| try session_store.instructionSnapshots(engine.deps.db, arena, pid.raw) else try instructions.load(arena, engine.deps.io, engine.deps.execution.env, root, diagnostic);
     const now = engine.nowMillis();
-    const environment = try prompts.environment(arena, root, engine.deps.execution.shell, now);
     if (parent_tree) |tree| try reports.reserve(engine, arena, tree.root);
     const available = content != null and (parent_tree == null or try admission.available(engine, arena, parent_tree.?.root, id));
     var prepared: ?run.RunSlot.Prepared = null;
@@ -635,7 +637,8 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
             .created_at_ms = now,
             .updated_at_ms = now,
         });
-        const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, .{ .base = base_prompt, .child_policy = child_prompt, .environment = environment, .sources = sources, .skills = catalog.entries });
+        try session_store.setContext(engine.deps.db, id.raw, sources, catalog.entries);
+        const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, seed, session_store.stale_generation);
         if (available) prepared = try run.RunSlot.prepare(engine.deps.gpa, .{ .model = model, .reasoning = reasoning, .system_prompt = system_prompt, .max_rounds = params.max_rounds, .root = root, .name = if (params.child) |child| child.name else null });
         try config_store.recordInitial(engine.deps.db, id.raw, birth_config);
         if (content) |parts| queued = try input_store.enqueue(engine.deps.db, arena, id.raw, engine.newId(), now, .{ .content = parts, .source = if (params.child) |child| .{ .parent_instruction = child.site } else null, .skill_name = if (params.initial_input.? == .skill) params.initial_input.?.skill.name else null }, now);

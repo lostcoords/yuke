@@ -57,6 +57,11 @@ fn jsSetPoints(ctx: Context, _: Value, args: []const Value) Value {
         const point = table.Point.parse(name) orelse return ctx.throwTypeError("no such hook point");
         points.insert(point);
     }
+    // A prompt handler joined or left, so every stored prompt is stale until its next run rebuilds it.
+    const prompt_changed = points.contains(.@"prompt.build") or host.hooks.points.contains(.@"prompt.build");
+    if (prompt_changed) if (host.engine.runtime) |runtime| {
+        runtime.engine.prompt_generation += 1;
+    };
     host.hooks.setPoints(points);
     return quickjs.UNDEFINED;
 }
