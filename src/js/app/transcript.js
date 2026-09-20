@@ -35,9 +35,9 @@ export const ROLE_NONE = 0;
 export const ROLE_ACTION = 1;
 export const ROLE_TEXT = 2;
 
-// The label a reader sees above an input the engine assigned a source. A plugin registers the labels for the sources it owns.
+// The label a reader sees above an input with an engine source.
 /** @type {Record<string, (source: any) => string>} */
-export const sources = Object.create(null);
+let sources = Object.create(null);
 sources.run_interrupted = (source) => "Engine notice · run " + source.run_id + " interrupted";
 
 /** @param {Wire.InputSource | undefined | null} source @returns {string} */
@@ -132,7 +132,7 @@ function lineRange(start, end) {
 
 // A presenter names one tool call. It must not walk tool output and must not scan a whole text.
 /** @type {Record<string, Presenter>} */
-export const presenters = Object.create(null);
+let presenters = Object.create(null);
 
 presenters.read = { category: "read", present: (o) => ({ verb: "Read", subject: shortPath(o.path) + lineRange(o.start, o.end) }) };
 presenters.write = { category: "write", present: (o) => ({ verb: "Write", subject: shortPath(o.path) }) };
@@ -140,8 +140,39 @@ presenters.edit = { category: "write", present: (o) => ({ verb: "Edit", subject:
 presenters.exec = { category: "run", present: (o) => ({ verb: "Run", subject: shortCommand(o.command) }) };
 presenters.skill = { category: "other", present: (o) => ({ verb: "Skill", subject: String(o.name || "") }) };
 
-// The transcript presentation policy. Every member is a method, so `ctx.advise` reaches it and a plugin reload reverts it.
+/** @typedef {{ tools?: Record<string, Presenter>, sources?: Record<string, (source: any) => string> }} PresentationRegistration */
+/** @type {PresentationRegistration[]} */
+const registrations = [{ tools: presenters, sources }];
+let presentationRevision = 0;
+
+// Resolve ownership on registration changes, not on each rendered label.
+function refreshPresentation() {
+  presenters = Object.create(null);
+  sources = Object.create(null);
+  for (const entry of registrations) {
+    Object.assign(presenters, entry.tools);
+    Object.assign(sources, entry.sources);
+  }
+  presentationRevision++;
+  root.invalidate();
+}
+
+// Plugins own registrations through `ctx.effect` and method advice through `ctx.advise`.
 export const presentation = {
+  // The newest registration wins; a disposer removes only its own layer.
+  /** @param {PresentationRegistration} entries @returns {() => void} */
+  register(entries) {
+    const entry = { tools: { ...entries.tools }, sources: { ...entries.sources } };
+    registrations.push(entry);
+    refreshPresentation();
+    return () => {
+      const index = registrations.indexOf(entry);
+      if (index < 0) return;
+      registrations.splice(index, 1);
+      refreshPresentation();
+    };
+  },
+
   // A tool with no presenter keeps its own name beside the field a reader acts on.
   /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {Record<string, any>} args @param {string} raw @returns {ToolLabel} */
   fallback(part, args, raw) {
@@ -696,6 +727,7 @@ export class Transcript {
     /** @type {MessageDescriptor | null} */
     this._active = null; // the streaming draft descriptor, or null
     this._width = -1;
+    this._presentationRevision = presentationRevision;
     /** @type {Map<string, number>} */
     this._positions = new Map();
     /** @type {Map<string, number>} */
@@ -939,12 +971,15 @@ export class Transcript {
     return { groupingChanged: true, rowsChanged: true };
   }
 
-  // A width change rewraps every row but keeps every parse; the selection moves back to the same source offsets.
+  // A width or presentation change rebuilds rows and moves the selection back to the same source offsets.
   /** @param {number} width @returns {void} */
   _invalidate(width) {
-    if (width === this._width) return;
+    const changed = this._presentationRevision !== presentationRevision;
+    if (width === this._width && !changed) return;
     const anchors = this._anchors();
     this._width = width;
+    this._presentationRevision = presentationRevision;
+    if (changed) for (const state of this._parts.values()) for (const c of state.rows.values()) stale(c);
     for (const c of this._rows.values()) stale(c);
     this._counts.clear();
     this._prefix = [0];

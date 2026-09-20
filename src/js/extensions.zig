@@ -34,12 +34,12 @@ pub const Extensions = struct {
         try host.evalModule(opts.boot, "boot.js");
         host.interrupt_budget = host_mod.default_interrupt_budget;
         // The prompt plugin loads before the user entry, so a user handler runs after it in every prompt.build chain.
-        try host.evalModule("import \"yuke:prompt\";", "prompt.js");
+        try host.evalModule("import { plugins } from \"yuke:ext\"; import { prompt } from \"yuke:prompt\"; plugins.use(prompt);", "prompt.js");
         evalUserEntry(host, opts.config_dir) catch {
             self.user_entry_fault = true;
         };
         // Load built-ins last so a user tool with the same name wins.
-        try host.evalModule("import \"yuke:builtins\";", "builtins.js");
+        try host.evalModule("import { plugins } from \"yuke:ext\"; import { builtins } from \"yuke:builtins\"; plugins.use(builtins);", "builtins.js");
 
         app.engine.installTools(port.toolSet(host));
         app.engine.installHooks(port.hookSet(host));
@@ -336,9 +336,9 @@ test "a hook chain replaces a payload and the first block ends it" {
     try std.testing.expect(extensions.host.hooks.holds(.@"tool.after"));
     try std.testing.expect(extensions.host.hooks.holds(.@"request.build"));
     try std.testing.expect(extensions.host.hooks.holds(.@"input.before"));
-    // A point no handler holds must cost nothing, so the set answers false for it. The skills plugin holds tools.select until it goes.
+    // The built-in tool owner holds tools.select until disposal.
     try std.testing.expect(extensions.host.hooks.holds(.@"tools.select"));
-    try extensions.host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"skills\");", "drop-skills.js");
+    try extensions.host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"builtins\");", "drop-builtins.js");
     try std.testing.expect(!extensions.host.hooks.holds(.@"tools.select"));
     // A throwing handler fails closed: the point answers a block, never a pass.
     const failed = try settleHook(extensions, "request.send", "{\"url\":\"u\",\"headers\":[],\"body\":\"{}\"}");

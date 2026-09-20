@@ -2,7 +2,7 @@ import { check } from "yuke:test";
 import { term } from "yuke:term";
 import { root, Node } from "yuke:core";
 import { plugins } from "yuke:ext";
-import { Transcript, presenters } from "yuke:transcript";
+import { Transcript, presentation, inputSourceLabel } from "yuke:transcript";
 import { ChatView } from "yuke:chat-view";
 import { transcriptVim } from "yuke:transcript-vim";
 import { tuiPlugin } from "yuke:tui";
@@ -123,7 +123,7 @@ thought.onMouse(at(6, 2, "release"));
 check("reasoning-body-details", root.overlays.length === 1 && root.overlays[0].content.sections[0].text === parts.thought[0].text);
 root.popOverlay(root.overlays[0]);
 
-// The presenter table is public: an override moves the row and the source together, and a fault falls back.
+// A scoped presenter changes both the row and its source; a faulty presenter falls back.
 parts.pres = [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"MISE_SHELL=bash /usr/bin/zig build test-js"}', state: { type: "completed", output: "ok", duration_ms: 1 } }];
 const pres = new Transcript({ partsOf: (id) => parts[id] || [] });
 pres.setOutline([{ id: "pres", type: "assistant" }], null);
@@ -136,16 +136,25 @@ unknown.setOutline([{ id: "unknown", type: "assistant" }], null);
 const unknownRows = unknown.rows(60, 0, 4);
 check("fallback-name", rowsHave(unknownRows, "mcp_thing") && rowsHave(unknownRows, "x.txt"));
 
-const savedExec = presenters.exec;
-presenters.exec = { category: "run", present: () => ({ verb: "$", subject: "custom" }) };
+const presenterOwner = plugins.use({ name: "test-presenter", apply(ctx) {
+  ctx.effect(() => presentation.register({ tools: { exec: { category: "run", present: () => ({ verb: "$", subject: "custom" }) } }, sources: { run_interrupted: () => "first" } }));
+} });
 const over = new Transcript({ partsOf: (id) => parts[id] || [] });
 over.setOutline([{ id: "pres", type: "assistant" }], null);
 const overRows = over.rows(60, 0, 4);
 check("override-row", rowsHave(overRows, "$") && rowsHave(overRows, "custom"));
 check("override-source", over._sourceOf("pres").indexOf("$ custom") === 0);
+check("cached-presenter-changes", rowsHave(pres.rows(60, 0, 4), "custom"));
 
-presenters.exec = { category: "run", present: () => { throw new Error("bad"); } };
+const faultyOwner = plugins.use({ name: "test-faulty-presenter", apply(ctx) {
+  ctx.effect(() => presentation.register({ tools: { exec: { category: "run", present: () => { throw new Error("bad"); } } }, sources: { run_interrupted: () => "second" } }));
+} });
+presenterOwner.dispose();
+check("hidden-source-owner-leaves", inputSourceLabel({ type: "run_interrupted", run_id: 1 }) === "second");
 const faulty = new Transcript({ partsOf: (id) => parts[id] || [] });
 faulty.setOutline([{ id: "pres", type: "assistant" }], null);
 check("presenter-fault-falls-back", rowsHave(faulty.rows(60, 0, 4), "exec"));
-presenters.exec = savedExec;
+faultyOwner.dispose();
+faultyOwner.dispose();
+check("source-owner-restores-default", inputSourceLabel({ type: "run_interrupted", run_id: 1 }) === "Engine notice · run 1 interrupted");
+check("cached-presenter-restores-default", rowsHave(over.rows(60, 0, 4), "Run"));

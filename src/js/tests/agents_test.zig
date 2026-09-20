@@ -138,21 +138,21 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     defer std.testing.allocator.free(foreign.text);
     try std.testing.expect(foreign.is_error);
     try host.evalModule(
-        \\import { presenters } from "yuke:transcript";
-        \\// A pending spawn names no child yet, and an omitted agent names the catalog default.
-        \\const pending = { type: "tool", id: 0, name: "spawn_agent", arguments: "{}", state: { type: "pending" } };
-        \\const spawn = presenters.spawn_agent.present({ agent: "review", message: "x" }, "{}", pending);
-        \\const fallback = presenters.spawn_agent.present({ message: "x" }, "{}", pending);
-        \\const send = presenters.send_agent_input.present({ child: "abc" });
-        \\globalThis.presented = spawn.verb === "Agent" && spawn.subject === "review" && fallback.subject === "small" && send.verb === "Send" && send.subject === "abc" ? 1 : 0;
+        \\import { Transcript } from "yuke:transcript";
+        \\globalThis.toolSource = (name, args) => {
+        \\  const view = new Transcript({ partsOf: () => [{ type: "tool", id: 0, name, arguments: JSON.stringify(args), state: { type: "pending" } }] });
+        \\  view.setOutline([{ id: 1, type: "assistant" }], null);
+        \\  view.rows(80, 0, 4);
+        \\  return view._sourceOf(1);
+        \\};
+        \\globalThis.presented = toolSource("spawn_agent", { agent: "review" }).startsWith("Agent review") && toolSource("spawn_agent", {}).startsWith("Agent small") && toolSource("send_agent_input", { child: "abc" }).startsWith("Send abc") ? 1 : 0;
     , "present.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("presented"));
     // A dispose withdraws the tools and the presenters it installed.
     try host.evalModule(
         \\import { plugins } from "yuke:ext";
-        \\import { presenters } from "yuke:transcript";
         \\plugins.dispose("agents");
-        \\globalThis.presentersGone = ["spawn_agent", "send_agent_input", "stop_agent"].every((name) => presenters[name] === undefined) ? 1 : 0;
+        \\globalThis.presentersGone = ["spawn_agent", "send_agent_input", "stop_agent"].every((name) => toolSource(name, {}).startsWith(name)) ? 1 : 0;
     , "dispose.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("presentersGone"));
     for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent" }) |name| try std.testing.expect(!hasTool(host, name));

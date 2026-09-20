@@ -1,5 +1,4 @@
 // yuke:prompt — the default prompt sections. The engine supplies the facts at run start; this plugin writes the text.
-import { plugins } from "yuke:ext";
 import { config } from "yuke:kernel";
 
 /** @typedef {{ key: string, text: string }} Section */
@@ -109,8 +108,12 @@ function sections(build) {
   return out;
 }
 
-// The plugin loads before the user entry, so a user handler runs after it and may append or replace by key.
-plugins.use({ name: "prompt", apply(ctx) {
-  ctx.hook("prompt.build", (/** @type {PromptBuild} */ build) => ({ replace: { ...build, sections: sections(build) } }));
-  ctx.hook("compaction.prompt", (/** @type {{ mode: "summarize" | "merge" }} */ build) => ({ replace: { ...build, prompt: build.mode === "merge" ? COMPACTION_MERGE : COMPACTION_SUMMARIZE } }));
-} });
+// The host activates this plugin before the user entry, so user hooks can replace its sections.
+export const prompt = {
+  name: "prompt",
+  /** @param {import("yuke:ext").Context} ctx */
+  apply(ctx) {
+    ctx.hook("prompt.build", (/** @type {PromptBuild} */ build) => ({ replace: { ...build, sections: sections(build) } }));
+    ctx.hook("compaction.prompt", (/** @type {{ mode: "summarize" | "merge" }} */ build) => ({ replace: { ...build, prompt: build.mode === "merge" ? COMPACTION_MERGE : COMPACTION_SUMMARIZE } }));
+  },
+};

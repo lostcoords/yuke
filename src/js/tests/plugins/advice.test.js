@@ -167,3 +167,21 @@ for (const kind of ["toString", "constructor", "__proto__", "unknown"]) {
   off();
   check("advice-retained-next", saved[0]() === "first" && saved[1]() === "second");
 }
+
+// Advice sees the promise itself and does not convert a synchronous throw into a rejection.
+{
+  const result = Promise.resolve(7);
+  const failure = new Error("method failed");
+  const obj = { f() { return result; }, fail() { throw failure; } };
+  const scope = new Scope("promise-advice");
+  const ctx = new Context(scope, "promise-advice");
+  let after = 0, filtered;
+  ctx.advise(obj, "f", "filterReturn", value => { filtered = value; });
+  ctx.advise(obj, "f", "after", () => { after++; });
+  ctx.advise(obj, "fail", "after", () => { after++; });
+  check("advice-keeps-promise", obj.f() === result && filtered === result && after === 1);
+  let caught;
+  try { obj.fail(); } catch (error) { caught = error; }
+  check("advice-keeps-throw", caught === failure && after === 1);
+  scope.dispose();
+}

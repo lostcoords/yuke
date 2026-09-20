@@ -1,5 +1,7 @@
-import "yuke:builtins";
+import { plugins } from "yuke:ext";
+import { builtins } from "yuke:builtins";
 import { client } from "yuke:client";
+plugins.use(builtins);
 
 // The engine is absent here, so the stub records the anchored path and answers one image.
 globalThis.putPath = "";

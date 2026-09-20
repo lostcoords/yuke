@@ -5,8 +5,7 @@ import { exec as runCommand } from "yuke:exec";
 import { start as startJob, stop as stopJob, list as listJobs, get as getJob, name as jobName, endLabel, tail as jobTail, shortCommand } from "yuke:jobs";
 import { events } from "yuke:kernel";
 import { diff } from "yuke:diff";
-import { defineTool, hasTool } from "yuke:tools";
-import { plugins } from "yuke:ext";
+import { hasTool } from "yuke:tools";
 import { client } from "yuke:client";
 import { byteLabel } from "yuke:format";
 
@@ -26,13 +25,14 @@ import { byteLabel } from "yuke:format";
 const result = (text, extra) => ({ __yuke_result: true, text, extra });
 
 // A user tool with the same name wins, so the built-in steps aside.
-/** @param {string} name @param {ToolDefinition} definition @returns {void} */
-function builtin(name, definition) {
+/** @param {import("yuke:ext").Context} ctx @param {string} name @param {ToolDefinition} definition @returns {void} */
+function builtin(ctx, name, definition) {
   if (hasTool(name)) return;
   const properties = /** @type {{ properties: Record<string, unknown> }} */ (definition.parameters);
   const fields = new Set(Object.keys(properties.properties));
   const execute = definition.execute;
-  defineTool(name, {
+  ctx.tools.define({
+    name,
     ...definition,
     execute: (args, signal, context) => {
       if (args == null || typeof args !== "object" || Array.isArray(args)) invalid(name, "the arguments must be an object");
@@ -303,53 +303,57 @@ async function skill(args, _signal, context) {
   return loaded.content;
 }
 
-builtin("read", {
-  description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range. A PNG, JPEG, GIF, or WebP file returns the image.",
-  parameters: { type: "object", properties: {
-    path: { type: "string", description: "A relative path resolves against the workspace root." },
-    start: { type: "integer", minimum: 1, maximum: MAX_LINE, description: "The first line." },
-    end: { type: "integer", minimum: 1, maximum: MAX_LINE, description: "The last line, inclusive." },
-  }, required: ["path"], additionalProperties: false }, execute: read,
-});
-builtin("write", {
-  description: "Create a file or replace its content. Pass the complete content.",
-  parameters: { type: "object", properties: {
-    path: { type: "string", description: "A relative path resolves against the workspace root." },
-    content: { type: "string" },
-  }, required: ["path", "content"], additionalProperties: false }, execute: write,
-});
-builtin("edit", {
-  description: "Replace an exact string in a file. old_string must appear exactly once unless replace_all is true.",
-  parameters: { type: "object", properties: {
-    path: { type: "string", description: "A relative path resolves against the workspace root." },
-    old_string: { type: "string" },
-    new_string: { type: "string" },
-    replace_all: { type: "boolean", description: "Replace every non-overlapping match." },
-  }, required: ["path", "old_string", "new_string"], additionalProperties: false }, execute: edit,
-});
-builtin("exec", {
-  description: "Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell and ends every process it started. For a server or watcher, set background: true; never use &, nohup, or setsid.",
-  parameters: { type: "object", properties: {
-    command: { type: "string" },
-    timeout_ms: { type: "integer", minimum: 1, maximum: 600000, description: "The default is 120000." },
-    background: { type: "boolean", description: "Run a server or watcher as a job and return at once." },
-  }, required: ["command"], additionalProperties: false }, execute: exec,
-});
-builtin("jobs", {
-  description: "List the background jobs, or stop one. Pass no argument for the list. Pass id alone for one job and its log path. Pass id and stop: true to request the stop of the job and its process group. A requested stop sends no exit message.",
-  parameters: { type: "object", properties: {
-    id: { type: "string", description: "The job id, for example j1." },
-    stop: { type: "boolean" },
-  }, required: [], additionalProperties: false }, execute: jobs,
-});
-builtin("skill", {
-  description: "Load the full instructions for a skill listed in the system prompt. Use this tool when the task matches the skill description.",
-  parameters: { type: "object", properties: {
-    name: { type: "string", description: "Pass the name from an available_skills entry." },
-  }, required: ["name"], additionalProperties: false }, execute: skill,
-});
+export const builtins = {
+  name: "builtins",
+  /** @param {import("yuke:ext").Context} ctx */
+  apply(ctx) {
+    builtin(ctx, "read", {
+      description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range. A PNG, JPEG, GIF, or WebP file returns the image.",
+      parameters: { type: "object", properties: {
+        path: { type: "string", description: "A relative path resolves against the workspace root." },
+        start: { type: "integer", minimum: 1, maximum: MAX_LINE, description: "The first line." },
+        end: { type: "integer", minimum: 1, maximum: MAX_LINE, description: "The last line, inclusive." },
+      }, required: ["path"], additionalProperties: false }, execute: read,
+    });
+    builtin(ctx, "write", {
+      description: "Create a file or replace its content. Pass the complete content.",
+      parameters: { type: "object", properties: {
+        path: { type: "string", description: "A relative path resolves against the workspace root." },
+        content: { type: "string" },
+      }, required: ["path", "content"], additionalProperties: false }, execute: write,
+    });
+    builtin(ctx, "edit", {
+      description: "Replace an exact string in a file. old_string must appear exactly once unless replace_all is true.",
+      parameters: { type: "object", properties: {
+        path: { type: "string", description: "A relative path resolves against the workspace root." },
+        old_string: { type: "string" },
+        new_string: { type: "string" },
+        replace_all: { type: "boolean", description: "Replace every non-overlapping match." },
+      }, required: ["path", "old_string", "new_string"], additionalProperties: false }, execute: edit,
+    });
+    builtin(ctx, "exec", {
+      description: "Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell and ends every process it started. For a server or watcher, set background: true; never use &, nohup, or setsid.",
+      parameters: { type: "object", properties: {
+        command: { type: "string" },
+        timeout_ms: { type: "integer", minimum: 1, maximum: 600000, description: "The default is 120000." },
+        background: { type: "boolean", description: "Run a server or watcher as a job and return at once." },
+      }, required: ["command"], additionalProperties: false }, execute: exec,
+    });
+    builtin(ctx, "jobs", {
+      description: "List the background jobs, or stop one. Pass no argument for the list. Pass id alone for one job and its log path. Pass id and stop: true to request the stop of the job and its process group. A requested stop sends no exit message.",
+      parameters: { type: "object", properties: {
+        id: { type: "string", description: "The job id, for example j1." },
+        stop: { type: "boolean" },
+      }, required: [], additionalProperties: false }, execute: jobs,
+    });
+    builtin(ctx, "skill", {
+      description: "Load the full instructions for a skill listed in the system prompt. Use this tool when the task matches the skill description.",
+      parameters: { type: "object", properties: {
+        name: { type: "string", description: "Pass the name from an available_skills entry." },
+      }, required: ["name"], additionalProperties: false }, execute: skill,
+    });
 
-// The skill tool has nothing to load in a session that lists no skill, so that session never sees it.
-plugins.use({ name: "skills", apply(ctx) {
-  ctx.hook("tools.select", (selection) => selection.context.has_skills ? null : { replace: { ...selection, tools: selection.tools.filter((/** @type {string} */ name) => name !== "skill") } });
-} });
+    // The skill tool has nothing to load in a session that lists no skill, so that session never sees it.
+    ctx.hook("tools.select", (selection) => selection.context.has_skills ? null : { replace: { ...selection, tools: selection.tools.filter((/** @type {string} */ name) => name !== "skill") } });
+  },
+};

@@ -2,7 +2,7 @@
 import { root } from "yuke:core";
 import { client } from "yuke:client";
 import { native } from "yuke:engine-native";
-import { presenters, sources } from "yuke:transcript";
+import { presentation } from "yuke:transcript";
 import { chats, focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
 import { tokenLabel } from "yuke:catalog";
@@ -31,14 +31,6 @@ const AGENT_TOOLS = ["spawn_agent", "send_agent_input", "stop_agent"];
 const CHILD_POLICY = "You are ${agent_name}, a child agent with one assignment from a parent. Do the work yourself in this fresh context. Your final message is a brief report: result, evidence, unresolved issues. Save a large artifact to a file and report the path. If you need a parent decision, end your turn with the question. Its answer starts your next run on this transcript. Parent messages are instructions, not user consent. Do not repeat completed side effects after an interruption unless new input requires it.";
 /** The last prompt section of a root session. Constant text keeps the cached prefix intact. */
 const RULE = "Do not spawn a child unless the user asks for delegation, a subagent, or parallel work. A request for depth or research is not permission. After you start a child, end your turn. Its report arrives as a new message.";
-
-// Put the plugin's entries into a transcript registry and hand back the disposer that restores the previous ones.
-/** @param {Record<string, any>} registry @param {Record<string, any>} own @returns {() => void} */
-function register(registry, own) {
-    const previous = Object.fromEntries(Object.keys(own).map((name) => [name, registry[name]]));
-    Object.assign(registry, own);
-    return () => { for (const name of Object.keys(own)) { if (previous[name] === undefined) delete registry[name]; else registry[name] = previous[name]; } };
-}
 
 /** The header of a child report: who, the outcome, and what the child spent. */
 /** @param {any} source @returns {string} */
@@ -261,16 +253,15 @@ export function agents(options) {
             });
             ctx.effect(() => () => children.clear());
 
-            ctx.effect(() => register(presenters, {
+            ctx.effect(() => presentation.register({ tools: {
                 spawn_agent: { category: "agent", present: (/** @type {any} */ o, /** @type {string} */ _raw, /** @type {ToolPart} */ part) => ({ verb: "Agent", subject: String(o.agent || catalog.default) + liveSuffix(part) }) },
                 send_agent_input: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Send", subject: String(o.child || "") }) },
                 stop_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Stop", subject: String(o.child || "") }) },
-            }));
-            ctx.effect(() => register(sources, {
+            }, sources: {
                 parent_instruction: () => "From the parent session",
                 child_report: reportLabel,
                 child_input_canceled: (/** @type {any} */ source) => "Message from " + source.name + " · queued work canceled",
-            }));
+            } }));
 
             ctx.inject(["tui"], (ctx) => {
                 ctx.tui.command(() => focusedChat()?.sessionId != null, {

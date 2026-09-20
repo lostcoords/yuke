@@ -415,7 +415,7 @@ test "exec call abort ends its process group and preserves unrelated work" {
     defer fixture.deinit();
     const root = fixture.root();
     const host = fixture.host;
-    try host.evalModule("import \"yuke:builtins\";", "builtins.js");
+    try host.evalModule("import { plugins } from \"yuke:ext\"; import { builtins } from \"yuke:builtins\"; plugins.use(builtins);", "builtins.js");
 
     const canceled = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
@@ -641,7 +641,7 @@ test "run cleanup stops signaled exec without another owner pump" {
     const root = fixture.root();
     const runtime = fixture.rt;
     const host = fixture.host;
-    try host.evalModule("import \"yuke:builtins\";", "builtins.js");
+    try host.evalModule("import { plugins } from \"yuke:ext\"; import { builtins } from \"yuke:builtins\"; plugins.use(builtins);", "builtins.js");
     var work: Work = .{};
     const call = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}

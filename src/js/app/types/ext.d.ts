@@ -3,11 +3,13 @@ import type { Context, Scope } from "../ext.js";
 export type Disposer = () => void;
 export type Effect = () => unknown;
 export type AdviceFunction = (...args: any[]) => any;
+// Advice follows the synchronous call, not promise settlement; a throw skips after and filterReturn.
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
 
 export interface AdviceOptions {
   owner?: string;
   name?: string;
+  /** Lower order runs first; equal orders keep registration order. */
   order?: number;
 }
 
