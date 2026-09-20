@@ -42,6 +42,10 @@ test "yuke:core RootView paints and only ctrl+q quits" {
     try std.testing.expect(host.paint.quit_requested);
 }
 
+test "yuke:core ticks each layer at its own period under a faster pulse" {
+    try support.run("ui/tick-pace.test.js");
+}
+
 test "yuke:core config validates and TextInput inserts committed text" {
     try support.run("ui/cfg.test.js");
 }

@@ -456,6 +456,9 @@ function rankByContext(entries, copy = true) {
   return hits.map((h) => h.entry);
 }
 
+// The share of a period a tick pulse can arrive early and still count, so timer jitter never skips a beat.
+const TICK_EARLY_SHARE = 0.75;
+
 // New bindings run before old bindings. A space separates chord strokes.
 /** @type {KeymapRegistry} */
 export const keymap = {
@@ -995,6 +998,9 @@ export class RootView {
     this._leafScratch = [];
     /** @type {TickableEntry[]} */
     this.tickables = [];
+    // The last tick each layer received. A pulse for the engine or a faster layer never runs a layer before its period.
+    /** @type {WeakMap<object, number>} */
+    this._tickedAt = new WeakMap();
     /** @type {Node | null} */
     this._capture = null; // the leaf that owns the drag, from press to release
     /** @type {boolean} */
@@ -1345,14 +1351,24 @@ export class RootView {
     else term.setNeedsTick(false);
   }
 
-  /** @returns {void} */
+  // Tick each layer whose period elapsed, and answer whether any did. A pulse can arrive a quarter period early.
+  /** @returns {boolean} */
   tickLayers() {
+    const now = Date.now();
+    let ticked = false;
     this._forEachTickable((layer, isTickable) => {
-      if (!callHook(layer, "needsTick")) return;
+      const t = /** @type {{ periodMs: number } | null} */ (callHook(layer, "needsTick"));
+      if (!t) return;
+      const last = this._tickedAt.get(layer);
+      // A clock that steps back reads as elapsed, so a layer never waits for the clock to catch up.
+      if (last !== undefined && now >= last && now - last < t.periodMs * TICK_EARLY_SHARE) return;
       // A service can remove itself inside `needsTick`, so a stale one must not still get `tick`.
       if (isTickable && !this.hasTickable(/** @type {Tickable} */ (layer))) return;
+      this._tickedAt.set(layer, now);
       callHook(layer, "tick");
+      ticked = true;
     });
+    return ticked;
   }
 
   /** @param {RootEvent} ev @returns {void} */
@@ -1377,9 +1393,9 @@ export class RootView {
       this.invalidate();
       return;
     }
+    // A pulse that ticks no layer changes no view, so it draws nothing.
     if (ev.type === "tick") {
-      this.tickLayers();
-      this.invalidate();
+      if (this.tickLayers()) this.invalidate();
       return;
     }
     // Redraw on focus gain. A focus loss changes no view state.
