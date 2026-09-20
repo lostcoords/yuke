@@ -97,13 +97,15 @@ pub const HookContext = struct {
     session_id: proto.ids.SessionId,
     parent_id: ?proto.ids.SessionId,
     depth: u32,
+    /// The engine owns this limit, so a plugin reads it here and keeps no default of its own.
+    max_agent_depth: u32,
     agent_name: []const u8,
     workspace: []const u8,
     has_skills: bool,
 };
 
-pub fn hookContext(slot: *const RunSlot, has_skills: bool) HookContext {
-    return .{ .session_id = slot.sessionId(), .parent_id = slot.parent_id, .depth = slot.depth, .agent_name = slot.config.name orelse "root", .workspace = slot.config.root, .has_skills = has_skills };
+pub fn hookContext(engine: *const Engine, slot: *const RunSlot, has_skills: bool) HookContext {
+    return .{ .session_id = slot.sessionId(), .parent_id = slot.parent_id, .depth = slot.depth, .max_agent_depth = engine.max_agent_depth, .agent_name = slot.config.name orelse "root", .workspace = slot.config.root, .has_skills = has_skills };
 }
 
 /// The tools this run may see, chosen once at its first request. `tools.select` may narrow the list; the answer holds for the run.
@@ -114,7 +116,7 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*cons
     const has_skills = try database.session.hasSkills(engine.deps.db, arena, slot.sessionId().raw);
     const Chosen = struct { tools: []const []const u8 };
     var chosen = names;
-    switch (engine.deps.hooks.askIfHeld(arena, .@"tools.select", .{ .tools = names, .context = hookContext(slot, has_skills) })) {
+    switch (engine.deps.hooks.askIfHeld(arena, .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot, has_skills) })) {
         .proceed => {},
         // An unreadable answer is a plugin bug, and the run fails closed like it does on a throw.
         .replace => |value| chosen = (std.json.parseFromValueLeaky(Chosen, arena, value, .{ .ignore_unknown_fields = true }) catch return error.HookAnswerInvalid).tools,
@@ -150,7 +152,7 @@ pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, mo
             .system = build.system,
             .tools = build.tools,
             .max_output_tokens = build.max_output_tokens,
-            .context = hookContext(slot, held.has_skills),
+            .context = hookContext(engine, slot, held.has_skills),
         };
         switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", hook_payload)) {
             .proceed => {},

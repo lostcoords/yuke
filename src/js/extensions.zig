@@ -636,6 +636,18 @@ test "the agents plugin sets the native limits from its options and a dispose re
     try std.testing.expectEqual(@as(u32, 1), f.app.engine.max_agent_depth);
 }
 
+test "an agents catalog with no limit option keeps the engine limits" {
+    var f: Fixture = undefined;
+    try f.init(
+        \\import { plugins } from "yuke";
+        \\import { agents } from "yuke/chat";
+        \\plugins.use(agents({ catalog: { only: {} }, maxConcurrent: 2 }));
+    , kernel_boot);
+    defer f.deinit();
+    try std.testing.expectEqual(@as(u32, 2), f.app.engine.max_concurrent_children);
+    try std.testing.expectEqual(@as(u32, 1), f.app.engine.max_agent_depth);
+}
+
 test "extensions install no agent tool without the agents plugin" {
     var f: Fixture = undefined;
     try f.init("", kernel_boot);

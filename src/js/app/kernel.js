@@ -14,7 +14,6 @@ import { native } from "yuke:engine-native";
 export const config = {
   // A null base selects the built-in prompt for new root sessions.
   systemPrompt: null,
-  // A child run stops after maxRounds and reports partial output; the parent keeps no budget.
   // Mouse reporting is always on; `scrollLines` counts screen lines, so a wheel step moves the same in every widget.
   mouse: {
     scrollLines: 3,

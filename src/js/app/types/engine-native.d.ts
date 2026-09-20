@@ -46,7 +46,8 @@ declare module "yuke:engine-native" {
     /** What the JavaScript runtime holds right now, separate from the process footprint. */
     memoryUsage(): MemoryUsage;
     /** Set the child run concurrency and nesting depth limits. */
-    setAgentLimits(maxConcurrent: number, maxDepth: number): [number, number];
+    /** An undefined limit keeps the engine value; the answer is the pair from before the call. */
+    setAgentLimits(maxConcurrent?: number, maxDepth?: number): [number, number];
     /** Install the one sink. `drain` calls it on the owner, never from an engine task. */
     setEventSink(fn: (ev: EngineEvent) => void): void;
     /** Resolve with the response JSON, or reject with an error that carries the refusal code. */

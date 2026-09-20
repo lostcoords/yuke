@@ -57,6 +57,22 @@ test "the catalog is validated at boot and an absent plugin declares no agent to
     for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent", "list_agents" }) |name| try std.testing.expect(!hasTool(host, name));
 }
 
+test "a catalog with no maxRounds starts a child with no round cap" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "agents/fixture.js");
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\import { agents } from "yuke:agents";
+        \\plugins.use(agents({ catalog: { only: { description: "One agent." } } }));
+        \\client.sessionGet = async (id) => ({ session: { id, title: "Main conversation", root: "/work", model: "parent/large", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } });
+    , "rounds.js");
+    const spawn = try invokeAgent(host, "spawn_agent", "{\"message\":\"task\"}");
+    defer std.testing.allocator.free(spawn.text);
+    try std.testing.expect(!spawn.is_error);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("'max_rounds' in created ? 0 : 1"));
+}
+
 test "agent tools list the catalog, inherit the parent model, and address a child by id" {
     const host = support.createHost();
     defer support.destroyHost(host);
@@ -176,21 +192,21 @@ test "the plugin ends a root prompt with the rule and scopes a child by its row"
     // tools.select runs once per run: a child at the depth limit keeps only its row tools, and agent tools never reach it.
     const Select = struct { type: []const u8, value: struct { tools: []const []const u8 } };
     const every = "\"tools\":[\"edit\",\"exec\",\"read\",\"send_agent_input\",\"spawn_agent\",\"stop_agent\",\"write\"]";
-    const review = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"review\",\"workspace\":\"/w\",\"has_skills\":true}}");
+    const review = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"review\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
     defer std.testing.allocator.free(review);
     const review_select = try std.json.parseFromSlice(Select, std.testing.allocator, review, .{ .ignore_unknown_fields = true });
     defer review_select.deinit();
     try std.testing.expectEqual(@as(usize, 2), review_select.value.value.tools.len);
     try std.testing.expectEqualStrings("exec", review_select.value.value.tools[0]);
     try std.testing.expectEqualStrings("read", review_select.value.value.tools[1]);
-    const small = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"small\",\"workspace\":\"/w\",\"has_skills\":true}}");
+    const small = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"small\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
     defer std.testing.allocator.free(small);
     const small_select = try std.json.parseFromSlice(Select, std.testing.allocator, small, .{ .ignore_unknown_fields = true });
     defer small_select.deinit();
     try std.testing.expectEqual(@as(usize, 4), small_select.value.value.tools.len);
     try std.testing.expectEqualStrings("write", small_select.value.value.tools[3]);
     // A root below the depth limit keeps every tool.
-    const root_select = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ root_id ++ "\",\"parent_id\":null,\"depth\":0,\"agent_name\":\"root\",\"workspace\":\"/w\",\"has_skills\":true}}");
+    const root_select = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ root_id ++ "\",\"parent_id\":null,\"depth\":0,\"agent_name\":\"root\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
     defer std.testing.allocator.free(root_select);
     try std.testing.expectEqualStrings("", root_select);
 }

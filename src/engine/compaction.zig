@@ -130,7 +130,7 @@ const Instruction = struct { prompt: []const u8 };
 /// The instruction that trails the covered range. A `compaction.prompt` handler writes it; the engine holds no text of its own.
 fn instruction(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, mode: Mode) ![]const u8 {
     std.debug.assert(slot.tools != null);
-    switch (engine.deps.hooks.askIfHeld(arena, .@"compaction.prompt", .{ .context = request_config.hookContext(slot, slot.tools.?.has_skills), .mode = mode, .prompt = "" })) {
+    switch (engine.deps.hooks.askIfHeld(arena, .@"compaction.prompt", .{ .context = request_config.hookContext(engine, slot, slot.tools.?.has_skills), .mode = mode, .prompt = "" })) {
         .proceed => return error.CompactionPromptMissing,
         .replace => |value| {
             const answer = std.json.parseFromValueLeaky(Instruction, arena, value, .{ .ignore_unknown_fields = true }) catch return error.HookAnswerInvalid;

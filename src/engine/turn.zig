@@ -790,7 +790,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
     const hooks = engine.deps.hooks;
     const held = try request_config_mod.loadout(engine, arena, slot);
     var call: ToolCall = .{ .name = pt.name, .arguments = pt.arguments };
-    const payload: ToolCallPayload = .{ .name = pt.name, .arguments = pt.arguments, .context = request_config_mod.hookContext(slot, held.has_skills) };
+    const payload: ToolCallPayload = .{ .name = pt.name, .arguments = pt.arguments, .context = request_config_mod.hookContext(engine, slot, held.has_skills) };
     switch (hooks.askIfHeld(arena, .@"tool.before", payload)) {
         .proceed => {},
         // An unreadable answer is a plugin bug, so the call fails closed like it does on a throw.

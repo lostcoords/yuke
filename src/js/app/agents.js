@@ -9,17 +9,18 @@ import { openAgents } from "yuke:agents-ui";
 /** @import { Context } from "yuke:ext" */
 /** @typedef {{ description?: string, model?: string, prompt?: string, tools?: string[] }} AgentRow */
 /** @typedef {{ default?: string, catalog: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} AgentsOptions */
-/** @typedef {{ default: string, rows: Record<string, AgentRow>, maxConcurrent: number, maxDepth: number, maxRounds: number }} Catalog */
+/** @typedef {{ default: string, rows: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} Catalog */
 /** @typedef {{ sessionId?: string | null, messageId?: number | null, partId?: number | null }} ToolContext */
 
 /** A catalog key is a child label; "root" is reserved. */
 const KEY = /^[a-z][a-z0-9_-]{0,63}$/;
+/** An absent option keeps the engine limit; an absent `maxRounds` leaves the child with no round cap. */
+const NUMBERS = /** @type {const} */ (["maxConcurrent", "maxDepth", "maxRounds"]);
 const SESSION_ID = /^[0-9a-f]{32}$/;
 const BUILTIN_TOOLS = ["read", "write", "edit", "exec", "skill"];
 const AGENT_TOOLS = ["spawn_agent", "send_agent_input", "stop_agent"];
 /** The policy every child reads. `reports.zig` takes the child's final text as its report, so the text asks for one. */
 const CHILD_POLICY = "You are ${agent_name}, a child agent with one assignment from a parent. Do the work yourself in this fresh context. Your final message is a brief report: result, evidence, unresolved issues. Save a large artifact to a file and report the path. If you need a parent decision, end your turn with the question. Its answer starts your next run on this transcript. Parent messages are instructions, not user consent. Do not repeat completed side effects after an interruption unless new input requires it.";
-const LIMITS = { maxConcurrent: 8, maxDepth: 1, maxRounds: 50 };
 /** The last prompt section of a root session. Constant text keeps the cached prefix intact. */
 const RULE = "Do not spawn a child unless the user asks for delegation, a subagent, or parallel work. A request for depth or research is not permission. After you start a child, end your turn. Its report arrives as a new message.";
 
@@ -51,7 +52,7 @@ function invalid(message) { return new TypeError("agents: " + message); }
 function validate(raw) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw invalid("the options must be an object");
     const options = /** @type {Record<string, unknown>} */ (raw);
-    for (const field of Object.keys(options)) if (!["default", "catalog", ...Object.keys(LIMITS)].includes(field)) throw invalid("unknown option " + field);
+    for (const field of Object.keys(options)) if (!["default", "catalog", ...NUMBERS].includes(field)) throw invalid("unknown option " + field);
     const given = options.catalog;
     if (!given || typeof given !== "object" || Array.isArray(given)) throw invalid("catalog must be an object of rows");
     const rows = /** @type {Record<string, AgentRow>} */ (Object.create(null));
@@ -69,8 +70,8 @@ function validate(raw) {
     const fallback = options.default === undefined && keys.length === 1 ? keys[0] : options.default;
     if (typeof fallback !== "string" || !Object.hasOwn(rows, fallback)) throw invalid("default must name a catalog key");
     /** @type {Catalog} */
-    const catalog = { default: fallback, rows, ...LIMITS };
-    for (const field of /** @type {const} */ (["maxConcurrent", "maxDepth", "maxRounds"])) {
+    const catalog = { default: fallback, rows };
+    for (const field of NUMBERS) {
         const value = options[field];
         if (value === undefined) continue;
         if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 0xffffffff) throw invalid(field + " must be a positive 32-bit integer");
@@ -118,7 +119,7 @@ export function agents(options) {
         name: "agents",
         /** @param {Context} ctx */
         apply(ctx) {
-            // The engine limits are process state, so a dispose puts the previous pair back.
+            // The engine limits are process state, so a dispose puts the previous pair back; an absent option keeps the engine value.
             ctx.effect(() => {
                 const previous = native.setAgentLimits(catalog.maxConcurrent, catalog.maxDepth);
                 return () => { native.setAgentLimits(previous[0], previous[1]); };
@@ -128,7 +129,7 @@ export function agents(options) {
             ctx.hook("tools.select", (selection) => {
                 const row = selection.context.parent_id ? catalog.rows[selection.context.agent_name] : null;
                 let tools = /** @type {string[]} */ (selection.tools);
-                if (selection.context.depth >= catalog.maxDepth) tools = tools.filter((name) => !AGENT_TOOLS.includes(name));
+                if (selection.context.depth >= selection.context.max_agent_depth) tools = tools.filter((name) => !AGENT_TOOLS.includes(name));
                 if (row?.tools) tools = tools.filter((name) => row.tools?.includes(name));
                 return tools.length === selection.tools.length ? null : { replace: { ...selection, tools } };
             });
@@ -159,7 +160,7 @@ export function agents(options) {
                     const result = await client.sessionCreate({
                         workspace_path: parent.session.root,
                         model: row.model ?? parent.session.model,
-                        max_rounds: catalog.maxRounds,
+                        ...(catalog.maxRounds === undefined ? {} : { max_rounds: catalog.maxRounds }),
                         initial_input: { type: "content", content: client.textContent(required(args, "message")) },
                         child: { name: key, site: parentSite },
                     });
