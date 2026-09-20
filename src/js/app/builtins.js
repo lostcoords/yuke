@@ -306,32 +306,32 @@ async function skill(args, _signal, context) {
 builtin("read", {
   description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range. A PNG, JPEG, GIF, or WebP file returns the image.",
   parameters: { type: "object", properties: {
-    path: { type: "string", description: "The file path. A relative path resolves against the workspace root." },
-    start: { type: ["integer", "null"], minimum: 1, maximum: MAX_LINE, description: "The first line to read, 1-indexed." },
-    end: { type: ["integer", "null"], minimum: 1, maximum: MAX_LINE, description: "The last line to read, 1-indexed and inclusive." },
+    path: { type: "string", description: "A relative path resolves against the workspace root." },
+    start: { type: "integer", minimum: 1, maximum: MAX_LINE, description: "The first line." },
+    end: { type: "integer", minimum: 1, maximum: MAX_LINE, description: "The last line, inclusive." },
   }, required: ["path"], additionalProperties: false }, execute: read,
 });
 builtin("write", {
   description: "Create a file or replace its content. Pass the complete content.",
   parameters: { type: "object", properties: {
-    path: { type: "string", description: "The file path. A relative path resolves against the workspace root." },
-    content: { type: "string", description: "The complete content for the file." },
+    path: { type: "string", description: "A relative path resolves against the workspace root." },
+    content: { type: "string" },
   }, required: ["path", "content"], additionalProperties: false }, execute: write,
 });
 builtin("edit", {
   description: "Replace an exact string in a file. old_string must appear exactly once unless replace_all is true.",
   parameters: { type: "object", properties: {
-    path: { type: "string", description: "The file path. A relative path resolves against the workspace root." },
-    old_string: { type: "string", description: "The exact text to replace." },
-    new_string: { type: "string", description: "The replacement text." },
+    path: { type: "string", description: "A relative path resolves against the workspace root." },
+    old_string: { type: "string" },
+    new_string: { type: "string" },
     replace_all: { type: "boolean", description: "Replace every non-overlapping match." },
   }, required: ["path", "old_string", "new_string"], additionalProperties: false }, execute: edit,
 });
 builtin("exec", {
-  description: "Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell and ends every process it started. For a server or watcher, set background: true; never use &, nohup, or setsid.\n\n`timeout_ms` is optional (default 120000, max 600000).",
+  description: "Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell and ends every process it started. For a server or watcher, set background: true; never use &, nohup, or setsid.",
   parameters: { type: "object", properties: {
-    command: { type: "string", description: "The shell command to run." },
-    timeout_ms: { type: ["integer", "null"], minimum: 1, maximum: 600000, description: "The timeout in milliseconds." },
+    command: { type: "string" },
+    timeout_ms: { type: "integer", minimum: 1, maximum: 600000, description: "The default is 120000." },
     background: { type: "boolean", description: "Run a server or watcher as a job and return at once." },
   }, required: ["command"], additionalProperties: false }, execute: exec,
 });
@@ -339,7 +339,7 @@ builtin("jobs", {
   description: "List the background jobs, or stop one. Pass no argument for the list. Pass id alone for one job and its log path. Pass id and stop: true to request the stop of the job and its process group. A requested stop sends no exit message.",
   parameters: { type: "object", properties: {
     id: { type: "string", description: "The job id, for example j1." },
-    stop: { type: "boolean", description: "Request the stop. It needs id." },
+    stop: { type: "boolean" },
   }, required: [], additionalProperties: false }, execute: jobs,
 });
 builtin("skill", {

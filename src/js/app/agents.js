@@ -83,7 +83,7 @@ function validate(raw) {
 /** @param {Catalog} catalog */
 function spawnDescription(catalog) {
     const rows = Object.entries(catalog.rows).map(([key, row]) => "- `" + key + "`" + (row.description ? ": " + row.description : ""));
-    return "Start a child on one self-contained task. Give a complete brief: goal, files or areas, and the result to return. This call returns when the child starts. The report comes later as a new message. " + RULE + "\n\nAgents:\n" + rows.join("\n");
+    return "Start a child on one self-contained task. Give a complete brief: goal, files or areas, and the result to return. This call returns when the child starts. " + RULE + "\n\nAgents:\n" + rows.join("\n");
 }
 
 /** @param {unknown} value @param {string[]} fields @returns {Record<string, any>} */
@@ -114,7 +114,7 @@ async function ownedChild(parentId, target) {
 /** @param {AgentsOptions} options */
 export function agents(options) {
     const catalog = validate(options);
-    const childField = { type: "string", pattern: SESSION_ID.source, description: "Child session ID." };
+    const childField = { type: "string", pattern: SESSION_ID.source };
     return {
         name: "agents",
         /** @param {Context} ctx */
@@ -146,8 +146,8 @@ export function agents(options) {
                 name: "spawn_agent", description: spawnDescription(catalog),
                 parameters: {
                     type: "object", properties: {
-                        agent: { type: "string", enum: Object.keys(catalog.rows), description: "A catalog key from the list. Omit it for the default agent." },
-                        message: { type: "string", minLength: 1, description: "The full task for the child." },
+                        agent: { type: "string", enum: Object.keys(catalog.rows), description: "Omit it for the default agent." },
+                        message: { type: "string", minLength: 1 },
                     }, required: ["message"], additionalProperties: false
                 },
                 execute: async (raw, _signal, context) => {
