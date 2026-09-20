@@ -406,12 +406,15 @@ test "an open run cannot exceed the run high-water mark" {
     try db.conn.execNoArgs(open);
 }
 
-test "list pages newest first and count matches" {
+test "list rejects a bad limit, answers empty, then pages newest first" {
     var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
+
+    try testing.expectEqual(@as(usize, 0), (try list(&db, a, .{}, null, 10)).len);
+    try testing.expectError(error.InvalidLimit, list(&db, a, .{}, null, -1));
 
     for (0..3) |i| {
         var p = rootParams([_]u8{@as(u8, @intCast(i + 1))} ** 16, "/w");
@@ -430,17 +433,6 @@ test "list pages newest first and count matches" {
     const page2 = try list(&db, a, .{}, .{ .updated_at_ms = page1[1].updated_at_ms, .id = page1[1].id }, 2);
     try testing.expectEqual(@as(usize, 1), page2.len);
     try testing.expectEqual(@as(u64, 100), page2[0].updated_at_ms);
-}
-
-test "an empty list and a negative limit" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    try testing.expectEqual(@as(usize, 0), (try list(&db, a, .{}, null, 10)).len);
-    try testing.expectError(error.InvalidLimit, list(&db, a, .{}, null, -1));
 }
 
 test "the keyset tiebreaks equal timestamps by id descending" {
@@ -466,32 +458,7 @@ test "the keyset tiebreaks equal timestamps by id descending" {
     try testing.expectEqual(@as(u8, 1), page2[0].id[0]);
 }
 
-test "top_level excludes a child session" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    try create(&db, rootParams([_]u8{1} ** 16, "/w"));
-
-    var child = rootParams([_]u8{2} ** 16, "/w");
-    child.origin = "child";
-    child.parent_id = [_]u8{1} ** 16;
-    child.parent_message_id = 1;
-    child.parent_part_id = 0;
-    child.name = "kid";
-    try create(&db, child);
-
-    try testing.expectEqual(@as(u64, 2), try count(&db, a, .{}));
-    try testing.expectEqual(@as(u64, 1), try count(&db, a, .{ .top_level = true }));
-
-    const top = try list(&db, a, .{ .top_level = true }, null, 10);
-    try testing.expectEqual(@as(usize, 1), top.len);
-    try testing.expectEqualStrings("root", top[0].origin);
-}
-
-test "the workspace and parent selectors filter and page" {
+test "the top_level and parent selectors filter and count" {
     var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -509,6 +476,14 @@ test "the workspace and parent selectors filter and page" {
     child.parent_part_id = 0;
     child.name = "kid";
     try create(&db, child);
+
+    try testing.expectEqual(@as(u64, 3), try count(&db, a, .{}));
+
+    // top_level drops the child and keeps both roots.
+    try testing.expectEqual(@as(u64, 2), try count(&db, a, .{ .top_level = true }));
+    const tops = try list(&db, a, .{ .top_level = true }, null, 10);
+    try testing.expectEqual(@as(usize, 2), tops.len);
+    for (tops) |row| try testing.expectEqualStrings("root", row.origin);
 
     // The parent selector keeps only the children of root a.
     try testing.expectEqual(@as(u64, 1), try count(&db, a, .{ .parent_id = root_a }));

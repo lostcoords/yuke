@@ -662,36 +662,39 @@ test "a reasoning item with no summary and no encrypted content emits no block" 
     try testing.expect(h.out.items[0] == .done);
 }
 
-// A gateway that speaks both dialects can append the Chat Completions sentinel.
-test "the chat done sentinel is ignored" {
-    var h = Harness.init();
-    defer h.deinit();
-    try h.feed(&.{
+// A rejection of a trailer would throw away an answer that already arrived in full.
+test "every trailer after the terminal response is ignored" {
+    const terminal =
         \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
-        ,
-        "[DONE]",
-    });
-    try testing.expectEqual(@as(usize, 1), h.out.items.len);
-    try testing.expect(h.out.items[0] == .done);
-}
-
-// A rejection here would throw away an answer that already arrived in full.
-test "a frame after the terminal response is ignored" {
-    var h = Harness.init();
-    defer h.deinit();
-    try h.feed(&.{
-        \\{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}
-        ,
-        \\{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}
-        ,
-        \\{"type":"response.output_text.delta","output_index":0,"delta":"hi"}
-        ,
-        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
-        ,
+    ;
+    for ([_]struct { name: []const u8, prefix: []const []const u8, trailer: []const u8, want: usize }{
+        // A gateway that speaks both dialects can append the Chat Completions sentinel.
+        .{ .name = "chat done sentinel", .prefix = &.{}, .trailer = "[DONE]", .want = 1 },
+        // A malformed trailer must not undo the answer.
+        .{ .name = "malformed frame", .prefix = &.{}, .trailer = "{not json", .want = 1 },
+        // A well-formed trailer must not add an event to a finished response either.
+        .{ .name = "item done after the terminal", .prefix = &.{
+            \\{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}
+            ,
+            \\{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}
+            ,
+            \\{"type":"response.output_text.delta","output_index":0,"delta":"hi"}
+        }, .trailer =
         \\{"type":"response.output_item.done","output_index":0,"item":{"type":"message"}}
-    });
-    try testing.expectEqual(@as(usize, 4), h.out.items.len);
-    try testing.expect(h.out.items[3] == .done);
+        , .want = 4 },
+    }) |case| {
+        errdefer std.debug.print("case: {s}\n", .{case.name});
+        var h = Harness.init();
+        defer h.deinit();
+        var frames: std.ArrayList([]const u8) = .empty;
+        defer frames.deinit(testing.allocator);
+        try frames.appendSlice(testing.allocator, case.prefix);
+        try frames.append(testing.allocator, terminal);
+        try frames.append(testing.allocator, case.trailer);
+        try h.feed(frames.items);
+        try testing.expectEqual(case.want, h.out.items.len);
+        try testing.expect(h.out.items[case.want - 1] == .done);
+    }
 }
 
 // The arguments are partial, so the call must not reach the consumer.
@@ -711,19 +714,6 @@ test "a tool item still open at the terminal is dropped" {
     // No block_stopped closes the tool, and the stop reason never claims a call.
     try testing.expect(h.out.items[2] == .done);
     try testing.expectEqual(types.FinishReason.stop, h.out.items[2].done.stop_reason);
-}
-
-// A malformed trailer must not undo an answer that already arrived in full.
-test "a malformed frame after the terminal response is ignored" {
-    var h = Harness.init();
-    defer h.deinit();
-    try h.feed(&.{
-        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
-        ,
-        "{not json",
-    });
-    try testing.expectEqual(@as(usize, 1), h.out.items.len);
-    try testing.expect(h.out.items[0] == .done);
 }
 
 // The arguments would otherwise attach to a call the event does not name.

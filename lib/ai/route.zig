@@ -330,60 +330,53 @@ test "endpoint url appends the protocol path and collapses a trailing slash" {
     }
 }
 
-test "anthropic api key uses x-api-key plus the pinned version header" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const out = try requestHeaders(arena.allocator(), &.{
-        .base_url = "https://api.anthropic.com/v1",
-        .protocol = .anthropic_messages,
-        .auth = .{ .api_key = .x_api_key },
-        .headers = &.{.{ .name = "anthropic-version", .value = "2023-06-01" }},
-    }, .{ .api_key = "sk-secret" }, "");
-
-    try testing.expectEqualStrings("sk-secret", findHeader(out, "x-api-key").?);
-    try testing.expectEqualStrings("2023-06-01", findHeader(out, "anthropic-version").?);
-    try testing.expect(findHeader(out, "Authorization") == null);
-}
-
-test "a compat host uses Authorization Bearer" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const out = try requestHeaders(arena.allocator(), &.{
-        .base_url = "https://llm.acme/v1",
-        .protocol = .anthropic_messages,
-        .auth = .{ .api_key = .authorization_bearer },
-    }, .{ .api_key = "sk-2" }, "");
-    try testing.expectEqualStrings("Bearer sk-2", findHeader(out, "Authorization").?);
-}
-
-test "an oauth grant is a bearer that carries its own identity header" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const out = try requestHeaders(arena.allocator(), &.{
-        .base_url = "https://chatgpt.com/backend-api/codex",
-        .protocol = .openai_responses,
-        .auth = .{ .api_key = .authorization_bearer },
-        .responses_dialect = .codex,
-    }, .{ .oauth = .{
-        .access_token = "tok",
-        .headers = &.{.{ .name = "ChatGPT-Account-ID", .value = "acct" }},
-    } }, "");
-    try testing.expectEqualStrings("Bearer tok", findHeader(out, "Authorization").?);
-    try testing.expectEqualStrings("acct", findHeader(out, "ChatGPT-Account-ID").?);
-}
-
-test "a keyless route writes no credential header" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const out = try requestHeaders(arena.allocator(), &.{
-        .base_url = "http://127.0.0.1:11434/v1",
-        .protocol = .openai_chat,
-        .auth = .none,
-        .headers = &.{.{ .name = "x-note", .value = "local" }},
-    }, .none, "");
-    try testing.expectEqual(@as(usize, 1), out.len);
-    try testing.expectEqualStrings("local", findHeader(out, "x-note").?);
-    try testing.expect(findHeader(out, "Authorization") == null);
+test "every credential shape writes its own headers and no other" {
+    for ([_]struct {
+        name: []const u8,
+        route: Route,
+        credential: Credential,
+        want: []const Header,
+        absent: []const []const u8 = &.{},
+        count: ?usize = null,
+    }{
+        .{
+            .name = "anthropic api key",
+            .route = .{ .base_url = "https://api.anthropic.com/v1", .protocol = .anthropic_messages, .auth = .{ .api_key = .x_api_key }, .headers = &.{.{ .name = "anthropic-version", .value = "2023-06-01" }} },
+            .credential = .{ .api_key = "sk-secret" },
+            .want = &.{ .{ .name = "x-api-key", .value = "sk-secret" }, .{ .name = "anthropic-version", .value = "2023-06-01" } },
+            .absent = &.{"Authorization"},
+        },
+        .{
+            .name = "compat host bearer",
+            .route = .{ .base_url = "https://llm.acme/v1", .protocol = .anthropic_messages, .auth = .{ .api_key = .authorization_bearer } },
+            .credential = .{ .api_key = "sk-2" },
+            .want = &.{.{ .name = "Authorization", .value = "Bearer sk-2" }},
+        },
+        // An oauth grant is a bearer that carries its own identity header.
+        .{
+            .name = "oauth grant",
+            .route = .{ .base_url = "https://chatgpt.com/backend-api/codex", .protocol = .openai_responses, .auth = .{ .api_key = .authorization_bearer }, .responses_dialect = .codex },
+            .credential = .{ .oauth = .{ .access_token = "tok", .headers = &.{.{ .name = "ChatGPT-Account-ID", .value = "acct" }} } },
+            .want = &.{ .{ .name = "Authorization", .value = "Bearer tok" }, .{ .name = "ChatGPT-Account-ID", .value = "acct" } },
+        },
+        // A keyless route writes the pinned header and nothing else.
+        .{
+            .name = "keyless route",
+            .route = .{ .base_url = "http://127.0.0.1:11434/v1", .protocol = .openai_chat, .auth = .none, .headers = &.{.{ .name = "x-note", .value = "local" }} },
+            .credential = .none,
+            .want = &.{.{ .name = "x-note", .value = "local" }},
+            .absent = &.{"Authorization"},
+            .count = 1,
+        },
+    }) |case| {
+        errdefer std.debug.print("case: {s}\n", .{case.name});
+        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+        defer arena.deinit();
+        const out = try requestHeaders(arena.allocator(), &case.route, case.credential, "");
+        if (case.count) |n| try testing.expectEqual(n, out.len);
+        for (case.want) |h| try testing.expectEqualStrings(h.value, findHeader(out, h.name).?);
+        for (case.absent) |name| try testing.expect(findHeader(out, name) == null);
+    }
 }
 
 test "a pinned header that collides with the credential is rejected" {

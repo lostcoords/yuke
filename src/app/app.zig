@@ -199,7 +199,7 @@ const util = @import("../util.zig");
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var test_transport = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
 
-test "an environment with no base for the store stops startup instead of losing every session" {
+test "no base for the store stops startup, and an absolute XDG base opens it with no home directory" {
     const testing = std.testing;
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
@@ -207,12 +207,7 @@ test "an environment with no base for the store stops startup instead of losing 
     var bare: std.process.Environ.Map = .init(testing.allocator);
     defer bare.deinit();
     try testing.expectError(error.NoStateDirectory, App.open(testing.allocator, rt.io(), execution.testContext(&bare)));
-}
 
-test "an absolute XDG base opens the store with no home directory at all" {
-    const testing = std.testing;
-    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;

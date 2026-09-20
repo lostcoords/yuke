@@ -77,7 +77,7 @@ pub fn forMessages(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
 const testing = std.testing;
 const session = @import("session.zig");
 
-test "a config change stores a revision and sets the current config" {
+test "a config change stores a revision, sets the current config, and reads back by revision" {
     var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -100,24 +100,10 @@ test "a config change stores a revision and sets the current config" {
     try testing.expectEqualStrings("low", snap.reasoning);
     try testing.expectEqual(@as(u64, 1), snap.config_rev);
     try testing.expectEqual(@as(?u64, 7), snap.max_rounds);
-}
-
-test "byRevision reads a stored revision and misses an absent one" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const sid = [_]u8{3} ** 16;
-    try session.seedSession(&db, sid);
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 1, .model = "sonnet", .reasoning = "low", .max_rounds = 5 });
-    try db.conn.execNoArgs("COMMIT");
 
     const got = (try byRevision(&db, a, sid, 1)).?;
     try testing.expectEqual(@as(u64, 1), got.config_rev);
-    try testing.expectEqual(@as(?u64, 5), got.max_rounds);
+    try testing.expectEqual(@as(?u64, 7), got.max_rounds);
     try testing.expectEqualStrings("sonnet", got.model);
     try testing.expectEqualStrings("low", got.reasoning);
     try testing.expect((try byRevision(&db, a, sid, 99)) == null);

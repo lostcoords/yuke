@@ -177,38 +177,20 @@ test "split at every byte boundary, including CRLF" {
     try testing.expectEqualStrings("[DONE]", events[2]);
 }
 
-test "two CRLF data lines join with a newline" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    // Every other CRLF fixture holds one data line, where a dropped CR state reads the same.
-    const events = try frame(&.{"data: a\r\ndata: b\r\n\r\n"}, arena.allocator());
-    try testing.expectEqual(@as(usize, 1), events.len);
-    try testing.expectEqualStrings("a\nb", events[0]);
-}
-
-test "a lone CR ends a line" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const events = try frame(&.{"data: {\"x\":1}\r\rdata: {\"y\":2}\r\r"}, arena.allocator());
-    try testing.expectEqual(@as(usize, 2), events.len);
-    try testing.expectEqualStrings("{\"x\":1}", events[0]);
-    try testing.expectEqualStrings("{\"y\":2}", events[1]);
-}
-
-test "a CR and LF split across peeks is one ending" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const events = try frame(&.{ "data: hi\r", "\n\r\n" }, arena.allocator());
-    try testing.expectEqual(@as(usize, 1), events.len);
-    try testing.expectEqualStrings("hi", events[0]);
-}
-
-test "multi-line data concatenates with newline" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const events = try frame(&.{"data: a\ndata: b\n\n"}, arena.allocator());
-    try testing.expectEqual(@as(usize, 1), events.len);
-    try testing.expectEqualStrings("a\nb", events[0]);
+test "every line ending frames the same events and multi-line data joins with a newline" {
+    // The two-data-line CRLF case is the one where a dropped CR state reads the same as success.
+    for ([_]struct { chunks: []const []const u8, want: []const []const u8 }{
+        .{ .chunks = &.{"data: a\r\ndata: b\r\n\r\n"}, .want = &.{"a\nb"} },
+        .{ .chunks = &.{"data: {\"x\":1}\r\rdata: {\"y\":2}\r\r"}, .want = &.{ "{\"x\":1}", "{\"y\":2}" } },
+        .{ .chunks = &.{ "data: hi\r", "\n\r\n" }, .want = &.{"hi"} },
+        .{ .chunks = &.{"data: a\ndata: b\n\n"}, .want = &.{"a\nb"} },
+    }) |case| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const events = try frame(case.chunks, arena.allocator());
+        try testing.expectEqual(case.want.len, events.len);
+        for (case.want, events) |want, got| try testing.expectEqualStrings(want, got);
+    }
 }
 
 test "leading BOM is stripped once" {

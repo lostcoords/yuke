@@ -308,30 +308,24 @@ test "a parser key paints and a missing endFrame still commits" {
     try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "a") != null);
 }
 
-test "a paste arrives as one paste event with the whole text" {
+test "every paste arrives as one event with the whole text, however large" {
+    var gpa = support.Pool.init;
+    defer std.debug.assert(gpa.deinit() == .ok);
     const host = support.createHost();
     defer support.destroyHost(host);
-    try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
+    try host.eval("globalThis.n = 0; globalThis.onEvent = (ev) => { globalThis.n++; globalThis.ev = ev; };", "onEvent.js");
 
     const text = "line one\nline two";
     try stepPaste(host, text);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.type === 'paste' ? 1 : 0"));
     try std.testing.expectEqual(@as(i32, @intCast(text.len)), try host.evalInt("globalThis.ev.text.length"));
-}
 
-test "a large paste reaches JavaScript in one event" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try host.eval("globalThis.n = 0; globalThis.onEvent = (ev) => { globalThis.n++; globalThis.len = ev.text.length; };", "onEvent.js");
-
-    const text = try gpa.allocator().alloc(u8, 100 * 1024);
-    defer gpa.allocator().free(text);
-    @memset(text, 'x');
-    try stepPaste(host, text);
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.n"));
-    try std.testing.expectEqual(@as(i32, 100 * 1024), try host.evalInt("globalThis.len"));
+    const large = try gpa.allocator().alloc(u8, 100 * 1024);
+    defer gpa.allocator().free(large);
+    @memset(large, 'x');
+    try stepPaste(host, large);
+    try std.testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.n"));
+    try std.testing.expectEqual(@as(i32, 100 * 1024), try host.evalInt("globalThis.ev.text.length"));
 }
 
 test "onEvent throw is a JavaScriptFault" {

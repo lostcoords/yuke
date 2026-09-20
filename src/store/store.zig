@@ -235,14 +235,10 @@ test "migrate applies the baseline and claims the database" {
     try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(db.conn, "PRAGMA user_version"));
     try std.testing.expectEqual(APPLICATION_ID, try scalarInt(db.conn, "PRAGMA application_id"));
     try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(db.conn, "SELECT count(*) FROM migration_hash"));
-}
 
-test "migrate is idempotent on reopen" {
-    const conn = try zqlite.open(":memory:", test_flags);
-    defer conn.close();
-    try migrate(conn);
-    try migrate(conn); // The database is current, so apply no step and recheck hashes.
-    try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
+    // The database is current, so a second migrate applies no step and rechecks the hashes.
+    try migrate(db.conn);
+    try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(db.conn, "SELECT count(*) FROM migration_hash"));
 }
 
 test "migrate rejects a version from the future" {

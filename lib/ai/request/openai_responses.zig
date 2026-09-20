@@ -275,19 +275,8 @@ test "a plain user turn with a system prompt" {
     );
 }
 
-// The ChatGPT-account backend rejects the sampling limits an API key accepts.
-test "the codex dialect omits the output ceiling" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
-    ,
-        .{ .model = "gpt-5", .max_output_tokens = 8, .responses_dialect = .codex },
-        &blocks,
-    );
-}
-
 // The backend rejects a request that folds in no system prompt.
-test "only the codex dialect injects an instruction when none is given" {
+test "only the codex dialect drops the output ceiling and injects an instruction" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
     try expectJson(
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}

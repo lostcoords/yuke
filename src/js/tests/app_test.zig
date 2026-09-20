@@ -155,7 +155,7 @@ test "the palette hints only the strokes that run the command here" {
     try support.run("app/hint.test.js");
 }
 
-test "the catalog stores a full reply and keeps the models on unchanged" {
+test "the catalog stores a full reply, keeps the models on unchanged, and retains them after a refusal" {
     // `client` is one object, so a test replaces the one method the branch calls.
     try support.run("app/catload.test.js");
 }
@@ -167,11 +167,6 @@ test "the explorer turns one directory listing into rows" {
 test "the catalog slice owns the model reading" {
     // The readings need the open session, which the shell owns, so the slice takes it as config.
     try support.run("app/catalog.test.js");
-}
-
-test "loadCatalog retains its state after a refusal" {
-    // Controlled requests exercise shared and follow-up reads, then a refusal.
-    try support.run("app/loadcatalog.test.js");
 }
 
 test "the chat slice owns its listeners and its transcript commands" {

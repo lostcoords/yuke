@@ -232,39 +232,40 @@ fn commit(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, cut: Cut, s
 const testing = std.testing;
 
 test "the cut lands on the start of the turn that holds the tail target" {
-    var db = try database.Database.openTest();
-    defer db.deinit();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const sid = [_]u8{7} ** 16;
-    try Resources.seedSession(&db, sid, .{ .model = "mock", .title = "t" });
+    const a = arena.allocator();
 
-    try seedMessage(&db, arena.allocator(), sid, 1, .user, 300);
-    try seedMessage(&db, arena.allocator(), sid, 2, .assistant, 300);
-    try seedMessage(&db, arena.allocator(), sid, 3, .user, 300);
-    try seedMessage(&db, arena.allocator(), sid, 4, .assistant, 3000);
+    {
+        var db = try database.Database.openTest();
+        defer db.deinit();
+        const sid = [_]u8{7} ** 16;
+        try Resources.seedSession(&db, sid, .{ .model = "mock", .title = "t" });
+        try seedMessage(&db, a, sid, 1, .user, 300);
+        try seedMessage(&db, a, sid, 2, .assistant, 300);
+        try seedMessage(&db, a, sid, 3, .user, 300);
+        try seedMessage(&db, a, sid, 4, .assistant, 3000);
 
-    const cut = (try selectCut(testing.allocator, &db, sid, 0, 100)).?;
-    try testing.expectEqual(@as(u64, 3), cut.first_kept_id);
-    try testing.expect(cut.tokens_kept > context.tokensFor(3300));
-    try testing.expect(cut.tokens_before > cut.tokens_kept);
-}
+        const cut = (try selectCut(testing.allocator, &db, sid, 0, 100)).?;
+        try testing.expectEqual(@as(u64, 3), cut.first_kept_id);
+        try testing.expect(cut.tokens_kept > context.tokensFor(3300));
+        try testing.expect(cut.tokens_before > cut.tokens_kept);
+    }
+    {
+        // A drained queue starts one turn, so the cut takes every user message of that run.
+        var db = try database.Database.openTest();
+        defer db.deinit();
+        const sid = [_]u8{8} ** 16;
+        try Resources.seedSession(&db, sid, .{ .model = "mock", .title = "t" });
+        try seedMessage(&db, a, sid, 1, .user, 300);
+        try seedMessage(&db, a, sid, 2, .assistant, 300);
+        try seedMessage(&db, a, sid, 3, .user, 300);
+        try seedMessage(&db, a, sid, 4, .user, 300);
+        try seedMessage(&db, a, sid, 5, .assistant, 3000);
 
-test "a drained queue starts one turn, so the cut takes every user message of that run" {
-    var db = try database.Database.openTest();
-    defer db.deinit();
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const sid = [_]u8{8} ** 16;
-    try Resources.seedSession(&db, sid, .{ .model = "mock", .title = "t" });
-    try seedMessage(&db, arena.allocator(), sid, 1, .user, 300);
-    try seedMessage(&db, arena.allocator(), sid, 2, .assistant, 300);
-    try seedMessage(&db, arena.allocator(), sid, 3, .user, 300);
-    try seedMessage(&db, arena.allocator(), sid, 4, .user, 300);
-    try seedMessage(&db, arena.allocator(), sid, 5, .assistant, 3000);
-
-    const cut = (try selectCut(testing.allocator, &db, sid, 0, 100)).?;
-    try testing.expectEqual(@as(u64, 3), cut.first_kept_id);
+        const cut = (try selectCut(testing.allocator, &db, sid, 0, 100)).?;
+        try testing.expectEqual(@as(u64, 3), cut.first_kept_id);
+    }
 }
 
 test "a history with no earlier turn is a skip" {

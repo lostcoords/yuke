@@ -264,24 +264,19 @@ test "a paste over the cap keeps the first bytes and drops the rest" {
     try std.testing.expectEqual(@as(u21, 'q'), (try input.next()).?.key_press.codepoint);
 }
 
-test "a paste without an allocator is dropped" {
+test "a paste without an allocator is dropped and holds no memory" {
     var input: Input = .{};
     defer input.deinit();
     try input.push("\x1b[200~hello\x1b[201~z");
     try std.testing.expectEqual(@as(u21, 'z'), (try input.next()).?.key_press.codepoint);
-}
 
-test "a paste without an allocator holds no memory" {
-    var input: Input = .{};
-    defer input.deinit();
+    // A partial paste must not grow the buffer either, and the key after the end still decodes.
     try input.push("\x1b[200~");
     try std.testing.expectEqual(@as(?Event, null), try input.next());
-
     const chunk = [_]u8{'a'} ** 4000;
     try input.push(&chunk);
     try std.testing.expectEqual(@as(?Event, null), try input.next());
     try std.testing.expectEqual(@as(usize, 0), input.paste_buf.items.len);
-
     try input.push("\x1b[201~q");
     try std.testing.expectEqual(@as(u21, 'q'), (try input.next()).?.key_press.codepoint);
 }

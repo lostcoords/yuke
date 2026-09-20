@@ -449,25 +449,38 @@ test "generate rejects an empty request before transport I/O" {
     try std.testing.expectEqual(@as(usize, 0), lifecycle.deinit_count);
 }
 
-test "stream releases the response body after success" {
+test "stream releases the response body once on success, a callback error, and a truncation" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    var lifecycle = LifecycleTransport{ .bytes = testing_transport.canned_reply };
-    var event_count: usize = 0;
-    const Counter = struct {
-        fn onEvent(count: *usize, _: event.StreamEvent) !void {
-            count.* += 1;
+    const Sink = struct {
+        fail: bool,
+        seen: usize = 0,
+        fn onEvent(self: *@This(), _: event.StreamEvent) !void {
+            if (self.fail) return error.CallbackRejected;
+            self.seen += 1;
         }
     };
-
-    try streamWithTransport(std.testing.allocator, lifecycle.transportFor(), testModel(.anthropic_messages), .{
-        .blocks = &blocks,
-        .options = .{ .max_output_tokens = 1 },
-    }, &event_count, Counter.onEvent);
-    try std.testing.expect(event_count > 0);
-    try std.testing.expectEqual(@as(usize, 1), lifecycle.open_count);
-    try std.testing.expectEqual(@as(usize, 1), lifecycle.deinit_count);
+    for ([_]struct { name: []const u8, bytes: []const u8, fail: bool, want: ?anyerror }{
+        .{ .name = "success", .bytes = testing_transport.canned_reply, .fail = false, .want = null },
+        .{ .name = "callback error", .bytes = testing_transport.canned_reply, .fail = true, .want = error.CallbackRejected },
+        .{ .name = "truncation", .bytes = testing_transport.sseFrame(
+            \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
+        ), .fail = false, .want = error.IncompleteStream },
+    }) |case| {
+        errdefer std.debug.print("case: {s}\n", .{case.name});
+        var lifecycle = LifecycleTransport{ .bytes = case.bytes };
+        var sink: Sink = .{ .fail = case.fail };
+        const result = streamWithTransport(std.testing.allocator, lifecycle.transportFor(), testModel(.anthropic_messages), .{
+            .blocks = &blocks,
+            .options = .{ .max_output_tokens = 1 },
+        }, &sink, Sink.onEvent);
+        if (case.want) |want| try std.testing.expectError(want, result) else {
+            try result;
+            try std.testing.expect(sink.seen > 0);
+        }
+        try std.testing.expectEqual(@as(usize, 1), lifecycle.open_count);
+        try std.testing.expectEqual(@as(usize, 1), lifecycle.deinit_count);
+    }
 }
-
 test "prepare and consume split request lifecycle" {
     var canned = testing_transport.CannedTransport{ .bytes = testing_transport.canned_reply };
     var prepared = try prepare(std.testing.allocator, testModel(.anthropic_messages), .{
@@ -523,40 +536,6 @@ test "prepare owns route and credential strings" {
     try std.testing.expectEqualStrings("https://a.test/v1/chat/completions", prepared.transport_request.url);
     try std.testing.expectEqualStrings("Bearer secret", prepared.transport_request.headers[0].value);
     try std.testing.expectEqualStrings("pinned", prepared.transport_request.headers[1].value);
-}
-
-test "stream releases the response body after a callback error" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    var lifecycle = LifecycleTransport{ .bytes = testing_transport.canned_reply };
-    const Reject = struct {
-        fn onEvent(_: void, _: event.StreamEvent) !void {
-            return error.CallbackRejected;
-        }
-    };
-
-    try std.testing.expectError(error.CallbackRejected, streamWithTransport(std.testing.allocator, lifecycle.transportFor(), testModel(.anthropic_messages), .{
-        .blocks = &blocks,
-        .options = .{ .max_output_tokens = 1 },
-    }, {}, Reject.onEvent));
-    try std.testing.expectEqual(@as(usize, 1), lifecycle.open_count);
-    try std.testing.expectEqual(@as(usize, 1), lifecycle.deinit_count);
-}
-
-test "stream releases the response body after a truncated response" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    var lifecycle = LifecycleTransport{ .bytes = testing_transport.sseFrame(
-        \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
-    ) };
-    const Ignore = struct {
-        fn onEvent(_: void, _: event.StreamEvent) !void {}
-    };
-
-    try std.testing.expectError(error.IncompleteStream, streamWithTransport(std.testing.allocator, lifecycle.transportFor(), testModel(.anthropic_messages), .{
-        .blocks = &blocks,
-        .options = .{ .max_output_tokens = 1 },
-    }, {}, Ignore.onEvent));
-    try std.testing.expectEqual(@as(usize, 1), lifecycle.open_count);
-    try std.testing.expectEqual(@as(usize, 1), lifecycle.deinit_count);
 }
 
 test "generate preserves reasoning and joins every text block" {

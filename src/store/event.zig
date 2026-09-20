@@ -90,23 +90,31 @@ fn eid(n: u8) [16]u8 {
     return [_]u8{n} ** 16;
 }
 
-test "append allocates contiguous seqs and raises the high-water mark" {
+test "a fresh session reports zeros, each session allocates its own contiguous seqs, and the mark rises" {
     var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
 
-    const sid = [_]u8{3} ** 16;
-    try session.seedSession(&db, sid);
+    const one = [_]u8{1} ** 16;
+    const two = [_]u8{2} ** 16;
+    try session.seedSession(&db, one);
+    try session.seedSession(&db, two);
+
+    const fresh = (try highWater(&db, a, one)).?;
+    try testing.expectEqual(@as(u64, 0), fresh.seq_high);
+    try testing.expectEqual(@as(u64, 0), fresh.message_id_high);
+    try testing.expect((try highWater(&db, a, [_]u8{9} ** 16)) == null);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    try testing.expectEqual(@as(u64, 1), try append(&db, a, sid, eid(1), 1, "run.started", "{}"));
-    try testing.expectEqual(@as(u64, 2), try append(&db, a, sid, eid(2), 1, "message.committed", "{}"));
+    try testing.expectEqual(@as(u64, 1), try append(&db, a, one, eid(1), 1, "run.started", "{}"));
+    try testing.expectEqual(@as(u64, 2), try append(&db, a, one, eid(2), 1, "message.committed", "{}"));
+    try testing.expectEqual(@as(u64, 1), try append(&db, a, two, eid(3), 1, "run.started", "{}"));
     try db.conn.execNoArgs("COMMIT");
 
-    const hw = (try highWater(&db, a, sid)).?;
-    try testing.expectEqual(@as(u64, 2), hw.seq_high);
+    try testing.expectEqual(@as(u64, 2), (try highWater(&db, a, one)).?.seq_high);
+    try testing.expectEqual(@as(u64, 1), (try highWater(&db, a, two)).?.seq_high);
 }
 
 test "append rejects a missing session" {
@@ -140,38 +148,4 @@ test "a rolled-back append leaves no seq hole" {
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     try testing.expectEqual(@as(u64, 1), try append(&db, a, sid, eid(2), 1, "run.started", "{}"));
     try db.conn.execNoArgs("COMMIT");
-}
-
-test "two sessions each start at seq 1" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const one = [_]u8{1} ** 16;
-    const two = [_]u8{2} ** 16;
-    try session.seedSession(&db, one);
-    try session.seedSession(&db, two);
-
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    try testing.expectEqual(@as(u64, 1), try append(&db, a, one, eid(1), 1, "x", "{}"));
-    try testing.expectEqual(@as(u64, 1), try append(&db, a, two, eid(2), 1, "x", "{}"));
-    try db.conn.execNoArgs("COMMIT");
-}
-
-test "highWater returns zeros for a fresh session and null for a missing one" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const sid = [_]u8{3} ** 16;
-    try session.seedSession(&db, sid);
-
-    const hw = (try highWater(&db, a, sid)).?;
-    try testing.expectEqual(@as(u64, 0), hw.seq_high);
-    try testing.expectEqual(@as(u64, 0), hw.message_id_high);
-    try testing.expect((try highWater(&db, a, [_]u8{9} ** 16)) == null);
 }

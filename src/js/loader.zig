@@ -155,26 +155,17 @@ test "the facade name is reserved and never reaches the config directory" {
     try std.testing.expectEqualStrings(expected, other);
 }
 
-test "resolve joins a relative import against the importing file" {
+test "resolve joins a relative import, leaves the config directory, and keeps an absolute path" {
     const gpa = std.testing.allocator;
-    const inside = try resolve(gpa, "/cfg/a.js", "./b.js");
-    defer gpa.free(inside);
-    const expected = try std.fs.path.resolve(gpa, &.{ "/cfg", "b.js" });
-    defer gpa.free(expected);
-    try std.testing.expectEqualStrings(expected, inside);
-}
-
-test "resolve leaves the config directory when the user asks for it" {
-    const gpa = std.testing.allocator;
-    const up = try resolve(gpa, "/cfg/a.js", "../sibling/b.js");
-    defer gpa.free(up);
-    const expected = try std.fs.path.resolve(gpa, &.{ "/sibling", "b.js" });
-    defer gpa.free(expected);
-    try std.testing.expectEqualStrings(expected, up);
-
-    const abs = try resolve(gpa, "", "/other/x.js");
-    defer gpa.free(abs);
-    const expected_abs = try std.fs.path.resolve(gpa, &.{"/other/x.js"});
-    defer gpa.free(expected_abs);
-    try std.testing.expectEqualStrings(expected_abs, abs);
+    for ([_]struct { base: []const u8, name: []const u8, want: []const []const u8 }{
+        .{ .base = "/cfg/a.js", .name = "./b.js", .want = &.{ "/cfg", "b.js" } },
+        .{ .base = "/cfg/a.js", .name = "../sibling/b.js", .want = &.{ "/sibling", "b.js" } },
+        .{ .base = "", .name = "/other/x.js", .want = &.{"/other/x.js"} },
+    }) |case| {
+        const got = try resolve(gpa, case.base, case.name);
+        defer gpa.free(got);
+        const want = try std.fs.path.resolve(gpa, case.want);
+        defer gpa.free(want);
+        try std.testing.expectEqualStrings(want, got);
+    }
 }

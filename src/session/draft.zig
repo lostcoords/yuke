@@ -365,21 +365,20 @@ fn toolStateChange(part_id: ids.PartId, state: tool.ToolState) tool.ToolStateCha
     return .{ .session_id = zero_session, .message_id = 1, .part_id = part_id, .state = state };
 }
 
-test "text part streams via contiguous deltas" {
-    var d = try Draft.init(testing.allocator, started());
-    defer d.deinit();
-    try d.addPart(addText(0, ""));
-    try d.applyPartDelta(delta(0, 0, "hel"));
-    try d.applyPartDelta(delta(0, 3, "lo"));
-    try testing.expectEqualStrings("hello", d.parts.items[0].text.text.items);
-}
+test "contiguous deltas extend a text part, with or without initial bytes" {
+    var empty = try Draft.init(testing.allocator, started());
+    defer empty.deinit();
+    try empty.addPart(addText(0, ""));
+    try empty.applyPartDelta(delta(0, 0, "hel"));
+    try empty.applyPartDelta(delta(0, 3, "lo"));
+    try testing.expectEqualStrings("hello", empty.parts.items[0].text.text.items);
 
-test "part_added may carry initial bytes that deltas extend" {
-    var d = try Draft.init(testing.allocator, started());
-    defer d.deinit();
-    try d.addPart(addText(0, "he"));
-    try d.applyPartDelta(delta(0, 2, "llo"));
-    try testing.expectEqualStrings("hello", d.parts.items[0].text.text.items);
+    // `part_added` may carry initial bytes that a later delta extends.
+    var preloaded = try Draft.init(testing.allocator, started());
+    defer preloaded.deinit();
+    try preloaded.addPart(addText(0, "he"));
+    try preloaded.applyPartDelta(delta(0, 2, "llo"));
+    try testing.expectEqualStrings("hello", preloaded.parts.items[0].text.text.items);
 }
 
 test "reasoning owns its signature; redacted owns its data" {

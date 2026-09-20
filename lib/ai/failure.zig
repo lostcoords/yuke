@@ -118,24 +118,24 @@ pub fn classify(err: anyerror) Failure {
 
 const testing = std.testing;
 
-test "every transport class names a connection reason, never a provider answer" {
+test "every transport class names its exact connection reason, never a provider answer" {
     // A retryable connection fault must never reach a caller as a permanent provider failure.
-    for ([_]anyerror{
-        error.ConnectionRefused,
-        error.ConnectionResetByPeer,
-        error.ConnectionTimedOut,
-        error.NetworkUnreachable,
-        error.TemporaryNameServerFailure,
-        error.NameServerFailure,
-        error.HostLacksNetworkAddresses,
-        error.EndOfStream,
-        error.IncompleteStream,
-        error.HttpChunkTruncated,
-        http.Error.IdleTimeout,
-    }) |err| {
-        const got = classify(err);
+    for ([_]struct { anyerror, Reason }{
+        .{ error.ConnectionRefused, .connect_failed },
+        .{ error.ConnectionResetByPeer, .connect_failed },
+        .{ error.ConnectionTimedOut, .connect_failed },
+        .{ error.NetworkUnreachable, .connect_failed },
+        .{ error.EndOfStream, .connect_failed },
+        .{ error.TemporaryNameServerFailure, .dns_failed },
+        .{ error.NameServerFailure, .dns_failed },
+        .{ error.HostLacksNetworkAddresses, .dns_failed },
+        .{ error.IncompleteStream, .stream_truncated },
+        .{ error.HttpChunkTruncated, .stream_truncated },
+        .{ http.Error.IdleTimeout, .stream_timeout },
+    }) |case| {
+        const got = classify(case[0]);
         try testing.expectEqual(Class.transport, got.class);
-        try testing.expect(got.reason != .unknown);
+        try testing.expectEqual(case[1], got.reason);
     }
 }
 
