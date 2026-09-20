@@ -46,6 +46,8 @@ export class Chat {
     // Use open or newChat to change the session and its native pin.
     /** @type {string | null} */
     this.sessionId = null;
+    // A goal set in a blank pane becomes part of the session created by its first message.
+    this.pendingGoal = "";
     this.creating = false;
     this.gen = 0;
     this.view = new ChatView({
@@ -80,6 +82,7 @@ export class Chat {
     // A second pane on one session must not lose it, so a later open cannot reuse a stale creation.
     this.gen++;
     this.creating = false;
+    this.pendingGoal = "";
     if (!client.sessionOpen(id)) {
       notice.show("open failed · session unavailable");
       root.invalidate();
@@ -150,6 +153,38 @@ export class Chat {
     client.sessionCancelRun(this.sessionId).catch(() => {});
   }
 
+  // A goal changes the saved prompt for later turns. It never alters a run that
+  // already holds its own immutable prompt.
+  /** @param {string | undefined} goal */
+  setGoal(goal) {
+    if (!this.sessionId) {
+      if (goal === undefined) {
+        notice.show(this.pendingGoal ? "goal · " + this.pendingGoal.replace(/\s+/g, " ").slice(0, 80) : "no goal set");
+      } else if (goal === "pause" || goal === "resume") {
+        notice.show("no goal is running");
+      } else {
+        this.pendingGoal = goal === "clear" ? "" : goal;
+        if (this.pendingGoal) {
+          // Codex treats goal text as the first prompt as well as its completion criteria.
+          this.startChat({ type: "content", content: [{ type: "text", text: this.pendingGoal }] });
+        } else notice.show("goal cleared");
+      }
+      root.invalidate();
+      return;
+    }
+    const action = goal === "pause" || goal === "resume" || goal === "clear" ? goal : undefined;
+    const value = action === undefined ? goal : undefined;
+    client.sessionGoal(this.sessionId, value, action).then((result) => {
+      const text = result.goal;
+      const status = result.status;
+      notice.show(text ? "goal " + (status || "active") + " · " + text.replace(/\s+/g, " ").slice(0, 80) : goal === undefined ? "no goal set" : "goal cleared");
+      root.invalidate();
+    }).catch((e) => {
+      notice.show("goal failed · " + ((e && e.message) || "unknown"));
+      root.invalidate();
+    });
+  }
+
   // Re-pull the outline on a structural change; a closed session must not empty the pane.
   reload() {
     if (!this.sessionId) return;
@@ -176,7 +211,7 @@ export class Chat {
     }
     const snap = this.composer.snapshot();
     const d = defaultModel();
-    const params = /** @type {CreateSessionDraft} */ ({ workspace_path: term.cwd, ...(d.model ? { model: d.model } : {}), ...(d.reasoning ? { reasoning: d.reasoning } : {}), initial_input: input });
+    const params = /** @type {CreateSessionDraft} */ ({ workspace_path: term.cwd, ...(d.model ? { model: d.model } : {}), ...(d.reasoning ? { reasoning: d.reasoning } : {}), ...(this.pendingGoal ? { goal: this.pendingGoal } : {}), initial_input: input });
     const token = ++this.gen;
     this.creating = true;
     client
@@ -206,6 +241,7 @@ export class Chat {
     this.creating = false;
     this.release();
     this.sessionId = null;
+    this.pendingGoal = "";
     this.transcript.setOutline([], null);
     root.focusView(this.view);
     root.invalidate();
@@ -215,6 +251,7 @@ export class Chat {
   // The engine lost the session. Clear the pane back to the placeholder.
   sessionGone() {
     this.sessionId = null;
+    this.pendingGoal = "";
     this.transcript.setOutline([], null);
     root.invalidate();
     notifyFocusedSession();

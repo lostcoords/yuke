@@ -504,6 +504,46 @@ pub const SessionExists = sql.OptionalQuery(
     },
 );
 
+pub const SessionGoal = sql.OptionalQuery(
+    \\SELECT goal, status FROM session_goals WHERE session_id = :id;
+,
+    struct {
+        id: [16]u8,
+    },
+    struct {
+        goal: []const u8,
+        status: []const u8,
+    },
+);
+
+pub const SetSessionGoal = sql.ExecQuery(
+    \\INSERT INTO session_goals(session_id, goal, status) VALUES (:id, :goal, :status)
+    \\ON CONFLICT(session_id) DO UPDATE SET goal = excluded.goal, status = excluded.status;
+,
+    struct {
+        id: [16]u8,
+        goal: []const u8,
+        status: []const u8,
+    },
+);
+
+pub const DeleteSessionGoal = sql.ExecQuery(
+    \\DELETE FROM session_goals WHERE session_id = :id;
+,
+    struct {
+        id: [16]u8,
+    },
+);
+
+pub const UpdateSessionPromptGoal = sql.ExecQuery(
+    \\UPDATE session_prompts SET prompt = :prompt WHERE session_id = :id;
+,
+    struct {
+        prompt: []const u8,
+        id: [16]u8,
+    },
+);
+
 pub const SessionSnapshot = sql.OptionalQuery(
     \\SELECT
     \\    id, root,
@@ -988,6 +1028,10 @@ pub const Queries = struct {
     newest_compaction: NewestCompaction,
     insert_session: InsertSession,
     session_exists: SessionExists,
+    session_goal: SessionGoal,
+    set_session_goal: SetSessionGoal,
+    delete_session_goal: DeleteSessionGoal,
+    update_session_prompt_goal: UpdateSessionPromptGoal,
     session_snapshot: SessionSnapshot,
     set_open_run: SetOpenRun,
     clear_open_run: ClearOpenRun,

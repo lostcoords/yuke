@@ -526,12 +526,18 @@ test "child prompts inherit the saved base and snapshot their own policy" {
     try f.engine.setPromptConfig("new process default", f.engine.child_instructions);
     try f.engine.setPromptConfig(f.engine.default_system_prompt, "policy for ${agent_name} in ${workspace}");
     f.engine.max_agent_depth = 2;
+    {
+        var tx = try f.db.begin();
+        defer tx.deinit();
+        try database.session.setGoal(&f.db, a, f.parent.raw, .{ .text = "ship", .status = .active });
+        try tx.commit();
+    }
     var launch: ?runs.Launch = null;
     const child = try f.child("worker", &launch);
     const saved = try commands.sessionConfig(&f.engine, a, .{ .session_id = child.session.id });
     const child_parts = try database.session.promptParts(&f.db, a, child.session.id.raw);
     try testing.expectEqualStrings("policy for worker in /work", child_parts.child_policy.?);
-    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "parent base\n\npolicy for worker in /work\n\n{s}", .{child_parts.environment}), saved.system_prompt.?);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "parent base\n\n## Goal\nship\n\nWork autonomously toward this goal across as many turns as needed. Verify the stated completion criteria before stopping. Do not stop merely to report progress or ask for routine direction. When the goal is achieved, call the finish_goal tool, then give the user a concise final summary.\n\npolicy for worker in /work\n\n{s}", .{child_parts.environment}), saved.system_prompt.?);
     try testing.expectEqualStrings(saved.system_prompt.?, launch.?.slot.config.system_prompt);
     try testing.expectEqualStrings("parent base", try database.session.basePrompt(&f.db, a, child.session.id.raw));
     try f.engine.setPromptConfig(f.engine.default_system_prompt, "next policy ${agent_name}");
@@ -541,7 +547,7 @@ test "child prompts inherit the saved base and snapshot their own policy" {
     var grand_launch: ?runs.Launch = null;
     const grandchild = try commands.sessionCreateForRpc(&f.engine, a, grand_params, &grand_launch, null);
     const grand_parts = try database.session.promptParts(&f.db, a, grandchild.session.id.raw);
-    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "parent base\n\nnext policy grandchild\n\n{s}", .{grand_parts.environment}), (try database.session.prompt(&f.db, a, grandchild.session.id.raw)).?);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "parent base\n\n## Goal\nship\n\nWork autonomously toward this goal across as many turns as needed. Verify the stated completion criteria before stopping. Do not stop merely to report progress or ask for routine direction. When the goal is achieved, call the finish_goal tool, then give the user a concise final summary.\n\nnext policy grandchild\n\n{s}", .{grand_parts.environment}), (try database.session.prompt(&f.db, a, grandchild.session.id.raw)).?);
     try testing.expectEqualStrings(saved.system_prompt.?, (try database.session.prompt(&f.db, a, child.session.id.raw)).?);
     try f.engine.setPromptConfig(f.engine.default_system_prompt, "");
     var explicit = f.params("explicit");
@@ -549,7 +555,7 @@ test "child prompts inherit the saved base and snapshot their own policy" {
     var explicit_launch: ?runs.Launch = null;
     const custom = try commands.sessionCreateForRpc(&f.engine, a, explicit, &explicit_launch, null);
     const custom_parts = try database.session.promptParts(&f.db, a, custom.session.id.raw);
-    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "explicit\n\n{s}", .{custom_parts.environment}), (try database.session.prompt(&f.db, a, custom.session.id.raw)).?);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "explicit\n\n## Goal\nship\n\nWork autonomously toward this goal across as many turns as needed. Verify the stated completion criteria before stopping. Do not stop merely to report progress or ask for routine direction. When the goal is achieved, call the finish_goal tool, then give the user a concise final summary.\n\n{s}", .{custom_parts.environment}), (try database.session.prompt(&f.db, a, custom.session.id.raw)).?);
 }
 
 test "root templates resolve once and invalid templates create no session" {
@@ -558,10 +564,10 @@ test "root templates resolve once and invalid templates create no session" {
     defer f.deinit();
     const a = f.arena.allocator();
     try f.engine.setPromptConfig("${agent_name} ${workspace} ${session_id}", f.engine.child_instructions);
-    const root = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model" });
+    const root = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = "/work", .model = "test/model", .goal = "finish the migration" });
     const hex = std.fmt.bytesToHex(root.session.id.raw, .lower);
     const parts = try database.session.promptParts(&f.db, a, root.session.id.raw);
-    const expected = try std.fmt.allocPrint(a, "root /work {s}\n\n{s}", .{ hex, parts.environment });
+    const expected = try std.fmt.allocPrint(a, "root /work {s}\n\n## Goal\nfinish the migration\n\nWork autonomously toward this goal across as many turns as needed. Verify the stated completion criteria before stopping. Do not stop merely to report progress or ask for routine direction. When the goal is achieved, call the finish_goal tool, then give the user a concise final summary.\n\n{s}", .{ hex, parts.environment });
     try testing.expectEqualStrings(expected, (try database.session.prompt(&f.db, a, root.session.id.raw)).?);
     try f.engine.setPromptConfig("changed", f.engine.child_instructions);
     var launch: ?runs.Launch = null;

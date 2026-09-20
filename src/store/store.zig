@@ -24,6 +24,8 @@ const Migration = struct { version: i64, sql: [:0]const u8 };
 /// Apply the migrations in order. Entry i sets version i+1.
 const migrations = [_]Migration{
     .{ .version = 1, .sql = @embedFile("migrations/0001_initial.sql") },
+    .{ .version = 2, .sql = @embedFile("migrations/0002_session_goals.sql") },
+    .{ .version = 3, .sql = @embedFile("migrations/0003_session_goal_status.sql") },
 };
 
 comptime {
@@ -243,6 +245,19 @@ test "migrate is idempotent on reopen" {
     try migrate(conn);
     try migrate(conn); // The database is current, so apply no step and recheck hashes.
     try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
+}
+
+test "migrate upgrades a version one database with session goals" {
+    const conn = try zqlite.open(":memory:", test_flags);
+    defer conn.close();
+    try conn.execNoArgs("BEGIN IMMEDIATE");
+    try conn.execNoArgs(migration_hash_ddl);
+    try applyStep(conn, migrations[0]);
+    try conn.execNoArgs("COMMIT");
+
+    try migrate(conn);
+    try std.testing.expectEqual(@as(i64, migrations.len), try scalarInt(conn, "PRAGMA user_version"));
+    try std.testing.expectEqual(@as(i64, 0), try scalarInt(conn, "SELECT count(*) FROM session_goals"));
 }
 
 test "migrate rejects a version from the future" {

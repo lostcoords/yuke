@@ -9,6 +9,8 @@ chat.view.focus = "composer";
 const sent = [];
 const msg = (text) => [{ type: "text", text }];
 chat.startChat = (input) => { sent.push(input.content[0].text); return true; };
+let goal = "";
+chat.setGoal = (value) => { goal = value || ""; };
 let ran = null;
 const off = command.add(null, { "test:echo": (arg) => { ran = arg === undefined ? "" : arg; } },
   { "test:echo": { title: "Echo", description: "d", slash: "echo", args: true } });
@@ -18,6 +20,10 @@ chat.composer.text = "/";
 check("opens", root.overlays.length === 1 && root.overlays[0].modal === false);
 check("composer-keeps-focus", root.focused === chat.view);
 check("lists-slash-entries", rowsOf().length > 3 && rowsOf().every((e) => e.slash));
+chat.composer.text = "/goal";
+check("lists-goal", rowsOf().some((e) => e.slash === "goal"));
+check("goal-runs", command.perform("session:goal", "ship the feature") && goal === "ship the feature");
+chat.composer.text = "/";
 const offAgents = command.add(null, { "test:agents": () => {}, "test:models": () => {} }, {
   "test:agents": { title: "Agents", slash: "agents" }, "test:models": { title: "Agent models", slash: "agent-models" },
 });

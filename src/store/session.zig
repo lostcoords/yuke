@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const sql = @import("sql");
+const proto = @import("proto");
 const Database = @import("store.zig").Database;
 const instructions = @import("../session/instructions.zig");
 const skills = @import("../session/skills.zig");
@@ -57,22 +58,58 @@ pub const PromptInput = struct {
     base: []const u8,
     child_policy: ?[]const u8,
     environment: []const u8,
+    goal: []const u8 = "",
     sources: []const instructions.Snapshot = &.{},
     skills: []const skills.Entry = &.{},
+};
+
+pub const Goal = struct {
+    text: []const u8,
+    status: proto.session.GoalStatus,
 };
 
 pub fn promptParts(db: *Database, arena: std.mem.Allocator, id: [16]u8) !PromptParts {
     const row = (try db.queries.select_prompt_parts.maybeOne(arena, .{ .session_id = id })) orelse return error.MissingSessionPrompt;
     std.debug.assert(row.value.environment.len <= @import("proto").meta.limits.max_message_string_bytes);
-    return .{ .base = row.value.base_prompt, .instructions = row.value.instructions, .skills = row.value.skills, .child_policy = row.value.child_policy, .environment = row.value.environment };
+    const stored_goal = if (try db.queries.session_goal.maybeOne(arena, .{ .id = id })) |entry| entry.value.goal else "";
+    return .{ .base = row.value.base_prompt, .instructions = row.value.instructions, .goal = stored_goal, .skills = row.value.skills, .child_policy = row.value.child_policy, .environment = row.value.environment };
+}
+
+/// Read the persistent goal. An absent row means the session has no goal.
+pub fn goal(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?Goal {
+    const row = try db.queries.session_goal.maybeOne(arena, .{ .id = id });
+    return if (row) |entry| .{
+        .text = entry.value.goal,
+        .status = std.meta.stringToEnum(proto.session.GoalStatus, entry.value.status) orelse return error.CorruptGoal,
+    } else null;
+}
+
+/// Replace one session's goal and the exact rendered prompt. The caller holds a transaction.
+pub fn setGoal(db: *Database, arena: std.mem.Allocator, id: [16]u8, value: Goal) !void {
+    if (value.text.len > @import("proto").meta.limits.max_message_string_bytes) return error.PromptTooLarge;
+    var parts = try promptParts(db, arena, id);
+    parts.goal = value.text;
+    const rendered = try parts.render(arena);
+    try db.queries.set_session_goal.exec(.{ .id = id, .goal = value.text, .status = @tagName(value.status) });
+    try db.queries.update_session_prompt_goal.exec(.{ .id = id, .prompt = rendered });
+}
+
+/// Remove a goal and recompose the prompt. The caller holds a transaction.
+pub fn clearGoal(db: *Database, arena: std.mem.Allocator, id: [16]u8) !void {
+    var parts = try promptParts(db, arena, id);
+    parts.goal = "";
+    const rendered = try parts.render(arena);
+    try db.queries.delete_session_goal.exec(.{ .id = id });
+    try db.queries.update_session_prompt_goal.exec(.{ .id = id, .prompt = rendered });
 }
 
 /// Render and store the exact parts; the caller owns the returned text.
 pub fn setPrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8, parts: PromptInput) ![]const u8 {
-    const resolved: PromptParts = .{ .base = parts.base, .instructions = try instructions.render(arena, parts.sources), .skills = try skills.render(arena, parts.skills), .child_policy = parts.child_policy, .environment = parts.environment };
+    const resolved: PromptParts = .{ .base = parts.base, .instructions = try instructions.render(arena, parts.sources), .goal = parts.goal, .skills = try skills.render(arena, parts.skills), .child_policy = parts.child_policy, .environment = parts.environment };
     const text = try resolved.render(arena);
     errdefer arena.free(text);
     try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text, .base_prompt = parts.base, .instructions = resolved.instructions, .skills = resolved.skills, .child_policy = parts.child_policy, .environment = parts.environment });
+    if (parts.goal.len != 0) try db.queries.set_session_goal.exec(.{ .id = id, .goal = parts.goal, .status = "active" });
     try insertSources(db, id, parts.sources);
     try insertSkills(db, id, parts.skills);
     return text;

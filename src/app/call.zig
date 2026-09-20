@@ -60,6 +60,7 @@ const bindings = struct {
     pub const initialize = commands.initialize;
     pub const @"session.list" = commands.sessionList;
     pub const @"session.get" = commands.sessionGet;
+    pub const @"session.goal" = commands.sessionGoal;
     pub const @"session.queue" = commands.sessionQueue;
     pub const @"session.create" = commands.sessionCreateForRpc;
     pub const @"session.patch" = commands.sessionPatch;

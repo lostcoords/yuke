@@ -121,6 +121,63 @@ pub fn sessionGet(engine: *Engine, arena: std.mem.Allocator, params: proto.sessi
     return item;
 }
 
+/// Read, start, or control a persistent goal. A new goal is its own first user
+/// prompt; an active goal keeps the model's run alive until it is completed.
+pub fn sessionGoal(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionGoalParams, launch: *?run.Launch) !proto.session.SessionGoalResult {
+    try engine.own(params.session_id);
+    std.debug.assert(launch.* == null);
+    const id = params.session_id.raw;
+    if (!try session_store.exists(engine.deps.db, arena, id)) return error.UnknownSession;
+    if (params.goal) |goal| {
+        if (params.action != null or goal.len == 0) return error.BadRequest;
+        if (engine.sessions.get(params.session_id)) |resident| if (resident.active_run != null) return error.SessionBusy;
+        var tx = try engine.deps.db.begin();
+        defer tx.deinit();
+        try session_store.setGoal(engine.deps.db, arena, id, .{ .text = goal, .status = .active });
+        try tx.commit();
+        _ = try sessionSendInputForRpc(engine, arena, .{ .session_id = params.session_id, .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = goal } }} } } }, launch, null);
+    } else if (params.action) |action| {
+        const stored = (try session_store.goal(engine.deps.db, arena, id)) orelse return error.BadRequest;
+        switch (action) {
+            .clear => {
+                if (engine.sessions.get(params.session_id)) |resident| if (resident.active_run != null) resident.active_run.?.cancel.request(engine.deps.io);
+                var tx = try engine.deps.db.begin();
+                defer tx.deinit();
+                try session_store.clearGoal(engine.deps.db, arena, id);
+                try tx.commit();
+                return .{};
+            },
+            .pause => {
+                var tx = try engine.deps.db.begin();
+                defer tx.deinit();
+                try session_store.setGoal(engine.deps.db, arena, id, .{ .text = stored.text, .status = .paused });
+                try tx.commit();
+                if (engine.sessions.get(params.session_id)) |resident| if (resident.active_run != null) resident.active_run.?.cancel.request(engine.deps.io);
+            },
+            .@"resume" => {
+                var tx = try engine.deps.db.begin();
+                defer tx.deinit();
+                try session_store.setGoal(engine.deps.db, arena, id, .{ .text = stored.text, .status = .active });
+                try tx.commit();
+                if (engine.sessions.get(params.session_id)) |resident| {
+                    if (resident.active_run == null)
+                        _ = try sessionSendInputForRpc(engine, arena, .{ .session_id = params.session_id, .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "Resume working toward the active goal." } }} } } }, launch, null);
+                }
+            },
+            // The model calls this while its final tool round is still live. The
+            // committed tool result triggers one final summary round, not another loop.
+            .complete => {
+                var tx = try engine.deps.db.begin();
+                defer tx.deinit();
+                try session_store.setGoal(engine.deps.db, arena, id, .{ .text = stored.text, .status = .completed });
+                try tx.commit();
+            },
+        }
+    }
+    const stored = try session_store.goal(engine.deps.db, arena, id);
+    return if (stored) |goal| .{ .goal = goal.text, .status = goal.status } else .{};
+}
+
 /// Report whether the AGENTS.md files on disk differ from the stored sources. An unloadable file counts as a change.
 fn instructionsChanged(engine: *Engine, arena: std.mem.Allocator, root: []const u8, stored: []const proto.instructions.InstructionSource) !bool {
     const fresh = instructions.load(arena, engine.deps.io, engine.deps.execution.env, root, null) catch |err| switch (err) {
@@ -611,6 +668,12 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     else
         prompts.default_system_prompt;
     const child_prompt = if (parent != null) try prompts.expand(arena, engine.child_instructions orelse prompts.default_child_instructions, prompt_context) else null;
+    // A child is part of its parent's task, so its saved goal follows the parent.
+    // A root session may receive a goal before it has any messages.
+    const inherited_goal = if (parent) |pid| blk: {
+        if (try session_store.goal(engine.deps.db, arena, pid.raw)) |goal| break :blk goal.text;
+        break :blk "";
+    } else params.goal orelse "";
     const sources = if (parent) |pid| try session_store.instructionSnapshots(engine.deps.db, arena, pid.raw) else try instructions.load(arena, engine.deps.io, engine.deps.execution.env, root, diagnostic);
     const now = engine.nowMillis();
     const environment = try prompts.environment(arena, root, engine.deps.execution.shell, now);
@@ -642,7 +705,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
             .created_at_ms = now,
             .updated_at_ms = now,
         });
-        const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, .{ .base = base_prompt, .child_policy = child_prompt, .environment = environment, .sources = sources, .skills = catalog.entries });
+        const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, .{ .base = base_prompt, .child_policy = child_prompt, .environment = environment, .goal = inherited_goal, .sources = sources, .skills = catalog.entries });
         if (available) prepared = try run.RunSlot.prepare(engine.deps.gpa, model, reasoning, system_prompt, params.max_rounds);
         try config_store.recordInitial(engine.deps.db, id.raw, birth_config);
         if (content) |parts| queued = try input_store.enqueue(engine.deps.db, arena, id.raw, engine.newId(), now, .{ .content = parts, .source = if (params.child) |child| .{ .parent_instruction = child.site } else null, .skill_name = if (params.initial_input.? == .skill) params.initial_input.?.skill.name else null }, now);
@@ -691,6 +754,40 @@ const ai = @import("ai");
 const provider = @import("../provider/provider.zig");
 
 const Resources = @import("test_resources.zig");
+
+test "session.goal persists in the next turn prompt and clears" {
+    var resources: Resources = undefined;
+    try resources.init();
+    defer resources.deinit();
+    var db = try database.Database.openTest();
+    defer db.deinit();
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const raw = [_]u8{9} ** 16;
+    try Resources.seedSession(&db, raw, .{ .root = "/goal", .title = "goal" });
+    {
+        var tx = try db.begin();
+        defer tx.deinit();
+        _ = try session_store.setPrompt(&db, arena, raw, .{ .base = "base", .child_policy = null, .environment = "env" });
+        try tx.commit();
+    }
+    var engine = resources.makeEngine(&db);
+    defer engine.close();
+    const id: proto.ids.SessionId = .bytes(raw);
+
+    var launch: ?run.Launch = null;
+    const set = try sessionGoal(&engine, arena, .{ .session_id = id, .goal = "ship /goal" }, &launch);
+    run.Launch.release(&launch, &engine);
+    try std.testing.expectEqualStrings("ship /goal", set.goal.?);
+    try std.testing.expectEqual(proto.session.GoalStatus.active, set.status.?);
+    const read = try sessionGoal(&engine, arena, .{ .session_id = id }, &launch);
+    try std.testing.expectEqualStrings("ship /goal", read.goal.?);
+
+    const cleared = try sessionGoal(&engine, arena, .{ .session_id = id, .action = .clear }, &launch);
+    try std.testing.expect(cleared.goal == null);
+    try std.testing.expectEqualStrings("base\n\nenv", (try session_store.prompt(&db, arena, raw)).?);
+}
 
 test "session.get and session.queue read the durable queue, resident or not" {
     var resources: Resources = undefined;

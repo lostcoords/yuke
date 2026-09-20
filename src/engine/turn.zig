@@ -349,7 +349,12 @@ fn commitRound(
     defer tx.deinit();
     // Only a success can continue, so only a success reads the queue, and one read serves the count and the consume.
     const queued: []const database.input.Entry = if (result == .success) try database.input.list(engine.deps.db, arena, session_id.raw) else &.{};
-    const wants_next = result == .success and (has_tools or queued.len > 0);
+    // A live goal is a continuation condition just like a tool call. The model
+    // ends it by calling finish_goal, which marks it completed before this
+    // transaction reads the durable state. A completed tool call still earns a
+    // final summary round through `has_tools`.
+    const goal_active = result == .success and if (try database.session.goal(engine.deps.db, arena, session_id.raw)) |goal| goal.status == .active else false;
+    const wants_next = result == .success and (has_tools or queued.len > 0 or goal_active);
     const capped = wants_next and if (slot.config.max_rounds) |cap| slot.progress.rounds_committed >= cap -| 1 else false;
     const terminal: Terminal = if (capped) .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } } else result;
     const final = !wants_next or capped;
@@ -1345,4 +1350,42 @@ test "a cancel at the boundary wins over a successful response and preserves pen
     try std.testing.expectEqual(@as(usize, 1), f.session.queueDepth());
     try std.testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, StreamerFixture.session_id));
     try std.testing.expect((try database.run.latestOutcome(&f.db, a, StreamerFixture.session_id)).? == .canceled);
+}
+
+test "an active goal continues text-only rounds until completion" {
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    {
+        var tx = try f.db.begin();
+        defer tx.deinit();
+        try session_store.setGoal(&f.db, a, StreamerFixture.session_id, .{ .text = "finish", .status = .active });
+        try tx.commit();
+    }
+    try f.persistStarted(a);
+    f.slot.phase = .running;
+    try commitRound(&f.engine, a, f.slot, &f.session.draft.?, false, null, .{ .success = .stop });
+    try std.testing.expectEqual(RunSlot.Phase.running, f.slot.phase);
+    try std.testing.expect(f.slot.progress.current == null);
+
+    try f.session.apply(.{ .message_started_data = .{
+        .session_id = .bytes(StreamerFixture.session_id),
+        .message_id = 3,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = agent_name,
+        .created_at_ms = 2,
+    } });
+    f.slot.progress.current = .{ .message_id = 3 };
+    {
+        var tx = try f.db.begin();
+        defer tx.deinit();
+        try session_store.setGoal(&f.db, a, StreamerFixture.session_id, .{ .text = "finish", .status = .completed });
+        try tx.commit();
+    }
+    try commitRound(&f.engine, a, f.slot, &f.session.draft.?, false, null, .{ .success = .stop });
+    try std.testing.expectEqual(RunSlot.Phase.terminalized, f.slot.phase);
 }

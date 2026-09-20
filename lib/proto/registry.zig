@@ -151,6 +151,8 @@ pub const structs = [_]TypeEntry{
     .{ .name = "SessionConfigResult", .ty = session.SessionConfigResult },
     .{ .name = "SessionForkParams", .ty = session.SessionForkParams },
     .{ .name = "SessionGetParams", .ty = session.SessionGetParams },
+    .{ .name = "SessionGoalParams", .ty = session.SessionGoalParams },
+    .{ .name = "SessionGoalResult", .ty = session.SessionGoalResult },
     .{ .name = "ContextChanges", .ty = session.ContextChanges },
     .{ .name = "SessionReloadContextParams", .ty = session.SessionReloadContextParams },
     .{ .name = "SessionReloadContextResult", .ty = session.SessionReloadContextResult },
@@ -220,6 +222,8 @@ pub const envelope_unions = [_]TypeEntry{
 };
 
 pub const string_enums = [_]EnumEntry{
+    .{ .name = "GoalAction", .ty = session.GoalAction },
+    .{ .name = "GoalStatus", .ty = session.GoalStatus },
     .{ .name = "InstructionScope", .ty = instructions.InstructionScope },
     .{ .name = "AgentModelSlot", .ty = agents.AgentModelSlot },
     .{ .name = "InputQueueReason", .ty = session.InputQueueReason },

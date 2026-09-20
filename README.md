@@ -36,6 +36,11 @@ A client can call it before other methods to check compatibility. The server has
 
 ## Agent configuration
 
+Use `/goal <text>` to start a durable task. Its text is both the first prompt
+and the completion criterion, so Yuke continues working until the agent
+verifies it and completes the goal. Use `/goal` to show the current goal, and
+`/goal pause`, `/goal resume`, or `/goal clear` to control it.
+
 Use `/agents` to see the main conversation and all descendant agents, switch sessions, or stop agent work.
 Use `/agent-models` to choose the small and medium models from your providers.
 Small handles narrow research and simple edits. Medium handles broader work and review.

@@ -55,6 +55,14 @@
       "paramsOptional": false
     },
     {
+      "name": "session.goal",
+      "doc": "Read or replace a session's task goal.",
+      "params": "SessionGoalParams",
+      "result": "SessionGoalResult",
+      "direction": "clientToServer",
+      "paramsOptional": false
+    },
+    {
       "name": "session.create",
       "doc": "Create a session.",
       "params": "CreateSession",
@@ -2115,6 +2123,12 @@
           "presence": "optional"
         },
         {
+          "name": "goal",
+          "doc": "The goal for a new root session. Child sessions inherit their parent's goal.",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
           "name": "max_rounds",
           "type": "u64",
           "presence": "optional"
@@ -2904,6 +2918,42 @@
           "doc": "Compare the stored AGENTS.md and skill snapshots with the files on disk.",
           "type": "bool",
           "presence": "defaulted"
+        }
+      ]
+    },
+    {
+      "name": "SessionGoalParams",
+      "doc": "Read, set, or control a session's persistent task goal. Setting text starts an active goal; the goal text is also the first user prompt.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "goal",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "action",
+          "type": "GoalAction",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "SessionGoalResult",
+      "fields": [
+        {
+          "name": "goal",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "status",
+          "type": "GoalStatus",
+          "presence": "optional"
         }
       ]
     },
@@ -3941,6 +3991,9 @@
           "type": "SessionGetParams"
         },
         {
+          "type": "SessionGoalParams"
+        },
+        {
           "type": "CreateSession"
         },
         {
@@ -4033,6 +4086,9 @@
         },
         {
           "type": "SessionListItem"
+        },
+        {
+          "type": "SessionGoalResult"
         },
         {
           "type": "SessionResult"
@@ -4188,30 +4244,44 @@
   ],
   "enumerations": [
     {
-      "name": "InstructionScope",
+      "name": "GoalAction",
+      "doc": "A control action for a persistent task goal.",
       "numeric": false,
       "values": [
         {
-          "name": "global",
-          "wire": "global"
+          "name": "pause",
+          "wire": "pause"
         },
         {
-          "name": "workspace",
-          "wire": "workspace"
+          "name": "resume",
+          "wire": "resume"
+        },
+        {
+          "name": "clear",
+          "wire": "clear"
+        },
+        {
+          "name": "complete",
+          "wire": "complete"
         }
       ]
     },
     {
-      "name": "AgentModelSlot",
+      "name": "GoalStatus",
+      "doc": "The lifecycle of a persistent task goal.",
       "numeric": false,
       "values": [
         {
-          "name": "small",
-          "wire": "small"
+          "name": "active",
+          "wire": "active"
         },
         {
-          "name": "medium",
-          "wire": "medium"
+          "name": "paused",
+          "wire": "paused"
+        },
+        {
+          "name": "completed",
+          "wire": "completed"
         }
       ]
     },
@@ -4335,6 +4405,34 @@
         {
           "name": "overloaded",
           "wire": "-31021"
+        }
+      ]
+    },
+    {
+      "name": "InstructionScope",
+      "numeric": false,
+      "values": [
+        {
+          "name": "global",
+          "wire": "global"
+        },
+        {
+          "name": "workspace",
+          "wire": "workspace"
+        }
+      ]
+    },
+    {
+      "name": "AgentModelSlot",
+      "numeric": false,
+      "values": [
+        {
+          "name": "small",
+          "wire": "small"
+        },
+        {
+          "name": "medium",
+          "wire": "medium"
         }
       ]
     },
@@ -4576,6 +4674,11 @@
           "name": "session.get",
           "wire": "session.get",
           "doc": "Read one session with its resident activity, or its durable idle activity."
+        },
+        {
+          "name": "session.goal",
+          "wire": "session.goal",
+          "doc": "Read or replace a session's task goal."
         },
         {
           "name": "session.create",

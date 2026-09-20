@@ -34,6 +34,28 @@ INSERT INTO sessions(
 -- present: i64!
 SELECT 1 AS present FROM sessions WHERE id = :id;
 
+-- name: SessionGoal :optional
+-- id: [16]u8!
+-- goal: []const u8!
+-- status: []const u8!
+SELECT goal, status FROM session_goals WHERE session_id = :id;
+
+-- name: SetSessionGoal :exec
+-- id: [16]u8!
+-- goal: []const u8!
+-- status: []const u8!
+INSERT INTO session_goals(session_id, goal, status) VALUES (:id, :goal, :status)
+ON CONFLICT(session_id) DO UPDATE SET goal = excluded.goal, status = excluded.status;
+
+-- name: DeleteSessionGoal :exec
+-- id: [16]u8!
+DELETE FROM session_goals WHERE session_id = :id;
+
+-- name: UpdateSessionPromptGoal :exec
+-- id: [16]u8!
+-- prompt: []const u8!
+UPDATE session_prompts SET prompt = :prompt WHERE session_id = :id;
+
 -- name: SessionSnapshot :optional
 -- Return the summary and open-run terminal marker for one id; omit id allocation marks because callers allocate them in write transactions.
 -- id: [16]u8!

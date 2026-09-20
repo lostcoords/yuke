@@ -90,6 +90,13 @@ plugins.use({
         "session:interrupt": { title: "Interrupt", description: "stop the run", slash: "interrupt" },
       });
 
+      // A blank chat can hold a goal which joins the session created by its first message.
+      ctx.tui.command(null, {
+        "session:goal": (goal) => withChat(c => c.setGoal(goal)),
+      }, {
+        "session:goal": { title: "Goal", description: "set, show, or clear this chat's goal", slash: "goal", args: true },
+      });
+
       ctx.tui.command(null, {
         "ui:sessions": () => openSessionFinder(ctx),
         "focus:left": () => root.focusDir("h"),
