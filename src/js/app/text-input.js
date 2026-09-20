@@ -153,6 +153,27 @@ export function nextWordEnd(s, at) {
   return /** @type {GraphemeCell} */ (cells[i]).at;
 }
 
+// Vim's uppercase W/B motions treat every non-whitespace run as one WORD.
+/** @param {string} s @param {number} at @returns {number} */
+export function nextWordStartBig(s, at) {
+  let i = at;
+  // When already on whitespace, W lands on the next WORD; when on a WORD,
+  // it first crosses that WORD and then the separating whitespace.
+  if (i < s.length && !/\s/u.test(s[i])) {
+    while (i < s.length && !/\s/u.test(s[i])) i++;
+  }
+  while (i < s.length && /\s/u.test(s[i])) i++;
+  return i;
+}
+
+/** @param {string} s @param {number} at @returns {number} */
+export function prevWordStartBig(s, at) {
+  let i = Math.min(at, s.length);
+  while (i > 0 && /\s/u.test(s[i - 1])) i--;
+  while (i > 0 && !/\s/u.test(s[i - 1])) i--;
+  return i;
+}
+
 // A caret step reads this many code units around the caret. No grapheme cluster is this long.
 const grapheme_window = 256;
 

@@ -30,6 +30,16 @@ check("word-end", t.caret === 18);
 press("0");
 check("zero", t.caret === 0);
 
+// Uppercase W/B treat punctuation as part of one WORD and must skip whitespace.
+t.setText("one,two three");
+setComposerMode(v.composer, "normal");
+press("0");
+press("W");
+check("big-word-forward", t.caret === 8);
+press("B");
+check("big-word-back", t.caret === 0);
+t.setText("alpha bravo charlie");
+
 // A shifted letter keeps its case, so D is not a pending d.
 press("$x");
 check("x", t.text === "alpha bravo charli" && t.caret === 17);
@@ -93,14 +103,29 @@ check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "",
   off();
 }
 
-// An unresolved sequence runs its second stroke on its own rather than dropping it.
+// Operators consume motions instead of dropping the second stroke.
 {
-  t.setText("abc def");
   setComposerMode(v.composer, "normal");
+  t.setText("one two three");
+  press("0");
+  press("de");
+  check("delete-to-word-end", t.text === " two three");
+  t.setText("one two three");
   press("$");
-  const at = t.caret;
+  press("db");
+  check("delete-back-word", t.text === "one two e");
+  t.setText("abc def");
+  press("$");
   press("dh");
-  check("operator-fallthrough", t.caret === at - 1 && t.text === "abc def");
+  check("operator-motion", t.text === "abc df");
+  t.setText("one two");
+  press("0");
+  press("diw");
+  check("inner-word-delete", t.text === " two");
+  t.setText("one,two");
+  press("0");
+  press("diw");
+  check("inner-word-punctuation-boundary", t.text === ",two");
 }
 
 // Esc reaches its binding while an operator waits, so a mode always has an exit.

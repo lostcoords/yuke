@@ -75,6 +75,19 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   off();
 }
 
+// Multi-stroke chords retain intermediate prefixes until the final stroke.
+{
+  let ran = 0;
+  const kev3 = (o) => Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o);
+  const off = keymap.add({ "f9 x y": () => { ran++; return true; } });
+  keymap.onKey(kev3({ code: "f9" }));
+  keymap.onKey(kev3({ char: "x" }));
+  check("multi-prefix-pending", keymap.pending !== null && keymap.pendingLabel() === "f9 x");
+  keymap.onKey(kev3({ char: "y" }));
+  check("multi-prefix-runs", ran === 1 && keymap.pending === null);
+  off();
+}
+
 // The chord wait is configurable and validated.
 {
   defineConfig({ keymap: { chordMs: 250 } });
