@@ -234,18 +234,35 @@ async function startBackground(command, context) {
   const same = sessionJobs(sessionId).find(j => j.state === "running" && j.command === command && (root === undefined || j.cwd === root));
   if (same) return `[job ${jobName(same)} already runs this command. Log: ${same.log}]`;
   const job = await hostCall("exec", startJob(command, { ...(root !== undefined ? { root } : {}), ...(sessionId !== undefined ? { sessionId } : {}) }));
-  return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use job_stop to request its stop.]`;
+  return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use jobs with id and stop: true to request its stop.]`;
+}
+
+// A job of another session stays hidden, so its id reads as absent.
+/** @param {string} name @param {string} id @param {ToolContext} context @returns {Job} */
+function jobOf(name, id, context) {
+  const job = /^j[1-9][0-9]*$/.test(id) ? getJob(Number(id.slice(1))) : null;
+  if (job && job.sessionId === (context?.sessionId ?? null)) return job;
+  const ids = sessionJobs(context?.sessionId).map(jobName);
+  return invalid(name, `the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
+}
+
+/** @param {Job} job @returns {string} */
+function jobLine(job) {
+  return `[${jobState(job)}. Log: ${job.log}]`;
 }
 
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
-async function jobStop(args, _signal, context) {
-  const name = "job_stop";
-  const id = stringArg(name, args, "id");
-  const job = /^j[1-9][0-9]*$/.test(id) ? getJob(Number(id.slice(1))) : null;
-  if (!job || job.sessionId !== (context?.sessionId ?? null)) {
-    const ids = sessionJobs(context?.sessionId).map(jobName);
-    return invalid(name, `the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
+async function jobs(args, _signal, context) {
+  const name = "jobs";
+  const stop = args.stop ?? false;
+  if (typeof stop !== "boolean") invalid(name, "the argument stop must be a boolean");
+  if (args.id == null) {
+    if (stop) invalid(name, "the argument stop needs the argument id");
+    const own = sessionJobs(context?.sessionId);
+    return own.length === 0 ? "[no job]" : own.map(jobLine).join("\n");
   }
+  const job = jobOf(name, stringArg(name, args, "id"), context);
+  if (!stop) return jobLine(job);
   return `[${jobState(/** @type {Job} */ (await stopJob(job.id)))}]`;
 }
 
@@ -273,8 +290,6 @@ async function exec(args, signal, context) {
   else if (r.signal !== null) text += `[A signal ended the command: ${r.signal}.]`;
   else text += `[exit code: ${r.code}]`;
   if (r.log !== null) text += `\n[The tool cut the output. Full log: ${r.log}. Use grep or read on it.]`;
-  const running = sessionJobs(context?.sessionId).filter(j => j.state === "running");
-  if (running.length !== 0) text += `\n[running jobs: ${running.map(j => `${jobName(j)} ${shortCommand(j.command)}`).join(", ")}]`;
   return text;
 }
 
@@ -320,11 +335,12 @@ builtin("exec", {
     background: { type: "boolean", description: "Run a server or watcher as a job and return at once." },
   }, required: ["command"], additionalProperties: false }, execute: exec,
 });
-builtin("job_stop", {
-  description: "Request a stop for a background job and its process group. Return at once. A requested stop sends no exit message.",
+builtin("jobs", {
+  description: "List the background jobs, or stop one. Pass no argument for the list. Pass id alone for one job and its log path. Pass id and stop: true to request the stop of the job and its process group. A requested stop sends no exit message.",
   parameters: { type: "object", properties: {
     id: { type: "string", description: "The job id, for example j1." },
-  }, required: ["id"], additionalProperties: false }, execute: jobStop,
+    stop: { type: "boolean", description: "Request the stop. It needs id." },
+  }, required: [], additionalProperties: false }, execute: jobs,
 });
 builtin("skill", {
   description: "Load the full instructions for a skill listed in the system prompt. Use this tool when the task matches the skill description.",

@@ -722,12 +722,24 @@ fn processExists(pid: std.posix.pid_t) bool {
 
 /// Submit one tool call from session 01…01, wait for it, and check that its text holds `part`.
 fn expectTool(host: *Host, name: []const u8, args: []const u8, is_error: bool, part: []const u8) !void {
+    return expectToolMatch(host, name, args, is_error, part, .holds);
+}
+
+/// Check the tail instead, so a test can pin what does not trail the text.
+fn expectToolEnd(host: *Host, name: []const u8, args: []const u8, is_error: bool, part: []const u8) !void {
+    return expectToolMatch(host, name, args, is_error, part, .ends);
+}
+
+fn expectToolMatch(host: *Host, name: []const u8, args: []const u8, is_error: bool, part: []const u8, match: enum { holds, ends }) !void {
     const call = host.calls.submit(name, args, "/tmp");
     call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
     try support.pumpUntilSettled(host, call);
     errdefer std.debug.print("{s} {s} -> {s}\n", .{ name, args, call.text orelse "" });
     try std.testing.expectEqual(is_error, call.is_error);
-    try std.testing.expect(std.mem.indexOf(u8, call.text.?, part) != null);
+    switch (match) {
+        .holds => try std.testing.expect(std.mem.indexOf(u8, call.text.?, part) != null),
+        .ends => try std.testing.expect(std.mem.endsWith(u8, call.text.?, part)),
+    }
     try support.dropCall(host, call);
 }
 
@@ -756,18 +768,21 @@ test "background jobs start, list, stop, and report a natural exit once to their
     try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", false, "[job j1 started: sleep 30.");
     try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", false, "[job j1 already runs this command.");
     try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true,\"timeout_ms\":5}", true, "Remove one of the two arguments");
-    try expectTool(host, "exec", "{\"command\":\"echo hi\"}", false, "[running jobs: j1 sleep 30]");
-    try expectTool(host, "job_stop", "{\"id\":\"j9\"}", true, "the job j9 does not exist. The jobs are: j1.");
+    try expectToolEnd(host, "exec", "{\"command\":\"echo hi\"}", false, "hi\n[exit code: 0]");
+    try expectTool(host, "jobs", "{}", false, "[j1 running: sleep 30. Log: ");
+    try expectTool(host, "jobs", "{\"id\":\"j1\"}", false, "[j1 running: sleep 30. Log: ");
+    try expectTool(host, "jobs", "{\"stop\":true}", true, "the argument stop needs the argument id");
+    try expectTool(host, "jobs", "{\"id\":\"j9\"}", true, "the job j9 does not exist. The jobs are: j1.");
     try expectTool(host, "exec", "{\"command\":\"echo done; exit 2\",\"background\":true}", false, "[job j2 started");
-    try expectTool(host, "job_stop", "{\"id\":\"j1\"}", false, "[j1 stop requested: sleep 30]");
+    try expectTool(host, "jobs", "{\"id\":\"j1\",\"stop\":true}", false, "[j1 stop requested: sleep 30]");
     try support.pumpUntilTrue(host, "globalThis.j1Ended");
-    try expectTool(host, "job_stop", "{\"id\":\"j1\"}", false, "[j1 stopped: sleep 30]");
+    try expectTool(host, "jobs", "{\"id\":\"j1\",\"stop\":true}", false, "[j1 stopped: sleep 30]");
     try support.pumpUntilTrue(host, "sent.length === 1");
     try support.pumpUntilIdle(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
         \\sent.length === 1 && sent[0].startsWith("[job j2 exited (exit code 2): echo done; exit 2. Log: ") && sent[0].endsWith("]\ndone") ? 1 : 0
     ));
-    try expectTool(host, "job_stop", "{\"id\":\"j2\"}", false, "[j2 exited (exit code 2): echo done; exit 2]");
+    try expectTool(host, "jobs", "{\"id\":\"j2\",\"stop\":true}", false, "[j2 exited (exit code 2): echo done; exit 2]");
 }
 
 test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves its exit" {
