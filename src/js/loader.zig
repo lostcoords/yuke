@@ -162,6 +162,7 @@ test "resolve joins a relative import, leaves the config directory, and keeps an
         .{ .base = "/cfg/a.js", .name = "../sibling/b.js", .want = &.{ "/sibling", "b.js" } },
         .{ .base = "", .name = "/other/x.js", .want = &.{"/other/x.js"} },
     }) |case| {
+        errdefer std.debug.print("case: {s} + {s}\n", .{ case.base, case.name });
         const got = try resolve(gpa, case.base, case.name);
         defer gpa.free(got);
         const want = try std.fs.path.resolve(gpa, case.want);

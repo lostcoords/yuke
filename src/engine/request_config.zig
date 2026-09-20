@@ -105,6 +105,7 @@ pub const HookContext = struct {
 };
 
 pub fn hookContext(engine: *const Engine, slot: *const RunSlot, has_skills: bool) HookContext {
+    std.debug.assert(engine.max_agent_depth > 0);
     return .{ .session_id = slot.sessionId(), .parent_id = slot.parent_id, .depth = slot.depth, .max_agent_depth = engine.max_agent_depth, .agent_name = slot.config.name orelse "root", .workspace = slot.config.root, .has_skills = has_skills };
 }
 

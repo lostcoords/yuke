@@ -636,6 +636,19 @@ test "the agents plugin sets the native limits from its options and a dispose re
     try std.testing.expectEqual(@as(u32, 1), f.app.engine.max_agent_depth);
 }
 
+test "the largest agent limit survives the answer a dispose reads" {
+    var f: Fixture = undefined;
+    try f.init(
+        \\import { plugins } from "yuke";
+        \\import { agents } from "yuke/chat";
+        \\plugins.use(agents({ catalog: { only: {} }, maxConcurrent: 0xffffffff }));
+    , kernel_boot);
+    defer f.deinit();
+    try std.testing.expectEqual(@as(u32, 0xffffffff), f.app.engine.max_concurrent_children);
+    try f.extensions.host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"agents\");", "dispose.js");
+    try std.testing.expectEqual(@as(u32, 8), f.app.engine.max_concurrent_children);
+}
+
 test "an agents catalog with no limit option keeps the engine limits" {
     var f: Fixture = undefined;
     try f.init(

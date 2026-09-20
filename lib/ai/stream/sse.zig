@@ -178,13 +178,14 @@ test "split at every byte boundary, including CRLF" {
 }
 
 test "every line ending frames the same events and multi-line data joins with a newline" {
-    // The two-data-line CRLF case is the one where a dropped CR state reads the same as success.
+    // A dropped CR state reads the same as success unless the case holds two data lines.
     for ([_]struct { chunks: []const []const u8, want: []const []const u8 }{
         .{ .chunks = &.{"data: a\r\ndata: b\r\n\r\n"}, .want = &.{"a\nb"} },
         .{ .chunks = &.{"data: {\"x\":1}\r\rdata: {\"y\":2}\r\r"}, .want = &.{ "{\"x\":1}", "{\"y\":2}" } },
         .{ .chunks = &.{ "data: hi\r", "\n\r\n" }, .want = &.{"hi"} },
         .{ .chunks = &.{"data: a\ndata: b\n\n"}, .want = &.{"a\nb"} },
     }) |case| {
+        errdefer std.debug.print("chunks: {s}\n", .{case.chunks[0]});
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
         const events = try frame(case.chunks, arena.allocator());

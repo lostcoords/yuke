@@ -101,11 +101,20 @@ test "a config change stores a revision, sets the current config, and reads back
     try testing.expectEqual(@as(u64, 1), snap.config_rev);
     try testing.expectEqual(@as(?u64, 7), snap.max_rounds);
 
-    const got = (try byRevision(&db, a, sid, 1)).?;
-    try testing.expectEqual(@as(u64, 1), got.config_rev);
-    try testing.expectEqual(@as(?u64, 7), got.max_rounds);
-    try testing.expectEqualStrings("sonnet", got.model);
-    try testing.expectEqualStrings("low", got.reasoning);
+    // A second revision proves that byRevision reads the row it names, not the current one.
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try appendConfig(&db, a, sid, [_]u8{2} ** 16, 300, .{ .config_rev = 2, .model = "opus", .reasoning = "high", .max_rounds = 5 });
+    try db.conn.execNoArgs("COMMIT");
+
+    const first = (try byRevision(&db, a, sid, 1)).?;
+    try testing.expectEqual(@as(u64, 1), first.config_rev);
+    try testing.expectEqual(@as(?u64, 7), first.max_rounds);
+    try testing.expectEqualStrings("sonnet", first.model);
+    try testing.expectEqualStrings("low", first.reasoning);
+
+    const second = (try byRevision(&db, a, sid, 2)).?;
+    try testing.expectEqual(@as(?u64, 5), second.max_rounds);
+    try testing.expectEqualStrings("opus", second.model);
     try testing.expect((try byRevision(&db, a, sid, 99)) == null);
 }
 

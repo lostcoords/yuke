@@ -454,7 +454,7 @@ fn jsSetAgentLimits(ctx: Context, _: Value, args: []const Value) Value {
     runtime.engine.setAgentLimits(next[0], next[1]) catch return ctx.throwPlainError("the agent scheduler could not start");
     // The caller keeps the previous pair, so a plugin dispose can put it back.
     const pair = ctx.newArray();
-    for (previous, 0..) |limit, i| module.setIndex(ctx, pair, i, ctx.newInt32(@intCast(limit)));
+    for (previous, 0..) |limit, i| module.setIndex(ctx, pair, i, ctx.newUint32(limit));
     if (ctx.hasException()) {
         ctx.freeValue(pair);
         return module.throwPending(ctx);
