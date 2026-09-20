@@ -16,14 +16,19 @@ pub const Error = error{
     RateLimitUnknown, // 429 the client could not read or decode
     ServerError, // 5xx
     BadStatus, // Any other non-200 status.
-    Timeout, // 408 or 504. The provider answered.
+    StatusTimeout, // 408 or 504. The provider answered.
     IdleTimeout, // The read stalled past the deadline. The request may already be held.
     RedirectRefused, // The client must not follow a 3xx response.
     BadUrl,
     InvalidHeaders,
+    ConnectFailed, // The socket or the TLS handshake never carried a request.
+    DnsFailed, // The provider host did not resolve.
+    ConnectionLost, // An open connection broke during the exchange.
+    MalformedResponse, // The peer sent a head, a chunk, or an encoding the client refuses.
+    CertificateBundleLoadFailure, // `std` names this failure, so the transport keeps the name.
 };
 
-/// The caller owns one shared client and lends its transport to each call.
+/// One executor drives every call on this shared client, because `std.http.Client` reads `now` outside its own lock.
 pub const HttpTransport = struct {
     client: std.http.Client,
     idle_timeout: ?std.Io.Duration,
@@ -41,6 +46,12 @@ pub const HttpTransport = struct {
         self.client.deinit();
     }
 
+    /// Move the clock `std` pins at its first handshake, so a certificate that rotates mid-process still verifies.
+    fn refreshCertificateClock(self: *HttpTransport) void {
+        // A concurrent first load can write a clock one rescan older, far under the one-second certificate grain.
+        if (self.client.now != null) self.client.now = std.Io.Clock.real.now(self.client.io);
+    }
+
     pub fn transportFor(self: *HttpTransport) transport.Transport {
         return .{ .ctx = self, .vtable = &vtable };
     }
@@ -51,6 +62,7 @@ pub const HttpTransport = struct {
         const self: *HttpTransport = @ptrCast(@alignCast(ctx));
         if (!route.validHeaders(request.headers)) return Error.InvalidHeaders;
         const uri = std.Uri.parse(request.url) catch return Error.BadUrl;
+        self.refreshCertificateClock();
 
         // The provider sends SSE, so request it. The transport owns Accept and User-Agent, so a route copy is dropped.
         const extra = try arena.alloc(std.http.Header, request.headers.len + 1);
@@ -62,10 +74,9 @@ pub const HttpTransport = struct {
             extra_len += 1;
         }
 
-        const hb = try self.client.allocator.create(HttpBody);
-        errdefer self.client.allocator.destroy(hb);
+        // The body borrows the arena, and every caller deinits it before that arena dies.
+        const hb = try arena.create(HttpBody);
         hb.* = .{
-            .gpa = self.client.allocator,
             .io = self.client.io,
             .idle_timeout = if (self.idle_timeout) |timeout| .{ .duration = .{
                 .clock = .awake,
@@ -77,7 +88,7 @@ pub const HttpTransport = struct {
             .reader = undefined,
         };
 
-        hb.request = try self.client.request(.POST, uri, .{
+        hb.request = self.client.request(.POST, uri, .{
             .redirect_behavior = .not_allowed, // Never resend the key to another origin.
             .keep_alive = false, // The client sends one request. A mid-stream connection never returns to the pool.
             .headers = .{
@@ -86,7 +97,7 @@ pub const HttpTransport = struct {
                 .user_agent = .{ .override = self.user_agent },
             },
             .extra_headers = extra[0..extra_len],
-        });
+        }) catch |err| return mapExchange(null, err);
         // A failed send or read leaves a partial exchange. Close the connection so the pool never reuses it.
         errdefer {
             if (hb.request.connection) |c| c.closing = true;
@@ -95,17 +106,14 @@ pub const HttpTransport = struct {
 
         // The provider may hold the request from this point. A later transport fault is ambiguous.
         info.delivery = .possibly_sent;
-        try hb.request.sendBodyComplete(request.body);
-        hb.response = hb.request.receiveHead(&.{}) catch |err| switch (err) {
-            error.TooManyHttpRedirects => return Error.RedirectRefused, // Never follow a redirect.
-            else => return err,
-        };
+        hb.request.sendBodyComplete(request.body) catch |err| return mapExchange(hb.request.connection, err);
+        hb.response = hb.request.receiveHead(&.{}) catch |err| return mapExchange(hb.request.connection, err);
         try readHeaders(hb.response.head, arena, info); // The reader below invalidates these slices.
         if (hb.response.head.status != .ok) {
-            const status = hb.response.head.status;
-            info.status = @intFromEnum(status);
+            const status: u16 = @intFromEnum(hb.response.head.status);
+            info.status = status;
             info.body = try readErrorBody(hb, arena);
-            if (@intFromEnum(status) == 429) return classify429(info.body orelse return Error.RateLimitUnknown, arena);
+            if (status == 429) return classify429(info.body orelse return Error.RateLimitUnknown, arena);
             return mapStatus(status);
         }
 
@@ -116,12 +124,11 @@ pub const HttpTransport = struct {
 
 /// This response owns the request and the transfer buffer until the caller invokes deinit.
 const HttpBody = struct {
-    gpa: Allocator,
     io: std.Io,
     idle_timeout: std.Io.Timeout,
     request: std.http.Client.Request,
     response: std.http.Client.Response,
-    /// The largest frame a provider sends stays under this size, so a whole line needs no second copy.
+    /// The transfer chunk for the body reader. The SSE parser copies any line that passes it.
     transfer_buffer: [8192]u8,
     reader: *std.Io.Reader,
 
@@ -174,14 +181,13 @@ const HttpBody = struct {
                 // A malformed or truncated body sets bodyErr without a socket error. Return it as a peer error.
                 if (self.response.bodyErr()) |be| {
                     if (self.request.connection) |c| c.closing = true;
-                    return be;
+                    return switch (be) {
+                        error.HttpChunkTruncated => Error.ConnectionLost,
+                        error.HttpChunkInvalid, error.HttpHeadersOversize => Error.MalformedResponse,
+                    };
                 }
-                // A socket failure sets the read error. The getReadError call can now unwrap it safely.
-                const cause = if (self.request.connection) |c| c.getReadError() else null;
-                if (cause) |ce| return ce;
-                return error.ReadFailed;
+                return readCause(self.request.connection.?); // A socket failure sets the read error instead.
             },
-            else => |e| return e,
         };
         const have = self.reader.buffered();
         std.debug.assert(have.len > 0); // fill(1) returned, so the reader holds at least one byte
@@ -190,8 +196,7 @@ const HttpBody = struct {
 
     fn deinit(ctx: *anyopaque) void {
         const self: *HttpBody = @ptrCast(@alignCast(ctx));
-        self.request.deinit();
-        self.gpa.destroy(self);
+        self.request.deinit(); // The arena owns the struct, so only the request needs a release.
     }
 };
 
@@ -215,13 +220,80 @@ fn readHeaders(head: std.http.Client.Response.Head, arena: Allocator, info: *tra
     }
 }
 
+/// Name one exchange failure through an exhaustive switch, so a `std` rename breaks the build.
+fn mapExchange(conn: ?*std.http.Client.Connection, err: std.http.Client.Request.ReceiveHeadError) anyerror {
+    return switch (err) {
+        error.OutOfMemory, error.Canceled => |e| e,
+        error.UnsupportedUriScheme, error.UriMissingHost => Error.BadUrl,
+        error.CertificateBundleLoadFailure => Error.CertificateBundleLoadFailure,
+        // The client never follows a redirect, so every redirect step is one refusal.
+        error.TooManyHttpRedirects,
+        error.RedirectRequiresResend,
+        error.HttpRedirectLocationMissing,
+        error.HttpRedirectLocationOversize,
+        error.HttpRedirectLocationInvalid,
+        => Error.RedirectRefused,
+        error.UnknownHostName,
+        error.NoAddressReturned,
+        error.NameServerFailure,
+        error.ResolvConfParseFailed,
+        error.InvalidDnsARecord,
+        error.InvalidDnsAAAARecord,
+        error.InvalidDnsCnameRecord,
+        error.DetectingNetworkConfigurationFailed,
+        => Error.DnsFailed,
+        error.HttpHeadersOversize,
+        error.HttpHeadersInvalid,
+        error.HttpContentEncodingUnsupported,
+        error.HttpChunkInvalid,
+        => Error.MalformedResponse,
+        error.HttpRequestTruncated,
+        error.HttpConnectionClosing,
+        error.HttpChunkTruncated,
+        error.WriteFailed,
+        => Error.ConnectionLost,
+        error.ReadFailed => readCause(conn.?), // Only an open connection reads, so one exists here.
+        // Nothing below reaches the provider, whatever stops the connect.
+        error.Timeout,
+        error.SystemResources,
+        error.ConnectionResetByPeer,
+        error.WouldBlock,
+        error.AccessDenied,
+        error.Unexpected,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        error.NetworkDown,
+        error.AddressInUse,
+        error.AddressUnavailable,
+        error.AddressFamilyUnsupported,
+        error.ProtocolUnsupportedBySystem,
+        error.ProtocolUnsupportedByAddressFamily,
+        error.SocketModeUnsupported,
+        error.OptionUnsupported,
+        error.ConnectionPending,
+        error.ConnectionRefused,
+        error.HostUnreachable,
+        error.NetworkUnreachable,
+        error.TlsInitializationFailed,
+        => Error.ConnectFailed,
+    };
+}
+
+/// Unwrap a read fault, where every socket and TLS cause names one broken connection.
+fn readCause(conn: *std.http.Client.Connection) anyerror {
+    return switch (conn.getReadError().?) { // A read fault always records its cause.
+        error.Canceled => error.Canceled,
+        else => Error.ConnectionLost,
+    };
+}
+
 /// Map a non-200 status to a stable class. The 505...599 range covers Anthropic's 529.
-fn mapStatus(status: std.http.Status) Error {
-    return switch (@intFromEnum(status)) {
+fn mapStatus(status: u16) Error {
+    return switch (status) {
         401 => Error.AuthFailed,
         402 => Error.QuotaExhausted,
         403 => Error.PermissionDenied,
-        408, 504 => Error.Timeout,
+        408, 504 => Error.StatusTimeout,
         500...503, 505...599 => Error.ServerError,
         else => Error.BadStatus,
     };
@@ -420,6 +492,20 @@ fn exchange(srv: *Server, out: *ClientOut) !void {
     var client = try io.concurrent(clientTask, .{out});
     client.await(io);
     server.await(io);
+}
+
+test "the transport moves the certificate clock but leaves the first bundle load to std" {
+    var t: HttpTransport = .init(testing.allocator, testing.io, null, test_user_agent);
+    defer t.deinit();
+
+    // A clock set here stops `std` from ever loading the root bundle, so a fresh client keeps none.
+    t.refreshCertificateClock();
+    try testing.expectEqual(@as(?std.Io.Timestamp, null), t.client.now);
+
+    // A pin that outlives the certificate it verified rejects every later rotation.
+    t.client.now = .fromNanoseconds(1);
+    t.refreshCertificateClock();
+    try testing.expect(t.client.now.?.toSeconds() > 1_700_000_000);
 }
 
 test "streams an SSE response body over http" {

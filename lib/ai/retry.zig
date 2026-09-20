@@ -91,7 +91,7 @@ test "a permanent class and the server veto stop the retry" {
 }
 
 test "an ambiguous delivery stops a transport failure only" {
-    var cut = failed(error.ConnectionResetByPeer, 1);
+    var cut = failed(http.Error.ConnectionLost, 1);
     cut.info.delivery = .possibly_sent;
     // No idempotency key exists for either provider, so a repeat could bill the same work twice.
     try testing.expectEqual(@as(?u64, null), decide(default, cut, 0.0));

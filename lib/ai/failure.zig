@@ -22,7 +22,10 @@ pub const Reason = enum {
     connect_failed,
     dns_failed,
     stream_truncated,
+    connection_lost,
     malformed_stream,
+    stream_too_large,
+    trust_store_failed,
     auth_rejected,
     permission_denied,
     quota_exhausted,
@@ -47,7 +50,10 @@ pub const Reason = enum {
             .connect_failed => "the provider connection failed",
             .dns_failed => "the provider host did not resolve",
             .stream_truncated => "the provider stream ended early",
+            .connection_lost => "the provider connection ended",
             .malformed_stream => "the provider stream was malformed",
+            .stream_too_large => "the provider stream exceeds the library size limit",
+            .trust_store_failed => "the system certificate store could not be read",
             .auth_rejected => "the provider rejected the API key",
             .permission_denied => "the provider denied permission for this request",
             .quota_exhausted => "the provider account quota is exhausted",
@@ -75,23 +81,15 @@ pub fn classify(err: anyerror) Failure {
     return switch (err) {
         http.Error.RateLimited => .{ .class = .answered_transient, .reason = .rate_limited },
         http.Error.ServerError => .{ .class = .answered_transient, .reason = .server_error },
-        http.Error.Timeout => .{ .class = .answered_transient, .reason = .stream_timeout },
+        http.Error.StatusTimeout => .{ .class = .answered_transient, .reason = .stream_timeout },
 
+        // The transport owns the `std` error names, so this table reads its closed set only.
         http.Error.IdleTimeout => .{ .class = .transport, .reason = .stream_timeout },
-        error.ConnectionRefused,
-        error.ConnectionResetByPeer,
-        error.ConnectionTimedOut,
-        error.NetworkUnreachable,
-        error.EndOfStream,
-        => .{ .class = .transport, .reason = .connect_failed },
-        error.TemporaryNameServerFailure,
-        error.NameServerFailure,
-        error.HostLacksNetworkAddresses,
-        => .{ .class = .transport, .reason = .dns_failed },
+        http.Error.ConnectFailed => .{ .class = .transport, .reason = .connect_failed },
+        http.Error.ConnectionLost => .{ .class = .transport, .reason = .connection_lost },
+        http.Error.DnsFailed => .{ .class = .transport, .reason = .dns_failed },
         // A stream without its terminal event is a truncation, not a malformed stream.
-        error.IncompleteStream,
-        error.HttpChunkTruncated,
-        => .{ .class = .transport, .reason = .stream_truncated },
+        error.IncompleteStream => .{ .class = .transport, .reason = .stream_truncated },
 
         error.OutOfMemory => .{ .class = .permanent, .reason = .out_of_memory },
         error.RequestTooLarge => .{ .class = .permanent, .reason = .request_too_large },
@@ -108,10 +106,15 @@ pub fn classify(err: anyerror) Failure {
         http.Error.BadUrl => .{ .class = .permanent, .reason = .bad_url },
         http.Error.InvalidHeaders => .{ .class = .permanent, .reason = .invalid_headers },
         http.Error.RedirectRefused => .{ .class = .permanent, .reason = .redirect_refused },
+        http.Error.CertificateBundleLoadFailure => .{ .class = .permanent, .reason = .trust_store_failed },
         // A parse error never repeats. Keep it apart from a truncation.
+        http.Error.MalformedResponse,
         error.Protocol,
-        error.HttpChunkInvalid,
         => .{ .class = .permanent, .reason = .malformed_stream },
+        error.LineTooLong,
+        error.EventTooLarge,
+        error.ResponseTooLarge,
+        => .{ .class = .permanent, .reason = .stream_too_large },
         else => .{ .class = .permanent, .reason = .unknown },
     };
 }
@@ -121,21 +124,23 @@ const testing = std.testing;
 test "every transport class names its exact connection reason, never a provider answer" {
     // A retryable connection fault must never reach a caller as a permanent provider failure.
     for ([_]struct { anyerror, Reason }{
-        .{ error.ConnectionRefused, .connect_failed },
-        .{ error.ConnectionResetByPeer, .connect_failed },
-        .{ error.ConnectionTimedOut, .connect_failed },
-        .{ error.NetworkUnreachable, .connect_failed },
-        .{ error.EndOfStream, .connect_failed },
-        .{ error.TemporaryNameServerFailure, .dns_failed },
-        .{ error.NameServerFailure, .dns_failed },
-        .{ error.HostLacksNetworkAddresses, .dns_failed },
+        .{ http.Error.ConnectFailed, .connect_failed },
+        .{ http.Error.ConnectionLost, .connection_lost },
+        .{ http.Error.DnsFailed, .dns_failed },
         .{ error.IncompleteStream, .stream_truncated },
-        .{ error.HttpChunkTruncated, .stream_truncated },
         .{ http.Error.IdleTimeout, .stream_timeout },
     }) |case| {
         const got = classify(case[0]);
         try testing.expectEqual(Class.transport, got.class);
         try testing.expectEqual(case[1], got.reason);
+    }
+}
+
+test "every transport error names a reason, so none reaches a caller as unknown" {
+    // The transport owns a closed set. An unlisted member would read as a bare provider failure.
+    inline for (@typeInfo(http.Error).error_set.?) |member| {
+        const got = classify(@field(http.Error, member.name));
+        try testing.expect(got.reason != .unknown);
     }
 }
 

@@ -115,7 +115,7 @@ const Fixture = struct {
         if (self.stage == .retry and index == 0) {
             self.waiting_with_draft = self.activity.?.state == .waiting and self.base.engine.sessions.get(id).?.draft != null;
             try self.pause();
-            return error.ConnectionRefused;
+            return ai.transport.HttpError.ConnectFailed;
         }
         const body = try arena.create(Body);
         body.* = .{
@@ -140,7 +140,7 @@ const Fixture = struct {
             const self: *Body = @ptrCast(@alignCast(ctx));
             if (self.cut) {
                 try self.fixture.pause();
-                return error.ConnectionResetByPeer;
+                return ai.transport.HttpError.ConnectionLost;
             }
             const gate = if (self.gated)
                 std.mem.indexOf(u8, self.bytes, "data: {\"type\":\"message_delta\"") orelse self.bytes.len / 2

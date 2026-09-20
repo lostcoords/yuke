@@ -40,8 +40,8 @@ fn codeOf(reason: ai.failure.Reason) proto.enums.RunErrorCode {
     return switch (reason) {
         .rate_limited, .rate_limit_unknown => .rate_limited,
         .stream_timeout => .timeout,
-        .connect_failed, .dns_failed, .stream_truncated => .network,
-        .malformed_stream, .redirect_refused => .protocol,
+        .connect_failed, .dns_failed, .stream_truncated, .connection_lost, .trust_store_failed => .network,
+        .malformed_stream, .redirect_refused, .stream_too_large => .protocol,
         .auth_rejected, .permission_denied => .auth,
         .quota_exhausted => .quota_exhausted,
         .out_of_memory => .internal,
@@ -120,9 +120,9 @@ const testing = std.testing;
 test "every transport class reports a network or timeout code" {
     // A retryable connection fault must never reach the client as a generic provider failure.
     for ([_]anyerror{
-        error.ConnectionRefused,
-        error.NetworkUnreachable,
-        error.NameServerFailure,
+        ai.transport.HttpError.ConnectFailed,
+        ai.transport.HttpError.ConnectionLost,
+        ai.transport.HttpError.DnsFailed,
         error.IncompleteStream,
         ai.transport.HttpError.IdleTimeout,
     }) |err| {
