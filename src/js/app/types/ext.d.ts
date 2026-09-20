@@ -48,8 +48,6 @@ export interface ToolDefinition {
   description: string;
   parameters: Record<string, unknown>;
   execute: ToolExecute;
-  spawnsAgents?: boolean;
-  needsSkills?: boolean;
 }
 
 export interface Capabilities {

@@ -54,12 +54,14 @@ pub const Phase = enum {
     jobs_output,
     timers_batch,
     tool_call,
+    hook_request_build,
+    hook_tool_before,
     plugin_sync,
     plugin_async,
     interaction_reused,
     interaction_fresh,
 
-    const Group = enum { transcript, colors, advice, agents, process, tools, plugins, net, utf8, interaction };
+    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, utf8, interaction };
 
     fn group(self: Phase) Group {
         return switch (self) {
@@ -68,6 +70,7 @@ pub const Phase = enum {
             .utf8_reused, .utf8_fresh => .utf8,
             .interaction_reused, .interaction_fresh => .interaction,
             .tool_call => .tools,
+            .hook_request_build, .hook_tool_before => .hooks,
             .plugin_sync, .plugin_async => .plugins,
             .colors => .colors,
             .agents_open, .agents_activity, .agents_burst, .agents_structure, .engine_activity, .engine_activity_changed => .agents,
@@ -140,6 +143,7 @@ pub const Harness = struct {
         try self.host.evalModule(switch (self.phase_group) {
             .interaction => @embedFile("interaction.js"),
             .tools => tool_source,
+            .hooks => hook_source,
             .plugins => plugin_source,
             .process => @embedFile("process.js"),
             .net => @embedFile("net.js"),
@@ -210,6 +214,7 @@ pub const Harness = struct {
         if (phase == .colors or phase.group() == .agents) _ = try self.call(self.step_fn, &.{});
         if (phase.group() == .agents) _ = try self.host.evalInt("agentResetReads()");
         if (phase == .tool_call) try self.toolOnce();
+        if (phase.group() == .hooks) try self.hookOnce(phase);
         if (phase.group() == .plugins) _ = try self.call(self.step_fn, &.{});
         if (phase.group() == .net) try self.drainClosedSockets();
         self.host.runtime.runGC();
@@ -262,6 +267,41 @@ pub const Harness = struct {
         \\globalThis.bench = { start: () => 1, step: () => 1, verify: () => 1 };
     ;
 
+    /// One plugin holds both points, as the agents plugin does: a replace on the request and a pass on the tool.
+    const hook_source =
+        \\import { plugins } from "yuke:ext";
+        \\plugins.use({ name: "probe", apply(ctx) {
+        \\  ctx.hook("request.build", (request) => ({ replace: { ...request, system: request.system + "\n\nDo not spawn a child unless the user asks." } }));
+        \\  ctx.hook("tool.before", () => null);
+        \\} });
+        \\globalThis.bench = { start: () => 1, step: () => 1, verify: () => 1 };
+    ;
+
+    /// A request.build payload as the engine sends it: an 8 KB prompt and the six built-in declarations.
+    const hook_request_payload =
+        \\{"model":"gpt-5.6-luna","system":"You are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\nYou are yuke, an assistant for software development.\n# AGENTS.md\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n- keep the articles; one idea per sentence; short sentences; consistent terms.\n","tools":[{"name":"read","description":"Read a file. A relative path resolves against the workspace root. Pass start and end to read a line range.","input_schema":"{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"The file path. A relative path resolves against the workspace root.\"},\"start\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"The first line, 1-based.\"},\"end\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"The last line, inclusive.\"}},\"required\":[\"path\"],\"additionalProperties\":false}","strict":false},{"name":"write","description":"Create or overwrite a file with the complete content.","input_schema":"{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"The file path. A relative path resolves against the workspace root.\"},\"content\":{\"type\":\"string\",\"description\":\"The complete content for the file.\"}},\"required\":[\"path\",\"content\"],\"additionalProperties\":false}","strict":false},{"name":"edit","description":"Replace an exact string in a file. old_string must appear exactly once unless replace_all is true.","input_schema":"{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"The file path. A relative path resolves against the workspace root.\"},\"old_string\":{\"type\":\"string\",\"description\":\"The exact text to replace.\"},\"new_string\":{\"type\":\"string\",\"description\":\"The replacement text.\"},\"replace_all\":{\"type\":\"boolean\",\"description\":\"Replace every non-overlapping match.\"}},\"required\":[\"path\",\"old_string\",\"new_string\"],\"additionalProperties\":false}","strict":false},{"name":"exec","description":"Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell and ends every process it started. For a server or watcher, set background: true; never use &, nohup, or setsid.\n\n`timeout_ms` is optional (default 120000, max 600000).","input_schema":"{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell command to run.\"},\"timeout_ms\":{\"type\":[\"integer\",\"null\"],\"minimum\":1,\"maximum\":600000,\"description\":\"The timeout in milliseconds.\"},\"background\":{\"type\":\"boolean\",\"description\":\"Run a server or watcher as a job and return at once.\"}},\"required\":[\"command\"],\"additionalProperties\":false}","strict":false},{"name":"job_stop","description":"Request a stop for a background job and its process group. Return at once. A requested stop sends no exit message.","input_schema":"{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The job id, for example j1.\"}},\"required\":[\"id\"],\"additionalProperties\":false}","strict":false},{"name":"skill","description":"Load the full instructions for a skill listed in the system prompt. Use this tool when the task matches the skill description.","input_schema":"{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\",\"description\":\"Pass the name from an available_skills entry.\"}},\"required\":[\"name\"],\"additionalProperties\":false}","strict":false}],"max_output_tokens":128000,"context":{"session_id":"01010101010101010101010101010101","parent_id":null,"workspace":"/Users/xyaman/Work/yuke","agent_name":"root"}}
+    ;
+
+    const hook_tool_payload =
+        \\{"name":"exec","arguments":"{\"command\":\"zig build test --seed 0 --summary new\"}","context":{"session_id":"01010101010101010101010101010101","parent_id":null,"agent_name":"root"}}
+    ;
+
+    fn hookOnce(self: *Harness, phase: Phase) !void {
+        const point: []const u8 = if (phase == .hook_request_build) "request.build" else "tool.before";
+        const payload: []const u8 = if (phase == .hook_request_build) hook_request_payload else hook_tool_payload;
+        const held = self.host.calls.submitHook(point, payload);
+        defer {
+            held.finish();
+            self.host.calls.sweep(self.host.ctx);
+        }
+        try self.host.pump();
+        if (held.state != .settled or held.is_error) return error.InvalidToolResult;
+        const text = held.text orelse return error.InvalidToolResult;
+        // A replace echoes the request; a pass is the empty answer.
+        if (phase == .hook_request_build and text.len < payload.len) return error.InvalidToolResult;
+        if (phase == .hook_tool_before and text.len != 0) return error.InvalidToolResult;
+    }
+
     fn toolOnce(self: *Harness) !void {
         const invocation = self.host.calls.submit("probe", "{}", "");
         defer {
@@ -282,6 +322,8 @@ pub const Harness = struct {
             self.host.runtime.runGC();
         } else if (phase == .tool_call) {
             try self.toolOnce();
+        } else if (phase.group() == .hooks) {
+            try self.hookOnce(phase);
         } else if (phase == .boot) {
             try self.bootOnce();
         } else {

@@ -26,6 +26,7 @@ const event = ai.event;
 const agent_name = "claude";
 const round_request = @import("request.zig");
 const request_context = @import("context.zig");
+const request_config_mod = @import("request_config.zig");
 
 /// Run one turn. The engine task group owns this task. The session owns `slot` until cleanup.
 pub fn execute(engine: *Engine, slot: *RunSlot) void {
@@ -670,15 +671,15 @@ const ToolCall = struct {
 const ToolCallPayload = struct {
     name: []const u8,
     arguments: []const u8,
-    context: struct { session_id: proto.ids.SessionId, parent_id: ?proto.ids.SessionId, agent_name: []const u8 },
+    context: request_config_mod.HookContext,
 };
 
-test "tool rewrites obey the current depth limit before dispatch" {
+test "the run loadout gates a tool call, and a tool.before rewrite lands inside it" {
     const State = struct {
         calls: usize = 0,
 
-        fn allowed(_: *anyopaque, name: []const u8, selection: toolset.Selection) bool {
-            return !std.mem.eql(u8, name, "delegate") or selection.can_spawn;
+        fn names(_: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
+            return try arena.dupe([]const u8, &.{ "delegate", "read" });
         }
 
         fn execute(raw: *anyopaque, _: std.mem.Allocator, name: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
@@ -689,15 +690,21 @@ test "tool rewrites obey the current depth limit before dispatch" {
         }
 
         fn holds(_: *anyopaque, point: proto.hook.Point) bool {
-            return point == .@"tool.before";
+            return point == .@"tool.before" or point == .@"tools.select";
         }
 
         fn ask(_: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) @import("hookset.zig").Decision {
-            std.debug.assert(point == .@"tool.before");
             const sent = std.json.parseFromSliceLeaky(std.json.Value, arena, payload, .{}) catch unreachable;
             const context = sent.object.get("context").?.object;
             std.debug.assert(context.get("parent_id").? == .null);
+            std.debug.assert(context.get("depth").?.integer == 0);
             std.debug.assert(std.mem.eql(u8, "root", context.get("agent_name").?.string));
+            if (point == .@"tools.select") {
+                const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"tools\":[\"delegate\"]}", .{}) catch unreachable;
+                return .{ .replace = value };
+            }
+            std.debug.assert(point == .@"tool.before");
+            if (!std.mem.eql(u8, sent.object.get("name").?.string, "read")) return .proceed;
             const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"name\":\"delegate\",\"arguments\":\"{}\"}", .{}) catch unreachable;
             return .{ .replace = value };
         }
@@ -706,19 +713,19 @@ test "tool rewrites obey the current depth limit before dispatch" {
     try f.init();
     defer f.deinit();
     var state: State = .{};
-    f.engine.installTools(.{ .ctx = &state, .isAllowed = State.allowed, .run = State.execute });
+    f.engine.installTools(.{ .ctx = &state, .names = State.names, .run = State.execute });
     f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
-    f.slot.depth = 1;
     var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer scratch.deinit();
-    const pending: PendingTool = .{ .part_id = 0, .name = "read", .arguments = "{}" };
-    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending);
+    // `write` is outside the loadout, so the process never runs it.
+    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "write", .arguments = "{}" });
     try std.testing.expect(refused.is_error);
     try std.testing.expectEqual(@as(usize, 0), state.calls);
-    try f.engine.setAgentLimits(8, 2);
-    const accepted = try runHooked(&f.engine, scratch.allocator(), f.slot, pending);
+    // `read` is rewritten to `delegate`, which the loadout allows.
+    const accepted = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "read", .arguments = "{}" });
     try std.testing.expect(!accepted.is_error);
     try std.testing.expectEqual(@as(usize, 1), state.calls);
+    try std.testing.expectEqual(@as(usize, 1), f.slot.tools.?.names.len);
 }
 
 test "a tool.after replacement is the whole result, and the engine admits the media that remains" {
@@ -747,7 +754,7 @@ test "a tool.after replacement is the whole result, and the engine admits the me
     try f.init();
     defer f.deinit();
     var state: State = .{};
-    f.engine.installTools(.{ .ctx = &state, .run = State.execute });
+    f.engine.installTools(.{ .ctx = &state, .names = Resources.serveNames(&.{"read"}), .run = State.execute });
     f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
     var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer scratch.deinit();
@@ -767,8 +774,9 @@ test "a tool.after replacement is the whole result, and the engine admits the me
 /// Run one tool through its hooks. A block answers the model, and the process runs nothing.
 fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: PendingTool) !toolset.Outcome {
     const hooks = engine.deps.hooks;
+    const held = try request_config_mod.loadout(engine, arena, slot);
     var call: ToolCall = .{ .name = pt.name, .arguments = pt.arguments };
-    const payload: ToolCallPayload = .{ .name = pt.name, .arguments = pt.arguments, .context = .{ .session_id = slot.sessionId(), .parent_id = slot.parent_id, .agent_name = slot.config.name orelse "root" } };
+    const payload: ToolCallPayload = .{ .name = pt.name, .arguments = pt.arguments, .context = request_config_mod.hookContext(slot, held.has_skills) };
     switch (hooks.askIfHeld(arena, .@"tool.before", payload)) {
         .proceed => {},
         // A handler that answers an unreadable call keeps the one the model chose.
@@ -781,9 +789,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
     }
 
     const tools = engine.deps.tools;
-    if (!tools.isAllowed(tools.ctx, call.name, try @import("request_config.zig").selectionFor(engine, arena, slot))) {
-        return .{ .output = "The tool is unavailable in this session.", .is_error = true };
-    }
+    if (!held.allows(call.name)) return .{ .output = "The tool is unavailable in this session.", .is_error = true };
     const res = tools.run(tools.ctx, arena, call.name, call.arguments, .{
         .workspace_root = slot.config.root,
         .site = .{ .session_id = slot.sessionId(), .message_id = slot.progress.current.?.message_id, .part_id = pt.part_id },
@@ -1101,7 +1107,7 @@ test "a build hook can discard the live registry and tools before the request se
         session_id: ids.SessionId,
         discarded: bool = false,
 
-        fn decls(ctx: *anyopaque, arena: std.mem.Allocator, _: toolset.Selection) error{OutOfMemory}![]const ai.ir.Tool {
+        fn decls(ctx: *anyopaque, arena: std.mem.Allocator, _: []const []const u8) error{OutOfMemory}![]const ai.ir.Tool {
             const self: *@This() = @ptrCast(@alignCast(ctx));
             return proto.dupe(arena, self.tools);
         }

@@ -6,12 +6,6 @@ const ir = @import("ai").ir;
 
 pub const Site = proto.input.ToolSite;
 
-pub const Selection = struct {
-    can_spawn: bool = false,
-    /// The session catalog lists at least one skill, so the skill tool has something to load.
-    has_skills: bool = false,
-};
-
 pub const Context = struct {
     workspace_root: []const u8,
     site: Site,
@@ -29,10 +23,10 @@ pub const Outcome = struct {
 
 pub const ToolSet = struct {
     ctx: *anyopaque = undefined,
-    /// Answer what the provider may call. The result belongs to `arena`.
-    getDecls: *const fn (ctx: *anyopaque, arena: std.mem.Allocator, selection: Selection) error{OutOfMemory}![]const ir.Tool = noDecls,
-    /// Answer whether a provider tool call is allowed for this selection.
-    isAllowed: *const fn (ctx: *anyopaque, name: []const u8, selection: Selection) bool = allow,
+    /// Answer every tool name the process serves. The result belongs to `arena`.
+    names: *const fn (ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 = noNames,
+    /// Answer the declarations of `allowed`, in table order. The result belongs to `arena`.
+    getDecls: *const fn (ctx: *anyopaque, arena: std.mem.Allocator, allowed: []const []const u8) error{OutOfMemory}![]const ir.Tool = noDecls,
     /// Run one tool by the name the provider chose.
     run: *const fn (
         ctx: *anyopaque,
@@ -44,12 +38,12 @@ pub const ToolSet = struct {
 };
 
 /// A process without extensions advertises no tool.
-fn noDecls(_: *anyopaque, _: std.mem.Allocator, _: Selection) error{OutOfMemory}![]const ir.Tool {
+fn noNames(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
     return &.{};
 }
 
-fn allow(_: *anyopaque, _: []const u8, _: Selection) bool {
-    return true;
+fn noDecls(_: *anyopaque, _: std.mem.Allocator, _: []const []const u8) error{OutOfMemory}![]const ir.Tool {
+    return &.{};
 }
 
 /// A name the process does not serve answers the model, so a turn continues.

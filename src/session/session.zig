@@ -5,6 +5,7 @@ const proto = @import("proto");
 const draftmod = @import("draft.zig");
 const transcriptmod = @import("transcript.zig");
 const transport = @import("ai").transport;
+const transport_ir = @import("ai").ir;
 const cancelmod = @import("../cancel.zig");
 
 const ids = proto.ids;
@@ -25,6 +26,20 @@ pub const Config = struct {
     root: []const u8,
     /// The child label, or null on a root session.
     name: ?[]const u8 = null,
+};
+
+/// The tools one run may see. One arena owns the names and the declarations for the whole run.
+pub const Loadout = struct {
+    arena: std.heap.ArenaAllocator,
+    names: []const []const u8,
+    decls: []const transport_ir.Tool,
+    /// The session catalog lists at least one skill. Read once, because a reload refuses an active run.
+    has_skills: bool,
+
+    pub fn allows(self: *const Loadout, name: []const u8) bool {
+        for (self.names) |allowed| if (std.mem.eql(u8, allowed, name)) return true;
+        return false;
+    }
 };
 
 pub const RunHandle = struct {
@@ -58,8 +73,8 @@ pub const RunSlot = struct {
     tree_root: ids.SessionId,
     depth: u32 = 0,
     work: @import("work.zig") = .{},
-    /// The catalog cannot change under a run, so the first tool selection caches this for the run.
-    has_skills: ?bool = null,
+    /// The tools this run may see, chosen once at its first request. A table change applies to the next run.
+    tools: ?Loadout = null,
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
 
@@ -139,6 +154,7 @@ pub const RunSlot = struct {
     }
 
     pub fn destroy(self: *RunSlot) void {
+        if (self.tools) |*held| held.arena.deinit();
         std.debug.assert(self.body == null);
         std.debug.assert(self.round == .none); // every round closes before the run ends
         std.debug.assert(self.work.pending == 0);

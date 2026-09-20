@@ -4,6 +4,7 @@ const std = @import("std");
 const proto = @import("proto");
 const ai = @import("ai");
 const Engine = @import("Engine.zig");
+const Loadout = @import("../session/session.zig").Loadout;
 const RunSlot = @import("run.zig").RunSlot;
 const registry = @import("../provider/registry.zig");
 const database = @import("../store/store.zig");
@@ -91,19 +92,58 @@ fn thinkingBudget(model: *const registry.ModelSpec, output_limit: u32) ?u64 {
     return if (budget >= output_limit) null else budget;
 }
 
-/// The tools this run may see: spawn tools below the depth limit, and the skill tool with a catalog.
-pub fn selectionFor(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !@import("toolset.zig").Selection {
-    // A reload refuses an active run, so one read per run answers every round and tool call.
-    if (slot.has_skills == null) slot.has_skills = try database.session.hasSkills(engine.deps.db, arena, slot.sessionId().raw);
-    return .{ .can_spawn = slot.depth < engine.max_agent_depth, .has_skills = slot.has_skills.? };
+/// The session facts every hook payload carries.
+pub const HookContext = struct {
+    session_id: proto.ids.SessionId,
+    parent_id: ?proto.ids.SessionId,
+    depth: u32,
+    agent_name: []const u8,
+    workspace: []const u8,
+    has_skills: bool,
+};
+
+pub fn hookContext(slot: *const RunSlot, has_skills: bool) HookContext {
+    return .{ .session_id = slot.sessionId(), .parent_id = slot.parent_id, .depth = slot.depth, .agent_name = slot.config.name orelse "root", .workspace = slot.config.root, .has_skills = has_skills };
+}
+
+/// The tools this run may see, chosen once at its first request. `tools.select` may narrow the list; the answer holds for the run.
+pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*const Loadout {
+    if (slot.tools) |*held| return held;
+    const tools = engine.deps.tools;
+    const names = try tools.names(tools.ctx, arena);
+    const has_skills = try database.session.hasSkills(engine.deps.db, arena, slot.sessionId().raw);
+    const Chosen = struct { tools: []const []const u8 };
+    var chosen = names;
+    switch (engine.deps.hooks.askIfHeld(arena, .@"tools.select", .{ .tools = names, .context = hookContext(slot, has_skills) })) {
+        .proceed => {},
+        .replace => |value| chosen = (std.json.parseFromValueLeaky(Chosen, arena, value, .{ .ignore_unknown_fields = true }) catch blk: {
+            std.log.warn("run {d} tools.select answered an unreadable list; the run keeps every tool", .{slot.runId()});
+            break :blk Chosen{ .tools = names };
+        }).tools,
+        .block => |reason| {
+            std.log.warn("run {d} stopped at tools.select: {s}", .{ slot.runId(), reason });
+            return error.HookBlocked;
+        },
+        .canceled => return error.Canceled,
+    }
+    var held: Loadout = .{ .arena = .init(engine.deps.gpa), .names = &.{}, .decls = &.{}, .has_skills = has_skills };
+    errdefer held.arena.deinit();
+    const own = held.arena.allocator();
+    const copied = try own.alloc([]const u8, chosen.len);
+    for (chosen, 0..) |name, i| copied[i] = try own.dupe(u8, name);
+    held.names = copied;
+    held.decls = try tools.getDecls(tools.ctx, own, copied);
+    slot.tools = held;
+    return &slot.tools.?;
 }
 
 /// Build the session request configuration once before any context decision.
 pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, model: *const registry.ModelSpec) !RequestBuild {
+    const held = try loadout(engine, arena, slot);
     var build: RequestBuild = .{
         .model = model.upstream_id,
         .system = slot.config.system_prompt,
-        .tools = try engine.deps.tools.getDecls(engine.deps.tools.ctx, arena, try selectionFor(engine, arena, slot)),
+        .tools = held.decls,
         .max_output_tokens = outputLimit(model),
     };
     if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"request.build")) {
@@ -112,12 +152,7 @@ pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, mo
             .system = build.system,
             .tools = build.tools,
             .max_output_tokens = build.max_output_tokens,
-            .context = .{
-                .session_id = slot.sessionId(),
-                .parent_id = slot.parent_id,
-                .workspace = slot.config.root,
-                .agent_name = slot.config.name orelse "root",
-            },
+            .context = hookContext(slot, held.has_skills),
         };
         switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", hook_payload)) {
             .proceed => {},

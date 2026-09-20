@@ -16,6 +16,8 @@ pub const Point = enum {
     @"tool.after",
     /// Before one user input reaches the queue.
     @"input.before",
+    /// Once per run, over the tool names the session may see. The engine keeps the answer for the run.
+    @"tools.select",
 
     /// Report the wire name, which is the point itself.
     pub fn wireName(self: Point) []const u8 {

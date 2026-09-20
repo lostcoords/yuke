@@ -680,7 +680,7 @@ test "the summary call repeats the prefix of the turn and refuses a tool" {
     try seedCompactableHistory(&f.db, a);
     // A turn declares tools, so the summary call declares the same ones.
     const Tools = struct {
-        fn decls(_: *anyopaque, tool_arena: std.mem.Allocator, _: @import("toolset.zig").Selection) error{OutOfMemory}![]const ai.ir.Tool {
+        fn decls(_: *anyopaque, tool_arena: std.mem.Allocator, _: []const []const u8) error{OutOfMemory}![]const ai.ir.Tool {
             return proto.dupe(tool_arena, @as([]const ai.ir.Tool, &.{.{
                 .name = "read",
                 .description = "Read a file.",
@@ -839,7 +839,7 @@ test "a tool round can compact and resume within the same run" {
             return .{ .output = "EXACT_TOOL_OUTPUT" ** 625, .is_error = false };
         }
     };
-    f.engine.installTools(.{ .run = Tool.run });
+    f.engine.installTools(.{ .names = Resources.serveNames(&.{"unknown"}), .run = Tool.run });
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{ Resources.tool_reply, ai.testing.canned_reply, ai.testing.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try sendAndWait(&f, a, "continue after the tool");

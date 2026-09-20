@@ -42,6 +42,15 @@ pub fn deinit(self: *Resources) void {
     self.* = undefined;
 }
 
+/// A tool port answer for tests: the names a canned reply calls, so the run loadout admits them.
+pub fn serveNames(comptime list: []const []const u8) *const fn (*anyopaque, std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
+    return struct {
+        fn names(_: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
+            return try arena.dupe([]const u8, list);
+        }
+    }.names;
+}
+
 pub fn makeEngine(self: *Resources, db: *Database) Engine {
     std.debug.assert(self.providers.env == &self.env);
     return Engine.init(.{

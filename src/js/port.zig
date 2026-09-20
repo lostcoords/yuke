@@ -10,33 +10,30 @@ const hookset = @import("../engine/hookset.zig");
 /// Build the port the process installs. The set answers from the live host table.
 pub fn toolSet(host: *Host) toolset.ToolSet {
     std.debug.assert(host.phase == .open);
-    return .{ .ctx = host, .getDecls = declsFor, .isAllowed = isAllowed, .run = runFor };
+    return .{ .ctx = host, .names = namesFor, .getDecls = declsFor, .run = runFor };
 }
 
-/// Answer the live declarations. The engine holds them only until it writes one request body.
-fn declsFor(ctx: *anyopaque, arena: std.mem.Allocator, selection: toolset.Selection) error{OutOfMemory}![]const ir.Tool {
+/// Answer every tool name in table order, which is sorted, so the advertised order never follows load order.
+fn namesFor(ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
+    const host: *Host = @ptrCast(@alignCast(ctx));
+    const names = try arena.alloc([]const u8, host.tools.entries.items.len);
+    for (host.tools.entries.items, 0..) |entry, i| names[i] = try arena.dupe(u8, entry.decl.name);
+    return names;
+}
+
+/// Answer the declarations of `allowed`. The run copies them once and keeps them for every round.
+fn declsFor(ctx: *anyopaque, arena: std.mem.Allocator, allowed: []const []const u8) error{OutOfMemory}![]const ir.Tool {
     const host: *Host = @ptrCast(@alignCast(ctx));
     const decls = try arena.alloc(ir.Tool, host.tools.entries.items.len);
     var at: usize = 0;
     for (host.tools.entries.items) |entry| {
-        if (!visible(entry.flags, selection)) continue;
-        decls[at] = try proto.dupe(arena, entry.decl);
-        at += 1;
+        for (allowed) |name| if (std.mem.eql(u8, name, entry.decl.name)) {
+            decls[at] = try proto.dupe(arena, entry.decl);
+            at += 1;
+            break;
+        };
     }
     return decls[0..at];
-}
-
-/// The declaration and the execution check agree, so a hidden tool never runs by name.
-fn visible(flags: @import("tools.zig").Tools.Flags, selection: toolset.Selection) bool {
-    if (flags.spawns_agents and !selection.can_spawn) return false;
-    if (flags.needs_skills and !selection.has_skills) return false;
-    return true;
-}
-
-fn isAllowed(ctx: *anyopaque, name: []const u8, selection: toolset.Selection) bool {
-    const host: *Host = @ptrCast(@alignCast(ctx));
-    const index = host.tools.find(name) orelse return true;
-    return visible(host.tools.entries.items[index].flags, selection);
 }
 
 /// Submit one call and wait at the turn cancellation point for the owner to answer it.

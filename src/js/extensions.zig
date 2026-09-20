@@ -158,7 +158,8 @@ test "headless extensions pump an async JavaScript tool" {
     const installed = app_runtime.engine.deps.tools;
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    const advertised = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = true, .has_skills = true });
+    const names = try installed.names(installed.ctx, arena.allocator());
+    const advertised = try installed.getDecls(installed.ctx, arena.allocator(), names);
     try std.testing.expectEqual(extensions.host.tools.entries.items.len, advertised.len);
     const found = for (advertised) |d| {
         if (std.mem.eql(u8, d.name, "read_note")) break true;
@@ -203,60 +204,31 @@ test "headless extensions pump an async JavaScript tool" {
     try extensions.host.pump();
 }
 
-test "tool declarations and dispatch enforce per-session spawn visibility" {
+test "the tool port lists names in table order and answers only the declarations a run allows" {
     var f: Fixture = undefined;
     try f.init(
         \\import { tools } from "yuke";
         \\const parameters = { type: "object", properties: {} };
         \\tools.define({ name: "normal_tool", description: "normal", parameters, execute: async () => "normal" });
-        \\tools.define({ name: "spawn_alias", description: "spawn", parameters, spawnsAgents: true, execute: async () => "spawn" });
-        \\tools.define({ name: "skill_alias", description: "skill", parameters, needsSkills: true, execute: async () => "skill" });
-        \\let malformedRejected = false;
-        \\try { tools.define({ name: "bad_metadata", description: "bad", parameters, spawnsAgents: 1, execute: async () => "bad" }); } catch { malformedRejected = true; }
-        \\globalThis.malformedRejected = malformedRejected ? 1 : 0;
+        \\tools.define({ name: "hidden_tool", description: "hidden", parameters, execute: async () => "hidden" });
     , kernel_boot);
     defer f.deinit();
-
     const host = f.extensions.host;
     const installed = f.app.engine.deps.tools;
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.malformedRejected"));
-    try std.testing.expect(host.tools.find("bad_metadata") == null);
-
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    const hidden = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = false });
-    const visible = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = true });
-    try std.testing.expect(findDecl(hidden, "normal_tool"));
-    try std.testing.expect(!findDecl(hidden, "spawn_alias"));
-    try std.testing.expect(findDecl(visible, "spawn_alias"));
-    // The skill tool and any tool that needs a catalog stay out of a session that lists no skill.
-    try std.testing.expect(!findDecl(visible, "skill"));
-    try std.testing.expect(!findDecl(visible, "skill_alias"));
-    const with_skills = try installed.getDecls(installed.ctx, arena.allocator(), .{ .can_spawn = false, .has_skills = true });
-    try std.testing.expect(findDecl(with_skills, "skill"));
-    try std.testing.expect(findDecl(with_skills, "skill_alias"));
-    try std.testing.expect(!findDecl(with_skills, "spawn_alias"));
-    try std.testing.expect(!installed.isAllowed(installed.ctx, "skill", .{ .can_spawn = true }));
-    try std.testing.expect(installed.isAllowed(installed.ctx, "skill", .{ .has_skills = true }));
-    try std.testing.expect(!installed.isAllowed(installed.ctx, "spawn_alias", .{ .can_spawn = false }));
-    try std.testing.expect(installed.isAllowed(installed.ctx, "normal_tool", .{ .can_spawn = false }));
-    try std.testing.expect(installed.isAllowed(installed.ctx, "spawn_alias", .{ .can_spawn = true }));
-
-    const before = host.tools.find("spawn_alias") orelse unreachable;
-    try std.testing.expect(host.tools.entries.items[before].flags.spawns_agents);
+    const names = try installed.names(installed.ctx, arena.allocator());
+    try std.testing.expect(names.len >= 2);
+    for (names[1..], 0..) |name, i| try std.testing.expect(std.mem.order(u8, names[i], name) == .lt);
+    const some = try installed.getDecls(installed.ctx, arena.allocator(), &.{ "normal_tool", "absent" });
+    try std.testing.expectEqual(@as(usize, 1), some.len);
+    try std.testing.expectEqualStrings("normal_tool", some[0].name);
     try host.evalModule(
         \\import { removeTool } from "yuke:tools";
-        \\globalThis.removedSpawnAlias = removeTool("spawn_alias") ? 1 : 0;
-    , "remove-spawn-alias.js");
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.removedSpawnAlias"));
-    try std.testing.expect(host.tools.find("spawn_alias") == null);
-    const normal_index = host.tools.find("normal_tool") orelse unreachable;
-    try std.testing.expect(!host.tools.entries.items[normal_index].flags.spawns_agents);
-}
-
-fn findDecl(decls: []const @import("ai").ir.Tool, name: []const u8) bool {
-    for (decls) |decl| if (std.mem.eql(u8, decl.name, name)) return true;
-    return false;
+        \\globalThis.removed = removeTool("hidden_tool") ? 1 : 0;
+    , "remove.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.removed"));
+    try std.testing.expect(host.tools.find("hidden_tool") == null);
 }
 
 test "a plugin notice reaches every attached frontend" {

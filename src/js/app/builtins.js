@@ -6,6 +6,7 @@ import { start as startJob, stop as stopJob, list as listJobs, get as getJob, na
 import { events } from "yuke:kernel";
 import { diff } from "yuke:diff";
 import { defineTool, hasTool } from "yuke:tools";
+import { plugins } from "yuke:ext";
 import { client } from "yuke:client";
 import { byteLabel } from "yuke:format";
 
@@ -329,5 +330,10 @@ builtin("skill", {
   description: "Load the full instructions for a skill listed in the system prompt. Use this tool when the task matches the skill description.",
   parameters: { type: "object", properties: {
     name: { type: "string", description: "Pass the name from an available_skills entry." },
-  }, required: ["name"], additionalProperties: false }, execute: skill, needsSkills: true,
+  }, required: ["name"], additionalProperties: false }, execute: skill,
 });
+
+// The skill tool has nothing to load in a session that lists no skill, so that session never sees it.
+plugins.use({ name: "skills", apply(ctx) {
+  ctx.hook("tools.select", (selection) => selection.context.has_skills ? null : { replace: { ...selection, tools: selection.tools.filter((/** @type {string} */ name) => name !== "skill") } });
+} });

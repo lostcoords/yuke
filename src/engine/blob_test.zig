@@ -108,7 +108,7 @@ test "a tool image commits as media with a ref, and a ref the store lacks become
     const a = f.arena.allocator();
     const blob = try putImage(&f, "shot.png", png);
     var tool: ImageTool = .{ .media = .{blob} };
-    f.engine.installTools(.{ .ctx = &tool, .run = ImageTool.run });
+    f.engine.installTools(.{ .ctx = &tool, .names = Resources.serveNames(&.{"unknown"}), .run = ImageTool.run });
 
     _ = try f.send(&.{.{ .text = .{ .text = "look" } }});
     try f.finish(Fixture.id);
@@ -179,7 +179,7 @@ test "a blob sync failure rejects input and converts tool media into an error" {
     try testing.expectEqual(@as(u64, 0), try database.input.count(&f.db, f.arena.allocator(), Fixture.id.raw));
     try testing.expect(!try blob_store.referenced(&f.db, f.arena.allocator(), blob.hash));
     var tool: ImageTool = .{ .media = .{blob} };
-    f.engine.installTools(.{ .ctx = &tool, .run = ImageTool.run });
+    f.engine.installTools(.{ .ctx = &tool, .names = Resources.serveNames(&.{"unknown"}), .run = ImageTool.run });
     _ = try f.send(&.{.{ .text = .{ .text = "look" } }});
     try f.finish(Fixture.id);
     const messages = try f.history();
