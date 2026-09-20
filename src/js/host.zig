@@ -776,8 +776,12 @@ test "user files can import public entries but cannot import cached internal mod
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "public.js", .data =
         \\import { fs, plugins } from "yuke";
         \\import { Composer } from "yuke/ui";
-        \\import { composerVim, transcriptVim } from "yuke/chat";
-        \\globalThis.publicOK = typeof fs.readFile === "function" && typeof Composer === "function" && plugins.names().length === 0;
+        \\import { composerVim, transcriptVim, agents } from "yuke/plugins";
+        \\import { Chat } from "yuke/chat";
+        \\globalThis.publicOK = typeof fs.readFile === "function"
+        \\  && typeof Composer === "function" && typeof Chat === "function"
+        \\  && typeof agents === "function" && typeof composerVim.apply === "function"
+        \\  && typeof transcriptVim.apply === "function" && plugins.names().length === 0;
     });
     const public_path = try std.fs.path.joinZ(std.testing.allocator, &.{ root, "public.js" });
     defer std.testing.allocator.free(public_path);

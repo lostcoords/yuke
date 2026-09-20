@@ -1,7 +1,6 @@
 import { check } from "yuke:test";
-import { plugins, services } from "yuke:ext";
-import { composerVim } from "yuke:composer-vim";
-import { transcriptVim } from "yuke:transcript-vim";
+import { plugins, services } from "yuke";
+import { composerVim, transcriptVim } from "yuke/plugins";
 
 // A view plugin holds its work behind `inject(["tui"])`, and no frontend provides that service here.
 let built = 0;

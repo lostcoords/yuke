@@ -18,6 +18,7 @@
       "yuke": ["./facade.js"],
       "yuke/ui": ["./public-ui.js"],
       "yuke/chat": ["./public-chat.js"],
+      "yuke/plugins": ["./public-plugins.js"],
       "yuke:*": ["./*.js"]
     }
   },

@@ -53,7 +53,7 @@ pub const Loader = struct {
         name: []const u8,
     ) ?[:0]u8 {
         if (std.mem.startsWith(u8, name, "yuke:") and !isBaked(base)) {
-            _ = ctx.throwReferenceError("internal yuke module: use yuke, yuke/ui, or yuke/chat");
+            _ = ctx.throwReferenceError("internal yuke module: use yuke, yuke/ui, yuke/chat, or yuke/plugins");
             return null;
         }
         if (isBaked(name)) return dupJs(ctx, name);
@@ -140,7 +140,7 @@ test "the facade name is reserved and never reaches the config directory" {
     defer gpa.free(bare);
     try std.testing.expectEqualStrings("yuke", bare);
 
-    for ([_][]const u8{ "yuke/ui", "yuke/chat", "yuke/unknown" }) |name| {
+    for ([_][]const u8{ "yuke/ui", "yuke/chat", "yuke/plugins", "yuke/unknown" }) |name| {
         const public = try resolve(gpa, "/cfg/index.js", name);
         defer gpa.free(public);
         try std.testing.expectEqualStrings(name, public);

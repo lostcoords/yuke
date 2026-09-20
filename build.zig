@@ -331,6 +331,8 @@ fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.buil
             "yuke/ui"
         else if (std.mem.eql(u8, stem, "public-chat"))
             "yuke/chat"
+        else if (std.mem.eql(u8, stem, "public-plugins"))
+            "yuke/plugins"
         else
             b.fmt("yuke:{s}", .{stem});
         run.addArg(name);
