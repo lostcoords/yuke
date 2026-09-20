@@ -116,10 +116,8 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*cons
     var chosen = names;
     switch (engine.deps.hooks.askIfHeld(arena, .@"tools.select", .{ .tools = names, .context = hookContext(slot, has_skills) })) {
         .proceed => {},
-        .replace => |value| chosen = (std.json.parseFromValueLeaky(Chosen, arena, value, .{ .ignore_unknown_fields = true }) catch blk: {
-            std.log.warn("run {d} tools.select answered an unreadable list; the run keeps every tool", .{slot.runId()});
-            break :blk Chosen{ .tools = names };
-        }).tools,
+        // An unreadable answer is a plugin bug, and the run fails closed like it does on a throw.
+        .replace => |value| chosen = (std.json.parseFromValueLeaky(Chosen, arena, value, .{ .ignore_unknown_fields = true }) catch return error.HookAnswerInvalid).tools,
         .block => |reason| {
             std.log.warn("run {d} stopped at tools.select: {s}", .{ slot.runId(), reason });
             return error.HookBlocked;
@@ -156,11 +154,7 @@ pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, mo
         };
         switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", hook_payload)) {
             .proceed => {},
-            // A handler that answers an unreadable request keeps the one this round already holds.
-            .replace => |value| build = std.json.parseFromValueLeaky(RequestBuild, arena, value, .{ .ignore_unknown_fields = true }) catch blk: {
-                std.log.warn("run {d} request.build answered an unreadable request; the round keeps its own", .{slot.runId()});
-                break :blk build;
-            },
+            .replace => |value| build = std.json.parseFromValueLeaky(RequestBuild, arena, value, .{ .ignore_unknown_fields = true }) catch return error.HookAnswerInvalid,
             .block => |reason| {
                 // The wire message names a class, so record the reason before the error loses it.
                 std.log.warn("run {d} stopped at request.build: {s}", .{ slot.runId(), reason });

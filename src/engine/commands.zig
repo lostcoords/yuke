@@ -106,7 +106,7 @@ fn liveSessionItem(engine: *Engine, arena: std.mem.Allocator, row: anytype) !pro
 /// A child starts from the seed its parent was created with, so a requested base reaches every descendant.
 fn inheritedSeed(engine: *Engine, arena: std.mem.Allocator, parent: [16]u8) ![]const session_store.Section {
     const sections = try session_store.promptSections(engine.deps.db, arena, parent);
-    for (sections) |section| if (std.mem.eql(u8, section.key, "system_prompt")) return try arena.dupe(session_store.Section, &.{section});
+    for (sections, 0..) |section, i| if (std.mem.eql(u8, section.key, "system_prompt")) return sections[i..][0..1];
     return &.{};
 }
 

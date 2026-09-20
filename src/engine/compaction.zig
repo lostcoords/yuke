@@ -131,8 +131,8 @@ fn instruction(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, mode: 
     switch (engine.deps.hooks.askIfHeld(arena, .@"compaction.prompt", .{ .context = request_config.hookContext(slot, slot.tools.?.has_skills), .mode = mode, .prompt = "" })) {
         .proceed => return error.CompactionPromptMissing,
         .replace => |value| {
-            const answer = std.json.parseFromValueLeaky(Instruction, arena, value, .{ .ignore_unknown_fields = true }) catch return error.CompactionPromptMissing;
-            if (answer.prompt.len == 0 or answer.prompt.len > proto.meta.limits.max_message_string_bytes) return error.CompactionPromptMissing;
+            const answer = std.json.parseFromValueLeaky(Instruction, arena, value, .{ .ignore_unknown_fields = true }) catch return error.HookAnswerInvalid;
+            if (answer.prompt.len == 0 or answer.prompt.len > proto.meta.limits.max_message_string_bytes) return error.HookAnswerInvalid;
             return answer.prompt;
         },
         .block => |reason| {

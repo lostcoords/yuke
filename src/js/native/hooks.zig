@@ -15,7 +15,7 @@ pub fn install(host: *Host) void {
         .{ .name = "installDispatcher", .arity = 1, .call = jsInstallDispatcher },
         .{ .name = "installInputGate", .arity = 1, .call = jsInstallInputGate },
         .{ .name = "installLifecycle", .arity = 1, .call = jsInstallLifecycle },
-        .{ .name = "setPoints", .arity = 1, .call = jsSetPoints },
+        .{ .name = "setPoints", .arity = 2, .call = jsSetPoints },
     });
 }
 
@@ -36,7 +36,7 @@ fn jsInstallInputGate(ctx: Context, _: Value, args: []const Value) Value {
     return quickjs.UNDEFINED;
 }
 
-/// `setPoints(names)` states every point that now holds a handler. An unknown name throws.
+/// `setPoints(names, changed)` states every point that now holds a handler and the point that changed. An unknown name throws.
 fn jsSetPoints(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 1 or !ctx.isArray(args[0])) return ctx.throwTypeError("setPoints needs an array of point names");
@@ -57,11 +57,14 @@ fn jsSetPoints(ctx: Context, _: Value, args: []const Value) Value {
         const point = table.Point.parse(name) orelse return ctx.throwTypeError("no such hook point");
         points.insert(point);
     }
-    // A prompt handler joined or left, so every stored prompt is stale until its next run rebuilds it.
-    const prompt_changed = points.contains(.@"prompt.build") or host.hooks.points.contains(.@"prompt.build");
-    if (prompt_changed) if (host.engine.runtime) |runtime| {
-        runtime.engine.prompt_generation += 1;
-    };
+    // The second argument names the point that changed. A prompt handler joined or left, so every stored prompt is stale.
+    if (args.len > 1 and ctx.isString(args[1])) {
+        const changed = ctx.toCStringLen(args[1]) catch return module.throwPending(ctx);
+        defer ctx.freeCString(changed.ptr);
+        if (table.Point.parse(changed) == .@"prompt.build") if (host.engine.runtime) |runtime| {
+            runtime.engine.prompt_generation += 1;
+        };
+    }
     host.hooks.setPoints(points);
     return quickjs.UNDEFINED;
 }

@@ -793,11 +793,8 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
     const payload: ToolCallPayload = .{ .name = pt.name, .arguments = pt.arguments, .context = request_config_mod.hookContext(slot, held.has_skills) };
     switch (hooks.askIfHeld(arena, .@"tool.before", payload)) {
         .proceed => {},
-        // A handler that answers an unreadable call keeps the one the model chose.
-        .replace => |value| call = std.json.parseFromValueLeaky(ToolCall, arena, value, .{ .ignore_unknown_fields = true }) catch blk: {
-            std.log.warn("run {d} tool.before answered an unreadable call; the process keeps the original", .{slot.runId()});
-            break :blk call;
-        },
+        // An unreadable answer is a plugin bug, so the call fails closed like it does on a throw.
+        .replace => |value| call = std.json.parseFromValueLeaky(ToolCall, arena, value, .{ .ignore_unknown_fields = true }) catch return .{ .output = "a tool.before handler answered an unreadable call", .is_error = true },
         .block => |reason| return .{ .output = reason, .is_error = true },
         .canceled => return error.Canceled,
     }
@@ -821,10 +818,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
     const outcome: toolset.Outcome = switch (after) {
         .proceed => res,
         // A replacement is the whole result, so a field it omits is gone.
-        .replace => |value| std.json.parseFromValueLeaky(toolset.Outcome, arena, value, .{ .ignore_unknown_fields = true }) catch blk: {
-            std.log.warn("run {d} tool.after answered an unreadable result; the process keeps the original", .{slot.runId()});
-            break :blk res;
-        },
+        .replace => |value| std.json.parseFromValueLeaky(toolset.Outcome, arena, value, .{ .ignore_unknown_fields = true }) catch return .{ .output = "a tool.after handler answered an unreadable result", .is_error = true },
         .block => |reason| return .{ .output = reason, .is_error = true },
         .canceled => return error.Canceled,
     };

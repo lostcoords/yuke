@@ -446,10 +446,10 @@ function injectInto(parentContext, names, apply) {
 /** @type {Record<string, readonly HookEntry[]>} */
 const HOOKS = Object.create(null);
 
-// State which points now hold a handler, so a turn never submits a call no handler wants.
-/** @returns {void} */
-function publishPoints() {
-  setPoints(Object.keys(HOOKS));
+// State which points now hold a handler, so a turn never submits a call no handler wants. The changed point rides along.
+/** @param {string} point @returns {void} */
+function publishPoints(point) {
+  setPoints(Object.keys(HOOKS), point);
 }
 
 // Register one handler at the end of its chain. An unknown point throws and registers nothing.
@@ -459,7 +459,7 @@ function addHook(point, owner, fn) {
   const before = HOOKS[point];
   HOOKS[point] = before ? [...before, entry] : [entry];
   try {
-    publishPoints();
+    publishPoints(point);
   } catch (e) {
     if (before) HOOKS[point] = before; else delete HOOKS[point];
     throw e;
@@ -471,7 +471,7 @@ function addHook(point, owner, fn) {
     done = true;
     const next = /** @type {readonly HookEntry[]} */ (HOOKS[point]).filter((held) => held !== entry);
     if (next.length === 0) delete HOOKS[point]; else HOOKS[point] = next;
-    publishPoints();
+    publishPoints(point);
   };
 }
 

@@ -88,8 +88,8 @@ pub fn releaseRoot(self: *Engine, id: proto.ids.SessionId) void {
 pub fn init(deps: Deps) Engine {
     var generation: u64 = undefined;
     deps.io.random(std.mem.asBytes(&generation));
-    // The store checks the generation as a 53-bit integer, so the value stays inside that range.
-    return .{ .deps = deps, .sessions = session.Registry.init(deps.gpa), .prompt_generation = (generation & std.math.maxInt(u53)) | 1 };
+    // The store checks the generation as a 53-bit integer, so a 52-bit start leaves room for every bump.
+    return .{ .deps = deps, .sessions = session.Registry.init(deps.gpa), .prompt_generation = (generation & std.math.maxInt(u52)) | 1 };
 }
 
 /// A saved queue alone is idle when no task can resume it without user input.

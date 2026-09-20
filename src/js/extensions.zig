@@ -295,6 +295,18 @@ test "the prompt plugin writes the default sections, and a user handler appends 
     defer std.testing.allocator.free(summarize);
     try std.testing.expect(std.mem.indexOf(u8, summarize, "Write a context checkpoint") != null);
     try std.testing.expect(std.mem.indexOf(u8, summarize, "context_summary") == null);
+    // Only a prompt.build handler change marks the stored prompts stale.
+    const before = f.app.engine.prompt_generation;
+    try f.extensions.host.evalModule(
+        \\import { plugins } from "yuke";
+        \\plugins.use({ name: "other", apply(ctx) { ctx.hook("request.send", () => null); } });
+    , "other-point.js");
+    try std.testing.expectEqual(before, f.app.engine.prompt_generation);
+    try f.extensions.host.evalModule(
+        \\import { plugins } from "yuke";
+        \\plugins.use({ name: "second", apply(ctx) { ctx.hook("prompt.build", () => null); } });
+    , "prompt-point.js");
+    try std.testing.expectEqual(before + 1, f.app.engine.prompt_generation);
 }
 
 test "a hook chain replaces a payload and the first block ends it" {

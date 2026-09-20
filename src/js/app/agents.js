@@ -62,7 +62,7 @@ function validate(raw) {
         for (const field of /** @type {const} */ (["description", "model", "prompt"])) if (row[field] !== undefined && (typeof row[field] !== "string" || !row[field].trim())) throw invalid("row " + key + " needs a nonempty string " + field);
         const tools = row.tools;
         if (tools !== undefined && (!Array.isArray(tools) || !tools.length || new Set(tools).size !== tools.length || tools.some((t) => !BUILTIN_TOOLS.includes(t)))) throw invalid("row " + key + " tools must be a nonempty unique subset of " + BUILTIN_TOOLS.join(", "));
-        rows[key] = { ...row };
+        rows[key] = tools ? { ...row, tools: [...tools] } : { ...row };
     }
     const keys = Object.keys(rows);
     if (!keys.length) throw invalid("the catalog needs at least one agent");
