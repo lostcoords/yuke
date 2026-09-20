@@ -442,7 +442,8 @@ function injectInto(parentContext, names, apply) {
 }
 
 // --- hooks: the points a plugin answers --- A fact reads as `x.verbed` and needs no answer; a point reads as `x.verb` and the runtime waits.
-/** @type {Record<string, HookEntry[]>} */
+// Each chain is replaced, never mutated, so a fold walks the chain it started with and copies nothing.
+/** @type {Record<string, readonly HookEntry[]>} */
 const HOOKS = Object.create(null);
 
 // State which points now hold a handler, so a turn never submits a call no handler wants.
@@ -454,14 +455,13 @@ function publishPoints() {
 // Register one handler at the end of its chain. An unknown point throws and registers nothing.
 /** @param {string} point @param {string} owner @param {HookHandler} fn @returns {Disposer} */
 function addHook(point, owner, fn) {
-  const list = HOOKS[point] || (HOOKS[point] = []);
   const entry = { owner, fn };
-  list.push(entry);
+  const before = HOOKS[point];
+  HOOKS[point] = before ? [...before, entry] : [entry];
   try {
     publishPoints();
   } catch (e) {
-    list.pop();
-    if (list.length === 0 && HOOKS[point] === list) delete HOOKS[point];
+    if (before) HOOKS[point] = before; else delete HOOKS[point];
     throw e;
   }
 
@@ -469,10 +469,8 @@ function addHook(point, owner, fn) {
   return () => {
     if (done) return;
     done = true;
-    const at = list.indexOf(entry);
-    if (at >= 0) list.splice(at, 1);
-    // Drop the key only while it still holds this list, so a later add keeps its own.
-    if (list.length === 0 && HOOKS[point] === list) delete HOOKS[point];
+    const next = /** @type {readonly HookEntry[]} */ (HOOKS[point]).filter((held) => held !== entry);
+    if (next.length === 0) delete HOOKS[point]; else HOOKS[point] = next;
     publishPoints();
   };
 }
@@ -485,8 +483,7 @@ async function dispatch(point, payload) {
 
   let value = payload;
   let replaced = false;
-  // A handler can register or withdraw another, so the fold walks a copy of the chain.
-  for (const entry of list.slice()) {
+  for (const entry of list) {
     try {
       const result = await entry.fn(value);
       if (result == null) continue;
