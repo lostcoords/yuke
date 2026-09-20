@@ -243,7 +243,6 @@ test "a message pages whole characters when the window splits one" {
         .id = 1,
         .run_id = 1,
         .config_rev = 0,
-        .agent = "claude",
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};

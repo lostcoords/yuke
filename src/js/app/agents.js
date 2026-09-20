@@ -1,7 +1,7 @@
 // yuke:agents — child sessions from a user catalog. Native stays policy-free; this plugin owns every rule.
 import { client } from "yuke:client";
 import { native } from "yuke:engine-native";
-import { presenters } from "yuke:transcript";
+import { presenters, sources } from "yuke:transcript";
 import { focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
 import { openAgents } from "yuke:agents-ui";
@@ -22,6 +22,25 @@ const CHILD_POLICY = "You are ${agent_name}, a child agent with one assignment f
 const LIMITS = { maxConcurrent: 8, maxDepth: 1, maxRounds: 50 };
 /** The last prompt section of a root session. Constant text keeps the cached prefix intact. */
 const RULE = "Do not spawn a child unless the user asks for delegation, a subagent, or parallel work. A request for depth or research is not permission. After you start a child, end your turn. Its report arrives as a new message.";
+
+// Put the plugin's entries into a transcript registry and hand back the disposer that restores the previous ones.
+/** @param {Record<string, any>} registry @param {Record<string, any>} own @returns {() => void} */
+function register(registry, own) {
+    const previous = Object.fromEntries(Object.keys(own).map((name) => [name, registry[name]]));
+    Object.assign(registry, own);
+    return () => { for (const name of Object.keys(own)) { if (previous[name] === undefined) delete registry[name]; else registry[name] = previous[name]; } };
+}
+
+/** The header of a child report: who, the outcome, and what the child spent. */
+/** @param {any} source @returns {string} */
+function reportLabel(source) {
+    const usage = source.usage;
+    const outcome = source.outcome;
+    const seconds = usage.duration_ms == null ? "" : " · " + (usage.duration_ms / 1000).toFixed(1) + "s";
+    const failure = outcome.type === "failed" ? " · " + outcome.message + (outcome.detail ? " · " + outcome.detail : "") : "";
+    return "Message from " + source.name + " · " + (outcome.type === "turn" ? "completed" : outcome.type) + failure + (source.partial ? " · partial" : "") + (source.truncated ? " · model report truncated" : "")
+        + " · " + usage.rounds + (usage.rounds === 1 ? " round" : " rounds") + " · " + usage.tool_calls + (usage.tool_calls === 1 ? " tool" : " tools") + " · " + usage.tokens.input + "/" + usage.tokens.output + " tokens" + seconds;
+}
 
 /** @param {string} code @param {string} message */
 function failure(code, message) { return Object.assign(new Error(message), { name: "AgentError", code }); }
@@ -169,16 +188,16 @@ export function agents(options) {
                 },
             });
 
-            ctx.effect(() => {
-                const own = {
-                    spawn_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Agent", subject: String(o.agent || "default") }) },
-                    send_agent_input: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Send", subject: String(o.child || "") }) },
-                    stop_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Stop", subject: String(o.child || "") }) },
-                };
-                const previous = Object.fromEntries(Object.keys(own).map((name) => [name, presenters[name]]));
-                Object.assign(presenters, own);
-                return () => { for (const name of Object.keys(own)) { if (previous[name] === undefined) delete presenters[name]; else presenters[name] = previous[name]; } };
-            });
+            ctx.effect(() => register(presenters, {
+                spawn_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Agent", subject: String(o.agent || "default") }) },
+                send_agent_input: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Send", subject: String(o.child || "") }) },
+                stop_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Stop", subject: String(o.child || "") }) },
+            }));
+            ctx.effect(() => register(sources, {
+                parent_instruction: () => "From the parent session",
+                child_report: reportLabel,
+                child_input_canceled: (/** @type {any} */ source) => "Message from " + source.name + " · queued work canceled",
+            }));
 
             ctx.inject(["tui"], (ctx) => {
                 ctx.tui.command(() => focusedChat()?.sessionId != null, {

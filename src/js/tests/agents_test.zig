@@ -197,6 +197,7 @@ test "report previews fold independently of their stored text and queue clear pr
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "agents/fixture.js");
+    try host.evalModule(tool_fixture, "tools.js");
     try support.eval(host, "agents/report-ui.test.js");
     try support.expectString(host, "result", "ok");
 }

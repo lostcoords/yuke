@@ -399,7 +399,6 @@ export interface AssistantMessage {
   readonly id: MessageId;
   readonly run_id: RunId;
   readonly config_rev: ConfigRev;
-  readonly agent: string;
   readonly content: ReadonlyArray<AssistantPart>;
   readonly finish?: StopReason;
   readonly tokens?: TokenUsage;
@@ -467,7 +466,6 @@ export interface MessageStartedData {
   readonly message_id: MessageId;
   readonly run_id: RunId;
   readonly config_rev: ConfigRev;
-  readonly agent: string;
   readonly created_at_ms: number;
 }
 

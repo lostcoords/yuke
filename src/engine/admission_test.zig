@@ -52,7 +52,7 @@ const Fixture = struct {
         slot.phase = .running;
         try self.openRound(slot);
         const resident = self.engine.sessions.get(self.parent).?;
-        resident.draft = try Draft.init(testing.allocator, .{ .session_id = self.parent, .message_id = slot.progress.current.?.message_id, .run_id = slot.runId(), .config_rev = 0, .agent = "parent", .created_at_ms = 1 });
+        resident.draft = try Draft.init(testing.allocator, .{ .session_id = self.parent, .message_id = slot.progress.current.?.message_id, .run_id = slot.runId(), .config_rev = 0, .created_at_ms = 1 });
         try resident.draft.?.addPart(.{ .session_id = self.parent, .message_id = slot.progress.current.?.message_id, .part = .{ .tool = .{ .id = 0, .name = "delegate", .arguments = "{}", .state = .{ .running = .{ .started_at_ms = 1 } } } } });
     }
 
@@ -79,7 +79,7 @@ const Fixture = struct {
         slot.phase = .running;
         try self.openRound(slot);
         const message_id = slot.progress.current.?.message_id;
-        resident.draft = try Draft.init(testing.allocator, .{ .session_id = id, .message_id = message_id, .run_id = slot.runId(), .config_rev = 0, .agent = "parent", .created_at_ms = 1 });
+        resident.draft = try Draft.init(testing.allocator, .{ .session_id = id, .message_id = message_id, .run_id = slot.runId(), .config_rev = 0, .created_at_ms = 1 });
         try resident.draft.?.addPart(.{ .session_id = id, .message_id = message_id, .part = .{ .tool = .{ .id = 0, .name = "delegate", .arguments = "{}", .state = .{ .running = .{ .started_at_ms = 1 } } } } });
         return .{ .session_id = id, .message_id = message_id, .part_id = 0 };
     }

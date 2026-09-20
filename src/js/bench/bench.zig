@@ -519,7 +519,6 @@ test "native part refresh validates the draft cursor across replacement and remo
         .message_id = 2,
         .run_id = 2,
         .config_rev = 0,
-        .agent = "bench",
         .created_at_ms = 2,
     } });
     const replacement = try harness.host.gpa.alloc(u8, harness.projection.?.source_bytes + 1);

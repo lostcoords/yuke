@@ -108,28 +108,24 @@ pub const Draft = struct {
     message_id: ids.MessageId,
     run_id: ids.RunId,
     config_rev: ids.ConfigRev,
-    agent: []const u8,
     created_at_ms: u64,
     parts: std.ArrayList(Part) = .empty,
 
     var next_generation: std.atomic.Value(u64) = .init(1);
 
-    /// Open a draft from `message.started`. Clone the borrowed `agent` into the arena.
+    /// Open a draft from `message.started`.
     pub fn init(gpa: std.mem.Allocator, d: message.MessageStartedData) Error!Draft {
         const generation = next_generation.fetchAdd(1, .monotonic);
         std.debug.assert(generation > 0 and generation <= proto.meta.constants.MAX_WIRE_INTEGER);
-        var self: Draft = .{
+        return .{
             .gpa = gpa,
             .generation = generation,
             .arena = .init(gpa),
             .message_id = d.message_id,
             .run_id = d.run_id,
             .config_rev = d.config_rev,
-            .agent = "",
             .created_at_ms = d.created_at_ms,
         };
-        self.agent = try self.arena.allocator().dupe(u8, d.agent);
-        return self;
     }
 
     pub fn deinit(self: *Draft) void {
@@ -222,7 +218,6 @@ pub const Draft = struct {
             .id = self.message_id,
             .run_id = self.run_id,
             .config_rev = self.config_rev,
-            .agent = self.agent,
             .content = content,
             .time = .{ .created_at_ms = self.created_at_ms },
         } };
@@ -339,13 +334,12 @@ const testing = std.testing;
 
 const zero_session: ids.SessionId = .bytes(@splat(0));
 
-fn started(agent: []const u8) message.MessageStartedData {
+fn started() message.MessageStartedData {
     return .{
         .session_id = zero_session,
         .message_id = 1,
         .run_id = 1,
         .config_rev = 1,
-        .agent = agent,
         .created_at_ms = 1000,
     };
 }
@@ -371,15 +365,14 @@ fn toolStateChange(part_id: ids.PartId, state: tool.ToolState) tool.ToolStateCha
     return .{ .session_id = zero_session, .message_id = 1, .part_id = part_id, .state = state };
 }
 
-test "init clones agent and deinit frees the whole draft" {
-    var d = try Draft.init(testing.allocator, started("claude"));
+test "deinit frees the whole draft" {
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
-    try testing.expectEqualStrings("claude", d.agent);
     try testing.expectEqual(@as(usize, 0), d.parts.items.len);
 }
 
 test "text part streams via contiguous deltas" {
-    var d = try Draft.init(testing.allocator, started("a"));
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(addText(0, ""));
     try d.applyPartDelta(delta(0, 0, "hel"));
@@ -388,7 +381,7 @@ test "text part streams via contiguous deltas" {
 }
 
 test "part_added may carry initial bytes that deltas extend" {
-    var d = try Draft.init(testing.allocator, started("a"));
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(addText(0, "he"));
     try d.applyPartDelta(delta(0, 2, "llo"));
@@ -396,7 +389,7 @@ test "part_added may carry initial bytes that deltas extend" {
 }
 
 test "reasoning owns its signature; redacted owns its data" {
-    var d = try Draft.init(testing.allocator, started("a"));
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "why", .signature = "sig" } } });
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .redacted_reasoning = .{ .id = 1, .data = "opaque" } } });
@@ -407,7 +400,7 @@ test "reasoning owns its signature; redacted owns its data" {
 }
 
 test "streamed reasoning finalizes its signature and redacted data at block stop" {
-    var d = try Draft.init(testing.allocator, started("a"));
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     // The stream path adds empty parts, sends text, then finalizes at block stop.
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "", .signature = "" } } });
@@ -427,7 +420,7 @@ test "streamed reasoning finalizes its signature and redacted data at block stop
 }
 
 test "tool output streams into the tool buffer" {
-    var d = try Draft.init(testing.allocator, started("a"));
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(addTool(0, .{ .running = .{ .started_at_ms = 5 } }));
     try testing.expectEqualStrings("bash", d.parts.items[0].tool.name);
@@ -437,7 +430,7 @@ test "tool output streams into the tool buffer" {
 }
 
 test "tool state transitions from pending to a terminal state" {
-    var d = try Draft.init(testing.allocator, started("a"));
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(addTool(0, .{ .pending = .{} }));
 
@@ -448,7 +441,7 @@ test "tool state transitions from pending to a terminal state" {
 }
 
 test "completed tool state with a diff view clones the whole tree" {
-    var d = try Draft.init(testing.allocator, started("a"));
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(addTool(0, .{ .running = .{ .started_at_ms = 1 } }));
 
@@ -464,7 +457,7 @@ test "completed tool state with a diff view clones the whole tree" {
 }
 
 test "streaming state: running tool outranks a trailing reasoning part" {
-    var d = try Draft.init(testing.allocator, started("a"));
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(addTool(0, .{ .running = .{ .started_at_ms = 7 } }));
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 1, .text = "", .signature = "" } } });
@@ -476,7 +469,7 @@ test "streaming state: running tool outranks a trailing reasoning part" {
 }
 
 test "streaming state: trailing reasoning, else plain streaming" {
-    var d = try Draft.init(testing.allocator, started("a"));
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(addText(0, "hi"));
     try testing.expectEqual(@as(u64, 42), d.deriveStreamingState(42).streaming.started_at_ms);
@@ -486,7 +479,7 @@ test "streaming state: trailing reasoning, else plain streaming" {
 }
 
 test "toActiveDraft carries the parts and the streamed output" {
-    var d = try Draft.init(testing.allocator, started("claude"));
+    var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(addText(0, ""));
     try d.applyPartDelta(delta(0, 0, "hello"));
@@ -496,7 +489,6 @@ test "toActiveDraft carries the parts and the streamed output" {
     var scratch = std.heap.ArenaAllocator.init(testing.allocator);
     defer scratch.deinit();
     const snapshot = try d.toActiveDraft(scratch.allocator());
-    try testing.expectEqualStrings("claude", snapshot.message.agent);
     try testing.expectEqualStrings("hello", snapshot.message.content[0].text.text);
     try testing.expectEqualStrings("out", snapshot.message.content[1].tool.state.running.output.?);
 }

@@ -35,20 +35,16 @@ export const ROLE_NONE = 0;
 export const ROLE_ACTION = 1;
 export const ROLE_TEXT = 2;
 
+// The label a reader sees above an input the engine assigned a source. A plugin registers the labels for the sources it owns.
+/** @type {Record<string, (source: any) => string>} */
+export const sources = Object.create(null);
+sources.run_interrupted = (source) => "Engine notice · run " + source.run_id + " interrupted";
+
 /** @param {Wire.InputSource | undefined | null} source @returns {string} */
 export function inputSourceLabel(source) {
   if (!source) return "";
-  if (source.type === "parent_instruction") return "From the parent session";
-  if (source.type === "child_report") {
-    const usage = source.usage;
-    const outcome = source.outcome;
-    const seconds = usage.duration_ms == null ? "" : " · " + (usage.duration_ms / 1000).toFixed(1) + "s";
-    const failure = outcome.type === "failed" ? " · " + outcome.message + (outcome.detail ? " · " + outcome.detail : "") : "";
-    return "Message from " + source.name + " · " + (outcome.type === "turn" ? "completed" : outcome.type) + failure + (source.partial ? " · partial" : "") + (source.truncated ? " · model report truncated" : "")
-      + " · " + usage.rounds + (usage.rounds === 1 ? " round" : " rounds") + " · " + usage.tool_calls + (usage.tool_calls === 1 ? " tool" : " tools") + " · " + usage.tokens.input + "/" + usage.tokens.output + " tokens" + seconds;
-  }
-  if (source.type === "child_input_canceled") return "Message from " + source.name + " · queued work canceled";
-  return "Engine notice · run " + source.run_id + " interrupted";
+  const label = sources[source.type];
+  return label ? label(source) : source.type.replace(/_/g, " ");
 }
 
 

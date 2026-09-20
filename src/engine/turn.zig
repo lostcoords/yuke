@@ -23,7 +23,6 @@ const session_store = database.session;
 const event_store = database.event;
 const event = ai.event;
 
-const agent_name = "claude";
 const round_request = @import("request.zig");
 const request_context = @import("context.zig");
 const request_config_mod = @import("request_config.zig");
@@ -174,7 +173,6 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
         .message_id = slot.progress.current.?.message_id,
         .run_id = slot.runId(),
         .config_rev = slot.handle.started.config_rev,
-        .agent = agent_name,
         .created_at_ms = created_at,
     } } };
     // Fold the start into the session, then publish. The fold opens the draft.
@@ -376,7 +374,6 @@ fn commitRound(
         .id = round.message_id,
         .run_id = slot.runId(),
         .config_rev = slot.handle.started.config_rev,
-        .agent = agent_name,
         .content = content,
         .finish = finish,
         .tokens = usage,
@@ -932,7 +929,6 @@ const StreamerFixture = struct {
             .message_id = 2,
             .run_id = 1,
             .config_rev = 0,
-            .agent = agent_name,
             .created_at_ms = 1,
         } });
     }
@@ -977,7 +973,6 @@ const StreamerFixture = struct {
             .message_id = message_id,
             .run_id = 1,
             .config_rev = 0,
-            .agent = agent_name,
             .created_at_ms = 2,
         } });
         self.slot.progress.current = .{ .message_id = message_id };

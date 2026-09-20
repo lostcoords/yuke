@@ -42,7 +42,6 @@ pub fn create(host: *Host, io: std.Io, scale: u32, native_stream: bool) !*Projec
         .id = 1,
         .run_id = 1,
         .config_rev = 0,
-        .agent = "bench",
         .content = &parts,
         .time = .{ .created_at_ms = 1 },
     } }};
@@ -53,7 +52,6 @@ pub fn create(host: *Host, io: std.Io, scale: u32, native_stream: bool) !*Projec
             .message_id = 2,
             .run_id = 2,
             .config_rev = 0,
-            .agent = "bench",
             .created_at_ms = 2,
         } });
         try session.apply(.{ .message_part_added_data = .{

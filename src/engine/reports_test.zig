@@ -62,7 +62,6 @@ const Fixture = struct {
             .id = try database.event.allocMessageId(&self.db, a, child.raw),
             .run_id = started.handle.started.run_id,
             .config_rev = 0,
-            .agent = "child",
             .content = &.{ .{ .tool = .{ .id = 0, .name = "exec", .arguments = "{}", .state = .{ .completed = .{ .output = "", .duration_ms = 1 } } } }, .{ .text = .{ .id = 1, .text = value } } },
             .finish = .stop,
             .tokens = if (i == 0) .{ .input = 10, .output = 5, .reasoning = 0, .cache_read = 0, .cache_write = 0 } else null,

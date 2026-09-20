@@ -439,7 +439,6 @@ test "a huge tool result projects into a bounded parts response" {
         .id = 1,
         .run_id = 1,
         .config_rev = 0,
-        .agent = "claude",
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
@@ -489,7 +488,6 @@ test "a diff of many files stays inside the response budget" {
         .id = 1,
         .run_id = 1,
         .config_rev = 0,
-        .agent = "claude",
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
@@ -532,7 +530,6 @@ test "many huge parts each stay inside the part budget and none is dropped" {
         .id = 1,
         .run_id = 1,
         .config_rev = 0,
-        .agent = "claude",
         .content = content,
         .time = .{ .created_at_ms = 1 },
     } }};
@@ -573,7 +570,6 @@ test "every cut address resolves to its own field, never a neighbour" {
         .id = 1,
         .run_id = 1,
         .config_rev = 0,
-        .agent = "claude",
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
@@ -611,7 +607,6 @@ test "a text part over the inline bound reports more and pages back whole" {
         .id = 1,
         .run_id = 1,
         .config_rev = 0,
-        .agent = "claude",
         .content = &content,
         .time = .{ .created_at_ms = 1 },
     } }};
@@ -701,7 +696,6 @@ test "the outline carries the provider answer of a failed run" {
             .id = 1,
             .run_id = 1,
             .config_rev = 0,
-            .agent = "root",
             .content = &.{},
             .finish = .@"error",
             .time = .{ .created_at_ms = 1 },

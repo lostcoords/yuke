@@ -350,7 +350,6 @@ test "input during automatic compaction waits for the next round and keeps messa
                 .id = id,
                 .run_id = 1,
                 .config_rev = 0,
-                .agent = "test",
                 .content = &.{.{ .text = .{ .id = 0, .text = text } }},
                 .finish = .stop,
                 .time = .{ .created_at_ms = 1 },

@@ -19,7 +19,6 @@ pub const AssistantMessage = struct {
     id: ids.MessageId,
     run_id: ids.RunId,
     config_rev: ids.ConfigRev,
-    agent: []const u8,
     content: []const AssistantPart,
     finish: ?enums.StopReason = null,
     tokens: ?TokenUsage = null,
@@ -118,7 +117,6 @@ pub const MessageStartedData = struct {
     message_id: ids.MessageId,
     run_id: ids.RunId,
     config_rev: ids.ConfigRev,
-    agent: []const u8,
     created_at_ms: u64,
 };
 

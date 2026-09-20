@@ -378,7 +378,7 @@ fn seedMessage(db: *database.Database, arena: std.mem.Allocator, id: [16]u8, mes
     @memset(filler, 'x');
     try seedCommitted(db, arena, id, message_id, switch (role) {
         .user => .{ .user = .{ .id = message_id, .input_id = message_id, .content = &.{.{ .text = .{ .text = filler } }}, .time = .{ .created_at_ms = message_id } } },
-        .assistant => .{ .assistant = .{ .id = message_id, .run_id = 1, .config_rev = 0, .agent = "root", .time = .{ .created_at_ms = message_id }, .content = &.{.{ .text = .{ .id = 1, .text = filler } }} } },
+        .assistant => .{ .assistant = .{ .id = message_id, .run_id = 1, .config_rev = 0, .time = .{ .created_at_ms = message_id }, .content = &.{.{ .text = .{ .id = 1, .text = filler } }} } },
     });
 }
 

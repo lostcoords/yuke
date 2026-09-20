@@ -220,7 +220,6 @@ test "assistant tool call yields a tool_use then a tool_result" {
         .id = 1,
         .run_id = 1,
         .config_rev = 1,
-        .agent = "main",
         .content = &content,
         .time = .{ .created_at_ms = 0 },
     } }};
@@ -247,7 +246,6 @@ test "reasoning replays only when the provenance matches the target" {
         .id = 1,
         .run_id = 1,
         .config_rev = 1,
-        .agent = "main",
         .content = &content,
         .time = .{ .created_at_ms = 0 },
         .provenance = .{ .protocol = .anthropic_messages, .model = "claude" },
@@ -303,7 +301,7 @@ test "a tool image resolves to result media, and a text-only model gets the note
     const content = [_]proto.message.AssistantPart{
         .{ .tool = .{ .id = 1, .call_id = "call_1", .name = "read", .arguments = "{}", .state = .{ .completed = .{ .output = "PNG image, 3 B", .media = &.{blob}, .duration_ms = 1 } } } },
     };
-    const messages = [_]proto.message.Message{.{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 1, .agent = "main", .content = &content, .time = .{ .created_at_ms = 0 } } }};
+    const messages = [_]proto.message.Message{.{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 1, .content = &content, .time = .{ .created_at_ms = 0 } } }};
 
     var spy: SpyLookup = .{ .bytes = "PNG" };
     const seen = try build(a, &messages, .{ .modalities = .{ .input = &.{ .text, .image } }, .blobs = spy.lookup() });
@@ -332,7 +330,6 @@ test "the request shares an image byte budget and reads only the newest images" 
             .id = 2,
             .run_id = 1,
             .config_rev = 0,
-            .agent = "main",
             .content = &.{.{ .tool = .{ .id = 1, .call_id = "read", .name = "read", .arguments = "{}", .state = .{ .completed = .{ .output = "images", .media = blobs[2..9], .duration_ms = 1 } } } }},
             .time = .{ .created_at_ms = 2 },
         } },
@@ -435,7 +432,6 @@ test "canceled tools state possible side effects and assistant diagnostics stay 
         .id = 1,
         .run_id = 1,
         .config_rev = 0,
-        .agent = "test",
         .time = .{ .created_at_ms = 1 },
         .@"error" = .{ .type = "runtime_failed", .message = "private diagnostic" },
         .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "exec", .arguments = "{}", .state = .{ .canceled = .{} } } }},
@@ -454,7 +450,6 @@ test "a canceled tool becomes an error provider result that names the side effec
         .id = 1,
         .run_id = 1,
         .config_rev = 0,
-        .agent = "test",
         .time = .{ .created_at_ms = 1 },
         .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "spawn", .arguments = "{}", .state = .{ .canceled = .{ .duration_ms = 3 } } } }},
     } }};
@@ -492,10 +487,10 @@ test "a failed run adds one user marker after its tool results, and any other fi
     const a = arena.allocator();
     const call: proto.message.AssistantPart = .{ .tool = .{ .id = 0, .call_id = "call_1", .name = "read", .arguments = "{}", .state = .{ .completed = .{ .output = "ok", .duration_ms = 1 } } } };
     const messages = [_]proto.message.Message{
-        .{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 1 }, .content = &.{call}, .finish = .tool_calls } },
-        .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 2 }, .content = &.{call}, .finish = .@"error", .@"error" = .{ .type = "provider", .message = "the provider returned an unexpected status", .status = 400, .detail = "invalid_request_error: too long" } } },
-        .{ .assistant = .{ .id = 3, .run_id = 2, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 3 }, .content = &.{.{ .text = .{ .id = 0, .text = "done" } }}, .finish = .stop } },
-        .{ .assistant = .{ .id = 4, .run_id = 3, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 4 }, .content = &.{}, .finish = .@"error", .@"error" = .{ .type = "network", .message = "the provider connection failed" } } },
+        .{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .time = .{ .created_at_ms = 1 }, .content = &.{call}, .finish = .tool_calls } },
+        .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 0, .time = .{ .created_at_ms = 2 }, .content = &.{call}, .finish = .@"error", .@"error" = .{ .type = "provider", .message = "the provider returned an unexpected status", .status = 400, .detail = "invalid_request_error: too long" } } },
+        .{ .assistant = .{ .id = 3, .run_id = 2, .config_rev = 0, .time = .{ .created_at_ms = 3 }, .content = &.{.{ .text = .{ .id = 0, .text = "done" } }}, .finish = .stop } },
+        .{ .assistant = .{ .id = 4, .run_id = 3, .config_rev = 0, .time = .{ .created_at_ms = 4 }, .content = &.{}, .finish = .@"error", .@"error" = .{ .type = "network", .message = "the provider connection failed" } } },
     };
     const request = try build(a, &messages, .{});
     try testing.expectEqual(@as(usize, 7), request.len);
@@ -508,7 +503,7 @@ test "a failed run adds one user marker after its tool results, and any other fi
 }
 
 test "a failed finish without its error is a bad transcript" {
-    const messages = [_]proto.message.Message{.{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 1 }, .content = &.{}, .finish = .@"error" } }};
+    const messages = [_]proto.message.Message{.{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .time = .{ .created_at_ms = 1 }, .content = &.{}, .finish = .@"error" } }};
     try testing.expectError(error.InvalidTranscript, build(testing.allocator, &messages, .{}));
 }
 
@@ -517,8 +512,8 @@ test "a canceled run adds the interrupted marker after its canceled tool, or alo
     defer arena.deinit();
     const a = arena.allocator();
     const messages = [_]proto.message.Message{
-        .{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 1 }, .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "exec", .arguments = "{}", .state = .{ .canceled = .{ .duration_ms = 3 } } } }}, .finish = .canceled } },
-        .{ .assistant = .{ .id = 2, .run_id = 2, .config_rev = 0, .agent = "test", .time = .{ .created_at_ms = 2 }, .content = &.{}, .finish = .canceled } },
+        .{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .time = .{ .created_at_ms = 1 }, .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "exec", .arguments = "{}", .state = .{ .canceled = .{ .duration_ms = 3 } } } }}, .finish = .canceled } },
+        .{ .assistant = .{ .id = 2, .run_id = 2, .config_rev = 0, .time = .{ .created_at_ms = 2 }, .content = &.{}, .finish = .canceled } },
     };
     const request = try build(a, &messages, .{});
     try testing.expectEqual(@as(usize, 4), request.len);

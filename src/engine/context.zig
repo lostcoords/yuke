@@ -154,7 +154,7 @@ test "model history survives cache eviction and an insufficient budget drops not
         for (1..10) |n| {
             const id: u64 = @intCast(n);
             const user = n % 2 == 1 and n != 9 or n == 8;
-            const msg: proto.message.Message = if (user) .{ .user = .{ .id = id, .content = &.{.{ .text = .{ .text = "task" } }}, .input_id = id, .time = .{ .created_at_ms = id } } } else .{ .assistant = .{ .id = id, .run_id = 1, .config_rev = 0, .agent = "root", .content = &.{}, .time = .{ .created_at_ms = id } } };
+            const msg: proto.message.Message = if (user) .{ .user = .{ .id = id, .content = &.{.{ .text = .{ .text = "task" } }}, .input_id = id, .time = .{ .created_at_ms = id } } } else .{ .assistant = .{ .id = id, .run_id = 1, .config_rev = 0, .content = &.{}, .time = .{ .created_at_ms = id } } };
             var event_id = sid;
             event_id[0] = @intCast(n);
             _ = try database.message.appendCommittedMessage(&db, a, sid, event_id, id, msg);
@@ -185,7 +185,7 @@ test "the newest checkpoint leads the request and an older one drops out" {
     // 1 and 2 are covered history, 3 is an old checkpoint, 4 is the tail, 5 is the newest checkpoint.
     const messages = [_]proto.message.Message{
         .{ .user = .{ .id = 1, .input_id = 1, .content = &.{.{ .text = .{ .text = "old" } }}, .time = .{ .created_at_ms = 1 } } },
-        .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 0, .agent = "root", .content = &.{}, .time = .{ .created_at_ms = 2 } } },
+        .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 0, .content = &.{}, .time = .{ .created_at_ms = 2 } } },
         .{ .compaction = .{ .id = 3, .run_id = 1, .reason = .manual, .summary = "first summary", .first_kept_id = 1, .tokens_before = 9, .tokens_after = 2, .time = .{ .created_at_ms = 3 } } },
         .{ .user = .{ .id = 4, .input_id = 2, .content = &.{.{ .text = .{ .text = "kept" } }}, .time = .{ .created_at_ms = 4 } } },
         .{ .compaction = .{ .id = 5, .run_id = 2, .reason = .auto, .summary = "second summary", .first_kept_id = 4, .tokens_before = 9, .tokens_after = 2, .time = .{ .created_at_ms = 5 } } },
