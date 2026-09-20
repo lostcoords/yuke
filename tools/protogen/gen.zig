@@ -124,6 +124,7 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "ActivityStateRetrying", .field = "run_id", .alias = "RunId" },
     .{ .owner = "ActivityStateCompacting", .field = "run_id", .alias = "RunId" },
     .{ .owner = "SessionHistoryParams", .field = "session_id", .alias = "SessionId" },
+    .{ .owner = "SessionGoalParams", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionHistoryParams", .field = "before_message_id", .alias = "MessageId" },
     .{ .owner = "SessionHistoryResult", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "SessionConfigParams", .field = "session_id", .alias = "SessionId" },

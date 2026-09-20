@@ -586,6 +586,8 @@ export interface CreateSession {
   readonly reasoning?: string;
   /** Replace the base prompt; child policy remains separate. Resolve placeholders at creation. */
   readonly system_prompt?: string;
+  /** The goal for a new root session. Child sessions inherit their parent's goal. */
+  readonly goal?: string;
   readonly max_rounds?: number;
   readonly initial_input?: Input;
   readonly child?: ChildSession;
@@ -847,6 +849,18 @@ export interface SessionGetParams {
   readonly check_files?: boolean;
 }
 
+/** Read, set, or control a session's persistent task goal. Setting text starts an active goal; the goal text is also the first user prompt. */
+export interface SessionGoalParams {
+  readonly session_id: SessionId;
+  readonly goal?: string;
+  readonly action?: GoalAction;
+}
+
+export interface SessionGoalResult {
+  readonly goal?: string;
+  readonly status?: GoalStatus;
+}
+
 /** Which stored snapshots differ from the files on disk. */
 export interface ContextChanges {
   readonly instructions: boolean;
@@ -1087,14 +1101,19 @@ export interface ViewText {
   readonly language?: string;
 }
 
-export type InstructionScope =
-  | "global"
-  | "workspace"
+/** A control action for a persistent task goal. */
+export type GoalAction =
+  | "pause"
+  | "resume"
+  | "clear"
+  | "complete"
 ;
 
-export type AgentModelSlot =
-  | "small"
-  | "medium"
+/** The lifecycle of a persistent task goal. */
+export type GoalStatus =
+  | "active"
+  | "paused"
+  | "completed"
 ;
 
 /** Workspace execution environment; advertised engine capability; numeric JSON-RPC and yuke error codes. */
@@ -1157,6 +1176,16 @@ export type ErrorCode =
   | -32603
   /** overloaded */
   | -31021
+;
+
+export type InstructionScope =
+  | "global"
+  | "workspace"
+;
+
+export type AgentModelSlot =
+  | "small"
+  | "medium"
 ;
 
 export type InputQueueReason =
@@ -1245,6 +1274,8 @@ export type MethodName =
   | "session.list"
   /** Read one session with its resident activity, or its durable idle activity. */
   | "session.get"
+  /** Read or replace a session's task goal. */
+  | "session.goal"
   /** Create a session. */
   | "session.create"
   /** Update a session's mutable fields. */
@@ -1508,6 +1539,7 @@ export type RequestParams =
   | AgentsUpdateParams
   | SessionListParams
   | SessionGetParams
+  | SessionGoalParams
   | CreateSession
   | SessionPatchParams
   | SessionRemoveParams
@@ -1541,6 +1573,7 @@ export type ResponseResult =
   | InitializeResult
   | SessionListResult
   | SessionListItem
+  | SessionGoalResult
   | SessionResult
   | Session
   | Empty
@@ -1665,6 +1698,8 @@ export interface Methods {
   "session.list": { paramsType: [SessionListParams?]; returnType: SessionListResult };
   /** Read one session with its resident activity, or its durable idle activity. */
   "session.get": { paramsType: [SessionGetParams]; returnType: SessionListItem };
+  /** Read or replace a session's task goal. */
+  "session.goal": { paramsType: [SessionGoalParams]; returnType: SessionGoalResult };
   /** Create a session. */
   "session.create": { paramsType: [CreateSession]; returnType: SessionResult };
   /** Update a session's mutable fields. */

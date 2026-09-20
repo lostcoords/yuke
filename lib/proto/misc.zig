@@ -25,6 +25,8 @@ pub const CreateSession = struct {
     reasoning: ?[]const u8 = null,
     /// Replace the base prompt; child policy remains separate. Resolve placeholders at creation.
     system_prompt: ?[]const u8 = null,
+    /// The goal for a new root session. Child sessions inherit their parent's goal.
+    goal: ?[]const u8 = null,
     max_rounds: ?u64 = null,
     initial_input: ?input.Input = null,
     child: ?session.ChildSession = null,

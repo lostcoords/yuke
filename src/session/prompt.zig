@@ -6,6 +6,8 @@ const limit = @import("proto").meta.limits.max_message_string_bytes;
 pub const Parts = struct {
     base: []const u8,
     instructions: []const u8 = "",
+    /// A user-set task goal. Its heading makes the value unambiguous to the model.
+    goal: []const u8 = "",
     /// The skill catalog component. It is empty when the session lists no skill.
     skills: []const u8 = "",
     child_policy: ?[]const u8,
@@ -13,7 +15,13 @@ pub const Parts = struct {
 
     /// Return one owned buffer; skip empty parts and separate the rest with two newline characters.
     pub fn render(self: Parts, gpa: std.mem.Allocator) ![]u8 {
-        const parts = [_][]const u8{ self.base, self.instructions, self.skills, self.child_policy orelse "", self.environment };
+        const goal_block: ?[]u8 = if (self.goal.len == 0) null else try std.mem.concat(gpa, u8, &.{
+            "## Goal\n",
+            self.goal,
+            "\n\nWork autonomously toward this goal across as many turns as needed. Verify the stated completion criteria before stopping. Do not stop merely to report progress or ask for routine direction. When the goal is achieved, call the finish_goal tool, then give the user a concise final summary.",
+        });
+        defer if (goal_block) |text| gpa.free(text);
+        const parts = [_][]const u8{ self.base, self.instructions, goal_block orelse "", self.skills, self.child_policy orelse "", self.environment };
         var size: usize = 0;
         for (parts) |part| {
             if (part.len == 0) continue;
@@ -49,6 +57,7 @@ test "prompt parts preserve text and omit empty components" {
         .{ .parts = .{ .base = "", .child_policy = "child", .environment = "env" }, .expected = "child\n\nenv" },
         .{ .parts = .{ .base = "base", .instructions = "rules", .child_policy = "child", .environment = "env" }, .expected = "base\n\nrules\n\nchild\n\nenv" },
         .{ .parts = .{ .base = "base\n\ntext", .child_policy = "child", .environment = "env" }, .expected = "base\n\ntext\n\nchild\n\nenv" },
+        .{ .parts = .{ .base = "base", .goal = "ship it", .child_policy = null, .environment = "env" }, .expected = "base\n\n## Goal\nship it\n\nWork autonomously toward this goal across as many turns as needed. Verify the stated completion criteria before stopping. Do not stop merely to report progress or ask for routine direction. When the goal is achieved, call the finish_goal tool, then give the user a concise final summary.\n\nenv" },
     };
     for (cases) |case| {
         const text = try case.parts.render(std.testing.allocator);

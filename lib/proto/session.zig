@@ -103,6 +103,25 @@ pub const SessionGetParams = struct {
     check_files: bool = false,
 };
 
+/// The lifecycle of a persistent task goal.
+pub const GoalStatus = enum { active, paused, completed };
+
+/// A control action for a persistent task goal.
+pub const GoalAction = enum { pause, @"resume", clear, complete };
+
+/// Read, set, or control a session's persistent task goal. Setting text starts
+/// an active goal; the goal text is also the first user prompt.
+pub const SessionGoalParams = struct {
+    session_id: ids.SessionId,
+    goal: ?[]const u8 = null,
+    action: ?GoalAction = null,
+};
+
+pub const SessionGoalResult = struct {
+    goal: ?[]const u8 = null,
+    status: ?GoalStatus = null,
+};
+
 /// Which stored snapshots differ from the files on disk.
 pub const ContextChanges = struct {
     instructions: bool,

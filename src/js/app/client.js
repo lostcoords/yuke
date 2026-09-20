@@ -256,6 +256,11 @@ function sessionPatch(sessionId, patch) {
   return request("session.patch", { session_id: sessionId, patch });
 }
 
+/** @param {string} sessionId @param {string | undefined} goal @param {Wire.GoalAction | undefined} action @returns {Promise<Wire.SessionGoalResult>} */
+function sessionGoal(sessionId, goal, action) {
+  return request("session.goal", { session_id: sessionId, ...(goal === undefined ? {} : { goal }), ...(action === undefined ? {} : { action }) });
+}
+
 // The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
 /** @param {Wire.CatalogRev | null | undefined} sinceRev @returns {Promise<Wire.CatalogListResult>} */
 function catalogList(sinceRev) {
@@ -374,6 +379,7 @@ export const client = {
   sessionCancelInput,
   sessionCreate,
   sessionPatch,
+  sessionGoal,
   catalogList,
   catalogReload,
   authList,

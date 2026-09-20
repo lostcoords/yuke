@@ -80,6 +80,8 @@ pub const MethodName = enum {
     @"session.list",
     /// Read one session with its resident activity, or its durable idle activity.
     @"session.get",
+    /// Read or replace a session's task goal.
+    @"session.goal",
     /// Create a session.
     @"session.create",
     /// Update a session's mutable fields.

@@ -287,6 +287,13 @@ async function skill(args, _signal, context) {
   return loaded.content;
 }
 
+/** @param {ToolArgs} _args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
+async function finishGoal(_args, _signal, context) {
+  if (!context?.sessionId) invalid("finish_goal", "the tool has no session");
+  await client.sessionGoal(context.sessionId, undefined, "complete");
+  return "The goal is marked complete. Give the user a concise final summary with the verification performed.";
+}
+
 builtin("read", {
   description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range. A PNG, JPEG, GIF, or WebP file returns the image.",
   parameters: { type: "object", properties: {
@@ -330,4 +337,8 @@ builtin("skill", {
   parameters: { type: "object", properties: {
     name: { type: "string", description: "Pass the name from an available_skills entry." },
   }, required: ["name"], additionalProperties: false }, execute: skill, needsSkills: true,
+});
+builtin("finish_goal", {
+  description: "Mark the active long-running goal complete. Call this only after verifying its stated completion criteria. The next response must be a concise final summary for the user.",
+  parameters: { type: "object", properties: {}, required: [], additionalProperties: false }, execute: finishGoal,
 });
