@@ -341,6 +341,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     try expectCall(host, "read", "{\"path\":\"blob.bin\"}", root, true, "read: the file holds invalid UTF-8");
     try expectCall(host, "read", "{\"path\":\"missing.txt\"}", root, true, "read: the path does not exist");
     try expectCall(host, "read", "{\"path\":1}", root, true, "read: the argument path must be a string");
+    try expectCall(host, "read", "{\"path\":\"a.txt\",\"file_path\":\"a.txt\"}", root, true, "read: the argument file_path does not exist. The arguments are: path, start, end.");
     {
         const call = host.calls.submit("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", root);
         try support.pumpUntilSettled(host, call);

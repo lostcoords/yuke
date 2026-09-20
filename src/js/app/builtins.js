@@ -36,7 +36,7 @@ function builtin(name, definition) {
     ...definition,
     execute: (args, signal, context) => {
       if (args == null || typeof args !== "object" || Array.isArray(args)) invalid(name, "the arguments must be an object");
-      for (const key of Object.keys(args)) if (!fields.has(key)) invalid(name, "the schema lacks the argument");
+      for (const key of Object.keys(args)) if (!fields.has(key)) invalid(name, `the argument ${key} does not exist. The arguments are: ${[...fields].join(", ")}.`);
       return execute(args, signal, context);
     },
   });
