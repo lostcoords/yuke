@@ -308,7 +308,7 @@ fn listFiles(b: *std.Build, dir_path: []const u8, suffix: []const u8) []const []
 }
 
 /// The modules that `src/js/native` installs in every host. The bake stubs them and rejects any other unknown import.
-const native_js = "yuke:cancellation-native,yuke:diff,yuke:engine-native,yuke:env,yuke:exec,yuke:fs,yuke:hooks,yuke:interaction-native,yuke:jobs-native,yuke:net-native,yuke:process,yuke:term,yuke:tools,yuke:utf8";
+const native_js = "yuke:cancellation-native,yuke:diff,yuke:engine-native,yuke:env,yuke:exec,yuke:fs,yuke:hooks,yuke:http-native,yuke:interaction-native,yuke:jobs-native,yuke:net-native,yuke:process,yuke:term,yuke:tools,yuke:utf8";
 
 fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.builtin.OptimizeMode) *std.Build.Module {
     const tool = b.addExecutable(.{

@@ -12,6 +12,7 @@ pub const TreeShape = Tree.Shape;
 const Commit = @import("commit.zig");
 const Projection = @import("projection.zig");
 const SocketPeer = @import("../socket_peer.zig").Peer;
+const HttpPeer = @import("../http_peer.zig").Peer;
 const builtin = @import("builtin");
 const metrics = @import("metrics");
 pub const metrics_enabled = builtin.is_test or metrics.enabled;
@@ -49,6 +50,9 @@ pub const Phase = enum {
     fs_read,
     utf8_reused,
     utf8_fresh,
+    http_reused,
+    http_fresh,
+    http_close,
     net_echo,
     net_echo_fresh,
     process_echo,
@@ -63,12 +67,13 @@ pub const Phase = enum {
     interaction_reused,
     interaction_fresh,
 
-    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, utf8, interaction };
+    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction };
 
     fn group(self: Phase) Group {
         return switch (self) {
             .exec_short, .exec_bulk, .fs_read, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
             .net_echo, .net_echo_fresh => .net,
+            .http_reused, .http_fresh, .http_close => .http,
             .utf8_reused, .utf8_fresh => .utf8,
             .interaction_reused, .interaction_fresh => .interaction,
             .tool_call => .tools,
@@ -97,6 +102,7 @@ pub const Harness = struct {
     commit: ?*Commit = null,
     tree: ?*Tree = null,
     socket_peer: ?*SocketPeer = null,
+    http_peer: ?*HttpPeer = null,
     tree_shape: TreeShape = .wide,
     phase: ?Phase = null,
     native_step: usize = 0,
@@ -142,7 +148,11 @@ pub const Harness = struct {
         }
         errdefer if (self.socket_peer) |peer| peer.destroy();
         if (self.socket_peer) |peer| try ctx.setPropertyStr(global, "SOCKET_PATH", ctx.newString(peer.path));
+        if (self.phase_group == .http) self.http_peer = try HttpPeer.create(gpa, io, if (phase == .http_close) .close else .reply);
+        errdefer if (self.http_peer) |peer| peer.destroy();
+        if (self.http_peer) |peer| try ctx.setPropertyStr(global, "HTTP_URL", ctx.newString(peer.url));
         try self.host.evalModule(switch (self.phase_group) {
+            .http => @embedFile("http.js"),
             .interaction => @embedFile("interaction.js"),
             .tools => tool_source,
             .hooks => hook_source,
@@ -172,6 +182,7 @@ pub const Harness = struct {
         self.host.ctx.freeValue(self.api);
         self.host.destroy();
         if (self.socket_peer) |peer| peer.destroy();
+        if (self.http_peer) |peer| peer.destroy();
         self.render.deinit(&self.output.writer);
         std.debug.assert(self.allocations.liveBytes() == 0);
         std.debug.assert(self.allocations.liveCount() == 0);
@@ -423,23 +434,23 @@ pub const Harness = struct {
             std.log.err("benchmark: {s}", .{self.host.faultText()});
             return error.JavaScriptFault;
         }
-        if ((self.phase_group == .process or self.phase_group == .net or self.phase_group == .plugins or self.phase_group == .interaction) and ctx.isObject(result)) {
+        if (ctx.isObject(result)) {
             const deadline = std.Io.Clock.Timestamp.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake });
             while (ctx.promiseState(result) == .Pending) {
                 self.host.wake.reset();
                 try self.host.pump();
                 if (ctx.promiseState(result) != .Pending) break;
-                if (deadline.durationFromNow(self.host.io).raw.nanoseconds <= 0) return error.ProcessBenchmarkTimeout;
+                if (deadline.durationFromNow(self.host.io).raw.nanoseconds <= 0) return error.BenchmarkTimeout;
                 self.host.wake.waitTimeout(self.host.io, .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } }) catch |err| switch (err) {
                     error.Timeout => {},
                     else => return err,
                 };
             }
         }
-        if (self.phase_group == .agents or self.phase_group == .process or self.phase_group == .net or self.phase_group == .plugins or self.phase_group == .interaction) {
-            if (self.phase_group == .agents) try self.settleAgents();
-            if (ctx.isObject(result) and ctx.promiseState(result) == .Rejected) return error.AgentBenchmarkRejected;
-            if (ctx.isObject(result) and ctx.promiseState(result) == .Fulfilled) {
+        if (self.phase_group == .agents) try self.settleAgents();
+        if (ctx.isObject(result)) {
+            if (ctx.promiseState(result) == .Rejected) return error.BenchmarkRejected;
+            if (ctx.promiseState(result) == .Fulfilled) {
                 const value = ctx.promiseResult(result);
                 defer ctx.freeValue(value);
                 return ctx.toInt32(value);
@@ -454,7 +465,7 @@ test "benchmark scenarios preserve the transcript across updates and cache evict
     defer _ = pool.deinit();
     for (phases) |phase| {
         // Process phases use the single-executor benchmark runtime.
-        if (phase.group() == .process or phase.group() == .net) continue;
+        if (phase.group() == .process or phase.group() == .net or phase.group() == .http) continue;
         const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, phase);
         defer harness.destroy();
         // Scale 9 holds 18 messages, above the 16-message row cache, so eviction runs.

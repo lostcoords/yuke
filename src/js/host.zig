@@ -12,6 +12,7 @@ const utf8_module = @import("native/utf8.zig");
 const env_module = @import("native/env.zig");
 const net_module = @import("native/net.zig");
 const exec_module = @import("native/exec.zig");
+const http_module = @import("native/http.zig");
 const process_module = @import("native/process.zig");
 const jobs_module = @import("native/jobs.zig");
 const diff_module = @import("native/diff.zig");
@@ -107,6 +108,9 @@ pub const Host = struct {
 
     net: net_module.Connections = .{},
 
+    /// The shared `fetch` client. It loads the root bundle once and takes a fresh clock for each request.
+    http: http_module.Client = .{},
+
     plugin_lifecycle: ?quickjs.Value = null,
     signal_class_id: quickjs.ClassID = 0,
     signal_waiters: std.ArrayList(cancellation.Waiter) = .empty,
@@ -165,10 +169,10 @@ pub const Host = struct {
         runtime.setModuleLoader(&self.loader);
         // A host with no renderer still installs the term module, because every draw call refuses a null render.
         const installers = [_]*const fn (*Host) void{
-            term_module.install,    engine_module.install,      fs_module.install,    env_module.install,
-            utf8_module.install,    net_module.install,         exec_module.install,  timers_mod.install,
-            process_module.install, jobs_module.install,        diff_module.install,  tools_module.install,
-            hooks_module.install,   interaction_module.install, cancellation.install,
+            term_module.install,  engine_module.install,  fs_module.install,          env_module.install,
+            http_module.install,  utf8_module.install,    net_module.install,         exec_module.install,
+            timers_mod.install,   process_module.install, jobs_module.install,        diff_module.install,
+            tools_module.install, hooks_module.install,   interaction_module.install, cancellation.install,
         };
         for (installers) |install| install(self);
         return self;
@@ -290,6 +294,7 @@ pub const Host = struct {
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
         self.net.deinit(self.gpa);
+        self.http.deinit();
         self.timers.deinit(self.ctx, self.gpa);
         self.procs.deinit(self);
         self.jobs.deinit(self.gpa);
@@ -984,6 +989,7 @@ test {
     _ = @import("tests/plugins_test.zig");
     _ = @import("tests/native_tools_test.zig");
     _ = @import("tests/net_test.zig");
+    _ = @import("tests/http_test.zig");
     _ = @import("timers.zig");
     _ = @import("native/jobs.zig");
     _ = @import("tests/interaction_test.zig");

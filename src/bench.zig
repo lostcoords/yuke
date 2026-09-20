@@ -60,6 +60,8 @@ pub fn main(init: std.process.Init) !void {
         for (0..5) |repeat| {
             try harness.start(phase, scale);
             const before = harness.allocations.counts;
+            const connections_before = if (harness.http_peer) |peer| peer.connections.load(.acquire) else 0;
+            const requests_before = if (harness.http_peer) |peer| peer.requests.load(.acquire) else 0;
             var output_bytes: u64 = 0;
             for (samples) |*sample| {
                 const start = std.Io.Timestamp.now(io, .awake);
@@ -89,6 +91,7 @@ pub fn main(init: std.process.Init) !void {
                 .max_ns = samples[samples.len - 1],
                 .checksum = checksum,
                 .requests = try harness.requests(),
+                .http = if (harness.http_peer) |peer| .{ .connections = peer.connections.load(.acquire) - connections_before, .requests = peer.requests.load(.acquire) - requests_before } else null,
                 .tree_shape = if (harness.tree != null) @tagName(tree_shape) else null,
                 .source_bytes = harness.sourceBytes(),
                 .output_bytes = output_bytes,

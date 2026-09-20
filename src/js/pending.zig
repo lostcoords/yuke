@@ -4,15 +4,55 @@ const std = @import("std");
 const quickjs = @import("quickjs");
 const cancellation = @import("native/cancellation.zig");
 const cancel = @import("../cancel.zig");
+const module = @import("native/module.zig");
 const Work = @import("../session/work.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
+/// A response owns its buffers until the owner settles or discards it.
+pub const Http = struct {
+    status: u16,
+    body: []u8,
+    headers: []Header,
+
+    pub const Header = struct {
+        name: [:0]u8,
+        value: []u8,
+
+        pub fn free(self: Header, gpa: std.mem.Allocator) void {
+            gpa.free(self.name);
+            gpa.free(self.value);
+        }
+    };
+
+    fn deinit(self: Http, gpa: std.mem.Allocator) void {
+        gpa.free(self.body);
+        for (self.headers) |header| header.free(gpa);
+        gpa.free(self.headers);
+    }
+
+    fn toJs(self: Http, ctx: Context) Value {
+        const object = ctx.newObject();
+        if (ctx.isException(object)) return object;
+        module.set(ctx, object, "status", ctx.newUint32(self.status));
+        module.set(ctx, object, "body", ctx.newString(self.body));
+        const headers = ctx.newObjectProto(quickjs.NULL);
+        for (self.headers) |header| module.set(ctx, headers, header.name, ctx.newString(header.value));
+        module.set(ctx, object, "headers", headers);
+        if (ctx.hasException()) {
+            ctx.freeValue(object);
+            return module.throwPending(ctx);
+        }
+        return object;
+    }
+};
+
 /// A task transfers owned buffers to the owner; failure messages and codes are static.
 pub const Result = union(enum) {
     bytes: struct { buffer: []u8, len: usize },
     number: u32,
+    http: Http,
     null_value,
     text: []u8,
     /// A structured answer, as the JSON text the owner parses. QuickJS reads it to the sentinel.
@@ -24,6 +64,7 @@ pub const Result = union(enum) {
     pub fn deinit(self: Result, gpa: std.mem.Allocator) void {
         switch (self) {
             .bytes => |bytes| gpa.free(bytes.buffer),
+            .http => |http| http.deinit(gpa),
             .text => |text| gpa.free(text),
             .json => |bytes| gpa.free(bytes),
             else => {},
@@ -192,6 +233,7 @@ pub const Ops = struct {
         const value = switch (result) {
             .bytes => |bytes| ctx.newUint8ArrayCopy(bytes.buffer[0..bytes.len]),
             .number => |number| ctx.newUint32(number),
+            .http => |http| http.toJs(ctx),
             .null_value => quickjs.NULL,
             .text => |text| ctx.newString(text),
             // A task builds this text, so a parse failure is our bug, not the caller's input.

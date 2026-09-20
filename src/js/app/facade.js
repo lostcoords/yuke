@@ -3,6 +3,7 @@ export { defineConfig, config } from "yuke:kernel";
 export { plugins, services } from "yuke:ext";
 export { fs } from "yuke:fs";
 export { env } from "yuke:env";
+export { fetch } from "yuke:http";
 export { utf8 } from "yuke:utf8";
 export { net } from "yuke:net";
 export { exec } from "yuke:exec";

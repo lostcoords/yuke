@@ -13,3 +13,5 @@ declare var agentReads: () => { gets: number; lists: number; updates: number };
 declare var agentResetReads: () => number;
 
 declare var SOCKET_PATH: string;
+
+declare var HTTP_URL: string;
