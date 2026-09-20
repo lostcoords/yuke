@@ -8,6 +8,7 @@ const misc = @import("misc.zig");
 const tagged = @import("tagged.zig");
 const tool = @import("tool.zig");
 const view = @import("view.zig");
+const input = @import("input.zig");
 
 /// This is the assistant draft that a run streams. Its fields borrow their data.
 pub const ActiveDraft = struct {
@@ -220,7 +221,7 @@ pub const TurnProvenance = struct {
 pub const UserMessage = struct {
     /// Native admission records the skill name beside its exact text.
     skill_name: ?[]const u8 = null,
-    source: ?@import("input.zig").InputSource = null,
+    source: ?input.InputSource = null,
     id: ids.MessageId,
     content: []const content.ContentPart,
     input_id: ids.InputId,

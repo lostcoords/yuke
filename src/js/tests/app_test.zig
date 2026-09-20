@@ -2,6 +2,10 @@ const support = @import("support.zig");
 const std = @import("std");
 const Paint = @import("paint.zig").Paint;
 const Host = @import("../host.zig").Host;
+const loop = @import("../loop.zig");
+const engine = @import("../native/engine.zig");
+const driver = @import("../driver.zig");
+const proto = @import("proto");
 
 test "focused session identity follows pane and session lifetimes" {
     try support.run("app/focused-session.test.js");
@@ -22,8 +26,6 @@ test "yuke:defaults boots the shell, seeds the session feed, and wires commands"
 
     // The frontend boot provides the terminal capability, so the test boots the same way.
     try support.eval(host, "app/boot.test.js");
-
-    const loop = @import("../loop.zig");
     // No engine is attached here, so boot renders the empty chat and its hint.
     try loop.start(host);
     try loop.stepTick(host);
@@ -37,7 +39,7 @@ test "yuke:defaults boots the shell, seeds the session feed, and wires commands"
 test "the notice plugin draws and listens only while it is loaded" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    const native_engine = @import("../native/engine.zig");
+    const native_engine = engine;
     // The message object outlives the plugin; only the registrations come and go.
     try support.eval(host, "app/notice.test.js");
     const event_sink = host.engine.eventSink();
@@ -89,7 +91,7 @@ test "the auth plugin logs in with a device code or a key, logs out, and guards 
     const host = support.createHost();
     defer support.destroyHost(host);
     host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
-    try host.evalModule(@import("../driver.zig").boot, "auth-boot.js");
+    try host.evalModule(driver.boot, "auth-boot.js");
     // `client` is one object, so the test replaces the auth calls and drives the dialogs with keys.
     try support.eval(host, "app/auth.test.js");
     try host.pump();
@@ -97,12 +99,11 @@ test "the auth plugin logs in with a device code or a key, logs out, and guards 
 }
 
 test "the auth device dialog closes for native completion before or after the login response" {
-    const proto = @import("proto");
-    const native_engine = @import("../native/engine.zig");
+    const native_engine = engine;
     const host = support.createHost();
     defer support.destroyHost(host);
     host.interrupt_budget = std.math.maxInt(u32);
-    try host.evalModule(@import("../driver.zig").boot, "auth-boot.js");
+    try host.evalModule(driver.boot, "auth-boot.js");
     try support.eval(host, "app/auth-native.test.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.openCount()"));
 
@@ -133,7 +134,7 @@ test "the activity module reads back on the fact, overlays the chat entry, and a
     const host = support.createHost();
     defer support.destroyHost(host);
     host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
-    try support.eval(host, "app/boot-4.test.js");
+    try support.eval(host, "app/boot-2.test.js");
     try support.eval(host, "app/activity.test.js");
 }
 
@@ -141,7 +142,7 @@ test "the indicator, the queue strip, and the context reading follow the live ac
     const host = support.createHost();
     defer support.destroyHost(host);
     host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
-    try support.eval(host, "app/boot-5.test.js");
+    try support.eval(host, "app/boot-2.test.js");
     try support.eval(host, "app/indicator.test.js");
 }
 

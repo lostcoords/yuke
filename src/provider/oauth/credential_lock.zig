@@ -1,6 +1,7 @@
 //! An advisory lock protects a shared `providers.json`; it covers the whole refresh—the disk read, expiry check, network call, and write—because a rotating refresh token is spent once, the provider rotates it, and the loser's grant dies, while a sibling lock file keeps the lock when `providers.json` replaces its inode.
 
 const std = @import("std");
+const zio = @import("zio");
 
 const CredentialLock = @This();
 
@@ -46,7 +47,6 @@ pub fn release(self: CredentialLock, io: std.Io) void {
 }
 
 test "one holder blocks a second acquire and a release lets it through" {
-    const zio = @import("zio");
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const io = rt.io();

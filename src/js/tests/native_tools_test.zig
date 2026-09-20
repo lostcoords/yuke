@@ -4,6 +4,13 @@ const host_mod = @import("../host.zig");
 const std = @import("std");
 const Host = @import("../host.zig").Host;
 const tools_table = @import("../tools.zig");
+const blob = @import("../../store/blob.zig");
+const commands = @import("../../engine/commands.zig");
+const run = @import("../../engine/run.zig");
+const provider = @import("../../provider/provider.zig");
+const extensions = @import("../extensions.zig");
+const Work = @import("../../session/work.zig");
+const process = @import("../native/process.zig");
 
 const ReactorHost = struct {
     rt: *zio.Runtime,
@@ -311,7 +318,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     defer std.testing.allocator.free(long_line);
     @memset(long_line, 'x');
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "long.txt", .data = long_line });
-    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "shot.png", .data = @import("../../store/blob.zig").png_1x1 });
+    try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "shot.png", .data = blob.png_1x1 });
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "blob.bin", .data = "\xff\xfe\x00\x01" });
     const root = fixture.root();
     const host = fixture.host;
@@ -412,7 +419,7 @@ test "exec call abort ends its process group and preserves unrelated work" {
     const canceled = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
     , root);
-    const survivor = host.calls.submit("exec", "{\"command\":\"sleep 1; echo survived\"}", root);
+    const survivor = host.calls.submit("exec", "{\"command\":\"sleep 0.3; echo survived\"}", root);
     try host.pump();
     const pids = try waitExecPids(host, fixture.tmp.?.dir);
     try std.testing.expect(processExists(pids[0]));
@@ -494,10 +501,8 @@ test "exec completion detaches before call abort and host close rejects late exe
 }
 
 test "session cancel reaches the builtin exec process group" {
-    const commands = @import("../../engine/commands.zig");
-    const runs = @import("../../engine/run.zig");
-    const provider = @import("../../provider/provider.zig");
-    var f: @import("../extensions.zig").Fixture = undefined;
+    const runs = run;
+    var f: extensions.Fixture = undefined;
     try f.init("", "import \"yuke:kernel\"; import \"yuke:ext\";");
     defer f.deinit();
     const host = f.extensions.host;
@@ -636,7 +641,7 @@ test "run cleanup stops signaled exec without another owner pump" {
     const runtime = fixture.rt;
     const host = fixture.host;
     try host.evalModule("import \"yuke:builtins\";", "builtins.js");
-    var work: @import("../../session/work.zig") = .{};
+    var work: Work = .{};
     const call = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
     , root);
@@ -738,7 +743,7 @@ test "background jobs start, list, stop, and report a natural exit once to their
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
     const host = fixture.host;
-    try support.eval(host, "native_tools/builtins-test.test.js");
+    try support.eval(host, "native_tools/builtins.test.js");
     try host.evalModule(
         \\import { client } from "yuke:client";
         \\globalThis.sent = [];
@@ -790,7 +795,7 @@ test "the jobs status segment and the /jobs list show, refresh, and stop backgro
 }
 
 test "a yuke:spawn reader stops at the buffer cap until the owner drains it" {
-    const process_module = @import("../native/process.zig");
+    const process_module = process;
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
     const rt = fixture.rt;
@@ -807,7 +812,7 @@ test "a yuke:spawn reader stops at the buffer cap until the owner drains it" {
 }
 
 test "extension teardown ends a live child instead of waiting for it" {
-    var f: @import("../extensions.zig").Fixture = undefined;
+    var f: extensions.Fixture = undefined;
     try f.init("import { spawn } from \"yuke\"; spawn([\"/bin/sleep\", \"60\"]);", "import \"yuke:kernel\";\nimport \"yuke:ext\";");
     const pid = f.extensions.host.procs.live.items[0].pid;
     f.deinit();

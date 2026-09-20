@@ -9,6 +9,7 @@ const run = @import("run.zig");
 const commands = @import("commands.zig");
 const testing = std.testing;
 const Resources = @import("test_resources.zig");
+const request_builder = @import("../provider/request_builder.zig");
 const root: proto.ids.SessionId = .bytes([_]u8{1} ** 16);
 const child: proto.ids.SessionId = .bytes([_]u8{2} ** 16);
 
@@ -116,7 +117,7 @@ test "child reuse reports only the current run and preserves source through prom
     try testing.expectEqual(@as(u64, 1), history.messages[0].user.source.?.child_report.run_id);
     try testing.expectEqual(@as(u64, 2), history.messages[1].user.source.?.child_report.run_id);
     // Each report projects as two user blocks: the preamble, then the body.
-    const request = try @import("../provider/request_builder.zig").build(a, history.messages, .{});
+    const request = try request_builder.build(a, history.messages, .{});
     try testing.expectEqual(@as(usize, 4), request.len);
     try testing.expectEqualStrings(second.report.?.input.content[0].text.text, request[2].value.text);
     try testing.expectEqualStrings("This run has no committed text output.", request[3].value.text);
@@ -151,7 +152,7 @@ test "report credits bound accepted work and preserve capacity after a lower lim
     const a = f.arena.allocator();
     for (0..136) |_| _ = try f.terminal(try f.start(), &.{}, success);
     try testing.expectError(error.ReportCapacityFull, reports.reserve(&f.engine, a, root));
-    var launch: ?@import("run.zig").Launch = null;
+    var launch: ?run.Launch = null;
     const before = (try database.event.highWater(&f.db, a, child.raw)).?.input_id_high;
     try testing.expectError(error.ReportCapacityFull, commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = child, .input = .{ .content = .{ .content = &.{} } } }, &launch, null));
     try testing.expectEqual(before, (try database.event.highWater(&f.db, a, child.raw)).?.input_id_high);

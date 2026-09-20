@@ -27,6 +27,7 @@ const cancellation = @import("native/cancellation.zig");
 const execution_mod = @import("../execution.zig");
 const Logs = @import("host/logs.zig").Logs;
 const timers_mod = @import("timers.zig");
+const baked = @import("baked");
 
 /// Limit the client heap. Scripts fail when they exceed this limit.
 pub const memory_limit: usize = 64 * 1024 * 1024;
@@ -45,9 +46,9 @@ pub const Error = error{JavaScriptFault};
 
 /// Every frontend bakes every module, because `index.js` is one file that both frontends load.
 pub const default_baked = blk: {
-    const baked = @import("baked").modules;
-    var modules: [baked.len]loader_mod.BakedModule = undefined;
-    for (baked, 0..) |m, i| modules[i] = .{ .name = m.name, .code = .{ .bytecode = m.bytecode } };
+    const list = baked.modules;
+    var modules: [list.len]loader_mod.BakedModule = undefined;
+    for (list, 0..) |m, i| modules[i] = .{ .name = m.name, .code = .{ .bytecode = m.bytecode } };
     break :blk modules;
 };
 
@@ -839,8 +840,6 @@ test "an event asks for a frame and the flush paints it once" {
         \\}
         \\root.setActive(new Counter());
     , "boot.js");
-
-    const loop = @import("loop.zig");
     // An event batch applies three keys and paints once.
     for (0..3) |_| try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.paints"));
@@ -940,7 +939,7 @@ test "every baked module reads back from its bytecode under its own name" {
 test "every native name the bake stubs is a module a host installs" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    const native = @import("baked").native;
+    const native = baked.native;
     try std.testing.expect(native.len > 0);
     for (native) |name| {
         var source: [128]u8 = undefined;
@@ -988,3 +987,4 @@ test {
 
 const support = @import("tests/support.zig");
 const TestPaint = @import("tests/paint.zig").Paint;
+const loop = @import("loop.zig");

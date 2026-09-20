@@ -47,7 +47,6 @@ test "a throwing onEvent paints the message on the bottom row" {
     paint.bind(host);
 
     try host.eval("globalThis.onEvent = function() { throw new Error('boom'); };", "onEvent.js");
-    const loop = @import("loop.zig");
     try testing.expectError(error.JavaScriptFault, loop.start(host));
     try testing.expect(std.mem.indexOf(u8, host.faultText(), "boom") != null);
 
@@ -75,3 +74,4 @@ test "paintFault does nothing without a recorded fault" {
 
 const support = @import("tests/support.zig");
 const TestPaint = @import("tests/paint.zig").Paint;
+const loop = @import("loop.zig");

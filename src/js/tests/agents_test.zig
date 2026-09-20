@@ -3,6 +3,8 @@
 const support = @import("support.zig");
 const std = @import("std");
 const Host = @import("../host.zig").Host;
+const tools = @import("../tools.zig");
+const digest = @import("../native/engine/digest.zig");
 
 const root_id = "01010101010101010101010101010101";
 const child_id = "02020202020202020202020202020202";
@@ -18,7 +20,7 @@ fn invokeAgent(host: *Host, name: []const u8, args: []const u8) !ToolAnswer {
     defer call.finish();
     call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
     for (0..4) |_| try host.pump();
-    try std.testing.expectEqual(@import("../tools.zig").Call.State.settled, call.state);
+    try std.testing.expectEqual(tools.Call.State.settled, call.state);
     return .{ .text = try std.testing.allocator.dupe(u8, call.text orelse ""), .is_error = call.is_error };
 }
 
@@ -297,7 +299,7 @@ test "dirty overflow refreshes a picker even beside unrelated index facts" {
     try support.expectString(host, "result", "ready");
     try host.evalModule("child.activity.state = { type: 'streaming' };", "changed.js");
     const sink = host.engine.eventSink();
-    for (0..@import("../native/engine/digest.zig").max_dirty_sessions) |n| {
+    for (0..digest.max_dirty_sessions) |n| {
         sink.on_event(sink.ctx, .{ .method = .@"session.removed", .params = .{ .session_removed_data = .{
             .session_id = .bytes(std.mem.toBytes(@as(u128, n + 1000))),
             .revision = 1,

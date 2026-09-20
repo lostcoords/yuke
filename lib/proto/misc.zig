@@ -70,7 +70,7 @@ pub const Notice = struct {
 pub const QueuedInput = struct {
     /// The loaded skill body stays in content until this input commits.
     skill_name: ?[]const u8 = null,
-    source: ?@import("input.zig").InputSource = null,
+    source: ?input.InputSource = null,
     input_id: ids.InputId,
     content: []const content.ContentPart,
     queued_at_ms: u64,

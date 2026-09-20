@@ -223,6 +223,7 @@ pub fn contextUsage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8)
 
 const testing = std.testing;
 const session = @import("session.zig");
+const session_mod = @import("../session/session.zig");
 
 fn scalar(db: *Database, query: []const u8) !i64 {
     const row = (try db.conn.row(query, .{})) orelse return error.NoRow;
@@ -269,7 +270,7 @@ test "a committed user then assistant message advances the summary" {
 
     var stored = try tail(&db, sid, 2);
     defer stored.deinit();
-    var resident = @import("../session/session.zig").Session.init(testing.allocator, .bytes(sid));
+    var resident = session_mod.Session.init(testing.allocator, .bytes(sid));
     defer resident.deinit();
     resident.transcript.max_bytes = user_commit.bytes + assistant_commit.bytes - 1;
     for ([_]Commit{ user_commit, assistant_commit }) |item| {

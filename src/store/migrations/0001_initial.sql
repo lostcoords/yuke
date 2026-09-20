@@ -1,6 +1,6 @@
--- The schema has mutable registry tables and an append-only activity log; projections rebuild from the log, STRICT types enforce storage, checks enforce domain rules, and 2^53-1 keeps numbers safe for wire JSON.
+-- Registry tables are mutable and the activity log is append-only. Projections rebuild from the log. STRICT types and CHECK rules enforce the domain, and 2^53-1 keeps numbers safe for wire JSON.
 
--- The session registry holds primary state that the log does not derive; a rowid table suits this wide, often updated row, and flattened Session_Origin keeps each arm's ids non-null only for that arm.
+-- The session registry holds state the log does not derive. A rowid table suits this wide, often updated row. The flattened origin keeps each arm's ids non-null only for that arm.
 CREATE TABLE sessions (
     id           BLOB NOT NULL UNIQUE CHECK (length(id) = 16), -- proto.SessionId; UUIDv7 for index locality
     root         TEXT NOT NULL CHECK (length(root) > 0), -- the canonical workspace directory
@@ -71,7 +71,7 @@ CREATE TABLE sessions (
 CREATE INDEX sessions_by_recent    ON sessions(updated_at_ms DESC, id DESC);
 CREATE INDEX sessions_by_parent    ON sessions(parent_id, updated_at_ms DESC, id DESC) WHERE parent_id IS NOT NULL;
 
--- The activity log stores full bodies in a rowid table with payload last for overflow I/O; event_id is a stable global id for export or sync, while (session_id, seq) is the local stream order.
+-- The activity log stores full bodies with the payload last for overflow I/O. event_id is a stable global id for export. (session_id, seq) is the local stream order.
 CREATE TABLE events (
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- proto.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
@@ -87,8 +87,6 @@ CREATE UNIQUE INDEX events_by_session_seq ON events(session_id, seq);
 
 -- Replay rebuilds this projection from events.payload joined by session_id and seq; the composite FK keeps the pointer valid.
 CREATE TABLE messages (
-    -- Use a stable alias rowid so FTS5 external-content can index it and VACUUM can keep it fixed.
-    search_id  INTEGER PRIMARY KEY,
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- proto.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
     message_id INTEGER NOT NULL CHECK (message_id BETWEEN 1 AND 9007199254740991), -- proto.MessageId
@@ -115,7 +113,6 @@ CREATE TABLE messages (
 
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 
-    -- Use a rowid table so FTS5 external-content can index the transcript by rowid later.
     UNIQUE (session_id, message_id),
     FOREIGN KEY (session_id, seq) REFERENCES events(session_id, seq) ON DELETE CASCADE
 ) STRICT;
@@ -127,7 +124,7 @@ CREATE INDEX messages_by_event ON messages(session_id, seq);
 CREATE INDEX messages_context_usage ON messages(session_id, message_id)
     WHERE role = 'assistant' AND tokens_input IS NOT NULL;
 
--- Join each session to the usage of its newest committed assistant turn for the live context gauge; a truncation removes the newest messages, so re-read this instead of a value on the session row.
+-- Join each session to the usage of its newest committed assistant turn for the context gauge. A truncation removes the newest messages, so this view is read, not a session column.
 CREATE VIEW session_context AS
 SELECT s.*,
        ctx.tokens_input       AS ctx_tokens_input,
@@ -217,7 +214,6 @@ CREATE TABLE blob_refs (
     session_id BLOB NOT NULL CHECK (length(session_id) = 16)
         REFERENCES sessions(id) ON DELETE CASCADE,
     hash       BLOB NOT NULL CHECK (length(hash) = 32),
-    bytes      INTEGER NOT NULL CHECK (bytes BETWEEN 0 AND 9007199254740991),
 
     PRIMARY KEY (session_id, hash)
 ) STRICT, WITHOUT ROWID;

@@ -19,6 +19,7 @@ const reports = @import("reports.zig");
 const ownership = @import("ownership.zig");
 const runs = @import("run.zig");
 const session_events = @import("events.zig");
+const admission = @import("admission.zig");
 
 const Engine = @This();
 
@@ -154,7 +155,7 @@ pub fn own(self: *Engine, session_id: proto.ids.SessionId) !void {
     var scratch: std.heap.ArenaAllocator = .init(self.deps.gpa);
     defer scratch.deinit();
     const arena = scratch.allocator();
-    const id = (try @import("admission.zig").location(self, arena, session_id)).root.raw;
+    const id = (try admission.location(self, arena, session_id)).root.raw;
     // An owned tree needs no await; a queued successor retains its resident across this check.
     if (self.owners.get(id)) |guard| if (guard.repaired) return;
     try self.owner_mutex.lock(self.deps.io);
@@ -362,7 +363,7 @@ fn drainOwnedChildren(self: *Engine) void {
     while (iterator.next()) |entry| if (entry.value_ptr.repaired) {
         roots.append(scratch.allocator(), .bytes(entry.key_ptr.*)) catch return;
     };
-    for (roots.items) |id| @import("admission.zig").drain(self, id) catch |err| {
+    for (roots.items) |id| admission.drain(self, id) catch |err| {
         std.log.warn("cannot admit a queued child: {t}", .{err});
     };
 }

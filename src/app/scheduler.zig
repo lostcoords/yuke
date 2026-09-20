@@ -3,6 +3,7 @@
 const std = @import("std");
 const App = @import("app.zig").App;
 const login_task = @import("../provider/oauth/login_task.zig");
+const zio = @import("zio");
 
 const Timestamp = std.Io.Clock.Timestamp;
 const Duration = std.Io.Clock.Duration;
@@ -116,7 +117,6 @@ test "the backoff doubles and then holds at the ceiling" {
 }
 
 test "a failure backs the job off" {
-    const zio = @import("zio");
     var rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const io = rt.io();

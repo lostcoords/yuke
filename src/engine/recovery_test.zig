@@ -9,6 +9,9 @@ const commands = @import("commands.zig");
 const run = @import("run.zig");
 const testing = std.testing;
 const Resources = @import("test_resources.zig");
+const util = @import("../util.zig");
+const context = @import("context.zig");
+const ownership = @import("ownership.zig");
 
 const Fixture = struct {
     tmp: testing.TmpDir,
@@ -64,7 +67,7 @@ fn start(db: *database.Database, io: std.Io, arena: std.mem.Allocator, id: [16]u
 fn queued(db: *database.Database, arena: std.mem.Allocator, id: [16]u8) !void {
     var tx = try db.begin();
     defer tx.deinit();
-    const event_id = @import("../util.zig").newId(testing.io);
+    const event_id = util.newId(testing.io);
     _ = try database.input.enqueue(db, arena, id, event_id, 2, .{ .content = &.{.{ .text = .{ .text = "queued input" } }} }, 2);
     try tx.commit();
 }
@@ -101,7 +104,7 @@ test "skill input survives admission teardown and recovery through another conne
     try testing.expectEqual(@as(usize, 1), page.messages.len);
     try testing.expectEqualStrings("pdf", page.messages[0].user.skill_name.?);
     try testing.expectEqualStrings(text, page.messages[0].user.content[0].text.text);
-    const projected = try @import("context.zig").project(std.testing.allocator, arena.allocator(), &f.db, sid, .{ .input_ceiling = 40_000 });
+    const projected = try context.project(std.testing.allocator, arena.allocator(), &f.db, sid, .{ .input_ceiling = 40_000 });
     try testing.expectEqualStrings("pdf", projected.messages[0].user.skill_name.?);
     try testing.expectEqualStrings(text, projected.messages[0].user.content[0].text.text);
 }
@@ -238,7 +241,7 @@ test "root removal releases only its tree claim" {
     try testing.expectError(error.SessionOwned, f.other.own(.bytes(root)));
     _ = try commands.sessionRemove(&f.engine, a, .{ .session_id = .bytes(root) });
     try testing.expectEqual(@as(u32, 0), f.engine.owners.count());
-    const guard = try @import("ownership.zig").acquire(testing.allocator, f.resources.runtime.io(), &f.other_db, root);
+    const guard = try ownership.acquire(testing.allocator, f.resources.runtime.io(), &f.other_db, root);
     defer guard.release(f.resources.runtime.io());
 }
 

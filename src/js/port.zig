@@ -6,6 +6,7 @@ const Host = @import("host.zig").Host;
 const ir = @import("ai").ir;
 const toolset = @import("../engine/toolset.zig");
 const hookset = @import("../engine/hookset.zig");
+const tools = @import("tools.zig");
 
 /// Build the port the process installs. The set answers from the live host table.
 pub fn toolSet(host: *Host) toolset.ToolSet {
@@ -57,13 +58,13 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
     };
 }
 
-fn awaitCall(host: *Host, call: *@import("tools.zig").Call) error{Canceled}!void {
+fn awaitCall(host: *Host, call: *tools.Call) error{Canceled}!void {
     host.wake.set(host.io);
     try call.done.wait(host.io);
     std.debug.assert(call.state == .settled);
 }
 
-fn finishCall(host: *Host, call: *@import("tools.zig").Call) void {
+fn finishCall(host: *Host, call: *tools.Call) void {
     call.finish();
     host.wake.set(host.io);
 }

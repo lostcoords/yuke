@@ -18,7 +18,7 @@ const execution = @import("../execution.zig");
 // The timeout wakes a stalled provider read. Cancellation also interrupts the read.
 const provider_idle_timeout = std.Io.Duration.fromMilliseconds(60_000);
 /// The name every provider request carries. A gateway wants an agent name, not a library name.
-const user_agent = "yuke/" ++ @import("build_info").version;
+const user_agent = "yuke/" ++ build_info.version;
 
 const open_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
 
@@ -48,7 +48,7 @@ pub const App = struct {
         const data_dir = (try resolveDataDir(gpa, io, context.env)) orelse return error.NoStateDirectory;
         defer gpa.free(data_dir);
 
-        const db_path = try dbPathZ(gpa, data_dir);
+        const db_path = try std.fs.path.joinZ(gpa, &.{ data_dir, paths.db_file });
         defer gpa.free(db_path);
         const blob_dir = try paths.blobDirIn(gpa, data_dir);
         errdefer gpa.free(blob_dir);
@@ -132,12 +132,12 @@ pub const App = struct {
 
     /// Return wall-clock milliseconds since the Unix epoch.
     pub fn nowMillis(self: *const App) u64 {
-        return @import("../util.zig").nowMillis(self.io);
+        return util.nowMillis(self.io);
     }
 
     /// Mint a fresh UUIDv7 for a session, workspace, or event.
     pub fn newId(self: *const App) [16]u8 {
-        return @import("../util.zig").newId(self.io);
+        return util.newId(self.io);
     }
 
     /// Close the app and release its allocation.
@@ -183,12 +183,6 @@ fn resolveDataDir(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.En
     return base;
 }
 
-/// Return the SQLite path under `base`. The caller owns the result.
-fn dbPathZ(gpa: std.mem.Allocator, base: []const u8) ![:0]u8 {
-    std.debug.assert(base.len != 0);
-    return std.fs.path.joinZ(gpa, &.{ base, paths.db_file });
-}
-
 /// Create the data directory with mode 0700 on POSIX, and default permissions on Windows.
 pub fn ensureDataDir(io: std.Io, dir: []const u8) !void {
     const cwd = std.Io.Dir.cwd();
@@ -200,6 +194,8 @@ pub fn ensureDataDir(io: std.Io, dir: []const u8) !void {
 
 /// The test dependencies. An empty environment allocates nothing, so no test frees it.
 const app_fixture = @import("fixture.zig");
+const build_info = @import("build_info");
+const util = @import("../util.zig");
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var test_transport = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
 

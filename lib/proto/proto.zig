@@ -3,7 +3,6 @@
 pub const instructions = @import("instructions.zig");
 
 pub const ids = @import("ids.zig");
-pub const tagged = @import("tagged.zig");
 pub const initialize = @import("initialize.zig");
 pub const meta = @import("meta.zig");
 pub const enums = @import("enums.zig");

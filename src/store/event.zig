@@ -1,4 +1,4 @@
-//! The event log is authoritative and projections rebuild from it; call these primitives inside the caller's write transaction so each event and projection commit together, and let the input inbox own idempotency for a retried request.
+//! The event log is authoritative and projections rebuild from it. Call these inside the caller's write transaction, so an event and its projection commit together. The input inbox owns idempotency.
 
 const std = @import("std");
 const sql = @import("sql");
@@ -8,7 +8,7 @@ const queries_gen = @import("queries_gen.zig");
 /// Recovery reads these id marks without MAX; the count includes every committed message because no path deletes a message row.
 pub const HighWater = queries_gen.ReadHigh.Row;
 
-/// Allocate the next seq, append the event, and return the seq inside a write transaction; the caller mints event_id (UUIDv7) and stamps committed_at_ms, and both fields belong to the event envelope.
+/// Allocate the next seq, append the event, and return the seq inside a write transaction. The caller mints event_id (UUIDv7) and stamps committed_at_ms.
 pub fn append(
     db: *Database,
     arena: std.mem.Allocator,

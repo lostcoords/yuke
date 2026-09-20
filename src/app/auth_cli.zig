@@ -74,7 +74,7 @@ fn listProviders(runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writer) !u8
     const catalog = try commands.catalogList(runtime, arena, .{});
     const infos = switch (catalog) {
         .full => |full| full.providers,
-        .unchanged => unreachable, // no revision was sent, so the engine answers in full
+        .unchanged => unreachable, // No revision was sent, so the engine answers in full.
     };
     for (list.providers) |p| {
         const state = stateOf(infos, p.provider_id);

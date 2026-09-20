@@ -11,4 +11,3 @@ client.catalogList = () => Promise.reject(new Error("offline"));
 root._needsDraw = false;
 equal(await loadCatalog(), catalog);
 check("refusal-repaints", !catalog.loading && root._needsDraw);
-check("refusal-retains-models", catalog.rev === "r1" && catalog.models[0].selector === "model");

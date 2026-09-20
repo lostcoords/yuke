@@ -65,7 +65,6 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     return quickjs.UNDEFINED;
 }
 
-/// Read one optional boolean option. Null means the value is present and not a boolean.
 /// `removeTool(name)` withdraws one tool. It answers true when a tool held that name.
 fn jsRemoveTool(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);

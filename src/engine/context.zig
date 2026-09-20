@@ -4,6 +4,10 @@ const std = @import("std");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
 const Resources = @import("test_resources.zig");
+const ai = @import("ai");
+const transcript = @import("../session/transcript.zig");
+const zqlite = @import("zqlite");
+const allocations = @import("../allocations.zig");
 
 pub const default_context_window: u64 = 128_000;
 /// One image costs about this many tokens after a provider resize, whatever its byte size.
@@ -14,7 +18,7 @@ pub const Budget = struct {
     input_ceiling: u64,
 
     /// Reserve the final build-hook prompt, tools, output, and a framing margin.
-    pub fn forRequest(window_limit: ?u64, output: u32, system: []const u8, tools: []const @import("ai").ir.Tool) !Budget {
+    pub fn forRequest(window_limit: ?u64, output: u32, system: []const u8, tools: []const ai.ir.Tool) !Budget {
         const window = window_limit orelse default_context_window;
         const fixed = tokensFor(system.len) + tokensFor(try jsonBytes(tools)) + 1024;
         if (output == 0 or output >= window or fixed >= window - output) return error.ContextTooLarge;
@@ -145,7 +149,7 @@ test "model history survives cache eviction and an insufficient budget drops not
     const a = arena.allocator();
     const sid = [_]u8{42} ** 16;
     try Resources.seedSession(&db, sid, .{ .model = "test/model", .title = "", .created_at_ms = 0, .updated_at_ms = 0 });
-    var cache = @import("../session/transcript.zig").Transcript.init(t.allocator);
+    var cache = transcript.Transcript.init(t.allocator);
     defer cache.deinit();
     cache.max_messages = 2;
     {
@@ -238,7 +242,7 @@ test "a context cutoff excludes the boundary payload and preserves validation in
     try t.expectEqual(@as(usize, 0), (try collect(t.allocator, a, &db, sid, null, 0)).len);
     try t.expectEqual(@as(usize, 0), (try collect(t.allocator, a, &db, sid, null, 1)).len);
     // The row id is valid, but its payload names another message.
-    try db.conn.exec("UPDATE events SET payload = json_set(payload, '$.id', 99) WHERE session_id = ? AND seq = 2", .{@import("zqlite").blob(&sid)});
+    try db.conn.exec("UPDATE events SET payload = json_set(payload, '$.id', 99) WHERE session_id = ? AND seq = 2", .{zqlite.blob(&sid)});
     try t.expectEqual(@as(usize, 1), (try collect(t.allocator, a, &db, sid, null, 2)).len);
     try t.expectError(error.CorruptLog, collect(t.allocator, a, &db, sid, null, 3));
     try t.expectError(error.CorruptLog, collect(t.allocator, a, &db, sid, null, null));
@@ -284,7 +288,7 @@ test "projected text outlives temporary SQL rows" {
         fn run(gpa: std.mem.Allocator, store: *database.Database, session_id: [16]u8, expected: []const u8) !void {
             var result: std.heap.ArenaAllocator = .init(gpa);
             defer result.deinit();
-            var temporary: @import("../allocations.zig") = .{ .backing = gpa };
+            var temporary: allocations = .{ .backing = gpa };
             const projected = try project(temporary.allocator(), result.allocator(), store, session_id, .{ .input_ceiling = 4_000_000 });
             try t.expectEqual(@as(usize, 0), temporary.liveBytes());
             try t.expectEqual(@as(usize, 0), temporary.liveCount());

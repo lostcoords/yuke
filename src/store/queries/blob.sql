@@ -1,9 +1,8 @@
 -- name: InsertBlobRef :exec
--- Insert one reference for a session and blob. The size supports a later budget pass.
+-- Insert one reference for a session and blob.
 -- session_id: [16]u8!
 -- hash: [32]u8!
--- bytes: u64!
-INSERT OR IGNORE INTO blob_refs(session_id, hash, bytes) VALUES (:session_id, :hash, :bytes);
+INSERT OR IGNORE INTO blob_refs(session_id, hash) VALUES (:session_id, :hash);
 
 -- name: BlobRefsOfSession :many
 -- List the blobs that one session names.

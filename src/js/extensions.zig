@@ -82,6 +82,11 @@ const database = @import("../store/store.zig");
 const tools_table = @import("tools.zig");
 const app_fixture = @import("../app/fixture.zig");
 const support = @import("tests/support.zig");
+const proto = @import("proto");
+const rpc = @import("../app/rpc.zig");
+const hookset = @import("../engine/hookset.zig");
+const commands = @import("../engine/commands.zig");
+const app_call = @import("../app/call.zig");
 
 /// The boot a headless test host runs: the kernel and the plugin bus, and nothing of the view tier.
 const kernel_boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";
@@ -205,9 +210,8 @@ test "the tool port lists names in table order and answers only the declarations
 }
 
 test "a plugin notice reaches every attached frontend" {
-    const proto = @import("proto");
     var f: Fixture = undefined;
-    try f.init("", @import("../app/rpc.zig").boot);
+    try f.init("", rpc.boot);
     defer f.deinit();
     const extensions = &f.extensions;
     const app_runtime = &f.app;
@@ -343,7 +347,6 @@ test "a hook chain replaces a payload and the first block ends it" {
     try std.testing.expect(std.mem.indexOf(u8, failed, "gate plugin failed at request.send") != null);
 
     // A published run must reach a headless handler through the digest, because the bus carried no engine fact before.
-    const proto = @import("proto");
     const session_id: proto.ids.SessionId = .bytes(@splat(0xab));
     app_runtime.engine.sinks.emit(.{ .method = .@"run.started", .params = .{ .run_started_data = .{
         .session_id = session_id,
@@ -401,7 +404,7 @@ test "a turn task gets its hook answer from the owner without a second wake" {
     const Asker = struct {
         host: *Host,
         arena: std.heap.ArenaAllocator,
-        decision: ?@import("../engine/hookset.zig").Decision = null,
+        decision: ?hookset.Decision = null,
         answered: std.Io.Event = .unset,
 
         fn run(self: *@This()) void {
@@ -594,7 +597,6 @@ test "create with input shares the hook gate and a refusal leaves no session" {
     var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer scratch.deinit();
     const a = scratch.allocator();
-    const proto = @import("proto");
     const params =
         \\{"workspace_path":"/work","model":"test/model","initial_input":{"type":"content","content":[{"type":"text","text":"original"}]}}
     ;
@@ -642,7 +644,6 @@ test "extensions install no agent tool without the agents plugin" {
 }
 
 test "the skill tool answers a catalog body through skill.load" {
-    const commands = @import("../engine/commands.zig");
     var f: Fixture = undefined;
     try f.init("", kernel_boot);
     defer f.deinit();
@@ -675,7 +676,6 @@ test "the skill tool answers a catalog body through skill.load" {
 }
 
 test "session create returns the invalid instruction path through the call API" {
-    const proto = @import("proto");
     var f: Fixture = undefined;
     try f.init("", kernel_boot);
     defer f.deinit();
@@ -685,7 +685,7 @@ test "session create returns the invalid instruction path through the call API" 
     const a = arena.allocator();
     const params = try std.json.Stringify.valueAlloc(a, .{ .workspace_path = f.extensions.host.cwd, .model = "test/model" }, .{});
     var output: std.Io.Writer.Allocating = .init(a);
-    const failure = (try @import("../app/call.zig").call(&f.app, a, "session.create", params, &output.writer)).?;
+    const failure = (try app_call.call(&f.app, a, "session.create", params, &output.writer)).?;
     try std.testing.expectEqual(proto.enums.ErrorCode.bad_request, failure.code);
     try std.testing.expect(std.mem.indexOf(u8, failure.message, f.extensions.host.cwd) != null);
     try std.testing.expect(std.mem.indexOf(u8, failure.message, "AGENTS.md") != null);

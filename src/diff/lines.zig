@@ -24,7 +24,7 @@ pub const Table = struct {
             entry.value_ptr.* = self.next;
             self.next += 1;
         }
-        std.debug.assert(entry.value_ptr.* < self.next); // every identifier is below the next free one
+        std.debug.assert(entry.value_ptr.* < self.next); // Every identifier is below the next free one.
         return entry.value_ptr.*;
     }
 };
@@ -43,7 +43,7 @@ pub fn split(gpa: std.mem.Allocator, table: *Table, text: []const u8) !Lines {
         start = stop + 1;
     }
 
-    std.debug.assert(out_text.items.len == out_ids.items.len); // one id per line
+    std.debug.assert(out_text.items.len == out_ids.items.len); // One id per line.
     return .{ .text = out_text.items, .ids = out_ids.items };
 }
 

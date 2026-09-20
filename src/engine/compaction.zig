@@ -6,6 +6,8 @@ const database = @import("../store/store.zig");
 const context = @import("context.zig");
 const request_config = @import("request_config.zig");
 const round_request = @import("request.zig");
+const ai = @import("ai");
+const prompt = @import("prompt.zig");
 
 /// How much recent history one compaction keeps, in estimated tokens.
 pub const default_keep_recent_tokens: u64 = 20_000;
@@ -101,7 +103,7 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
 fn summarizeChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?proto.run.RunOutcome) !void {
     defer slot.cancel.finish(engine.deps.io);
     try slot.cancel.check(engine.deps.io);
-    try @import("prompt.zig").refresh(engine, arena, slot);
+    try prompt.refresh(engine, arena, slot);
     const match = engine.deps.providers.merged.resolveModel(slot.config.model) orelse return error.UnknownModel;
     out.* = try summarize(engine, arena, slot, try round_request.snapshot(arena, engine, slot, match));
 }
@@ -533,7 +535,8 @@ test "the session starts the compaction it held once its run ends" {
     try testing.expectEqual(@as(i64, 1), row.int(0));
 }
 
-const ai = @import("ai");
+const zqlite = @import("zqlite");
+const toolset = @import("toolset.zig");
 
 fn sendAndWait(f: *TaskFixture, arena: std.mem.Allocator, text: []const u8) !void {
     var gate: ?runs.Launch = null;
@@ -554,7 +557,7 @@ test "a request inside its budget reads the checkpoint and context sizes once" {
     const a = arena.allocator();
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.testing.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
-    const c = @import("zqlite").c;
+    const c = zqlite.c;
     const statements = .{
         f.db.queries.newest_compaction.statement.statement.stmt,
         f.db.queries.context_sizes.statement.statement.stmt,
@@ -769,7 +772,6 @@ test "a tool round can compact and resume within the same run" {
     f.models[0].limits.context_window = 20_000;
     try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 24_000);
-    const toolset = @import("toolset.zig");
     const Tool = struct {
         fn run(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
             return .{ .output = "EXACT_TOOL_OUTPUT" ** 625, .is_error = false };

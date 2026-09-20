@@ -9,6 +9,7 @@ const provider = @import("../provider/provider.zig");
 const registry = @import("../provider/registry.zig");
 const config = @import("request_config.zig");
 const context = @import("context.zig");
+const store = @import("../store/store.zig");
 
 /// The round arena owns the route, model, and hook result across compaction.
 pub const Snapshot = struct {
@@ -112,7 +113,7 @@ const RequestSend = struct {
 const BlobReader = struct {
     arena: std.mem.Allocator,
     io: std.Io,
-    store: @import("../store/store.zig").blob.Store,
+    store: store.blob.Store,
 
     fn lookup(self: *const BlobReader) provider.request_builder.BlobLookup {
         return .{ .context = self, .getFn = get };

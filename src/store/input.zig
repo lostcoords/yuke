@@ -14,7 +14,7 @@ pub const Entry = struct {
 };
 
 /// Commit the validated input and its queue projection in the caller's transaction.
-pub fn enqueue(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, event_id: [16]u8, committed_at_ms: u64, input: @import("../session/input.zig"), queued_at_ms: u64) !Entry {
+pub fn enqueue(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, event_id: [16]u8, committed_at_ms: u64, input: Input, queued_at_ms: u64) !Entry {
     std.debug.assert(sql.inTransaction(db.conn));
 
     const input_id = try event.allocInputId(db, arena, session_id);
@@ -117,6 +117,7 @@ fn checkedRow(arena: std.mem.Allocator, row: anytype) !Entry {
 const testing = std.testing;
 const zqlite = @import("zqlite");
 const session = @import("session.zig");
+const Input = @import("../session/input.zig");
 
 fn textContent(comptime text: []const u8) []const proto.content.ContentPart {
     return &.{.{ .text = .{ .text = text } }};

@@ -35,8 +35,3 @@ plugins.use({
   },
 });
 check("inject-refuses-reserved", injectRefused === 1);
-
-// `ctx.use` is gone, because a point-in-time read carries no lifetime.
-let hasUse = 1;
-plugins.use({ name: "no-use", apply(ctx) { hasUse = typeof ctx.use === "function" ? 1 : 0; } });
-check("use-removed", hasUse === 0);

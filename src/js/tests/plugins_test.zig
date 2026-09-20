@@ -1,6 +1,9 @@
 const support = @import("support.zig");
 const std = @import("std");
 const Host = @import("../host.zig").Host;
+const loader_mod = @import("../loader.zig");
+const quickjs = @import("quickjs");
+const zio = @import("zio");
 
 test "public tools and commands leave with their owners" {
     const host = support.createHost();
@@ -166,9 +169,9 @@ test "a listener fault reaches the shared error bus" {
 }
 
 const KernelLoader = struct {
-    inner: *@import("../loader.zig").Loader,
+    inner: *loader_mod.Loader,
 
-    pub fn onNormalize(self: *@This(), ctx: @import("quickjs").Context, base: []const u8, name: []const u8) ?[:0]u8 {
+    pub fn onNormalize(self: *@This(), ctx: quickjs.Context, base: []const u8, name: []const u8) ?[:0]u8 {
         for ([_][]const u8{ "yuke:kernel", "yuke:engine-native", "yuke:test" }) |allowed| {
             if (std.mem.eql(u8, name, allowed)) return self.inner.onNormalize(ctx, base, name);
         }
@@ -176,7 +179,7 @@ const KernelLoader = struct {
         return null;
     }
 
-    pub fn onLoadModule(self: *@This(), ctx: @import("quickjs").Context, name: []const u8) ?@import("quickjs").Context.Module {
+    pub fn onLoadModule(self: *@This(), ctx: quickjs.Context, name: []const u8) ?quickjs.Context.Module {
         return self.inner.onLoadModule(ctx, name);
     }
 };
@@ -205,7 +208,7 @@ test "plugin stop faults still dispose every scope" {
 }
 
 test "shutdown permits process I/O and timers before resource release" {
-    const reactor = try @import("zio").Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    const reactor = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer reactor.deinit();
     const host = support.createHostWith(reactor.io(), "/tmp");
     defer support.destroyHost(host);
@@ -298,7 +301,7 @@ test "unload bounds startup that ignores cancellation" {
 }
 
 test "plugin unload cancels and drains native startup" {
-    const reactor = try @import("zio").Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    const reactor = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer reactor.deinit();
     const host = support.createHostWith(reactor.io(), "/tmp");
     defer support.destroyHost(host);
@@ -326,7 +329,7 @@ test "resource release is LIFO, idempotent, and safe under reentrant disposal" {
 }
 
 test "plugin disposal joins native work from a withdrawn injection" {
-    const reactor = try @import("zio").Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    const reactor = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer reactor.deinit();
     const host = support.createHostWith(reactor.io(), "/tmp");
     defer support.destroyHost(host);

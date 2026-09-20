@@ -134,7 +134,7 @@ fn run(init: std.process.Init) !u8 {
         switch (err) {
             error.ShellNotFound => std.log.err("yuke: no command shell; install bash or provide {s}", .{execution.fallback_shell}),
             error.UnsupportedPlatform => std.log.err("yuke: this platform states no shell contract", .{}),
-            error.OutOfMemory => std.log.err("yuke: startup ran out of memory", .{}),
+            error.OutOfMemory => unreachable,
         }
         return 1;
     };
@@ -161,7 +161,11 @@ fn run(init: std.process.Init) !u8 {
     defer application.close();
 
     // The auth commands need the engine and the store, but no JavaScript host and no terminal view.
-    if (try authStatus(init.gpa, io, application, command)) |status| return status;
+    switch (command) {
+        .login => |provider| return try auth_cli.login(init.gpa, io, application, provider),
+        .logout => |provider| return try auth_cli.logout(init.gpa, io, application, provider),
+        .rpc, .tui, .print => {},
+    }
 
     var extensions: extensions_mod.Extensions = undefined;
     try extensions.init(init.gpa, io, application, .{
@@ -186,15 +190,6 @@ fn run(init: std.process.Init) !u8 {
         .login, .logout => unreachable, // The auth commands return before the host starts.
     }
     return 0;
-}
-
-/// Run an auth command and answer its exit status, or null for a command that runs the host.
-fn authStatus(gpa: std.mem.Allocator, io: std.Io, application: *app.App, command: cli.Command) !?u8 {
-    return switch (command) {
-        .login => |provider| try auth_cli.login(gpa, io, application, provider),
-        .logout => |provider| try auth_cli.logout(gpa, io, application, provider),
-        .rpc, .tui, .print => null,
-    };
 }
 
 fn printUsage(io: std.Io, scope: cli.Scope) !void {

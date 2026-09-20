@@ -4,6 +4,7 @@ const std = @import("std");
 const quickjs = @import("quickjs");
 const proto = @import("proto");
 const pending = @import("pending.zig");
+const cancellation = @import("native/cancellation.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -117,7 +118,7 @@ pub const Table = struct {
         std.debug.assert(request.session_id == null);
         request.session_id = session_id;
         request.op.signal = ctx.dupValue(signal);
-        @import("native/cancellation.zig").get(ctx, signal).?.retain();
+        cancellation.get(ctx, signal).?.retain();
     }
 
     pub fn cancelSignal(self: *Table, ctx: Context, signal: Value) void {

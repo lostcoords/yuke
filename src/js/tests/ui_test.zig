@@ -1,6 +1,7 @@
 const support = @import("support.zig");
 const std = @import("std");
 const Host = @import("../host.zig").Host;
+const loop = @import("../loop.zig");
 
 test "yuke:core clip and style.resolve" {
     try support.run("ui/core.test.js");
@@ -27,7 +28,6 @@ test "yuke:core RootView paints and only ctrl+q quits" {
     const host = fixture.host;
 
     try support.eval(host, "ui/ui.test.js");
-    const loop = @import("../loop.zig");
     try loop.start(host);
     try loop.flushFrame(host);
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "hi") != null);
@@ -188,8 +188,6 @@ test "an overlay without a hook is consumed, not a fault" {
 
     // The overlay implements `draw` and no other hook.
     try support.eval(host, "ui/overlay.test.js");
-
-    const loop = @import("../loop.zig");
     try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });
     try loop.flushFrame(host);
     try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
@@ -218,7 +216,6 @@ test "a route sends an event to the keymap before the view" {
     var fixture = try support.PaintedHost.init(2, 8);
     defer fixture.deinit();
     const host = fixture.host;
-    const loop = @import("../loop.zig");
 
     // The pane records a "V" when it reads, and the binding records a "K".
     try support.eval(host, "ui/route.test.js");
@@ -284,7 +281,6 @@ test "a pane focus and a terminal focus are separate events" {
     var fixture = try support.PaintedHost.init(4, 16);
     defer fixture.deinit();
     const host = fixture.host;
-    const loop = @import("../loop.zig");
 
     // `focus.changed` is the terminal window and `pane.focused` is a leaf inside the layout.
     try support.eval(host, "ui/focus.test.js");

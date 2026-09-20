@@ -6,6 +6,7 @@ const utf8 = @import("../../utf8.zig");
 const h = @import("operations.zig");
 const paths = @import("../../paths.zig");
 const execution = @import("../../execution.zig");
+const builtin = @import("builtin");
 
 /// One command to run. `cwd` is relative to the workspace root. A null `cwd` uses the root itself.
 pub const Spec = struct {
@@ -41,7 +42,7 @@ pub const Result = struct {
 };
 
 /// The wait between SIGTERM and SIGKILL. A shell runs its SIGTERM trap in this time. A test waits less.
-const grace_ns: u64 = if (@import("builtin").is_test) 100 * std.time.ns_per_ms else 2 * std.time.ns_per_s;
+const grace_ns: u64 = if (builtin.is_test) 100 * std.time.ns_per_ms else 2 * std.time.ns_per_s;
 
 /// The probe period while a group ends.
 const poll_ms = 10;
@@ -174,7 +175,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     };
 }
 
-/// Spawn `argv` as the leader of a new session with no terminal; a null `stdin` reads `/dev/null`, and TODO.md tracks the std session flag.
+/// Spawn `argv` as the leader of a new session with no terminal. A null `stdin` reads `/dev/null`. std has no session flag yet, so libc does it.
 fn spawnArgv(scratch: std.mem.Allocator, env: *const std.process.Environ.Map, argv: []const []const u8, cwd: []const u8, stdin: ?std.posix.fd_t, stdout: std.posix.fd_t, stderr: std.posix.fd_t) h.HostError!std.process.Child {
     std.debug.assert(argv.len > 0 and std.fs.path.isAbsolute(argv[0]));
     std.debug.assert(std.fs.path.isAbsolute(cwd));

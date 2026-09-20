@@ -243,6 +243,7 @@ fn dueGrant(runtime: *App, arena: std.mem.Allocator, margin_ms: u64) !?Due {
 }
 
 const app_fixture = @import("../../app/fixture.zig");
+const zio = @import("zio");
 const testing = std.testing;
 
 /// One login under test. The engine borrows the runtime fields, so the probe must not move after `init`.
@@ -281,7 +282,6 @@ const Probe = struct {
 };
 
 test "a canceled login stops before its first poll" {
-    const zio = @import("zio");
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
 
@@ -299,7 +299,6 @@ test "a canceled login stops before its first poll" {
 }
 
 test "a refused poll fails the login and stores nothing" {
-    const zio = @import("zio");
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
 
@@ -317,7 +316,6 @@ test "a refused poll fails the login and stores nothing" {
 }
 
 test "an approved codex login stores the grant" {
-    const zio = @import("zio");
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     var tmp = std.testing.tmpDir(.{});
@@ -359,7 +357,6 @@ const NoteSink = struct {
 };
 
 test "finish publishes one login_finished and drops the slot" {
-    const zio = @import("zio");
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
 

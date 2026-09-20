@@ -161,7 +161,6 @@ fn instructionSource(row: anytype) instruction_types.InstructionSource {
     return .{ .scope = scope, .path = row.path, .canonical_path = row.canonical_path, .content_hash = .bytes(row.content_hash) };
 }
 
-/// Read the session's system prompt into `arena`, or return null when no prompt exists.
 /// Report whether a session with `id` exists.
 pub fn exists(db: *Database, arena: std.mem.Allocator, id: [16]u8) !bool {
     var row = (try db.queries.session_exists.maybeOne(arena, .{ .id = id })) orelse return false;
@@ -204,7 +203,7 @@ pub fn clearOpenRun(db: *Database, arena: std.mem.Allocator, id: [16]u8, run_id:
     });
 }
 
-/// The first page seeks below this cursor; the schema bounds updated_at_ms to 2^53-1, so this timestamp exceeds every stored row, and the row-value predicate keeps one seekable form and admits all.
+/// The first page seeks below this cursor. The schema bounds updated_at_ms to 2^53-1, so this value exceeds every row and the one seek form admits all.
 const first_page: Cursor = .{ .updated_at_ms = std.math.maxInt(i64), .id = [_]u8{0xFF} ** 16 };
 
 /// Load one keyset page of the session list into `arena`, newest first; the result borrows `arena`, and the selector picks the parent-scope or recent-row index-seek variant.
@@ -256,10 +255,12 @@ pub fn count(db: *Database, arena: std.mem.Allocator, sel: Selector) !u64 {
 
 const testing = std.testing;
 const event = @import("event.zig");
+const builtin = @import("builtin");
+const zqlite = @import("zqlite");
 
 /// Insert the one root session that every store and engine test seeds.
 pub fn seedSession(db: *Database, id: [16]u8) !void {
-    std.debug.assert(@import("builtin").is_test);
+    std.debug.assert(builtin.is_test);
     try create(db, rootParams(id, "/w"));
 }
 
@@ -524,7 +525,7 @@ test "each list variant seeks its index and never sorts" {
     try expectPlan(&db, queries_gen.SessionPageParent.sql, "sessions_by_parent");
 }
 
-/// Assert that the planner SEARCHes `index` for the real generated query and adds no sort step; SEARCH proves a subset seek, while a plain SCAN or temp B-tree means the keyset does not hold.
+/// Assert that the planner SEARCHes `index` for the generated query with no sort step. A SCAN or a temp B-tree means the keyset does not hold.
 fn expectPlan(db: *Database, comptime query: [:0]const u8, index: []const u8) !void {
     var rows = try db.conn.rows("EXPLAIN QUERY PLAN " ++ query, .{});
     defer rows.deinit();
@@ -540,7 +541,6 @@ fn expectPlan(db: *Database, comptime query: [:0]const u8, index: []const u8) !v
 }
 
 test "prompt sections and the composed text survive a database restart, and a reload marks them stale" {
-    const zqlite = @import("zqlite");
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);

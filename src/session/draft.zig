@@ -1,4 +1,4 @@
-//! Fold broadcast events in the engine and client; copy bytes before `apply` returns and keep the Draft address stable while `gpa` owns stream buffers and `arena` owns write-once data.
+//! Fold broadcast events in the engine and client. Copy bytes before `apply` returns. The Draft address stays stable: `gpa` owns stream buffers and `arena` owns write-once data.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -363,12 +363,6 @@ fn delta(part_id: ids.PartId, offset: u64, bytes: []const u8) message.PartDelta 
 
 fn toolStateChange(part_id: ids.PartId, state: tool.ToolState) tool.ToolStateChangedData {
     return .{ .session_id = zero_session, .message_id = 1, .part_id = part_id, .state = state };
-}
-
-test "deinit frees the whole draft" {
-    var d = try Draft.init(testing.allocator, started());
-    defer d.deinit();
-    try testing.expectEqual(@as(usize, 0), d.parts.items.len);
 }
 
 test "text part streams via contiguous deltas" {

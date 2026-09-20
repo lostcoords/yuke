@@ -81,18 +81,18 @@ const SKILLS_LEAD = "Available skills provide specialized instructions for speci
 
 // A value inside a delimited block must never close the block, so the delimiters and line breaks are escaped.
 /** @param {string} text @returns {string} */
-export function escape(text) {
+function escape(text) {
   return text.replace(/[&<>\n\r\t]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\n": "&#10;", "\r": "&#13;", "\t": "&#9;" })[c] || c);
 }
 
 // `${workspace}`, `${session_id}`, and `${agent_name}` in a base prompt read the session facts. Any other placeholder stays as written.
 /** @param {string} template @param {PromptContext} context @returns {string} */
-export function expand(template, context) {
+function expand(template, context) {
   return template.replace(/\$\{(workspace|session_id|agent_name)\}/g, (_, name) => String(context[/** @type {"workspace" | "session_id" | "agent_name"} */ (name)]));
 }
 
 /** @param {PromptBuild} build @returns {Section[]} */
-export function sections(build) {
+function sections(build) {
   const ctx = build.context;
   const seeded = build.sections.find((section) => section.key === "system_prompt");
   const base = seeded ? { key: "system_prompt", text: expand(seeded.text, ctx) } : { key: "base", text: expand(config.systemPrompt ?? DEFAULT_BASE, ctx) };

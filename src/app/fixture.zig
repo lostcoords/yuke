@@ -7,6 +7,7 @@ const Database = @import("../store/store.zig").Database;
 const execution = @import("../execution.zig");
 const provider = @import("../provider/provider.zig");
 const Engine = @import("../engine/Engine.zig");
+const builtin = @import("builtin");
 
 /// Initialize caller-owned app memory; the caller must call `App.deinit` before it moves.
 pub fn init(app: *App, gpa: std.mem.Allocator, io: std.Io, blob_dir: []const u8, context: execution.Context, route_transport: ai.transport.Transport) !void {
@@ -38,7 +39,7 @@ pub fn init(app: *App, gpa: std.mem.Allocator, io: std.Io, blob_dir: []const u8,
 
 /// Offer `test/model` so a test that creates a session can name a model the catalog serves.
 pub fn installModel(self: *App) !void {
-    std.debug.assert(@import("builtin").is_test);
+    std.debug.assert(builtin.is_test);
     var local = try provider.config.loadBytes(self.gpa,
         \\{"providers":[{"id":"test","base_url":"http://localhost:1/v1","endpoints":[{"protocol":"openai_chat"}],"models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}}]}]}
     );

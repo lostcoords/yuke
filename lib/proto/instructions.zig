@@ -1,6 +1,7 @@
 //! Instruction source metadata for session inspection.
 
 const ids = @import("ids.zig");
+const std = @import("std");
 
 pub const InstructionScope = enum { global, workspace };
 
@@ -12,7 +13,6 @@ pub const InstructionSource = struct {
 };
 
 test "instruction sources reject unknown scope and invalid hashes" {
-    const std = @import("std");
     const a = std.testing.allocator;
     const valid = "{\"scope\":\"workspace\",\"path\":\"/work/AGENTS.md\",\"canonical_path\":\"/work/AGENTS.md\",\"content_hash\":\"" ++ "ab" ** 32 ++ "\"}";
     const parsed = try std.json.parseFromSlice(InstructionSource, a, valid, .{});

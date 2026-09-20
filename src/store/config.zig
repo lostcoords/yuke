@@ -77,12 +77,6 @@ pub fn forMessages(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
 const testing = std.testing;
 const session = @import("session.zig");
 
-fn scalarText(db: *Database, arena: std.mem.Allocator, query: []const u8) ![]const u8 {
-    const row = (try db.conn.row(query, .{})) orelse return error.NoRow;
-    defer row.deinit();
-    return arena.dupe(u8, row.text(0));
-}
-
 test "a config change stores a revision and sets the current config" {
     var db = try Database.openTest();
     defer db.deinit();
@@ -98,10 +92,9 @@ test "a config change stores a revision and sets the current config" {
     try db.conn.execNoArgs("COMMIT");
     try testing.expectEqual(@as(u64, 1), seq);
 
-    // Store the revision row.
-    try testing.expectEqualStrings("sonnet", try scalarText(&db, a, "SELECT model FROM session_configs WHERE config_rev = 1"));
-
-    // Point the session's current config at the new revision.
+    const row = (try db.conn.row("SELECT model FROM session_configs WHERE config_rev = 1", .{})).?;
+    defer row.deinit();
+    try testing.expectEqualStrings("sonnet", row.text(0));
     const snap = (try session.snapshot(&db, a, sid)).?;
     try testing.expectEqualStrings("sonnet", snap.model);
     try testing.expectEqualStrings("low", snap.reasoning);

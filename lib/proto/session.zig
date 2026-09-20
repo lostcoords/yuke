@@ -9,6 +9,8 @@ const message = @import("message.zig");
 const misc = @import("misc.zig");
 const run = @import("run.zig");
 const tagged = @import("tagged.zig");
+const instructions = @import("instructions.zig");
+const skill = @import("skill.zig");
 
 /// Coarse live session state.
 pub const SessionActivity = struct {
@@ -114,8 +116,8 @@ pub const SessionListItem = struct {
     /// The outcome of the latest terminal turn; the engine reports it for a child.
     last_run: ?run.RunOutcome = null,
     /// Only session.get includes the instruction sources and the skill catalog.
-    instruction_sources: ?[]const @import("instructions.zig").InstructionSource = null,
-    skills: ?[]const @import("skill.zig").SkillInfo = null,
+    instruction_sources: ?[]const instructions.InstructionSource = null,
+    skills: ?[]const skill.SkillInfo = null,
     /// Only session.get with check_files includes this field.
     context_changes: ?ContextChanges = null,
 };
@@ -127,8 +129,8 @@ pub const SessionReloadContextParams = struct {
 
 /// This result lists the replaced snapshots.
 pub const SessionReloadContextResult = struct {
-    instruction_sources: []const @import("instructions.zig").InstructionSource,
-    skills: []const @import("skill.zig").SkillInfo,
+    instruction_sources: []const instructions.InstructionSource,
+    skills: []const skill.SkillInfo,
 };
 
 /// These are the `session.list` input fields. They borrow their data.

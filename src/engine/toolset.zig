@@ -1,15 +1,16 @@
-//! The process supplies the port that runs tools; the engine never names a tool: it sends `decls` to the provider and calls `run` with the name the provider chose, so a built-in tool and a future extension tool use the same path.
+//! The process supplies the port that runs tools. The engine sends `decls` to the provider and calls `run` with the name the provider chose, so a built-in and an extension tool share one path.
 
 const std = @import("std");
 const proto = @import("proto");
 const ir = @import("ai").ir;
+const work = @import("../session/work.zig");
 
 pub const Site = proto.input.ToolSite;
 
 pub const Context = struct {
     workspace_root: []const u8,
     site: Site,
-    work: *@import("../session/work.zig"),
+    work: *work,
 };
 
 /// One tool run, mapped for a tool part. `is_error` selects the completed or the error state.

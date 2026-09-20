@@ -4,8 +4,6 @@ const std = @import("std");
 const proto = @import("proto");
 const Engine = @import("Engine.zig");
 
-/// The build version. `initialize` reports one value for the whole process.
-pub const version = "0.0.1";
 const database = @import("../store/store.zig");
 const blob_store = database.blob;
 const run = @import("run.zig");
@@ -243,7 +241,7 @@ test "session list cursor round-trips and binds to its selector" {
 pub fn initialize(engine: *Engine, _: std.mem.Allocator) !proto.misc.InitializeResult {
     return .{
         .protocol = proto.meta.protocol_version,
-        .engine = .{ .version = version },
+        .engine = .{ .version = build_info.version },
         .session_revision = engine.session_revision,
         .catalog_rev = engine.deps.providers.merged.revision,
         .blob_dir = engine.deps.blobs.dir,
@@ -505,7 +503,7 @@ pub fn sessionRemove(engine: *Engine, arena: std.mem.Allocator, params: proto.se
         return error.SessionHasChildren;
 
     const doomed = try removalSet(engine, arena, sid, params.cascade_children);
-    // Check each session before the first delete so a busy child leaves no partial removal; a pinned session is open in a view, and removal would leave that view without a resident.
+    // Check each session before the first delete, so a busy child leaves no partial removal. A pinned session is open in a view and keeps its resident.
     for (doomed) |id| {
         const rt = engine.sessions.get(.bytes(id)) orelse continue;
         if (rt.active_run != null or rt.pins != 0) return error.SessionBusy;
@@ -687,6 +685,7 @@ const ai = @import("ai");
 const provider = @import("../provider/provider.zig");
 
 const Resources = @import("test_resources.zig");
+const build_info = @import("build_info");
 
 test "session.get and session.queue read the durable queue, resident or not" {
     var resources: Resources = undefined;

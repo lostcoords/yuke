@@ -7,6 +7,7 @@ const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 const interactions = @import("../interactions.zig");
 const pending = @import("../pending.zig");
+const cancellation = @import("cancellation.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -41,7 +42,7 @@ fn jsWatchCancellation(ctx: Context, _: Value, args: []const Value) Value {
 
 fn jsValidateSignal(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len != 1) return ctx.throwTypeError("the interaction needs a cancellation signal");
-    const token = @import("cancellation.zig").get(ctx, args[0]) orelse return ctx.throwTypeError("the interaction needs a cancellation signal");
+    const token = cancellation.get(ctx, args[0]) orelse return ctx.throwTypeError("the interaction needs a cancellation signal");
     if (!token.aborted and !Host.fromContext(ctx).calls.acceptsSignal(ctx, args[0]))
         return ctx.throwTypeError("the interaction signal has no live call");
     return quickjs.UNDEFINED;

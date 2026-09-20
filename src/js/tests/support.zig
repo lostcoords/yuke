@@ -6,6 +6,7 @@ const Host = host_mod.Host;
 const tools_table = @import("../tools.zig");
 const BakedModule = @import("../loader.zig").BakedModule;
 const Paint = @import("paint.zig").Paint;
+const execution = @import("../../execution.zig");
 
 const modules = host_mod.default_baked ++ [_]BakedModule{
     .{ .name = "yuke:test-markdown", .code = .{ .source = @embedFile("markdown.js") } },
@@ -15,7 +16,7 @@ const modules = host_mod.default_baked ++ [_]BakedModule{
 const environment: std.process.Environ.Map = .init(std.testing.allocator);
 
 pub fn hostOptions(cwd: []const u8) host_mod.Options {
-    return .{ .cwd = cwd, .execution = @import("../../execution.zig").testContext(&environment) };
+    return .{ .cwd = cwd, .execution = execution.testContext(&environment) };
 }
 
 /// A test allocator that records no stack traces, because QuickJS allocates on every JavaScript step.

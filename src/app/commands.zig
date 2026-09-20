@@ -73,7 +73,7 @@ pub fn authLogin(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Aut
 
     // Reserve before the network call because `start` yields and a second request could pass the check; the registry owns the arena from here, so one `remove` frees everything.
     const login_id: proto.ids.LoginId = .bytes(runtime.newId() ++ runtime.newId());
-    const slot = runtime.logins.reserve(login_id, slot_arena, owned_id, flow) catch unreachable; // only an allocation fails here
+    const slot = runtime.logins.reserve(login_id, slot_arena, owned_id, flow) catch unreachable; // Only an allocation fails here.
     errdefer runtime.logins.remove(login_id);
 
     var client: net_http.Client = .init(runtime.gpa, runtime.io);
@@ -123,10 +123,10 @@ fn credentialKind(p: provider_config.LocalProvider) ?proto.enums.AuthCredentialK
 }
 
 const app_fixture = @import("fixture.zig");
+const zio = @import("zio");
 const testing = std.testing;
 
 test "auth.list reports the providers the environment offers, not only the file" {
-    const zio = @import("zio");
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
 
@@ -164,7 +164,6 @@ test "auth.list reports the providers the environment offers, not only the file"
 }
 
 test "catalog.reload reads the file again and reports whether the revision moved" {
-    const zio = @import("zio");
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     var tmp = std.testing.tmpDir(.{});

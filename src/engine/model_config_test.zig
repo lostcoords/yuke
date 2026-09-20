@@ -8,6 +8,8 @@ const Engine = @import("Engine.zig");
 const testing = std.testing;
 const Resources = @import("test_resources.zig");
 const commands = @import("commands.zig");
+const run = @import("run.zig");
+const model_config = @import("model_config.zig");
 const chosen = "local/family/model";
 
 const Fixture = struct {
@@ -128,8 +130,8 @@ test "a patch lands on the next turn while a run holds its own config" {
     defer f.deinit();
     const a = f.arena.allocator();
     const id = try seed(&f, a);
-    var launch: ?@import("run.zig").Launch = null;
-    defer @import("run.zig").Launch.release(&launch, &f.engine);
+    var launch: ?run.Launch = null;
+    defer run.Launch.release(&launch, &f.engine);
     _ = try commands.sessionSendInputForRpc(&f.engine, a, .{ .session_id = id, .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "go" } }} } } }, &launch, null);
 
     // The run copied its settings at start, so a patch during the turn is accepted and does not disturb it.
@@ -143,7 +145,6 @@ test "an inherited level crosses only to a model that names it" {
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    const model_config = @import("model_config.zig");
 
     // The level the parent holds survives when the child model names it.
     const same = try model_config.validate(&f.engine, a, chosen, .{ .inherit = "low" });

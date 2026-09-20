@@ -77,13 +77,13 @@ fn middle(arena: std.mem.Allocator, out: *std.ArrayList(Edit), a: []const u32, b
             else
                 frontier[at - 1] + 1;
             var y: u32 = @intCast(@as(i64, x) - k);
-            while (x < n and y < m and a[x] == b[y]) { // the snake runs along equal lines
+            while (x < n and y < m and a[x] == b[y]) { // The snake runs along equal lines.
                 x += 1;
                 y += 1;
             }
             frontier[at] = x;
             if (x >= n and y >= m) {
-                std.debug.assert(x == n and y == m); // the frontier stops exactly at both ends
+                std.debug.assert(x == n and y == m); // The frontier stops exactly at both ends.
                 return backtrack(arena, out, trace.items, d, a, b, offset);
             }
         }
@@ -101,7 +101,7 @@ fn middle(arena: std.mem.Allocator, out: *std.ArrayList(Edit), a: []const u32, b
 fn traceAt(trace: []const u32, step: i64, k: i64) u32 {
     std.debug.assert(step >= 0);
     std.debug.assert(k >= -step and k <= step);
-    std.debug.assert(@rem(k - step, 2) == 0); // k and step share their parity
+    std.debug.assert(@rem(k - step, 2) == 0); // k and step share their parity.
     const base: usize = @intCast(@divExact(step * (step + 1), 2));
     const index: usize = @intCast(@divExact(k + step, 2));
     std.debug.assert(base + index < trace.len);
@@ -128,7 +128,7 @@ fn backtrack(
         const prev = d - 1;
         const k = x - y;
         std.debug.assert(k >= -d and k <= d);
-        std.debug.assert(@rem(k - d, 2) == 0); // k and d share their parity
+        std.debug.assert(@rem(k - d, 2) == 0); // k and d share their parity.
         const prev_k = if (k == -d or (k != d and traceAt(trace, prev, k - 1) < traceAt(trace, prev, k + 1)))
             k + 1
         else
@@ -136,9 +136,9 @@ fn backtrack(
         const prev_x: i64 = traceAt(trace, prev, prev_k);
         const prev_y: i64 = prev_x - prev_k;
         std.debug.assert(prev_x >= 0 and prev_y >= 0);
-        std.debug.assert(x >= prev_x and y >= prev_y); // the walk never moves forward
+        std.debug.assert(x >= prev_x and y >= prev_y); // The walk never moves forward.
 
-        while (x > prev_x and y > prev_y) { // the snake, walked backward
+        while (x > prev_x and y > prev_y) { // The snake, walked backward.
             x -= 1;
             y -= 1;
             try steps.append(arena, .{ .op = .keep, .old_index = @intCast(x), .new_index = @intCast(y) });
@@ -154,8 +154,8 @@ fn backtrack(
         }
         std.debug.assert(x == prev_x and y == prev_y);
     }
-    std.debug.assert(x == y); // step 0 ends on diagonal 0
-    while (x > 0 and y > 0) { // the leading snake of step 0
+    std.debug.assert(x == y); // Step 0 ends on diagonal 0.
+    while (x > 0 and y > 0) { // The leading snake of step 0.
         x -= 1;
         y -= 1;
         try steps.append(arena, .{ .op = .keep, .old_index = @intCast(x), .new_index = @intCast(y) });

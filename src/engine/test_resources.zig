@@ -13,6 +13,8 @@ const database = @import("../store/store.zig");
 const Database = database.Database;
 const ProviderStore = @import("../provider/provider_store.zig");
 const registry = @import("../provider/registry.zig");
+const builtin = @import("builtin");
+const execution = @import("../execution.zig");
 const Resources = @This();
 
 runtime: *zio.Runtime,
@@ -24,7 +26,7 @@ blob_dir_buf: [std.fs.max_path_bytes]u8,
 blob_dir: []const u8,
 
 pub fn init(self: *Resources) !void {
-    std.debug.assert(@import("builtin").is_test);
+    std.debug.assert(builtin.is_test);
     self.runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     self.env = .init(std.testing.allocator);
     self.providers = .init(std.testing.allocator, self.runtime.io(), &self.env);
@@ -61,7 +63,7 @@ pub fn makeEngine(self: *Resources, db: *Database) Engine {
         .blobs = .{ .dir = self.blob_dir },
         .providers = &self.providers,
         .route_transport = self.transport.transport(),
-        .execution = @import("../execution.zig").testContext(&self.env),
+        .execution = execution.testContext(&self.env),
         .hooks = compaction_prompt_hooks,
     });
 }

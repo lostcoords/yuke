@@ -6,6 +6,7 @@ const zqlite = @import("zqlite");
 const proto = @import("proto");
 
 const Database = @import("store.zig").Database;
+const session = @import("session.zig");
 
 pub const MediaBlob = proto.content.MediaBlob;
 pub const Hash = proto.ids.BlobHash;
@@ -184,7 +185,7 @@ pub fn recordRefs(db: *Database, session_id: [16]u8, content: []const proto.cont
 /// Record each blob in the list, in the caller's transaction. A duplicate has no effect.
 pub fn recordBlobRefs(db: *Database, session_id: [16]u8, blobs: []const MediaBlob) !void {
     std.debug.assert(sql.inTransaction(db.conn));
-    for (blobs) |blob| try db.queries.insert_blob_ref.exec(.{ .session_id = session_id, .hash = blob.hash.raw, .bytes = blob.bytes });
+    for (blobs) |blob| try db.queries.insert_blob_ref.exec(.{ .session_id = session_id, .hash = blob.hash.raw });
 }
 
 /// List the blobs one session names. The caller reads this before it deletes the session rows.
@@ -200,8 +201,6 @@ pub fn refsOf(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) ![]co
 pub fn referenced(db: *Database, arena: std.mem.Allocator, hash: Hash) !bool {
     return (try db.queries.blob_referenced.maybeOne(arena, .{ .hash = hash.raw })) != null;
 }
-
-// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -330,8 +329,8 @@ test "refs count per session and answer whether a blob is still named" {
     const a = arena.allocator();
     const one: [16]u8 = @splat(1);
     const two: [16]u8 = @splat(2);
-    try @import("session.zig").seedSession(&db, one);
-    try @import("session.zig").seedSession(&db, two);
+    try session.seedSession(&db, one);
+    try session.seedSession(&db, two);
     const shared: MediaBlob = .{ .hash = .bytes(@splat(0xaa)), .mime = "image/png", .bytes = 1 };
     const only: MediaBlob = .{ .hash = .bytes(@splat(0xbb)), .mime = "image/png", .bytes = 1 };
 
@@ -343,13 +342,9 @@ test "refs count per session and answer whether a blob is still named" {
 
     const refs = try refsOf(&db, a, one);
     try testing.expectEqual(@as(usize, 2), refs.len);
-    // The size travels into the row for a later budget pass.
-    const size_row = (try db.conn.row("SELECT bytes FROM blob_refs WHERE session_id = ?1 AND hash = ?2", .{ zqlite.blob(&one), zqlite.blob(&shared.hash.raw) })).?;
-    defer size_row.deinit();
-    try testing.expectEqual(@as(u64, 1), @as(u64, @intCast(size_row.int(0))));
     var removal = try db.begin();
     defer removal.deinit();
-    try @import("session.zig").remove(&db, one);
+    try session.remove(&db, one);
     try removal.commit();
     try testing.expect(try referenced(&db, a, shared.hash));
     try testing.expect(!try referenced(&db, a, only.hash));

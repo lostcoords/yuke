@@ -1,4 +1,4 @@
-//! The engine hands each event to every in-process subscriber; one process has few readers, so an event travels as a value and never as JSON bytes.
+//! The engine hands each event to every in-process subscriber. A process has few readers, so an event travels as a value, never as JSON bytes.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -37,7 +37,7 @@ pub const Sinks = struct {
         self.len -= 1;
     }
 
-    /// Deliver one event to every subscriber; an empty set drops it for a headless run, and the note borrows the caller's arena so a subscriber must copy what it keeps.
+    /// Deliver one event to every subscriber. An empty set drops it. The note borrows the caller's arena, so a subscriber copies what it keeps.
     pub fn emit(self: *Sinks, note: proto.rpc.Notification) void {
         std.debug.assert(!self.emitting); // an event never re-enters the fan-out
         self.emitting = true;

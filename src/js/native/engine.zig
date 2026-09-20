@@ -26,7 +26,6 @@ const SessionId = proto.ids.SessionId;
 pub const Engine = digest.Engine;
 pub const drain = digest.drain;
 
-/// The default prompt uses the protocol string limit.
 /// Register `yuke:engine-native` and its one `native` object.
 pub fn install(host: *Host) void {
     module.installObject(host, "yuke:engine-native", "native", &.{
@@ -269,8 +268,6 @@ test "view integers stay within the protocol safe integer range" {
 }
 
 test "a request reaches a command and answers with its result" {
-    const ai = @import("ai");
-
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     var env: std.process.Environ.Map = .init(testing.allocator);
@@ -368,9 +365,11 @@ test "a request reaches a command and answers with its result" {
 }
 
 const support = @import("../tests/support.zig");
+const ai = @import("ai");
+const agents = @import("../bench/agents.zig");
 
 test "process activity uses live engine state and scoped coalesced notifications" {
-    const Tree = @import("../bench/agents.zig");
+    const Tree = agents;
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const host = support.createHostWith(rt.io(), "");

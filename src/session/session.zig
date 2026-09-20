@@ -7,6 +7,7 @@ const transcriptmod = @import("transcript.zig");
 const transport = @import("ai").transport;
 const transport_ir = @import("ai").ir;
 const cancelmod = @import("../cancel.zig");
+const work = @import("work.zig");
 
 const ids = proto.ids;
 const message = proto.message;
@@ -72,7 +73,7 @@ pub const RunSlot = struct {
     parent_id: ?ids.SessionId = null,
     tree_root: ids.SessionId,
     depth: u32 = 0,
-    work: @import("work.zig") = .{},
+    work: work = .{},
     /// The tools this run may see, chosen once at its first request. A table change applies to the next run.
     tools: ?Loadout = null,
 

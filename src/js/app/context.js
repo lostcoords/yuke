@@ -17,7 +17,7 @@ const NO_TOKENS = { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_writ
 
 // The numbers the status line and the window read. With no session they describe the next chat.
 /** @returns {Reading} */
-export function reading() {
+function reading() {
   const e = chatEntry();
   if (!e) return { model: defaultModel().model || "", count: 0, usage: NO_TOKENS, total: NO_TOKENS, queued: 0, compaction: false };
   const a = e.activity;

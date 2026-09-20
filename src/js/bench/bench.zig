@@ -12,7 +12,9 @@ pub const TreeShape = Tree.Shape;
 const Commit = @import("commit.zig");
 const Projection = @import("projection.zig");
 const SocketPeer = @import("../socket_peer.zig").Peer;
-pub const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
+const builtin = @import("builtin");
+const metrics = @import("metrics");
+pub const metrics_enabled = builtin.is_test or metrics.enabled;
 
 pub const Phase = enum {
     build,

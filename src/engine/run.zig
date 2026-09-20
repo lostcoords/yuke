@@ -41,7 +41,7 @@ fn appendRunStarted(db: *Database, arena: std.mem.Allocator, io: std.Io, session
 }
 
 /// Commit the validated input and the run start in one transaction.
-pub fn beginTurn(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, input: @import("../session/input.zig"), config_rev: proto.ids.ConfigRev) !Started {
+pub fn beginTurn(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, input: Input, config_rev: proto.ids.ConfigRev) !Started {
     var tx = try db.begin();
     defer tx.deinit();
     const input_id = try event_store.allocInputId(db, arena, session_id);
@@ -85,7 +85,7 @@ pub fn beginQueuedTurn(
 
 /// Create admission can share this transaction without a nested commit.
 pub fn beginQueuedTurnInTransaction(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, config_rev: proto.ids.ConfigRev) !Started {
-    std.debug.assert(@import("sql").inTransaction(db.conn));
+    std.debug.assert(sql.inTransaction(db.conn));
     const commits = try consumeQueued(db, io, arena, session_id);
     if (commits.len == 0) return error.NoRow;
     const run_id = try event_store.allocRunId(db, arena, session_id);
@@ -103,7 +103,7 @@ pub fn consumeQueued(db: *Database, io: std.Io, arena: std.mem.Allocator, sessio
 
 /// Commit the listed inputs as user messages inside the caller's transaction.
 pub fn consumeEntries(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, queued: []const input_store.Entry) ![]const message_store.Commit {
-    std.debug.assert(@import("sql").inTransaction(db.conn));
+    std.debug.assert(sql.inTransaction(db.conn));
     const commits = try arena.alloc(message_store.Commit, queued.len);
     const now = util.nowMillis(io);
 
@@ -179,14 +179,14 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
     std.debug.assert(engine.sessions.get(slot.sessionId()).?.active_run == slot);
     defer finishSlot(engine, slot);
     switch (slot.handle.started.kind) {
-        .turn => @import("turn.zig").execute(engine, slot),
-        .compaction => @import("compaction.zig").execute(engine, slot),
+        .turn => turn.execute(engine, slot),
+        .compaction => compaction.execute(engine, slot),
     }
 }
 
 /// Publish the terminal record before its notice and child report.
 pub fn publishTerminal(engine: *Engine, rt: *Session, terminal: reports.Terminal) void {
-    std.debug.assert(!@import("sql").inTransaction(engine.deps.db.conn));
+    std.debug.assert(!sql.inTransaction(engine.deps.db.conn));
     std.debug.assert(std.meta.eql(rt.id, terminal.done.session_id));
     session_events.emitDurable(engine, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = terminal.done } });
     if (terminal.notice) |notice| session_events.emitCommitted(engine, rt, notice);
@@ -395,9 +395,15 @@ pub fn startPendingCompaction(engine: *Engine, rt: *Session) bool {
 
 const testing = std.testing;
 const zio = @import("zio");
+const Input = @import("../session/input.zig");
+const sql = @import("sql");
+const turn = @import("turn.zig");
+const compaction = @import("compaction.zig");
+const test_resources = @import("test_resources.zig");
+const commands = @import("commands.zig");
 
 test "queued input and compaction retain process activity through successor admission" {
-    const Fixture = @import("test_resources.zig").Fixture;
+    const Fixture = test_resources.Fixture;
     const Probe = struct {
         engine: *Engine,
         last: bool = false,
@@ -427,7 +433,6 @@ test "queued input and compaction retain process activity through successor admi
     const resident = f.engine.sessions.get(Fixture.id).?;
     try testing.expectEqual(@as(u32, 0), resident.pins);
     var queued_gate: ?Launch = null;
-    const commands = @import("commands.zig");
     _ = try commands.sessionSendInputForRpc(&f.engine, f.arena.allocator(), .{
         .session_id = Fixture.id,
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "second" } }} } },
@@ -440,7 +445,7 @@ test "queued input and compaction retain process activity through successor admi
     slot.phase = .running;
     try finishRunOpen(&f.engine, f.arena.allocator(), slot, .{ .turn = .{ .finish = .stop, .rounds = 0 } });
     finishSlot(&f.engine, slot);
-    try @import("test_resources.zig").awaitLiveIdle(&f.engine, Fixture.id);
+    try test_resources.awaitLiveIdle(&f.engine, Fixture.id);
     try testing.expect(!f.engine.isBusy());
     try testing.expectEqual(@as(usize, 2), probe.changes);
     try testing.expectEqual(@as(i64, 3), try eventCount(&f.db, "run.started"));
@@ -503,7 +508,7 @@ test "beginQueuedTurn drains all durable inputs in FIFO order" {
 }
 
 test "launch failure releases both run kinds and preserves a failed terminal transaction" {
-    const Fixture = @import("test_resources.zig").Fixture;
+    const Fixture = test_resources.Fixture;
     const Notice = struct {
         session: *Session,
         seen: bool = false,

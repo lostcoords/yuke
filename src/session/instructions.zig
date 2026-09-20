@@ -3,6 +3,7 @@
 const std = @import("std");
 const proto = @import("proto");
 const paths = @import("../paths.zig");
+const builtin = @import("builtin");
 
 pub const max_file_bytes = 256 * 1024;
 pub const Snapshot = struct {
@@ -71,7 +72,7 @@ test "instruction roots preserve literal text and omit nested files" {
     const workspace = try std.fs.path.join(scratch, &.{ root, "work" });
     var env: std.process.Environ.Map = .init(a);
     defer env.deinit();
-    try env.put(if (@import("builtin").os.tag == .windows) "USERPROFILE" else "HOME", home);
+    try env.put(if (builtin.os.tag == .windows) "USERPROFILE" else "HOME", home);
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "work/nested/AGENTS.md", .data = "nested must not load" });
     try std.testing.expectEqual(@as(usize, 0), (try load(scratch, std.testing.io, &env, workspace, null)).len);
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "home/.agents/AGENTS.md", .data = "global ${workspace}\n" });
@@ -112,7 +113,7 @@ test "instruction symlinks share one snapshot and can leave the workspace" {
     const root = path_buf[0..try tmp.dir.realPath(std.testing.io, &path_buf)];
     var env: std.process.Environ.Map = .init(std.testing.allocator);
     defer env.deinit();
-    try env.put(if (@import("builtin").os.tag == .windows) "USERPROFILE" else "HOME", try std.fs.path.join(a, &.{ root, "home" }));
+    try env.put(if (builtin.os.tag == .windows) "USERPROFILE" else "HOME", try std.fs.path.join(a, &.{ root, "home" }));
     const snapshots = try load(a, std.testing.io, &env, try std.fs.path.join(a, &.{ root, "work" }), null);
     try std.testing.expectEqual(@as(usize, 1), snapshots.len);
     try std.testing.expectEqual(.workspace, snapshots[0].source.scope);

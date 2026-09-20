@@ -120,7 +120,7 @@ fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer,
             break :blk 1;
         },
         .canceled => status_interrupted,
-        .compacted, .skipped => unreachable, // a turn run never compacts
+        .compacted, .skipped => unreachable, // A turn run never compacts.
     };
     if (opts.json) {
         try writeReport(arena, w, &waiter, pick, done.*);
@@ -162,7 +162,7 @@ fn pickSession(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.W
             return try configured(engine, arena, err, id);
         },
         .session => |text| {
-            std.debug.assert(proto.ids.SessionId.validText(text)); // the parser accepts only a wire id
+            std.debug.assert(proto.ids.SessionId.validText(text)); // The parser accepts only a wire id.
             var id: proto.ids.SessionId = undefined;
             _ = std.fmt.hexToBytes(&id.raw, text) catch unreachable;
             return try configured(engine, arena, err, id);
@@ -482,7 +482,7 @@ test "a print run refuses a model the catalog cannot resolve before it creates a
     const arena = arena_state.allocator();
 
     const none = try f.print(arena, "hello", .{});
-    try testing.expectEqual(@as(u8, 1), none.status); // no session names a model yet
+    try testing.expectEqual(@as(u8, 1), none.status); // No session names a model yet.
     try testing.expectEqualStrings("yuke -p: no model; pass --model <provider/model>\n", none.err);
     try testing.expectEqualStrings("", none.out);
 

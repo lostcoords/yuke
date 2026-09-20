@@ -42,7 +42,7 @@ plugins.use({ name: "jobs-ui-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { 
 
   // The output view follows a growing log, keeps the unfinished last line, and ends with the exit line.
   const texts = (view) => view.pager.source.rows(200, 0, 100000).map((r) => r.text);
-  const talky = await start("for i in 1 2 3; do echo line$i; sleep 0.2; done; printf 'tail'", { root: "/tmp" });
+  const talky = await start("for i in 1 2 3; do echo line$i; sleep 0.05; done; printf 'tail'", { root: "/tmp" });
   // Enter in the list opens the output view of the selected job.
   const list = openJobs(tui);
   list.content.selectKey(talky.id);

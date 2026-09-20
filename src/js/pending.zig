@@ -3,6 +3,8 @@
 const std = @import("std");
 const quickjs = @import("quickjs");
 const cancellation = @import("native/cancellation.zig");
+const cancel = @import("../cancel.zig");
+const Work = @import("../session/work.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -81,12 +83,12 @@ pub const Op = struct {
     /// The cancellation signal remains rooted until this op leaves the table.
     signal: Value = quickjs.UNDEFINED,
     /// The task uses this token to interrupt work after a call abort.
-    cancel: @import("../cancel.zig").Cancel = .{},
-    work: ?*@import("../session/work.zig") = null,
+    cancel: cancel.Cancel = .{},
+    work: ?*Work = null,
     io: std.Io,
-    operation: @import("../session/work.zig").Operation = .{ .cancel = cancelOperation },
+    operation: Work.Operation = .{ .cancel = cancelOperation },
 
-    fn cancelOperation(operation: *@import("../session/work.zig").Operation) void {
+    fn cancelOperation(operation: *Work.Operation) void {
         const self: *Op = @fieldParentPtr("operation", operation);
         std.debug.assert(!self.done.load(.acquire));
         self.cancel.request(self.io);

@@ -2,12 +2,11 @@
 const sql = @import("sql");
 
 pub const InsertBlobRef = sql.ExecQuery(
-    \\INSERT OR IGNORE INTO blob_refs(session_id, hash, bytes) VALUES (:session_id, :hash, :bytes);
+    \\INSERT OR IGNORE INTO blob_refs(session_id, hash) VALUES (:session_id, :hash);
 ,
     struct {
         session_id: [16]u8,
         hash: [32]u8,
-        bytes: u64,
     },
 );
 

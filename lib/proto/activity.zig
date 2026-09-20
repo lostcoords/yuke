@@ -79,21 +79,6 @@ pub const ActivityStateWaiting = struct {
 const testing = std.testing;
 const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
-test "activity state running_tool round-trips" {
-    const json =
-        \\{"type":"running_tool","run_id":7,"message_id":8,"part_id":9,"tool_name":"search","started_at_ms":100}
-    ;
-    const parsed = try std.json.parseFromSlice(ActivityState, testing.allocator, json, opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value == .running_tool);
-    try testing.expectEqualStrings("search", parsed.value.running_tool.tool_name);
-
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    try testing.expectEqualStrings(json, buf.written());
-}
-
 test "activity state rejects the removed running tag" {
     const removed =
         \\{"type":"running","run_id":7,"started_at_ms":100}

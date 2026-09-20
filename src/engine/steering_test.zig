@@ -9,6 +9,7 @@ const commands = @import("commands.zig");
 const runs = @import("run.zig");
 const hookset = @import("hookset.zig");
 const Resources = @import("test_resources.zig");
+const reports = @import("reports.zig");
 
 const Fixture = struct {
     base: Resources.Fixture,
@@ -302,7 +303,6 @@ test "input accepted after run completion starts a new run" {
 }
 
 test "a protected child report joins its active parent at the next boundary" {
-    const reports = @import("reports.zig");
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
@@ -310,7 +310,7 @@ test "a protected child report joins its active parent at the next boundary" {
     const a = f.base.arena.allocator();
     const child: proto.ids.SessionId = .bytes([_]u8{75} ** 16);
     try Resources.seedSession(&f.base.db, child.raw, .{ .root = "/work", .origin = "child", .parent_id = Fixture.id.raw, .parent_message_id = 2, .parent_part_id = 0, .name = "worker", .model = "mock/m", .title = "child" });
-    const started = try @import("run.zig").beginTurn(&f.base.db, f.base.engine.deps.io, a, child.raw, .{ .content = &.{.{ .text = .{ .text = "child task" } }} }, 0);
+    const started = try runs.beginTurn(&f.base.db, f.base.engine.deps.io, a, child.raw, .{ .content = &.{.{ .text = .{ .text = "child task" } }} }, 0);
     const report = blk: {
         var tx = try f.base.db.begin();
         defer tx.deinit();

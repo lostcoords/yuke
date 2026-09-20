@@ -6,6 +6,8 @@ const ids = @import("ids.zig");
 const message = @import("message.zig");
 const misc = @import("misc.zig");
 const tagged = @import("tagged.zig");
+const run = @import("run.zig");
+const enums = @import("enums.zig");
 
 /// This type accepts raw content or a skill invocation. Its fields borrow their data.
 pub const Input = union(enum) {
@@ -45,7 +47,7 @@ pub const ChildReport = struct {
     session_id: ids.SessionId,
     run_id: ids.RunId,
     name: []const u8,
-    outcome: @import("run.zig").RunOutcome,
+    outcome: run.RunOutcome,
     partial: bool,
     truncated: bool,
     usage: ChildReportUsage,
@@ -67,7 +69,7 @@ pub const ChildInputCanceled = struct {
 
 pub const EngineInterruption = struct {
     run_id: ids.RunId,
-    kind: @import("enums.zig").RunKind,
+    kind: enums.RunKind,
 };
 
 /// This payload describes `input.canceled`.

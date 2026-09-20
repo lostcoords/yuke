@@ -3,6 +3,7 @@
 const std = @import("std");
 const proto = @import("proto");
 const paths = @import("../paths.zig");
+const builtin = @import("builtin");
 
 pub const Entry = proto.skill.SkillInfo;
 pub const max_file_bytes = 256 * 1024;
@@ -472,7 +473,7 @@ const Roots = struct {
         try self.tmp.dir.createDirPath(testing.io, "home/.agents/skills");
         try self.tmp.dir.createDirPath(testing.io, "work/.agents/skills");
         const root = self.root_buf[0..try self.tmp.dir.realPath(testing.io, &self.root_buf)];
-        try self.env.put(if (@import("builtin").os.tag == .windows) "USERPROFILE" else "HOME", try std.fs.path.join(self.arena.allocator(), &.{ root, "home" }));
+        try self.env.put(if (builtin.os.tag == .windows) "USERPROFILE" else "HOME", try std.fs.path.join(self.arena.allocator(), &.{ root, "home" }));
         self.workspace = try std.fs.path.join(self.arena.allocator(), &.{ root, "work" });
     }
 

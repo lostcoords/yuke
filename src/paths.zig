@@ -13,7 +13,6 @@ pub const app_name_env = "YUKE_APPNAME";
 
 /// This is the SQLite event-log file in the data directory.
 pub const db_file = "yuke.db";
-pub const blob_dir = "blobs";
 
 /// This variable names the home directory: `USERPROFILE` on Windows and `HOME` elsewhere.
 pub const home_env = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
@@ -88,7 +87,7 @@ fn platformDir(alloc: std.mem.Allocator, env: *const Map, comptime windows_key: 
 /// Return the blob directory under `base`. The caller frees the result.
 pub fn blobDirIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
     std.debug.assert(base.len != 0);
-    return std.fs.path.join(alloc, &.{ base, blob_dir });
+    return std.fs.path.join(alloc, &.{ base, "blobs" });
 }
 
 pub const ExpandError = error{HomeUnavailable} || std.mem.Allocator.Error;

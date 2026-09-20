@@ -2,6 +2,7 @@ const std = @import("std");
 const zio = @import("zio");
 const support = @import("support.zig");
 const Peer = @import("../socket_peer.zig").Peer;
+const bench = @import("../bench/bench.zig");
 
 fn run(comptime file: [:0]const u8, mode: Peer.Mode, cleanup_checkpoint: bool) !void {
     const runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
@@ -49,7 +50,6 @@ test "socket EOF and host shutdown release open connections" {
 }
 
 test "socket benchmark scenarios verify reused and fresh connections" {
-    const bench = @import("../bench/bench.zig");
     const runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer runtime.deinit();
     for ([_]bench.Phase{ .net_echo, .net_echo_fresh }) |phase| {

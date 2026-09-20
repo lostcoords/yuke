@@ -5,16 +5,15 @@ const std = @import("std");
 /// U+FFFD stands for one byte the decoder cannot read.
 const replacement = &std.unicode.replacement_character_utf8;
 
-/// Append `raw` to `buf`. Keep every valid codepoint and replace each other byte with U+FFFD.
-pub fn appendSanitized(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), raw: []const u8) error{OutOfMemory}!void {
+/// Answer a valid UTF-8 copy of `raw`. Each byte outside a valid codepoint becomes U+FFFD. The caller owns the result.
+pub fn sanitize(gpa: std.mem.Allocator, raw: []const u8) error{OutOfMemory}![]u8 {
+    if (std.unicode.utf8ValidateSlice(raw)) return gpa.dupe(u8, raw); // Valid text needs one copy and no scan per codepoint.
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(gpa);
     var i: usize = 0;
     while (i < raw.len) {
-        const need = std.unicode.utf8ByteSequenceLength(raw[i]) catch {
-            try buf.appendSlice(gpa, replacement);
-            i += 1;
-            continue;
-        };
-        if (raw.len - i < need or !std.unicode.utf8ValidateSlice(raw[i..][0..need])) {
+        const need = std.unicode.utf8ByteSequenceLength(raw[i]) catch 0;
+        if (need == 0 or raw.len - i < need or !std.unicode.utf8ValidateSlice(raw[i..][0..need])) {
             try buf.appendSlice(gpa, replacement);
             i += 1;
             continue;
@@ -22,14 +21,6 @@ pub fn appendSanitized(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), raw: []c
         try buf.appendSlice(gpa, raw[i..][0..need]);
         i += need;
     }
-}
-
-/// Answer a valid UTF-8 copy of `raw`. The caller owns the result.
-pub fn sanitize(gpa: std.mem.Allocator, raw: []const u8) error{OutOfMemory}![]u8 {
-    if (std.unicode.utf8ValidateSlice(raw)) return gpa.dupe(u8, raw); // Valid text needs one copy and no scan per codepoint.
-    var buf: std.ArrayList(u8) = .empty;
-    errdefer buf.deinit(gpa);
-    try appendSanitized(gpa, &buf, raw);
     return buf.toOwnedSlice(gpa);
 }
 

@@ -5,6 +5,9 @@ const quickjs = @import("quickjs");
 const ir = @import("ai").ir;
 const pending = @import("pending.zig");
 const utf8 = @import("../utf8.zig");
+const toolset = @import("../engine/toolset.zig");
+const work = @import("../session/work.zig");
+const cancellation = @import("native/cancellation.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -107,8 +110,8 @@ pub const Call = struct {
     arguments: []const u8,
     /// The workspace a tool runs against. A hook call leaves it empty.
     workspace_root: []u8,
-    site: ?@import("../engine/toolset.zig").Site = null,
-    work: ?*@import("../session/work.zig") = null,
+    site: ?toolset.Site = null,
+    work: ?*work = null,
     /// The submitter sleeps on this. The owner sets it once, when the call settles.
     done: std.Io.Event = .unset,
     /// The answer text, from the host allocator. The submitter copies it before it leaves.
@@ -212,7 +215,7 @@ pub const Calls = struct {
         for (self.live.items) |call| {
             if (!ctx.isStrictEqual(call.signal, signal)) continue;
             if (call.submitter_done or call.state == .settled) return null;
-            const token = @import("native/cancellation.zig").get(ctx, signal).?;
+            const token = cancellation.get(ctx, signal).?;
             return if (token.aborted) null else call;
         }
         return null;
@@ -237,7 +240,7 @@ pub const Calls = struct {
 
     fn free(self: *Calls, ctx: Context, call: *Call) void {
         ctx.freeValue(call.promise);
-        if (@import("native/cancellation.zig").get(ctx, call.signal)) |signal| std.debug.assert(signal.aborted);
+        if (cancellation.get(ctx, call.signal)) |signal| std.debug.assert(signal.aborted);
         ctx.freeValue(call.signal);
         if (call.text) |text| self.gpa.free(text);
         if (call.extra_json) |json| self.gpa.free(json);

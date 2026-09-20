@@ -7,7 +7,9 @@ const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 const wrapping = @import("wrap.zig");
 const TestPaint = @import("../tests/paint.zig").Paint;
-const metrics_enabled = @import("builtin").is_test or @import("metrics").enabled;
+const builtin = @import("builtin");
+const metrics = @import("metrics");
+const metrics_enabled = builtin.is_test or metrics.enabled;
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -530,9 +532,8 @@ test "style colors preserve defaults and propagate property faults" {
 }
 
 test "RGB styles reach all paint paths and preserve frame diffs" {
-    const PaintTest = @import("../tests/paint.zig").Paint;
     for (0..3) |mode| {
-        var paint: PaintTest = undefined;
+        var paint: TestPaint = undefined;
         try paint.setup(std.testing.allocator, 3, 4);
         defer paint.deinit();
         paint.render.vx.sgr = if (mode == 1) .legacy else .standard;

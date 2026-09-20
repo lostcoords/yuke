@@ -1,6 +1,7 @@
 const support = @import("support.zig");
 const std = @import("std");
 const Host = @import("../host.zig").Host;
+const loop = @import("../loop.zig");
 
 test "RPC interaction answers correlated promises out of order" {
     const host = support.createHost();
@@ -61,8 +62,6 @@ test "the TUI interaction provider answers select and input dialogs" {
     defer fixture.deinit();
     const host = fixture.host;
     try support.eval(host, "interaction/interaction-tui.test.js");
-
-    const loop = @import("../loop.zig");
     try loop.start(host);
     try loop.step(host, .{ .key_press = .{ .codepoint = '\r' } });
     try loop.step(host, .{ .key_press = .{ .codepoint = 'x' } });

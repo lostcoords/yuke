@@ -10,6 +10,11 @@ const runs = @import("run.zig");
 const Draft = @import("../session/draft.zig").Draft;
 const testing = std.testing;
 const Resources = @import("test_resources.zig");
+const provider = @import("../provider/provider.zig");
+const zqlite = @import("zqlite");
+const work = @import("../session/work.zig");
+const prompt = @import("prompt.zig");
+const request_config = @import("request_config.zig");
 
 const Fixture = struct {
     tmp: testing.TmpDir,
@@ -33,7 +38,7 @@ const Fixture = struct {
         var path: [std.fs.max_path_bytes]u8 = undefined;
         try self.resources.env.put("XDG_CONFIG_HOME", path[0..try self.tmp.dir.realPath(testing.io, &path)]);
         try self.resources.env.put("YUKE_APPNAME", "agents-test");
-        var local = try @import("../provider/provider.zig").config.loadBytes(testing.allocator,
+        var local = try provider.config.loadBytes(testing.allocator,
             \\{"providers":[{"id":"test","base_url":"http://localhost:1/v1","endpoints":[{"protocol":"openai_chat"}],"models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}}]}]}
         );
         _ = self.resources.providers.installLocal(&local) catch |err| {
@@ -84,7 +89,7 @@ const Fixture = struct {
         return .{ .session_id = id, .message_id = message_id, .part_id = 0 };
     }
 
-    fn openRound(self: *Fixture, slot: *@import("run.zig").RunSlot) !void {
+    fn openRound(self: *Fixture, slot: *runs.RunSlot) !void {
         var tx = try self.db.begin();
         defer tx.deinit();
         const id = try database.event.allocMessageId(&self.db, self.arena.allocator(), slot.sessionId().raw);
@@ -250,7 +255,6 @@ test "child capacity excludes the parent and admits durable queues in FIFO order
     try Resources.waitUntil(f.engine.deps.io, &wait);
     try testing.expectEqual(@as(u64, 0), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, one.session.id.raw)).?.run_id_high);
-    const zqlite = @import("zqlite");
     const row = (try f.db.conn.row("SELECT (SELECT min(rowid) FROM events WHERE session_id = ?1 AND name = 'run.started') < (SELECT min(rowid) FROM events WHERE session_id = ?2 AND name = 'run.started')", .{ zqlite.blob(&two.session.id.raw), zqlite.blob(&three.session.id.raw) })).?;
     defer row.deinit();
     try testing.expectEqual(@as(i64, 1), row.int(0));
@@ -395,7 +399,7 @@ test "a terminal child retains capacity until native cleanup ends" {
     var first: ?runs.Launch = null;
     _ = try f.child("first", &first);
     const slot = first.?.slot;
-    const Work = @import("../session/work.zig");
+    const Work = work;
     const Cleanup = struct {
         operation: Work.Operation = .{ .cancel = cancel },
         canceled: bool = false,
@@ -520,7 +524,7 @@ test "a seed waits for the first run, a child inherits it, and a reload marks th
     try f.initWithPrompt("parent base");
     defer f.deinit();
     const a = f.arena.allocator();
-    const prompt_build = @import("prompt.zig");
+    const prompt_build = prompt;
     const parent_prompt = (try database.session.prompt(&f.db, a, f.parent.raw)).?;
     try testing.expectEqualStrings("parent base", parent_prompt.text);
     try testing.expectEqual(database.session.stale_generation, parent_prompt.generation);
@@ -662,8 +666,8 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
     try testing.expect(std.mem.indexOf(u8, notices.last(), "bad/SKILL.md") != null);
     try testing.expect(std.mem.indexOf(u8, notices.last(), "description is missing") != null);
     // The loadout reads the catalog once per run, so the hook context can say whether the skill tool has work.
-    try testing.expect((try @import("request_config.zig").loadout(&f.engine, a, root_launch.?.slot)).has_skills);
-    try testing.expect(!(try @import("request_config.zig").loadout(&f.engine, a, f.engine.sessions.get(f.parent).?.active_run.?)).has_skills);
+    try testing.expect((try request_config.loadout(&f.engine, a, root_launch.?.slot)).has_skills);
+    try testing.expect(!(try request_config.loadout(&f.engine, a, f.engine.sessions.get(f.parent).?.active_run.?)).has_skills);
 
     const item = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id });
     try testing.expectEqual(@as(usize, 1), item.skills.?.len);

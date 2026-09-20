@@ -8,6 +8,7 @@ const domain_draft = @import("../../../session/draft.zig");
 
 const SessionId = proto.ids.SessionId;
 const paging = @import("paging.zig");
+const request_builder = @import("../../../provider/request_builder.zig");
 
 const max_page_bytes = paging.max_page_bytes;
 
@@ -680,7 +681,7 @@ test "the outline carries report and skill identity without their bodies" {
     try std.testing.expect(!skill.contains("source"));
     try std.testing.expect(std.mem.indexOf(u8, buffer.written(), body) == null);
     const stored = session.transcript.list.items[0].message;
-    const request = try @import("../../../provider/request_builder.zig").build(a, &.{stored}, .{});
+    const request = try request_builder.build(a, &.{stored}, .{});
     defer a.free(request);
     try std.testing.expectEqualStrings(body, request[0].value.text);
 }

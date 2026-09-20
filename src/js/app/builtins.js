@@ -160,8 +160,8 @@ function changedLines(view) {
   return count;
 }
 
-/** @param {string} text @param {string} old @param {string} replacement @param {boolean} all @returns {{ count: number, text: string }} */
-function replaceAt(text, old, replacement, all) {
+/** @param {string} text @param {string} old @param {string} replacement @returns {{ count: number, text: string }} */
+function replaceAt(text, old, replacement) {
   let count = 0;
   let out = "";
   let at = 0;
@@ -186,7 +186,7 @@ async function edit(args, _signal, context) {
   if (oldString.length === 0) invalid(name, "the argument old_string has the wrong type or range");
   if (oldString === newString) invalid(name, "old_string and new_string match. The edit changes nothing");
   const old = await hostCall(name, fs.readFile(path, context?.workspaceRoot));
-  const replaced = replaceAt(old, oldString, newString, replaceAll);
+  const replaced = replaceAt(old, oldString, newString);
   if (replaced.count === 0) invalid(name, "the file lacks old_string");
   if (replaced.count > 1 && !replaceAll) invalid(name, "old_string appears more than one time. You must add context or set replace_all");
   if (utf8Length(replaced.text) > MAX_FILE_BYTES) invalid(name, "the file exceeds the size limit");

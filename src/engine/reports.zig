@@ -6,6 +6,7 @@ const Engine = @import("Engine.zig");
 const store = @import("../store/store.zig");
 const events = @import("events.zig");
 const runs = @import("run.zig");
+const sql = @import("sql");
 
 pub const max_output_bytes = 64 * 1024;
 
@@ -24,7 +25,7 @@ pub fn reserve(engine: *Engine, arena: std.mem.Allocator, root: proto.ids.Sessio
 }
 
 pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDoneData) !Terminal {
-    std.debug.assert(@import("sql").inTransaction(engine.deps.db.conn));
+    std.debug.assert(sql.inTransaction(engine.deps.db.conn));
     std.debug.assert(data.run_id > 0);
     const db = engine.deps.db;
     const ended = data.timing.ended_at_ms;
@@ -69,7 +70,7 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
 
 /// A canceled input consumes its reservation without a fabricated run outcome.
 pub fn canceledInputs(engine: *Engine, arena: std.mem.Allocator, child: proto.ids.SessionId, input_ids: []const proto.ids.InputId) !?proto.input.InputQueuedData {
-    std.debug.assert(@import("sql").inTransaction(engine.deps.db.conn));
+    std.debug.assert(sql.inTransaction(engine.deps.db.conn));
     if (input_ids.len == 0) return null;
     const snapshot = (try store.session.snapshot(engine.deps.db, arena, child.raw)) orelse return error.UnknownSession;
     const parent = snapshot.parent_id orelse return null;

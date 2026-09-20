@@ -195,7 +195,7 @@ pub const Rpc = struct {
 
     /// Write one JSON value as one line.
     fn writeValue(self: *Rpc, value: anytype) !void {
-        std.debug.assert(!self.writing); // one line never opens inside another
+        std.debug.assert(!self.writing); // One line never opens inside another.
         self.writing = true;
         defer self.writing = false;
         try std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, self.out);

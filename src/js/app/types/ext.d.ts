@@ -103,7 +103,7 @@ export interface ScopeEntry {
 }
 
 export interface InteractionOptions {
-  signal?: { aborted: boolean } | undefined;
+  signal?: import("yuke:cancellation-native").CancellationSignal;
   secret?: boolean;
   labels?: { accept?: string; cancel?: string };
 }

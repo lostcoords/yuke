@@ -8,6 +8,8 @@ const pending = @import("../pending.zig");
 const runner = @import("../host/process.zig");
 const utf8 = @import("../../utf8.zig");
 const Job = @import("jobs.zig").Job;
+const jobs = @import("jobs.zig");
+const support = @import("../tests/support.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -194,7 +196,7 @@ fn settle(host: *Host, proc: *Proc) bool {
     defer ctx.freeValue(argv[0]);
     if (proc.job) |job| {
         host.jobs.end(host, job, proc.outcome);
-        argv[0] = @import("jobs.zig").toValue(ctx, job);
+        argv[0] = jobs.toValue(ctx, job);
         return call(host, proc.resolve, &argv);
     }
     const outcome = proc.outcome orelse {
@@ -509,7 +511,6 @@ fn stringList(ctx: Context, a: std.mem.Allocator, value: Value) ?[]const []const
 
 test "a failed task admission preserves the child exit and releases its handle" {
     const testing = std.testing;
-    const support = @import("../tests/support.zig");
     const Fail = struct {
         fn concurrent(_: ?*anyopaque, _: *std.Io.Group, _: []const u8, _: std.mem.Alignment, _: *const fn (*const anyopaque) void) std.Io.ConcurrentError!void {
             return error.ConcurrencyUnavailable;

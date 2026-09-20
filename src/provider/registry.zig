@@ -418,8 +418,6 @@ pub fn findModel(rows: []const Provider, selector: []const u8) ?Match {
     return null;
 }
 
-// ── The wire projection. ──
-
 /// Prefer `medium`, else the middle effort. `off` disables thinking, so it is never the default.
 fn defaultReasoning(names: []const []const u8) []const u8 {
     var efforts: usize = 0;

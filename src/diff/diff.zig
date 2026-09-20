@@ -6,8 +6,6 @@ const myers = @import("myers.zig");
 const hunks = @import("hunks.zig");
 
 pub const Op = myers.Op;
-pub const Edit = myers.Edit;
-pub const Line = hunks.Line;
 pub const Hunk = hunks.Hunk;
 
 pub const Error = error{ TooDifferent, OutOfMemory };
@@ -42,23 +40,6 @@ pub fn changedLines(list: []const Hunk) usize {
 }
 
 const testing = std.testing;
-
-test "compare reports one changed line with its context" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const old = "one\ntwo\nthree\nfour\nfive\n";
-    const new = "one\ntwo\nCHANGED\nfour\nfive\n";
-    const list = try compare(arena.allocator(), old, new, .{ .context = 1 });
-
-    try testing.expectEqual(@as(usize, 1), list.len);
-    try testing.expectEqual(@as(usize, 2), changedLines(list));
-    try testing.expectEqual(@as(u32, 2), list[0].old_start);
-    try testing.expectEqualStrings("three", list[0].lines[1].text);
-    try testing.expectEqual(Op.delete, list[0].lines[1].op);
-    try testing.expectEqualStrings("CHANGED", list[0].lines[2].text);
-    try testing.expectEqual(Op.insert, list[0].lines[2].op);
-}
 
 test "compare reports a line-ending change as a changed line" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

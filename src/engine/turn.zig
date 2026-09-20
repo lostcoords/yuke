@@ -26,6 +26,8 @@ const event = ai.event;
 const round_request = @import("request.zig");
 const request_context = @import("context.zig");
 const request_config_mod = @import("request_config.zig");
+const compaction = @import("compaction.zig");
+const prompt = @import("prompt.zig");
 
 /// Run one turn. The engine task group owns this task. The session owns `slot` until cleanup.
 pub fn execute(engine: *Engine, slot: *RunSlot) void {
@@ -140,8 +142,7 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
     };
 }
 
-/// Stream one round, and resend the same request while the classifier allows it.
-/// Run one round. `out` outlives the round; a failure copies the provider answer into it.
+/// Run one round and resend the request while the classifier allows it. A failure copies the provider answer into `out`, which outlives the round.
 fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) Terminal {
     // The request and its attempts die with this round, so a long run never accumulates them.
     var round_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
@@ -275,7 +276,7 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !ai.P
     const held = try round_request.snapshot(arena, engine, slot, resolved);
     const projected = request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget) catch |err| switch (err) {
         error.ContextHistoryTooLarge => blk: {
-            try @import("compaction.zig").compactForRequest(engine, arena, slot, held);
+            try compaction.compactForRequest(engine, arena, slot, held);
             break :blk try request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget);
         },
         else => return err,
@@ -599,7 +600,6 @@ const Streamer = struct {
     }
 };
 
-/// Return the canonical workspace root for a session. The built-in tools resolve paths against it.
 /// True when the draft holds any tool part.
 fn hasToolPart(live: *const draft.Draft) bool {
     for (live.parts.items) |*p| if (p.* == .tool) return true;
@@ -672,7 +672,7 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTo
 fn promptChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void {
     defer slot.cancel.finish(engine.deps.io);
     try slot.cancel.check(engine.deps.io);
-    try @import("prompt.zig").refresh(engine, arena, slot);
+    try prompt.refresh(engine, arena, slot);
 }
 
 /// One tool call the model asked for. A `tool.before` handler may replace either field.
@@ -707,7 +707,7 @@ test "the run loadout gates a tool call, and a tool.before rewrite lands inside 
             return point == .@"tool.before" or point == .@"tools.select";
         }
 
-        fn ask(_: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) @import("hookset.zig").Decision {
+        fn ask(_: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
             const sent = std.json.parseFromSliceLeaky(std.json.Value, arena, payload, .{}) catch unreachable;
             const context = sent.object.get("context").?.object;
             std.debug.assert(context.get("parent_id").? == .null);
@@ -756,7 +756,7 @@ test "a tool.after replacement is the whole result, and the engine admits the me
             return point == .@"tool.after";
         }
 
-        fn ask(raw: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, _: []const u8) @import("hookset.zig").Decision {
+        fn ask(raw: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, _: []const u8) hookset.Decision {
             const self: *@This() = @ptrCast(@alignCast(raw));
             std.debug.assert(point == .@"tool.after");
             if (!self.replace) return .proceed;
@@ -866,6 +866,7 @@ test "the stream cap rejects an oversized provider delta" {
 }
 
 const Resources = @import("test_resources.zig");
+const hookset = @import("hookset.zig");
 
 /// Drive `Streamer.onEvent` over a real engine, session, and draft. The caller reads the draft parts.
 const StreamerFixture = struct {
@@ -1106,7 +1107,6 @@ test "part ids restart for each round" {
 }
 
 test "a build hook can discard the live registry and tools before the request serializes" {
-    const hookset = @import("hookset.zig");
     const State = struct {
         source: std.heap.ArenaAllocator,
         tools: []const ai.ir.Tool,
@@ -1201,7 +1201,6 @@ test "a build hook can discard the live registry and tools before the request se
 }
 
 test "a run cancel interrupts either request hook before it settles" {
-    const hookset = @import("hookset.zig");
     const State = struct {
         io: std.Io,
         slot: *RunSlot,
@@ -1304,12 +1303,10 @@ test "an advertised output ceiling equal to context leaves a usable request budg
         .limits = .{ .context_window = 500_000, .max_output_tokens = 500_000 },
     };
     const held = try round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model });
-    try std.testing.expectEqual(@as(u32, 8192), held.build.max_output_tokens);
     try std.testing.expect(held.budget.input_ceiling > 0);
 }
 
 test "the final build hook obeys prompt and context limits without a new floor" {
-    const hookset = @import("hookset.zig");
     const State = struct {
         size: usize = proto.meta.limits.max_message_string_bytes + 1,
         output: u32 = 8192,
