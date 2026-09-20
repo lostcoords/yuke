@@ -516,11 +516,13 @@ export const keymap = {
   _rebuildPrefixes() {
     this.prefixes = Object.create(null);
     for (const key in this.map) {
-      const sp = key.indexOf(" ");
-      if (sp <= 0) continue;
-      const head = key.slice(0, sp);
-      const keys = this.prefixes[head] || (this.prefixes[head] = []);
-      keys.push(key);
+      const parts = key.split(" ");
+      if (parts.length < 2) continue;
+      for (let i = 1; i < parts.length; i++) {
+        const prefix = parts.slice(0, i).join(" ");
+        const keys = this.prefixes[prefix] || (this.prefixes[prefix] = []);
+        keys.push(key);
+      }
     }
     const p = this.pending;
     if (p && !this.prefixes[p.stroke]) {
@@ -587,6 +589,14 @@ export const keymap = {
       const chord = p.stroke + " " + s;
       if (this._perform(chord, ev)) return true;
       if (this._perform(p.stroke + " " + stripCtrl(s), ev)) return true;
+      // A longer sequence may still be waiting for another stroke (for
+      // example `d i w`). Keep the accumulated prefix pending instead of
+      // dispatching the motion as an unrelated normal-mode key.
+      const kind = this._armKind(chord);
+      if (kind) {
+        this.arm(chord, kind, ev);
+        return true;
+      }
       // The sequence did not resolve, so the second stroke runs on its own.
       return this._perform(s, ev);
     }

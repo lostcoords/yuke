@@ -1,7 +1,7 @@
 // yuke:composer-vim — opt-in modal keys for the chat composer.
 import { root } from "yuke:core";
 import { Emitter } from "yuke:kernel";
-import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:text-input";
+import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd, nextWordStartBig, prevWordStartBig } from "yuke:text-input";
 import { Composer } from "yuke:ui";
 import { register } from "yuke:vim";
 import { focusedChatView } from "yuke:chat";
@@ -20,7 +20,7 @@ const NORMAL_MODE = "composer && composer_vim == normal";
 
 // Normal mode maps these strokes to `normalKey`.
 const NORMAL_KEYS = [
-  "h", "l", "j", "k", "0", "^", "$", "w", "b", "e", "G",
+  "h", "l", "j", "k", "0", "^", "$", "w", "W", "b", "B", "e", "G",
   "i", "a", "I", "A", "o", "O", "x", "s", "D", "C", "p", "P",
   "left", "right", "up", "down", "enter",
 ];
@@ -151,7 +151,134 @@ function pair(c, first, k) {
     t.replace(start, end, "");
     return enter(c, start);
   }
+  if (first === "y" && k === "y") {
+    register.set(t.text.slice(start, end), true);
+    return true;
+  }
   return false;
+}
+
+/**
+ * Apply a one-character operator to a motion.  Keeping this separate from
+ * normalKey is important: the keymap owns the second stroke while an
+ * operator is pending, so `db`/`de` must not be interpreted as plain motion.
+ * @param {ComposerType} c
+ * @param {"d" | "c" | "y"} operator
+ * @param {string} motion
+ * @returns {boolean}
+ */
+function operatorMotion(c, operator, motion) {
+  const t = c.input;
+  const text = t.text;
+  const caret = t.caret;
+  const { start, end } = lineAt(text, caret);
+  let target;
+  let from;
+  let toAt;
+  let linewise = false;
+  switch (motion) {
+    case "h":
+    case "left":
+      target = prevGrapheme(text, caret);
+      break;
+    case "l":
+    case "right":
+      target = clamp(text, nextGrapheme(text, caret));
+      break;
+    case "w":
+      target = clamp(text, nextWordStart(text, caret));
+      break;
+    case "W":
+      target = clamp(text, nextWordStartBig(text, caret));
+      break;
+    case "b":
+      target = prevWordStart(text, caret);
+      break;
+    case "B":
+      target = prevWordStartBig(text, caret);
+      break;
+    case "e":
+      target = clamp(text, nextWordEnd(text, caret));
+      break;
+    case "0":
+    case "^":
+      target = motion === "^" ? firstWord(text, caret) : start;
+      break;
+    case "$":
+      target = end;
+      break;
+    case "G":
+      target = text.length;
+      break;
+    case "gg":
+      target = 0;
+      linewise = true;
+      break;
+    case "iw":
+    case "aw": {
+      // Reuse the text-input word classifier so punctuation runs remain
+      // distinct from ordinary words (for example, `foo,bar` has separate
+      // word objects around the comma).
+      const at = Math.min(caret, end);
+      let wordStart = Math.max(start, prevWordStart(text, at));
+      let wordEnd = Math.min(end, nextGrapheme(text, nextWordEnd(text, at)));
+      if (wordEnd < wordStart) wordEnd = wordStart;
+      if (motion === "aw") {
+        while (wordStart > start && /\s/u.test(text[wordStart - 1])) wordStart--;
+        while (wordEnd < end && /\s/u.test(text[wordEnd])) wordEnd++;
+      }
+      from = wordStart;
+      toAt = wordEnd;
+      break;
+    }
+    case "j":
+    case "down": {
+      const next = text.indexOf("\n", end);
+      if (next < 0) return true;
+      target = text.indexOf("\n", next + 1);
+      if (target < 0) target = text.length;
+      linewise = true;
+      break;
+    }
+    case "k":
+    case "up": {
+      if (start === 0) return true;
+      const previousEnd = start - 1;
+      const previousStart = text.lastIndexOf("\n", previousEnd - 1) + 1;
+      target = previousStart;
+      linewise = true;
+      break;
+    }
+    default:
+      return false;
+  }
+  if (from === undefined) from = Math.min(caret, target);
+  if (toAt === undefined) toAt = Math.max(caret, target);
+  if (linewise) {
+    if (motion === "gg") {
+      from = 0;
+      toAt = Math.min(text.length, end + (end < text.length ? 1 : 0));
+    } else if (motion === "j" || motion === "down") {
+      from = start;
+      toAt = Math.min(text.length, target + (target < text.length ? 1 : 0));
+    } else {
+      from = target;
+      toAt = Math.min(text.length, end + (end < text.length ? 1 : 0));
+    }
+  }
+  // Forward `e` is inclusive, as it is in Vim. Other motions already point
+  // at the insertion boundary; include the character under the cursor only
+  // for the word-end motion.
+  if (target > caret && motion === "e") toAt = Math.min(end, nextGrapheme(text, target));
+  if (from === toAt) return true;
+  if (operator === "y") {
+    register.set(text.slice(from, toAt), linewise);
+    return true;
+  }
+  if (operator === "d") return cut(c, from, toAt, linewise);
+  register.set(text.slice(from, toAt), linewise);
+  t.replace(from, toAt, "");
+  return enter(c, from);
 }
 
 /** @param {ComposerType} c @param {string} k @returns {boolean} */
@@ -180,8 +307,12 @@ function normalKey(c, k) {
       return to(c, clamp(text, end));
     case "w":
       return to(c, clamp(text, nextWordStart(text, t.caret)));
+    case "W":
+      return to(c, clamp(text, nextWordStartBig(text, t.caret)));
     case "b":
       return to(c, prevWordStart(text, t.caret));
+    case "B":
+      return to(c, prevWordStartBig(text, t.caret));
     case "e":
       return to(c, clamp(text, nextWordEnd(text, t.caret)));
     case "G":
@@ -261,13 +392,30 @@ export const composerVim = {
         const c = chatComposer();
         return c ? fn(c) : false;
       };
-      // `gg` is a chord, while `dd` and `cc` are operators that never expire.
+      // `gg` is a chord. `dd`/`cc`/`yy` and operator motions stay pending until
+      // their second stroke, matching Vim's non-expiring operator prompt.
       ctx.tui.keymap({ "g g": edit((c) => pair(c, "g", "g")) }, NORMAL_MODE);
-      ctx.tui.keymap(
-        { "d d": edit((c) => pair(c, "d", "d")), "c c": edit((c) => pair(c, "c", "c")) },
-        NORMAL_MODE,
-        { pending: "operator" },
-      );
+      /** @type {Record<string, () => boolean>} */
+      const operators = {
+        "d d": edit((c) => pair(c, "d", "d")),
+        "c c": edit((c) => pair(c, "c", "c")),
+        "y y": edit((c) => pair(c, "y", "y")),
+        "d g g": edit((c) => operatorMotion(c, "d", "gg")),
+        "c g g": edit((c) => operatorMotion(c, "c", "gg")),
+        "y g g": edit((c) => operatorMotion(c, "y", "gg")),
+        "d i w": edit((c) => operatorMotion(c, "d", "iw")),
+        "c i w": edit((c) => operatorMotion(c, "c", "iw")),
+        "y i w": edit((c) => operatorMotion(c, "y", "iw")),
+        "d a w": edit((c) => operatorMotion(c, "d", "aw")),
+        "c a w": edit((c) => operatorMotion(c, "c", "aw")),
+        "y a w": edit((c) => operatorMotion(c, "y", "aw")),
+      };
+      for (const motion of ["h", "l", "j", "k", "w", "W", "b", "B", "e", "0", "^", "$", "G", "left", "right", "up", "down"]) {
+        operators[`d ${motion}`] = edit((c) => operatorMotion(c, "d", motion));
+        operators[`c ${motion}`] = edit((c) => operatorMotion(c, "c", motion));
+        operators[`y ${motion}`] = edit((c) => operatorMotion(c, "y", motion));
+      }
+      ctx.tui.keymap(operators, NORMAL_MODE, { pending: "operator" });
 
       // A null answer leaves the composer its own glyph.
       ctx.tui.slot(Composer, "prompt", /** @param {ComposerType} c @returns {string | null} */ (c) => (composerMode(c) === "normal" ? NORMAL_PROMPT : null));

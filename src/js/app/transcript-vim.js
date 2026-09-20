@@ -1,7 +1,7 @@
 // yuke:transcript-vim — opt-in cursor and yank keys for the transcript.
 import { term } from "yuke:term";
 import { root, copy } from "yuke:core";
-import { caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:text-input";
+import { caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd, nextWordStartBig, prevWordStartBig } from "yuke:text-input";
 import { ChatView } from "yuke:chat-view";
 import { register } from "yuke:vim";
 import { focusedChatView } from "yuke:chat";
@@ -20,7 +20,7 @@ import { focusedChatView } from "yuke:chat";
 const TRANSCRIPT = "transcript";
 const VISUAL = "transcript && transcript_visual == on";
 const NOT_VISUAL = "transcript && transcript_visual != on";
-const MOTION_KEYS = ["h", "l", "j", "k", "left", "right", "down", "up", "0", "home", "$", "end", "G", "w", "b", "e", "}", "{", "J", "K"];
+const MOTION_KEYS = ["h", "l", "j", "k", "left", "right", "down", "up", "0", "home", "$", "end", "G", "w", "W", "b", "B", "e", "}", "{", "J", "K"];
 
 /** @type {WeakMap<ChatView, VimState>} */
 const panes = new WeakMap();
@@ -220,8 +220,12 @@ function move(t, s, k) {
       return toEnd(t, s, true);
     case "w":
       return wordStep(t, s, nextWordStart, 1);
+    case "W":
+      return wordStep(t, s, nextWordStartBig, 1);
     case "b":
       return wordStep(t, s, prevWordStart, -1);
+    case "B":
+      return wordStep(t, s, prevWordStartBig, -1);
     case "e":
       return wordStep(t, s, nextWordEnd, 1);
     case "}":
