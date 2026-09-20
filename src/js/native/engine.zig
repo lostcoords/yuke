@@ -33,7 +33,7 @@ pub fn install(host: *Host) void {
         .{ .name = "setEventSink", .arity = 1, .call = jsSetEventSink },
         .{ .name = "factNames", .arity = 0, .call = jsFactNames },
         .{ .name = "memoryUsage", .arity = 0, .call = jsMemoryUsage },
-        .{ .name = "isBusy", .arity = 0, .call = jsIsBusy },
+        .{ .name = "load", .arity = 0, .call = jsLoad },
         .{ .name = "request", .arity = 2, .call = jsRequest },
         .{ .name = "sessionOpen", .arity = 1, .call = jsSessionOpen },
         .{ .name = "sessionClose", .arity = 1, .call = jsSessionClose },
@@ -48,8 +48,14 @@ pub fn install(host: *Host) void {
 
 // ---------------------------------------------------------------- javascript seam
 
-fn jsIsBusy(ctx: Context, _: Value, _: []const Value) Value {
-    return ctx.newBool(Host.fromContext(ctx).engine.isBusy());
+/// The run and continuation counts this process carries, so a view counts children without a pin.
+fn jsLoad(ctx: Context, _: Value, _: []const Value) Value {
+    const load = Host.fromContext(ctx).engine.currentLoad();
+    const obj = ctx.newObject();
+    module.set(ctx, obj, "runs", ctx.newInt64(load.runs));
+    module.set(ctx, obj, "childRuns", ctx.newInt64(load.child_runs));
+    module.set(ctx, obj, "continuations", ctx.newInt64(load.continuations));
+    return obj;
 }
 
 fn sidArg(ctx: Context, args: []const Value, idx: usize) ?SessionId {
@@ -405,6 +411,7 @@ test "process activity uses live engine state and scoped coalesced notifications
     defer resident.active_run = null;
     try testing.expectEqual(@as(u32, 0), resident.pins);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("client.isBusy()"));
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("JSON.stringify(client.load()) === '{\"runs\":1,\"childRuns\":1,\"continuations\":0}'"));
     tree.app.engine.sinks.emit(.{ .method = .@"run.started", .params = .{ .run_started_data = slot.handle.started } });
     try testing.expect(host.engine.hasPending());
     try host.pump();
@@ -413,28 +420,30 @@ test "process activity uses live engine state and scoped coalesced notifications
     tree.app.engine.beginContinuation();
     resident.active_run = null;
     try host.pump();
-    try testing.expectEqual(@as(i32, 1), try host.evalInt("client.isBusy() && seen.length === 1"));
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("client.isBusy() && seen.length === 2 && seen[1]"));
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("JSON.stringify(client.load()) === '{\"runs\":0,\"childRuns\":0,\"continuations\":1}'"));
     tree.app.engine.endContinuation();
     try testing.expectEqual(@as(i32, 0), try host.evalInt("client.isBusy()"));
     try testing.expect(host.engine.hasPending());
     try host.pump();
-    try testing.expectEqual(@as(i32, 1), try host.evalInt("seen.length === 2 && seen[1] === false"));
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("seen.length === 3 && seen[2] === false"));
 
     tree.app.engine.beginContinuation();
     tree.app.engine.endContinuation();
     try host.pump();
-    try testing.expectEqual(@as(i32, 2), try host.evalInt("seen.length"));
+    try testing.expectEqual(@as(i32, 3), try host.evalInt("seen.length"));
     tree.app.engine.beginContinuation();
     try host.pump();
     host.engine.detach();
     try host.pump();
-    try testing.expectEqual(@as(i32, 1), try host.evalInt("!client.isBusy() && seen.length === 4 && seen[3] === false"));
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("!client.isBusy() && seen.length === 5 && seen[4] === false"));
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("JSON.stringify(client.load()) === '{\"runs\":0,\"childRuns\":0,\"continuations\":0}'"));
     host.engine.attach(&tree.app);
     try host.pump();
     try host.evalModule("observer.scope.dispose();", "dispose.js");
     tree.app.engine.endContinuation();
     try host.pump();
-    try testing.expectEqual(@as(i32, 5), try host.evalInt("seen.length"));
+    try testing.expectEqual(@as(i32, 6), try host.evalInt("seen.length"));
 }
 
 test {

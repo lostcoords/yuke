@@ -38,9 +38,11 @@ declare module "yuke:engine-native" {
     shapes: number; arrayCount: number; fastArrayElements: number;
   };
 
+  export type EngineLoad = { runs: number; childRuns: number; continuations: number };
+
   export const native: {
-    /** True through run cleanup and automatic continuation; false before engine attach. */
-    isBusy(): boolean;
+    /** Every run this process owns, the child runs among them, and the continuations; all zero before engine attach. */
+    load(): EngineLoad;
     /** Every fact the engine can publish, so a bus declares them without drift. */
     factNames(): Wire.BroadcastName[];
     /** What the JavaScript runtime holds right now, separate from the process footprint. */

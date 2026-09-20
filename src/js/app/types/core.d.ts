@@ -168,6 +168,7 @@ export interface KeymapRegistry {
   needsTick: () => { periodMs: number } | null;
   tick: () => void;
   candidates: (stroke: string) => KeyEntry[];
+  hints: () => Record<string, string>;
   describe: (stroke: string) => unknown;
   _perform: (stroke: string, event: Extract<HostEvent, { type: "key" }>) => boolean;
 }

@@ -17,6 +17,7 @@ import { indicatorPlugin } from "yuke:indicator";
 import { queuePlugin } from "yuke:queue";
 import { contextUsage } from "yuke:context";
 import { cachePlugin } from "yuke:cache";
+import { quitGuard } from "yuke:quit";
 /** @import { NavTarget } from "./types/core.js" */
 /** @import { InjectContext } from "./types/ext.js" */
 /** @import { Context } from "yuke:ext" */
@@ -166,6 +167,7 @@ plugins.use(indicatorPlugin);
 plugins.use(queuePlugin);
 plugins.use(contextUsage());
 plugins.use(cachePlugin);
+plugins.use(quitGuard);
 
 root.setRoot(workspace);
 root.focusView(chat.view);

@@ -505,6 +505,18 @@ export const keymap = {
     return rankByContext(entries);
   },
 
+  // The first stroke that runs each command here. `candidates` drops what the context shadows.
+  /** @returns {Record<string, string>} */
+  hints() {
+    /** @type {Record<string, string>} */
+    const hints = Object.create(null);
+    for (const stroke in this.map) {
+      const winner = this.candidates(stroke)[0];
+      if (winner && typeof winner.fn === "string" && !(winner.fn in hints)) hints[winner.fn] = stroke;
+    }
+    return hints;
+  },
+
   // Report the binding a stroke runs here and the bindings it shadows.
   /** @param {string} stroke @returns {{ stroke: string, winner: { binding: KeyBinding, context: string } | null, shadowed: Array<{ binding: KeyBinding, context: string }> }} */
   describe(stroke) {
@@ -1410,7 +1422,9 @@ export class RootView {
 
 export const root = new RootView();
 
+// A guard claims the ask while work runs, so the key, the palette, the slash word, and user code follow one rule.
 export function quit() {
+  if (events.bail("quit.requested")) return;
   term.quit();
 }
 

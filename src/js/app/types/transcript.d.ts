@@ -93,5 +93,5 @@ export interface ToolLabel {
 
 export interface Presenter {
   category: string;
-  present(args: Record<string, any>, raw: string): { verb: string; subject: string };
+  present(args: Record<string, any>, raw: string, part: Extract<Wire.AssistantPart, { type: "tool" }>): { verb: string; subject: string };
 }

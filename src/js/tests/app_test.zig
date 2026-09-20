@@ -146,6 +146,28 @@ test "the indicator, the queue strip, and the context reading follow the live ac
     try support.eval(host, "app/indicator.test.js");
 }
 
+test "the quit guard holds a busy quit, follows a remap in its hint, and leaves on the second ask" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
+    try support.eval(host, "app/boot-2.test.js");
+    try support.eval(host, "app/quit.test.js");
+    try std.testing.expect(!host.paint.quit_requested);
+    try support.evalScript(host, "app/quit-rearm.js");
+    try std.testing.expect(!host.paint.quit_requested);
+    try support.evalScript(host, "app/quit-again.js");
+    try std.testing.expect(host.paint.quit_requested);
+}
+
+test "an idle quit leaves on the first ask" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
+    try support.eval(host, "app/boot-2.test.js");
+    try support.eval(host, "app/quit-idle.test.js");
+    try std.testing.expect(host.paint.quit_requested);
+}
+
 test "the cache window reads the session totals and the catalog prices" {
     try support.run("app/cache.test.js");
 }

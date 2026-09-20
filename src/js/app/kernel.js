@@ -90,7 +90,7 @@ function applyConfigPatch(section, fields, src, label) {
 }
 
 // The kernel declares only the events that neutral code emits. Each tier declares its own names.
-const CORE_EVENTS = new Set(["ext.error", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", ...native.factNames()]);
+const CORE_EVENTS = new Set(["ext.error", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.requested", ...native.factNames()]);
 
 // True for an `owner:event` name. A plugin owns such a name, so no declaration can enumerate it.
 /** @param {string} name @returns {boolean} */

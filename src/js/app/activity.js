@@ -22,6 +22,12 @@ export function isWorking(activity) {
   return activity != null && activity.state.type !== "idle";
 }
 
+/** The words for the child runs the process carries, or "" without one. */
+/** @param {number} count @returns {string} */
+export function agentsLabel(count) {
+  return count > 0 ? count + (count === 1 ? " agent" : " agents") : "";
+}
+
 // Read the activity again. The pane pinned the session, so a null read means the pane let it go.
 /** @param {string} sessionId @returns {Wire.SessionActivity | null} */
 export function refreshActivity(sessionId) {

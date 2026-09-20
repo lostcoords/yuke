@@ -14,6 +14,8 @@ const usage = { input: 200, output: 30, reasoning: 5, cache_read: 0, cache_write
 const idle = { state: { type: "idle" }, queued: 0, context_usage: usage, pending_compaction: null };
 const tool = { ...idle, state: { type: "running_tool", run_id: 1, message_id: 1, part_id: 1, tool_name: "bash", started_at_ms: Date.now() - 65000 }, queued: 2 };
 let answer = idle;
+let load = { runs: 0, childRuns: 0, continuations: 0 };
+client.load = () => load;
 client.sessionOpen = () => true;
 client.sessionActivity = () => answer;
 client.sessionGet = async () => ({ instruction_sources: [{ scope: "workspace", path: "/work/AGENTS.md" }] });
@@ -37,12 +39,21 @@ check("idle-rule", slot.get(chat.view, "rule") === null);
 check("idle-strip", stripRows([]).length === 0 && slot.get(chat.view, "strip").length === 0);
 check("idle-status", status.side("right").indexOf("[█░░░░░] 20% context") >= 0);
 check("idle-no-queue-cmd", !command.available("queue:drop"));
+// A resting pane still shows the child runs, and the time counts from the moment the count rose from zero.
+load = { runs: 2, childRuns: 2, continuations: 0 };
+const agentsLine = slot.get(chat.view, "rule");
+check("agents-rule", agentsLine && agentsLine.text.indexOf("2 agents working · 0s") > 0);
+load = { runs: 0, childRuns: 0, continuations: 0 };
+check("agents-gone", slot.get(chat.view, "rule") === null);
 // Working with two queued: the rule names the tool and the elapsed time, and the strip reads the queue once.
 answer = tool;
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
 await settle();
 const line = slot.get(chat.view, "rule");
-check("rule-line", line && line.text.indexOf("bash · 1m05s · 2 queued") > 0);
+check("rule-line", line && line.text.indexOf("bash · 1m05s · 2 queued") > 0 && line.text.indexOf("agent") < 0);
+load = { runs: 3, childRuns: 1, continuations: 0 };
+check("rule-line-agents", slot.get(chat.view, "rule").text.indexOf("bash · 1m05s · 2 queued · 1 agent ") > 0);
+load = { runs: 0, childRuns: 0, continuations: 0 };
 check("queue-read-once", queueReads === 1);
 const strip = slot.get(chat.view, "strip");
 check("strip-rows", strip.length === 2 && strip[0].text === " ↳ first line…" && strip[1].text === " ↳ [image] look");
@@ -92,6 +103,9 @@ check("queued-text", queuedText(items[1]) === "[image] look");
 // A new run restarts the elapsed time, and the same run keeps its start across a state with no start time.
 check("run-change", indicatorLine("s1", { ...tool, state: { type: "reasoning", run_id: 1, message_id: 1, part_id: 1 } }, Date.now()).indexOf("1m05s") > 0
   && indicatorLine("s1", { ...tool, state: { type: "streaming", run_id: 2, started_at_ms: Date.now() } }, Date.now()).indexOf("responding · 0s") > 0);
+// The count rose at one second, so the line counts from there; a zero count ends the words.
+indicatorLine("s1", idle, 1000, 3);
+check("agents-elapsed", indicatorLine("s1", idle, 66000, 3).indexOf("3 agents working · 1m05s") > 0 && indicatorLine("s1", idle, 66000) === "");
 // A queue read that lands after the pane let the session go stays out, and the close clears both slots.
 let land = null;
 client.sessionQueue = () => new Promise((resolve) => { land = resolve; });

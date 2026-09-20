@@ -1,7 +1,8 @@
-// yuke:indicator — the working line on the rule above the composer: a spinner, the phase, and the elapsed time.
+// yuke:indicator — the working line on the rule above the composer: a spinner, the phase, the elapsed time, and the child runs.
 import { ChatView } from "yuke:chat-view";
 import { chatOf, chats } from "yuke:chat";
-import { activityOf, isWorking } from "yuke:activity";
+import { client } from "yuke:client";
+import { activityOf, agentsLabel, isWorking } from "yuke:activity";
 
 /** @import { Context } from "yuke:ext" */
 
@@ -14,6 +15,9 @@ let frame = 0;
 // The start of the run a session works on. A reasoning state has no start time, so the first sight of a run keeps one.
 /** @type {Map<string, { run_id: number, at: number }>} */
 const starts = new Map();
+
+// The moment the child count last rose from zero, so the aggregate reads how long the agents have worked.
+let agentsSince = 0;
 
 /** @param {number} ms @returns {string} */
 export function elapsedLabel(ms) {
@@ -40,12 +44,16 @@ export function phaseLabel(state, now) {
   }
 }
 
-// The whole line for one session, or "" while it rests.
-/** @param {string} sessionId @param {Wire.SessionActivity | null} activity @param {number} now @returns {string} */
-export function indicatorLine(sessionId, activity, now) {
+// The whole line for one session, or "" while it and the child runs rest. A resting pane still shows the child runs.
+/** @param {string} sessionId @param {Wire.SessionActivity | null} activity @param {number} now @param {number} [childRuns] @returns {string} */
+export function indicatorLine(sessionId, activity, now, childRuns = 0) {
+  const spinner = /** @type {string} */ (FRAMES[frame % FRAMES.length]);
+  if (childRuns === 0) agentsSince = 0;
+  else if (agentsSince === 0) agentsSince = now;
+  const suffix = childRuns > 0 ? " · " + agentsLabel(childRuns) : "";
   if (!isWorking(activity)) {
     starts.delete(sessionId);
-    return "";
+    return childRuns > 0 ? " " + spinner + " " + agentsLabel(childRuns) + " working · " + elapsedLabel(now - agentsSince) + " " : "";
   }
   const state = /** @type {Wire.SessionActivity} */ (activity).state;
   const run_id = /** @type {{ run_id: number }} */ (state).run_id;
@@ -53,12 +61,12 @@ export function indicatorLine(sessionId, activity, now) {
   const at = held && held.run_id === run_id ? held.at : "started_at_ms" in state ? state.started_at_ms : now;
   if (!held || held.run_id !== run_id) starts.set(sessionId, { run_id, at });
   const queued = /** @type {Wire.SessionActivity} */ (activity).queued;
-  const spinner = /** @type {string} */ (FRAMES[frame % FRAMES.length]);
-  return " " + spinner + " " + phaseLabel(state, now) + " · " + elapsedLabel(now - at) + (queued > 0 ? " · " + queued + " queued" : "") + " ";
+  return " " + spinner + " " + phaseLabel(state, now) + " · " + elapsedLabel(now - at) + (queued > 0 ? " · " + queued + " queued" : "") + suffix + " ";
 }
 
 /** @returns {boolean} */
 function anyWorking() {
+  if (client.load().childRuns > 0) return true;
   for (const c of chats) if (c.sessionId && isWorking(activityOf(c.sessionId))) return true;
   return false;
 }
@@ -71,17 +79,17 @@ export const indicatorPlugin = {
       ctx.tui.slot(ChatView, "rule", /** @param {ChatView} view @returns {{ text: string, group: string } | null} */ (view) => {
         const c = chatOf(view);
         if (!c || !c.sessionId) return null;
-        const line = indicatorLine(c.sessionId, activityOf(c.sessionId), Date.now());
+        const line = indicatorLine(c.sessionId, activityOf(c.sessionId), Date.now(), client.load().childRuns);
         return line ? { text: line, group: "YukeStatus" } : null;
       });
-      // The frame loop runs only while a pane works, so an idle screen costs no wakeups.
+      // The frame loop runs only while a pane or a child run works, so an idle screen costs no wakeups.
       ctx.tui.tickable({
         needsTick: () => (anyWorking() ? { periodMs: PERIOD_MS } : null),
         tick: () => {
           frame++;
         },
       });
-      ctx.effect(() => () => starts.clear());
+      ctx.effect(() => () => { starts.clear(); agentsSince = 0; });
     });
   },
 };

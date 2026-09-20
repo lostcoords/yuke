@@ -10,7 +10,8 @@ import { notice } from "yuke:notice";
 /** @typedef {{ item: Wire.SessionListItem, depth: number }} AgentRow */
 /** @param {unknown} error */
 function failed(error) { notice.show("agents · " + (/** @type {Error} */ (error)?.message || String(error))); }
-/** @param {Wire.SessionListItem} child */
+/** The state words of a child. A spawn row passes the view it keeps, so the shape is only what the words read. */
+/** @param {{ activity: Wire.SessionActivity, last_run?: Wire.RunOutcome | null }} child */
 export function childState(child) {
   const state = child.activity.state;
   const queued = child.activity.queued;

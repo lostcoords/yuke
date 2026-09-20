@@ -341,8 +341,9 @@ function authRemove(providerId) {
 // One object carries the whole surface, so a test or a plugin can replace a single method.
 
 export const client = {
-  // Read all process-owned runs and continuations; engine.activity.changed coalesces changes on the owner drain.
-  isBusy: () => native.isBusy(),
+  // The counts of process-owned runs and continuations; engine.activity.changed fires once per changed load.
+  load: () => native.load(),
+  isBusy: () => { const load = native.load(); return load.runs > 0 || load.continuations > 0; },
   request,
   sessionList,
   sessionOpen,

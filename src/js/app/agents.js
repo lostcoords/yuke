@@ -1,16 +1,24 @@
 // yuke:agents — child sessions from a user catalog. Native stays policy-free; this plugin owns every rule.
+import { root } from "yuke:core";
 import { client } from "yuke:client";
 import { native } from "yuke:engine-native";
 import { presenters, sources } from "yuke:transcript";
-import { focusedChat } from "yuke:chat";
+import { chats, focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
-import { openAgents } from "yuke:agents-ui";
+import { tokenLabel } from "yuke:catalog";
+import { childState, openAgents } from "yuke:agents-ui";
 
 /** @import { Context } from "yuke:ext" */
+/** @import { EngineEvent } from "yuke:engine-native" */
 /** @typedef {{ description?: string, model?: string, prompt?: string, tools?: string[] }} AgentRow */
 /** @typedef {{ default?: string, catalog: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} AgentsOptions */
 /** @typedef {{ default: string, rows: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} Catalog */
 /** @typedef {{ sessionId?: string | null, messageId?: number | null, partId?: number | null }} ToolContext */
+/** @typedef {Extract<Wire.AssistantPart, { type: "tool" }>} ToolPart */
+/** What a spawn row draws of its child. `session.get` also answers the instruction sources and the skills, which the row never reads. */
+/** @typedef {{ site: Wire.ToolSite, activity: Wire.SessionActivity, last_run: Wire.RunOutcome | null }} ChildView */
+/** A child a spawn row shows: the last read, and the coalesced read a burst of facts asks for. */
+/** @typedef {{ view: ChildView | null, reading: boolean, again: boolean }} ChildEntry */
 
 /** A catalog key is a child label; "root" is reserved. */
 const KEY = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -41,6 +49,24 @@ function reportLabel(source) {
     const failure = outcome.type === "failed" ? " · " + outcome.message + (outcome.detail ? " · " + outcome.detail : "") : "";
     return "Message from " + source.name + " · " + (outcome.type === "turn" ? "completed" : outcome.type) + failure + (source.partial ? " · partial" : "") + (source.truncated ? " · model report truncated" : "")
         + " · " + usage.rounds + (usage.rounds === 1 ? " round" : " rounds") + " · " + usage.tool_calls + (usage.tool_calls === 1 ? " tool" : " tools") + " · " + usage.tokens.input + "/" + usage.tokens.output + " tokens" + seconds;
+}
+
+/** The child a settled spawn row names. The tool answered JSON with the session id, so a bad answer names none. */
+/** @param {ToolPart} part @returns {string | null} */
+function childOf(part) {
+    const state = part.state;
+    if (!state || state.type !== "completed") return null;
+    try {
+        const id = JSON.parse(String(state.output || "")).session_id;
+        return typeof id === "string" && SESSION_ID.test(id) ? id : null;
+    } catch (_) { return null; }
+}
+
+/** The live words of a child on its spawn row: the state the picker shows, then the context it holds. */
+/** @param {ChildView} view @returns {string} */
+export function childLabel(view) {
+    const held = view.activity.context_usage.input;
+    return childState(view) + (held > 0 ? " · " + tokenLabel(held) + " ctx" : "");
 }
 
 /** @param {string} code @param {string} message */
@@ -189,8 +215,54 @@ export function agents(options) {
                 },
             });
 
+            // The spawn row reads its child from this cache. A first sight starts one read, and the read rebuilds the row.
+            /** @type {Map<string, ChildEntry>} */
+            const children = new Map();
+            /** @param {ChildEntry} entry */
+            function rebuild(entry) {
+                const site = entry.view?.site;
+                if (!site) return;
+                for (const c of chats) if (c.sessionId === site.session_id) c.transcript.refreshRow(site.message_id, site.part_id);
+                root.invalidate();
+            }
+            /** @param {string} id */
+            function read(id) {
+                const entry = children.get(id);
+                if (!entry) return;
+                if (entry.reading) { entry.again = true; return; }
+                entry.reading = true;
+                client.sessionGet(id).then((item) => {
+                    const origin = item.session.origin;
+                    if (origin.type === "child") entry.view = { site: origin.site, activity: item.activity, last_run: item.last_run ?? null };
+                }, () => {}).then(() => {
+                    entry.reading = false;
+                    if (children.get(id) !== entry) return;
+                    if (entry.again) { entry.again = false; read(id); return; }
+                    rebuild(entry);
+                });
+            }
+            /** @param {ToolPart} part @returns {string} */
+            function liveSuffix(part) {
+                const id = childOf(part);
+                if (!id) return "";
+                let entry = children.get(id);
+                if (!entry) {
+                    entry = { view: null, reading: false, again: false };
+                    children.set(id, entry);
+                    read(id);
+                }
+                return entry.view ? " · " + childLabel(entry.view) : "";
+            }
+            ctx.on("session.changed", /** @param {Extract<EngineEvent, { type: "session" }>} ev */ (ev) => {
+                const entry = children.get(ev.session);
+                if (!entry) return;
+                if (ev.kind === "gone") { children.delete(ev.session); rebuild(entry); return; }
+                if (ev.facts.some((fact) => fact === "session.activity_changed" || fact === "run.done" || fact === "session.summary_changed")) read(ev.session);
+            });
+            ctx.effect(() => () => children.clear());
+
             ctx.effect(() => register(presenters, {
-                spawn_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Agent", subject: String(o.agent || "default") }) },
+                spawn_agent: { category: "agent", present: (/** @type {any} */ o, /** @type {string} */ _raw, /** @type {ToolPart} */ part) => ({ verb: "Agent", subject: String(o.agent || catalog.default) + liveSuffix(part) }) },
                 send_agent_input: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Send", subject: String(o.child || "") }) },
                 stop_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Stop", subject: String(o.child || "") }) },
             }));

@@ -7,6 +7,7 @@ const host_mod = @import("../../host.zig");
 const module = @import("../module.zig");
 const App = @import("../../../app/app.zig").App;
 const Sink = @import("../../../engine/sink.zig").Sink;
+const EngineLoad = @import("../../../engine/Engine.zig").Load;
 const jobs = @import("../jobs.zig");
 
 const Host = host_mod.Host;
@@ -49,8 +50,8 @@ pub const Engine = struct {
     faulted: bool = false,
     /// Internal handoffs can change activity without a session fact.
     activity_dirty: bool = false,
-    /// The last value delivered to the sink, never the query source.
-    busy: bool = false,
+    /// The last load delivered to the sink, never the query source.
+    load: EngineLoad = .{},
 
     pub fn create(gpa: std.mem.Allocator, ctx: Context, io: std.Io, wake: *std.Io.Event) !*Engine {
         const self = try gpa.create(Engine);
@@ -89,8 +90,9 @@ pub const Engine = struct {
         onActivity(self);
     }
 
-    pub fn isBusy(self: *const Engine) bool {
-        return if (self.runtime) |runtime| runtime.engine.isBusy() else false;
+    /// The load the runtime carries now; a detached host carries none.
+    pub fn currentLoad(self: *const Engine) EngineLoad {
+        return if (self.runtime) |runtime| runtime.engine.load() else .{};
     }
 
     fn onActivity(ctx: *anyopaque) void {
@@ -309,10 +311,11 @@ pub fn drain(engine: *Engine, ctx: Context) bool {
     engine.faulted = false;
     if (index) emitIndex(engine, ctx, index_facts, auth.items, notices.items, overflow);
     for (batch[0..count]) |entry| emitSession(engine, ctx, entry.id, entry.change);
+    // The event says the load differs from the last delivered load; a listener reads the counts back and never receives them.
     if (activity) {
-        const busy = engine.isBusy();
-        if (busy != engine.busy) {
-            engine.busy = busy;
+        const load = engine.currentLoad();
+        if (!std.meta.eql(load, engine.load)) {
+            engine.load = load;
             const ev = ctx.newObject();
             defer ctx.freeValue(ev);
             module.set(ctx, ev, "type", ctx.newString("activity"));

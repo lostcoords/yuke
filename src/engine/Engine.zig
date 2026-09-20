@@ -93,14 +93,32 @@ pub fn init(deps: Deps) Engine {
     return .{ .deps = deps, .sessions = session.Registry.init(deps.gpa), .prompt_generation = (generation & std.math.maxInt(u52)) | 1 };
 }
 
-/// A saved queue alone is idle when no task can resume it without user input.
-pub fn isBusy(self: *const Engine) bool {
-    if (self.continuations != 0) return true;
+/// The live load this process carries: every run, the child runs among them, and the continuations.
+pub const Load = struct {
+    runs: u32 = 0,
+    child_runs: u32 = 0,
+    continuations: u32 = 0,
+
+    /// A saved queue alone is idle when no task can resume it without user input.
+    pub fn busy(self: Load) bool {
+        return self.runs > 0 or self.continuations > 0;
+    }
+};
+
+pub fn load(self: *const Engine) Load {
+    var out: Load = .{ .continuations = @intCast(self.continuations) };
     var residents = self.sessions.map.valueIterator();
     while (residents.next()) |resident| {
-        if (resident.*.active_run != null) return true;
+        const slot = resident.*.active_run orelse continue;
+        out.runs += 1;
+        if (slot.depth > 0) out.child_runs += 1;
     }
-    return false;
+    std.debug.assert(out.child_runs <= out.runs);
+    return out;
+}
+
+pub fn isBusy(self: *const Engine) bool {
+    return self.load().busy();
 }
 
 pub fn beginContinuation(self: *Engine) void {

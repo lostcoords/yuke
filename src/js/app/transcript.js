@@ -290,7 +290,7 @@ function describe(part) {
   try {
     // A presenter states its category beside the label it returns, so both branches answer one shape.
     const out = presenter
-      ? { ...presenter.present(args, raw), category: presenter.category }
+      ? { ...presenter.present(args, raw, part), category: presenter.category }
       : presentation.fallback(part, args, raw);
     if (out && typeof out.verb === "string" && typeof out.subject === "string") {
       return { verb: out.verb, subject: out.subject, category: typeof out.category === "string" ? out.category : "other" };
@@ -900,6 +900,21 @@ export class Transcript {
     if (groupingChanged) this._actionPlanCache = null;
     if (adopted || refreshed.rowsChanged) this._markStale(id);
     if (groupingChanged) this._refreshActionRows(oldPlan, oldMessages);
+    if (touches) this._reanchor(anchors);
+  }
+
+  // Rebuild one tool row whose presenter reads state outside the part, so a child's activity reaches its spawn row.
+  /** @param {number} id @param {number} partId @returns {void} */
+  refreshRow(id, partId) {
+    const state = this._parts.get(String(id));
+    const c = state && state.rows.get(String(partId));
+    if (!c) return;
+    // The header text changes length, so a selection on this message moves back to the same source offsets.
+    const sel = this.selection;
+    const touches = !!sel && (sameId(sel.anchor.id, id) || sameId(sel.cursor.id, id));
+    const anchors = touches ? this._anchors() : null;
+    stale(c);
+    this._markStale(id);
     if (touches) this._reanchor(anchors);
   }
 

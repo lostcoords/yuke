@@ -139,10 +139,12 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     try std.testing.expect(foreign.is_error);
     try host.evalModule(
         \\import { presenters } from "yuke:transcript";
-        \\const spawn = presenters.spawn_agent.present({ agent: "review", message: "x" });
-        \\const fallback = presenters.spawn_agent.present({ message: "x" });
+        \\// A pending spawn names no child yet, and an omitted agent names the catalog default.
+        \\const pending = { type: "tool", id: 0, name: "spawn_agent", arguments: "{}", state: { type: "pending" } };
+        \\const spawn = presenters.spawn_agent.present({ agent: "review", message: "x" }, "{}", pending);
+        \\const fallback = presenters.spawn_agent.present({ message: "x" }, "{}", pending);
         \\const send = presenters.send_agent_input.present({ child: "abc" });
-        \\globalThis.presented = spawn.verb === "Agent" && spawn.subject === "review" && fallback.subject === "default" && send.verb === "Send" && send.subject === "abc" ? 1 : 0;
+        \\globalThis.presented = spawn.verb === "Agent" && spawn.subject === "review" && fallback.subject === "small" && send.verb === "Send" && send.subject === "abc" ? 1 : 0;
     , "present.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("presented"));
     // A dispose withdraws the tools and the presenters it installed.
@@ -226,6 +228,13 @@ test "agent picker opens children stops one or all and retains focused interrupt
     try support.eval(host, "agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
     try support.eval(host, "agents/agent-picker.test.js");
+    try support.expectString(host, "result", "ok");
+}
+
+test "a spawn row reads its child once on first sight and follows the child's facts" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "agents/live-row.test.js");
     try support.expectString(host, "result", "ok");
 }
 

@@ -13,21 +13,9 @@ import { Chat, focusedChat, soleText } from "yuke:chat";
 /** @typedef {{ rows?: number, border?: Border, format?: (entry: Entry, column: number) => string | ListItem, filterText?: (entry: Entry) => string, keymap?: FloatKeymap }} CommandUiConfig */
 /** @typedef {{ word: string, rest: string, complete: boolean }} SlashLine */
 
-// The first stroke that runs each command here. `candidates` drops what the context shadows.
-/** @returns {Record<string, string>} */
-function keyHints() {
-  /** @type {Record<string, string>} */
-  const hints = Object.create(null);
-  for (const stroke in keymap.map) {
-    const winner = keymap.candidates(stroke)[0];
-    if (winner && typeof winner.fn === "string" && !(winner.fn in hints)) hints[winner.fn] = stroke;
-  }
-  return hints;
-}
-
 /** @returns {Entry[]} */
 function entries() {
-  const hints = keyHints();
+  const hints = keymap.hints();
   return command.list().map((c) => ({ ...c, hint: hints[c.name] || "" }));
 }
 
