@@ -63,88 +63,6 @@ pub fn selectCut(gpa: std.mem.Allocator, db: *database.Database, session_id: [16
     return selected;
 }
 
-pub const summarizer_system_prompt =
-    \\You are a context summarization assistant. You read a conversation between a user and an AI assistant, and you write one structured summary in the exact format the instructions name.
-    \\
-    \\Do not continue the conversation. Do not answer any question in it. Write only the summary.
-;
-
-const summarize_instructions =
-    \\The conversation above is the history to summarize. Write a context checkpoint that another assistant uses to continue the work.
-    \\
-    \\Use this exact format:
-    \\
-    \\## Goal
-    \\[What does the user want? Name each task when the session covers more than one.]
-    \\
-    \\## Constraints and preferences
-    \\- [Each constraint, preference, or requirement the user stated]
-    \\- [Or "(none)"]
-    \\
-    \\## Progress
-    \\### Done
-    \\- [x] [Completed work]
-    \\
-    \\### In progress
-    \\- [ ] [Current work]
-    \\
-    \\### Blocked
-    \\- [What stops the work, if anything]
-    \\
-    \\## Key decisions
-    \\- **[Decision]**: [Short reason]
-    \\
-    \\## Next steps
-    \\1. [What happens next, in order]
-    \\
-    \\## Critical context
-    \\- [Data, examples, or references the next assistant needs]
-    \\- [Or "(none)"]
-    \\
-    \\Keep each section short. Keep exact file paths, symbol names, and error messages.
-;
-
-const merge_instructions =
-    \\The conversation above holds the new messages. The <previous-summary> block holds the summary of every earlier message.
-    \\
-    \\Write one summary that replaces both. Rules:
-    \\- Keep every fact from the previous summary.
-    \\- Add the new progress, decisions, and context from the new messages.
-    \\- Move an item from "In progress" to "Done" when the new messages completed it.
-    \\- Update "Next steps" against the current state.
-    \\- Keep exact file paths, symbol names, and error messages.
-    \\- Remove an item only when it no longer applies.
-    \\
-    \\Use this exact format:
-    \\
-    \\## Goal
-    \\[Keep the earlier goals. Add a new one when the task grew.]
-    \\
-    \\## Constraints and preferences
-    \\- [Keep the earlier ones. Add each new one.]
-    \\
-    \\## Progress
-    \\### Done
-    \\- [x] [The earlier done items and the new ones]
-    \\
-    \\### In progress
-    \\- [ ] [Current work]
-    \\
-    \\### Blocked
-    \\- [What stops the work now]
-    \\
-    \\## Key decisions
-    \\- **[Decision]**: [Short reason]
-    \\
-    \\## Next steps
-    \\1. [What happens next, in order]
-    \\
-    \\## Critical context
-    \\- [Data, examples, or references the next assistant needs]
-    \\
-    \\Keep each section short.
-;
-
 const Engine = @import("Engine.zig");
 const session_mod = @import("../session/session.zig");
 const Session = session_mod.Session;
@@ -204,9 +122,26 @@ pub fn compactForRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSl
     if (outcome != .compacted) return error.ContextHistoryTooLarge;
 }
 
-/// The instruction that trails the covered range. The turn system prompt leads the request.
-const summarize_prompt = summarizer_system_prompt ++ "\n\n" ++ summarize_instructions;
-const merge_prompt = summarizer_system_prompt ++ "\n\n" ++ merge_instructions;
+const Mode = enum { summarize, merge };
+const Instruction = struct { prompt: []const u8 };
+
+/// The instruction that trails the covered range. A `compaction.prompt` handler writes it; the engine holds no text of its own.
+fn instruction(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, mode: Mode) ![]const u8 {
+    std.debug.assert(slot.tools != null);
+    switch (engine.deps.hooks.askIfHeld(arena, .@"compaction.prompt", .{ .context = request_config.hookContext(slot, slot.tools.?.has_skills), .mode = mode, .prompt = "" })) {
+        .proceed => return error.CompactionPromptMissing,
+        .replace => |value| {
+            const answer = std.json.parseFromValueLeaky(Instruction, arena, value, .{ .ignore_unknown_fields = true }) catch return error.CompactionPromptMissing;
+            if (answer.prompt.len == 0 or answer.prompt.len > proto.meta.limits.max_message_string_bytes) return error.CompactionPromptMissing;
+            return answer.prompt;
+        },
+        .block => |reason| {
+            std.log.warn("run {d} stopped at compaction.prompt: {s}", .{ slot.runId(), reason });
+            return error.HookBlocked;
+        },
+        .canceled => return error.Canceled,
+    }
+}
 
 /// Summarize the covered range with the request snapshot of the turn, then commit the checkpoint.
 fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot) !proto.run.RunOutcome {
@@ -236,7 +171,7 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: ro
     // The instruction trails the covered range, so every block above it repeats the turn prefix.
     const blocks = try arena.alloc(ai.ir.Block, built.len + 1);
     @memcpy(blocks[0..built.len], built);
-    blocks[built.len] = .{ .role = .user, .value = .{ .text = if (head != null) merge_prompt else summarize_prompt } };
+    blocks[built.len] = .{ .role = .user, .value = .{ .text = try instruction(engine, arena, slot, if (head != null) .merge else .summarize) } };
 
     const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
     const answer = try model_call.generateWith(engine, arena, &slot.cancel, held.route, &held.model, .{
@@ -947,7 +882,9 @@ test "repeated compaction merges the prior summary and charges only the active c
     try testing.expectEqual(@as(u64, 6), head.from_id);
     try testing.expectEqual(before, head.message.compaction.tokens_before);
     try testing.expectEqual(try context.estimate(testing.allocator, a, &f.db, TaskFixture.sid), head.message.compaction.tokens_after);
-    try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "previous-summary") != null);
+    // The merge call carries the wrapped earlier summary and the merge instruction the stub answered.
+    try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "<context_summary>") != null);
+    try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "Merge the context summary") != null);
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "Hello from the yuke mock provider.") != null);
     const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, .{ .input_ceiling = 100_000 });
     try testing.expectEqual(@as(usize, 3), projected.messages.len);

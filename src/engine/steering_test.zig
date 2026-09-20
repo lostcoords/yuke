@@ -88,6 +88,7 @@ const Fixture = struct {
 
     fn holds(ctx: *anyopaque, point: proto.hook.Point) bool {
         const self: *Fixture = @ptrCast(@alignCast(ctx));
+        if (point == .@"compaction.prompt") return true;
         return switch (self.stage) {
             .build => point == .@"request.build",
             .send => point == .@"request.send",
@@ -96,8 +97,10 @@ const Fixture = struct {
         };
     }
 
-    fn ask(ctx: *anyopaque, _: std.mem.Allocator, _: proto.hook.Point, _: []const u8) hookset.Decision {
+    fn ask(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
         const self: *Fixture = @ptrCast(@alignCast(ctx));
+        // A compaction inside the run reads its instruction from the shared stub, so the steering stages stay untouched.
+        if (point == .@"compaction.prompt") return Resources.compaction_prompt_hooks.ask(undefined, out, point, payload);
         if (self.stage == .build) self.build_activity = self.activity;
         self.pause() catch return .canceled;
         return if (self.stage == .tool) .{ .block = "settled tool result" } else .proceed;

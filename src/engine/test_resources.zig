@@ -5,6 +5,7 @@ const testing = std.testing;
 const zio = @import("zio");
 const ai = @import("ai");
 const proto = @import("proto");
+const hookset = @import("hookset.zig");
 const Engine = @import("Engine.zig");
 const commands = @import("commands.zig");
 const runs = @import("run.zig");
@@ -61,8 +62,24 @@ pub fn makeEngine(self: *Resources, db: *Database) Engine {
         .providers = &self.providers,
         .route_transport = self.transport.transport(),
         .execution = @import("../execution.zig").testContext(&self.env),
+        .hooks = compaction_prompt_hooks,
     });
 }
+
+/// A stand-in for the prompt plugin: it answers `compaction.prompt` with a short text that names the mode.
+pub const compaction_prompt_hooks: hookset.HookSet = .{ .holds = CompactionPrompt.holds, .ask = CompactionPrompt.ask };
+
+const CompactionPrompt = struct {
+    fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+        return point == .@"compaction.prompt";
+    }
+    fn ask(_: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
+        std.debug.assert(point == .@"compaction.prompt");
+        const merge = std.mem.indexOf(u8, payload, "\"mode\":\"merge\"") != null;
+        const text = if (merge) "{\"prompt\":\"Merge the context summary with the new messages.\"}" else "{\"prompt\":\"You are a context summarization assistant. Write a context checkpoint.\"}";
+        return .{ .replace = std.json.parseFromSliceLeaky(std.json.Value, out, text, .{}) catch unreachable };
+    }
+};
 
 pub const SessionOptions = struct {
     root: []const u8 = "/w",

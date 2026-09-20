@@ -24,6 +24,58 @@ const DEFAULT_BASE = [
   "Give brief progress updates during substantial work.",
   "Explain the result, the verification, and any unresolved issues.",
 ].join("\n");
+const SUMMARIZER = [
+  "You are a context summarization assistant. You read a conversation between a user and an AI assistant, and you write one structured summary in the exact format the instructions name.",
+  "",
+  "Do not continue the conversation. Do not answer any question in it. Write only the summary.",
+  "",
+].join("\n");
+const SUMMARY_FORMAT = [
+  "Use this exact format:",
+  "",
+  "## Goal",
+  "[What does the user want? Name each task when the session covers more than one.]",
+  "",
+  "## Constraints and preferences",
+  "- [Each constraint, preference, or requirement the user stated]",
+  "- [Or \"(none)\"]",
+  "",
+  "## Progress",
+  "### Done",
+  "- [x] [Completed work]",
+  "",
+  "### In progress",
+  "- [ ] [Current work]",
+  "",
+  "### Blocked",
+  "- [What stops the work, if anything]",
+  "",
+  "## Key decisions",
+  "- **[Decision]**: [Short reason]",
+  "",
+  "## Next steps",
+  "1. [What happens next, in order]",
+  "",
+  "## Critical context",
+  "- [Data, examples, or references the next assistant needs]",
+  "- [Or \"(none)\"]",
+  "",
+  "Keep each section short. Keep exact file paths, symbol names, and error messages.",
+].join("\n");
+const COMPACTION_SUMMARIZE = SUMMARIZER + "The conversation above is the history to summarize. Write a context checkpoint that another assistant uses to continue the work.\n\n" + SUMMARY_FORMAT;
+// The engine wraps the earlier summary in `<context_summary>`, so the merge names that block.
+const COMPACTION_MERGE = SUMMARIZER + [
+  "The conversation above holds the new messages. The <context_summary> block holds the summary of every earlier message.",
+  "",
+  "Write one summary that replaces both. Rules:",
+  "- Keep every fact from the previous summary.",
+  "- Add the new progress, decisions, and context from the new messages.",
+  "- Move an item from \"In progress\" to \"Done\" when the new messages completed it.",
+  "- Update \"Next steps\" against the current state.",
+  "- Keep exact file paths, symbol names, and error messages.",
+  "- Remove an item only when it no longer applies.",
+  "",
+].join("\n") + SUMMARY_FORMAT;
 const INSTRUCTIONS_LEAD = "Project instructions follow. Explicit user instructions take precedence. Workspace instructions override global instructions where they conflict.";
 const SKILLS_LEAD = "Available skills provide specialized instructions for specific tasks. Use the skill tool when a task matches a skill description. Pass the skill name to load its full instructions.";
 
@@ -60,4 +112,5 @@ export function sections(build) {
 // The plugin loads before the user entry, so a user handler runs after it and may append or replace by key.
 plugins.use({ name: "prompt", apply(ctx) {
   ctx.hook("prompt.build", (/** @type {PromptBuild} */ build) => ({ replace: { ...build, sections: sections(build) } }));
+  ctx.hook("compaction.prompt", (/** @type {{ mode: "summarize" | "merge" }} */ build) => ({ replace: { ...build, prompt: build.mode === "merge" ? COMPACTION_MERGE : COMPACTION_SUMMARIZE } }));
 } });

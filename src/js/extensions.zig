@@ -286,6 +286,15 @@ test "the prompt plugin writes the default sections, and a user handler appends 
     try std.testing.expectEqual(@as(usize, 3), seeded_answer.value.value.sections.len);
     try std.testing.expectEqualStrings("system_prompt", seeded_answer.value.value.sections[0].key);
     try std.testing.expectEqualStrings("custom", seeded_answer.value.value.sections[0].text);
+    // The compaction instruction comes from the same plugin, one text per mode, and the merge names the engine's wrapper.
+    const merge = try settleHook(&f.extensions, "compaction.prompt", "{\"context\":{},\"mode\":\"merge\",\"prompt\":\"\"}");
+    defer std.testing.allocator.free(merge);
+    try std.testing.expect(std.mem.indexOf(u8, merge, "You are a context summarization assistant") != null);
+    try std.testing.expect(std.mem.indexOf(u8, merge, "The <context_summary> block holds the summary") != null);
+    const summarize = try settleHook(&f.extensions, "compaction.prompt", "{\"context\":{},\"mode\":\"summarize\",\"prompt\":\"\"}");
+    defer std.testing.allocator.free(summarize);
+    try std.testing.expect(std.mem.indexOf(u8, summarize, "Write a context checkpoint") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summarize, "context_summary") == null);
 }
 
 test "a hook chain replaces a payload and the first block ends it" {

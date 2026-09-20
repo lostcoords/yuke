@@ -20,6 +20,8 @@ pub const Point = enum {
     @"tools.select",
     /// At a run start whose stored prompt is stale, over the prompt sections. The engine stores the answer.
     @"prompt.build",
+    /// Once per compaction, over the instruction that trails the covered range. `mode` names a first summary or a merge.
+    @"compaction.prompt",
 
     /// Report the wire name, which is the point itself.
     pub fn wireName(self: Point) []const u8 {
