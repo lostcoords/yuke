@@ -69,6 +69,11 @@ pub fn install(host: *Host) void {
     });
 }
 
+/// True when `value` is a signal that was canceled. An undefined or foreign value is not aborted.
+pub fn aborted(ctx: Context, value: Value) bool {
+    return if (get(ctx, value)) |signal| signal.aborted else false;
+}
+
 pub fn get(ctx: Context, value: Value) ?*Signal {
     if (!ctx.isObject(value)) return null;
     const id = Host.fromContext(ctx).signal_class_id;

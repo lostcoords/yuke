@@ -5,6 +5,7 @@ const quickjs = @import("quickjs");
 const proto = @import("proto");
 const Host = @import("../host.zig").Host;
 const cancellation = @import("cancellation.zig");
+const support = @import("../tests/support.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -150,44 +151,6 @@ pub inline fn setIndex(ctx: Context, obj: Value, index: usize, value: Value) voi
     ctx.setPropertyUint32(obj, @intCast(index), value) catch {};
 }
 
-test "integer checks exact bounds before and after the float conversion" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    const cases = [_]struct { n: f64, min: u64 = 0, max: u64 = std.math.maxInt(u64), want: ?u64 = null }{
-        .{ .n = 0, .want = 0 },
-        .{ .n = 42, .min = 42, .max = 42, .want = 42 },
-        .{ .n = -1 },
-        .{ .n = 1.5 },
-        .{ .n = std.math.nan(f64) },
-        .{ .n = std.math.inf(f64) },
-        .{ .n = 0x1p64 },
-        .{ .n = 0x1p64 - 2048, .want = 0xfffffffffffff800 },
-        .{ .n = 9007199254740992, .min = 9007199254740993 },
-        .{ .n = 9007199254740996, .max = 9007199254740995 },
-    };
-    for (cases) |case| {
-        const value = host.ctx.newFloat64(case.n);
-        defer host.ctx.freeValue(value);
-        try std.testing.expectEqual(case.want, integer(host.ctx, value, case.min, case.max));
-    }
-    const text = host.ctx.newString("42");
-    defer host.ctx.freeValue(text);
-    try std.testing.expectEqual(null, integer(host.ctx, text, 0, 100));
-}
-
-test "session ids accept only lowercase hexadecimal text" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    const lower = host.ctx.newString("00" ** 16);
-    defer host.ctx.freeValue(lower);
-    try std.testing.expect(sessionId(host.ctx, lower) != null);
-    const upper = host.ctx.newString("AA" ++ ("00" ** 15));
-    defer host.ctx.freeValue(upper);
-    try std.testing.expectEqual(null, sessionId(host.ctx, upper));
-}
-
-const support = @import("../tests/support.zig");
-
 /// The bounds of one I/O option set. A zero `max_bytes` means the operation has no chunk size.
 pub const IoLimits = struct { default_timeout_ms: u32, max_timeout_ms: u32, min_bytes: u32 = 0, default_bytes: u32 = 0, max_bytes: u32 = 0 };
 pub const IoOptions = struct { signal: Value, deadline: std.Io.Clock.Timestamp, max_bytes: u32 };
@@ -219,6 +182,13 @@ pub fn Table(comptime T: type) type {
         pub fn find(self: *Self, id: u32) ?*T {
             for (self.live.items) |record| if (record.id == id) return record;
             return null;
+        }
+
+        /// Return the record named by the first JavaScript argument, or return null.
+        pub fn findArg(self: *Self, ctx: Context, args: []const Value) ?*T {
+            if (args.len == 0) return null;
+            const id = integer(ctx, args[0], 1, std.math.maxInt(u32)) orelse return null;
+            return self.find(@intCast(id));
         }
 
         /// True at the record limit. The reap runs first, so a done record never counts.
@@ -267,4 +237,40 @@ pub fn Table(comptime T: type) type {
             self.* = .{};
         }
     };
+}
+
+test "integer checks exact bounds before and after the float conversion" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    const cases = [_]struct { n: f64, min: u64 = 0, max: u64 = std.math.maxInt(u64), want: ?u64 = null }{
+        .{ .n = 0, .want = 0 },
+        .{ .n = 42, .min = 42, .max = 42, .want = 42 },
+        .{ .n = -1 },
+        .{ .n = 1.5 },
+        .{ .n = std.math.nan(f64) },
+        .{ .n = std.math.inf(f64) },
+        .{ .n = 0x1p64 },
+        .{ .n = 0x1p64 - 2048, .want = 0xfffffffffffff800 },
+        .{ .n = 9007199254740992, .min = 9007199254740993 },
+        .{ .n = 9007199254740996, .max = 9007199254740995 },
+    };
+    for (cases) |case| {
+        const value = host.ctx.newFloat64(case.n);
+        defer host.ctx.freeValue(value);
+        try std.testing.expectEqual(case.want, integer(host.ctx, value, case.min, case.max));
+    }
+    const text = host.ctx.newString("42");
+    defer host.ctx.freeValue(text);
+    try std.testing.expectEqual(null, integer(host.ctx, text, 0, 100));
+}
+
+test "session ids accept only lowercase hexadecimal text" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    const lower = host.ctx.newString("00" ** 16);
+    defer host.ctx.freeValue(lower);
+    try std.testing.expect(sessionId(host.ctx, lower) != null);
+    const upper = host.ctx.newString("AA" ++ ("00" ** 15));
+    defer host.ctx.freeValue(upper);
+    try std.testing.expectEqual(null, sessionId(host.ctx, upper));
 }

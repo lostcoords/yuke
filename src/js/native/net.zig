@@ -118,23 +118,16 @@ fn jsConnect(ctx: Context, _: Value, args: []const Value) Value {
     const path = module.string(ctx, path_value) orelse return invalid(ctx);
     defer ctx.freeCString(path.ptr);
     if (path.len == 0 or path.len > std.Io.net.UnixAddress.max_len or std.mem.indexOfScalar(u8, path, 0) != null) return invalid(ctx);
-    if (isAborted(ctx, options.signal)) return pending.rejectedWith(ctx, canceled);
+    if (cancellation.aborted(ctx, options.signal)) return pending.rejectedWith(ctx, canceled);
     if (host.net.full(host.gpa, max_connections)) return pending.rejectedWith(ctx, .{ .message = "the socket limit was reached", .code = "LIMIT" });
     const connection = host.net.add(host.gpa, .{ .host = host });
     const request: Request = .{ .connection = connection, .kind = .connect, .bytes = host.gpa.dupe(u8, path) catch unreachable, .deadline = options.deadline };
     return host.startTaskWithSignal(Request, connectTask, request, options.signal);
 }
 
-fn isAborted(ctx: Context, signal: Value) bool {
-    return if (cancellation.get(ctx, signal)) |token| token.aborted else false;
-}
-
 fn connectionArg(host: *Host, args: []const Value) ?*Connection {
-    if (args.len == 0) return null;
-    const id = module.integer(host.ctx, args[0], 1, std.math.maxInt(u32)) orelse return null;
-    const connection = host.net.find(@intCast(id)) orelse return null;
-    if (connection.closed or connection.stream == null) return null;
-    return connection;
+    const connection = host.net.findArg(host.ctx, args) orelse return null;
+    return if (connection.closed or connection.stream == null) null else connection;
 }
 
 fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
@@ -143,7 +136,7 @@ fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
     const options = module.ioOptions(host, if (args.len > 1) args[1] else quickjs.UNDEFINED, read_limits) catch return invalid(ctx);
     defer ctx.freeValue(options.signal);
     const connection = connectionArg(host, args) orelse return pending.rejectedWith(ctx, closed);
-    if (isAborted(ctx, options.signal)) {
+    if (cancellation.aborted(ctx, options.signal)) {
         connection.close();
         return pending.rejectedWith(ctx, canceled);
     }
@@ -163,7 +156,7 @@ fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
     const bytes = ctx.getUint8Array(args[1]) catch return invalid(ctx);
     if (bytes.len > max_bytes) return invalid(ctx);
     const connection = connectionArg(host, args) orelse return pending.rejectedWith(ctx, closed);
-    if (isAborted(ctx, options.signal)) {
+    if (cancellation.aborted(ctx, options.signal)) {
         connection.close();
         return pending.rejectedWith(ctx, canceled);
     }
@@ -173,10 +166,7 @@ fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
 }
 
 fn jsClose(ctx: Context, _: Value, args: []const Value) Value {
-    const host = Host.fromContext(ctx);
-    if (args.len > 0) if (module.integer(ctx, args[0], 1, std.math.maxInt(u32))) |id| {
-        if (host.net.find(@intCast(id))) |connection| connection.close();
-    };
+    if (Host.fromContext(ctx).net.findArg(ctx, args)) |connection| connection.close();
     return quickjs.UNDEFINED;
 }
 

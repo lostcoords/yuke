@@ -60,9 +60,8 @@ const Request = struct {
     headers: std.http.Client.Request.Headers = .{ .accept_encoding = .omit },
     extra_headers: []const std.http.Header,
     body: ?[]u8,
-    timeout_ms: u32,
 
-    const ParseError = error{ UrlType, Url, Options, Option, Method, Body, BodyMethod, Headers, Header, Timeout };
+    const ParseError = error{ UrlType, Url, Options, Option, Method, Body, BodyMethod, Headers, Header };
 
     fn parse(ctx: Context, gpa: std.mem.Allocator, url_value: Value, options: Value) ParseError!Request {
         var arena = std.heap.ArenaAllocator.init(gpa);
@@ -93,7 +92,7 @@ const Request = struct {
             }
         }
 
-        const method_text = optionalString(ctx, a, options, "method") catch return error.Method;
+        const method_text = module.optionalString(ctx, a, options, "method") catch return error.Method;
         var method: std.http.Method = .GET;
         if (method_text) |name| {
             method = std.meta.stringToEnum(std.http.Method, name) orelse return error.Method;
@@ -102,11 +101,8 @@ const Request = struct {
                 else => return error.Method,
             }
         }
-        const body = optionalString(ctx, a, options, "body") catch return error.Body;
+        const body = module.optionalString(ctx, a, options, "body") catch return error.Body;
         if (body != null and !method.requestHasBody()) return error.BodyMethod;
-        const timeout = if (ctx.isUndefined(options)) quickjs.UNDEFINED else ctx.getPropertyStr(options, "timeoutMs");
-        defer ctx.freeValue(timeout);
-        const timeout_ms: u32 = if (ctx.isUndefined(timeout)) default_timeout_ms else @intCast(module.integer(ctx, timeout, 1, max_timeout_ms) orelse return error.Timeout);
         var headers: std.http.Client.Request.Headers = .{ .accept_encoding = .omit };
         var extra: std.ArrayList(std.http.Header) = .empty;
         var seen: std.StringHashMapUnmanaged(void) = .empty;
@@ -143,7 +139,7 @@ const Request = struct {
                 }
             }
         }
-        return .{ .arena = arena, .url = url, .method = method, .headers = headers, .extra_headers = extra.items, .body = body, .timeout_ms = timeout_ms };
+        return .{ .arena = arena, .url = url, .method = method, .headers = headers, .extra_headers = extra.items, .body = body };
     }
 
     pub fn free(self: Request, _: std.mem.Allocator) void {
@@ -166,13 +162,6 @@ fn plainObject(ctx: Context, value: Value) bool {
     return !ctx.isException(expected) and ctx.isStrictEqual(proto, expected);
 }
 
-fn optionalString(ctx: Context, gpa: std.mem.Allocator, options: Value, name: [:0]const u8) error{InvalidOption}!?[]u8 {
-    const value = if (ctx.isUndefined(options)) quickjs.UNDEFINED else ctx.getPropertyStr(options, name);
-    defer ctx.freeValue(value);
-    if (ctx.isUndefined(value)) return null;
-    return module.owned(ctx, gpa, value) orelse error.InvalidOption;
-}
-
 fn validHeaderName(name: []const u8) bool {
     if (name.len == 0) return false;
     for (name) |byte| switch (byte) {
@@ -187,6 +176,7 @@ fn validHeaderValue(value: []const u8) bool {
     return true;
 }
 
+const head_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_timeout_ms };
 const read_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_read_timeout_ms, .min_bytes = 4, .default_bytes = default_read_bytes, .max_bytes = max_read_bytes };
 const canceled: pending.Result = .{ .failed = .{ .message = "the request was canceled" } };
 const timed_out: pending.Result = .{ .failed = .{ .message = "the request timed out" } };
@@ -200,6 +190,8 @@ const Body = struct {
     id: u32 = 0,
     /// The parsed request owns the header bytes std borrows for the whole exchange.
     parsed: Request,
+    /// The head deadline. A body read brings its own.
+    deadline: std.Io.Clock.Timestamp,
     /// Null once the connection went back to the client.
     request: ?std.http.Client.Request = null,
     response: std.http.Client.Response = undefined,
@@ -268,26 +260,24 @@ fn jsFetch(ctx: Context, _: Value, args: []const Value) Value {
         error.BodyMethod => "this method must not have a body",
         error.Headers => "headers must be an object",
         error.Header => "a request header is invalid",
-        error.Timeout => "timeoutMs must be a whole number of milliseconds up to 120000",
     });
-    const signal = if (ctx.isUndefined(options)) quickjs.UNDEFINED else ctx.getPropertyStr(options, "signal");
-    defer ctx.freeValue(signal);
-    if (ctx.isException(signal)) {
+    const io_options = module.ioOptions(host, options, head_limits) catch {
         request.free(host.gpa);
-        return pending.rejected(ctx, "the fetch signal could not be read");
-    }
+        return pending.rejected(ctx, "a fetch option is invalid");
+    };
+    defer ctx.freeValue(io_options.signal);
     if (host.bodies.full(host.gpa, max_bodies)) {
         request.free(host.gpa);
         return pending.rejected(ctx, "the host holds 64 open response bodies");
     }
-    const body = host.bodies.add(host.gpa, .{ .host = host, .parsed = request });
-    return host.startTaskWithSignal(*Body, httpTask, body, signal);
+    const body = host.bodies.add(host.gpa, .{ .host = host, .parsed = request, .deadline = io_options.deadline });
+    return host.startTaskWithSignal(*Body, httpTask, body, io_options.signal);
 }
 
-/// Run the head exchange under the deadline. A stop after the head ends the body nobody will read.
+/// Run the head exchange under the deadline. End the body for every answer but a head, because no reader can use it.
 fn httpTask(host: *Host, op: *pending.Op, body: *Body) void {
-    const timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(body.parsed.timeout_ms) } };
-    const result = pending.runTimed(host, op, timeout, httpWorker, body, failures);
+    std.debug.assert(body.request == null);
+    const result = pending.runTimed(host, op, .{ .deadline = body.deadline }, httpWorker, body, failures);
     if (result != .http) body.end();
     op.finish(result);
 }
@@ -296,7 +286,6 @@ fn httpWorker(host: *Host, op: *pending.Op, body: *Body, result: *pending.Result
     defer op.cancel.finish(host.io);
     const head = exchange(host, body) catch |err| {
         body.release(true);
-        body.end();
         result.* = switch (err) {
             error.Canceled => canceled,
             error.Redirect => .{ .failed = .{ .message = "the request was redirected" } },
@@ -309,6 +298,7 @@ fn httpWorker(host: *Host, op: *pending.Op, body: *Body, result: *pending.Result
 }
 
 fn exchange(host: *Host, body: *Body) !pending.Http {
+    std.debug.assert(body.request == null);
     const uri = std.Uri.parse(body.parsed.url) catch unreachable;
     const client = host.http.acquire(host.gpa, host.io);
     var reused = false;
@@ -423,27 +413,22 @@ fn startRead(ctx: Context, args: []const Value, all: bool) Value {
     const options = module.ioOptions(host, if (args.len > 1) args[1] else quickjs.UNDEFINED, read_limits) catch return pending.rejected(ctx, "a read option is invalid");
     defer ctx.freeValue(options.signal);
     const body = bodyArg(host, args) orelse return pending.rejected(ctx, "the response body is closed");
-    if (cancellation.get(ctx, options.signal)) |token| if (token.aborted) {
+    if (cancellation.aborted(ctx, options.signal)) {
         body.close();
         return pending.rejected(ctx, "the operation was canceled");
-    };
+    }
     if (body.read_busy) return pending.rejected(ctx, "a body read is already pending");
     body.read_busy = true;
     return host.startTaskWithSignal(Read, readTask, .{ .body = body, .all = all, .max_bytes = options.max_bytes, .deadline = options.deadline }, options.signal);
 }
 
 fn bodyArg(host: *Host, args: []const Value) ?*Body {
-    if (args.len == 0) return null;
-    const id = module.integer(host.ctx, args[0], 1, std.math.maxInt(u32)) orelse return null;
-    const body = host.bodies.find(@intCast(id)) orelse return null;
+    const body = host.bodies.findArg(host.ctx, args) orelse return null;
     return if (body.ended) null else body;
 }
 
 fn jsClose(ctx: Context, _: Value, args: []const Value) Value {
-    const host = Host.fromContext(ctx);
-    if (args.len > 0) if (module.integer(ctx, args[0], 1, std.math.maxInt(u32))) |id| {
-        if (host.bodies.find(@intCast(id))) |body| body.close();
-    };
+    if (Host.fromContext(ctx).bodies.findArg(ctx, args)) |body| body.close();
     return quickjs.UNDEFINED;
 }
 
@@ -451,6 +436,7 @@ fn jsClose(ctx: Context, _: Value, args: []const Value) Value {
 fn readTask(host: *Host, op: *pending.Op, read: Read) void {
     defer read.free(host.gpa);
     const body = read.body;
+    std.debug.assert(body.read_busy and body.read_op == null);
     body.read_op = op;
     const result = if (body.ended) canceled else pending.runTimed(host, op, .{ .deadline = read.deadline }, readWorker, read, failures);
     if (result == .failed or body.eof) body.end();
@@ -461,6 +447,7 @@ fn readWorker(host: *Host, op: *pending.Op, read: Read, result: *pending.Result)
     defer op.cancel.finish(host.io);
     host.io.checkCancel() catch return;
     const body = read.body;
+    std.debug.assert(body.read_op == op and body.request != null);
     const gpa = host.gpa;
     // The body reader needs no buffer of its own; a read streams into the caller's bytes.
     const reader = body.reader orelse blk: {
