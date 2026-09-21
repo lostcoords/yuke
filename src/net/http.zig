@@ -184,6 +184,7 @@ test "a form body percent-encodes every reserved and UTF-8 byte" {
 const FormServer = struct {
     listener: *zio.net.Server = undefined,
     mode: enum { reply, redirect, oversize, stall },
+    release: zio.ResetEvent = .init,
     seen_type: [64]u8 = undefined,
     seen_type_len: usize = 0,
     err: ?anyerror = null,
@@ -221,8 +222,8 @@ fn serveFormOnceInner(s: *FormServer) !void {
             .extra_headers = &.{.{ .name = "location", .value = "https://elsewhere.invalid/token" }},
         }),
         .oversize => try request.respond("x" ** 512, .{ .status = .bad_request, .keep_alive = false }),
-        // Read the request, then never answer, so the client times out after it sent the body.
-        .stall => try zio.sleep(.fromMilliseconds(400)),
+        // Keep the connection open without a response until the client completes.
+        .stall => try s.release.wait(),
     }
 }
 
@@ -271,8 +272,13 @@ fn exchangeForm(server: *FormServer, client: *FormClient) !void {
     client.port = listener.socket.address.ip.getPort();
 
     var server_task = try rt.spawn(serveFormOnce, .{server});
+    errdefer {
+        server_task.cancel();
+        server_task.join();
+    }
     var client_task = try rt.spawn(postFormOnce, .{client});
     client_task.join();
+    server.release.set();
     server_task.join();
 }
 
@@ -383,4 +389,6 @@ test "a timeout after the send reports ambiguity, never a pre-flight failure" {
 
     // A retry here could look like token reuse and cost the whole grant.
     try testing.expectEqual(@as(?anyerror, Error.Ambiguous), client.err);
+    try testing.expectEqual(@as(?anyerror, null), server.err);
+    try testing.expectEqualStrings("application/x-www-form-urlencoded", server.seen_type[0..server.seen_type_len]);
 }
