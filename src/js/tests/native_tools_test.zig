@@ -857,6 +857,19 @@ test "the jobs status segment and the /jobs list show, refresh, and stop backgro
     defer fixture.deinit();
     const host = fixture.host;
     try support.eval(host, "native_tools/jobs-ui.test.js");
+    for (1..4) |stage| {
+        var buf: [96]u8 = undefined;
+        const ready = try std.fmt.bufPrintZ(&buf, "talkyStage === {d} || result !== 'pending'", .{stage});
+        try support.pumpUntilTrue(host, ready);
+        try support.expectString(host, "result", "pending");
+        const job_id: u32 = @intCast(try host.evalInt("talkyId"));
+        const pid = for (host.procs.live.items) |proc| {
+            if (proc.job) |job| {
+                if (job.id == job_id) break proc.pid;
+            }
+        } else return error.OutputJobNotFound;
+        try std.posix.kill(pid, .USR1);
+    }
     try support.pumpUntilTrue(host, "globalThis.result !== \"pending\"");
     try support.expectString(host, "result", "ok");
 }

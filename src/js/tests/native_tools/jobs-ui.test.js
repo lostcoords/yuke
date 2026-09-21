@@ -9,6 +9,8 @@ const check = (name, cond) => { if (!cond) fail.push(name); };
 const until = async (ready) => { for (let i = 0; i < 1000 && !ready(); i++) await new Promise((resolve) => setTimeout(resolve, 5)); };
 const key = (picker, char) => picker.content.onKey({ type: "key", code: "char", char, text: char, event: "press", mods: 0 });
 globalThis.result = "pending";
+globalThis.talkyStage = 0;
+globalThis.talkyId = 0;
 plugins.use(tuiPlugin);
 plugins.use(jobsUiPlugin);
 let tui = null;
@@ -42,14 +44,35 @@ plugins.use({ name: "jobs-ui-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { 
 
   // The output view follows a growing log, keeps the unfinished last line, and ends with the exit line.
   const texts = (view) => view.pager.source.rows(200, 0, 100000).map((r) => r.text);
-  const talky = await start("for i in 1 2 3; do echo line$i; sleep 0.05; done; printf 'tail'", { root: "/tmp" });
+  const talky = await start(`sleep 30 & child=$!; stage=1
+trap 'stage=$((stage + 1)); case "$stage" in
+  2) printf "line2\\n" ;;
+  3) printf "line3\\ntail" ;;
+  4) kill "$child"; wait "$child" 2>/dev/null; exit 0 ;;
+esac' USR1
+printf 'line1\\n'
+while :; do wait "$child"; done`, { root: "/tmp" });
+  globalThis.talkyId = talky.id;
   // Enter in the list opens the output view of the selected job.
   const list = openJobs(tui);
   list.content.selectKey(talky.id);
   list.content.onKey({ type: "key", code: "enter", event: "press", mods: 0 });
   const view = root.overlays.at(-1)?.content;
   check("enter-opens-output", root.overlays.length === 1 && view instanceof JobOutput && view.job.id === talky.id);
-  for (let i = 0; i < 60 && !texts(view).includes("[exit code 0]"); i++) { view.tick(); await new Promise((resolve) => setTimeout(resolve, 50)); }
+  for (let stage = 1; stage <= 3; stage++) {
+    const expected = ["line1", "line2", "line3"].slice(0, stage).join("|") + (stage === 3 ? "|tail" : "");
+    const partial = stage === 3 ? "tail" : "";
+    for (let i = 0; i < 1000; i++) {
+      await view.read();
+      if (texts(view).join("|") === expected && view.partial === partial) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    check("output-stage-" + stage, texts(view).join("|") === expected && view.partial === partial);
+    check("output-still-running-" + stage, jobs.get(talky.id)?.state === "running");
+    globalThis.talkyStage = stage;
+  }
+  await jobs.wait(talky.id);
+  await until(() => { view.tick(); return texts(view).includes("[exit code 0]"); });
   check("output-follows", texts(view).join("|") === "line1|line2|line3|tail|[exit code 0]");
   view.onKey({ type: "key", code: "esc", event: "press", mods: 0 });
   check("output-closes", root.overlays.length === 0);
