@@ -201,10 +201,11 @@ const Body = struct {
     carry_len: u8 = 0,
     /// True after a read saw the end of the stream, so the read task ends the body.
     eof: bool = false,
-    /// True once no read may start. The record leaves the table after its last read returns.
+    /// True once no read may start.
     ended: bool = false,
-    read_busy: bool = false,
-    read_op: ?*pending.Op = null,
+    /// The head or read task retains the record from submission until return.
+    busy: bool = true,
+    op: ?*pending.Op = null,
 
     /// Give the connection back. A failed exchange or a body short of its end must not return to the pool.
     fn release(self: *Body, failed: bool) void {
@@ -222,22 +223,37 @@ const Body = struct {
         self.release(false);
     }
 
-    /// Stop the body. A read in flight ends it when that read returns.
+    /// An active task releases its own request after its worker returns.
     pub fn close(self: *Body) void {
         if (self.ended) return;
-        if (self.read_op) |op| op.cancel.request(self.host.io) else self.end();
+        if (self.busy) {
+            if (self.op) |op| op.cancel.request(self.host.io) else self.ended = true;
+        } else {
+            std.debug.assert(self.op == null);
+            self.end();
+        }
+    }
+
+    fn finish(self: *Body) void {
+        std.debug.assert(self.busy);
+        self.op = null;
+        self.busy = false;
+        self.host.wake.set(self.host.io);
     }
 
     pub fn done(self: *const Body) bool {
-        return self.ended and !self.read_busy;
+        return self.ended and !self.busy;
     }
 
     /// The head task payload path: a task that never starts ends the body, and the table reaps it.
     pub fn free(self: *Body, _: std.mem.Allocator) void {
+        std.debug.assert(self.busy and self.op == null);
         self.end();
+        self.finish();
     }
 
     pub fn deinit(self: *Body, gpa: std.mem.Allocator) void {
+        std.debug.assert(self.done() and self.op == null);
         std.debug.assert(self.request == null);
         self.parsed.free(gpa);
     }
@@ -276,8 +292,11 @@ fn jsFetch(ctx: Context, _: Value, args: []const Value) Value {
 
 /// Run the head exchange under the deadline. End the body for every answer but a head, because no reader can use it.
 fn httpTask(host: *Host, op: *pending.Op, body: *Body) void {
+    defer body.finish();
+    std.debug.assert(body.busy and body.op == null);
     std.debug.assert(body.request == null);
-    const result = pending.runTimed(host, op, .{ .deadline = body.deadline }, httpWorker, body, failures);
+    body.op = op;
+    const result = if (body.ended) canceled else pending.runTimed(host, op, .{ .deadline = body.deadline }, httpWorker, body, failures);
     if (result != .http) body.end();
     op.finish(result);
 }
@@ -391,11 +410,7 @@ const Read = struct {
     deadline: std.Io.Clock.Timestamp,
 
     pub fn free(self: Read, _: std.mem.Allocator) void {
-        const body = self.body;
-        std.debug.assert(body.read_busy);
-        body.read_op = null;
-        body.read_busy = false;
-        body.host.wake.set(body.host.io);
+        self.body.finish();
     }
 };
 
@@ -417,8 +432,8 @@ fn startRead(ctx: Context, args: []const Value, all: bool) Value {
         body.close();
         return pending.rejected(ctx, "the operation was canceled");
     }
-    if (body.read_busy) return pending.rejected(ctx, "a body read is already pending");
-    body.read_busy = true;
+    if (body.busy) return pending.rejected(ctx, "a body read is already pending");
+    body.busy = true;
     return host.startTaskWithSignal(Read, readTask, .{ .body = body, .all = all, .max_bytes = options.max_bytes, .deadline = options.deadline }, options.signal);
 }
 
@@ -436,8 +451,8 @@ fn jsClose(ctx: Context, _: Value, args: []const Value) Value {
 fn readTask(host: *Host, op: *pending.Op, read: Read) void {
     defer read.free(host.gpa);
     const body = read.body;
-    std.debug.assert(body.read_busy and body.read_op == null);
-    body.read_op = op;
+    std.debug.assert(body.busy and body.op == null);
+    body.op = op;
     const result = if (body.ended) canceled else pending.runTimed(host, op, .{ .deadline = read.deadline }, readWorker, read, failures);
     if (result == .failed or body.eof) body.end();
     op.finish(result);
@@ -447,7 +462,7 @@ fn readWorker(host: *Host, op: *pending.Op, read: Read, result: *pending.Result)
     defer op.cancel.finish(host.io);
     host.io.checkCancel() catch return;
     const body = read.body;
-    std.debug.assert(body.read_op == op and body.request != null);
+    std.debug.assert(body.op == op and body.request != null);
     const gpa = host.gpa;
     // The body reader needs no buffer of its own; a read streams into the caller's bytes.
     const reader = body.reader orelse blk: {

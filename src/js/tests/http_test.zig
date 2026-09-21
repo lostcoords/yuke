@@ -5,7 +5,7 @@ const zio = @import("zio");
 const support = @import("support.zig");
 const Host = @import("../host.zig").Host;
 const Work = @import("../../session/work.zig");
-const Cleanup = enum { none, plugin, host, tool };
+const Cleanup = enum { none, plugin, host, tool, body };
 const PoolCase = enum { reuse, recover, stale, no_replay, concurrent, origins };
 
 const bench = @import("../bench/bench.zig");
@@ -50,6 +50,15 @@ fn run(mode: Mode, options: struct { cleanup: Cleanup = .none, pool: ?PoolCase =
         peer.release.set(host.io);
     }
     if (cleanup != .none) try support.pumpUntilSet(host, &peer.ready);
+    if (cleanup != .none and mode == .slow_body) try support.pumpUntilTrue(host, "globalThis.httpReadStarted === true");
+    if (cleanup == .body) {
+        try std.testing.expectEqual(@as(usize, 1), host.bodies.live.items.len);
+        const body = host.bodies.live.items[0];
+        body.close();
+        try std.testing.expect(!body.done());
+        host.bodies.reap(host.gpa);
+        try std.testing.expectEqual(@as(usize, 1), host.bodies.live.items.len);
+    }
     if (cleanup == .plugin) try host.eval("resumeHttp();", "http-resume.js");
     if (cleanup == .tool) {
         var drain = try runtime.spawn(Work.drain, .{ &work, host.io });
@@ -87,6 +96,7 @@ fn run(mode: Mode, options: struct { cleanup: Cleanup = .none, pool: ?PoolCase =
     }
     try support.expectString(host, "httpError", "");
     try std.testing.expect(host.http.inner == null);
+    try std.testing.expectEqual(@as(usize, 0), host.bodies.live.items.len);
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
     try std.testing.expectEqual(@as(usize, 0), host.signal_waiters.items.len);
     peer.stop();
@@ -164,7 +174,11 @@ test "plugin disposal cancels and drains fetch" {
 }
 
 test "host close cancels an unscoped fetch and settles its promise" {
-    inline for (.{ .stall, .slow_body }) |mode| try run(mode, .{ .cleanup = .host });
+    inline for (.{ .stall, .partial_head, .slow_body, .upload_stall }) |mode| try run(mode, .{ .cleanup = .host });
+}
+
+test "body close retains an active head or read until its task returns" {
+    inline for (.{ .stall, .partial_head, .upload_stall, .slow_body }) |mode| try run(mode, .{ .cleanup = .body });
 }
 
 test "run cleanup drains fetch without another owner pump" {

@@ -2,13 +2,17 @@ import { fetch, plugins } from "yuke";
 import { equal } from "yuke:test";
 
 const options = () => httpMode === "upload_stall" ? { method: "POST", body: "x".repeat(16 * 1024 * 1024) } : {};
-const outcome = signal => fetch(httpUrl, { ...options(), signal }).then(response => response.text()).then(() => "unexpected success", error => error.message);
+const outcome = signal => fetch(httpUrl, { ...options(), signal }).then(response => {
+  const read = response.text();
+  globalThis.httpReadStarted = true;
+  return read;
+}).then(() => "unexpected success", error => error.message);
 const finish = promise => promise.then(() => { globalThis.httpDone = true; }, error => { globalThis.httpError = error.message + "\n" + error.stack; globalThis.httpDone = true; });
 
 async function run() {
-  if (httpCleanup === "host") {
+  if (httpCleanup === "host" || httpCleanup === "body") {
     equal(await outcome(), "the request was canceled");
-    equal(await outcome(), "the host is closed");
+    if (httpCleanup === "host") equal(await outcome(), "the host is closed");
     return;
   }
   let request, signal;

@@ -294,10 +294,11 @@ pub const Host = struct {
         call_run.abortAll(self);
         self.endChildren();
         self.net.closeAll();
-        self.bodies.closeAll();
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
         self.net.deinit(self.gpa);
+        // Only idle response bodies remain after all HTTP tasks return.
+        self.bodies.closeAll();
         // Every body has released its connection, so the client can free the pool.
         self.bodies.deinit(self.gpa);
         self.http.deinit();
