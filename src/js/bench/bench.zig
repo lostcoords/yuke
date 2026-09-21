@@ -48,6 +48,8 @@ pub const Phase = enum {
     exec_short,
     exec_bulk,
     fs_read,
+    mcp_result_reused,
+    mcp_result_fresh,
     utf8_reused,
     utf8_fresh,
     http_reused,
@@ -67,13 +69,14 @@ pub const Phase = enum {
     interaction_reused,
     interaction_fresh,
 
-    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction };
+    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction, mcp };
 
     fn group(self: Phase) Group {
         return switch (self) {
             .exec_short, .exec_bulk, .fs_read, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
             .net_echo, .net_echo_fresh => .net,
             .http_reused, .http_fresh, .http_close => .http,
+            .mcp_result_reused, .mcp_result_fresh => .mcp,
             .utf8_reused, .utf8_fresh => .utf8,
             .interaction_reused, .interaction_fresh => .interaction,
             .tool_call => .tools,
@@ -160,6 +163,7 @@ pub const Harness = struct {
             .plugins => plugin_source,
             .process => @embedFile("process.js"),
             .net => @embedFile("net.js"),
+            .mcp => @embedFile("mcp.js"),
             .utf8 => @embedFile("utf8.js"),
             .agents => @embedFile("agents.js"),
             .colors => @embedFile("colors.js"),

@@ -21,8 +21,10 @@ const Fixture = struct {
         self.root_len = try self.tmp.dir.realPath(std.testing.io, &self.root_buf);
         self.env = .init(std.testing.allocator);
         errdefer self.env.deinit();
-        // The config home is the empty test directory, so the user file is absent.
+        // The private config directory is outside the test workspace.
         try self.env.put("XDG_CONFIG_HOME", self.root());
+        try self.tmp.dir.createDirPath(std.testing.io, "workspace");
+        self.root_len = try self.tmp.dir.realPathFile(std.testing.io, "workspace", &self.root_buf);
         try self.env.put("MCP_TEST_GREETING", "hello");
         self.rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
         errdefer self.rt.deinit();
@@ -72,6 +74,22 @@ fn askSelect(host: *Host) !void {
     try support.dropCall(host, call);
 }
 
+test "a silent MCP server times out after the legacy fallback and releases its resources" {
+    var f: Fixture = undefined;
+    const start = std.Io.Timestamp.now(std.testing.io, .awake);
+    try f.init("silent");
+    defer f.deinit();
+    const host = f.host;
+    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try expectState(host, "silent", "failed · legacy · the request timed out");
+    try std.testing.expect(start.durationTo(std.Io.Timestamp.now(std.testing.io, .awake)).toMilliseconds() >= 100);
+    try std.testing.expect(!support.hasTool(host, "mcp_silent_echo"));
+    try host.close();
+    try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.procs.live.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+}
+
 test "the MCP plugin connects both eras, names every failure, and answers each result kind" {
     var f: Fixture = undefined;
     try f.init("servers");
@@ -80,8 +98,6 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
     try expectState(host, "legacy", "connected · legacy · 1 tool: echo · 1 stray stdout line");
     try expectState(host, "modern", "connected · modern · 3 tools: a.tool, a_tool, echo");
-    // A silent probe selects the legacy handshake next, and that handshake times out.
-    try expectState(host, "silent", "failed · legacy · the request timed out");
     try expectState(host, "dies", "connected · legacy · 1 tool: echo");
     try expectState(host, "modernonly", "failed · modern · the server supports no protocol version this client speaks");
     try expectState(host, "oldver", "failed · legacy · the server answered initialize with an unknown protocol version");
@@ -96,6 +112,7 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     // The legacy server sent a ping after the handshake and received the empty answer.
     try expectCall(host, "mcp_legacy_echo", "{\"text\":\"there\"}", "hello says there pinged", false);
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"x\"}", "modern: x", false);
+    try expectCall(host, "mcp_modern_echo", "[]", "MCP tool arguments must be an object", true);
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"fail\"}", "no such thing", true);
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"media\"}", "[image image/png, 3 bytes]\n[resource file:///x x]\nwhy", false);
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"structured\"}", "{\"n\":1}", false);
@@ -106,11 +123,23 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     @memcpy(big[100_000..], marker);
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"big\"}", big, false);
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"input\"}", "the tool asks for input, which this client cannot answer", true);
+    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpConflict = false; plugins.use({ name: \"mcp-conflict\", apply(ctx) { ctx.tools.define({ name: \"mcp_modern_added\", description: \"Occupied name.\", parameters: { type: \"object\", properties: {} }, execute() { return \"other\"; } }); } }).ready.then(() => { globalThis.mcpConflict = true; });", "mcp-conflict.js");
+    try support.pumpUntilTrue(host, "mcpConflict === true");
+    try expectCall(host, "mcp_modern_echo", "{\"text\":\"change\"}", "changed", false);
+    try support.pumpUntilTrue(host, "mcpStates().modern.includes('another tool already has this name')");
+    try std.testing.expect(support.hasTool(host, "mcp_modern_a_tool"));
+    try expectCall(host, "mcp_modern_echo", "{\"text\":\"restored\"}", "modern: restored", false);
+    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpConflict = true; Promise.resolve(plugins.dispose(\"mcp-conflict\")).then(() => { globalThis.mcpConflict = false; });", "mcp-unconflict.js");
+    try support.pumpUntilTrue(host, "mcpConflict === false");
     // A list change installs a new tool set and removes the old yuke names first.
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"change\"}", "changed", false);
     try support.pumpUntilTrue(host, "mcpStates().modern === 'connected · modern · 2 tools: added, echo'");
     try std.testing.expect(support.hasTool(host, "mcp_modern_added"));
     try std.testing.expect(!support.hasTool(host, "mcp_modern_a_tool"));
+    try expectCall(host, "mcp_modern_echo", "{\"text\":\"badchange\"}", "changed", false);
+    try support.pumpUntilTrue(host, "mcpStates().modern.includes('invalid MCP tool input schema')");
+    try std.testing.expect(support.hasTool(host, "mcp_modern_added"));
+    try expectCall(host, "mcp_modern_added", "{\"text\":\"still\"}", "modern: still", false);
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"slow\"}", "the request timed out", true);
     // A server that exits during a call fails the call and removes its tools.
     try expectCall(host, "mcp_dies_echo", "{}", "the server exited with code 3", true);
@@ -138,10 +167,81 @@ test "a workspace server starts only after the user trusts it at the first run" 
     try askSelect(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("asked.length"));
 
+    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-denied-reload.js");
+    try support.pumpUntilTrue(host, "mcpReady === true");
+    try expectState(host, "ws", "disabled · not trusted");
+    try askSelect(host);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("asked.length"));
+    try host.evalModule("globalThis.mcpReset = false; mcpPlugin.resetTrust().then(() => { globalThis.mcpReset = true; });", "mcp-reset.js");
+    try support.pumpUntilTrue(host, "mcpReset === true");
+
     try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpAnswer = true; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-restart.js");
     try support.pumpUntilTrue(host, "mcpReady === true");
     try askSelect(host);
     try support.pumpUntilTrue(host, "mcpStates().ws === 'connected · legacy · 1 tool: echo · 1 stray stdout line'");
     try std.testing.expect(support.hasTool(host, "mcp_ws_echo"));
     try expectCall(host, "mcp_ws_echo", "{\"text\":\"you\"}", "hello says you pinged", false);
+    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpReorder = true; globalThis.mcpTimeout = 800; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-approved-reload.js");
+    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try askSelect(host);
+    try std.testing.expectEqual(@as(i32, 2), try host.evalInt("asked.length"));
+    try std.testing.expect(support.hasTool(host, "mcp_ws_echo"));
+    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => mcpStart(\"changed\")).then(() => { globalThis.mcpReady = true; });", "mcp-changed.js");
+    try support.pumpUntilTrue(host, "mcpReady === true");
+    try expectState(host, "ws", "untrusted");
+    try askSelect(host);
+    try support.pumpUntilTrue(host, "mcpSettled()");
+    try std.testing.expectEqual(@as(i32, 3), try host.evalInt("asked.length"));
+    try host.evalModule("globalThis.mcpReset = false; mcpPlugin.resetTrust().then(() => { globalThis.mcpReset = true; });", "mcp-connected-reset.js");
+    try support.pumpUntilTrue(host, "mcpReset === true");
+    try expectState(host, "ws", "untrusted");
+    try std.testing.expect(!support.hasTool(host, "mcp_ws_echo"));
+    try askSelect(host);
+    try support.pumpUntilTrue(host, "mcpSettled()");
+    try std.testing.expect(support.hasTool(host, "mcp_ws_echo"));
+    try std.testing.expectEqual(@as(i32, 4), try host.evalInt("asked.length"));
+    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpEnabled = false; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => mcpStart(\"changed\")).then(() => { globalThis.mcpReady = true; });", "mcp-disabled.js");
+    try support.pumpUntilTrue(host, "mcpReady === true");
+    try expectState(host, "ws", "disabled");
+    try host.evalModule("globalThis.mcpReset = false; mcpPlugin.resetTrust().then(() => { globalThis.mcpReset = true; });", "mcp-disabled-reset.js");
+    try support.pumpUntilTrue(host, "mcpReset === true");
+    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpEnabled = true; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => mcpStart(\"changed\")).then(() => { globalThis.mcpReady = true; });", "mcp-enabled.js");
+    try support.pumpUntilTrue(host, "mcpReady === true");
+    try expectState(host, "ws", "untrusted");
+}
+
+test "MCP rejects malformed envelopes and content without a peer crash" {
+    var f: Fixture = undefined;
+    try f.init("validation");
+    defer f.deinit();
+}
+
+test "MCP refuses incompatible discovery and incomplete catalogs" {
+    var f: Fixture = undefined;
+    try f.init("protocol");
+    defer f.deinit();
+    const host = f.host;
+    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try expectState(host, "version", "failed · modern · the server supports no protocol version this client speaks");
+    try expectState(host, "noTools", "connected · modern · no tools");
+    try expectState(host, "capabilities", "failed · modern · invalid MCP tool capabilities");
+    try expectState(host, "envelope", "failed · modern · invalid MCP envelope");
+    try expectState(host, "duplicate", "failed · modern · invalid MCP duplicate tool name");
+    try expectState(host, "schema", "failed · modern · invalid MCP tool input schema");
+    try expectState(host, "cursor", "failed · modern · invalid MCP tool cursor");
+}
+
+test "a headless MCP denial is not a persistent user decision" {
+    var f: Fixture = undefined;
+    try f.init("trust");
+    defer f.deinit();
+    const host = f.host;
+    try host.evalModule("import { interaction } from \"yuke:ext\"; globalThis.mcpHeadless = interaction.install({ interactive: false, notify() {} }); globalThis.mcpReady = false; mcpStart().then(() => { globalThis.mcpReady = true; });", "mcp-headless.js");
+    try support.pumpUntilTrue(host, "mcpReady === true");
+    try askSelect(host);
+    try expectState(host, "ws", "disabled · not trusted");
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("asked.length"));
+    try host.evalModule("import { plugins } from \"yuke:ext\"; mcpHeadless(); globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-interactive.js");
+    try support.pumpUntilTrue(host, "mcpReady === true");
+    try expectState(host, "ws", "untrusted");
 }

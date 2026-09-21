@@ -28,8 +28,8 @@ export function spawn(argv, options = {}) {
 const MAX_LINE_CHARS = 1024 * 1024;
 
 // Join chunks into lines and strip one CR before each LF, as MCP stdio framing does.
-/** @param {(line: string) => void} onLine @returns {(text: string) => void} */
-export function lines(onLine) {
+/** @param {(line: string) => void} onLine @param {() => void} [onOverflow] @returns {(text: string) => void} */
+export function lines(onLine, onOverflow = () => {}) {
   let rest = "";
   let dropping = false;
   return (text) => {
@@ -45,13 +45,14 @@ export function lines(onLine) {
     let end;
     try {
       while ((end = rest.indexOf("\n", start)) >= 0) {
+        if (end - start > MAX_LINE_CHARS) { start = end + 1; onOverflow(); continue; }
         const line = rest.slice(start, end);
         start = end + 1;
         onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
       }
     } finally {
       rest = rest.slice(start);
-      if (rest.length > MAX_LINE_CHARS) { rest = ""; dropping = true; }
+      if (rest.length > MAX_LINE_CHARS) { rest = ""; dropping = true; onOverflow(); }
     }
   };
 }

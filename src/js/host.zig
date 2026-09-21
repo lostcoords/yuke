@@ -10,6 +10,7 @@ const engine_module = @import("native/engine.zig");
 const fs_module = @import("native/fs.zig");
 const utf8_module = @import("native/utf8.zig");
 const env_module = @import("native/env.zig");
+const mcp_module = @import("native/mcp.zig");
 const net_module = @import("native/net.zig");
 const exec_module = @import("native/exec.zig");
 const http_module = @import("native/http.zig");
@@ -179,6 +180,7 @@ pub const Host = struct {
             http_module.install,  utf8_module.install,    net_module.install,         exec_module.install,
             timers_mod.install,   process_module.install, jobs_module.install,        diff_module.install,
             tools_module.install, hooks_module.install,   interaction_module.install, cancellation.install,
+            mcp_module.install,
         };
         for (installers) |install| install(self);
         return self;
@@ -1003,6 +1005,7 @@ test {
     _ = @import("tests/net_test.zig");
     _ = @import("tests/http_test.zig");
     _ = @import("tests/mcp_test.zig");
+    _ = @import("native/mcp.zig");
     _ = @import("timers.zig");
     _ = @import("native/jobs.zig");
     _ = @import("tests/interaction_test.zig");

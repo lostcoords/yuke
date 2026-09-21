@@ -1,18 +1,19 @@
 // yuke:mcp — MCP servers over stdio as yuke tools. `.mcp.json` names them; one child process serves each one.
+import { mcpState } from "yuke:mcp-native";
 import { fs } from "yuke:fs";
 import { env } from "yuke:env";
 import { spawn, lines } from "yuke:spawn";
 import { showInfo } from "yuke:info-panel";
 
 /** @import { Context } from "yuke:ext" */
-/** @import { Plugin } from "./types/ext.js" */
+/** @import { Plugin, ToolDefinition } from "./types/ext.js" */
 /** @typedef {import("yuke:spawn").ChildProcess} ChildProcess */
 /** @typedef {import("yuke:cancellation-native").CancellationSignal} CancellationSignal */
 /** @typedef {{ type?: "stdio" | "http" | "sse", command?: string, args?: string[], env?: Record<string, string>, cwd?: string, url?: string, headers?: Record<string, string>, enabled?: boolean, timeout?: number }} ServerConfig */
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
 /** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "failed" | "disabled" | "unsupported" | "stopped"} ServerState */
-/** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void }} Waiting */
+/** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number }} Waiting */
 
 const WORKSPACE_FILE = ".mcp.json";
 const MODERN = "2026-07-28";
@@ -25,6 +26,8 @@ const CLIENT = { name: "yuke", version: "0" };
 const META = { "io.modelcontextprotocol/protocolVersion": MODERN, "io.modelcontextprotocol/clientCapabilities": {}, "io.modelcontextprotocol/clientInfo": CLIENT };
 const NAME_MAX = 64;
 const MAX_PAGES = 100;
+const MAX_TOOLS = 10_000;
+const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
 const STOP_GRACE_MS = 2000;
 // A result above this reaches the model cut, with a marker that names the missing part.
 const MAX_RESULT_CHARS = 100_000;
@@ -63,39 +66,131 @@ export function toolName(server, tool) {
 }
 
 // The model reads text. Every other block becomes a one-line description until media results land.
-/** @param {unknown} content @param {unknown} structured @returns {string} */
+/** @param {any[]} content @param {unknown} structured @returns {string} */
 function contentText(content, structured) {
+  if (content.length === 1 && content[0].type === "text") {
+    const text = content[0].text;
+    return text.length <= MAX_RESULT_CHARS ? text : text.slice(0, MAX_RESULT_CHARS) + "\n[truncated " + (text.length - MAX_RESULT_CHARS) + " characters]";
+  }
   /** @type {string[]} */
   const parts = [];
-  let hasText = false;
-  if (Array.isArray(content)) for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const mime = typeof block.mimeType === "string" ? block.mimeType : "";
+  let total = 0, blocks = 0, hasText = false;
+  /** @param {string} text */
+  const append = (text) => {
+    const separator = blocks++ === 0 ? 0 : 1;
+    const remaining = MAX_RESULT_CHARS - total - separator;
+    if (remaining >= 0) parts.push(text.slice(0, remaining));
+    total += separator + text.length;
+  };
+  for (const block of content) {
     switch (block.type) {
-      case "text": if (typeof block.text === "string") { parts.push(block.text); hasText = true; } break;
-      case "image": case "audio": parts.push("[" + block.type + " " + mime + ", " + (typeof block.data === "string" ? Math.floor(block.data.length * 3 / 4) : 0) + " bytes]"); break;
-      case "resource_link": parts.push("[resource " + String(block.uri) + (typeof block.name === "string" ? " " + block.name : "") + "]"); break;
+      case "text": append(block.text); hasText = true; break;
+      case "image": case "audio": append("[" + block.type + " " + block.mimeType + ", " + Math.floor(block.data.length * 3 / 4) + " bytes]"); break;
+      case "resource_link": append("[resource " + block.uri + " " + block.name + "]"); break;
       case "resource": {
         const resource = block.resource;
-        if (resource && typeof resource.text === "string") parts.push(resource.text);
-        else parts.push("[resource " + String(resource?.uri) + (resource?.mimeType ? " " + resource.mimeType : "") + "]");
+        if (typeof resource.text === "string") append(resource.text);
+        else append("[resource " + resource.uri + (resource.mimeType ? " " + resource.mimeType : "") + "]");
         break;
       }
-      default: parts.push("[" + String(block.type) + "]");
     }
   }
-  // A server should serialize its structured answer as text too, so the JSON appears only when no text block does.
-  if (!hasText && structured !== undefined) parts.push(JSON.stringify(structured));
+  if (!hasText && structured !== undefined) append(JSON.stringify(structured));
   const text = parts.join("\n");
-  if (text.length <= MAX_RESULT_CHARS) return text;
-  return text.slice(0, MAX_RESULT_CHARS) + "\n[truncated " + (text.length - MAX_RESULT_CHARS) + " characters]";
+  return total <= MAX_RESULT_CHARS ? text : text + "\n[truncated " + (total - MAX_RESULT_CHARS) + " characters]";
 }
 
-// A JSON-RPC error carries its code, so the handshake can tell a refused method from a dead or silent server.
-/** @param {unknown} error @returns {Error & { code: number }} */
-function rpcError(error) {
-  const body = error && typeof error === "object" ? /** @type {{ code?: unknown, message?: unknown }} */ (error) : {};
-  return Object.assign(new Error(typeof body.message === "string" ? body.message : "the server answered an error"), { code: typeof body.code === "number" ? body.code : -32603 });
+/** @param {any} value @returns {boolean} */
+function record(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
+
+/** @param {string} message @returns {never} */
+function invalid(message) { throw new Error("invalid MCP " + message); }
+
+// Extension fields remain legal; known envelope fields must identify exactly one message kind.
+/** @param {string} line @returns {any} */
+export function decodeMessage(line) {
+  let message;
+  try { message = JSON.parse(line); } catch { return invalid("JSON"); }
+  if (!record(message) || message.jsonrpc !== "2.0") return invalid("envelope");
+  const hasId = Object.hasOwn(message, "id");
+  const hasResult = Object.hasOwn(message, "result");
+  const hasError = Object.hasOwn(message, "error");
+  const id = message.id;
+  const validId = typeof id === "string" || Number.isSafeInteger(id);
+  if (Object.hasOwn(message, "method")) {
+    if (typeof message.method !== "string" || message.method === "" || hasResult || hasError || (hasId && !validId)) return invalid("request");
+    if (message.params !== undefined && !record(message.params)) return invalid("request params");
+  } else {
+    if (!hasId || (!validId && !(id === null && hasError)) || hasResult === hasError || Object.hasOwn(message, "params")) return invalid("response");
+    if (hasResult && !record(message.result)) return invalid("response result");
+    if (hasError && (!record(message.error) || !Number.isSafeInteger(message.error.code) || typeof message.error.message !== "string")) return invalid("response error");
+  }
+  return message;
+}
+
+/** @param {any} result @param {boolean} modern */
+function complete(result, modern) {
+  if (!record(result)) return invalid("result");
+  if ((modern || result.resultType !== undefined) && result.resultType !== "complete") return invalid("result type");
+  if (result._meta !== undefined && !record(result._meta)) return invalid("result metadata");
+}
+
+/** @param {any} capabilities @returns {boolean} */
+function hasTools(capabilities) {
+  if (!record(capabilities)) return invalid("server capabilities");
+  if (capabilities.tools === undefined) return false;
+  if (!record(capabilities.tools) || (capabilities.tools.listChanged !== undefined && typeof capabilities.tools.listChanged !== "boolean")) return invalid("tool capabilities");
+  return true;
+}
+
+// The catalog owns the parsed schema; validation does not clone or serialize it.
+/** @param {any} tool */
+function validateTool(tool) {
+  if (!record(tool) || typeof tool.name !== "string" || tool.name === "" || tool.name.length > 1024) return invalid("tool name");
+  if (tool.description !== undefined && typeof tool.description !== "string") return invalid("tool description");
+  if (tool.title !== undefined && typeof tool.title !== "string") return invalid("tool title");
+  const schema = tool.inputSchema;
+  if (!record(schema) || schema.type !== "object") return invalid("tool input schema");
+  if (schema.properties !== undefined && !record(schema.properties)) return invalid("tool properties");
+  if (schema.required !== undefined && (!Array.isArray(schema.required) || !schema.required.every((/** @type {any} */ name) => typeof name === "string"))) return invalid("tool required fields");
+  if (tool.outputSchema !== undefined && (!record(tool.outputSchema) || tool.outputSchema.type !== "object")) return invalid("tool output schema");
+}
+
+/** @param {any} block */
+function validateContent(block) {
+  if (!record(block)) return invalid("content block");
+  switch (block.type) {
+    case "text":
+      if (typeof block.text !== "string") return invalid("text content");
+      break;
+    case "image": case "audio":
+      if (typeof block.data !== "string" || typeof block.mimeType !== "string" || !block.mimeType) return invalid("media content");
+      break;
+    case "resource_link":
+      if (typeof block.uri !== "string" || !block.uri || typeof block.name !== "string") return invalid("resource link");
+      break;
+    case "resource": {
+      const resource = block.resource;
+      if (!record(resource) || typeof resource.uri !== "string" || !resource.uri) return invalid("resource content");
+      if (typeof resource.text !== "string" && typeof resource.blob !== "string") return invalid("resource body");
+      if (resource.mimeType !== undefined && typeof resource.mimeType !== "string") return invalid("resource MIME type");
+      break;
+    }
+    default: return invalid("content type");
+  }
+}
+
+/** @param {any} result @param {boolean} [modern] @returns {string} */
+export function toolResult(result, modern = false) {
+  if (record(result) && modern && result.resultType === "input_required") throw new Error("the tool asks for input, which this client cannot answer");
+  complete(result, modern);
+  if (!Array.isArray(result.content)) return invalid("tool content");
+  if (result.isError !== undefined && typeof result.isError !== "boolean") return invalid("tool error flag");
+  if (result.structuredContent !== undefined && !record(result.structuredContent)) return invalid("structured content");
+  for (const block of result.content) validateContent(block);
+  const text = contentText(result.content, result.structuredContent);
+  if (result.isError === true) throw new Error(text || "the tool failed");
+  return text;
 }
 
 // The message for a wrong entry, or null. A missing variable shows later, when the server starts.
@@ -103,9 +198,11 @@ function rpcError(error) {
 function checkConfig(config) {
   if (typeof config.command !== "string" || config.command === "") return "command must be a nonempty string";
   if (config.args !== undefined && !(Array.isArray(config.args) && config.args.every((arg) => typeof arg === "string"))) return "args must be an array of strings";
-  if (config.env !== undefined && !(config.env && typeof config.env === "object" && Object.values(config.env).every((value) => typeof value === "string"))) return "env must be an object of strings";
+  if (config.env !== undefined && !(record(config.env) && Object.entries(config.env).every(([key, value]) => key !== "" && !/[=\0]/.test(key) && typeof value === "string" && !value.includes("\0")))) return "env must be an object of strings";
   if (config.cwd !== undefined && typeof config.cwd !== "string") return "cwd must be a string";
-  if (config.timeout !== undefined && typeof config.timeout !== "number") return "timeout must be a number of milliseconds";
+  if (config.timeout !== undefined && (!Number.isSafeInteger(config.timeout) || config.timeout <= 0)) return "timeout must be a positive integer of milliseconds";
+  if (config.enabled !== undefined && typeof config.enabled !== "boolean") return "enabled must be a boolean";
+  if (config.command.includes("\0") || config.args?.some((arg) => arg.includes("\0")) || config.cwd?.includes("\0")) return "execution fields must not contain NUL";
   return null;
 }
 
@@ -116,11 +213,16 @@ class Server {
     this.config = config;
     this.limits = limits;
     this.ctx = ctx;
+    this.workspace = !trusted;
+    this.identity = "";
+    /** @type {{ argv: string[], env: Record<string, string>, cwd?: string } | null} */
+    this.launch = null;
     /** @type {ServerState} */
     this.state = "pending";
     this.error = "";
     /** @type {"" | "modern" | "legacy"} */
     this.era = "";
+    this.hasTools = false;
     /** @type {ChildProcess | null} */
     this.child = null;
     this.nextId = 1;
@@ -128,6 +230,8 @@ class Server {
     this.waiting = new Map();
     /** @type {(() => void)[]} */
     this.disposers = [];
+    /** @type {ToolDefinition[]} */
+    this.definitions = [];
     /** @type {Set<string>} */
     this.tools = new Set();
     // The server's own tool names, in the defined order.
@@ -138,18 +242,39 @@ class Server {
     // The last stderr line, for the failure row.
     /** @type {string | undefined} */
     this.stderr = undefined;
-    this.refreshing = Promise.resolve();
+    this.refreshing = false;
+    this.refreshAgain = false;
     const type = config.type ?? (config.url ? "http" : "stdio");
     const problem = checkConfig(config);
     if (config.enabled === false) this.state = "disabled";
     else if (type !== "stdio") this.fail("unsupported", "only stdio servers are supported");
     else if (problem !== null) this.fail("failed", problem);
     else if (!trusted) this.state = "untrusted";
+    if (this.state !== "pending" && this.state !== "untrusted") return;
+    try {
+      const argv = [expand(config.command ?? ""), ...(config.args ?? []).map(expand)];
+      /** @type {Record<string, string>} */
+      const vars = Object.create(null);
+      const entries = Object.entries(config.env ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+      for (const [key, value] of entries) vars[key] = expand(value);
+      this.launch = { argv, env: vars, ...(config.cwd !== undefined ? { cwd: expand(config.cwd) } : {}) };
+      this.identity = JSON.stringify([config.command, config.args ?? [], config.cwd ?? null, entries, this.launch]);
+    } catch (error) {
+      this.fail("failed", errorText(error));
+      return;
+    }
+    if (!trusted) {
+      try {
+        const approved = mcpState.readTrust(name, this.identity);
+        if (approved === true) this.state = "pending";
+        else if (approved === false) this.fail("disabled", "not trusted");
+      } catch (error) { this.error = errorText(error); }
+    }
   }
 
   /** @returns {string} */
   commandLine() {
-    return [this.config.command ?? "", ...(this.config.args ?? [])].join(" ");
+    return (this.launch?.argv ?? []).map((arg) => JSON.stringify(arg)).join(" ");
   }
 
   /** @param {ServerState} state @param {string} message */
@@ -157,6 +282,7 @@ class Server {
     this.state = state;
     this.error = message;
     this.undefineTools();
+    for (const id of this.waiting.keys()) this.settle(id, undefined, new Error(message));
     if (this.child) this.child.kill();
   }
 
@@ -167,29 +293,31 @@ class Server {
     try {
       this.spawnChild();
       await this.handshake(deadline);
-      await this.refresh(deadline);
-      if (this.state === "connecting") this.state = "connected";
+      if (this.hasTools) await this.refresh(deadline);
+      if (this.state === "connecting") {
+        this.state = "connected";
+        if (this.refreshAgain) this.refreshTools();
+      }
     } catch (error) {
       if (this.state === "connecting") this.fail("failed", errorText(error));
     }
   }
 
   spawnChild() {
-    const config = this.config;
-    const argv = [expand(config.command ?? ""), ...(config.args ?? []).map(expand)];
-    /** @type {Record<string, string>} */
-    const vars = {};
-    for (const [key, value] of Object.entries(config.env ?? {})) vars[key] = expand(value);
-    const child = spawn(argv, { env: vars, ...(config.cwd !== undefined ? { cwd: expand(config.cwd) } : {}) });
+    const launch = this.launch;
+    if (!launch) throw new Error("the MCP execution configuration is unavailable");
+    const child = spawn(launch.argv, { env: launch.env, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}) });
     this.child = child;
-    child.onStdout(lines((line) => this.receive(line)));
+    child.onStdout(lines((line) => this.receive(line), () => this.fail("failed", "the MCP frame exceeds the line limit")));
     child.onStderr(lines((line) => { this.stderr = line; }));
     child.exited.then((exit) => {
+      if (this.child !== child) return;
       this.child = null;
       const reason = exit.signal != null ? "the server ended on signal " + exit.signal : "the server exited with code " + exit.code;
       for (const id of [...this.waiting.keys()]) this.settle(id, undefined, new Error(reason));
       if (this.state === "connecting" || this.state === "connected") this.fail("failed", reason);
     }, (error) => {
+      if (this.child !== child) return;
       this.child = null;
       this.fail("failed", "the server did not start: " + errorText(error));
     });
@@ -197,13 +325,16 @@ class Server {
 
   /** @param {string} line */
   receive(line) {
+    const first = line.trimStart()[0];
+    if (first !== "{" && first !== "[") { this.noise += 1; return; }
     let message;
-    // A protocol line is one JSON object, so a log line skips the parser.
-    if (line[0] !== "{") { this.noise += 1; return; }
-    try { message = JSON.parse(line); } catch { this.noise += 1; return; }
-    if (!message || typeof message !== "object") { this.noise += 1; return; }
+    try { message = decodeMessage(line); } catch (error) { this.fail("failed", errorText(error)); return; }
     if (typeof message.method !== "string") {
-      if (typeof message.id === "number") this.settle(message.id, message.result, message.error === undefined ? undefined : rpcError(message.error));
+      if (typeof message.id === "number") {
+        const slot = this.waiting.get(message.id);
+        if (slot) slot.bytes = line.length;
+        this.settle(message.id, message.result, message.error === undefined ? undefined : Object.assign(new Error(message.error.message), { code: message.error.code }));
+      }
       return;
     }
     // The legacy era lets a server ask the client. A ping gets its empty answer; every other request is refused.
@@ -212,9 +343,7 @@ class Server {
       this.send(answer).catch(() => {});
       return;
     }
-    if (message.method === "notifications/tools/list_changed") {
-      this.refreshing = this.refreshing.then(() => this.refresh(Date.now() + this.limits.startupMs)).catch((error) => { this.error = errorText(error); });
-    }
+    if (message.method === "notifications/tools/list_changed" && this.hasTools) this.refreshTools();
   }
 
   /** @param {Record<string, unknown>} message @returns {Promise<void>} */
@@ -223,13 +352,13 @@ class Server {
     return this.child.write(JSON.stringify(message) + "\n");
   }
 
-  /** @param {string} method @param {Record<string, unknown>} params @param {number} timeoutMs @param {CancellationSignal} [signal] @returns {Promise<any>} */
-  request(method, params, timeoutMs, signal) {
+  /** @param {string} method @param {Record<string, unknown>} params @param {number} timeoutMs @param {CancellationSignal} [signal] @param {{ bytes: number }} [received] @returns {Promise<any>} */
+  request(method, params, timeoutMs, signal, received) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.cancel(id, "the request timed out"), Math.max(1, timeoutMs));
       const poll = signal === undefined ? undefined : setInterval(() => { if (signal.aborted) this.cancel(id, "the call was canceled"); }, POLL_MS);
-      this.waiting.set(id, { resolve, reject, done: () => { clearTimeout(timer); if (poll !== undefined) clearInterval(poll); } });
+      this.waiting.set(id, { bytes: 0, resolve, reject, done: () => { if (received) received.bytes = this.waiting.get(id)?.bytes ?? 0; clearTimeout(timer); if (poll !== undefined) clearInterval(poll); } });
       this.send({ jsonrpc: "2.0", id, method, params: this.era === "modern" ? { ...params, _meta: META } : params }).catch((error) => this.settle(id, undefined, error));
     });
   }
@@ -238,8 +367,8 @@ class Server {
   settle(id, result, error) {
     const slot = this.waiting.get(id);
     if (!slot) return;
-    this.waiting.delete(id);
     slot.done();
+    this.waiting.delete(id);
     if (error) slot.reject(error); else slot.resolve(result);
   }
 
@@ -255,57 +384,115 @@ class Server {
   /** @param {number} deadline */
   async handshake(deadline) {
     this.era = "modern";
+    let found;
     try {
-      // The probe takes half the startup budget, so a legacy handshake still has the other half.
-      const found = await this.request("server/discover", {}, Math.min(deadline - Date.now(), this.limits.startupMs / 2));
-      if (!Array.isArray(found?.supportedVersions) || !found.supportedVersions.includes(MODERN)) throw new Error("the server supports no protocol version this client speaks");
-      return;
+      found = await this.request("server/discover", {}, Math.min(deadline - Date.now(), this.limits.startupMs / 2));
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === UNSUPPORTED_VERSION) throw new Error("the server supports no protocol version this client speaks");
-      if (!this.child) throw error;
+      if (this.state !== "connecting" || !this.child) throw error;
+      this.era = "legacy";
     }
-    this.era = "legacy";
+    if (this.era === "modern") {
+      complete(found, true);
+      if (!Array.isArray(found.supportedVersions) || !found.supportedVersions.every((/** @type {any} */ value) => typeof value === "string") || !found.supportedVersions.includes(MODERN)) throw new Error("the server supports no protocol version this client speaks");
+      this.hasTools = hasTools(found.capabilities);
+      return;
+    }
     const init = await this.request("initialize", { protocolVersion: LEGACY, capabilities: {}, clientInfo: CLIENT }, deadline - Date.now());
-    if (!LEGACY_KNOWN.includes(init?.protocolVersion)) throw new Error("the server answered initialize with an unknown protocol version");
+    complete(init, false);
+    if (!LEGACY_KNOWN.includes(init.protocolVersion)) throw new Error("the server answered initialize with an unknown protocol version");
+    this.hasTools = hasTools(init.capabilities);
+    if (!record(init.serverInfo) || typeof init.serverInfo.name !== "string" || typeof init.serverInfo.version !== "string") return invalid("initialize result");
     await this.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  }
+
+  // Coalesce a burst into the active refresh and at most one follow-up pass.
+  async refreshTools() {
+    this.refreshAgain = true;
+    if (this.refreshing) return;
+    this.refreshing = true;
+    try {
+      while (this.refreshAgain && this.state === "connected") {
+        this.refreshAgain = false;
+        try { await this.refresh(Date.now() + this.limits.startupMs); }
+        catch (error) { this.error = errorText(error); }
+      }
+    } finally { this.refreshing = false; }
   }
 
   // List every page, then swap the tool set. The run loadout is chosen once, so a change lands on the next run.
   /** @param {number} deadline */
   async refresh(deadline) {
-    /** @type {{ name: string, description?: string, title?: string, inputSchema?: Record<string, unknown> }[]} */
+    if (this.state !== "connecting" && this.state !== "connected") return;
+    /** @type {{ name: string, description?: string, title?: string, inputSchema: Record<string, unknown> }[]} */
     const tools = [];
+    const names = new Set();
+    const cursors = new Set();
+    const received = { bytes: 0 };
+    let catalog_bytes = 0;
     /** @type {string | undefined} */
     let cursor;
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const answer = await this.request("tools/list", cursor === undefined ? {} : { cursor }, deadline - Date.now());
-      if (!Array.isArray(answer?.tools)) throw new Error("the server answered tools/list without tools");
-      for (const tool of answer.tools) if (tool && typeof tool.name === "string" && tool.name !== "") tools.push(tool);
+    for (let page = 0; ; page++) {
+      if (page === MAX_PAGES) return invalid("tool page limit");
+      const answer = await this.request("tools/list", cursor === undefined ? {} : { cursor }, deadline - Date.now(), undefined, received);
+      complete(answer, this.era === "modern");
+      // UTF-8 uses at most three bytes per UTF-16 unit, so this bound needs no wire copy.
+      catalog_bytes += received.bytes * 3;
+      if (catalog_bytes > MAX_CATALOG_BYTES) return invalid("catalog size limit");
+      if (!Array.isArray(answer.tools)) return invalid("tool list");
+      if (tools.length + answer.tools.length > MAX_TOOLS) return invalid("tool count limit");
+      for (const tool of answer.tools) {
+        validateTool(tool);
+        if (names.has(tool.name)) return invalid("duplicate tool name");
+        names.add(tool.name);
+        tools.push(tool);
+      }
       cursor = answer.nextCursor;
-      if (typeof cursor !== "string" || cursor === "") break;
+      if (cursor === undefined) break;
+      if (typeof cursor !== "string" || cursor === "" || cursors.has(cursor)) return invalid("tool cursor");
+      cursors.add(cursor);
     }
     tools.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     // A server that stopped or failed while the list was in flight defines nothing.
     if (this.state !== "connecting" && this.state !== "connected") return;
-    this.undefineTools();
+    /** @type {ToolDefinition[]} */
+    const definitions = [];
+    const used = new Set();
     for (const tool of tools) {
-      // Two server names that clean to one yuke name get `_2`, `_3`, and so on, as fx does.
       const base = toolName(this.name, tool.name);
       let name = base;
-      for (let n = 2; this.tools.has(name); n++) name = base.slice(0, NAME_MAX - 1 - String(n).length) + "_" + n;
-      try {
-        this.disposers.push(this.ctx.tools.define({
-          name,
-          description: (typeof tool.description === "string" && tool.description) || (typeof tool.title === "string" && tool.title) || "The " + tool.name + " tool of the " + this.name + " MCP server.",
-          parameters: tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : { type: "object", properties: {} },
-          execute: (args, signal) => this.call(tool.name, args, signal),
-        }));
-        this.tools.add(name);
-        this.names.push(tool.name);
-      } catch (error) {
-        this.error = name + ": " + errorText(error);
-      }
+      for (let n = 2; used.has(name); n++) name = base.slice(0, NAME_MAX - 1 - String(n).length) + "_" + n;
+      used.add(name);
+      definitions.push({
+        name,
+        description: tool.description || tool.title || "The " + tool.name + " tool of the " + this.name + " MCP server.",
+        parameters: tool.inputSchema.properties === undefined ? { ...tool.inputSchema, properties: {} } : tool.inputSchema,
+        execute: (args, signal) => this.call(tool.name, args, signal),
+      });
     }
+    const previous = this.definitions;
+    const previous_names = this.names;
+    this.undefineTools();
+    try {
+      this.defineTools(definitions);
+      this.names = tools.map((tool) => tool.name);
+      this.error = "";
+    } catch (error) {
+      this.undefineTools();
+      this.defineTools(previous);
+      this.names = previous_names;
+      throw error;
+    }
+  }
+
+  // This synchronous swap restores the old declarations if native registration refuses a new one.
+  /** @param {ToolDefinition[]} definitions */
+  defineTools(definitions) {
+    for (const definition of definitions) {
+      this.disposers.push(this.ctx.tools.define(definition));
+      this.tools.add(definition.name);
+    }
+    this.definitions = definitions;
   }
 
   undefineTools() {
@@ -313,17 +500,16 @@ class Server {
     this.disposers = [];
     this.tools.clear();
     this.names = [];
+    this.definitions = [];
   }
 
   /** @param {string} tool @param {unknown} args @param {CancellationSignal} signal @returns {Promise<string>} */
   async call(tool, args, signal) {
     if (this.state !== "connected") throw new Error("the MCP server " + this.name + " is " + this.state);
-    const timeoutMs = typeof this.config.timeout === "number" && this.config.timeout > 0 ? this.config.timeout : this.limits.callMs;
-    const result = await this.request("tools/call", { name: tool, arguments: args && typeof args === "object" ? args : {} }, timeoutMs, signal);
-    if (result?.resultType === "input_required") throw new Error("the tool asks for input, which this client cannot answer");
-    const text = contentText(result?.content, result?.structuredContent);
-    if (result?.isError === true) throw new Error(text || "the tool failed");
-    return text;
+    if (!record(args)) throw new Error("MCP tool arguments must be an object");
+    const timeoutMs = this.config.timeout ?? this.limits.callMs;
+    const result = await this.request("tools/call", { name: tool, arguments: args }, timeoutMs, signal);
+    return toolResult(result, this.era === "modern");
   }
 
   // The MCP stdio shutdown: stdin EOF, a grace period, then TERM and KILL through `kill`.
@@ -331,13 +517,15 @@ class Server {
   async close() {
     const child = this.child;
     this.state = "stopped";
+    this.refreshAgain = false;
     this.undefineTools();
     if (!child) return;
     child.closeStdin();
     let grace = 0;
     const exited = await Promise.race([child.exited.then(() => true, () => true), new Promise((resolve) => { grace = setTimeout(() => resolve(false), STOP_GRACE_MS); })]);
     clearTimeout(grace);
-    if (!exited) child.kill();
+    if (!exited) await child.kill();
+    await child.exited.catch(() => {});
   }
 
   /** @returns {[string, string]} */
@@ -353,15 +541,6 @@ class Server {
   }
 }
 
-// `XDG_CONFIG_HOME` or `~/.config`, then the app leaf, as `src/paths.zig` resolves it.
-/** @returns {string | undefined} */
-function userConfigPath() {
-  const xdg = env.get("XDG_CONFIG_HOME");
-  const home = env.get("HOME");
-  const base = xdg && xdg.startsWith("/") ? xdg : home && home.startsWith("/") ? home + "/.config" : undefined;
-  return base === undefined ? undefined : base + "/" + (env.get("YUKE_APPNAME") || "yuke") + "/" + WORKSPACE_FILE;
-}
-
 // A missing file is the normal case. Any other failure is a problem the panel shows.
 /** @param {string} path @param {string[]} problems @returns {Promise<Record<string, ServerConfig>>} */
 async function readServers(path, problems) {
@@ -373,7 +552,7 @@ async function readServers(path, problems) {
   }
   try {
     const servers = JSON.parse(text)?.mcpServers;
-    if (!servers || typeof servers !== "object" || Array.isArray(servers)) throw new Error("mcpServers must be an object");
+    if (!record(servers)) throw new Error("mcpServers must be an object");
     return servers;
   } catch (error) {
     problems.push(path + ": " + errorText(error));
@@ -381,15 +560,17 @@ async function readServers(path, problems) {
   }
 }
 
-/** @param {McpOptions} [options] @returns {Plugin & { rows(): [string, string][] }} */
+/** @param {McpOptions} [options] @returns {Plugin & { rows(): [string, string][], resetTrust(): Promise<void> }} */
 export function mcp(options = {}) {
   /** @type {Limits} */
   const limits = { startupMs: options.startupMs ?? 10_000, callMs: options.callMs ?? 60_000 };
+  if (!Number.isSafeInteger(limits.startupMs) || limits.startupMs <= 0 || !Number.isSafeInteger(limits.callMs) || limits.callMs <= 0) throw new TypeError("MCP timeouts must be positive integer milliseconds");
   /** @type {Server[]} */
   const servers = [];
   /** @type {string[]} */
   const problems = [];
-  /** @type {Plugin & { rows(): [string, string][] }} */
+  let asked = false;
+  /** @type {Plugin & { rows(): [string, string][], resetTrust(): Promise<void> }} */
   const plugin = {
     name: "mcp",
     /** @param {Context} ctx */
@@ -397,24 +578,30 @@ export function mcp(options = {}) {
       // The first definition of a name wins: index.js, then the user file, then the workspace file, which is not trusted yet.
       /** @type {[Record<string, ServerConfig>, boolean][]} */
       const sources = [[options.servers ?? {}, true]];
-      const user = userConfigPath();
-      if (user !== undefined) sources.push([await readServers(user, problems), true]);
+      try {
+        const user = mcpState.configPath();
+        if (user !== undefined) sources.push([await readServers(user, problems), true]);
+      } catch (error) { problems.push(errorText(error)); }
       sources.push([await readServers(WORKSPACE_FILE, problems), false]);
+      if (!ctx.scope.alive) return;
       for (const [configs, trusted] of sources) for (const [name, config] of Object.entries(configs)) {
         if (servers.some((server) => server.name === name)) continue;
-        if (!config || typeof config !== "object") { problems.push(name + ": the server entry must be an object"); continue; }
+        if (!record(config)) { problems.push(name + ": the server entry must be an object"); continue; }
         servers.push(new Server(name, config, limits, trusted, ctx));
       }
       for (const server of servers) if (server.state === "pending") server.start();
 
       // A workspace server asks once, at the first run. A yes starts it; its tools join the next run.
-      let asked = false;
       ctx.hook("tools.select", async () => {
         if (asked) return;
         asked = true;
         for (const server of servers) {
           if (server.state !== "untrusted") continue;
-          const ok = await ctx.interaction.confirm("Start the MCP server " + server.name + "?", WORKSPACE_FILE + " runs: " + server.commandLine());
+          if (!ctx.interaction.interactive) { server.fail("disabled", "not trusted"); continue; }
+          const ok = await ctx.interaction.confirm("Start the MCP server " + server.name + "?", WORKSPACE_FILE + " runs: " + server.commandLine() + "\nRemember this decision for this workspace and server configuration.");
+          if (ok === undefined || !ctx.scope.alive || server.state !== "untrusted") continue;
+          try { mcpState.writeTrust(server.name, server.identity, ok); }
+          catch (error) { problems.push(server.name + ": " + errorText(error)); }
           if (ok) server.start(); else server.fail("disabled", "not trusted");
         }
       });
@@ -422,8 +609,23 @@ export function mcp(options = {}) {
       ctx.inject(["tui"], (ctx) => {
         ctx.tui.command(null, {
           "mcp:show": () => showInfo(ctx, "mcp", plugin.rows()),
-        }, { "mcp:show": { title: "MCP", description: "show the MCP servers and their tools", slash: "mcp" } });
+          "mcp:reset-trust": () => plugin.resetTrust(),
+        }, { "mcp:show": { title: "MCP", description: "show the MCP servers and their tools", slash: "mcp" }, "mcp:reset-trust": { title: "Reset MCP trust", description: "forget this workspace’s MCP server decisions", slash: "mcp-reset-trust" } });
       });
+    },
+    async resetTrust() {
+      for (const server of servers) {
+        if (!server.workspace) continue;
+        mcpState.resetTrust(server.name);
+        if (!server.launch) continue;
+        await server.close();
+        server.state = server.config.enabled === false ? "disabled" : "untrusted";
+        server.error = "";
+        server.era = "";
+        server.noise = 0;
+        server.stderr = undefined;
+      }
+      asked = false;
     },
     async stop() {
       await Promise.all(servers.map((server) => server.close()));
