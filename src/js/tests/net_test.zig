@@ -60,7 +60,7 @@ test "socket benchmark scenarios verify reused and fresh connections" {
             _ = try harness.step();
             if (phase == .net_echo_fresh) try std.testing.expectEqual(@as(usize, 0), harness.host.net.live.items.len);
         }
-        try std.testing.expectEqual(@as(i32, 5), try harness.verify());
+        try std.testing.expectEqual(@as(i32, 5), try harness.verify(true));
     }
 }
 

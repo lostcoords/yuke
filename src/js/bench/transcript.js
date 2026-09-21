@@ -226,7 +226,8 @@ function paint(view, followTail = false) {
   term.endFrame();
 }
 
-function verify() {
+/** @param {boolean} [withChecksum] */
+function verify(withChecksum = true) {
   // The boot phase drives no transcript, so it compares nothing.
   if (phase === "boot") return 0;
   if (phase === "key_routing") {
@@ -236,7 +237,7 @@ function verify() {
   if (phase === "projection") {
     if (projected?.type !== "text" || projected.text !== globalThis.PROJECTION_TEXT)
       throw new Error("native projection lost text across a page boundary");
-    return checksum(projected.text);
+    return withChecksum ? checksum(projected.text) : 0;
   }
   if (phase === "stream") verifyStreamSuffix();
   if (phase === "stream_native") verifyNativeStream();
@@ -256,7 +257,7 @@ function verify() {
   if (actual.length === 0 || !actual.some(r => r.segments?.some(s => s.text.length > 0))) throw new Error("empty benchmark output");
   if (phase === "paint" || phase === "selection") paint(reference);
   if (phase === "stream_native") paint(reference, true);
-  return checksum(encoded);
+  return withChecksum ? checksum(encoded) : 0;
 }
 
 function verifyNativeStream() {

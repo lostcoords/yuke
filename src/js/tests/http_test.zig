@@ -243,7 +243,7 @@ test "HTTP benchmark scenarios verify complete responses" {
         try harness.start(phase, 1);
         const before = harness.http_peer.?.connections.load(.acquire);
         for (0..5) |_| _ = try harness.step();
-        try std.testing.expectEqual(@as(i32, 5), try harness.verify());
+        try std.testing.expectEqual(@as(i32, 5), try harness.verify(true));
         try std.testing.expectEqual(@as(usize, if (phase == .http_close) 5 else 0), harness.http_peer.?.connections.load(.acquire) - before);
     }
 }

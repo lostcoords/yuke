@@ -73,7 +73,7 @@ pub fn main(init: std.process.Init) !void {
             const peak_bytes = harness.allocations.peak_bytes;
             const counters = harness.counters();
             const usage = harness.host.runtime.computeMemoryUsage();
-            const checksum = try harness.verify();
+            const checksum = try harness.verify(true);
             std.mem.sort(u64, samples, {}, std.sort.asc(u64));
             try std.json.Stringify.value(.{
                 .phase = @tagName(phase),

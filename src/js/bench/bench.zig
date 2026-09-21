@@ -386,14 +386,14 @@ pub const Harness = struct {
         }
     }
 
-    pub fn verify(self: *Harness) !i32 {
+    pub fn verify(self: *Harness, with_checksum: bool) !i32 {
         std.debug.assert(self.phase != null);
         if (self.commit) |commit| return commit.verify(std.meta.stringToEnum(Commit.Mode, @tagName(self.phase.?)).?);
         self.output.clearRetainingCapacity();
         const ctx = self.host.ctx;
         const function = ctx.getPropertyStr(self.api, "verify");
         defer ctx.freeValue(function);
-        const checksum = try self.call(function, &.{});
+        const checksum = try self.call(function, &.{ctx.newBool(with_checksum)});
         if (self.output.written().len != 0) return error.FrameMismatch;
         return checksum;
     }
@@ -482,8 +482,37 @@ test "benchmark scenarios preserve the transcript across updates and cache evict
         // The initial native text exceeds one page, so the client must complete it before the first update.
         if (phase == .stream_native) try std.testing.expect(harness.sourceBytes().? > paging.max_page_bytes);
         for (0..6) |_| _ = try harness.step();
-        _ = try harness.verify();
+        _ = try harness.verify(false);
     }
+}
+
+test "transcript verification preserves row checks without a checksum" {
+    var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
+    defer _ = pool.deinit();
+    const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, .build);
+    defer harness.destroy();
+    try harness.start(.build, 1);
+    _ = try harness.step();
+    try std.testing.expectEqual(@as(i32, 0), try harness.verify(false));
+    const checksum = try harness.verify(true);
+    try std.testing.expect(checksum != 0);
+    try std.testing.expectEqual(checksum, try harness.host.evalInt("bench.verify()"));
+    try harness.host.evalModule(
+        \\import { Transcript } from "yuke:transcript";
+        \\const rows = Transcript.prototype.rows;
+        \\let calls = 0;
+        \\Transcript.prototype.rows = function(...args) {
+        \\  const result = Reflect.apply(rows, this, args);
+        \\  if (++calls === 2) result[0] = { ...result[0], text: "corrupt" };
+        \\  return result;
+        \\};
+        \\globalThis.rejectedMismatch = false;
+        \\try { bench.verify(false); } catch (error) { globalThis.rejectedMismatch = error.message.startsWith("build differs at row 0:"); };
+        \\Transcript.prototype.rows = () => [];
+        \\globalThis.rejectedEmptyRows = false;
+        \\try { bench.verify(false); } catch (error) { globalThis.rejectedEmptyRows = error.message === "empty benchmark output"; }
+    , "verify-empty-rows.js");
+    try std.testing.expectEqual(@as(i32, 1), try harness.host.evalInt("Number(rejectedMismatch && rejectedEmptyRows)"));
 }
 
 test "advice batches preserve the default workload and reset their counters" {
@@ -498,7 +527,7 @@ test "advice batches preserve the default workload and reset their counters" {
         for (1..3) |steps| {
             _ = try harness.step();
             const expected: i32 = @intCast(steps * (batch_size * 12 + batch_size * (batch_size - 1) / 2));
-            try std.testing.expectEqual(expected, try harness.verify());
+            try std.testing.expectEqual(expected, try harness.verify(true));
         }
     }
 }
@@ -510,7 +539,7 @@ test "an unchanged transcript frame has stable cells and no terminal output" {
     defer harness.destroy();
     try harness.start(.paint, 1);
     try std.testing.expect(try harness.step() > 0);
-    const first = try harness.verify();
+    const first = try harness.verify(true);
     const before = harness.counters();
     try std.testing.expectEqual(@as(u64, 0), try harness.step());
     if (metrics_enabled) {
@@ -519,7 +548,7 @@ test "an unchanged transcript frame has stable cells and no terminal output" {
         try std.testing.expect(after.text_calls > before.text_calls);
         try std.testing.expect(after.measure_calls - before.measure_calls <= after.text_calls - before.text_calls);
     }
-    try std.testing.expectEqual(first, try harness.verify());
+    try std.testing.expectEqual(first, try harness.verify(true));
 }
 
 test "reused RGB and ANSI colors need no backing allocations after warmup" {
@@ -534,7 +563,7 @@ test "reused RGB and ANSI colors need no backing allocations after warmup" {
         for (0..8) |_| try std.testing.expectEqual(@as(u64, 0), try harness.step());
         const counts = harness.allocations.counts.since(before);
         try std.testing.expectEqualDeep(Allocations.Counts{}, counts);
-        _ = try harness.verify();
+        _ = try harness.verify(true);
     }
 }
 
