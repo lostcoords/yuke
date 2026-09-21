@@ -28,6 +28,8 @@ pub const Cost = struct {
 
 pub const Caps = struct {
     tools: ?bool = null,
+    /// Hosted search requires explicit support for the resolved model and endpoint.
+    hosted_tool_search: ?bool = null,
     /// True when the model takes some attachment. Read `Modalities` to learn which kind.
     vision: ?bool = null,
     structured_output: ?bool = null,

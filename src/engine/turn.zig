@@ -488,7 +488,15 @@ const Streamer = struct {
                     try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{
                         .session_id = self.slot.sessionId(),
                         .message_id = self.slot.progress.current.?.message_id,
-                        .part = emptyPart(part_id, b.kind),
+                        .part = if (b.kind == .tool_search) .{ .tool_search = .{
+                            .id = part_id,
+                            .protocol = switch (self.slot.protocol) {
+                                .anthropic_messages => .anthropic,
+                                .openai_responses => .openai_responses,
+                                .openai_chat => unreachable,
+                            },
+                            .data = "",
+                        } } else emptyPart(part_id, b.kind),
                     } } });
                     // A block boundary is the only point in a turn that moves the phase. A delta never does.
                     session_events.announceActivity(self.engine, self.session);
@@ -505,6 +513,13 @@ const Streamer = struct {
                     .reasoning => |r| try self.emitFinalized(self.partIdOf(b.block), .{ .reasoning = .{ .signature = r.signature } }),
                     .redacted_reasoning => |r| try self.emitFinalized(self.partIdOf(b.block), .{ .redacted_reasoning = .{ .data = r.data } }),
                     .text => {},
+                    .tool_search => |value| {
+                        std.debug.assert(switch (value.protocol) {
+                            .anthropic => self.slot.protocol == .anthropic_messages,
+                            .openai_responses => self.slot.protocol == .openai_responses,
+                        });
+                        try self.emitFinalized(self.partIdOf(b.block), .{ .tool_search = .{ .data = value.data } });
+                    },
                     // A tool part carries its call metadata, so it opens here and not at the start.
                     .tool => |call| try self.emitToolPart(self.openPart(b.block), call),
                 }
@@ -558,6 +573,7 @@ const Streamer = struct {
         const len = switch (final) {
             .reasoning => |r| r.signature.len,
             .redacted_reasoning => |r| r.data.len,
+            .tool_search => |value| value.data.len,
         };
         try checkStreamCap(0, len);
         try self.emit(.{ .method = .@"message.part_finalized", .params = .{ .message_part_finalized_data = .{
@@ -853,7 +869,7 @@ fn emptyPart(part_id: ids.PartId, kind: event.BlockKind) message.AssistantPart {
         .text => .{ .text = .{ .id = part_id, .text = "" } },
         .reasoning => .{ .reasoning = .{ .id = part_id, .text = "", .signature = "" } },
         .redacted_reasoning => .{ .redacted_reasoning = .{ .id = part_id, .data = "" } },
-        .tool => unreachable, // A tool part opens at block_stopped, not block_started.
+        .tool, .tool_search => unreachable, // These parts need metadata from the caller.
     };
 }
 
@@ -1388,4 +1404,27 @@ test "a cancel at the boundary wins over a successful response and preserves pen
     try std.testing.expectEqual(@as(usize, 1), f.session.queueDepth());
     try std.testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, StreamerFixture.session_id));
     try std.testing.expect((try database.run.latestOutcome(&f.db, a, StreamerFixture.session_id)).? == .canceled);
+}
+
+test "hosted search keeps its position across interleaved text and never queues execution" {
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    var s = fixture.streamer();
+    defer s.blocks.deinit(std.testing.allocator);
+    const data =
+        \\{"type":"server_tool_use","id":"srv_1","name":"tool_search_tool_bm25","input":{"query":"read"}}
+    ;
+    try s.onEvent(.{ .block_started = .{ .block = 0, .kind = .tool_search } });
+    try s.onEvent(.{ .block_started = .{ .block = 1, .kind = .text } });
+    try s.onEvent(.{ .text_delta = .{ .block = 1, .text = "found" } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 0, .result = .{ .tool_search = .{ .protocol = .anthropic, .data = data } } } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 1, .result = .text } });
+    const parts = fixture.session.draft.?.parts.items;
+    try std.testing.expectEqual(@as(usize, 2), parts.len);
+    try std.testing.expectEqualStrings(data, parts[0].tool_search.data);
+    try std.testing.expectEqualStrings("found", parts[1].text.text.items);
+    try std.testing.expectEqual(@as(ids.PartId, 0), parts[0].id());
+    try std.testing.expectEqual(@as(ids.PartId, 1), parts[1].id());
+    try std.testing.expect(!hasToolPart(&fixture.session.draft.?));
 }

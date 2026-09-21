@@ -12,7 +12,7 @@ pub const max_tool_arg_bytes = types.limits.max_string_bytes;
 /// A dense identifier that a reducer assigns to a stream-local block.
 pub const BlockId = u32;
 
-pub const BlockKind = enum { text, reasoning, redacted_reasoning, tool };
+pub const BlockKind = enum { text, reasoning, redacted_reasoning, tool, tool_search };
 
 pub const StreamEvent = union(enum) {
     block_started: BlockStarted,
@@ -55,11 +55,13 @@ pub const BlockResult = union(enum) {
     reasoning: Reasoning,
     redacted_reasoning: Redacted,
     tool: ToolCall,
+    tool_search: @import("../tool_search.zig").Record,
 
     /// Copy every string into `gpa`, which must be an arena, because a result frees nothing itself.
     pub fn cloneLeaky(self: BlockResult, gpa: std.mem.Allocator) std.mem.Allocator.Error!BlockResult {
         return switch (self) {
             .text => .text,
+            .tool_search => |value| .{ .tool_search = try value.clone(gpa) },
             .reasoning => |value| .{ .reasoning = .{ .signature = try gpa.dupe(u8, value.signature) } },
             .redacted_reasoning => |value| .{ .redacted_reasoning = .{ .data = try gpa.dupe(u8, value.data) } },
             .tool => |value| .{ .tool = .{

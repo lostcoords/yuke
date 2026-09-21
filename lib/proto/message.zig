@@ -35,6 +35,7 @@ pub const AssistantPart = union(enum) {
     reasoning: ReasoningPart,
     redacted_reasoning: RedactedReasoningPart,
     tool: ToolPart,
+    tool_search: ToolSearchPart,
 
     /// Return the part id. Each arm carries the same field.
     pub fn id(self: @This()) ids.PartId {
@@ -47,6 +48,16 @@ pub const AssistantPart = union(enum) {
     pub const jsonParse = tagged.Codec(@This()).jsonParse;
     pub const jsonParseFromValue = tagged.Codec(@This()).jsonParseFromValue;
     pub const jsonStringify = tagged.Codec(@This()).jsonStringify;
+};
+
+/// The native search formats this client can replay.
+pub const ToolSearchProtocol = enum { anthropic, openai_responses };
+
+/// This part preserves native search JSON in its original block position.
+pub const ToolSearchPart = struct {
+    id: ids.PartId,
+    protocol: ToolSearchProtocol,
+    data: []const u8 = "",
 };
 
 /// This payload describes a compaction transcript message. Its fields borrow their data.
@@ -146,6 +157,7 @@ pub const ToolOutputDeltaData = PartDelta;
 pub const PartFinal = union(enum) {
     reasoning: ReasoningFinal,
     redacted_reasoning: RedactedReasoningFinal,
+    tool_search: ToolSearchFinal,
 
     /// Decode a tagged wire union from JSON.
     pub const jsonParse = tagged.Codec(@This()).jsonParse;
@@ -160,6 +172,11 @@ pub const ReasoningFinal = struct {
 
 /// The engine attaches the opaque redacted reasoning data at block stop.
 pub const RedactedReasoningFinal = struct {
+    data: []const u8,
+};
+
+/// The engine attaches a validated native search record at block stop.
+pub const ToolSearchFinal = struct {
     data: []const u8,
 };
 

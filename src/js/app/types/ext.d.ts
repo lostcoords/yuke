@@ -89,6 +89,7 @@ export interface ToolDecl {
   name: string;
   description: string;
   input_schema: string;
+  defer_loading: boolean;
   strict: boolean;
 }
 

@@ -4,6 +4,7 @@ const std = @import("std");
 const event = @import("event.zig");
 const json = @import("json.zig");
 const types = @import("../types.zig");
+const search = @import("../tool_search.zig");
 
 const StreamEvent = event.StreamEvent;
 
@@ -30,7 +31,7 @@ const ResponsesEvent = enum {
     @"error",
 };
 
-const ItemKind = enum { message, reasoning, tool, ignored };
+const ItemKind = enum { message, reasoning, tool, search_call, search_output, ignored };
 
 /// An output item records the blocks that it owns.
 const Output = struct {
@@ -55,7 +56,7 @@ const Block = struct {
     dropped: bool = false,
     call_id: []const u8 = "",
     name: []const u8 = "",
-    signature: []const u8 = "",
+    data: []const u8 = "",
     args: std.ArrayList(u8) = .empty,
     authoritative_args: ?[]const u8 = null,
 };
@@ -81,7 +82,7 @@ pub const Reducer = struct {
             block.args.deinit(self.gpa);
             json.release(self.gpa, block.call_id);
             json.release(self.gpa, block.name);
-            json.release(self.gpa, block.signature);
+            json.release(self.gpa, block.data);
             if (block.authoritative_args) |arguments| json.release(self.gpa, arguments);
         }
         self.blocks.deinit(self.gpa);
@@ -139,6 +140,11 @@ pub const Reducer = struct {
         }
         if (std.mem.eql(u8, item_type, "reasoning")) {
             entry.value_ptr.kind = .reasoning; // The reasoning block starts on the first delta.
+            return;
+        }
+        if (std.mem.eql(u8, item_type, "tool_search_call") or std.mem.eql(u8, item_type, "tool_search_output")) {
+            entry.value_ptr.kind = if (std.mem.eql(u8, item_type, "tool_search_call")) .search_call else .search_output;
+            entry.value_ptr.tool = try self.startBlock(.tool_search, out);
             return;
         }
         if (!std.mem.eql(u8, item_type, "function_call")) return;
@@ -244,9 +250,17 @@ pub const Reducer = struct {
                     break :blk new_id;
                 };
                 if (id) |rid| {
-                    if (encrypted.len != 0) (try self.openBlock(rid)).signature = try json.own(self.gpa, encrypted);
+                    if (encrypted.len != 0) (try self.openBlock(rid)).data = try json.own(self.gpa, encrypted);
                     try self.stopBlockIfOpen(rid, out);
                 }
+            },
+            .search_call, .search_output => {
+                const expected = if (output.kind == .search_call) "tool_search_call" else "tool_search_output";
+                if (!std.mem.eql(u8, item_type, expected)) return error.Protocol;
+                const id = output.tool orelse return error.Protocol;
+                const block = try self.openBlock(id);
+                block.data = try search.encode(self.gpa, .openai_responses, item);
+                try self.stopBlock(id, out);
             },
             .ignored => {},
             .tool => {
@@ -325,6 +339,7 @@ pub const Reducer = struct {
         std.debug.assert(!self.done_emitted);
         // An open tool block holds partial arguments, so drop it instead of an unfinished call.
         for (self.blocks.items, 0..) |block, i| {
+            if (block.kind == .tool_search and block.open) return error.Protocol;
             if (block.kind == .tool) continue;
             try self.stopBlockIfOpen(@intCast(i), out);
         }
@@ -344,7 +359,7 @@ pub const Reducer = struct {
             .text => output.text orelse return error.Protocol,
             .reasoning => output.reasoning orelse return error.Protocol,
             .tool => output.tool orelse return error.Protocol,
-            .redacted_reasoning => return error.Protocol,
+            .redacted_reasoning, .tool_search => return error.Protocol,
         };
         const block = try self.openBlock(id);
         if (block.kind != kind) return error.Protocol;
@@ -391,8 +406,9 @@ pub const Reducer = struct {
         const block = try self.openBlock(id);
         block.open = false;
         const result: event.BlockResult = switch (block.kind) {
+            .tool_search => .{ .tool_search = .{ .protocol = .openai_responses, .data = block.data } },
             .text => .text,
-            .reasoning => .{ .reasoning = .{ .signature = block.signature } },
+            .reasoning => .{ .reasoning = .{ .signature = block.data } },
             .redacted_reasoning => unreachable,
             .tool => .{ .tool = .{
                 .call_id = block.call_id,
@@ -855,4 +871,61 @@ test "decode frees everything on allocation failure at every point" {
             \\{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":1}}}
         },
     });
+}
+
+test "hosted search output stays in the transcript and never becomes a local call" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"ts_1","type":"tool_search_call","status":"in_progress"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"ts_1","type":"tool_search_call","execution":"server","call_id":null,"status":"completed","arguments":{"paths":["mcp_weather"]}}}
+        ,
+        \\{"type":"response.output_item.added","output_index":1,"item":{"id":"ts_2","type":"tool_search_output","status":"in_progress"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":1,"item":{"id":"ts_2","type":"tool_search_output","execution":"server","call_id":null,"status":"completed","tools":[{"type":"function","name":"mcp_weather","parameters":{"type":"object"},"defer_loading":true}],"extension":true}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    });
+    try testing.expectEqual(@as(usize, 5), h.out.items.len);
+    for ([_]usize{ 1, 3 }) |i| {
+        const result = h.out.items[i].block_stopped.result;
+        try testing.expect(result == .tool_search);
+        try result.tool_search.validate(h.arena.allocator());
+    }
+    try testing.expect(std.mem.indexOf(u8, h.out.items[3].block_stopped.result.tool_search.data, "\"extension\":true") != null);
+    try testing.expectEqual(types.FinishReason.stop, h.out.items[4].done.stop_reason);
+}
+
+test "a hosted search declaration cannot dispatch a client search request" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"ts_1","type":"tool_search_call"}}
+    });
+    try testing.expectError(error.Protocol, h.feed(&.{
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"ts_1","type":"tool_search_call","execution":"client","call_id":"call","status":"completed","arguments":{}}}
+    }));
+}
+
+test "native search output releases owned schemas at every allocation failure" {
+    const frames = [_][]const u8{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"ts_1","type":"tool_search_output"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"ts_1","type":"tool_search_output","execution":"server","call_id":null,"status":"completed","tools":[{"type":"function","name":"mcp_read","parameters":{"type":"object"}}]}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, @import("testing.zig").decodeAll(Reducer), .{@as([]const []const u8, &frames)});
+}
+
+test "an unfinished native search returns a protocol error before done" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"ts_1","type":"tool_search_call"}}
+    });
+    try testing.expectError(error.Protocol, h.feed(&.{
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    }));
 }

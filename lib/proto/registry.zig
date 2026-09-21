@@ -104,6 +104,8 @@ pub const structs = [_]TypeEntry{
     .{ .name = "TextPart", .ty = message.TextPart },
     .{ .name = "TokenUsage", .ty = message.TokenUsage },
     .{ .name = "ToolPart", .ty = message.ToolPart },
+    .{ .name = "ToolSearchPart", .ty = message.ToolSearchPart },
+    .{ .name = "ToolSearchFinal", .ty = message.ToolSearchFinal },
     .{ .name = "TurnProvenance", .ty = message.TurnProvenance },
     .{ .name = "UserMessage", .ty = message.UserMessage },
     .{ .name = "ConfigChangedData", .ty = misc.ConfigChangedData },
@@ -227,6 +229,7 @@ pub const string_enums = [_]EnumEntry{
     .{ .name = "SessionView", .ty = enums.SessionView },
     .{ .name = "CompactionReason", .ty = enums.CompactionReason },
     .{ .name = "ProviderProtocol", .ty = enums.ProviderProtocol },
+    .{ .name = "ToolSearchProtocol", .ty = message.ToolSearchProtocol },
     .{ .name = "ProviderState", .ty = enums.ProviderState },
     .{ .name = "JobState", .ty = job.JobState },
 };

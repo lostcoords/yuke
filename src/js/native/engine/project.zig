@@ -174,6 +174,7 @@ fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart, c
         .text => |t| try writeTextPart(w, parts, "text", t.id, t.text, cursor),
         .reasoning => |r| try writeTextPart(w, parts, "reasoning", r.id, r.text, cursor),
         .redacted_reasoning => |r| try w.print("{{\"type\":\"redacted_reasoning\",\"id\":{d}}}", .{r.id}),
+        .tool_search => |value| try w.print("{{\"type\":\"tool_search\",\"id\":{d},\"protocol\":\"{s}\"}}", .{ value.id, @tagName(value.protocol) }),
         .tool => |t| try writeToolPart(w, parts, t),
     }
 }
@@ -760,4 +761,16 @@ test "a user message projects its content parts, and a position names each one" 
     try std.testing.expectEqualStrings("after", partTextOf(&session, 1, 2, "text").?);
     try std.testing.expect(partTextOf(&session, 1, 1, "text") == null);
     try std.testing.expect(partTextOf(&session, 1, 2, "output") == null);
+}
+
+test "the UI projection does not copy native search schemas" {
+    var buffer: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+    var parts: Parts = .{};
+    try writePart(&writer, &parts, .{ .tool_search = .{
+        .id = 7,
+        .protocol = .openai_responses,
+        .data = "x" ** 100_000,
+    } }, null);
+    try std.testing.expectEqualStrings("{\"type\":\"tool_search\",\"id\":7,\"protocol\":\"openai_responses\"}", writer.buffered());
 }

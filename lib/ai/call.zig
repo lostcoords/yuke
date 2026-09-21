@@ -15,7 +15,7 @@ pub const Model = struct {
     id: []const u8,
     route: route.Route,
     credential: route.Credential,
-    /// What this model states it can do. An unknown capability is never a refusal.
+    /// The resolved model capabilities; hosted search requires explicit support.
     caps: model_types.Caps = .{},
     dialect: model_types.Dialect = .{},
 };
@@ -42,8 +42,9 @@ pub const Options = struct {
     cache_key: []const u8 = "",
     /// One stable id per session. The route decides which header carries it, and some routes carry none.
     session_id: []const u8 = "",
-    /// Whether the model may call a tool. A request that declares no tool writes no control.
+    /// Whether the model may call a tool, including native search.
     tool_choice: ir.ToolChoice = .auto,
+    tool_search: ir.ToolSearch = .disabled,
 };
 
 pub const Content = union(enum) {
@@ -51,6 +52,7 @@ pub const Content = union(enum) {
     reasoning: Reasoning,
     redacted_reasoning: []const u8,
     tool_call: ToolCall,
+    tool_search: @import("tool_search.zig").Record,
 
     pub const Reasoning = struct {
         text: []const u8,
@@ -154,6 +156,8 @@ pub fn generateWithTransport(gpa: std.mem.Allocator, route_transport: transport.
 /// Use `gpa` to own the validated request and route data until `PreparedRequest.deinit` runs.
 pub fn prepare(gpa: std.mem.Allocator, model: Model, request: Request) !PreparedRequest {
     if (request.blocks.len == 0) return error.EmptyRequest;
+    if (request.options.tool_search == .hosted and
+        (model.route.protocol == .openai_chat or model.caps.hosted_tool_search != true)) return error.UnsupportedToolSearch;
     var call_arena: std.heap.ArenaAllocator = .init(gpa);
     errdefer call_arena.deinit();
     const arena = call_arena.allocator();
@@ -208,6 +212,7 @@ fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
         .temperature = options.temperature,
         .top_p = options.top_p,
         .tool_choice = options.tool_choice,
+        .tool_search = options.tool_search,
     };
     return adapter.serialize(arena, model.route.protocol, value, request.blocks);
 }
@@ -300,13 +305,17 @@ const Collector = struct {
     fn result(self: *Collector) !Result {
         const done = self.done.?;
         const arena = self.arena.allocator();
-        const content = try arena.alloc(Content, self.blocks.items.len);
+        var content_len: usize = 0;
 
         // The text blocks lead the buffer, so `Result.text` is the joined prefix and needs no second copy.
         var text_len: usize = 0;
         var total_len: usize = 0;
         for (self.blocks.items) |current| {
-            std.debug.assert(current.stopped);
+            if (!current.stopped) {
+                if (current.kind == .tool) continue;
+                return error.Protocol;
+            }
+            content_len += 1;
             switch (current.result.?) {
                 .text => text_len = try std.math.add(usize, text_len, current.bytes.items.len),
                 .reasoning => {},
@@ -314,21 +323,27 @@ const Collector = struct {
             }
             total_len = try std.math.add(usize, total_len, current.bytes.items.len);
         }
+        const content = try arena.alloc(Content, content_len);
         const bytes = try arena.alloc(u8, total_len);
         var text_offset: usize = 0;
         var tail_offset: usize = text_len;
 
-        for (self.blocks.items, content) |current, *part| {
-            part.* = switch (current.result.?) {
+        var content_index: usize = 0;
+        for (self.blocks.items) |current| {
+            if (!current.stopped) continue;
+            content[content_index] = switch (current.result.?) {
                 .text => .{ .text = take(bytes, &text_offset, current.bytes.items) },
                 .reasoning => |reasoning| .{ .reasoning = .{
                     .text = take(bytes, &tail_offset, current.bytes.items),
                     .signature = reasoning.signature,
                 } },
                 .redacted_reasoning => |redacted| .{ .redacted_reasoning = redacted.data },
+                .tool_search => |value| .{ .tool_search = value },
                 .tool => |tool| .{ .tool_call = .{ .call_id = tool.call_id, .name = tool.name, .arguments = tool.arguments } },
             };
+            content_index += 1;
         }
+        std.debug.assert(content_index == content.len);
         std.debug.assert(text_offset == text_len);
         std.debug.assert(tail_offset == total_len);
 
@@ -594,4 +609,125 @@ test "generate preserves a completed tool call" {
     try std.testing.expectEqualStrings("toolu_1", tool.call_id);
     try std.testing.expectEqualStrings("run", tool.name);
     try std.testing.expectEqualStrings("{\"cmd\":\"zig test\"}", tool.arguments);
+}
+
+test "generate owns native search records after the reducer releases them" {
+    const reply = comptime testing_transport.sseFrame(
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"ts_1","type":"tool_search_call"}}
+    ) ++ testing_transport.sseFrame(
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"ts_1","type":"tool_search_call","execution":"server","call_id":null,"status":"completed","arguments":{"paths":["mcp_read"]}}}
+    ) ++ testing_transport.sseFrame(
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    );
+    var canned: testing_transport.CannedTransport = .{ .bytes = reply };
+    var model = testModel(.openai_responses);
+    model.caps.hosted_tool_search = true;
+    var result_value = try generateTextWithTransport(std.testing.allocator, canned.transport(), model, "read", .{ .tool_search = .hosted });
+    defer result_value.deinit();
+    try std.testing.expectEqual(@as(usize, 1), result_value.content.len);
+    try std.testing.expectEqualStrings("", result_value.text);
+    try std.testing.expect(std.mem.indexOf(u8, result_value.content[0].tool_search.data, "mcp_read") != null);
+    try result_value.content[0].tool_search.validate(result_value.arena.allocator());
+}
+
+test "generate drops a tool call the Responses reducer leaves unfinished" {
+    const reply = comptime testing_transport.sseFrame(
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call","name":"read"}}
+    ) ++ testing_transport.sseFrame(
+        \\{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{}}}
+    );
+    var canned: testing_transport.CannedTransport = .{ .bytes = reply };
+    var result_value = try generateTextWithTransport(std.testing.allocator, canned.transport(), testModel(.openai_responses), "read", .{});
+    defer result_value.deinit();
+    try std.testing.expectEqual(@as(usize, 0), result_value.content.len);
+    try std.testing.expectEqual(types.FinishReason.length, result_value.finish_reason);
+}
+
+test "hosted search requires an explicit mode and a verified model route" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "read" } }};
+    const tools = [_]ir.Tool{.{ .name = "mcp_read", .description = "Read.", .input_schema = "{\"type\":\"object\"}", .defer_loading = true }};
+    inline for (.{ types.Protocol.anthropic_messages, types.Protocol.openai_responses, types.Protocol.openai_chat }) |protocol| {
+        for ([_]?bool{ null, false, true }) |supported| {
+            var model = testModel(protocol);
+            model.caps.hosted_tool_search = supported;
+            var eager_tools = tools;
+            eager_tools[0].defer_loading = false;
+            const eager: Request = .{ .blocks = &blocks, .tools = &eager_tools };
+            var default_request = try prepare(std.testing.allocator, model, eager);
+            defer default_request.deinit();
+            try std.testing.expect(std.mem.indexOf(u8, default_request.transport_request.body, "tool_search") == null);
+
+            const implicit: Request = .{ .blocks = &blocks, .tools = &tools };
+            try std.testing.expectError(error.InvalidRequest, prepare(std.testing.allocator, model, implicit));
+
+            const hosted: Request = .{ .blocks = &blocks, .tools = &tools, .options = .{ .tool_search = .hosted } };
+            if (supported != true or protocol == .openai_chat) {
+                try std.testing.expectError(error.UnsupportedToolSearch, prepare(std.testing.allocator, model, hosted));
+            } else {
+                var explicit_request = try prepare(std.testing.allocator, model, hosted);
+                defer explicit_request.deinit();
+                try std.testing.expect(std.mem.indexOf(u8, explicit_request.transport_request.body, "tool_search") != null);
+                try std.testing.expect(std.mem.indexOf(u8, explicit_request.transport_request.body, "\"defer_loading\":true") != null);
+            }
+        }
+    }
+}
+
+test "hosted search is independent of deferred definitions and respects tool choice" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "summarize" } }};
+    inline for (.{ types.Protocol.anthropic_messages, types.Protocol.openai_responses }) |protocol| {
+        var model = testModel(protocol);
+        model.caps.hosted_tool_search = true;
+        var prepared = try prepare(std.testing.allocator, model, .{
+            .blocks = &blocks,
+            .options = .{ .tool_search = .hosted, .tool_choice = .none },
+        });
+        defer prepared.deinit();
+        const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, prepared.transport_request.body, .{});
+        defer parsed.deinit();
+        const object = parsed.value.object;
+        const tools = object.get("tools").?.array.items;
+        try std.testing.expectEqual(@as(usize, 1), tools.len);
+        try std.testing.expectEqualStrings(if (protocol == .anthropic_messages) "tool_search_tool_bm25_20251119" else "tool_search", tools[0].object.get("type").?.string);
+        const choice = object.get("tool_choice").?;
+        try std.testing.expectEqualStrings("none", if (protocol == .anthropic_messages) choice.object.get("type").?.string else choice.string);
+    }
+}
+
+test "native search replay requires explicit activation and the same protocol" {
+    const data =
+        \\{"id":"ts_1","type":"tool_search_call","execution":"server","call_id":null,"status":"completed","arguments":{"paths":["mcp_read"]}}
+    ;
+    const blocks = [_]ir.Block{
+        .{ .role = .user, .value = .{ .text = "read" } },
+        .{ .role = .assistant, .value = .{ .tool_search = .{ .protocol = .openai_responses, .data = data } } },
+    };
+    var model = testModel(.openai_responses);
+    model.caps.hosted_tool_search = true;
+    try std.testing.expectError(error.InvalidRequest, prepare(std.testing.allocator, model, .{ .blocks = &blocks }));
+    var prepared = try prepare(std.testing.allocator, model, .{ .blocks = &blocks, .options = .{ .tool_search = .hosted } });
+    defer prepared.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, prepared.transport_request.body, data) != null);
+    model.route.protocol = .anthropic_messages;
+    try std.testing.expectError(error.UnsupportedToolSearch, prepare(std.testing.allocator, model, .{ .blocks = &blocks, .options = .{ .tool_search = .hosted } }));
+}
+
+test "hosted search request cleanup survives each allocation failure" {
+    inline for (.{ types.Protocol.anthropic_messages, types.Protocol.openai_responses }) |protocol| {
+        try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareHostedForTest, .{protocol});
+    }
+}
+
+fn prepareHostedForTest(gpa: std.mem.Allocator, protocol: types.Protocol) !void {
+    std.debug.assert(protocol != .openai_chat);
+    var model = testModel(protocol);
+    model.caps.hosted_tool_search = true;
+    var prepared = try prepare(gpa, model, .{
+        .blocks = &.{.{ .role = .user, .value = .{ .text = "read" } }},
+        .tools = &.{.{ .name = "mcp_read", .description = "Read.", .input_schema = "{\"type\":\"object\"}", .defer_loading = true }},
+        .options = .{ .tool_search = .hosted },
+    });
+    defer prepared.deinit();
+    std.debug.assert(prepared.protocol == protocol);
+    try std.testing.expect(std.mem.indexOf(u8, prepared.transport_request.body, "tool_search") != null);
 }

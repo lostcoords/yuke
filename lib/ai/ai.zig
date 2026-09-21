@@ -34,6 +34,7 @@ pub const Header = route.Header;
 pub const ir = @import("request/ir.zig");
 /// The neutral stream events one call emits.
 pub const event = @import("stream/event.zig");
+pub const tool_search = @import("tool_search.zig");
 /// The model vocabulary every provider source shares.
 pub const model = @import("model.zig");
 /// How one request reaches a provider, and the credential headers it presents.

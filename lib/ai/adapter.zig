@@ -32,7 +32,10 @@ pub fn serialize(arena: std.mem.Allocator, protocol: types.Protocol, request: ir
     try ir.validate(arena, request, blocks);
     var body: std.Io.Writer.Allocating = .init(arena);
     switch (protocol) {
-        inline else => |value| try Adapter(value).serialize(&body.writer, request, blocks),
+        inline else => |value| Adapter(value).serialize(&body.writer, request, blocks) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            else => return err,
+        },
     }
     return body.written();
 }

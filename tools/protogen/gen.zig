@@ -133,6 +133,7 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "ReasoningPart", .field = "id", .alias = "PartId" },
     .{ .owner = "RedactedReasoningPart", .field = "id", .alias = "PartId" },
     .{ .owner = "ToolPart", .field = "id", .alias = "PartId" },
+    .{ .owner = "ToolSearchPart", .field = "id", .alias = "PartId" },
     .{ .owner = "ToolSite", .field = "session_id", .alias = "SessionId" },
     .{ .owner = "ToolSite", .field = "message_id", .alias = "MessageId" },
     .{ .owner = "ToolSite", .field = "part_id", .alias = "PartId" },

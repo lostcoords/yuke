@@ -532,6 +532,18 @@ export interface ToolPart {
   readonly state: ToolState;
 }
 
+/** This part preserves native search JSON in its original block position. */
+export interface ToolSearchPart {
+  readonly id: PartId;
+  readonly protocol: ToolSearchProtocol;
+  readonly data?: string;
+}
+
+/** The engine attaches a validated native search record at block stop. */
+export interface ToolSearchFinal {
+  readonly data: string;
+}
+
 /** This type records the provider that produced an assistant turn. Its fields borrow their data. */
 export interface TurnProvenance {
   readonly protocol: ProviderProtocol;
@@ -1319,6 +1331,12 @@ export type ProviderProtocol =
   | "openai_responses"
 ;
 
+/** The native search formats this client can replay. */
+export type ToolSearchProtocol =
+  | "anthropic"
+  | "openai_responses"
+;
+
 /** Report whether a configured provider can serve a request now, and why it cannot. */
 export type ProviderState =
   | "ready"
@@ -1404,6 +1422,7 @@ export type AssistantPart =
   | { readonly type: "reasoning" } & ReasoningPart
   | { readonly type: "redacted_reasoning" } & RedactedReasoningPart
   | { readonly type: "tool" } & ToolPart
+  | { readonly type: "tool_search" } & ToolSearchPart
 ;
 
 /** This union describes a transcript message. Its fields borrow their data. */
@@ -1417,6 +1436,7 @@ export type Message =
 export type PartFinal =
   | { readonly type: "reasoning" } & ReasoningFinal
   | { readonly type: "redacted_reasoning" } & RedactedReasoningFinal
+  | { readonly type: "tool_search" } & ToolSearchFinal
 ;
 
 /** This union describes the terminal run outcome. The `type` field selects the outcome. */

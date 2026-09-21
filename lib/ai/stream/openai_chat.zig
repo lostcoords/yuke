@@ -233,6 +233,7 @@ pub const Reducer = struct {
             .text => .text,
             .reasoning => .{ .reasoning = .{ .signature = "" } },
             .redacted_reasoning => .{ .redacted_reasoning = .{ .data = "" } },
+            .tool_search => unreachable,
             .tool => .{ .tool = .{
                 .call_id = block.call_id,
                 .name = block.name,
