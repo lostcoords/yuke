@@ -256,6 +256,53 @@ const Probe = struct {
     canned: oauth.CannedHttp,
     transport: ai.testing.CannedTransport = .{ .bytes = ai.testing.canned_reply },
     outcome: ?proto.auth.AuthLoginOutcome = null,
+    elapsed_ms: u64 = 0,
+    waits: [8]u64 = undefined,
+    wait_count: usize = 0,
+    cancel_at_wait: ?usize = null,
+
+    const epoch_ms = 1_700_000_000_000;
+    const time_vtable: std.Io.VTable = blk: {
+        var table = std.Io.failing.vtable.*;
+        table.now = now;
+        table.futexWait = wait;
+        table.futexWake = wake;
+        break :blk table;
+    };
+
+    fn timeIo(self: *Probe) std.Io {
+        return .{ .userdata = self, .vtable = &time_vtable };
+    }
+
+    fn now(userdata: ?*anyopaque, clock: std.Io.Clock) std.Io.Timestamp {
+        const self: *Probe = @ptrCast(@alignCast(userdata.?));
+        std.debug.assert(clock == .real or clock == .awake);
+        return .{ .nanoseconds = @as(i96, epoch_ms + self.elapsed_ms) * std.time.ns_per_ms };
+    }
+
+    fn wait(userdata: ?*anyopaque, ptr: *const u32, expected: u32, timeout: std.Io.Timeout) std.Io.Cancelable!void {
+        const self: *Probe = @ptrCast(@alignCast(userdata.?));
+        std.debug.assert(ptr == @as(*const u32, @ptrCast(&self.slot.cancel.event)));
+        std.debug.assert(expected == @intFromEnum(std.Io.Event.waiting));
+        std.debug.assert(timeout == .duration and timeout.duration.clock == .awake);
+        std.debug.assert(self.wait_count < self.waits.len);
+        const delay_ms: u64 = @intCast(timeout.duration.raw.toMilliseconds());
+        std.debug.assert(delay_ms > 0);
+        self.waits[self.wait_count] = delay_ms;
+        self.wait_count += 1;
+        if (self.cancel_at_wait == self.wait_count) {
+            self.slot.cancel.request(self.timeIo());
+        } else {
+            self.elapsed_ms += delay_ms;
+        }
+    }
+
+    fn wake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
+        const self: *Probe = @ptrCast(@alignCast(userdata.?));
+        std.debug.assert(ptr == @as(*const u32, @ptrCast(&self.slot.cancel.event)));
+        std.debug.assert(max_waiters > 0);
+        std.debug.assert(self.slot.cancel.isRequested());
+    }
 
     fn init(self: *Probe, io: std.Io, replies: []const oauth.CannedHttp.Reply) !void {
         self.* = .{ .env = .init(testing.allocator), .canned = .{ .replies = replies } };
@@ -269,7 +316,7 @@ const Probe = struct {
         self.blobs.cleanup();
     }
 
-    /// Reserve one slot. The poller floor turns the one-millisecond interval into a one-second wait.
+    /// The poller must raise this interval to one second.
     fn reserve(self: *Probe, provider_id: []const u8, flow: login_runtime.Flow) !void {
         const arena: std.heap.ArenaAllocator = .init(testing.allocator);
         self.slot = try self.runtime.logins.reserve(.bytes(@splat(7)), arena, provider_id, flow);
@@ -277,6 +324,10 @@ const Probe = struct {
     }
 
     fn driveTask(self: *Probe) !void {
+        // Only the driver borrows virtual time; the store and engine retain the reactor I/O.
+        const io = self.runtime.io;
+        self.runtime.io = self.timeIo();
+        defer self.runtime.io = io;
         self.outcome = try drive(&self.runtime, self.slot, self.canned.seam());
     }
 };
@@ -295,6 +346,7 @@ test "a canceled login stops before its first poll" {
     try task.join();
 
     try testing.expect(probe.outcome.? == .canceled);
+    try testing.expectEqual(@as(usize, 0), probe.wait_count);
     try testing.expectEqual(@as(usize, 0), probe.canned.index); // The provider saw no request.
 }
 
@@ -311,6 +363,7 @@ test "a refused poll fails the login and stores nothing" {
     try task.join();
 
     try testing.expectEqualStrings("the provider refused the login", probe.outcome.?.failed.message);
+    try testing.expectEqualSlices(u64, &.{1000}, probe.waits[0..probe.wait_count]);
     try testing.expectEqual(@as(usize, 1), probe.canned.index); // One poll ran and ended the login.
     try testing.expect(probe.runtime.store.local == null);
 }
@@ -337,11 +390,67 @@ test "an approved codex login stores the grant" {
     try task.join();
 
     try testing.expect(probe.outcome.? == .succeeded);
+    try testing.expectEqualSlices(u64, &.{1000}, probe.waits[0..probe.wait_count]);
     try testing.expectEqual(@as(usize, 2), probe.canned.index); // The poll and the exchange both ran.
     const p = probe.runtime.store.local.?.providers[0];
     try testing.expectEqualStrings("openai-codex", p.id);
     try testing.expectEqualStrings("at", p.auth.?.oauth.access_token);
     try testing.expectEqualStrings("rt", p.auth.?.oauth.refresh_token.?);
+    try testing.expectEqual(@as(u64, Probe.epoch_ms + 1000 + 60_000), p.auth.?.oauth.expires_at_ms);
+}
+
+test "a cancel during a login wait prevents the next poll" {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    for ([_]usize{ 1, 2 }) |cancel_at_wait| {
+        var probe: Probe = undefined;
+        try probe.init(rt.io(), &.{.{ .answer = .{ .status = 400, .body = "{\"error\":\"authorization_pending\"}" } }});
+        defer probe.deinit();
+        try probe.reserve("xai", .xai);
+        probe.cancel_at_wait = cancel_at_wait;
+        var task = try rt.spawn(Probe.driveTask, .{&probe});
+        try task.join();
+        try testing.expect(probe.outcome.? == .canceled);
+        try testing.expectEqual(cancel_at_wait, probe.wait_count);
+        try testing.expectEqual(cancel_at_wait - 1, probe.canned.index);
+        try testing.expectEqual(@as(u64, (cancel_at_wait - 1) * 1000), probe.elapsed_ms);
+        try testing.expect(probe.runtime.store.local == null);
+    }
+}
+
+test "a pending login waits another whole interval before its next poll" {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    var probe: Probe = undefined;
+    try probe.init(rt.io(), &.{
+        .{ .answer = .{ .status = 400, .body = "{\"error\":\"authorization_pending\"}" } },
+        .{ .answer = .{ .status = 400, .body = "{\"error\":\"access_denied\"}" } },
+    });
+    defer probe.deinit();
+    try probe.reserve("xai", .xai);
+    var task = try rt.spawn(Probe.driveTask, .{&probe});
+    try task.join();
+    try testing.expectEqualStrings("the provider refused the login", probe.outcome.?.failed.message);
+    try testing.expectEqualSlices(u64, &.{ 1000, 1000 }, probe.waits[0..probe.wait_count]);
+    try testing.expectEqual(@as(u64, 2000), probe.elapsed_ms);
+    try testing.expectEqual(@as(usize, 2), probe.canned.index);
+    try testing.expect(probe.runtime.store.local == null);
+}
+
+test "a login that reaches its lifetime limit does not poll" {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    var probe: Probe = undefined;
+    try probe.init(rt.io(), &.{});
+    defer probe.deinit();
+    try probe.reserve("xai", .xai);
+    probe.slot.start.interval_ms = max_lifetime_ms;
+    var task = try rt.spawn(Probe.driveTask, .{&probe});
+    try task.join();
+    try testing.expectEqualStrings("the login expired before approval", probe.outcome.?.failed.message);
+    try testing.expectEqualSlices(u64, &.{max_lifetime_ms}, probe.waits[0..probe.wait_count]);
+    try testing.expectEqual(@as(usize, 0), probe.canned.index);
+    try testing.expect(probe.runtime.store.local == null);
 }
 
 /// Keep the last notification, so a test can read what `finish` published.
