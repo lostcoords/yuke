@@ -75,5 +75,5 @@ fn jsInstallLifecycle(ctx: Context, _: Value, args: []const Value) Value {
     if (host.phase != .open or host.plugin_lifecycle != null) return ctx.throwTypeError("the plugin lifecycle is already installed or closed");
     if (args.len != 1 or !ctx.isFunction(args[0])) return ctx.throwTypeError("installLifecycle needs a function");
     host.plugin_lifecycle = ctx.dupValue(args[0]);
-    return ctx.newInt32(Host.plugin_stop_timeout_ms);
+    return ctx.newInt32(host.plugin_stop_timeout_ms);
 }

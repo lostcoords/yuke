@@ -28,9 +28,13 @@ pub fn createHost() *Host {
 
 /// The testing allocator backs the pool, so a page that a leak pins fails the test.
 pub fn createHostWith(io: std.Io, cwd: []const u8) *Host {
+    return createHostWithOptions(io, hostOptions(cwd));
+}
+
+pub fn createHostWithOptions(io: std.Io, options: host_mod.Options) *Host {
     const pool = std.testing.allocator.create(Pool) catch unreachable;
     pool.* = .{ .backing_allocator = std.testing.allocator };
-    return Host.createWith(pool.allocator(), io, hostOptions(cwd));
+    return Host.createWith(pool.allocator(), io, options);
 }
 
 /// Destroy a host from `createHostWith` and then its pool.

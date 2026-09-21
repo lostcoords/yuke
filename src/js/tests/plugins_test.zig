@@ -5,6 +5,29 @@ const loader_mod = @import("../loader.zig");
 const quickjs = @import("quickjs");
 const zio = @import("zio");
 
+const stop_timeout_ms = 100;
+
+fn createTimeoutHost() *Host {
+    var options = support.hostOptions("");
+    options.plugin_stop_timeout_ms = stop_timeout_ms;
+    return support.createHostWithOptions(std.testing.io, options);
+}
+
+fn expectStopDeadline(host: *Host, start: std.Io.Timestamp) !void {
+    const elapsed = start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds();
+    try std.testing.expect(elapsed >= stop_timeout_ms);
+    try std.testing.expect(elapsed < stop_timeout_ms * 5 / 2);
+}
+
+test "plugin stop deadlines belong to each host and default to one second" {
+    const default_host = support.createHost();
+    defer support.destroyHost(default_host);
+    const timeout_host = createTimeoutHost();
+    defer support.destroyHost(timeout_host);
+    try std.testing.expectEqual(@as(i32, 1000), default_host.plugin_stop_timeout_ms);
+    try std.testing.expectEqual(@as(i32, stop_timeout_ms), timeout_host.plugin_stop_timeout_ms);
+}
+
 test "public tools and commands leave with their owners" {
     const host = support.createHost();
     defer support.destroyHost(host);
@@ -193,10 +216,12 @@ test "plugin stop shares its promise and holds its name until disposal" {
 }
 
 test "plugin stop timeout releases the scope and ignores late failure" {
-    const host = support.createHost();
+    const host = createTimeoutHost();
     defer support.destroyHost(host);
+    const start = std.Io.Timestamp.now(host.io, .awake);
     try support.eval(host, "plugins/stop-timeout.test.js");
     try support.pumpUntilTrue(host, "globalThis.stopDone");
+    try expectStopDeadline(host, start);
     try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
 }
 
@@ -238,7 +263,7 @@ test "shutdown permits process I/O and timers before resource release" {
 }
 
 test "shutdown has one deadline and forces disposal of stalled plugins" {
-    const host = support.createHost();
+    const host = createTimeoutHost();
     defer support.destroyHost(host);
     try host.evalModule(
         \\import { plugins } from "yuke";
@@ -250,13 +275,13 @@ test "shutdown has one deadline and forces disposal of stalled plugins" {
     , "shutdown-stall.js");
     const start = std.Io.Timestamp.now(host.io, .awake);
     try host.close();
-    const elapsed = start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds();
-    try std.testing.expect(elapsed < 2500);
+    try expectStopDeadline(host, start);
     try support.expectString(host, "stopped", "cba");
+    try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
 }
 
 test "shutdown bounds synchronous stop code and still disposes its scope" {
-    const host = support.createHost();
+    const host = createTimeoutHost();
     defer support.destroyHost(host);
     try host.evalModule(
         \\import { plugins } from "yuke";
@@ -268,9 +293,10 @@ test "shutdown bounds synchronous stop code and still disposes its scope" {
     , "shutdown-spin.js");
     const start = std.Io.Timestamp.now(host.io, .awake);
     host.stopPlugins();
-    try std.testing.expect(start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds() < 2500);
+    try expectStopDeadline(host, start);
     try host.close();
     try support.expectString(host, "stopped", "disposed");
+    try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
 }
 
 test "async plugin startup cancels, releases late resources, and isolates a replacement" {
@@ -292,10 +318,12 @@ test "a capability withdrawal closes its child resource owner" {
 }
 
 test "unload bounds startup that ignores cancellation" {
-    const host = support.createHost();
+    const host = createTimeoutHost();
     defer support.destroyHost(host);
+    const start = std.Io.Timestamp.now(host.io, .awake);
     try support.eval(host, "plugins/start-timeout.test.js");
     try support.pumpUntilTrue(host, "globalThis.startDone");
+    try expectStopDeadline(host, start);
     try support.expectString(host, "globalThis.startFailure || ''", "");
     try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
 }

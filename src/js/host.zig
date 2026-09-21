@@ -54,6 +54,8 @@ pub const default_baked = blk: {
 };
 
 pub const Options = struct {
+    /// The shared deadline for plugin stop timers and the native shutdown guard.
+    plugin_stop_timeout_ms: i32 = 1000,
     max_file_bytes: usize = loader_mod.default_max_file_bytes,
     /// The directory the process runs in. A new session takes it as the workspace root.
     cwd: []const u8,
@@ -116,9 +118,9 @@ pub const Host = struct {
     plugin_lifecycle: ?quickjs.Value = null,
     signal_class_id: quickjs.ClassID = 0,
     signal_waiters: std.ArrayList(cancellation.Waiter) = .empty,
+    plugin_stop_timeout_ms: i32,
 
     pub const Phase = enum { open, stopping, closing, drained };
-    pub const plugin_stop_timeout_ms = 1000;
 
     /// Cleanup can use I/O until the host enters the close phase.
     pub fn acceptsIo(self: *const Host) bool {
@@ -127,6 +129,7 @@ pub const Host = struct {
 
     /// Allocate a host and install its limits, interrupt handler, and loader.
     pub fn createWith(gpa: std.mem.Allocator, io: std.Io, opts: Options) *Host {
+        std.debug.assert(opts.plugin_stop_timeout_ms > 0);
         const self = gpa.create(Host) catch unreachable;
         self.memory = .{ .backing = gpa };
         const runtime = memory.createRuntime(&self.memory) catch unreachable;
@@ -150,6 +153,7 @@ pub const Host = struct {
             .ctx = ctx,
             .loader = ld,
             .phase = .open,
+            .plugin_stop_timeout_ms = opts.plugin_stop_timeout_ms,
             .interrupt_budget = default_interrupt_budget,
             .interrupt_count = 0,
             .fault_text = undefined,
@@ -327,7 +331,7 @@ pub const Host = struct {
         const callback = self.plugin_lifecycle orelse return;
         var guard: DeadlineGuard = .{
             .host = self,
-            .deadline = std.Io.Timestamp.now(self.io, .awake).addDuration(.fromMilliseconds(plugin_stop_timeout_ms)),
+            .deadline = std.Io.Timestamp.now(self.io, .awake).addDuration(.fromMilliseconds(self.plugin_stop_timeout_ms)),
         };
         self.runtime.setInterruptHandler(&guard);
         defer self.runtime.setInterruptHandler(self);
