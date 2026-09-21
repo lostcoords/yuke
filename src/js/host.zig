@@ -997,6 +997,7 @@ test {
     _ = @import("tests/native_tools_test.zig");
     _ = @import("tests/net_test.zig");
     _ = @import("tests/http_test.zig");
+    _ = @import("tests/mcp_test.zig");
     _ = @import("timers.zig");
     _ = @import("native/jobs.zig");
     _ = @import("tests/interaction_test.zig");

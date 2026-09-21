@@ -169,6 +169,11 @@ fn awaitWork(host: *Host) !void {
     }
 }
 
+pub fn hasTool(host: *Host, name: []const u8) bool {
+    for (host.tools.entries.items) |entry| if (std.mem.eql(u8, entry.decl.name, name)) return true;
+    return false;
+}
+
 pub fn dropCall(host: *Host, call: *tools_table.Call) !void {
     call.finish();
     try host.pump();

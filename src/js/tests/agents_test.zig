@@ -32,11 +32,6 @@ fn answerHook(host: *Host, point: []const u8, payload: []const u8) ![]u8 {
     return std.testing.allocator.dupe(u8, call.text.?);
 }
 
-fn hasTool(host: *Host, name: []const u8) bool {
-    for (host.tools.entries.items) |entry| if (std.mem.eql(u8, entry.decl.name, name)) return true;
-    return false;
-}
-
 const tool_fixture =
     \\import { plugins } from "yuke:ext";
     \\import { agents } from "yuke:agents";
@@ -54,7 +49,7 @@ test "the catalog is validated at boot and an absent plugin declares no agent to
     try support.eval(host, "agents/fixture.js");
     try support.eval(host, "agents/catalog.test.js");
     try support.expectString(host, "result", "ok");
-    for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent", "list_agents" }) |name| try std.testing.expect(!hasTool(host, name));
+    for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent", "list_agents" }) |name| try std.testing.expect(!support.hasTool(host, name));
 }
 
 test "a catalog with no maxRounds starts a child with no round cap" {
@@ -78,7 +73,7 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     defer support.destroyHost(host);
     try support.eval(host, "agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
-    try std.testing.expect(!hasTool(host, "list_agents"));
+    try std.testing.expect(!support.hasTool(host, "list_agents"));
     var seen = false;
     for (host.tools.entries.items) |entry| if (std.mem.eql(u8, entry.decl.name, "spawn_agent")) {
         seen = true;
@@ -155,7 +150,7 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
         \\globalThis.presentersGone = ["spawn_agent", "send_agent_input", "stop_agent"].every((name) => toolSource(name, {}).startsWith(name)) ? 1 : 0;
     , "dispose.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("presentersGone"));
-    for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent" }) |name| try std.testing.expect(!hasTool(host, name));
+    for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent" }) |name| try std.testing.expect(!support.hasTool(host, name));
 }
 
 test "the plugin ends a root prompt with the rule and scopes a child by its row" {

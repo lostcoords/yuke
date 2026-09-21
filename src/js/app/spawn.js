@@ -24,11 +24,21 @@ export function spawn(argv, options = {}) {
   };
 }
 
+// The longest line a child may send. A longer one is dropped up to its newline, so a stuck line cannot grow forever.
+const MAX_LINE_CHARS = 1024 * 1024;
+
 // Join chunks into lines and strip one CR before each LF, as MCP stdio framing does.
 /** @param {(line: string) => void} onLine @returns {(text: string) => void} */
 export function lines(onLine) {
   let rest = "";
+  let dropping = false;
   return (text) => {
+    if (dropping) {
+      const end = text.indexOf("\n");
+      if (end < 0) return;
+      text = text.slice(end + 1);
+      dropping = false;
+    }
     rest += text;
     // Walk with a cursor and cut the tail once, so a chunk with many lines copies the tail one time.
     let start = 0;
@@ -41,6 +51,7 @@ export function lines(onLine) {
       }
     } finally {
       rest = rest.slice(start);
+      if (rest.length > MAX_LINE_CHARS) { rest = ""; dropping = true; }
     }
   };
 }
