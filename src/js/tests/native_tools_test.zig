@@ -99,7 +99,7 @@ test "a native signal cancels and drains only its commands" {
     const host = fixture.host;
     try support.eval(host, "native_tools/cancellation.test.js");
     try std.testing.expectEqual(@as(usize, 3), host.ops.live.items.len);
-    const pids = try waitExecPids(host, fixture.tmp.?.dir);
+    const pids = try waitExecPids(host, fixture.tmp.?.dir, "started");
     try std.testing.expect(processExists(pids[0]));
     try std.testing.expect(processExists(pids[1]));
     try host.evalModule("globalThis.finishCancellation();", "cancel-signal.js");
@@ -420,9 +420,14 @@ test "exec call abort ends its process group and preserves unrelated work" {
     const canceled = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
     , root);
-    const survivor = host.calls.submit("exec", "{\"command\":\"sleep 0.3; echo survived\"}", root);
+    const survivor = host.calls.submit("exec",
+        \\{"command":"sleep 30 & child=$!; trap 'kill \"$child\"; wait \"$child\"; echo survived; exit 0' USR1; echo $$ $child > survivor-started; wait \"$child\""}
+    , root);
     try host.pump();
-    const pids = try waitExecPids(host, fixture.tmp.?.dir);
+    const pids = try waitExecPids(host, fixture.tmp.?.dir, "started");
+    const survivor_pids = try waitExecPids(host, fixture.tmp.?.dir, "survivor-started");
+    try std.testing.expect(processExists(survivor_pids[0]));
+    try std.testing.expect(processExists(survivor_pids[1]));
     try std.testing.expect(processExists(pids[0]));
     try std.testing.expect(processExists(pids[1]));
 
@@ -430,7 +435,7 @@ test "exec call abort ends its process group and preserves unrelated work" {
     canceled.finish();
     try host.pump();
     try std.testing.expect(started.durationTo(.now(host.io, .awake)).toMilliseconds() < 500);
-    while (host.ops.live.items.len != 0) {
+    while (processExists(pids[0]) or processExists(pids[1])) {
         if (started.durationTo(.now(host.io, .awake)).toMilliseconds() > 8000) return error.ExecAbortDidNotStop;
         host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(20), .clock = .awake } }) catch {};
         host.wake.reset();
@@ -438,7 +443,15 @@ test "exec call abort ends its process group and preserves unrelated work" {
     }
     try std.testing.expect(!processExists(pids[0]));
     try std.testing.expect(!processExists(pids[1]));
-    try std.testing.expect(survivor.state == .settled);
+    try std.testing.expect(survivor.state != .settled);
+    try std.testing.expect(processExists(survivor_pids[0]));
+    try std.testing.expect(processExists(survivor_pids[1]));
+    try std.posix.kill(survivor_pids[0], .USR1);
+    try support.pumpUntilSettled(host, survivor);
+    try support.pumpUntilIdle(host);
+    try std.testing.expect(!processExists(survivor_pids[0]));
+    try std.testing.expect(!processExists(survivor_pids[1]));
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
     try std.testing.expect(!survivor.is_error);
     try std.testing.expect(std.mem.indexOf(u8, survivor.text.?, "survived") != null);
     try support.dropCall(host, survivor);
@@ -489,7 +502,7 @@ test "exec completion detaches before call abort and host close rejects late exe
     try support.dropCall(host, race);
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
     try support.eval(host, "native_tools/exec-close.test.js");
-    const pids = try waitExecPids(host, fixture.tmp.?.dir);
+    const pids = try waitExecPids(host, fixture.tmp.?.dir, "started");
     const started: std.Io.Timestamp = .now(host.io, .awake);
     try host.close();
     try std.testing.expect(started.durationTo(.now(host.io, .awake)).toMilliseconds() < 8000);
@@ -542,7 +555,7 @@ test "session cancel reaches the builtin exec process group" {
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "Run the command." } }} } },
     }, &launch, null);
     runs.Launch.release(&launch, &f.app.engine);
-    const pids = try waitExecPids(host, f.tmp.dir);
+    const pids = try waitExecPids(host, f.tmp.dir, "started");
     const canceled = try commands.sessionCancelRun(&f.app.engine, a, .{ .session_id = created.session.id });
     try std.testing.expect(canceled.canceled_run != null);
     const started: std.Io.Timestamp = .now(host.io, .awake);
@@ -648,7 +661,7 @@ test "run cleanup stops signaled exec without another owner pump" {
     , root);
     call.work = &work;
     try host.pump();
-    const pids = try waitExecPids(host, fixture.tmp.?.dir);
+    const pids = try waitExecPids(host, fixture.tmp.?.dir, "started");
     try std.testing.expectEqual(@as(usize, 1), work.pending);
     call.finish();
     work.drain(runtime.io());
@@ -688,10 +701,10 @@ test "a hidden cancellation watch is never listed and no peer can answer it" {
     try support.expectString(host, "seen", "canceled");
 }
 
-fn waitExecPids(host: *Host, dir: std.Io.Dir) ![2]std.posix.pid_t {
+fn waitExecPids(host: *Host, dir: std.Io.Dir, path: []const u8) ![2]std.posix.pid_t {
     const started: std.Io.Timestamp = .now(host.io, .awake);
     while (started.durationTo(.now(host.io, .awake)).toMilliseconds() < 5000) {
-        const text = dir.readFileAlloc(std.testing.io, "started", std.testing.allocator, .limited(128)) catch |err| switch (err) {
+        const text = dir.readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(128)) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
         };
