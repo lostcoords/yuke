@@ -90,6 +90,32 @@ test "a silent MCP server times out after the legacy fallback and releases its r
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
 }
 
+test "an MCP call timeout cancels the request and ignores its late reply" {
+    var f: Fixture = undefined;
+    try f.init("timeout");
+    defer f.deinit();
+    const host = f.host;
+    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try expectState(host, "modern", "connected · modern · 3 tools: a.tool, a_tool, echo");
+    const start = std.Io.Timestamp.now(host.io, .awake);
+    const call = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", host.cwd);
+    try support.pumpUntilSettled(host, call);
+    try std.testing.expect(call.is_error);
+    try std.testing.expectEqualStrings("the request timed out", call.text orelse "");
+    try std.testing.expect(start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds() >= 100);
+    try expectCall(host, "mcp_modern_echo", "{\"text\":\"after-timeout\"}", "canceled: yes", false);
+    try std.testing.expect(call.is_error);
+    try std.testing.expectEqualStrings("the request timed out", call.text orelse "");
+    try support.dropCall(host, call);
+    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-timeout-dispose.js");
+    try support.pumpUntilTrue(host, "mcpDisposed === true");
+    try std.testing.expect(!support.hasTool(host, "mcp_modern_echo"));
+    try host.close();
+    try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.procs.live.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+}
+
 test "the MCP plugin connects both eras, names every failure, and answers each result kind" {
     var f: Fixture = undefined;
     try f.init("servers");
@@ -140,7 +166,6 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try support.pumpUntilTrue(host, "mcpStates().modern.includes('invalid MCP tool input schema')");
     try std.testing.expect(support.hasTool(host, "mcp_modern_added"));
     try expectCall(host, "mcp_modern_added", "{\"text\":\"still\"}", "modern: still", false);
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"slow\"}", "the request timed out", true);
     // A server that exits during a call fails the call and removes its tools.
     try expectCall(host, "mcp_dies_echo", "{}", "the server exited with code 3", true);
     try support.pumpUntilTrue(host, "mcpStates().dies === 'failed · legacy · the server exited with code 3 · stderr: boom'");

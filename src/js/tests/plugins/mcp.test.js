@@ -41,10 +41,17 @@ const MODERN = server(String.raw`    server/discover) case "$line" in
       badchange) changed=2; printf '{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n'; printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"changed"}]}}\n' "$id" ;;
       change) changed=1; printf '{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n'; printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"changed"}]}}\n' "$id" ;;
       big) printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"' "$id"; head -c 120000 /dev/zero | tr '\0' x; printf '"}]}}\n' ;;
-      slow) sleep 2; printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"late"}]}}\n' "$id" ;;
+      slow) delayed_id=$id ;;
+      after-timeout) printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"canceled: %s"}]}}\n' "$id" "$canceled" ;;
       *) printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"modern: %s"}]}}\n' "$id" "$text" ;;
     esac ;;
-`, String.raw`changed=0
+    notifications/cancelled) request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":\([0-9]*\).*/\1/p')
+    if [ -n "$delayed_id" ] && [ "$request_id" = "$delayed_id" ]; then
+      canceled=yes
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"late"}]}}\n' "$delayed_id"
+      delayed_id=""
+    fi ;;
+`, String.raw`changed=0; delayed_id=""; canceled=no
 `);
 // A legacy server that exits inside its first tool call.
 const DIES = server(String.raw`    server/discover) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"Method not found"}}\n' "$id" ;;
@@ -89,6 +96,12 @@ if (mcpCase === "servers") {
       off: { command: "/bin/sh", enabled: false },
     },
   });
+  globalThis.mcpReady = false;
+  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+}
+
+if (mcpCase === "timeout") {
+  globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 100, servers: { modern: sh(MODERN) } });
   globalThis.mcpReady = false;
   plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
 }
