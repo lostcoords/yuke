@@ -34,12 +34,19 @@ async function run() {
   await socket.write(new Uint8Array());
 
   const large = new Uint8Array(1048576);
-  for (let i = 0; i < large.length; i++) large[i] = i % 251;
+  for (let i = 0; i < 251; i++) large[i] = i;
+  for (let filled = 251; filled < large.length;) {
+    const copied = Math.min(filled, large.length - filled);
+    large.set(large.subarray(0, copied), filled);
+    filled += copied;
+  }
   let count = 0;
   const consume = (async () => {
     while (count < large.length) {
       const chunk = await socket.read({ maxBytes: 16384 });
-      for (const byte of chunk) equal(byte, count++ % 251);
+      for (let i = 0; i < chunk.length; i++, count++) {
+        if (chunk[i] !== count % 251) throw new Error(`Byte ${count}: expected ${count % 251}, got ${chunk[i]}`);
+      }
     }
   })();
   const writing = socket.write(large);
