@@ -13,7 +13,8 @@ const Value = quickjs.Value;
 /// A response owns its buffers until the owner settles or discards it.
 pub const Http = struct {
     status: u16,
-    body: []u8,
+    /// The parked body id, or zero when the response has no body.
+    body: u32,
     headers: []Header,
 
     pub const Header = struct {
@@ -27,7 +28,6 @@ pub const Http = struct {
     };
 
     fn deinit(self: Http, gpa: std.mem.Allocator) void {
-        gpa.free(self.body);
         for (self.headers) |header| header.free(gpa);
         gpa.free(self.headers);
     }
@@ -36,7 +36,7 @@ pub const Http = struct {
         const object = ctx.newObject();
         if (ctx.isException(object)) return object;
         module.set(ctx, object, "status", ctx.newUint32(self.status));
-        module.set(ctx, object, "body", ctx.newString(self.body));
+        module.set(ctx, object, "body", ctx.newUint32(self.body));
         const headers = ctx.newObjectProto(quickjs.NULL);
         for (self.headers) |header| module.set(ctx, headers, header.name, ctx.newString(header.value));
         module.set(ctx, object, "headers", headers);
@@ -150,12 +150,39 @@ pub const Op = struct {
     }
 };
 
+/// The results a task answers when a stop is not the worker's own answer.
+pub const Failures = struct { canceled: Result, timed_out: Result, failed: Result };
+
+/// Run `worker(host, op, payload, *result)` under the op's cancel token until `timeout`. A canceled, late, or unstartable worker maps through `failures`.
+pub fn runTimed(host: anytype, op: *Op, timeout: std.Io.Timeout, comptime worker: anytype, payload: anytype, failures: Failures) Result {
+    var result: Result = failures.canceled;
+    if (op.cancel.isRequested()) return result;
+    if (timeout == .deadline and timeout.deadline.durationFromNow(host.io).raw.nanoseconds <= 0) return failures.timed_out;
+    const outcome = op.cancel.runChildTimeout(host.io, timeout, worker, .{ host, op, payload, &result }) catch {
+        result.deinit(host.gpa);
+        return failures.timed_out;
+    };
+    switch (outcome) {
+        .returned => |returned| returned catch {
+            result.deinit(host.gpa);
+            return failures.failed;
+        },
+        .canceled, .aborted => {
+            result.deinit(host.gpa);
+            return failures.canceled;
+        },
+    }
+    return result;
+}
+
 /// Every op this host has started and not yet settled. The owner drains it between frames.
 pub const Ops = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
     wake: *std.Io.Event,
     live: std.ArrayList(*Op) = .empty,
+    /// Settled records wait here, so a steady stream of ops allocates none.
+    spare: std.ArrayList(*Op) = .empty,
 
     pub fn deinit(self: *Ops, ctx: Context) void {
         // A host that dies with work in flight frees the roots itself; nothing settles after this.
@@ -172,7 +199,9 @@ pub const Ops = struct {
             if (op.result) |r| r.deinit(self.gpa);
             self.gpa.destroy(op);
         }
+        for (self.spare.items) |op| self.gpa.destroy(op);
         self.live.deinit(self.gpa);
+        self.spare.deinit(self.gpa);
         self.* = undefined;
     }
 
@@ -181,7 +210,7 @@ pub const Ops = struct {
         var funcs: [2]Value = undefined;
         const promise = ctx.newPromiseCapability(&funcs);
         if (ctx.isException(promise)) return null;
-        const op = self.gpa.create(Op) catch unreachable;
+        const op = self.spare.pop() orelse self.gpa.create(Op) catch unreachable;
         op.* = .{ .resolve = funcs[0], .reject = funcs[1], .wake = self.wake, .io = self.io };
         self.live.append(self.gpa, op) catch unreachable;
         return .{ .op = op, .promise = promise };
@@ -222,7 +251,7 @@ pub const Ops = struct {
             ctx.freeValue(op.resolve);
             ctx.freeValue(op.reject);
             ctx.freeValue(op.signal);
-            self.gpa.destroy(op);
+            self.spare.append(self.gpa, op) catch unreachable;
         }
         return faulted;
     }

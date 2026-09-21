@@ -3,7 +3,7 @@
 const std = @import("std");
 const http = @import("native/http.zig");
 
-pub const Mode = enum { reply, echo, head, put, patch, delete, empty, hints, missing, redirect, limit, oversize, chunked, truncated, headers, header_bytes, utf8, malformed, bad_status, compressed, stall, slow_body, oversized_chunk, chunk_limit, close_delimited, close, silent_close, gated, partial_head, upload_stall, headers_limit, header_bytes_limit, close_limit, close_oversize };
+pub const Mode = enum { reply, echo, head, put, patch, delete, empty, hints, missing, redirect, limit, oversize, chunked, truncated, headers, header_bytes, utf8, malformed, bad_status, compressed, stall, slow_body, oversized_chunk, chunk_limit, close_delimited, close, silent_close, gated, partial_head, upload_stall, headers_limit, header_bytes_limit, close_limit, close_oversize, sse };
 
 pub const Peer = struct {
     gpa: std.mem.Allocator,
@@ -188,6 +188,17 @@ pub const Peer = struct {
                     try writer.interface.writeAll("HTTP/1.1 200 OK\r\nContent-Length: 1\r\nBad Header: value\r\n\r\nx");
                 },
                 .compressed => try request.respond("bad", .{ .keep_alive = false, .extra_headers = &.{.{ .name = "Content-Encoding", .value = "gzip" }} }),
+                // One event, then a wait for the test, then a character split across two writes, a stray byte, and the end.
+                .sse => {
+                    try writer.interface.writeAll("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\nb\r\ndata: one\n\n\r\n");
+                    try writer.interface.flush();
+                    self.announce();
+                    try self.pause();
+                    try writer.interface.writeAll("8\r\ndata: \xe4\xb8\r\n");
+                    try writer.interface.flush();
+                    // The stray byte at the end arrives repaired, after the last whole character.
+                    try writer.interface.writeAll("9\r\n\x96\xe7\x95\x8c\n\ndat\r\n8\r\na: end\n\xff\r\n0\r\n\r\n");
+                },
             }
             try writer.interface.flush();
             switch (mode) {

@@ -110,6 +110,8 @@ pub const Host = struct {
 
     /// The shared `fetch` client. It loads the root bundle once and takes a fresh clock for each request.
     http: http_module.Client = .{},
+    /// The response bodies that wait for reads. Each one holds a client connection until it ends.
+    bodies: http_module.Bodies = .{},
 
     plugin_lifecycle: ?quickjs.Value = null,
     signal_class_id: quickjs.ClassID = 0,
@@ -219,6 +221,7 @@ pub const Host = struct {
         std.debug.assert(self.phase == .open);
         self.enterSlice();
         self.net.reap(self.gpa);
+        self.bodies.reap(self.gpa);
         // Engine events reach JavaScript here, on the owner, never from an engine task.
         if (engine_module.drain(self.engine, self.ctx)) return error.JavaScriptFault;
         call_run.abortLeft(self); // A continuation below must read a left call's signal as aborted.
@@ -291,9 +294,12 @@ pub const Host = struct {
         call_run.abortAll(self);
         self.endChildren();
         self.net.closeAll();
+        self.bodies.closeAll();
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
         self.net.deinit(self.gpa);
+        // Every body has released its connection, so the client can free the pool.
+        self.bodies.deinit(self.gpa);
         self.http.deinit();
         self.timers.deinit(self.ctx, self.gpa);
         self.procs.deinit(self);
@@ -347,6 +353,7 @@ pub const Host = struct {
             self.wake.reset();
             self.enterSlice();
             self.net.reap(self.gpa);
+            self.bodies.reap(self.gpa);
             if (self.procs.drain(self)) self.dropPendingException();
             if (self.ops.settle(self.ctx)) self.dropPendingException();
             if (self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) self.dropPendingException();

@@ -5,15 +5,32 @@ declare module "yuke:http-native" {
     method?: "GET" | "POST" | "PUT" | "PATCH" | "HEAD" | "DELETE";
     headers?: Record<string, string>;
     body?: string;
+    /** The connect and head deadline; default 30000, maximum 120000. */
     timeoutMs?: number;
     signal?: CancellationSignal;
   }
 
-  export interface HttpResponse {
+  export interface ReadOptions {
+    /** The deadline of one read; default 30000, maximum 600000. */
+    timeoutMs?: number;
+    signal?: CancellationSignal;
+    /** The largest chunk one read answers; default 65536, from 4 to 1048576. */
+    maxBytes?: number;
+  }
+
+  export interface HttpHead {
     status: number;
-    body: string;
+    /** The parked body, or zero when the response has none. */
+    body: number;
     headers: Record<string, string>;
   }
 
-  export function fetch(url: string, options?: FetchOptions): Promise<HttpResponse>;
+  /** Resolves at the response head. The body waits for reads. */
+  export function fetch(url: string, options?: FetchOptions): Promise<HttpHead>;
+  /** Answers one text chunk cut on a character boundary, or null at the end. A concurrent read rejects. */
+  export function read(id: number, options?: ReadOptions): Promise<string | null>;
+  /** Answers the rest of the body as text, or rejects above 256 KiB. */
+  export function readAll(id: number, options?: ReadOptions): Promise<string>;
+  /** Drops the body and its connection; repeat calls are safe. */
+  export function close(id: number): void;
 }

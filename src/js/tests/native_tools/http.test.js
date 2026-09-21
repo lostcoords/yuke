@@ -1,22 +1,26 @@
 import { fetch } from "yuke";
 import { check, equal } from "yuke:test";
 
+// The head refuses these before any body exists.
 const failures = {
   redirect: "the request was redirected",
-  oversize: "the response exceeds the size limit",
-  truncated: "the host could not complete the request",
   malformed: "the host could not complete the request",
   bad_status: "the host could not complete the request",
   compressed: "the host could not complete the request",
   refused: "the host could not complete the request",
-  oversized_chunk: "the response exceeds the size limit",
-  slow_body: "the request timed out",
   partial_head: "the request timed out",
   upload_stall: "the request timed out",
-  close_oversize: "the response exceeds the size limit",
   headers: "the response exceeds the size limit",
   header_bytes: "the response exceeds the size limit",
   stall: "the request timed out",
+};
+// The head arrives, and the body read fails.
+const bodyFailures = {
+  oversize: "the response exceeds the size limit",
+  truncated: "the host could not complete the request",
+  oversized_chunk: "the response exceeds the size limit",
+  slow_body: "the request timed out",
+  close_oversize: "the response exceeds the size limit",
 };
 
 async function runPool() {
@@ -28,8 +32,8 @@ async function runPool() {
   await read(httpUrl.replace(/^http:/, "HTTP:"));
   if (httpPoolCase === "recover" || httpPoolCase === "no_replay") {
     let failed = false;
-    try { await fetch(httpUrl, httpPoolCase === "no_replay" ? { method: "POST", body: "" } : undefined); }
-    catch (error) { failed = true; equal(error.message, httpPoolCase === "no_replay" ? "the host could not complete the request" : failures[httpMode]); }
+    try { await (await fetch(httpUrl, httpPoolCase === "no_replay" ? { method: "POST", body: "" } : undefined)).text(); }
+    catch (error) { failed = true; equal(error.message, httpPoolCase === "no_replay" ? "the host could not complete the request" : failures[httpMode] ?? bodyFailures[httpMode]); }
     check("failed request did not replay", failed);
   }
   if (httpPoolCase === "origins") await read(httpSecondUrl);
@@ -51,6 +55,20 @@ async function run() {
     try { await fetch(httpUrl, options); } catch (error) { equal(error.message, failures[httpMode]); return; }
     throw new Error("request did not reject: " + httpMode);
   }
+  // A chunk read has no total cap, so the body that `text()` refuses streams whole.
+  if (httpMode === "oversize") {
+    let total = 0, chunks = 0;
+    for await (const chunk of (await fetch(httpUrl, options)).body) { total += chunk.length; chunks += 1; }
+    equal(total, 256 * 1024 + 1);
+    check("the body arrived in bounded chunks", chunks >= 5);
+    return;
+  }
+  if (bodyFailures[httpMode]) {
+    const response = await fetch(httpUrl, options);
+    equal(response.status, 200);
+    try { await response.text(); } catch (error) { equal(error.message, bodyFailures[httpMode]); return; }
+    throw new Error("body did not reject: " + httpMode);
+  }
   const expectedBody = options.body;
   const pending = fetch(httpUrl, options);
   if (httpMode === "echo") { options.body = "changed"; options.headers.Authorization = "changed"; }
@@ -62,6 +80,8 @@ async function run() {
   equal(response.headers.get(1), null);
   const text = await response.text();
   equal(await response.text(), text);
+  equal(await response.body.read(), null);
+  equal(await response.body.readAll(), "");
   if (httpMode === "reply") equal((await response.json()).ok, true);
   if (httpMode === "echo") {
     equal(text, expectedBody);

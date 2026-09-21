@@ -93,6 +93,54 @@ fn run(mode: Mode, options: struct { cleanup: Cleanup = .none, pool: ?PoolCase =
     try std.testing.expectEqual(@as(?anyerror, null), peer.failure);
 }
 
+/// Drive one gated stream mode: the peer writes its first part, the test sees it in JavaScript, then the peer writes the rest.
+fn runStream(mode: Mode) !void {
+    const runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer runtime.deinit();
+    const peer = try Peer.create(std.testing.allocator, runtime.io(), mode);
+    defer peer.destroy();
+    const host = support.createHostWith(runtime.io(), "");
+    defer support.destroyHost(host);
+    peer.wake = &host.wake;
+    const global = host.ctx.getGlobalObject();
+    defer host.ctx.freeValue(global);
+    try host.ctx.setPropertyStr(global, "httpUrl", host.ctx.newString(peer.url));
+    try host.ctx.setPropertyStr(global, "httpMode", host.ctx.newString(@tagName(mode)));
+    try host.ctx.setPropertyStr(global, "httpError", host.ctx.newString(""));
+    try support.eval(host, "native_tools/http-stream.test.js");
+    try support.pumpUntilSet(host, &peer.ready);
+    try support.pumpUntilTrue(host, "globalThis.httpChunks === 1");
+    peer.release.set(host.io);
+    try support.pumpUntilTrue(host, "globalThis.httpDone === true");
+    try support.expectString(host, "httpError", "");
+    const client = &host.http.inner.?;
+    host.bodies.reap(host.gpa);
+    if (mode == .slow_body) {
+        // The canceled body closed its connection, and the unread one still holds its own.
+        try std.testing.expectEqual(@as(usize, 1), host.bodies.live.items.len);
+        try std.testing.expectEqual(@as(usize, 0), client.connection_pool.free_len);
+        try std.testing.expectEqual(@as(usize, 2), peer.connections.load(.acquire));
+    } else {
+        // A stream read to its end returns its connection to the pool.
+        try std.testing.expectEqual(@as(usize, 0), host.bodies.live.items.len);
+        try std.testing.expectEqual(@as(usize, 1), client.connection_pool.free_len);
+    }
+    try host.close();
+    try std.testing.expect(host.http.inner == null);
+    try std.testing.expectEqual(@as(usize, 0), host.bodies.live.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    peer.stop();
+    try std.testing.expectEqual(@as(?anyerror, null), peer.failure);
+}
+
+test "fetch streams a body in chunks and carries a character split across reads" {
+    try runStream(.sse);
+}
+
+test "a canceled body leaves the pool, and an unread body ends at host close" {
+    try runStream(.slow_body);
+}
+
 test "fetch rejects invalid arguments without an operation" {
     const host = support.createHost();
     defer support.destroyHost(host);

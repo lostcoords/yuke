@@ -23,7 +23,7 @@ const io_failed: pending.Failure = .{ .message = "the socket operation failed", 
 // The host has one executor, so tasks share this state only across suspension points.
 const Connection = struct {
     host: *Host,
-    id: u32,
+    id: u32 = 0,
     stream: ?std.Io.net.Stream = null,
     closed: bool = false,
     finished: bool = false,
@@ -34,7 +34,7 @@ const Connection = struct {
     write_op: ?*pending.Op = null,
     changed: std.Io.Event = .unset,
 
-    fn close(self: *Connection) void {
+    pub fn close(self: *Connection) void {
         if (self.closed) return;
         self.closed = true;
         for ([_]?*pending.Op{ self.connect_op, self.read_op, self.write_op }) |maybe| {
@@ -42,43 +42,19 @@ const Connection = struct {
         }
         self.changed.set(self.host.io);
     }
+
+    pub fn done(self: *const Connection) bool {
+        if (!self.finished) return false;
+        std.debug.assert(self.closed and self.stream == null);
+        std.debug.assert(!self.read_busy and !self.write_busy);
+        return true;
+    }
+
+    /// The connect task closed the stream, so the record holds nothing else.
+    pub fn deinit(_: *Connection, _: std.mem.Allocator) void {}
 };
 
-pub const Connections = struct {
-    live: std.ArrayList(*Connection) = .empty,
-    last_id: u32 = 0,
-
-    fn find(self: *Connections, id: u32) ?*Connection {
-        for (self.live.items) |connection| if (connection.id == id) return connection;
-        return null;
-    }
-
-    pub fn reap(self: *Connections, gpa: std.mem.Allocator) void {
-        var i: usize = 0;
-        while (i < self.live.items.len) {
-            const connection = self.live.items[i];
-            if (!connection.finished) {
-                i += 1;
-                continue;
-            }
-            std.debug.assert(connection.closed and connection.stream == null);
-            std.debug.assert(!connection.read_busy and !connection.write_busy);
-            _ = self.live.swapRemove(i);
-            gpa.destroy(connection);
-        }
-    }
-
-    pub fn closeAll(self: *Connections) void {
-        for (self.live.items) |connection| connection.close();
-    }
-
-    pub fn deinit(self: *Connections, gpa: std.mem.Allocator) void {
-        self.reap(gpa);
-        std.debug.assert(self.live.items.len == 0);
-        self.live.deinit(gpa);
-        self.* = .{};
-    }
-};
+pub const Connections = module.Table(Connection);
 
 pub fn install(host: *Host) void {
     module.installFunctions(host, "yuke:net-native", &.{
@@ -89,27 +65,9 @@ pub fn install(host: *Host) void {
     });
 }
 
-const Options = struct {
-    signal: Value,
-    deadline: std.Io.Clock.Timestamp,
-    max_bytes: u32,
-
-    fn parse(host: *Host, value: Value, read: bool) !Options {
-        const ctx = host.ctx;
-        if (!ctx.isUndefined(value) and (!ctx.isObject(value) or ctx.isArray(value))) return error.InvalidOption;
-        const timeout_ms = (try module.optionalInteger(ctx, value, "timeoutMs", default_timeout_ms, max_timeout_ms)).?;
-        const limit = if (read) (try module.optionalInteger(ctx, value, "maxBytes", default_read_bytes, max_bytes)).? else 0;
-        const signal = if (ctx.isObject(value)) ctx.getPropertyStr(value, "signal") else quickjs.UNDEFINED;
-        if (ctx.isException(signal)) return error.InvalidOption;
-        errdefer ctx.freeValue(signal);
-        if (!ctx.isUndefined(signal) and cancellation.get(ctx, signal) == null) return error.InvalidOption;
-        return .{
-            .signal = signal,
-            .deadline = .fromNow(host.io, .{ .clock = .awake, .raw = .fromMilliseconds(timeout_ms) }),
-            .max_bytes = limit,
-        };
-    }
-};
+const plain_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_timeout_ms };
+const read_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_timeout_ms, .min_bytes = 1, .default_bytes = default_read_bytes, .max_bytes = max_bytes };
+const failures: pending.Failures = .{ .canceled = .{ .failed = canceled }, .timed_out = .{ .failed = timed_out }, .failed = .{ .failed = io_failed } };
 
 const Kind = enum { connect, read, write };
 const Request = struct {
@@ -153,7 +111,7 @@ fn jsConnect(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (!host.acceptsIo()) return pending.rejectedWith(ctx, closed);
     if (args.len == 0 or !ctx.isObject(args[0]) or ctx.isArray(args[0])) return invalid(ctx);
-    const options = Options.parse(host, args[0], false) catch return invalid(ctx);
+    const options = module.ioOptions(host, args[0], plain_limits) catch return invalid(ctx);
     defer ctx.freeValue(options.signal);
     const path_value = ctx.getPropertyStr(args[0], "path");
     defer ctx.freeValue(path_value);
@@ -161,13 +119,8 @@ fn jsConnect(ctx: Context, _: Value, args: []const Value) Value {
     defer ctx.freeCString(path.ptr);
     if (path.len == 0 or path.len > std.Io.net.UnixAddress.max_len or std.mem.indexOfScalar(u8, path, 0) != null) return invalid(ctx);
     if (isAborted(ctx, options.signal)) return pending.rejectedWith(ctx, canceled);
-    host.net.reap(host.gpa);
-    if (host.net.live.items.len == max_connections or host.net.last_id == std.math.maxInt(u32))
-        return pending.rejectedWith(ctx, .{ .message = "the socket limit was reached", .code = "LIMIT" });
-    const connection = host.gpa.create(Connection) catch unreachable;
-    host.net.last_id += 1;
-    connection.* = .{ .host = host, .id = host.net.last_id };
-    host.net.live.append(host.gpa, connection) catch unreachable;
+    if (host.net.full(host.gpa, max_connections)) return pending.rejectedWith(ctx, .{ .message = "the socket limit was reached", .code = "LIMIT" });
+    const connection = host.net.add(host.gpa, .{ .host = host });
     const request: Request = .{ .connection = connection, .kind = .connect, .bytes = host.gpa.dupe(u8, path) catch unreachable, .deadline = options.deadline };
     return host.startTaskWithSignal(Request, connectTask, request, options.signal);
 }
@@ -187,7 +140,7 @@ fn connectionArg(host: *Host, args: []const Value) ?*Connection {
 fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (!host.acceptsIo()) return pending.rejectedWith(ctx, closed);
-    const options = Options.parse(host, if (args.len > 1) args[1] else quickjs.UNDEFINED, true) catch return invalid(ctx);
+    const options = module.ioOptions(host, if (args.len > 1) args[1] else quickjs.UNDEFINED, read_limits) catch return invalid(ctx);
     defer ctx.freeValue(options.signal);
     const connection = connectionArg(host, args) orelse return pending.rejectedWith(ctx, closed);
     if (isAborted(ctx, options.signal)) {
@@ -202,7 +155,7 @@ fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
 fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (!host.acceptsIo()) return pending.rejectedWith(ctx, closed);
-    const options = Options.parse(host, if (args.len > 2) args[2] else quickjs.UNDEFINED, false) catch return invalid(ctx);
+    const options = module.ioOptions(host, if (args.len > 2) args[2] else quickjs.UNDEFINED, plain_limits) catch return invalid(ctx);
     defer ctx.freeValue(options.signal);
     if (args.len < 2) return invalid(ctx);
     const kind = ctx.getTypedArrayType(args[1]) catch return invalid(ctx);
@@ -227,25 +180,10 @@ fn jsClose(ctx: Context, _: Value, args: []const Value) Value {
     return quickjs.UNDEFINED;
 }
 
+/// Run one operation, or answer canceled at once for a closed connection.
 fn run(host: *Host, op: *pending.Op, request: Request) pending.Result {
-    var result: pending.Result = .{ .failed = canceled };
-    if (request.connection.closed or op.cancel.isRequested()) return result;
-    if (request.deadline.durationFromNow(host.io).raw.nanoseconds <= 0) return .{ .failed = timed_out };
-    const outcome = op.cancel.runChildTimeout(host.io, .{ .deadline = request.deadline }, worker, .{ host, op, request, &result }) catch {
-        result.deinit(host.gpa);
-        return .{ .failed = timed_out };
-    };
-    switch (outcome) {
-        .returned => |returned| returned catch {
-            result.deinit(host.gpa);
-            return .{ .failed = io_failed };
-        },
-        .canceled, .aborted => {
-            result.deinit(host.gpa);
-            return .{ .failed = canceled };
-        },
-    }
-    return result;
+    if (request.connection.closed) return failures.canceled;
+    return pending.runTimed(host, op, .{ .deadline = request.deadline }, worker, request, failures);
 }
 
 fn connectTask(host: *Host, op: *pending.Op, request: Request) void {

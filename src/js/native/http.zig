@@ -1,17 +1,25 @@
-//! Bounded HTTP requests use worker tasks; only the owner reads or creates JavaScript values.
+//! HTTP requests run on worker tasks; only the owner reads or creates JavaScript values. The head answers first, and the body waits for reads.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
 const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 const pending = @import("../pending.zig");
+const cancellation = @import("cancellation.zig");
 const utf8 = @import("../../utf8.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
 pub const default_timeout_ms: u32 = 30_000;
 pub const max_timeout_ms: u32 = 120_000;
+/// A body read may wait longer than a head, so a quiet event stream stays open.
+pub const max_read_timeout_ms: u32 = 600_000;
+/// `text()` refuses a body above this; a chunk read has no total cap.
 pub const max_response_bytes: usize = 256 * 1024;
+pub const default_read_bytes: u32 = 64 * 1024;
+pub const max_read_bytes: u32 = 1024 * 1024;
+/// Every parked body holds one connection, so the count is bounded like the sockets.
+pub const max_bodies = 64;
 const max_response_headers = 64;
 const max_response_header_bytes = 8 * 1024;
 
@@ -36,7 +44,12 @@ pub const Client = struct {
 };
 
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:http-native", &.{.{ .name = "fetch", .arity = 2, .call = jsFetch }});
+    module.installFunctions(host, "yuke:http-native", &.{
+        .{ .name = "fetch", .arity = 2, .call = jsFetch },
+        .{ .name = "read", .arity = 2, .call = jsRead },
+        .{ .name = "readAll", .arity = 2, .call = jsReadAll },
+        .{ .name = "close", .arity = 1, .call = jsClose },
+    });
 }
 
 // The supervisor owns this arena until its worker joins.
@@ -174,6 +187,72 @@ fn validHeaderValue(value: []const u8) bool {
     return true;
 }
 
+const read_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_read_timeout_ms, .min_bytes = 4, .default_bytes = default_read_bytes, .max_bytes = max_read_bytes };
+const canceled: pending.Result = .{ .failed = .{ .message = "the request was canceled" } };
+const timed_out: pending.Result = .{ .failed = .{ .message = "the request timed out" } };
+const io_failed: pending.Result = .{ .failed = .{ .message = "the host could not complete the request" } };
+const too_long: pending.Result = .{ .failed = .{ .message = "the response exceeds the size limit" } };
+const failures: pending.Failures = .{ .canceled = canceled, .timed_out = timed_out, .failed = .{ .failed = .{ .message = "the host cannot start another operation" } } };
+
+/// One response, tabled from the request on. The std response points at the request, so both live here, pinned.
+const Body = struct {
+    host: *Host,
+    id: u32 = 0,
+    /// The parsed request owns the header bytes std borrows for the whole exchange.
+    parsed: Request,
+    /// Null once the connection went back to the client.
+    request: ?std.http.Client.Request = null,
+    response: std.http.Client.Response = undefined,
+    reader: ?*std.Io.Reader = null,
+    /// The bytes of one character a chunk cut, kept for the next read.
+    carry: [3]u8 = undefined,
+    carry_len: u8 = 0,
+    /// True after a read saw the end of the stream, so the read task ends the body.
+    eof: bool = false,
+    /// True once no read may start. The record leaves the table after its last read returns.
+    ended: bool = false,
+    read_busy: bool = false,
+    read_op: ?*pending.Op = null,
+
+    /// Give the connection back. A failed exchange or a body short of its end must not return to the pool.
+    fn release(self: *Body, failed: bool) void {
+        // The close is an I/O call that can suspend, so the request leaves the body before it, and a second caller finds none.
+        var request = self.request orelse return;
+        self.request = null;
+        if (failed or request.reader.state != .ready) if (request.connection) |connection| {
+            connection.closing = true;
+        };
+        request.deinit();
+    }
+
+    fn end(self: *Body) void {
+        self.ended = true;
+        self.release(false);
+    }
+
+    /// Stop the body. A read in flight ends it when that read returns.
+    pub fn close(self: *Body) void {
+        if (self.ended) return;
+        if (self.read_op) |op| op.cancel.request(self.host.io) else self.end();
+    }
+
+    pub fn done(self: *const Body) bool {
+        return self.ended and !self.read_busy;
+    }
+
+    /// The head task payload path: a task that never starts ends the body, and the table reaps it.
+    pub fn free(self: *Body, _: std.mem.Allocator) void {
+        self.end();
+    }
+
+    pub fn deinit(self: *Body, gpa: std.mem.Allocator) void {
+        std.debug.assert(self.request == null);
+        self.parsed.free(gpa);
+    }
+};
+
+pub const Bodies = module.Table(Body);
+
 fn jsFetch(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (!host.acceptsIo()) return pending.rejected(ctx, "the host is closed");
@@ -197,65 +276,58 @@ fn jsFetch(ctx: Context, _: Value, args: []const Value) Value {
         request.free(host.gpa);
         return pending.rejected(ctx, "the fetch signal could not be read");
     }
-    return host.startTaskWithSignal(Request, httpTask, request, signal);
+    if (host.bodies.full(host.gpa, max_bodies)) {
+        request.free(host.gpa);
+        return pending.rejected(ctx, "the host holds 64 open response bodies");
+    }
+    const body = host.bodies.add(host.gpa, .{ .host = host, .parsed = request });
+    return host.startTaskWithSignal(*Body, httpTask, body, signal);
 }
 
-const canceled: pending.Result = .{ .failed = .{ .message = "the request was canceled" } };
-
-fn httpTask(host: *Host, op: *pending.Op, request: Request) void {
-    defer request.free(host.gpa);
-    std.debug.assert(op.result == null);
-    if (op.cancel.isRequested()) return op.finish(canceled);
-    var result: pending.Result = canceled;
-    const timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(request.timeout_ms) } };
-    const outcome = op.cancel.runChildTimeout(host.io, timeout, httpWorker, .{ host, op, request, &result }) catch {
-        result.deinit(host.gpa);
-        return op.finish(.{ .failed = .{ .message = "the request timed out" } });
-    };
-    switch (outcome) {
-        .returned => |started| started catch {
-            result.deinit(host.gpa);
-            return op.finish(.{ .failed = .{ .message = "the host cannot start another operation" } });
-        },
-        .canceled, .aborted => {
-            result.deinit(host.gpa);
-            result = canceled;
-        },
-    }
+/// Run the head exchange under the deadline. A stop after the head ends the body nobody will read.
+fn httpTask(host: *Host, op: *pending.Op, body: *Body) void {
+    const timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(body.parsed.timeout_ms) } };
+    const result = pending.runTimed(host, op, timeout, httpWorker, body, failures);
+    if (result != .http) body.end();
     op.finish(result);
 }
 
-fn httpWorker(host: *Host, op: *pending.Op, request: Request, result: *pending.Result) error{}!void {
+fn httpWorker(host: *Host, op: *pending.Op, body: *Body, result: *pending.Result) error{}!void {
     defer op.cancel.finish(host.io);
-    std.debug.assert(result.* == .failed);
-    result.* = .{ .http = exchange(host, request) catch |err| {
-        result.* = .{ .failed = .{ .message = switch (err) {
-            error.Canceled => "the request was canceled",
-            error.Redirect => "the request was redirected",
-            error.StreamTooLong, error.HttpHeadersOversize => "the response exceeds the size limit",
-            else => "the host could not complete the request",
-        } } };
+    const head = exchange(host, body) catch |err| {
+        body.release(true);
+        body.end();
+        result.* = switch (err) {
+            error.Canceled => canceled,
+            error.Redirect => .{ .failed = .{ .message = "the request was redirected" } },
+            error.StreamTooLong, error.HttpHeadersOversize => too_long,
+            else => io_failed,
+        };
         return;
-    } };
+    };
+    result.* = .{ .http = head };
 }
 
-fn exchange(host: *Host, req: Request) !pending.Http {
-    const uri = std.Uri.parse(req.url) catch unreachable;
+fn exchange(host: *Host, body: *Body) !pending.Http {
+    const uri = std.Uri.parse(body.parsed.url) catch unreachable;
     const client = host.http.acquire(host.gpa, host.io);
     var reused = false;
-    return exchangeOnce(client, req, uri, &reused) catch |err| {
+    return exchangeOnce(client, body, uri, &reused) catch |err| {
+        body.release(true);
         // A stale idle connection may retry a safe method, but never replay a body or a partial response.
-        if (!reused or (req.method != .GET and req.method != .HEAD)) return err;
-        switch (err) {
-            error.WriteFailed, error.ReadFailed, error.EndOfStream, error.HttpConnectionClosing => return exchangeOnce(client, req, uri, &reused),
-            else => return err,
-        }
+        if (!reused or (body.parsed.method != .GET and body.parsed.method != .HEAD)) return err;
+        return switch (err) {
+            error.WriteFailed, error.ReadFailed, error.EndOfStream, error.HttpConnectionClosing => exchangeOnce(client, body, uri, &reused),
+            else => err,
+        };
     };
 }
 
-fn exchangeOnce(client: *std.http.Client, req: Request, uri: std.Uri, reused: *bool) !pending.Http {
+/// Send the request and read the head. The body stays tabled when the response has one, and ends now when it has none.
+fn exchangeOnce(client: *std.http.Client, body: *Body, uri: std.Uri, reused: *bool) !pending.Http {
     const gpa = client.allocator;
     const io = client.io;
+    const req = &body.parsed;
     try io.checkCancel();
     var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
     const protocol = std.http.Client.Protocol.fromUri(uri).?;
@@ -266,21 +338,17 @@ fn exchangeOnce(client: *std.http.Client, req: Request, uri: std.Uri, reused: *b
     });
     reused.* = connection != null;
     // An unhandled redirect returns its head without a body drain or a second request.
-    var request = client.request(req.method, uri, .{ .connection = connection, .redirect_behavior = .unhandled, .handle_continue = false, .headers = req.headers, .extra_headers = req.extra_headers }) catch |err| {
+    body.request = client.request(req.method, uri, .{ .connection = connection, .redirect_behavior = .unhandled, .handle_continue = false, .headers = req.headers, .extra_headers = req.extra_headers }) catch |err| {
         if (connection) |held| {
             held.closing = true;
             client.connection_pool.release(held, io);
         }
         return err;
     };
-    defer request.deinit();
-    errdefer if (request.connection) |held| {
-        held.closing = true;
-    };
-    // Check content encoding after the status, so a compressed redirect still reports a redirect.
+    const request = &body.request.?;
     request.accept_encoding = @splat(true);
     if (req.method.requestHasBody()) try request.sendBodyComplete(req.body orelse &.{}) else try request.sendBodiless();
-    var response = response: while (true) {
+    body.response = response: while (true) {
         // Validate digits before the standard parser converts the untrusted status to u10.
         const prefix = try request.connection.?.reader().peekArray(12);
         if (prefix[9] < '1' or prefix[9] > '5' or !std.ascii.isDigit(prefix[10]) or !std.ascii.isDigit(prefix[11])) return error.BadStatus;
@@ -290,12 +358,11 @@ fn exchangeOnce(client: *std.http.Client, req: Request, uri: std.Uri, reused: *b
         try io.checkCancel();
     };
     reused.* = false;
-    const status: u16 = @intFromEnum(response.head.status);
+    const head = &body.response.head;
+    const status: u16 = @intFromEnum(head.status);
     if (status >= 300 and status < 400) return error.Redirect;
-    const has_body = req.method != .HEAD and status != 204 and status != 205;
-    if (has_body and response.head.content_encoding != .identity) return error.UnsupportedEncoding;
-    const content_length = if (has_body and response.head.transfer_encoding == .none) response.head.content_length else null;
-    if (content_length) |length| if (length > max_response_bytes) return error.StreamTooLong;
+    const has_body = req.method != .HEAD and status != 204 and status != 205 and !(head.transfer_encoding == .none and head.content_length == 0);
+    if (has_body and head.content_encoding != .identity) return error.UnsupportedEncoding;
 
     // The body reader invalidates the head slices, so copy the bounded headers first.
     var headers: std.ArrayList(pending.Http.Header) = .empty;
@@ -304,7 +371,7 @@ fn exchangeOnce(client: *std.http.Client, req: Request, uri: std.Uri, reused: *b
         headers.deinit(gpa);
     }
     var total: usize = 0;
-    var it = response.head.iterateHeaders();
+    var it = head.iterateHeaders();
     next_header: while (it.next()) |header| {
         if (!validHeaderName(header.name) or !validHeaderValue(header.value)) return error.BadHeader;
         for (headers.items) |held| if (std.ascii.eqlIgnoreCase(held.name, header.name)) continue :next_header;
@@ -318,23 +385,163 @@ fn exchangeOnce(client: *std.http.Client, req: Request, uri: std.Uri, reused: *b
         try headers.append(gpa, .{ .name = name, .value = value });
         total += size;
     }
-    var transfer: [4096]u8 = undefined;
-    const raw = if (!has_body) try gpa.alloc(u8, 0) else body: {
-        const reader = response.reader(&transfer);
-        if (content_length) |length| {
-            const bytes = try gpa.alloc(u8, @intCast(length));
-            errdefer gpa.free(bytes);
-            try reader.readSliceAll(bytes);
-            break :body bytes;
+    if (!has_body) {
+        // Nothing follows the head, so the connection is ready for the pool now.
+        request.reader.state = .ready;
+        body.end();
+    }
+    return .{ .status = status, .headers = try headers.toOwnedSlice(gpa), .body = if (body.ended) 0 else body.id };
+}
+
+/// One body read. `all` takes the rest under the text cap; a chunk read takes at most `max_bytes`.
+const Read = struct {
+    body: *Body,
+    all: bool,
+    max_bytes: u32,
+    deadline: std.Io.Clock.Timestamp,
+
+    pub fn free(self: Read, _: std.mem.Allocator) void {
+        const body = self.body;
+        std.debug.assert(body.read_busy);
+        body.read_op = null;
+        body.read_busy = false;
+        body.host.wake.set(body.host.io);
+    }
+};
+
+fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
+    return startRead(ctx, args, false);
+}
+
+fn jsReadAll(ctx: Context, _: Value, args: []const Value) Value {
+    return startRead(ctx, args, true);
+}
+
+fn startRead(ctx: Context, args: []const Value, all: bool) Value {
+    const host = Host.fromContext(ctx);
+    if (!host.acceptsIo()) return pending.rejected(ctx, "the host is closed");
+    const options = module.ioOptions(host, if (args.len > 1) args[1] else quickjs.UNDEFINED, read_limits) catch return pending.rejected(ctx, "a read option is invalid");
+    defer ctx.freeValue(options.signal);
+    const body = bodyArg(host, args) orelse return pending.rejected(ctx, "the response body is closed");
+    if (cancellation.get(ctx, options.signal)) |token| if (token.aborted) {
+        body.close();
+        return pending.rejected(ctx, "the operation was canceled");
+    };
+    if (body.read_busy) return pending.rejected(ctx, "a body read is already pending");
+    body.read_busy = true;
+    return host.startTaskWithSignal(Read, readTask, .{ .body = body, .all = all, .max_bytes = options.max_bytes, .deadline = options.deadline }, options.signal);
+}
+
+fn bodyArg(host: *Host, args: []const Value) ?*Body {
+    if (args.len == 0) return null;
+    const id = module.integer(host.ctx, args[0], 1, std.math.maxInt(u32)) orelse return null;
+    const body = host.bodies.find(@intCast(id)) orelse return null;
+    return if (body.ended) null else body;
+}
+
+fn jsClose(ctx: Context, _: Value, args: []const Value) Value {
+    const host = Host.fromContext(ctx);
+    if (args.len > 0) if (module.integer(ctx, args[0], 1, std.math.maxInt(u32))) |id| {
+        if (host.bodies.find(@intCast(id))) |body| body.close();
+    };
+    return quickjs.UNDEFINED;
+}
+
+/// Run one read under its deadline. A failure or the end of the stream releases the connection.
+fn readTask(host: *Host, op: *pending.Op, read: Read) void {
+    defer read.free(host.gpa);
+    const body = read.body;
+    body.read_op = op;
+    const result = if (body.ended) canceled else pending.runTimed(host, op, .{ .deadline = read.deadline }, readWorker, read, failures);
+    if (result == .failed or body.eof) body.end();
+    op.finish(result);
+}
+
+fn readWorker(host: *Host, op: *pending.Op, read: Read, result: *pending.Result) error{}!void {
+    defer op.cancel.finish(host.io);
+    host.io.checkCancel() catch return;
+    const body = read.body;
+    const gpa = host.gpa;
+    // The body reader needs no buffer of its own; a read streams into the caller's bytes.
+    const reader = body.reader orelse blk: {
+        body.reader = body.response.reader(&.{});
+        break :blk body.reader.?;
+    };
+    if (read.all) {
+        var list: std.ArrayList(u8) = .empty;
+        defer list.deinit(gpa);
+        // A declared length sizes the list once, so a complete body needs no second allocation.
+        const head = &body.response.head;
+        const expected: usize = if (head.transfer_encoding == .none) @intCast(@min(head.content_length orelse 0, max_response_bytes + 1)) else 0;
+        list.ensureTotalCapacityPrecise(gpa, @max(expected, body.carry_len)) catch unreachable;
+        list.appendSliceAssumeCapacity(body.carry[0..body.carry_len]);
+        body.carry_len = 0;
+        // The limit is exclusive, so one extra byte distinguishes the cap from overflow.
+        reader.appendRemaining(gpa, &list, .limited(max_response_bytes + 1 - list.items.len)) catch |err| {
+            result.* = switch (err) {
+                error.StreamTooLong => too_long,
+                error.OutOfMemory => unreachable,
+                else => io_failed,
+            };
+            return;
+        };
+        body.eof = true;
+        if (!complete(body)) {
+            result.* = io_failed;
+            return;
         }
-        // The reader's limit is exclusive, so one extra byte distinguishes the cap from overflow.
-        break :body try reader.allocRemaining(gpa, .limited(max_response_bytes + 1));
+        // Valid text moves out of the list; only a repair copies.
+        result.* = .{ .text = if (std.unicode.utf8ValidateSlice(list.items)) list.toOwnedSlice(gpa) catch unreachable else utf8.sanitize(gpa, list.items) catch unreachable };
+        return;
+    }
+    const buffer = gpa.alloc(u8, read.max_bytes) catch unreachable;
+    var filled: usize = body.carry_len;
+    @memcpy(buffer[0..filled], body.carry[0..filled]);
+    while (true) {
+        var slices = [_][]u8{buffer[filled..]};
+        // Zero bytes is not the end; the reader may have filled its own buffer, and the next call copies it.
+        const n = reader.readVec(&slices) catch |err| {
+            gpa.free(buffer);
+            if (err != error.EndOfStream) {
+                result.* = io_failed;
+                return;
+            }
+            // A stream that ends inside a character answers the repaired bytes now and its end on the next read.
+            if (filled > 0) {
+                result.* = .{ .text = text(gpa, body.carry[0..body.carry_len]) };
+                body.carry_len = 0;
+                return;
+            }
+            body.eof = true;
+            result.* = if (complete(body)) .null_value else io_failed;
+            return;
+        };
+        std.debug.assert(n <= buffer.len - filled);
+        if (n == 0) continue;
+        filled += n;
+        const cut = utf8.whole(buffer[0..filled]);
+        if (cut > 0) {
+            body.carry_len = @intCast(filled - cut);
+            @memcpy(body.carry[0..body.carry_len], buffer[cut..filled]);
+            defer gpa.free(buffer);
+            result.* = .{ .text = text(gpa, buffer[0..cut]) };
+            return;
+        }
+        // Fewer than four bytes of one character wait for the rest, so the next read always fits.
+        std.debug.assert(filled <= body.carry.len);
+    }
+}
+
+/// A stream that ended with declared bytes or chunks still due was cut short.
+fn complete(body: *const Body) bool {
+    return switch (body.request.?.reader.state) {
+        .received_head, .body_remaining_content_length, .body_remaining_chunk_len => false,
+        .ready, .body_none, .closing => true,
     };
-    if (!has_body) request.reader.state = .ready;
-    const body = if (std.unicode.utf8ValidateSlice(raw)) raw else body: {
-        defer gpa.free(raw);
-        break :body try utf8.sanitize(gpa, raw);
-    };
-    errdefer gpa.free(body);
-    return .{ .status = status, .body = body, .headers = try headers.toOwnedSlice(gpa) };
+}
+
+/// Copy `bytes` as text the owner may hand to QuickJS, with invalid sequences repaired.
+fn text(gpa: std.mem.Allocator, bytes: []const u8) []u8 {
+    if (std.unicode.utf8ValidateSlice(bytes)) return gpa.dupe(u8, bytes) catch unreachable;
+    return utf8.sanitize(gpa, bytes) catch unreachable;
 }

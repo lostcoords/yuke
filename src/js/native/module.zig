@@ -4,6 +4,7 @@ const std = @import("std");
 const quickjs = @import("quickjs");
 const proto = @import("proto");
 const Host = @import("../host.zig").Host;
+const cancellation = @import("cancellation.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -186,3 +187,84 @@ test "session ids accept only lowercase hexadecimal text" {
 }
 
 const support = @import("../tests/support.zig");
+
+/// The bounds of one I/O option set. A zero `max_bytes` means the operation has no chunk size.
+pub const IoLimits = struct { default_timeout_ms: u32, max_timeout_ms: u32, min_bytes: u32 = 0, default_bytes: u32 = 0, max_bytes: u32 = 0 };
+pub const IoOptions = struct { signal: Value, deadline: std.Io.Clock.Timestamp, max_bytes: u32 };
+
+/// Read `{ timeoutMs, maxBytes, signal }` under `limits`. The caller frees `signal`. A wrong member is an error.
+pub fn ioOptions(host: *Host, value: Value, limits: IoLimits) error{InvalidOption}!IoOptions {
+    const ctx = host.ctx;
+    if (!ctx.isUndefined(value) and (!ctx.isObject(value) or ctx.isArray(value))) return error.InvalidOption;
+    const timeout_ms = (try optionalInteger(ctx, value, "timeoutMs", limits.default_timeout_ms, limits.max_timeout_ms)).?;
+    const max_bytes = if (limits.max_bytes == 0) 0 else (try optionalInteger(ctx, value, "maxBytes", limits.default_bytes, limits.max_bytes)).?;
+    if (max_bytes < limits.min_bytes) return error.InvalidOption;
+    const signal = if (ctx.isObject(value)) ctx.getPropertyStr(value, "signal") else quickjs.UNDEFINED;
+    if (ctx.isException(signal)) return error.InvalidOption;
+    errdefer ctx.freeValue(signal);
+    if (!ctx.isUndefined(signal) and cancellation.get(ctx, signal) == null) return error.InvalidOption;
+    return .{ .signal = signal, .deadline = .fromNow(host.io, .{ .clock = .awake, .raw = .fromMilliseconds(timeout_ms) }), .max_bytes = max_bytes };
+}
+
+/// The live records of one primitive. `T` has `id`, `done()`, `close()`, and `deinit(gpa)` for what it holds beside its memory.
+pub fn Table(comptime T: type) type {
+    return struct {
+        live: std.ArrayList(*T) = .empty,
+        last_id: u32 = 0,
+        /// One reaped record waits here, so a serial caller allocates none.
+        spare: ?*T = null,
+
+        const Self = @This();
+
+        pub fn find(self: *Self, id: u32) ?*T {
+            for (self.live.items) |record| if (record.id == id) return record;
+            return null;
+        }
+
+        /// True at the record limit. The reap runs first, so a done record never counts.
+        pub fn full(self: *Self, gpa: std.mem.Allocator, limit: usize) bool {
+            self.reap(gpa);
+            return self.live.items.len >= limit or self.last_id == std.math.maxInt(u32);
+        }
+
+        /// Table one record with a fresh id.
+        pub fn add(self: *Self, gpa: std.mem.Allocator, init: T) *T {
+            std.debug.assert(self.last_id < std.math.maxInt(u32));
+            const record = self.spare orelse gpa.create(T) catch unreachable;
+            self.spare = null;
+            record.* = init;
+            self.last_id += 1;
+            record.id = self.last_id;
+            self.live.append(gpa, record) catch unreachable;
+            return record;
+        }
+
+        /// Drop every done record. The first one becomes the spare.
+        pub fn reap(self: *Self, gpa: std.mem.Allocator) void {
+            var i: usize = 0;
+            while (i < self.live.items.len) {
+                const record = self.live.items[i];
+                if (!record.done()) {
+                    i += 1;
+                    continue;
+                }
+                _ = self.live.swapRemove(i);
+                record.deinit(gpa);
+                if (self.spare == null) self.spare = record else gpa.destroy(record);
+            }
+        }
+
+        pub fn closeAll(self: *Self) void {
+            for (self.live.items) |record| record.close();
+        }
+
+        /// Every task has returned, so each record is done and this frees them all.
+        pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
+            self.reap(gpa);
+            std.debug.assert(self.live.items.len == 0);
+            if (self.spare) |record| gpa.destroy(record);
+            self.live.deinit(gpa);
+            self.* = .{};
+        }
+    };
+}
