@@ -52,13 +52,6 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   check("grandchild-gone", Number(grandchild) > 0 && (await exec(`kill -0 ${Number(grandchild)} 2>/dev/null`)).code !== 0);
   check("kill-exited", tree.kill() === false);
 
-  // A character that a read cuts in two arrives whole.
-  const split = spawn(["sh", "-c", "printf '\\346'; sleep 0.1; printf '\\227\\245'"]);
-  let text = "";
-  split.onStdout((chunk) => { text += chunk; });
-  await split.exited;
-  check("split-char", text === "日");
-
   const streams = spawn(["sh", "-c", "echo out; echo bad 1>&2; exit 4"]);
   let out = "", bad = "";
   streams.onStdout((chunk) => { out += chunk; });

@@ -814,6 +814,44 @@ test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves it
     try support.expectString(host, "result", "ok");
 }
 
+test "yuke:spawn retains an incomplete UTF-8 character until the next read" {
+    var fixture = try ReactorHost.init("/tmp");
+    defer fixture.deinit();
+    const host = fixture.host;
+    try host.evalModule(
+        \\import { spawn } from "yuke:spawn";
+        \\globalThis.splitText = "";
+        \\globalThis.splitExit = null;
+        \\globalThis.split = spawn(["/bin/sh", "-c", "printf '\\346'; read release; printf '\\227\\245'"]);
+        \\split.onStdout(text => { splitText += text; });
+        \\split.exited.then(result => { splitExit = result; });
+    , "split-utf8.js");
+    try std.testing.expectEqual(@as(usize, 1), host.procs.live.items.len);
+    const stream = &host.procs.live.items[0].streams[0];
+    const deadline = std.Io.Clock.Timestamp.fromNow(host.io, .{ .raw = .fromSeconds(5), .clock = .awake });
+    while (!stream.ready.load(.acquire)) {
+        host.wake.reset();
+        if (stream.ready.load(.acquire)) break;
+        host.wake.waitTimeout(host.io, .{ .deadline = deadline }) catch |err| switch (err) {
+            error.Timeout => if (deadline.durationFromNow(host.io).raw.nanoseconds <= 0) return error.PartialCharacterNeverRead,
+            else => return err,
+        };
+    }
+    {
+        stream.lock.lockUncancelable(host.io);
+        defer stream.lock.unlock(host.io);
+        try std.testing.expectEqualSlices(u8, &.{0xe6}, stream.buffer.items);
+        try std.testing.expect(!stream.ended);
+    }
+    try host.pump();
+    try support.expectString(host, "splitText", "");
+    try host.evalModule("split.write('continue\\n').then(() => split.closeStdin());", "split-release.js");
+    try support.pumpUntilTrue(host, "splitExit !== null");
+    try support.expectString(host, "splitText", "日");
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("splitExit.code"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("Number(splitExit.signal === null)"));
+}
+
 test "the jobs status segment and the /jobs list show, refresh, and stop background jobs" {
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
