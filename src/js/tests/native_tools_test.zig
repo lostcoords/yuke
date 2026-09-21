@@ -878,17 +878,35 @@ test "a yuke:spawn reader stops at the buffer cap until the owner drains it" {
     const process_module = process;
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
-    const rt = fixture.rt;
     const host = fixture.host;
     try host.evalModule(
         \\import { spawn } from "yuke:spawn";
         \\globalThis.bytes = 0;
         \\spawn(["yes"], { env: { PATH: "/usr/bin:/bin" } }).onStdout((text) => { bytes += text.length; });
     , "spawn-cap.js");
-    try rt.io().sleep(.fromMilliseconds(300), .awake);
-    try std.testing.expect(host.procs.live.items[0].streams[0].buffer.items.len < process_module.max_buffered_bytes + 4096);
-    try host.pump();
-    try std.testing.expect(try host.evalInt("bytes") >= process_module.max_buffered_bytes);
+    try std.testing.expectEqual(@as(usize, 1), host.procs.live.items.len);
+    const stream = &host.procs.live.items[0].streams[0];
+    const deadline = std.Io.Clock.Timestamp.fromNow(host.io, .{ .raw = .fromSeconds(5), .clock = .awake });
+    for (0..2) |_| {
+        while (true) {
+            host.wake.reset();
+            const full = blk: {
+                stream.lock.lockUncancelable(host.io);
+                defer stream.lock.unlock(host.io);
+                try std.testing.expect(!stream.ended);
+                try std.testing.expect(stream.buffer.items.len <= process_module.max_buffered_bytes);
+                break :blk stream.buffer.items.len == process_module.max_buffered_bytes;
+            };
+            if (full) break;
+            host.wake.waitTimeout(host.io, .{ .deadline = deadline }) catch |err| switch (err) {
+                error.Timeout => if (deadline.durationFromNow(host.io).raw.nanoseconds <= 0) return error.ProcessBufferNeverFull,
+                else => return err,
+            };
+        }
+        const before = try host.evalInt("bytes");
+        try host.pump();
+        try std.testing.expect(try host.evalInt("bytes") >= before + process_module.max_buffered_bytes);
+    }
 }
 
 test "extension teardown ends a live child instead of waiting for it" {
