@@ -107,6 +107,7 @@ pub const Harness = struct {
     phase: ?Phase = null,
     native_step: usize = 0,
     colors: Colors = .ansi_raw,
+    advice_batch_size: u32 = 1000,
     phase_group: Phase.Group,
 
     /// The benchmark borrows its own environment and runs no command of its own.
@@ -194,6 +195,7 @@ pub const Harness = struct {
     pub fn start(self: *Harness, phase: Phase, scale: u32) !void {
         std.debug.assert(scale > 0);
         std.debug.assert(self.phase_group == phase.group());
+        std.debug.assert(self.advice_batch_size > 0);
         self.phase = null;
         self.native_step = 0;
         self.host.engine.detach();
@@ -216,8 +218,10 @@ pub const Harness = struct {
             self.projection = try Projection.create(self.host, self.host.io, scale, phase == .stream_native);
         const ctx = self.host.ctx;
         const args = [_]quickjs.Value{
-            ctx.newString(@tagName(phase)),       ctx.newUint32(scale),
-            ctx.newInt32(self.host.paint.width),  ctx.newInt32(self.host.paint.height),
+            ctx.newString(@tagName(phase)),
+            ctx.newUint32(scale),
+            ctx.newUint32(if (phase.group() == .advice) self.advice_batch_size else self.host.paint.width),
+            ctx.newInt32(self.host.paint.height),
             ctx.newString(@tagName(self.colors)),
         };
         defer for (args) |arg| ctx.freeValue(arg);
@@ -468,12 +472,30 @@ test "benchmark scenarios preserve the transcript across updates and cache evict
         if (phase.group() == .process or phase.group() == .net or phase.group() == .http) continue;
         const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, phase);
         defer harness.destroy();
+        harness.advice_batch_size = 32;
         // Scale 9 holds 18 messages, above the 16-message row cache, so eviction runs.
         try harness.start(phase, if (phase == .stream_native) 1 else 9);
         // The initial native text exceeds one page, so the client must complete it before the first update.
         if (phase == .stream_native) try std.testing.expect(harness.sourceBytes().? > paging.max_page_bytes);
         for (0..6) |_| _ = try harness.step();
         _ = try harness.verify();
+    }
+}
+
+test "advice batches preserve the default workload and reset their counters" {
+    var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
+    defer _ = pool.deinit();
+    const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, .advice_direct);
+    defer harness.destroy();
+    try std.testing.expectEqual(@as(u32, 1000), harness.advice_batch_size);
+    for ([_]u32{ 1000, 32, 1, 1000 }) |batch_size| {
+        harness.advice_batch_size = batch_size;
+        try harness.start(.advice_direct, 9);
+        for (1..3) |steps| {
+            _ = try harness.step();
+            const expected: i32 = @intCast(steps * (batch_size * 12 + batch_size * (batch_size - 1) / 2));
+            try std.testing.expectEqual(expected, try harness.verify());
+        }
     }
 }
 

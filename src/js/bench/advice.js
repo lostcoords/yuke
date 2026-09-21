@@ -1,7 +1,7 @@
 import { advice } from "yuke:ext";
 
 /** @import { AdviceWhere, AdviceFunction, Disposer } from "../app/types/ext.js" */
-const BATCH = 1000;
+let batch = 1000;
 let phase = "", count = 0, calls = 0, hits = 0, sum = 0, steps = 0;
 /** @type {Disposer[]} */
 let disposers = [];
@@ -37,36 +37,37 @@ function remove() {
   disposers.length = 0;
 }
 
-/** @param {string} name @param {number} scale @returns {number} */
-function start(name, scale) {
+/** @param {string} name @param {number} scale @param {number} [batchSize] @returns {number} */
+function start(name, scale, batchSize = 1000) {
   remove();
-  if (!(name in handlers) || scale < 1) throw new Error("invalid advice scenario");
+  if (!(name in handlers) || scale < 1 || !Number.isSafeInteger(batchSize) || batchSize < 1) throw new Error("invalid advice scenario");
   phase = name;
   count = scale;
+  batch = batchSize;
   if (phase !== "advice_churn") install();
   step();
   calls = hits = sum = steps = 0;
-  return BATCH;
+  return batch;
 }
 
 function step() {
   if (phase === "advice_churn") {
-    for (let i = 0; i < BATCH; i++) { install(); remove(); }
+    for (let i = 0; i < batch; i++) { install(); remove(); }
   } else {
-    for (let i = 0; i < BATCH; i++) sum += target.method(i, 2, 3);
+    for (let i = 0; i < batch; i++) sum += target.method(i, 2, 3);
   }
   steps++;
-  return BATCH;
+  return batch;
 }
 
 function verify() {
   if (phase === "advice_churn") {
     if (target.method !== original || advice.list(target).length !== 0 || calls !== 0 || hits !== 0) throw new Error("advice teardown changed");
-    return steps * BATCH;
+    return steps * batch;
   }
-  const expected = steps * (BATCH * 12 + BATCH * (BATCH - 1) / 2);
+  const expected = steps * (batch * 12 + batch * (batch - 1) / 2);
   const handlerCount = count * (handlers[phase] || []).length;
-  if (calls !== steps * BATCH || hits !== calls * handlerCount || sum !== expected) throw new Error("advice call changed");
+  if (calls !== steps * batch || hits !== calls * handlerCount || sum !== expected) throw new Error("advice call changed");
   return sum;
 }
 
