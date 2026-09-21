@@ -10,7 +10,7 @@ pub const Peer = struct {
     tasks: std.Io.Group = .init,
     mode: Mode,
 
-    pub const Mode = enum { echo, stall, eof, json_lines, herdr };
+    pub const Mode = enum { echo, stall, eof, json_lines };
 
     pub fn create(gpa: std.mem.Allocator, io: std.Io, mode: Mode) !*Peer {
         var random: [16]u8 = undefined;
@@ -51,21 +51,6 @@ pub const Peer = struct {
         switch (self.mode) {
             .stall => std.Io.sleep(self.io, .fromSeconds(60), .awake) catch {},
             .eof => {},
-            .herdr => {
-                var buffer: [4096]u8 = undefined;
-                var reader = stream.reader(self.io, &buffer);
-                const line = reader.interface.takeDelimiterExclusive('\n') catch return;
-                const parsed = std.json.parseFromSlice(std.json.Value, self.gpa, line, .{}) catch return;
-                defer parsed.deinit();
-                if (parsed.value != .object) return;
-                const id = parsed.value.object.get("id") orelse return;
-                if (id != .string) return;
-                const response = std.json.Stringify.valueAlloc(self.gpa, .{ .id = id.string, .result = .{ .type = "ok" } }, .{}) catch return;
-                defer self.gpa.free(response);
-                var writer = stream.writer(self.io, &.{});
-                writer.interface.writeAll(response) catch return;
-                writer.interface.writeByte('\n') catch return;
-            },
             .json_lines => {
                 var reader = stream.reader(self.io, &.{});
                 var writer = stream.writer(self.io, &.{});

@@ -28,5 +28,5 @@ class Response {
 
 /** @param {string} url @param {FetchOptions} [options] @returns {Promise<Response>} */
 export async function fetch(url, options) {
-  return new Response(await (arguments.length === 0 ? send() : send(url, options)));
+  return new Response(await send(url, options));
 }

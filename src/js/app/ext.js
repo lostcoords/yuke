@@ -7,7 +7,7 @@ import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installInputGate, installLifecycle, setPoints } from "yuke:hooks";
 import { native } from "yuke:engine-native";
 
-/** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, InjectApply, InjectContext, InteractionSurface, Plugin, ScopeEntry, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, ScopeEntry, ToolDefinition } from "./types/ext.js" */
 
 const NOOP = () => {};
 
@@ -453,7 +453,7 @@ function publishPoints(point) {
 }
 
 // Register one handler at the end of its chain. An unknown point throws and registers nothing.
-/** @param {string} point @param {string} owner @param {HookHandler} fn @returns {Disposer} */
+/** @param {string} point @param {string} owner @param {HookHandler<any>} fn @returns {Disposer} */
 function addHook(point, owner, fn) {
   const entry = { owner, fn };
   const before = HOOKS[point];
@@ -678,7 +678,7 @@ export class Context {
   }
 
   // Answer one point. The chain runs in registration order and this plugin's turn reverts on unload.
-  /** @param {string} point @param {HookHandler} fn @returns {Disposer} */
+  /** @template {HookPoint} P @param {P} point @param {HookHandler<P>} fn @returns {Disposer} */
   hook(point, fn) {
     if (typeof fn !== "function") throw new TypeError("hook needs a handler function");
     return this.scope.effect(() => addHook(point, this.id, fn));
@@ -742,7 +742,7 @@ function startupCanceled() {
 class PluginInstance extends Context {
   /** @param {string} name @param {Plugin["stop"]} stop */
   constructor(name, stop) {
-    super(new Scope("plugin:" + name), name);
+    super(new Scope(name), name);
     this._name = name;
     this._phase = "applying";
     if (stop) {

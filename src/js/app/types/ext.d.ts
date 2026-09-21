@@ -73,16 +73,93 @@ export interface Plugin {
   stop?: (context: Context) => void | Promise<void>;
 }
 
-export type HookHandler = (payload: any) => unknown;
-
-export interface HookEntry {
-  owner: string;
-  fn: HookHandler;
+/** The run facts every engine hook carries. */
+export interface HookContext {
+  session_id: string;
+  parent_id: string | null;
+  depth: number;
+  max_agent_depth: number;
+  agent_name: string;
+  workspace: string;
+  has_skills: boolean;
 }
 
-export interface HookAnswer {
-  block?: unknown;
-  replace?: unknown;
+/** One tool as the provider request declares it. `input_schema` is JSON Schema text. */
+export interface ToolDecl {
+  name: string;
+  description: string;
+  input_schema: string;
+  strict: boolean;
+}
+
+/** One tool result as the model reads it. */
+export interface ToolOutcome {
+  output: string;
+  is_error: boolean;
+  view?: Wire.View[] | null;
+  media?: Wire.MediaBlob[];
+}
+
+export interface PromptSection {
+  key: string;
+  text: string;
+}
+
+/** The prompt facts. The date is the session start, so a rebuild never moves it. */
+export interface PromptContext {
+  session_id: string;
+  parent_id: string | null;
+  depth: number;
+  agent_name: string;
+  workspace: string;
+  operating_system: string;
+  shell: string;
+  session_start_date_utc: string;
+}
+
+export interface PromptBuild {
+  context: PromptContext;
+  instructions: { scope: Wire.InstructionScope; path: string; text: string }[];
+  skills: { name: string; description: string }[];
+  sections: PromptSection[];
+}
+
+/** The closed point set of `lib/proto/hook.zig`, with the payload each handler reads. */
+export interface HookPayloads {
+  "tools.select": { tools: string[]; context: HookContext };
+  /** `arguments` is the raw JSON text of the call. */
+  "tool.before": { name: string; arguments: string; context: HookContext };
+  "tool.after": { name: string; arguments: string } & ToolOutcome;
+  "request.build": { model: string; system: string; tools: ToolDecl[]; max_output_tokens: number; context: HookContext };
+  "request.send": { url: string; headers: { name: string; value: string }[]; body: string };
+  "prompt.build": PromptBuild;
+  "compaction.prompt": { context: HookContext; mode: "summarize" | "merge"; prompt: string };
+  "input.before": { session_id: string | null; content: Wire.ContentPart[]; create?: Wire.CreateSession };
+}
+
+/** The whole value a `replace` answer carries, not a patch. */
+export interface HookReplacements {
+  "tools.select": { tools: string[] };
+  "tool.before": { name: string; arguments: string };
+  "tool.after": ToolOutcome;
+  "request.build": { model: string; system: string; tools: ToolDecl[]; max_output_tokens: number };
+  "request.send": HookPayloads["request.send"];
+  "prompt.build": { sections: PromptSection[] };
+  "compaction.prompt": { prompt: string };
+  "input.before": { content: Wire.ContentPart[] };
+}
+
+export type HookPoint = keyof HookPayloads;
+
+/** A block stops the action with a reason. A replace hands the next handler a new value. Nothing means proceed. */
+export type HookAnswer<P extends HookPoint = HookPoint> = { block: string; replace?: undefined } | { replace: HookReplacements[P]; block?: undefined };
+
+export type HookHandler<P extends HookPoint = HookPoint> = (payload: HookPayloads[P]) => HookAnswer<P> | null | undefined | void | Promise<HookAnswer<P> | null | undefined | void>;
+
+/** The chain stores every point's handlers in one shape, so the entry erases the point. */
+export interface HookEntry {
+  owner: string;
+  fn: HookHandler<any>;
 }
 
 export type HookDecision = { type: "block"; reason: string } | { type: "replace"; value: any };

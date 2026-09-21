@@ -146,7 +146,7 @@ export function agents(options) {
             // Once per run: no agent tool at the depth limit, and a child sees only its row tools.
             ctx.hook("tools.select", (selection) => {
                 const row = selection.context.parent_id ? catalog.rows[selection.context.agent_name] : null;
-                let tools = /** @type {string[]} */ (selection.tools);
+                let tools = selection.tools;
                 if (selection.context.depth >= selection.context.max_agent_depth) tools = tools.filter((name) => !AGENT_TOOLS.includes(name));
                 if (row?.tools) tools = tools.filter((name) => row.tools?.includes(name));
                 return tools.length === selection.tools.length ? null : { replace: { ...selection, tools } };

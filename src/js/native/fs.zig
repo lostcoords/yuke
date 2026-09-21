@@ -216,11 +216,13 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
 /// Remove one regular file, and resolve false for a missing path, so a cleanup needs no `stat` first.
 fn jsRemoveFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    var call = Call.open(host, host.cwd);
+    if (args.len < 1 or !ctx.isString(args[0])) return rejected(ctx, "removeFile needs a path");
+    const root = ownedPath(ctx, host.gpa, args, 1, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    defer host.gpa.free(root);
+    var call = Call.open(host, root);
     defer call.close();
 
-    if (args.len < 1 or !ctx.isString(args[0])) return rejected(ctx, "removeFile needs a path");
-    const path = ownedPath(ctx, call.alloc(), args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const path = ownedPath(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     call.local.removeFile(call.alloc(), path) catch |err| switch (err) {
         error.NotFound => return resolved(ctx, ctx.newBool(false)),
         else => return rejected(ctx, errorMessage(err)),

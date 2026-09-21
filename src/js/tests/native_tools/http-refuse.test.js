@@ -11,7 +11,6 @@ async function refuses(args, message) {
 
 async function run() {
   const url = "http://127.0.0.1:1/";
-  await refuses([], "fetch needs a url");
   for (const value of [undefined, null, 42, {}, new String(url)]) await refuses([value], "the url must be a string");
   for (const value of ["", " ", "/relative", "ftp://host/", "http:", "http:///", "http://a\r\nx", "http://a/\0", "http://a b/", "http://user:pass@host/"]) {
     await refuses([value], "the url is invalid");

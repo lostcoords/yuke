@@ -1,9 +1,7 @@
 // yuke:prompt — the default prompt sections. The engine supplies the facts at run start; this plugin writes the text.
 import { config } from "yuke:kernel";
 
-/** @typedef {{ key: string, text: string }} Section */
-/** @typedef {{ session_id: string, parent_id: string | null, depth: number, agent_name: string, workspace: string, operating_system: string, shell: string, session_start_date_utc: string }} PromptContext */
-/** @typedef {{ context: PromptContext, instructions: { scope: string, path: string, text: string }[], skills: { name: string, description: string }[], sections: Section[] }} PromptBuild */
+/** @import { PromptBuild, PromptContext, PromptSection as Section } from "./types/ext.js" */
 
 const DEFAULT_BASE = [
   "You are yuke, an assistant for software development.",
@@ -113,7 +111,7 @@ export const prompt = {
   name: "prompt",
   /** @param {import("yuke:ext").Context} ctx */
   apply(ctx) {
-    ctx.hook("prompt.build", (/** @type {PromptBuild} */ build) => ({ replace: { ...build, sections: sections(build) } }));
-    ctx.hook("compaction.prompt", (/** @type {{ mode: "summarize" | "merge" }} */ build) => ({ replace: { ...build, prompt: build.mode === "merge" ? COMPACTION_MERGE : COMPACTION_SUMMARIZE } }));
+    ctx.hook("prompt.build", (build) => ({ replace: { ...build, sections: sections(build) } }));
+    ctx.hook("compaction.prompt", (build) => ({ replace: { ...build, prompt: build.mode === "merge" ? COMPACTION_MERGE : COMPACTION_SUMMARIZE } }));
   },
 };

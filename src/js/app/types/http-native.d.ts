@@ -15,5 +15,5 @@ declare module "yuke:http-native" {
     headers: Record<string, string>;
   }
 
-  export function fetch(url?: string, options?: FetchOptions): Promise<HttpResponse>;
+  export function fetch(url: string, options?: FetchOptions): Promise<HttpResponse>;
 }
