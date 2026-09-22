@@ -73,6 +73,7 @@ pub const ModelInfo = struct {
     default_reasoning: []const u8,
     supports_vision: ?bool = null,
     supports_tools: ?bool = null,
+    supports_hosted_tool_search: ?bool = null,
     cost: ModelCost,
 };
 

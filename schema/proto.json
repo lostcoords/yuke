@@ -824,6 +824,11 @@
           "presence": "optional"
         },
         {
+          "name": "supports_hosted_tool_search",
+          "type": "bool",
+          "presence": "optional"
+        },
+        {
           "name": "cost",
           "type": "ModelCost",
           "presence": "required"

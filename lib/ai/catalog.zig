@@ -191,3 +191,23 @@ test "the credential comes from the variable the catalog names" {
     oauth.auth = .{ .oauth = "codex" };
     try testing.expect(envCredential(&oauth, &env) == null);
 }
+
+test "baked hosted search support remains specific to the provider and model" {
+    const supported = try resolve("openai/gpt-5.4", .{ .api_key = "test-key" });
+    const refused = try resolve("openai/gpt-5.4-nano", .{ .api_key = "test-key" });
+    const codex = try resolve("openai-codex/gpt-5.4", .none);
+    const claude = try resolve("anthropic/claude-opus-4-6", .{ .api_key = "test-key" });
+    try testing.expectEqual(@as(?bool, true), supported.caps.hosted_tool_search);
+    try testing.expectEqual(@as(?bool, false), refused.caps.hosted_tool_search);
+    try testing.expectEqual(@as(?bool, null), codex.caps.hosted_tool_search);
+    try testing.expectEqual(@as(?bool, true), claude.caps.hosted_tool_search);
+    const request: call.Request = .{
+        .blocks = &.{.{ .role = .user, .value = .{ .text = "read" } }},
+        .options = .{ .tool_search = .hosted },
+    };
+    var prepared = try call.prepare(testing.allocator, supported, request);
+    defer prepared.deinit();
+    try testing.expect(std.mem.indexOf(u8, prepared.transport_request.body, "tool_search") != null);
+    try testing.expectError(error.UnsupportedToolSearch, call.prepare(testing.allocator, refused, request));
+    try testing.expectError(error.UnsupportedToolSearch, call.prepare(testing.allocator, codex, request));
+}

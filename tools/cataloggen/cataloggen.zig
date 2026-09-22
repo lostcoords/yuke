@@ -235,7 +235,12 @@ fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
         try boolean(flags, "supports_tools"),
         try boolean(flags, "supports_vision"),
     });
-    // An absent capability stays unknown, so a caller may still try it.
+    if (flags.contains("supports_hosted_tool_search")) {
+        const supported = try boolean(flags, "supports_hosted_tool_search");
+        if (supported and (std.mem.eql(u8, protocol, "openai_chat") or !try boolean(flags, "supports_tools"))) return Error.InvalidDocument;
+    }
+    try emitOptionalBool(w, flags, "supports_hosted_tool_search", "hosted_tool_search");
+    // Preserve source capabilities without a model-name heuristic.
     try emitOptionalBool(w, flags, "supports_structured_output", "structured_output");
     try emitOptionalBool(w, flags, "can_disable_reasoning", "disable_reasoning");
     try emitOptionalBool(w, flags, "supports_prompt_caching", "prompt_caching");
@@ -642,4 +647,24 @@ test "a document with no provider is rejected" {
         Error.InvalidDocument,
         generate(arena.allocator(), "{\"catalog_rev\":\"r\",\"providers\":[]}"),
     );
+}
+
+test "hosted search capability preserves true false and unknown" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const unknown = try generate(a, one_provider);
+    try testing.expect(std.mem.indexOf(u8, unknown, ".hosted_tool_search") == null);
+    inline for (.{ "true", "false" }) |value| {
+        const stated = try withFlags(a, "\"supports_vision\":true,\"supports_hosted_tool_search\":" ++ value);
+        try testing.expect(std.mem.indexOf(u8, stated.text, ".hosted_tool_search = " ++ value) != null);
+    }
+    inline for (.{ "null", "1", "\"true\"" }) |value| {
+        try testing.expectError(Error.InvalidDocument, withFlags(a, "\"supports_vision\":true,\"supports_hosted_tool_search\":" ++ value));
+    }
+    const supported = try std.mem.replaceOwned(u8, a, one_provider, "\"supports_vision\":true", "\"supports_vision\":true,\"supports_hosted_tool_search\":true");
+    const chat = try std.mem.replaceOwned(u8, a, supported, "anthropic_messages", "openai_chat");
+    try testing.expectError(Error.InvalidDocument, generate(a, chat));
+    const no_tools = try std.mem.replaceOwned(u8, a, supported, "\"supports_tools\":true", "\"supports_tools\":false");
+    try testing.expectError(Error.InvalidDocument, generate(a, no_tools));
 }

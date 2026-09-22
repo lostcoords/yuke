@@ -217,10 +217,10 @@ fn providerRow(
 ) !Provider {
     // A file list replaces the catalog list as a whole, so a model names a path from one list only.
     const endpoints: []const ai.route.Endpoint = p.endpoints orelse (if (from_catalog) |c| c.endpoints else &.{});
-    const baked: []const ModelSpec = if (from_catalog) |c| c.models else &.{};
-    // A file model on no declared path cannot be shaped, so the row keeps the baked list and cannot serve a turn.
+    const baked = try catalogModelsForRoute(arena, p, from_catalog);
+    // An invalid model/endpoint combination leaves the provider unavailable.
     const merged = mergedModels(arena, p, baked, endpoints) catch |err| switch (err) {
-        error.NoEndpoint => null,
+        error.NoEndpoint, error.BadCapability => null,
         error.OutOfMemory => |e| return e,
     };
     return .{
@@ -233,6 +233,36 @@ fn providerRow(
         else
             .{ .unavailable = .needs_route },
     };
+}
+
+/// A catalog capability belongs to its endpoint, not to another host with the same model id.
+fn catalogModelsForRoute(arena: std.mem.Allocator, p: provider.config.LocalProvider, from_catalog: ?*const catalog.Provider) ![]const ModelSpec {
+    const source = from_catalog orelse return &.{};
+    for (source.models) |spec| if (spec.caps.hosted_tool_search != null and !sameCatalogRoute(p, source, spec.protocol)) {
+        const models = try arena.dupe(ModelSpec, source.models);
+        for (models) |*copy| {
+            if (copy.caps.hosted_tool_search != null and !sameCatalogRoute(p, source, copy.protocol)) copy.caps.hosted_tool_search = null;
+        }
+        return models;
+    };
+    return source.models;
+}
+
+fn sameCatalogRoute(p: provider.config.LocalProvider, source: *const catalog.Provider, protocol: ai.Protocol) bool {
+    std.debug.assert(std.mem.eql(u8, p.id, source.id));
+    if (p.base_url) |url| if (!std.mem.eql(u8, url, source.base_url)) return false;
+    if (p.headers) |headers| {
+        if (headers.len != source.headers.len) return false;
+        for (headers, source.headers) |a, b| {
+            if (!std.mem.eql(u8, a.name, b.name) or !std.mem.eql(u8, a.value, b.value)) return false;
+        }
+    }
+    if (p.endpoints) |endpoints| {
+        const before = ai.route.findEndpoint(source.endpoints, protocol) orelse return false;
+        const after = ai.route.findEndpoint(endpoints, protocol) orelse return false;
+        return std.meta.eql(before.*, after.*);
+    }
+    return true;
 }
 
 fn findLocal(local: ?*const provider.config.Loaded, id: []const u8) ?provider.config.LocalProvider {
@@ -474,6 +504,7 @@ fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, spec: ModelSpec)
         .default_reasoning = defaultReasoning(names),
         .supports_vision = spec.caps.vision,
         .supports_tools = spec.caps.tools,
+        .supports_hosted_tool_search = spec.caps.hosted_tool_search,
         .cost = .{
             .input = spec.cost.input,
             .output = spec.cost.output,
@@ -536,4 +567,45 @@ test "the default effort never lands on the disable sentinel" {
     try testing.expectEqualStrings("xhigh", defaultReasoning(&.{ "high", "xhigh", "max" }));
     try testing.expectEqualStrings("", defaultReasoning(&.{}));
     try testing.expectEqualStrings("", defaultReasoning(&.{"off"}));
+}
+
+test "hosted search capability reaches the public projection and revision" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var spec: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .openai_responses };
+    const unknown = try modelInfo(arena.allocator(), "p", spec);
+    spec.caps.hosted_tool_search = true;
+    const supported = try modelInfo(arena.allocator(), "p", spec);
+    spec.caps.hosted_tool_search = false;
+    const refused = try modelInfo(arena.allocator(), "p", spec);
+    try std.testing.expectEqual(@as(?bool, null), unknown.supports_hosted_tool_search);
+    try std.testing.expectEqual(@as(?bool, true), supported.supports_hosted_tool_search);
+    try std.testing.expectEqual(@as(?bool, false), refused.supports_hosted_tool_search);
+    const unknown_rev = try revisionOf(std.testing.allocator, &.{}, &.{unknown});
+    const supported_rev = try revisionOf(std.testing.allocator, &.{}, &.{supported});
+    const refused_rev = try revisionOf(std.testing.allocator, &.{}, &.{refused});
+    try std.testing.expect(!std.meta.eql(unknown_rev, supported_rev));
+    try std.testing.expect(!std.meta.eql(refused_rev, supported_rev));
+}
+
+test "a route override copies only the model array and leaves the catalog intact" {
+    var tracked: @import("../allocations.zig") = .{ .backing = std.testing.allocator };
+    const models = [_]ModelSpec{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .openai_responses, .caps = .{ .hosted_tool_search = true } }};
+    const source: catalog.Provider = .{ .id = "p", .name = "P", .auth = .{ .api_key = null }, .base_url = "https://api.example/v1", .endpoints = &.{}, .models = &models };
+    const same = try catalogModelsForRoute(tracked.allocator(), .{ .id = "p" }, &source);
+    try std.testing.expectEqual(models[0..].ptr, same.ptr);
+    try std.testing.expectEqual(@as(usize, 0), tracked.counts.allocations);
+    const changed = try catalogModelsForRoute(tracked.allocator(), .{ .id = "p", .base_url = "https://proxy.example/v1" }, &source);
+    try std.testing.expectEqual(@as(?bool, null), changed[0].caps.hosted_tool_search);
+    try std.testing.expectEqual(@as(?bool, true), models[0].caps.hosted_tool_search);
+    try std.testing.expectEqual(models[0].name.ptr, changed[0].name.ptr);
+    tracked.allocator().free(changed);
+    try std.testing.expectEqual(@as(usize, 1), tracked.counts.allocations);
+    try std.testing.expectEqual(@as(usize, 1), tracked.counts.frees);
+    try std.testing.expectEqual(@sizeOf(ModelSpec), tracked.counts.allocated_bytes);
+    try std.testing.expectEqual(@sizeOf(ModelSpec), tracked.counts.freed_bytes);
+    try std.testing.expectEqual(@sizeOf(ModelSpec), tracked.peak_bytes);
+    try std.testing.expectEqual(@as(usize, 0), tracked.counts.resize_attempts);
+    try std.testing.expectEqual(@as(usize, 0), tracked.counts.remap_attempts);
+    try std.testing.expectEqual(@as(usize, 0), tracked.liveBytes());
 }

@@ -532,3 +532,52 @@ test "the file beats the environment and extends the baked model list" {
     try testing.expectEqualStrings("pinned", row.models[0].upstream_id);
     try testing.expectEqualStrings("private", row.models[row.models.len - 1].id);
 }
+
+test "hosted search support follows the resolved endpoint rather than the model name" {
+    var spec = catalog_model;
+    spec.protocol = .openai_responses;
+    spec.caps.hosted_tool_search = true;
+    const specs = [_]registry.ModelSpec{spec};
+    var source = catalogRow("acme", "Acme", &specs);
+    source.endpoints = &.{.{ .protocol = .openai_responses, .key_header = .authorization_bearer }};
+    const cases = .{
+        .{ "", @as(?bool, true) },
+        .{ ",\"base_url\":\"https://api.example/v1\"", @as(?bool, true) },
+        .{ ",\"headers\":[{\"name\":\"x-catalog-version\",\"value\":\"1\"}]", @as(?bool, true) },
+        .{ ",\"endpoints\":[{\"protocol\":\"openai_responses\",\"key_header\":\"authorization_bearer\"}]", @as(?bool, true) },
+        .{ ",\"base_url\":\"https://proxy.example/v1\"", @as(?bool, null) },
+        .{ ",\"endpoints\":[{\"protocol\":\"openai_chat\",\"key_header\":\"authorization_bearer\"},{\"protocol\":\"openai_responses\",\"key_header\":\"authorization_bearer\"}]", @as(?bool, true) },
+        .{ ",\"headers\":[]", @as(?bool, null) },
+        .{ ",\"endpoints\":[{\"protocol\":\"openai_responses\",\"key_header\":\"authorization_bearer\",\"responses_dialect\":\"codex\"}]", @as(?bool, null) },
+        .{ ",\"base_url\":\"https://proxy.example/v1\",\"models\":[{\"id\":\"cm\",\"upstream_id\":\"cm\",\"flags\":{\"supports_hosted_tool_search\":true}}]", @as(?bool, true) },
+    };
+    inline for (cases) |case| {
+        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+        defer arena.deinit();
+        const bytes = "{\"providers\":[{\"id\":\"acme\",\"api_key\":\"test-key\"" ++ case[0] ++ "}]}";
+        var loaded = try provider.config.loadBytes(testing.allocator, bytes);
+        defer loaded.deinit();
+        const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{source}, .env = &no_env });
+        const effective = rows[0].models[0];
+        try testing.expectEqual(case[1], effective.caps.hosted_tool_search);
+        try testing.expectEqual(@as(?bool, true), specs[0].caps.hosted_tool_search);
+        const route = routeOf(&rows[0]);
+        const resolved_model: ai.Model = .{
+            .id = effective.upstream_id,
+            .route = route.route,
+            .credential = credential(route.credential, &no_env, 0).?,
+            .caps = effective.caps,
+        };
+        const request: ai.Request = .{
+            .blocks = &.{.{ .role = .user, .value = .{ .text = "read" } }},
+            .options = .{ .tool_search = .hosted },
+        };
+        if (case[1] == true) {
+            var prepared = try ai.prepare(testing.allocator, resolved_model, request);
+            defer prepared.deinit();
+            try testing.expect(std.mem.indexOf(u8, prepared.transport_request.body, "tool_search") != null);
+        } else {
+            try testing.expectError(error.UnsupportedToolSearch, ai.prepare(testing.allocator, resolved_model, request));
+        }
+    }
+}

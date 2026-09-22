@@ -164,6 +164,7 @@ export interface ModelInfo {
   readonly default_reasoning: string;
   readonly supports_vision?: boolean;
   readonly supports_tools?: boolean;
+  readonly supports_hosted_tool_search?: boolean;
   readonly cost: ModelCost;
 }
 
