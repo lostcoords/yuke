@@ -1296,13 +1296,14 @@ export type CompactSkipReason =
   | "too_few_messages"
 ;
 
-/** Assistant stop reason. `refusal` is a model decline; `content_filter` is a filter that cut content. */
+/** Assistant stop reason. `refusal` is a model decline, `content_filter` a filter cut, `pause_turn` a provider pause the run resumes. */
 export type StopReason =
   | "stop"
   | "length"
   | "content_filter"
   | "refusal"
   | "tool_calls"
+  | "pause_turn"
   | "canceled"
   | "error"
   | "unknown"

@@ -261,7 +261,8 @@ fn mapStopReason(raw: []const u8) types.FinishReason {
     if (std.mem.eql(u8, raw, "tool_use")) return .tool_calls;
     if (std.mem.eql(u8, raw, "refusal")) return .refusal;
     if (std.mem.eql(u8, raw, "model_context_window_exceeded")) return .length;
-    // The reducer keeps only the raw value for pause_turn and new reasons.
+    if (std.mem.eql(u8, raw, "pause_turn")) return .pause;
+    // The reducer keeps only the raw value for a new reason.
     return .unknown;
 }
 
@@ -299,6 +300,22 @@ test "text turn: started, deltas, stopped, done with usage" {
     try testing.expectEqual(@as(u64, 120), done.usage.input); // The cache subsets belong to input.
     try testing.expectEqual(@as(u64, 20), done.usage.cache_read);
     try testing.expectEqual(@as(u64, 5), done.usage.output);
+}
+
+test "a paused turn maps to pause and keeps the raw reason" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
+        ,
+        \\{"type":"message_delta","delta":{"stop_reason":"pause_turn"},"usage":{"output_tokens":2}}
+        ,
+        \\{"type":"message_stop"}
+    });
+
+    const done = h.out.items[0].done;
+    try testing.expectEqual(types.FinishReason.pause, done.stop_reason);
+    try testing.expectEqualStrings("pause_turn", done.raw_stop_reason);
 }
 
 test "input holds the cached and the cache-created subsets" {

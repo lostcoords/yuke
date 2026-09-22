@@ -55,6 +55,8 @@ pub const RoundState = struct {
 
 pub const RunProgress = struct {
     rounds_committed: u64 = 0,
+    /// Consecutive rounds the provider paused. Any other stop reason resets it.
+    pauses: u8 = 0,
     current: ?RoundState = null,
 };
 

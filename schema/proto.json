@@ -4683,7 +4683,7 @@
     },
     {
       "name": "StopReason",
-      "doc": "Assistant stop reason. `refusal` is a model decline; `content_filter` is a filter that cut content.",
+      "doc": "Assistant stop reason. `refusal` is a model decline, `content_filter` a filter cut, `pause_turn` a provider pause the run resumes.",
       "numeric": false,
       "values": [
         {
@@ -4705,6 +4705,10 @@
         {
           "name": "tool_calls",
           "wire": "tool_calls"
+        },
+        {
+          "name": "pause_turn",
+          "wire": "pause_turn"
         },
         {
           "name": "canceled",

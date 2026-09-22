@@ -533,6 +533,29 @@ test "a canceled run adds the interrupted marker after its canceled tool, or alo
     try testing.expectEqualStrings(interrupted_marker, request[3].value.text);
 }
 
+test "a paused message replays as assistant content with no marker after it" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const data =
+        \\{"type":"server_tool_use","id":"srv_1","name":"tool_search_tool_bm25","input":{"query":"read"}}
+    ;
+    const provenance: proto.message.TurnProvenance = .{ .protocol = .anthropic_messages, .model = "p/m" };
+    const messages = [_]proto.message.Message{
+        .{ .user = .{ .id = 1, .input_id = 1, .time = .{ .created_at_ms = 0 }, .content = &.{.{ .text = .{ .text = "read" } }} } },
+        .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 1, .time = .{ .created_at_ms = 1 }, .finish = .pause_turn, .provenance = provenance, .content = &.{
+            .{ .text = .{ .id = 0, .text = "searching" } },
+            .{ .tool_search = .{ .id = 1, .protocol = .anthropic, .data = data } },
+        } } },
+        .{ .assistant = .{ .id = 3, .run_id = 1, .config_rev = 1, .time = .{ .created_at_ms = 2 }, .finish = .stop, .provenance = provenance, .content = &.{.{ .text = .{ .id = 0, .text = "done" } }} } },
+    };
+    const built = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "p/m" }, .tool_search = .hosted });
+    try testing.expectEqual(@as(usize, 4), built.len);
+    for (built[1..]) |block| try testing.expectEqual(ir.Role.assistant, block.role);
+    try testing.expectEqualStrings("searching", built[1].value.text);
+    try testing.expectEqualStrings(data, built[2].value.tool_search.data);
+    try testing.expectEqualStrings("done", built[3].value.text);
+}
+
 test "native discovery replays for its model and a canceled placeholder stays out" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();

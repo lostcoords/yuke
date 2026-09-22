@@ -36,6 +36,7 @@ pub fn finishReasonToProto(reason: ai.FinishReason) proto.enums.StopReason {
         .content_filter => .content_filter,
         .refusal => .refusal,
         .tool_calls => .tool_calls,
+        .pause => .pause_turn,
         .unknown => .unknown,
     };
 }

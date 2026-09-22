@@ -29,6 +29,10 @@ const request_config_mod = @import("request_config.zig");
 const compaction = @import("compaction.zig");
 const prompt = @import("prompt.zig");
 
+/// Anthropic pauses a server-tool loop at ten iterations. Its guide resumes at most five times.
+const max_pause_continuations: u8 = 5;
+const pause_cap_message = std.fmt.comptimePrint("the provider paused the turn more than {d} times in a row", .{max_pause_continuations});
+
 /// Run one turn. The engine task group owns this task. The session owns `slot` until cleanup.
 pub fn execute(engine: *Engine, slot: *RunSlot) void {
     std.debug.assert(slot.phase == .running);
@@ -354,10 +358,20 @@ fn commitRound(
     defer tx.deinit();
     // Only a success can continue, so only a success reads the queue, and one read serves the count and the consume.
     const queued: []const database.input.Entry = if (result == .success) try database.input.list(engine.deps.db, arena, session_id.raw) else &.{};
-    const wants_next = result == .success and (has_tools or queued.len > 0);
+    // A paused round holds no client call. The provider resumes its server loop when the same content returns.
+    const paused = result == .success and result.success == .pause_turn;
+    const wants_next = result == .success and (has_tools or queued.len > 0 or paused);
+    std.debug.assert(slot.progress.pauses <= max_pause_continuations);
+    const pauses: u8 = if (paused) slot.progress.pauses + 1 else 0;
     const capped = wants_next and if (slot.config.max_rounds) |cap| slot.progress.rounds_committed >= cap -| 1 else false;
-    const terminal: Terminal = if (capped) .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } } else result;
-    const final = !wants_next or capped;
+    const over_paused = pauses > max_pause_continuations;
+    const terminal: Terminal = if (capped)
+        .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } }
+    else if (over_paused)
+        .{ .failed = .{ .code = .max_rounds, .message = pause_cap_message } }
+    else
+        result;
+    const final = !wants_next or capped or over_paused;
     const rounds_committed = slot.progress.rounds_committed + 1;
     const round = &slot.progress.current.?;
     const content = (try live.toActiveDraft(arena)).message.content;
@@ -402,6 +416,7 @@ fn commitRound(
     const inputs = if (!final) try run.consumeEntries(engine.deps.db, engine.deps.io, arena, session_id.raw, queued) else &.{};
     try tx.commit();
     slot.progress.rounds_committed = rounds_committed;
+    slot.progress.pauses = pauses;
     slot.progress.current = null;
     if (final) slot.phase = .terminalized;
 
@@ -1023,6 +1038,46 @@ test "a capped tool round reloads with an assistant error and failed outcome" {
     try std.testing.expectEqualStrings("max_rounds", saved_message.?.assistant.@"error".?.type);
     const outcome = (try database.run.latestOutcome(&fixture.db, a, StreamerFixture.session_id)).?;
     try std.testing.expectEqual(proto.enums.RunErrorCode.max_rounds, outcome.failed.code);
+}
+
+test "a paused round continues with the same content and commits both messages" {
+    var f: Resources.Fixture = undefined;
+    try f.init(.{ .replies = &.{ Resources.pause_reply, ai.testing.canned_reply } });
+    defer f.deinit();
+    _ = try f.send(&.{.{ .text = .{ .text = "read" } }});
+    try f.finish(Resources.Fixture.id);
+
+    const messages = try f.history();
+    try std.testing.expectEqual(@as(usize, 3), messages.len);
+    try std.testing.expectEqual(proto.enums.StopReason.pause_turn, messages[1].assistant.finish.?);
+    try std.testing.expect(messages[1].assistant.@"error" == null);
+    try std.testing.expectEqual(proto.enums.StopReason.stop, messages[2].assistant.finish.?);
+    const outcome = (try database.run.latestOutcome(&f.db, f.arena.allocator(), Resources.Fixture.id.raw)).?;
+    try std.testing.expectEqual(@as(u64, 2), outcome.turn.rounds);
+
+    // The continuation ends with the paused assistant content and adds no user text after it.
+    try std.testing.expectEqual(@as(usize, 2), f.capture.requests.items.len);
+    const body = f.capture.requests.items[1];
+    const paused_at = std.mem.indexOf(u8, body, "\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"searching\"").?;
+    try std.testing.expect(std.mem.lastIndexOf(u8, body, "\"role\":\"user\"").? < paused_at);
+}
+
+test "a run that pauses past the continuation cap fails with max_rounds" {
+    var f: Resources.Fixture = undefined;
+    try f.init(.{ .replies = &[_][]const u8{Resources.pause_reply} ** (max_pause_continuations + 1) });
+    defer f.deinit();
+    _ = try f.send(&.{.{ .text = .{ .text = "read" } }});
+    try f.finish(Resources.Fixture.id);
+
+    const messages = try f.history();
+    try std.testing.expectEqual(@as(usize, max_pause_continuations + 2), messages.len);
+    const last = messages[messages.len - 1].assistant;
+    try std.testing.expectEqual(proto.enums.StopReason.@"error", last.finish.?);
+    try std.testing.expectEqualStrings("max_rounds", last.@"error".?.type);
+    try std.testing.expect(std.mem.indexOf(u8, last.@"error".?.message, "paused") != null);
+    const outcome = (try database.run.latestOutcome(&f.db, f.arena.allocator(), Resources.Fixture.id.raw)).?;
+    try std.testing.expectEqual(proto.enums.RunErrorCode.max_rounds, outcome.failed.code);
+    try std.testing.expectEqual(@as(usize, max_pause_continuations + 1), f.capture.requests.items.len);
 }
 
 // A tool part opens at the stop, so a part id follows the emit order and never the block id.

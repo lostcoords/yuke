@@ -270,6 +270,20 @@ test "a plain user turn with a system prompt" {
     );
 }
 
+test "consecutive assistant blocks join one message" {
+    const blocks = [_]ir.Block{
+        .{ .role = .user, .value = .{ .text = "read" } },
+        .{ .role = .assistant, .value = .{ .text = "searching" } },
+        .{ .role = .assistant, .value = .{ .text = "done" } },
+    };
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"read"}]},{"role":"assistant","content":[{"type":"text","text":"searching"},{"type":"text","text":"done"}]}]}
+    ,
+        .{ .model = "claude", .max_output_tokens = 8 },
+        &blocks,
+    );
+}
+
 test "adaptive thinking rides on the request" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hi" } }};
     try expectJson(

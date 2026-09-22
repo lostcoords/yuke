@@ -2,7 +2,8 @@
 
 pub const Protocol = enum { anthropic_messages, openai_chat, openai_responses };
 
-pub const FinishReason = enum { stop, length, content_filter, refusal, tool_calls, unknown };
+/// `pause` is an Anthropic server-tool loop that stopped at its iteration cap; the same content resumes it.
+pub const FinishReason = enum { stop, length, content_filter, refusal, tool_calls, pause, unknown };
 
 pub const Usage = struct {
     input: u64 = 0,

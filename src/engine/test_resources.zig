@@ -195,6 +195,18 @@ pub const tool_reply =
     "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":1}}\n\n" ++
     "data: {\"type\":\"message_stop\"}\n\n";
 
+/// One Anthropic stream that searches for a tool and pauses before the server loop ends.
+pub const pause_reply =
+    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"searching\"}}\n\n" ++
+    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_1\",\"name\":\"tool_search_tool_bm25\",\"input\":{}}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"read\\\"}\"}}\n\n" ++
+    "data: {\"type\":\"content_block_stop\",\"index\":1}\n\n" ++
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"pause_turn\"},\"usage\":{\"output_tokens\":1}}\n\n" ++
+    "data: {\"type\":\"message_stop\"}\n\n";
+
 /// Record every request body and header set, and answer each with the next reply. A request past the list fails.
 pub const Capture = struct {
     arena: std.mem.Allocator,
