@@ -377,21 +377,14 @@ pub const Harness = struct {
     }
 
     fn drainClosedSockets(self: *Harness) !void {
-        const deadline = std.Io.Clock.Timestamp.fromNow(self.host.io, .{ .raw = .fromSeconds(5), .clock = .awake });
-        while (true) {
-            self.host.wake.reset();
-            self.host.net.reap(self.host.gpa);
-            var closing = false;
-            for (self.host.net.live.items) |connection| closing = closing or connection.closed;
-            if (!closing) return;
-            try self.host.pump();
-            self.host.wake.waitTimeout(self.host.io, .{ .deadline = deadline }) catch |err| switch (err) {
-                error.Timeout => {
-                    if (deadline.durationFromNow(self.host.io).raw.nanoseconds <= 0) return error.SocketBenchmarkTimeout;
-                },
-                else => return err,
-            };
-        }
+        self.host.net.reap(self.host.gpa);
+        if (socketsDrained(self.host)) return;
+        try self.host.pumpUntil(.fromNow(self.host.io, .{ .raw = .fromSeconds(5), .clock = .awake }), self.host, socketsDrained);
+    }
+
+    fn socketsDrained(host: *Host) bool {
+        for (host.net.live.items) |connection| if (connection.closed) return false;
+        return true;
     }
 
     pub fn verify(self: *Harness, with_checksum: bool) !i32 {
@@ -425,18 +418,11 @@ pub const Harness = struct {
     }
 
     fn settleAgents(self: *Harness) !void {
-        const deadline = std.Io.Clock.Timestamp.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake });
-        while (true) {
-            try self.host.pump();
-            if (self.host.ops.live.items.len == 0 and !self.host.hasPending()) return;
-            if (deadline.durationFromNow(self.host.io).raw.nanoseconds <= 0) return error.AgentBenchmarkTimeout;
-            self.host.wake.reset();
-            if (self.host.hasPending()) continue;
-            self.host.wake.waitTimeout(self.host.io, .{ .deadline = deadline }) catch |err| switch (err) {
-                error.Timeout => continue,
-                else => return err,
-            };
-        }
+        try self.host.pumpUntil(.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake }), self.host, struct {
+            fn settled(host: *Host) bool {
+                return host.ops.live.items.len == 0 and !host.hasPending();
+            }
+        }.settled);
     }
 
     fn call(self: *Harness, function: quickjs.Value, args: []const quickjs.Value) !i32 {
@@ -451,17 +437,8 @@ pub const Harness = struct {
             return error.JavaScriptFault;
         }
         if (ctx.isObject(result)) {
-            const deadline = std.Io.Clock.Timestamp.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake });
-            while (ctx.promiseState(result) == .Pending) {
-                self.host.wake.reset();
-                try self.host.pump();
-                if (ctx.promiseState(result) != .Pending) break;
-                if (deadline.durationFromNow(self.host.io).raw.nanoseconds <= 0) return error.BenchmarkTimeout;
-                self.host.wake.waitTimeout(self.host.io, .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } }) catch |err| switch (err) {
-                    error.Timeout => {},
-                    else => return err,
-                };
-            }
+            const pending: Host.PendingPromise = .{ .ctx = ctx, .promise = result };
+            if (!pending.settled()) try self.host.pumpUntil(.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake }), pending, Host.PendingPromise.settled);
         }
         if (self.phase_group == .agents) try self.settleAgents();
         if (ctx.isObject(result)) {

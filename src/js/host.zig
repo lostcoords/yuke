@@ -269,14 +269,27 @@ pub const Host = struct {
             self.calls.hasWork(self.ctx) or self.procs.hasWork() or self.timers.isDue(std.Io.Timestamp.now(self.io, .awake));
     }
 
-    /// Sleep until a task sets the wake or the next timer is due. The caller resets the wake before its last pump.
-    pub fn waitForWork(self: *Host) error{Canceled}!void {
+    /// Sleep until a task sets the wake, the next timer is due, or `deadline` passes; a passed deadline is `error.Timeout`.
+    pub fn waitForWork(self: *Host, deadline: ?std.Io.Clock.Timestamp) error{ Canceled, Timeout }!void {
         if (self.hasPending()) return;
-        const due = self.timers.nextDeadline() orelse return self.wake.wait(self.io);
-        self.wake.waitTimeout(self.io, .{ .deadline = .{ .raw = due, .clock = .awake } }) catch |err| switch (err) {
-            error.Timeout => {},
+        const timer: ?std.Io.Clock.Timestamp = if (self.timers.nextDeadline()) |due| .{ .raw = due, .clock = .awake } else null;
+        const until = if (timer) |t| (if (deadline) |d| (if (t.raw.nanoseconds < d.raw.nanoseconds) t else d) else t) else deadline orelse return self.wake.wait(self.io);
+        self.wake.waitTimeout(self.io, .{ .deadline = until }) catch |err| switch (err) {
             error.Canceled => return error.Canceled,
+            // A spurious wakeup also answers Timeout, so only a passed deadline counts.
+            error.Timeout => if (deadline) |d| if (d.durationFromNow(self.io).raw.nanoseconds <= 0) return error.Timeout,
         };
+    }
+
+    /// Pump until `done(context)` holds; the condition is read after each pump, because a settle inside the pump sets no wake.
+    pub fn pumpUntil(self: *Host, deadline: ?std.Io.Clock.Timestamp, context: anytype, comptime done: fn (@TypeOf(context)) bool) (Error || error{ Canceled, Timeout })!void {
+        std.debug.assert(self.phase == .open);
+        while (true) {
+            self.wake.reset();
+            try self.pump();
+            if (done(context)) return;
+            try self.waitForWork(deadline);
+        }
     }
 
     /// Drain jobs, release QuickJS resources, and destroy the host.
@@ -470,24 +483,25 @@ pub const Host = struct {
         };
         self.runtime.setInterruptHandler(&guard);
         defer self.runtime.setInterruptHandler(self);
-        while (self.ctx.promiseState(promise) == .Pending) {
-            if (std.Io.Timestamp.now(self.io, .awake).nanoseconds >= guard.deadline.nanoseconds) {
+        self.pumpUntil(.{ .raw = guard.deadline, .clock = .awake }, PendingPromise{ .ctx = self.ctx, .promise = promise }, PendingPromise.settled) catch |err| switch (err) {
+            error.JavaScriptFault, error.Canceled => return error.JavaScriptFault,
+            error.Timeout => {
                 self.fault_text_len = 0;
                 self.appendFaultText("plugin startup timed out");
                 return error.JavaScriptFault;
-            }
-            self.wake.reset();
-            try self.pump();
-            if (self.ctx.promiseState(promise) != .Pending) break;
-            if (self.hasPending()) continue;
-            const timer = self.timers.nextDeadline() orelse guard.deadline;
-            const due = if (timer.nanoseconds < guard.deadline.nanoseconds) timer else guard.deadline;
-            self.wake.waitTimeout(self.io, .{ .deadline = .{ .raw = due, .clock = .awake } }) catch |err| switch (err) {
-                error.Timeout => {},
-                error.Canceled => return error.JavaScriptFault,
-            };
-        }
+            },
+        };
     }
+
+    /// A promise the owner waits on with `pumpUntil`.
+    pub const PendingPromise = struct {
+        ctx: quickjs.Context,
+        promise: quickjs.Value,
+
+        pub fn settled(self: PendingPromise) bool {
+            return self.ctx.promiseState(self.promise) != .Pending;
+        }
+    };
 
     /// Turn a rejected module promise into a fault, because QuickJS never throws it at the caller.
     fn checkModulePromise(self: *Host, value: quickjs.Value) Error!void {

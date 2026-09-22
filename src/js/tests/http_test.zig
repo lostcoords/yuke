@@ -39,14 +39,11 @@ fn run(mode: Mode, options: struct { cleanup: Cleanup = .none, pool: ?PoolCase =
     defer if (call) |held| held.finish();
     if (call) |held| held.work = &work;
     if (options.pool == .concurrent) {
-        const deadline: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(2) } };
-        const due = deadline.toDeadline(host.io);
-        while (peer.requests.load(.acquire) < 10) {
-            host.wake.reset();
-            try host.pump();
-            if (peer.requests.load(.acquire) == 10) break;
-            try host.wake.waitTimeout(host.io, due);
-        }
+        try support.pumpUntil(host, peer, struct {
+            fn all(p: *Peer) bool {
+                return p.requests.load(.acquire) == 10;
+            }
+        }.all);
         peer.release.set(host.io);
     }
     if (cleanup != .none) try support.pumpUntilSet(host, &peer.ready);

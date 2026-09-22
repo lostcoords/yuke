@@ -435,17 +435,8 @@ test "exec call abort ends its process group and preserves unrelated work" {
     try std.testing.expect(processExists(pids[0]));
     try std.testing.expect(processExists(pids[1]));
 
-    const started: std.Io.Timestamp = .now(host.io, .awake);
     canceled.finish();
-    try host.pump();
-    while (processExists(pids[0]) or processExists(pids[1])) {
-        if (started.durationTo(.now(host.io, .awake)).toMilliseconds() > 8000) return error.ExecAbortDidNotStop;
-        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(20), .clock = .awake } }) catch {};
-        host.wake.reset();
-        try host.pump();
-    }
-    try std.testing.expect(!processExists(pids[0]));
-    try std.testing.expect(!processExists(pids[1]));
+    try support.pumpPolling(host, pids, bothEnded);
     try std.testing.expect(survivor.state != .settled);
     try std.testing.expect(processExists(survivor_pids[0]));
     try std.testing.expect(processExists(survivor_pids[1]));
@@ -561,15 +552,8 @@ test "session cancel reaches the builtin exec process group" {
     const pids = try waitExecPids(host, f.tmp.dir, "started");
     const canceled = try commands.sessionCancelRun(&f.app.engine, a, .{ .session_id = created.session.id });
     try std.testing.expect(canceled.canceled_run != null);
-    const started: std.Io.Timestamp = .now(host.io, .awake);
-    while (host.calls.live.items.len != 0 or host.ops.live.items.len != 0) {
-        if (started.durationTo(.now(host.io, .awake)).toMilliseconds() > 8000) return error.ExecAbortDidNotStop;
-        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(20), .clock = .awake } }) catch {};
-        host.wake.reset();
-        try host.pump();
-    }
-    try std.testing.expect(!processExists(pids[0]));
-    try std.testing.expect(!processExists(pids[1]));
+    try support.pumpUntil(host, host, callsDone);
+    try std.testing.expect(bothEnded(pids));
 }
 
 test "a JS tool's live output reaches the engine as ordered output deltas while the call runs" {
@@ -589,6 +573,10 @@ test "a JS tool's live output reaches the engine as ordered output deltas while 
             if (delta.offset != self.text.items.len) self.gap = true;
             self.text.appendSlice(std.testing.allocator, delta.delta) catch unreachable;
             self.len.store(self.text.items.len, .release);
+        }
+
+        fn streamed(self: *@This()) bool {
+            return self.len.load(.acquire) >= 8;
         }
     };
     const entry =
@@ -630,22 +618,11 @@ test "a JS tool's live output reaches the engine as ordered output deltas while 
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "Stream." } }} } },
     }, &launch, null);
     run.Launch.release(&launch, &f.app.engine);
-    const started: std.Io.Timestamp = .now(host.io, .awake);
-    while (recorder.len.load(.acquire) < 8) {
-        if (started.durationTo(.now(host.io, .awake)).toMilliseconds() > 5000) return error.OutputDidNotStream;
-        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(10), .clock = .awake } }) catch {};
-        host.wake.reset();
-        try host.pump();
-    }
+    try support.pumpPolling(host, &recorder, Recorder.streamed);
     try std.testing.expect(!recorder.gap);
     try std.testing.expectEqualStrings("one\ntwo\n", recorder.text.items);
     _ = try commands.sessionCancelRun(&f.app.engine, a, .{ .session_id = created.session.id });
-    while (host.calls.live.items.len != 0 or host.ops.live.items.len != 0) {
-        if (started.durationTo(.now(host.io, .awake)).toMilliseconds() > 8000) return error.RunDidNotStop;
-        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(20), .clock = .awake } }) catch {};
-        host.wake.reset();
-        try host.pump();
-    }
+    try support.pumpUntil(host, host, callsDone);
 }
 
 test "yuke:exec runs commands on tasks and reports each outcome" {
@@ -874,6 +851,14 @@ fn waitExecPids(host: *Host, dir: std.Io.Dir, path: []const u8) ![2]std.posix.pi
         try host.pump();
     }
     return error.ExecDidNotStart;
+}
+
+fn bothEnded(pids: [2]std.posix.pid_t) bool {
+    return !processExists(pids[0]) and !processExists(pids[1]);
+}
+
+fn callsDone(host: *Host) bool {
+    return host.calls.live.items.len == 0 and host.ops.live.items.len == 0;
 }
 
 fn processExists(pid: std.posix.pid_t) bool {

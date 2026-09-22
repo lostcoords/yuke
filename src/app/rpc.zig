@@ -341,7 +341,7 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
             extensions.host.wake.set(extensions.host.io);
             continue;
         } else |_| {}
-        extensions.host.waitForWork() catch return;
+        extensions.host.waitForWork(null) catch return;
     }
 }
 

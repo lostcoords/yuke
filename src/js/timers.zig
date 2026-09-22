@@ -250,7 +250,7 @@ test "waitForWork returns at the next timer deadline with no wake" {
     try host.eval("setTimeout(() => {}, 40);", "wait.js");
     host.wake.reset();
     const started: std.Io.Timestamp = .now(testing.io, .awake);
-    try host.waitForWork();
+    try host.waitForWork(null);
     const waited = started.durationTo(.now(testing.io, .awake)).toMilliseconds();
     try testing.expect(waited >= 30 and waited < 5000);
     try testing.expect(host.hasPending());

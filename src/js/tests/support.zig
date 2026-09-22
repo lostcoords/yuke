@@ -109,68 +109,58 @@ pub fn expectString(host: *Host, comptime property: []const u8, want: []const u8
     try std.testing.expectEqualStrings(want, text);
 }
 
-/// A test that sleeps this long found work that no task announced.
+/// A test that waits this long found work that no task announced.
 const wake_timeout: std.Io.Clock.Duration = .{ .raw = .fromSeconds(10), .clock = .awake };
-const max_pumps = 1024;
+
+/// Pump until `done(context)` holds; a missed wake fails the test at the timeout.
+pub fn pumpUntil(host: *Host, context: anytype, comptime done: fn (@TypeOf(context)) bool) !void {
+    try host.pumpUntil(.fromNow(host.io, wake_timeout), context, done);
+}
+
+/// Pump and poll a condition that no task announces, such as the end of a process.
+pub fn pumpPolling(host: *Host, context: anytype, comptime done: fn (@TypeOf(context)) bool) !void {
+    const deadline: std.Io.Clock.Timestamp = .fromNow(host.io, wake_timeout);
+    while (true) {
+        host.pumpUntil(.fromNow(host.io, .{ .raw = .fromMilliseconds(10), .clock = .awake }), context, done) catch |err| {
+            if (err == error.Timeout and deadline.durationFromNow(host.io).raw.nanoseconds > 0) continue;
+            return err;
+        };
+        return;
+    }
+}
 
 pub fn pumpUntilIdle(host: *Host) !void {
-    for (0..max_pumps) |_| {
-        try host.pump();
-        if (host.ops.live.items.len == 0) return;
-        try awaitWork(host);
-    }
-    return error.PrimitiveNeverSettled;
+    try pumpUntil(host, host, struct {
+        fn idle(h: *Host) bool {
+            return h.ops.live.items.len == 0;
+        }
+    }.idle);
 }
 
 pub fn pumpUntilSettled(host: *Host, call: *tools_table.Call) !void {
-    for (0..max_pumps) |_| {
-        try host.pump();
-        if (call.state == .settled) return;
-        try awaitWork(host);
-    }
-    return error.CallNeverSettled;
+    try pumpUntil(host, call, struct {
+        fn settled(c: *tools_table.Call) bool {
+            return c.state == .settled;
+        }
+    }.settled);
 }
 
 /// The task must set `host.wake` after it sets the event.
 pub fn pumpUntilSet(host: *Host, event: *const std.Io.Event) !void {
-    for (0..max_pumps) |_| {
-        try host.pump();
-        if (event.isSet()) return;
-        try awaitWork(host);
-    }
-    return error.TaskNeverFinished;
+    try pumpUntil(host, event, std.Io.Event.isSet);
 }
 
 pub fn pumpUntilTrue(host: *Host, expression: [:0]const u8) !void {
-    for (0..max_pumps) |_| {
-        try host.pump();
-        if (try host.evalInt(expression) != 0) return;
-        try awaitWork(host);
-    }
-    return error.ConditionNeverTrue;
-}
-
-/// Clear the wake and sleep only when no work waits, as the owner loops do.
-fn awaitWork(host: *Host) !void {
-    std.debug.assert(host.phase == .open);
-    host.wake.reset();
-    if (host.hasPending()) return;
-    const deadline = std.Io.Clock.Timestamp.fromNow(host.io, wake_timeout);
-    // A timer due before the missed-wake deadline ends the sleep with no wake, as `Host.waitForWork` does.
-    const timer = host.timers.nextDeadline();
-    const until: std.Io.Clock.Timestamp = if (timer) |due| (if (due.nanoseconds < deadline.raw.nanoseconds) .{ .raw = due, .clock = .awake } else deadline) else deadline;
-    while (true) {
-        host.wake.waitTimeout(host.io, .{ .deadline = until }) catch |err| switch (err) {
-            error.Canceled => return err,
-            // A spurious wakeup also returns Timeout, so only a passed deadline proves a missed wake.
-            error.Timeout => {
-                if (until.durationFromNow(host.io).raw.nanoseconds > 0) continue;
-                if (timer != null and until.raw.nanoseconds != deadline.raw.nanoseconds) return;
-                return error.OwnerNeverWoken;
-            },
-        };
-        return;
-    }
+    const Check = struct {
+        host: *Host,
+        expression: [:0]const u8,
+        // A failed read ends the wait, and the read below reports it.
+        fn holds(self: @This()) bool {
+            return (self.host.evalInt(self.expression) catch return true) != 0;
+        }
+    };
+    try pumpUntil(host, Check{ .host = host, .expression = expression }, Check.holds);
+    if (try host.evalInt(expression) == 0) return error.ConditionNeverTrue;
 }
 
 pub fn hasTool(host: *Host, name: []const u8) bool {

@@ -2,6 +2,7 @@ const std = @import("std");
 const zio = @import("zio");
 const support = @import("support.zig");
 const Peer = @import("../socket_peer.zig").Peer;
+const Host = @import("../host.zig").Host;
 const bench = @import("../bench/bench.zig");
 
 fn run(comptime file: [:0]const u8, mode: Peer.Mode, cleanup_checkpoint: bool) !void {
@@ -18,18 +19,11 @@ fn run(comptime file: [:0]const u8, mode: Peer.Mode, cleanup_checkpoint: bool) !
     try support.eval(host, file);
     if (cleanup_checkpoint) {
         try support.pumpUntilTrue(host, "globalThis.socketCleanupReady === true");
-        const deadline = std.Io.Clock.Timestamp.fromNow(host.io, .{ .raw = .fromSeconds(5), .clock = .awake });
-        while (true) {
-            host.wake.reset();
-            try host.pump();
-            if (host.net.live.items.len == 0) break;
-            if (deadline.durationFromNow(host.io).raw.nanoseconds <= 0) return error.SocketCleanupTimeout;
-            if (host.hasPending()) continue;
-            host.wake.waitTimeout(host.io, .{ .deadline = deadline }) catch |err| switch (err) {
-                error.Timeout => {},
-                else => return err,
-            };
-        }
+        try support.pumpUntil(host, host, struct {
+            fn closed(h: *Host) bool {
+                return h.net.live.items.len == 0;
+            }
+        }.closed);
         try host.eval("globalThis.resumeSocketTest()", "net-resume.js");
     }
     try support.pumpUntilTrue(host, "globalThis.socketDone === true");

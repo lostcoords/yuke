@@ -9,6 +9,7 @@ const call = @import("call.zig");
 const commands = @import("../engine/commands.zig");
 const Engine = @import("../engine/Engine.zig");
 const extensions_mod = @import("../js/extensions.zig");
+const tools = @import("../js/tools.zig");
 const Extensions = extensions_mod.Extensions;
 
 /// Boot the headless graph with an answerer that denies every question.
@@ -110,7 +111,7 @@ fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer,
             },
         },
     };
-    try awaitRun(extensions, &waiter, started.run_id);
+    try pumpUntil(extensions, RunWait{ .waiter = &waiter, .run_id = started.run_id }, RunWait.done);
 
     const done = waiter.doneOf(started.run_id).?;
     const status: u8 = switch (done.outcome) {
@@ -230,12 +231,7 @@ fn gatedCommand(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.
     }
     const record = host.calls.submitInputMethod(method, params);
     defer record.finish();
-    while (record.state != .settled) {
-        host.wake.reset();
-        pump(extensions);
-        if (record.state == .settled) break;
-        try extensions.host.waitForWork();
-    }
+    try pumpUntil(extensions, record, callSettled);
     if (record.is_error) {
         try fail(err, "the input gate failed: {s}", .{record.text orelse ""});
         return error.InputGateFailed;
@@ -243,25 +239,31 @@ fn gatedCommand(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.
     return std.json.parseFromSliceLeaky(GateAnswer, arena, record.text orelse "", .{});
 }
 
-/// Block until the run reports its outcome. Tools and hooks run on the owner, so the owner pumps meanwhile.
-fn awaitRun(extensions: *Extensions, waiter: *Waiter, run_id: proto.ids.RunId) !void {
-    while (waiter.doneOf(run_id) == null) {
-        extensions.host.wake.reset();
-        pump(extensions);
-        // A settle inside the pump sets no wake, so the condition is read again before the sleep.
-        if (waiter.doneOf(run_id) != null) break;
-        try extensions.host.waitForWork();
-    }
-}
-
-/// One owner turn. A script fault is logged, and the run goes on without the handler.
-fn pump(extensions: *Extensions) void {
+/// Pump until `done(context)` holds. Tools and hooks run on the owner; a script fault is logged, and the run goes on without the handler.
+fn pumpUntil(extensions: *Extensions, context: anytype, comptime done: fn (@TypeOf(context)) bool) !void {
     const host = extensions.host;
-    host.pump() catch {
-        std.log.warn("yuke -p: JavaScript fault: {s}", .{host.faultText()});
-        host.clearFault();
+    while (true) return host.pumpUntil(null, context, done) catch |err| switch (err) {
+        error.JavaScriptFault => {
+            std.log.warn("yuke -p: JavaScript fault: {s}", .{host.faultText()});
+            host.clearFault();
+            continue;
+        },
+        else => |e| return e,
     };
 }
+
+fn callSettled(record: *tools.Call) bool {
+    return record.state == .settled;
+}
+
+const RunWait = struct {
+    waiter: *const Waiter,
+    run_id: proto.ids.RunId,
+
+    fn done(self: RunWait) bool {
+        return self.waiter.doneOf(self.run_id) != null;
+    }
+};
 
 /// The events of one session, copied out of the emitter's arena, and the wake of the owner loop.
 const Waiter = struct {
