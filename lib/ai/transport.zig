@@ -6,6 +6,7 @@ const route = @import("route.zig");
 const sse = @import("stream/sse.zig");
 const event = @import("stream/event.zig");
 const types = @import("types.zig");
+const answer = @import("answer.zig");
 
 pub const HttpTransport = http.HttpTransport;
 pub const HttpError = http.Error;
@@ -23,11 +24,11 @@ pub const AttemptInfo = struct {
     no_retry: bool = false,
     /// The adapter sets this before the first body write. A later transport fault is then ambiguous.
     delivery: Delivery = .definitely_unsent,
-    /// The status of a non-200 answer. The transport fills these three in the attempt arena before it returns the error.
+    /// The status of a non-200 answer; a 200 stream that fails later leaves it null.
     status: ?u16 = null,
     /// The provider request id from `request-id` or `x-request-id`, when the answer names one.
     request_id: ?[]const u8 = null,
-    /// The first bytes of a non-200 body, at most `max_error_body_bytes`; null when the body could not be read.
+    /// The first bytes of the error answer, at most `max_error_body_bytes`: a non-200 body, or the stream event that failed a 200 response.
     body: ?[]const u8 = null,
 
     pub const Delivery = enum { definitely_unsent, possibly_sent };
@@ -72,10 +73,12 @@ pub const ResponseBody = struct {
     }
 };
 
-/// Hand each StreamEvent to `onEvent`, which copies what it keeps before the next payload replaces it.
+/// Hand each StreamEvent to `onEvent`, which copies what it keeps; an error event leaves its bytes in `info.body` in `arena`.
 pub fn stream(
     gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
     body: ResponseBody,
+    info: *AttemptInfo,
     reducer: anytype,
     ctx: anytype,
     comptime onEvent: fn (@TypeOf(ctx), event.StreamEvent) anyerror!void,
@@ -91,7 +94,11 @@ pub fn stream(
     // The parser owns the payload until the next call, so the decode and the emit run first.
     while (try parser.next(body)) |data| {
         events.clearRetainingCapacity();
-        try reducer.decode(data, scratch.allocator(), &events);
+        reducer.decode(data, scratch.allocator(), &events) catch |err| {
+            std.debug.assert(info.body == null); // a 200 stream has no error body yet
+            if (answer.isAnswer(err)) info.body = try arena.dupe(u8, data[0..@min(data.len, AttemptInfo.max_error_body_bytes)]);
+            return err;
+        };
         try emit(events.items, &saw_done, ctx, onEvent);
         _ = scratch.reset(.retain_capacity);
     }
@@ -192,7 +199,9 @@ test "stream delivers each event to the callback across fragmented reads" {
 
     // A 7-byte chunk splits SSE events across reads, so the parser holds cross-read state.
     var replay: ReplayReader = .{ .bytes = canned_text_turn, .chunk_size = 7 };
-    try stream(testing.allocator, replay.body(), &reducer, &collector, StreamCollector.on);
+    var info: AttemptInfo = .{};
+    try stream(testing.allocator, testing.allocator, replay.body(), &info, &reducer, &collector, StreamCollector.on);
+    try testing.expectEqual(@as(?[]const u8, null), info.body);
 
     try testing.expectEqualStrings("Hello", collector.text.items);
     try testing.expectEqual(types.FinishReason.stop, collector.stop.?);
@@ -213,5 +222,42 @@ test "stream reports a truncated stream" {
     defer collector.deinit();
 
     var replay: ReplayReader = .{ .bytes = canned_truncated };
-    try testing.expectError(error.IncompleteStream, stream(testing.allocator, replay.body(), &reducer, &collector, StreamCollector.on));
+    var info: AttemptInfo = .{};
+    try testing.expectError(error.IncompleteStream, stream(testing.allocator, testing.allocator, replay.body(), &info, &reducer, &collector, StreamCollector.on));
+    try testing.expectEqual(@as(?[]const u8, null), info.body);
+}
+
+test "stream keeps the bytes of the error event that failed a 200 response" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    var reducer = anthropic.Reducer.init(testing.allocator);
+    defer reducer.deinit();
+    var collector: StreamCollector = .{ .gpa = testing.allocator };
+    defer collector.deinit();
+
+    const failed_event =
+        \\{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+    ;
+    var replay: ReplayReader = .{ .bytes = comptime sseFrame(
+        \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
+    ) ++ sseFrame(failed_event) };
+    var info: AttemptInfo = .{};
+    try testing.expectError(error.ServerError, stream(testing.allocator, arena.allocator(), replay.body(), &info, &reducer, &collector, StreamCollector.on));
+    try testing.expectEqualStrings(failed_event, info.body.?);
+    // The provider answered 200, so the attempt carries no status.
+    try testing.expectEqual(@as(?u16, null), info.status);
+}
+
+test "stream keeps no bytes for a malformed event, which is no provider answer" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    var reducer = anthropic.Reducer.init(testing.allocator);
+    defer reducer.deinit();
+    var collector: StreamCollector = .{ .gpa = testing.allocator };
+    defer collector.deinit();
+
+    var replay: ReplayReader = .{ .bytes = sseFrame("{not json") };
+    var info: AttemptInfo = .{};
+    try testing.expectError(error.Protocol, stream(testing.allocator, arena.allocator(), replay.body(), &info, &reducer, &collector, StreamCollector.on));
+    try testing.expectEqual(@as(?[]const u8, null), info.body);
 }

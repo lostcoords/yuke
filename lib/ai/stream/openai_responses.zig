@@ -3,12 +3,13 @@
 const std = @import("std");
 const event = @import("event.zig");
 const json = @import("json.zig");
+const answer = @import("../answer.zig");
 const types = @import("../types.zig");
 const search = @import("../tool_search.zig");
 
 const StreamEvent = event.StreamEvent;
 
-pub const Error = error{ Protocol, Provider, OutOfMemory };
+pub const Error = error{ Protocol, OutOfMemory } || answer.Error;
 
 const ResponsesEvent = enum {
     @"response.created",
@@ -120,7 +121,7 @@ pub const Reducer = struct {
             .@"response.output_item.done" => try self.onOutputItemDone(root, out),
             .@"response.completed" => try self.onCompleted(root, out),
             .@"response.incomplete" => try self.onIncomplete(root, out),
-            .@"response.failed", .@"error" => return error.Provider,
+            .@"response.failed", .@"error" => return answer.fromEvent(root),
         }
     }
 
@@ -839,10 +840,20 @@ test "a refusal outranks a tool call in the stop reason" {
     try testing.expectEqual(types.FinishReason.refusal, done.stop_reason);
 }
 
-test "a failed response terminates with a provider error" {
+test "a failed response and an error event classify by their provider code" {
     var h = Harness.init();
     defer h.deinit();
-    try testing.expectError(error.Provider, h.feed(&.{
+    try testing.expectError(error.RateLimited, h.feed(&.{
+        \\{"type":"response.failed","response":{"status":"failed","error":{"code":"rate_limit_exceeded","message":"try again"}}}
+    }));
+    var flat = Harness.init();
+    defer flat.deinit();
+    try testing.expectError(error.ContextOverflow, flat.feed(&.{
+        \\{"type":"error","code":"context_length_exceeded","message":"too long","param":null,"sequence_number":1}
+    }));
+    var bare = Harness.init();
+    defer bare.deinit();
+    try testing.expectError(error.ProviderFailed, bare.feed(&.{
         \\{"type":"response.failed"}
     }));
 }
@@ -891,7 +902,7 @@ test "hosted search output stays in the transcript and never becomes a local cal
     for ([_]usize{ 1, 3 }) |i| {
         const result = h.out.items[i].block_stopped.result;
         try testing.expect(result == .tool_search);
-        try result.tool_search.validate(h.arena.allocator());
+        _ = try result.tool_search.summarize(h.arena.allocator());
     }
     try testing.expect(std.mem.indexOf(u8, h.out.items[3].block_stopped.result.tool_search.data, "\"extension\":true") != null);
     try testing.expectEqual(types.FinishReason.stop, h.out.items[4].done.stop_reason);

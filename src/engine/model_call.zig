@@ -27,8 +27,8 @@ pub const Response = struct {
     finish_reason: ai.FinishReason,
 };
 
-/// Run one call in the caller's cancelable task with the caller-owned route and model.
-pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, held_route: registry.Route, spec: *const registry.ModelSpec, request: Request) !Response {
+/// Run one call in the caller's cancelable task with the caller-owned route and model; a failure fills `diagnostics`.
+pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, held_route: registry.Route, spec: *const registry.ModelSpec, request: Request, diagnostics: ?*ai.Diagnostics) !Response {
     std.debug.assert(request.blocks.len > 0);
     std.debug.assert(request.max_output_tokens > 0);
     try cancel.check(engine.deps.io); // A cancel that already landed reports no other refusal.
@@ -69,7 +69,7 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
             .cache_key = request.session_id,
             .session_id = request.session_id,
         },
-    });
+    }, diagnostics);
     defer result.deinit();
     try cancel.check(engine.deps.io);
     for (result.content) |part| if (part == .tool_call) return error.IncompleteSummary;
@@ -119,7 +119,7 @@ const Fixture = struct {
 
     fn callWith(self: *Fixture, cancel: *Cancel, match: registry.Match, request: Request) !Response {
         const route = registry.routeFor(match) orelse return error.UnknownModel;
-        var handle = try self.resources.runtime.spawn(generateWith, .{ &self.engine, self.arena.allocator(), cancel, route, match.model, request });
+        var handle = try self.resources.runtime.spawn(generateWith, .{ &self.engine, self.arena.allocator(), cancel, route, match.model, request, null });
         return handle.join();
     }
 };

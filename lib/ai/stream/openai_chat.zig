@@ -3,11 +3,12 @@
 const std = @import("std");
 const event = @import("event.zig");
 const json = @import("json.zig");
+const answer = @import("../answer.zig");
 const types = @import("../types.zig");
 
 const StreamEvent = event.StreamEvent;
 
-pub const Error = error{ Protocol, Provider, OutOfMemory };
+pub const Error = error{ Protocol, OutOfMemory } || answer.Error;
 
 /// An active content block. The reducer owns its terminal fields until `deinit`.
 const Block = struct {
@@ -58,6 +59,8 @@ pub const Reducer = struct {
         if (self.done_emitted) return;
 
         const root = try json.parse(data, scratch);
+        // A gateway reports a failure after the 200 head as a chunk with a top-level `error`.
+        if (json.fieldGet(root, "error")) |value| if (value != .null) return answer.fromEvent(root);
         const choices = switch (json.fieldGet(root, "choices") orelse return error.Protocol) {
             .array => |a| a,
             else => return error.Protocol,
@@ -487,6 +490,22 @@ test "malformed JSON degrades to a protocol error" {
     var h = Harness.init();
     defer h.deinit();
     try testing.expectError(error.Protocol, h.feed(&.{"{not json"}));
+}
+
+test "a gateway error chunk fails the stream, never a finish with an unknown reason" {
+    var h = Harness.init();
+    defer h.deinit();
+    try testing.expectError(error.ServerError, h.feed(&.{
+        \\{"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}
+        ,
+        \\{"id":"gen-1","object":"chat.completion.chunk","error":{"code":502,"message":"upstream failed"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
+    }));
+    // A null `error` is no error.
+    var ok = Harness.init();
+    defer ok.deinit();
+    try ok.feed(&.{
+        \\{"error":null,"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}
+    });
 }
 
 test "a choice with index one is rejected" {

@@ -55,7 +55,7 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
     defer boundary_state.deinit();
     const boundary_arena = boundary_state.allocator();
     consumeInitialInputs(engine, boundary_arena, slot) catch |err| {
-        commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = failure(err) });
+        commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = failure(boundary_arena, err) });
         return;
     };
     // The prompt is built here and not at creation, because only a run task can await a hook.
@@ -65,7 +65,7 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
             return;
         },
         .returned => |result| result catch |err| {
-            commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = failure(err) });
+            commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = failure(boundary_arena, err) });
             return;
         },
     }
@@ -134,7 +134,7 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
         const outcome: proto.run.RunOutcome = switch (terminal) {
             .success => unreachable,
             .canceled => .{ .canceled = .{} },
-            .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message, .status = item.status, .request_id = item.request_id, .detail = item.detail } },
+            .failed => |item| .{ .failed = item },
         };
         slot.progress.current = null;
         run.finishRunOpen(engine, arena, slot, outcome) catch |err| run.faultSlot(engine, slot, err);
@@ -156,14 +156,16 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
     // A request hook can await indefinitely, so the build runs as a child a run cancel can reach.
     var request: ?ai.PreparedRequest = null;
     defer if (request) |*prepared| prepared.deinit();
-    const built = switch (slot.cancel.runChild(engine.deps.io, requestChild, .{ engine, arena, slot, &request })) {
+    // A compaction inside the build calls the provider, and its answer must outlive the build state.
+    var diagnostics: ai.Diagnostics = .{ .arena = out };
+    const built = switch (slot.cancel.runChild(engine.deps.io, requestChild, .{ engine, arena, slot, &request, &diagnostics })) {
         .canceled, .aborted => return .canceled,
         .returned => |result| result,
     };
     built catch |err| {
         if (err == error.Canceled) return .canceled;
         std.log.warn("run {d} could not build its request: {t}", .{ slot.runId(), err });
-        return .{ .failed = failure(err) };
+        return .{ .failed = provider.failure.outcome(out, err, &diagnostics.info) };
     };
     std.debug.assert(request != null);
     // The build state dies here, so the projected transcript and the blob bytes do not stay live while the stream runs.
@@ -171,7 +173,7 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
 
     const rt = streamer.session;
     const session_id = slot.sessionId();
-    beginRound(engine, arena, slot) catch |err| return .{ .failed = failure(err) };
+    beginRound(engine, arena, slot) catch |err| return .{ .failed = failure(out, err) };
     const created_at = slot.progress.current.?.created_at_ms;
     const started_note: proto.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = .{
         .session_id = session_id,
@@ -182,7 +184,7 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
     } } };
     // Fold the start into the session, then publish. The fold opens the draft.
     rt.apply(started_note.params) catch |err| {
-        return .{ .failed = failure(err) };
+        return .{ .failed = failure(out, err) };
     };
     engine.sinks.emit(started_note);
     std.debug.assert(slot.round == .none); // the last round closed before this one opened
@@ -205,7 +207,7 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
                 .budget_left = slot.retry_budget,
             }, engine.jitter()) orelse {
                 std.log.warn("run {d} attempt {d} ended: {t} (status {?d})", .{ slot.runId(), number, err, info.status });
-                return .{ .failed = attemptFailure(out, err, &info) };
+                return .{ .failed = provider.failure.outcome(out, err, &info) };
             };
 
             std.debug.assert(slot.retry_budget > 0); // the classifier refuses a retry at zero
@@ -224,7 +226,7 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
 
 /// Record the wait on the slot, then publish it, so the wait shows as a retry and not a silent pause.
 fn publishRetrying(engine: *Engine, rt: *Session, slot: *RunSlot, number: u8, err: anyerror, status: ?u16, delay_ms: u64) void {
-    const detail = failure(err);
+    const detail = provider.failure.classify(err);
     std.log.info("run {d} attempt {d} ended with {t} (status {?d}); the next attempt starts in {d} ms with {d} retries left", .{ slot.runId(), number, err, status, delay_ms, slot.retry_budget });
     std.debug.assert(slot.round == .waiting or slot.round == .streaming); // only a live attempt can fail
     slot.round = .{ .retrying = .{
@@ -263,15 +265,15 @@ fn streamAttempt(
     }
 }
 
-fn requestChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?ai.PreparedRequest) !void {
+fn requestChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?ai.PreparedRequest, diagnostics: *ai.Diagnostics) !void {
     std.debug.assert(out.* == null);
     defer slot.cancel.finish(engine.deps.io);
     try slot.cancel.check(engine.deps.io);
-    out.* = try roundRequest(engine, arena, slot);
+    out.* = try roundRequest(engine, arena, slot, diagnostics);
 }
 
 /// Build the request for one round. A retry re-sends these bytes, so the cached prefix still matches.
-fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !ai.PreparedRequest {
+fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, diagnostics: *ai.Diagnostics) !ai.PreparedRequest {
     const model = slot.config.model;
 
     // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
@@ -280,7 +282,7 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !ai.P
     const held = try round_request.snapshot(arena, engine, slot, resolved);
     const projected = request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget) catch |err| switch (err) {
         error.ContextHistoryTooLarge => blk: {
-            try compaction.compactForRequest(engine, arena, slot, held);
+            try compaction.compactForRequest(engine, arena, slot, held, diagnostics);
             break :blk try request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget);
         },
         else => return err,
@@ -304,7 +306,7 @@ fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, stream
         body.deinit();
     }
     try slot.cancel.check(engine.deps.io);
-    try ai.consume(engine.deps.gpa, body, request.protocol, streamer, Streamer.onEvent);
+    try ai.consume(engine.deps.gpa, arena, body, info, request.protocol, streamer, Streamer.onEvent);
 }
 
 const Terminal = union(enum) {
@@ -313,27 +315,11 @@ const Terminal = union(enum) {
     failed: Failure,
 };
 
-const Failure = struct {
-    code: proto.enums.RunErrorCode,
-    message: []const u8,
-    status: ?u16 = null,
-    request_id: ?[]const u8 = null,
-    detail: ?[]const u8 = null,
-};
+const Failure = proto.run.RunOutcomeFailed;
 
-/// Map a run failure to its wire code and sentence. `provider.failure` holds the one error table.
-fn failure(err: anyerror) Failure {
-    const detail = provider.failure.classify(err);
-    return .{ .code = detail.code, .message = detail.message };
-}
-
-/// Map the final attempt, and copy what the provider answered into `out`, because the attempt arena dies with the round.
-fn attemptFailure(out: std.mem.Allocator, err: anyerror, info: *const ai.transport.AttemptInfo) Failure {
-    var result = failure(err);
-    result.status = info.status;
-    result.request_id = if (info.request_id) |id| out.dupe(u8, id) catch unreachable else null;
-    result.detail = if (info.body) |body| provider.failure.detailText(out, body) catch unreachable else null;
-    return result;
+/// Describe a failure that no provider attempt explains, in `arena`, which must outlive the round.
+fn failure(arena: std.mem.Allocator, err: anyerror) Failure {
+    return provider.failure.outcome(arena, err, &.{});
 }
 
 /// Commit the current round, and terminalize the run only when this is the final round.
@@ -400,7 +386,7 @@ fn commitRound(
     const outcome: proto.run.RunOutcome = switch (terminal) {
         .success => |reason| .{ .turn = .{ .finish = reason, .rounds = rounds_committed } },
         .canceled => .{ .canceled = .{} },
-        .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message, .status = item.status, .request_id = item.request_id, .detail = item.detail } },
+        .failed => |item| .{ .failed = item },
     };
     // The committed content borrows the draft. The commit fold frees the draft, so own a copy first.
     const owned = try proto.dupe(arena, committed);
@@ -1356,6 +1342,33 @@ test "a failed attempt keeps the provider status, request id, and detail past it
     try std.testing.expectEqual(@as(?u16, 400), terminal.failed.status);
     try std.testing.expectEqualStrings("req_9", terminal.failed.request_id.?);
     try std.testing.expectEqualStrings("invalid_request_error: too long", terminal.failed.detail.?);
+}
+
+test "an error event inside a 200 stream reports its class and the provider message" {
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    f.slot.gpa.free(f.slot.config.model);
+    f.slot.config.model = try f.slot.gpa.dupe(u8, "mock/model");
+    f.slot.phase = .running;
+    f.resources.providers.merged.rows = &.{Resources.mockProvider(&.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .openai_chat }}, .{ .protocol = .openai_chat })};
+    // A gateway sends the 200 head, then reports the upstream failure as a chunk.
+    var canned: ai.testing.CannedTransport = .{ .bytes = ai.testing.sseFrame(
+        \\{"id":"gen-1","error":{"code":402,"message":"no credits left"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
+    ) };
+    f.engine.deps.route_transport = canned.transport();
+    f.slot.progress.current = null; // the round opens its own message and its own draft
+    if (f.session.draft) |*held| held.deinit();
+    f.session.draft = null;
+    var out: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer out.deinit();
+    var streamer = f.streamer();
+    defer streamer.blocks.deinit(std.testing.allocator);
+    const terminal = streamRound(&f.engine, out.allocator(), f.slot, &streamer);
+    try std.testing.expect(terminal == .failed);
+    try std.testing.expectEqual(proto.enums.RunErrorCode.quota_exhausted, terminal.failed.code);
+    try std.testing.expectEqual(@as(?u16, null), terminal.failed.status);
+    try std.testing.expectEqualStrings("no credits left (402)", terminal.failed.detail.?);
 }
 
 test "an advertised output ceiling equal to context leaves a usable request budget" {

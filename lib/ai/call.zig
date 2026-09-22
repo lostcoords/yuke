@@ -115,7 +115,7 @@ pub const Client = struct {
 
     /// Use `gpa` for call storage until the caller invokes `Result.deinit`.
     pub fn generate(self: *Client, gpa: std.mem.Allocator, model: Model, request: Request) !Result {
-        return generateWithTransport(gpa, self.http.transportFor(), model, request);
+        return generateWithTransport(gpa, self.http.transportFor(), model, request, null);
     }
 
     /// Use `gpa` for call storage until the caller invokes `Result.deinit`.
@@ -132,7 +132,7 @@ pub const Client = struct {
         context: anytype,
         comptime onEvent: fn (@TypeOf(context), event.StreamEvent) anyerror!void,
     ) !void {
-        return streamWithTransport(gpa, self.http.transportFor(), model, request, context, onEvent);
+        return streamWithTransport(gpa, self.http.transportFor(), model, request, null, context, onEvent);
     }
 };
 
@@ -142,16 +142,28 @@ pub fn generateTextWithTransport(gpa: std.mem.Allocator, route_transport: transp
     return generateWithTransport(gpa, route_transport, model, .{
         .blocks = &blocks,
         .options = options,
-    });
+    }, null);
 }
 
-/// Use `gpa` for call storage until the caller invokes `Result.deinit`.
-pub fn generateWithTransport(gpa: std.mem.Allocator, route_transport: transport.Transport, model: Model, request: Request) !Result {
+/// Use `gpa` for call storage until the caller invokes `Result.deinit`; a failure fills `diagnostics` when the caller passes one.
+pub fn generateWithTransport(gpa: std.mem.Allocator, route_transport: transport.Transport, model: Model, request: Request, diagnostics: ?*Diagnostics) !Result {
     var collector = Collector.init(gpa);
     errdefer collector.deinit();
-    try streamWithTransport(gpa, route_transport, model, request, &collector, Collector.onEvent);
+    try streamWithTransport(gpa, route_transport, model, request, diagnostics, &collector, Collector.onEvent);
     return collector.result();
 }
+
+/// Hold the provider answer of a failed call; the call copies it into `arena` only on a failure.
+pub const Diagnostics = struct {
+    arena: std.mem.Allocator,
+    info: transport.AttemptInfo = .{},
+
+    fn keep(self: *Diagnostics, info: *const transport.AttemptInfo) void {
+        self.info = info.*;
+        self.info.request_id = if (info.request_id) |id| self.arena.dupe(u8, id) catch unreachable else null;
+        self.info.body = if (info.body) |body| self.arena.dupe(u8, body) catch unreachable else null;
+    }
+};
 
 /// Use `gpa` to own the validated request and route data until `PreparedRequest.deinit` runs.
 pub fn prepare(gpa: std.mem.Allocator, model: Model, request: Request) !PreparedRequest {
@@ -178,6 +190,7 @@ pub fn streamWithTransport(
     route_transport: transport.Transport,
     model: Model,
     request: Request,
+    diagnostics: ?*Diagnostics,
     context: anytype,
     comptime onEvent: fn (@TypeOf(context), event.StreamEvent) anyerror!void,
 ) !void {
@@ -188,10 +201,12 @@ pub fn streamWithTransport(
     var attempt: std.heap.ArenaAllocator = .init(gpa);
     defer attempt.deinit();
     var info: transport.AttemptInfo = .{};
+    // The attempt arena dies here, so a failure copies what the provider answered first.
+    errdefer if (diagnostics) |d| d.keep(&info);
     const body = try route_transport.open(attempt.allocator(), prepared.transport_request, &info);
     defer body.deinit();
 
-    try consume(gpa, body, prepared.protocol, context, onEvent);
+    try consume(gpa, attempt.allocator(), body, &info, prepared.protocol, context, onEvent);
 }
 
 fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
@@ -217,10 +232,12 @@ fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
     return adapter.serialize(arena, model.route.protocol, value, request.blocks);
 }
 
-/// Use `gpa` for scratch until return; the caller retains ownership of the borrowed response body.
+/// Use `gpa` for scratch until return; the caller owns the body, `arena`, and `info`, which keeps an error event.
 pub fn consume(
     gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
     body: transport.ResponseBody,
+    info: *transport.AttemptInfo,
     protocol: types.Protocol,
     context: anytype,
     comptime onEvent: fn (@TypeOf(context), event.StreamEvent) anyerror!void,
@@ -229,7 +246,7 @@ pub fn consume(
         inline else => |value| {
             var reducer = adapter.Adapter(value).Reducer.init(gpa);
             defer reducer.deinit();
-            try transport.stream(gpa, body, &reducer, context, onEvent);
+            try transport.stream(gpa, arena, body, info, &reducer, context, onEvent);
         },
     }
 }
@@ -459,7 +476,7 @@ test "generate rejects an empty request before transport I/O" {
     try std.testing.expectError(error.EmptyRequest, generateWithTransport(std.testing.allocator, lifecycle.transportFor(), testModel(.openai_chat), .{
         .blocks = &.{},
         .options = .{ .max_output_tokens = 1 },
-    }));
+    }, null));
     try std.testing.expectEqual(@as(usize, 0), lifecycle.open_count);
     try std.testing.expectEqual(@as(usize, 0), lifecycle.deinit_count);
 }
@@ -487,7 +504,7 @@ test "stream releases the response body once on success, a callback error, and a
         const result = streamWithTransport(std.testing.allocator, lifecycle.transportFor(), testModel(.anthropic_messages), .{
             .blocks = &blocks,
             .options = .{ .max_output_tokens = 1 },
-        }, &sink, Sink.onEvent);
+        }, null, &sink, Sink.onEvent);
         if (case.want) |want| try std.testing.expectError(want, result) else {
             try result;
             try std.testing.expect(sink.seen > 0);
@@ -496,6 +513,22 @@ test "stream releases the response body once on success, a callback error, and a
         try std.testing.expectEqual(@as(usize, 1), lifecycle.deinit_count);
     }
 }
+test "a failed call keeps the provider answer in the caller diagnostics" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const failed_event =
+        \\{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+    ;
+    var canned = testing_transport.CannedTransport{ .bytes = testing_transport.sseFrame(failed_event) };
+    var diagnostics: Diagnostics = .{ .arena = arena.allocator() };
+    try std.testing.expectError(error.ServerError, generateWithTransport(std.testing.allocator, canned.transport(), testModel(.anthropic_messages), .{
+        .blocks = &.{.{ .role = .user, .value = .{ .text = "hello" } }},
+        .options = .{ .max_output_tokens = 1 },
+    }, &diagnostics));
+    // The attempt arena is gone, so this read proves the copy.
+    try std.testing.expectEqualStrings(failed_event, diagnostics.info.body.?);
+}
+
 test "prepare and consume split request lifecycle" {
     var canned = testing_transport.CannedTransport{ .bytes = testing_transport.canned_reply };
     var prepared = try prepare(std.testing.allocator, testModel(.anthropic_messages), .{
@@ -519,7 +552,7 @@ test "prepare and consume split request lifecycle" {
             count.* += 1;
         }
     };
-    try consume(std.testing.allocator, body, prepared.protocol, &event_count, Counter.onEvent);
+    try consume(std.testing.allocator, attempt.allocator(), body, &info, prepared.protocol, &event_count, Counter.onEvent);
     try std.testing.expect(event_count > 0);
 }
 
@@ -627,7 +660,7 @@ test "generate owns native search records after the reducer releases them" {
     try std.testing.expectEqual(@as(usize, 1), result_value.content.len);
     try std.testing.expectEqualStrings("", result_value.text);
     try std.testing.expect(std.mem.indexOf(u8, result_value.content[0].tool_search.data, "mcp_read") != null);
-    try result_value.content[0].tool_search.validate(result_value.arena.allocator());
+    _ = try result_value.content[0].tool_search.summarize(result_value.arena.allocator());
 }
 
 test "generate drops a tool call the Responses reducer leaves unfinished" {

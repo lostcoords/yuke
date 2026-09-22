@@ -3,20 +3,12 @@
 const std = @import("std");
 const route = @import("../route.zig");
 const transport = @import("../transport.zig");
-const json = @import("../stream/json.zig");
+const answer = @import("../answer.zig");
 
 const Allocator = std.mem.Allocator;
 
-/// This error set defines stable classes for non-200 statuses and transport failures. The run task decides the outcome.
-pub const Error = error{
-    AuthFailed, // 401
-    PermissionDenied, // 403
-    RateLimited, // 429 with a body and no quota code
-    QuotaExhausted, // 429 with a quota or spend code
-    RateLimitUnknown, // 429 the client could not read or decode
-    ServerError, // 5xx
-    BadStatus, // Any other non-200 status.
-    StatusTimeout, // 408 or 504. The provider answered.
+/// Define stable classes for provider answers and transport failures; the run task decides the outcome.
+pub const Error = answer.Error || error{
     IdleTimeout, // The read stalled past the deadline. The request may already be held.
     RedirectRefused, // The client must not follow a 3xx response.
     BadUrl,
@@ -113,8 +105,7 @@ pub const HttpTransport = struct {
             const status: u16 = @intFromEnum(hb.response.head.status);
             info.status = status;
             info.body = try readErrorBody(hb, arena);
-            if (status == 429) return classify429(info.body orelse return Error.RateLimitUnknown, arena);
-            return mapStatus(status);
+            return answer.fromStatus(arena, status, info.body);
         }
 
         hb.reader = hb.response.reader(&hb.transfer_buffer); // This invalidates the head string slices.
@@ -287,18 +278,6 @@ fn readCause(conn: *std.http.Client.Connection) anyerror {
     };
 }
 
-/// Map a non-200 status to a stable class. The 505...599 range covers Anthropic's 529.
-fn mapStatus(status: u16) Error {
-    return switch (status) {
-        401 => Error.AuthFailed,
-        402 => Error.QuotaExhausted,
-        403 => Error.PermissionDenied,
-        408, 504 => Error.StatusTimeout,
-        500...503, 505...599 => Error.ServerError,
-        else => Error.BadStatus,
-    };
-}
-
 /// Read the first bytes of an error body into `arena`. A read fault answers null; only a cancel propagates.
 fn readErrorBody(hb: *HttpBody, arena: Allocator) error{ OutOfMemory, Canceled }!?[]const u8 {
     hb.reader = hb.response.reader(&hb.transfer_buffer);
@@ -317,40 +296,6 @@ fn readErrorBody(hb: *HttpBody, arena: Allocator) error{ OutOfMemory, Canceled }
         hb.reader.toss(take);
     }
     return try arena.dupe(u8, buf[0..len]);
-}
-
-/// Classify a 429 from its body, because a spend cap and a rate limit share the status.
-fn classify429(body: []const u8, arena: Allocator) anyerror {
-    const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return Error.RateLimitUnknown;
-    const err = json.fieldGet(value, "error") orelse return Error.RateLimitUnknown;
-    if (bodyIsQuota(err)) return Error.QuotaExhausted;
-    // A rate limit must prove itself. An unreadable body may still name a spend cap.
-    return if (bodyIsRateLimit(err)) Error.RateLimited else Error.RateLimitUnknown;
-}
-
-/// Report whether the error body names a temporary rate limit. Absence of proof is not proof.
-fn bodyIsRateLimit(err: std.json.Value) bool {
-    if (json.fieldStr(err, "code")) |code| if (std.mem.eql(u8, code, "rate_limit_exceeded")) return true;
-    if (json.fieldStr(err, "type")) |t| if (std.mem.eql(u8, t, "rate_limit_error")) return true;
-    return false;
-}
-
-/// Report whether the error body names an exhausted quota, by code, type, or spend-limit detail.
-fn bodyIsQuota(err: std.json.Value) bool {
-    if (json.fieldStr(err, "code")) |code| if (isQuotaCode(code)) return true;
-    if (json.fieldStr(err, "type")) |t| if (std.mem.eql(u8, t, "insufficient_quota")) return true;
-    if (json.fieldGet(err, "details")) |details| if (json.fieldStr(details, "error_code")) |dc| {
-        if (std.mem.eql(u8, dc, "enforced_spend_limit_reached")) return true;
-    };
-    return false;
-}
-
-/// Report whether a provider error code names an exhausted quota, credit, or spend limit.
-fn isQuotaCode(code: []const u8) bool {
-    if (std.mem.eql(u8, code, "insufficient_quota")) return true;
-    if (std.mem.eql(u8, code, "credit_balance_exhausted")) return true;
-    if (std.mem.eql(u8, code, "organization_usage_limit_exceeded")) return true;
-    return std.mem.endsWith(u8, code, "_spend_limit_exceeded");
 }
 
 const testing = std.testing;

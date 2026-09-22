@@ -3,12 +3,13 @@
 const std = @import("std");
 const event = @import("event.zig");
 const json = @import("json.zig");
+const answer = @import("../answer.zig");
 const types = @import("../types.zig");
 const search = @import("../tool_search.zig");
 
 const StreamEvent = event.StreamEvent;
 
-pub const Error = error{ Protocol, Provider, OutOfMemory };
+pub const Error = error{ Protocol, OutOfMemory } || answer.Error;
 
 const AnthropicEvent = enum {
     message_start,
@@ -73,7 +74,7 @@ pub const Reducer = struct {
 
         switch (kind) {
             .ping => {},
-            .@"error" => return error.Provider,
+            .@"error" => return answer.fromEvent(root),
             .message_start => try self.onMessageStart(root),
             .content_block_start => try self.onBlockStart(root, out),
             .content_block_delta => try self.onBlockDelta(root, out),
@@ -477,10 +478,10 @@ test "malformed JSON degrades to a protocol error" {
     try testing.expectError(error.Protocol, h.feed(&.{"{not json"}));
 }
 
-test "an error event terminates with a provider error" {
+test "an overload error event is a server error, as its 529 answer is" {
     var h = Harness.init();
     defer h.deinit();
-    try testing.expectError(error.Provider, h.feed(&.{
+    try testing.expectError(error.ServerError, h.feed(&.{
         \\{"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}
     }));
 }
@@ -624,7 +625,7 @@ test "hosted search preserves streamed input and references without a local tool
     for (h.out.items) |e| if (e == .block_stopped) {
         try testing.expect(e.block_stopped.result == .tool_search);
         const record = e.block_stopped.result.tool_search;
-        try record.validate(h.arena.allocator());
+        _ = try record.summarize(h.arena.allocator());
         try testing.expectEqual(@import("../tool_search.zig").Protocol.anthropic, record.protocol);
         if (stops == 0) try testing.expect(std.mem.indexOf(u8, record.data, "weather") != null);
         if (stops == 1) try testing.expect(std.mem.indexOf(u8, record.data, "\"extension\":true") != null);

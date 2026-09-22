@@ -2,6 +2,10 @@
 
 const std = @import("std");
 const http = @import("transport/http.zig");
+const answer = @import("answer.zig");
+
+/// Build the bounded detail line of one provider answer.
+pub const detailText = answer.detailText;
 
 /// How an error class behaves for a repeat.
 pub const Class = enum {
@@ -30,6 +34,8 @@ pub const Reason = enum {
     permission_denied,
     quota_exhausted,
     bad_status,
+    context_overflow,
+    provider_failed,
     bad_url,
     invalid_headers,
     redirect_refused,
@@ -58,6 +64,8 @@ pub const Reason = enum {
             .permission_denied => "the provider denied permission for this request",
             .quota_exhausted => "the provider account quota is exhausted",
             .bad_status => "the provider returned an unexpected status",
+            .context_overflow => "the provider reports that the input exceeds the model context window",
+            .provider_failed => "the provider reported an error",
             .bad_url => "the provider endpoint URL is invalid",
             .invalid_headers => "the provider request headers are invalid",
             .redirect_refused => "the provider attempted a redirect",
@@ -66,7 +74,7 @@ pub const Reason = enum {
             .malformed_selector => "the model selector is malformed",
             .unknown_provider => "the catalog holds no provider with that name",
             .unknown_model => "the catalog holds no model with that name",
-            .unknown => "the provider request failed",
+            .unknown => "an internal error stopped the request",
         };
     }
 };
@@ -103,6 +111,8 @@ pub fn classify(err: anyerror) Failure {
         http.Error.RateLimitUnknown => .{ .class = .permanent, .reason = .rate_limit_unknown },
         http.Error.QuotaExhausted => .{ .class = .permanent, .reason = .quota_exhausted },
         http.Error.BadStatus => .{ .class = .permanent, .reason = .bad_status },
+        http.Error.ContextOverflow => .{ .class = .permanent, .reason = .context_overflow },
+        http.Error.ProviderFailed => .{ .class = .permanent, .reason = .provider_failed },
         http.Error.BadUrl => .{ .class = .permanent, .reason = .bad_url },
         http.Error.InvalidHeaders => .{ .class = .permanent, .reason = .invalid_headers },
         http.Error.RedirectRefused => .{ .class = .permanent, .reason = .redirect_refused },

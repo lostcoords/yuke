@@ -22,6 +22,7 @@ pub const Content = call.Content;
 pub const PreparedRequest = call.PreparedRequest;
 pub const prepare = call.prepare;
 pub const consume = call.consume;
+pub const Diagnostics = call.Diagnostics;
 pub const generateWithTransport = call.generateWithTransport;
 pub const generateTextWithTransport = call.generateTextWithTransport;
 pub const streamWithTransport = call.streamWithTransport;

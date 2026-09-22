@@ -86,7 +86,8 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
     const arena = arena_state.allocator();
 
     var completed: ?proto.run.RunOutcome = null;
-    const result = switch (slot.cancel.runChild(engine.deps.io, summarizeChild, .{ engine, arena, slot, &completed })) {
+    var diagnostics: ai.Diagnostics = .{ .arena = arena };
+    const result = switch (slot.cancel.runChild(engine.deps.io, summarizeChild, .{ engine, arena, slot, &completed, &diagnostics })) {
         .canceled, .aborted => @as(anyerror!void, error.Canceled),
         .returned => |result| result,
     };
@@ -94,22 +95,21 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
         if (err == error.Canceled or slot.cancel.isRequested()) break :blk proto.run.RunOutcome{ .canceled = .{} };
         // The wire message names a class, so record the cause before the error loses it.
         std.log.warn("compaction run {d} ended: {t}", .{ slot.runId(), err });
-        const detail = provider.failure.classify(err);
-        break :blk proto.run.RunOutcome{ .failed = .{ .code = detail.code, .message = detail.message } };
+        break :blk proto.run.RunOutcome{ .failed = provider.failure.outcome(arena, err, &diagnostics.info) };
     };
     runs.finishRunOpen(engine, arena, slot, outcome) catch |err| runs.faultSlot(engine, slot, err);
 }
 
-fn summarizeChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?proto.run.RunOutcome) !void {
+fn summarizeChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?proto.run.RunOutcome, diagnostics: *ai.Diagnostics) !void {
     defer slot.cancel.finish(engine.deps.io);
     try slot.cancel.check(engine.deps.io);
     try prompt.refresh(engine, arena, slot);
     const match = engine.deps.providers.merged.resolveModel(slot.config.model) orelse return error.UnknownModel;
-    out.* = try summarize(engine, arena, slot, try round_request.snapshot(arena, engine, slot, match));
+    out.* = try summarize(engine, arena, slot, try round_request.snapshot(arena, engine, slot, match), diagnostics);
 }
 
 /// Compact an oversized context; the caller must project the new checkpoint before a request.
-pub fn compactForRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot) !void {
+pub fn compactForRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot, diagnostics: *ai.Diagnostics) !void {
     std.debug.assert(slot.handle.started.kind == .turn);
     const rt = engine.sessions.get(slot.sessionId()) orelse return error.UnknownSession;
     std.debug.assert(rt.active_run == slot and slot.progress.current == null);
@@ -120,7 +120,7 @@ pub fn compactForRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSl
         slot.compacting = false;
         session_events.announceActivity(engine, rt);
     }
-    const outcome = try summarize(engine, arena, slot, held);
+    const outcome = try summarize(engine, arena, slot, held, diagnostics);
     if (outcome != .compacted) return error.ContextHistoryTooLarge;
 }
 
@@ -146,7 +146,7 @@ fn instruction(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, mode: 
 }
 
 /// Summarize the covered range with the request snapshot of the turn, then commit the checkpoint.
-fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot) !proto.run.RunOutcome {
+fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot, diagnostics: *ai.Diagnostics) !proto.run.RunOutcome {
     try slot.cancel.check(engine.deps.io);
     const sid = slot.sessionId().raw;
     const db = engine.deps.db;
@@ -183,7 +183,7 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: ro
         .max_output_tokens = summary_output_tokens,
         .reasoning = slot.config.reasoning,
         .session_id = &session_hex,
-    });
+    }, diagnostics);
     if (answer.finish_reason != .stop) return error.IncompleteSummary;
     if (std.mem.trim(u8, answer.text, " \t\r\n").len == 0) return error.EmptySummary;
     const after = cut.tokens_kept + context.summaryTokens(answer.text);
