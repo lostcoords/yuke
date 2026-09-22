@@ -1,4 +1,4 @@
-//! The baked provider table, and the lookup that turns one selector into a call model.
+//! Expose the baked provider table and the selector lookup.
 
 const std = @import("std");
 const generated = @import("catalog_gen.zig");

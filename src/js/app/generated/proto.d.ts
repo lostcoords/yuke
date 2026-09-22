@@ -38,11 +38,11 @@ export interface MediaBlob {
   readonly bytes: number;
 }
 
-/** These are the parameters for `blob.put`. A caller names exactly one source: a file the engine reads, or the bytes. */
+/** A caller names one source for `blob.put`: an absolute path or base64 image bytes. */
 export interface BlobPutParams {
   /** An absolute path to an image file on the engine host. */
   readonly path?: string;
-  /** The image bytes in standard base64, for a caller whose bytes are in no file. */
+  /** The image bytes in standard base64 when no file holds them. */
   readonly data?: string;
 }
 

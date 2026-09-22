@@ -120,7 +120,7 @@ pub const Host = struct {
     signal_class_id: quickjs.ClassID = 0,
     signal_waiters: std.ArrayList(cancellation.Waiter) = .empty,
     abort_listeners: std.ArrayList(cancellation.Listener) = .empty,
-    /// The next abort listener id. Zero is never an id.
+    /// The next listener id; zero is invalid.
     next_listener: u32 = 1,
     plugin_stop_timeout_ms: i32,
 

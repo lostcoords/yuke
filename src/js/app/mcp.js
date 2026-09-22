@@ -3,7 +3,7 @@ import { mcpState } from "yuke:mcp-native";
 import * as cancellation from "yuke:cancellation-native";
 import { fs } from "yuke:fs";
 import { showInfo } from "yuke:info-panel";
-import { checkTransport, endpointFor } from "yuke:mcp-transport";
+import { checkTransport, endpointFor, headerValue } from "yuke:mcp-transport";
 import { client } from "yuke:client";
 
 /** @import { Context } from "yuke:ext" */
@@ -16,6 +16,7 @@ import { client } from "yuke:client";
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
 /** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "failed" | "disabled" | "stopped"} ServerState */
 /** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number, cancelable: boolean }} Waiting */
+/** @typedef {{ name: string, path: string[] }} Mirrored */
 
 const WORKSPACE_FILE = ".mcp.json";
 const MODERN = "2026-07-28";
@@ -23,6 +24,8 @@ const LEGACY = "2025-11-25";
 // The legacy versions this client can serve. A server that answers another one gets no requests.
 const LEGACY_KNOWN = ["2024-11-05", "2025-03-26", "2025-06-18", LEGACY];
 const UNSUPPORTED_VERSION = -32022;
+// A modern server refuses a request whose headers disagree with its body; a fallback to legacy would hide that.
+const HEADER_MISMATCH = -32020;
 const CLIENT = { name: "yuke", version: "0" };
 // The modern era carries the version and the client capabilities in every request.
 const META = { "io.modelcontextprotocol/protocolVersion": MODERN, "io.modelcontextprotocol/clientCapabilities": {}, "io.modelcontextprotocol/clientInfo": CLIENT };
@@ -203,6 +206,63 @@ export function toolResult(result, modern = false) {
   return { text, images: images ?? NO_IMAGES };
 }
 
+// An HTTP field name is one or more token characters.
+const HEADER_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+// The `x-mcp-header` annotations of one input schema, or the reason they make the tool invalid.
+// An annotation must sit on a primitive parameter that a chain of `properties` keys reaches from the root.
+/** @param {unknown} schema @returns {Mirrored[] | string} */
+export function mirroredParams(schema) {
+  /** @type {Mirrored[]} */
+  const found = [];
+  const seen = new Set();
+  // A null path marks a node that no chain of `properties` keys reaches.
+  /** @param {unknown} node @param {string[] | null} path @returns {string | null} */
+  const walk = (node, path) => {
+    if (Array.isArray(node)) {
+      for (const item of node) { const reason = walk(item, null); if (reason) return reason; }
+      return null;
+    }
+    if (!record(node)) return null;
+    const object = /** @type {Record<string, unknown>} */ (node);
+    const mark = object["x-mcp-header"];
+    if (mark !== undefined) {
+      if (path === null || path.length === 0) return "x-mcp-header outside a properties chain";
+      if (typeof mark !== "string" || !HEADER_TOKEN.test(mark)) return "x-mcp-header is not a header token";
+      if (object.type !== "string" && object.type !== "integer" && object.type !== "boolean") return "x-mcp-header on a parameter that is not a string, integer, or boolean";
+      if (seen.has(mark.toLowerCase())) return "x-mcp-header names one header twice";
+      seen.add(mark.toLowerCase());
+      found.push({ name: mark, path });
+    }
+    for (const [key, value] of Object.entries(object)) {
+      if (key === "x-mcp-header") continue;
+      if (key === "properties" && path !== null && record(value)) {
+        for (const [property, child] of Object.entries(/** @type {Record<string, unknown>} */ (value))) { const reason = walk(child, [...path, property]); if (reason) return reason; }
+      } else {
+        const reason = walk(value, null);
+        if (reason) return reason;
+      }
+    }
+    return null;
+  };
+  return walk(schema, []) ?? found;
+}
+
+// Mirror each annotated argument into its `Mcp-Param-*` header. An absent or non-primitive value sends no header.
+/** @param {Mirrored[]} mirrored @param {Record<string, unknown>} args @returns {Record<string, string>} */
+function paramHeaders(mirrored, args) {
+  /** @type {Record<string, string>} */
+  const headers = {};
+  for (const { name, path } of mirrored) {
+    /** @type {unknown} */
+    let value = args;
+    for (const key of path) value = record(value) && Object.hasOwn(/** @type {object} */ (value), key) ? /** @type {Record<string, unknown>} */ (value)[key] : undefined;
+    const text = typeof value === "string" ? value : typeof value === "boolean" || Number.isSafeInteger(value) ? String(value) : null;
+    if (text !== null) headers["mcp-param-" + name.toLowerCase()] = headerValue(text);
+  }
+  return headers;
+}
+
 // The message for a wrong entry, or null. A missing variable shows later, when the server starts.
 /** @param {ServerConfig} config @returns {string | null} */
 function checkConfig(config) {
@@ -322,6 +382,11 @@ class Server {
     // The server's own tool names, sorted.
     /** @type {string[]} */
     this.names = [];
+    // The mirrored parameters of each HTTP tool, and the tools an invalid annotation dropped.
+    /** @type {Map<string, Mirrored[]>} */
+    this.mirrors = new Map();
+    /** @type {string[]} */
+    this.dropped = [];
     this.refreshing = false;
     this.refreshAgain = false;
     const type = config.type ?? (config.url ? "http" : "stdio");
@@ -389,58 +454,63 @@ class Server {
   open() {
     const endpoint = this.endpoint;
     if (!endpoint) throw new Error("the MCP execution configuration is unavailable");
+    // Ignore callbacks from an older transport after close or replacement.
     /** @type {Transport} */
     const transport = endpoint.open({
-      message: (text) => { if (this.transport === transport) this.receive(text); },
-      closed: (reason) => {
+      message: (text) => this.transport === transport ? this.receive(text) : undefined,
+      closed: (reason, reconnect) => {
         if (this.transport !== transport) return;
         this.transport = null;
         this.settleAll(reason);
-        if (this.state === "connecting" || this.state === "connected") this.fail("failed", reason);
+        const connected = this.state === "connected";
+        if (connected || this.state === "connecting") this.fail("failed", reason);
+        // A connected server that ended its session gets a new one; a handshake still runs its own attempt.
+        if (connected && reconnect) this.start();
       },
     });
     this.transport = transport;
     this.last = transport;
   }
 
-  /** @param {string} text */
+  // Answer the id of the request this text settles, so a transport knows its exchange ended.
+  /** @param {string} text @returns {number | undefined} */
   receive(text) {
     let message;
-    try { message = decodeMessage(text); } catch (error) { this.fail("failed", errorText(error)); return; }
+    try { message = decodeMessage(text); } catch (error) { this.fail("failed", errorText(error)); return undefined; }
     if (typeof message.method !== "string") {
-      if (typeof message.id === "number") {
-        const slot = this.waiting.get(message.id);
-        if (slot) slot.bytes = text.length;
-        const error = message.error === undefined ? undefined : Object.assign(new Error(message.error.message), { code: message.error.code, data: message.error.data });
-        this.settle(message.id, message.result, error);
-      }
-      return;
+      if (typeof message.id !== "number") return undefined;
+      const slot = this.waiting.get(message.id);
+      if (slot) slot.bytes = text.length;
+      const error = message.error === undefined ? undefined : Object.assign(new Error(message.error.message), { code: message.error.code, data: message.error.data });
+      this.settle(message.id, message.result, error);
+      return message.id;
     }
     // The legacy era lets a server ask the client. A ping gets its empty answer; every other request is refused.
     if (message.id !== undefined && message.id !== null) {
       const answer = message.method === "ping" ? { jsonrpc: "2.0", id: message.id, result: {} } : { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "yuke answers no server requests" } };
       this.send(answer).catch(() => {});
-      return;
+      return undefined;
     }
     if (message.method === "notifications/tools/list_changed" && this.hasTools) this.refreshTools();
+    return undefined;
   }
 
-  /** @param {Record<string, unknown>} message @returns {Promise<void>} */
-  send(message) {
+  /** @param {Record<string, unknown>} message @param {Record<string, string>} [headers] @returns {Promise<void>} */
+  send(message, headers) {
     if (!this.transport) return Promise.reject(new Error("the server is not running"));
-    return this.transport.send(message);
+    return this.transport.send(message, headers);
   }
 
   // A handshake request is not cancelable: the legacy rules forbid a cancel of `initialize`.
-  /** @param {string} method @param {Record<string, unknown>} params @param {{ timeoutMs: number, signal?: CancellationSignal, cancelable?: boolean, received?: { bytes: number } }} options @returns {Promise<any>} */
-  request(method, params, { timeoutMs, signal, cancelable = true, received }) {
+  /** @param {string} method @param {Record<string, unknown>} params @param {{ timeoutMs: number, signal?: CancellationSignal, cancelable?: boolean, received?: { bytes: number }, headers?: Record<string, string> | undefined }} options @returns {Promise<any>} */
+  request(method, params, { timeoutMs, signal, cancelable = true, received, headers }) {
     if (signal?.aborted) return Promise.reject(new Error("the call was canceled"));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.cancel(id, "the request timed out"), Math.max(1, timeoutMs));
       const listener = signal === undefined ? 0 : cancellation.listen(signal, () => this.cancel(id, "the call was canceled"));
       this.waiting.set(id, { bytes: 0, cancelable, resolve, reject, done: () => { if (received) received.bytes = this.waiting.get(id)?.bytes ?? 0; clearTimeout(timer); if (listener !== 0) cancellation.unlisten(listener); } });
-      this.send({ jsonrpc: "2.0", id, method, params: this.era === "modern" ? { ...params, _meta: META } : params }).catch((error) => this.settle(id, undefined, error));
+      this.send({ jsonrpc: "2.0", id, method, params: this.era === "modern" ? { ...params, _meta: META } : params }, headers).catch((error) => this.settle(id, undefined, error));
     });
   }
 
@@ -479,7 +549,7 @@ class Server {
       if (error instanceof Error && "code" in error && error.code === UNSUPPORTED_VERSION) {
         const supported = /** @type {any} */ (error).data?.supported;
         if (!Array.isArray(supported) || !supported.some((version) => LEGACY_KNOWN.includes(version))) throw new Error("the server supports no protocol version this client speaks");
-      } else if (this.state !== "connecting" || !this.transport) throw error;
+      } else if (this.state !== "connecting" || !this.transport || (error instanceof Error && "code" in error && error.code === HEADER_MISMATCH)) throw error;
       this.era = "legacy";
     }
     if (this.era === "modern") {
@@ -552,7 +622,20 @@ class Server {
     /** @type {ToolDefinition[]} */
     const definitions = [];
     const used = new Set();
+    /** @type {Map<string, Mirrored[]>} */
+    const mirrors = new Map();
+    /** @type {string[]} */
+    const dropped = [];
+    /** @type {string[]} */
+    const kept = [];
     for (const tool of tools) {
+      // An HTTP client must drop a tool whose header annotation is invalid, and keep the rest.
+      if (this.endpoint?.mirrorsParams) {
+        const mirrored = mirroredParams(tool.inputSchema);
+        if (typeof mirrored === "string") { dropped.push(tool.name + " (" + mirrored + ")"); continue; }
+        if (mirrored.length !== 0) mirrors.set(tool.name, mirrored);
+      }
+      kept.push(tool.name);
       const base = toolName(this.name, tool.name);
       let name = base;
       for (let n = 2; used.has(name); n++) name = base.slice(0, NAME_MAX - 1 - String(n).length) + "_" + n;
@@ -571,7 +654,9 @@ class Server {
     this.undefineTools();
     try {
       this.defineTools(definitions);
-      this.names = tools.map((tool) => tool.name);
+      this.names = kept;
+      this.mirrors = mirrors;
+      this.dropped = dropped;
       this.error = "";
     } catch (error) {
       this.undefineTools();
@@ -599,7 +684,9 @@ class Server {
   async call(tool, args, signal) {
     if (this.state !== "connected") throw new Error("the MCP server " + this.name + " is " + this.state);
     if (!record(args)) throw new Error("MCP tool arguments must be an object");
-    const result = await this.request("tools/call", { name: tool, arguments: args }, { timeoutMs: this.config.timeout ?? this.limits.callMs, signal });
+    const mirrored = this.mirrors.get(tool);
+    const headers = mirrored ? paramHeaders(mirrored, /** @type {Record<string, unknown>} */ (args)) : undefined;
+    const result = await this.request("tools/call", { name: tool, arguments: args }, { timeoutMs: this.config.timeout ?? this.limits.callMs, signal, headers });
     const { text, images } = toolResult(result, this.era === "modern");
     /** @type {Wire.MediaBlob[]} */
     const media = [];
@@ -627,6 +714,7 @@ class Server {
     const parts = [this.state];
     if (this.era) parts.push(this.era);
     if (this.state === "connected") parts.push(this.names.length === 0 ? "no tools" : this.names.length + (this.names.length === 1 ? " tool: " : " tools: ") + this.names.join(", "));
+    if (this.state === "connected" && this.dropped.length !== 0) parts.push("dropped: " + this.dropped.join(", "));
     if (this.error) parts.push(this.error);
     if (this.last) parts.push(...this.last.diagnostics(this.state === "failed"));
     return [this.name, parts.join(" · ")];

@@ -51,7 +51,7 @@ pub const Waiter = struct {
     }
 };
 
-/// One abort callback. It holds the signal, so the signal outlives it.
+/// A listener owns one callback and one signal.
 pub const Listener = struct {
     id: u32,
     signal: Value,
@@ -63,7 +63,7 @@ pub const Listener = struct {
     }
 };
 
-/// A listener that never hears its abort lives until `unlisten` or host close, so the count is bounded.
+/// An unused listener stays until `unlisten` or host close, so the count is bounded.
 pub const max_listeners = 4096;
 
 pub fn deinit(host: *Host) void {
@@ -160,22 +160,16 @@ pub fn cancel(host: *Host, value: Value) void {
     notify(host, value);
 }
 
-/// Call each abort callback of `value` once. The list settles first, so a callback may listen or unlisten.
+/// Call each abort callback of `value` once, oldest first. The next callback is found after each call, so a callback may unlisten another.
 fn notify(host: *Host, value: Value) void {
     const ctx = host.ctx;
-    var heard: std.ArrayList(Listener) = .empty;
-    defer heard.deinit(host.gpa);
-    var index: usize = 0;
-    while (index < host.abort_listeners.items.len) {
-        if (!ctx.isStrictEqual(host.abort_listeners.items[index].signal, value)) {
-            index += 1;
-            continue;
-        }
-        heard.append(host.gpa, host.abort_listeners.orderedRemove(index)) catch unreachable;
-    }
-    for (heard.items) |listener| {
+    while (true) {
+        const index = for (host.abort_listeners.items, 0..) |listener, index| {
+            if (ctx.isStrictEqual(listener.signal, value)) break index;
+        } else return;
+        const listener = host.abort_listeners.orderedRemove(index);
         defer listener.free(ctx);
-        // A callback that throws stops no other callback and no cancellation.
+        // A callback error does not stop other callbacks or the cancellation.
         const result = ctx.call(listener.callback, quickjs.UNDEFINED, &.{});
         if (ctx.isException(result)) pending.dropException(ctx) else ctx.freeValue(result);
     }
@@ -207,7 +201,11 @@ fn jsListen(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (!host.acceptsIo()) return ctx.throwTypeError("the host is closed");
     if (host.abort_listeners.items.len == max_listeners) return ctx.throwTypeError("the host holds 4096 abort listeners");
-    const id = host.next_listener;
+    // An id wraps after 2^32 listens, so it skips any id still in use.
+    var id = host.next_listener;
+    while (for (host.abort_listeners.items) |listener| {
+        if (listener.id == id) break true;
+    } else false) id = if (id == std.math.maxInt(u32)) 1 else id + 1;
     host.next_listener = if (id == std.math.maxInt(u32)) 1 else id + 1;
     host.abort_listeners.append(host.gpa, .{ .id = id, .signal = ctx.dupValue(args[0]), .callback = ctx.dupValue(args[1]) }) catch unreachable;
     return ctx.newUint32(id);

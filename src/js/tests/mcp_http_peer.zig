@@ -2,14 +2,14 @@
 
 const std = @import("std");
 
-const session_id = "s-1";
 const legacy_version = "2025-06-18";
 
-/// Messages one task writes onto another task's open event stream.
+/// Messages one task writes onto another task's open event stream. A new reader takes the channel from the old one.
 const Channel = struct {
     mutex: std.Io.Mutex = .init,
-    ready: std.Io.Event = .unset,
+    changed: std.Io.Condition = .init,
     items: std.ArrayList([]u8) = .empty,
+    reader: u32 = 0,
 
     fn push(self: *Channel, peer: *Peer, message: []const u8) !void {
         const owned = try peer.gpa.dupe(u8, message);
@@ -17,14 +17,26 @@ const Channel = struct {
         try self.mutex.lock(peer.io);
         defer self.mutex.unlock(peer.io);
         try self.items.append(peer.gpa, owned);
-        self.ready.set(peer.io);
+        self.changed.broadcast(peer.io);
     }
 
-    /// Write every queued message as one event, then wait for more until the task ends.
+    /// Write every queued message as one event until a newer reader takes the channel or the task ends.
     fn drain(self: *Channel, peer: *Peer, writer: *std.Io.Writer) !void {
+        try self.mutex.lock(peer.io);
+        self.reader += 1;
+        const mine = self.reader;
+        self.changed.broadcast(peer.io);
+        self.mutex.unlock(peer.io);
         while (true) {
-            self.ready.reset();
             try self.mutex.lock(peer.io);
+            while (self.items.items.len == 0 and self.reader == mine) self.changed.wait(peer.io, &self.mutex) catch |err| {
+                self.mutex.unlock(peer.io);
+                return err;
+            };
+            if (self.reader != mine) {
+                self.mutex.unlock(peer.io);
+                return;
+            }
             const taken = self.items.toOwnedSlice(peer.gpa) catch unreachable;
             self.mutex.unlock(peer.io);
             defer {
@@ -33,7 +45,6 @@ const Channel = struct {
             }
             for (taken) |item| try writer.print("event: message\ndata: {s}\n\n", .{item});
             try writer.flush();
-            try self.ready.wait(peer.io);
         }
     }
 
@@ -54,6 +65,8 @@ pub const Peer = struct {
     pushes: Channel = .{},
     events: Channel = .{},
     changed: std.atomic.Value(bool) = .init(false),
+    /// The legacy session is "s-<generation>"; an `expire` call moves to the next one, so the old id answers 404.
+    generation: std.atomic.Value(u32) = .init(1),
     /// The modern slow call saw its stream close.
     cancel_seen: std.Io.Event = .unset,
     deleted: std.atomic.Value(bool) = .init(false),
@@ -121,24 +134,30 @@ pub const Peer = struct {
                 return self.events.drain(self, out);
             }
             if (std.mem.eql(u8, target, "/legacy")) {
-                if (!legacyHeaders(&request)) return plain(out, "400 Bad Request", "no session");
+                var session_buf: [16]u8 = undefined;
+                const current = self.currentSession(&session_buf);
+                if (!std.mem.eql(u8, header(&request, "mcp-session-id") orelse "", current)) return plain(out, "404 Not Found", "");
                 try streamHead(out);
                 return self.pushes.drain(self, out);
             }
             return plain(out, "405 Method Not Allowed", "");
         }
         if (request.head.method == .DELETE) {
-            if (std.mem.eql(u8, header(&request, "mcp-session-id") orelse "", session_id)) self.deleted.store(true, .release);
+            var session_buf: [16]u8 = undefined;
+            if (std.mem.eql(u8, header(&request, "mcp-session-id") orelse "", self.currentSession(&session_buf))) self.deleted.store(true, .release);
             return plain(out, "200 OK", "");
         }
 
         // The body reader invalidates the head, so the checked headers are copied first.
-        var copies: [4][128]u8 = undefined;
+        var copies: [5][128]u8 = undefined;
         const version = copy(&copies[0], header(&request, "mcp-protocol-version"));
         const routed_method = copy(&copies[1], header(&request, "mcp-method"));
         const routed_name = copy(&copies[2], header(&request, "mcp-name"));
         const session = copy(&copies[3], header(&request, "mcp-session-id"));
-        const legacy = std.mem.eql(u8, session, session_id) and std.mem.eql(u8, version, legacy_version);
+        const region = copy(&copies[4], header(&request, "mcp-param-region"));
+        var session_buf: [16]u8 = undefined;
+        const current = self.currentSession(&session_buf);
+        const legacy = std.mem.eql(u8, session, current) and std.mem.eql(u8, version, legacy_version);
         var body_buf: [1024]u8 = undefined;
         const body = try request.readerExpectNone(&body_buf).allocRemaining(self.gpa, .limited(64 * 1024));
         defer self.gpa.free(body);
@@ -156,6 +175,11 @@ pub const Peer = struct {
             break :text value.string;
         };
 
+        // A modern server that refuses the probe's headers; the client must not fall back to legacy.
+        if (std.mem.eql(u8, target, "/mismatch")) {
+            try out.print("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}", .{ mismatch_body.len, mismatch_body });
+            return out.flush();
+        }
         if (std.mem.eql(u8, target, "/modern")) {
             // The body and the header name the same version, and the routing headers match the body.
             if (!std.mem.eql(u8, version, "2026-07-28")) return plain(out, "400 Bad Request", "version");
@@ -167,7 +191,12 @@ pub const Peer = struct {
             }
             try streamHead(out);
             if (std.mem.eql(u8, method, "tools/list")) {
-                try out.print(": keepalive\n\nevent: message\ndata: {{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"tools\":[{{\"name\":\"echo\",\"inputSchema\":{{\"type\":\"object\"}}}},{{\"name\":\"slow\",\"inputSchema\":{{\"type\":\"object\"}}}}]}}}}\n\n", .{reply_id});
+                try out.print(": keepalive\n\nevent: message\ndata: {{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"tools\":[{{\"name\":\"echo\",\"inputSchema\":{{\"type\":\"object\"}}}},{{\"name\":\"slow\",\"inputSchema\":{{\"type\":\"object\"}}}},{s},{s}]}}}}\n\n", .{ reply_id, region_tool, broken_tool });
+                return out.flush();
+            }
+            // The mirrored parameter comes back, so the test reads the header the client sent.
+            if (std.mem.eql(u8, name, "region")) {
+                try out.print("event: message\ndata: {{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"content\":[{{\"type\":\"text\",\"text\":\"region header: {s}\"}}]}}}}\n\n", .{ reply_id, region });
                 return out.flush();
             }
             if (std.mem.eql(u8, name, "slow")) {
@@ -186,14 +215,25 @@ pub const Peer = struct {
 
         if (std.mem.eql(u8, target, "/legacy")) {
             if (std.mem.eql(u8, method, "initialize")) {
-                return json(out, session_id, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"protocolVersion\":\"" ++ legacy_version ++ "\",\"capabilities\":{{\"tools\":{{\"listChanged\":true}}}},\"serverInfo\":{{\"name\":\"legacy\",\"version\":\"1\"}}}}}}", .{id.?});
+                return json(out, current, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"protocolVersion\":\"" ++ legacy_version ++ "\",\"capabilities\":{{\"tools\":{{\"listChanged\":true}}}},\"serverInfo\":{{\"name\":\"legacy\",\"version\":\"1\"}}}}}}", .{id.?});
             }
             // A legacy server refuses a request outside its session, so the modern probe fails here.
+            // An old session is gone, and a missing one never began.
+            if (session.len != 0 and !std.mem.eql(u8, session, current)) return plain(out, "404 Not Found", "session expired");
             if (!legacy) return plain(out, "400 Bad Request", "Bad Request: Server not initialized");
             const reply_id = id orelse return plain(out, "202 Accepted", "");
             if (std.mem.eql(u8, method, "tools/list")) {
                 const tools = if (self.changed.load(.acquire)) "{\"name\":\"added\",\"inputSchema\":{\"type\":\"object\"}},{\"name\":\"echo\",\"inputSchema\":{\"type\":\"object\"}}" else "{\"name\":\"echo\",\"inputSchema\":{\"type\":\"object\"}}";
                 return json(out, "", "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"tools\":[{s}]}}}}", .{ reply_id, tools });
+            }
+            if (std.mem.eql(u8, text, "expire")) _ = self.generation.fetchAdd(1, .acq_rel);
+            // An answer above the host's 256 KiB `text()` cap reads in chunks.
+            if (std.mem.eql(u8, text, "big")) {
+                const filler = "x" ** 1024;
+                try out.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"content\":[{{\"type\":\"text\",\"text\":\"", .{reply_id});
+                for (0..300) |_| try out.writeAll(filler);
+                try out.writeAll("\"}]}}");
+                return out.flush();
             }
             if (std.mem.eql(u8, text, "change")) {
                 self.changed.store(true, .release);
@@ -223,12 +263,15 @@ pub const Peer = struct {
         return plain(out, "404 Not Found", "");
     }
 
-    /// A legacy request after `initialize` names the session and the negotiated version.
-    fn legacyHeaders(request: *std.http.Server.Request) bool {
-        return std.mem.eql(u8, header(request, "mcp-session-id") orelse "", session_id) and
-            std.mem.eql(u8, header(request, "mcp-protocol-version") orelse "", legacy_version);
+    fn currentSession(self: *Peer, buf: *[16]u8) []const u8 {
+        return std.fmt.bufPrint(buf, "s-{d}", .{self.generation.load(.acquire)}) catch unreachable;
     }
 };
+
+const mismatch_body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32020,\"message\":\"Header mismatch\"}}";
+const region_tool = "{\"name\":\"region\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"region\":{\"type\":\"string\",\"x-mcp-header\":\"Region\"}}}}";
+// A number parameter cannot carry a header, so the client drops this tool.
+const broken_tool = "{\"name\":\"broken\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"n\":{\"type\":\"number\",\"x-mcp-header\":\"N\"}}}}";
 
 fn header(request: *std.http.Server.Request, name: []const u8) ?[]const u8 {
     var it = request.iterateHeaders();

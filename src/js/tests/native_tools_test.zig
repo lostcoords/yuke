@@ -686,6 +686,32 @@ test "tool site attributes a question and call completion cancels it" {
     try std.testing.expectEqual(@as(usize, 0), host.interactions.live.items.len);
 }
 
+test "a callback may remove a later listener, and a wrapped id skips a live one" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    host.next_listener = std.math.maxInt(u32);
+    try host.evalModule(
+        \\import * as cancellation from "yuke:cancellation-native";
+        \\const signal = cancellation.create();
+        \\globalThis.heard = [];
+        \\let second = 0;
+        \\globalThis.firstId = cancellation.listen(signal, () => { globalThis.heard.push("first"); cancellation.unlisten(second); });
+        \\second = cancellation.listen(signal, () => globalThis.heard.push("second"));
+        \\globalThis.secondId = second;
+        \\cancellation.cancel(signal);
+    , "listen-order.js");
+    try std.testing.expectEqual(@as(i32, std.math.maxInt(i32)), try host.evalInt("firstId === 4294967295 ? 2147483647 : 0"));
+    // The id after the largest one wraps to 1.
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("secondId"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("heard.length"));
+    try std.testing.expectEqual(@as(usize, 0), host.abort_listeners.items.len);
+    // A live id is never handed out twice.
+    try host.evalModule("import * as c from \"yuke:cancellation-native\"; globalThis.live = c.create(); globalThis.held = c.listen(live, () => {});", "listen-held.js");
+    host.next_listener = @intCast(try host.evalInt("held"));
+    try host.evalModule("import * as c from \"yuke:cancellation-native\"; globalThis.fresh = c.listen(live, () => {});", "listen-fresh.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("fresh - held"));
+}
+
 test "an abort listener hears the call cancel once and a removed one hears nothing" {
     const host = support.createHost();
     defer support.destroyHost(host);

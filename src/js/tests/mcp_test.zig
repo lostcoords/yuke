@@ -255,7 +255,9 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     const host = f.host;
     const peer = f.peer.?;
     try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
-    try expectState(host, "modern", "connected · modern · 2 tools: echo, slow");
+    try expectState(host, "modern", "connected · modern · 3 tools: echo, region, slow · dropped: broken (x-mcp-header on a parameter that is not a string, integer, or boolean)");
+    // A modern error in a 400 body is no legacy server, so the client does not fall back.
+    try expectState(host, "mismatch", "failed · modern · Header mismatch");
     // The modern probe fails outside a session, so the client falls back to `initialize` and keeps the session.
     try expectState(host, "legacy", "connected · legacy · 1 tool: echo");
     try expectState(host, "old", "connected · legacy · 1 tool: echo");
@@ -263,10 +265,24 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
 
     // A progress notification before the answer changes nothing.
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"hi\"}", "modern http: hi", false);
+    // An annotated argument travels in its header too, encoded when it is not plain ASCII.
+    try expectCall(host, "mcp_modern_region", "{\"region\":\"eu-west1\"}", "region header: eu-west1", false);
+    try expectCall(host, "mcp_modern_region", "{\"region\":\"世界\"}", "region header: =?base64?5LiW55WM?=", false);
     try expectCall(host, "mcp_old_echo", "{\"text\":\"hi\"}", "old sse: hi", false);
     // A timeout closes the modern stream, which is the modern cancel.
     try expectCall(host, "mcp_modern_slow", "{}", "the request timed out", true);
     try support.pumpUntilSet(host, &peer.cancel_seen);
+    // An answer above 256 KiB arrives whole, cut only at the model's result limit.
+    const big = host.calls.submit("mcp_legacy_echo", "{\"text\":\"big\"}", host.cwd);
+    try support.pumpUntilSettled(host, big);
+    try std.testing.expect(!big.is_error);
+    try std.testing.expect(std.mem.endsWith(u8, big.text orelse "", "[truncated 207200 characters]"));
+    try support.dropCall(host, big);
+    // A forgotten session fails the call that finds it, and the server starts a new session.
+    try expectCall(host, "mcp_legacy_echo", "{\"text\":\"expire\"}", "legacy http: expire", false);
+    try expectCall(host, "mcp_legacy_echo", "{\"text\":\"late\"}", "the server ended the session", true);
+    try support.pumpUntilTrue(host, "mcpStates().legacy === 'connected · legacy · 1 tool: echo'");
+    try expectCall(host, "mcp_legacy_echo", "{\"text\":\"again\"}", "legacy http: again", false);
     // The legacy GET stream carries the list change, and the next list names the new tool.
     try expectCall(host, "mcp_legacy_echo", "{\"text\":\"change\"}", "legacy http: change", false);
     try support.pumpUntilTrue(host, "mcpStates().legacy === 'connected · legacy · 2 tools: added, echo'");

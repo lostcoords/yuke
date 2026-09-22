@@ -13,7 +13,7 @@ const types = @import("types.zig");
 const model_types = @import("model.zig");
 
 pub const Model = struct {
-    /// The id the wire carries. A gateway may rename a model, so a catalog model sends its upstream id.
+    /// The id the wire carries. Send the upstream id, because a gateway may rename the model.
     id: []const u8,
     route: route.Route,
     credential: route.Credential,
@@ -43,7 +43,7 @@ pub const Options = struct {
     temperature: ?f64 = null,
     /// Nucleus sampling mass. A null value leaves the endpoint default.
     top_p: ?f64 = null,
-    /// One stable id per session. The route picks the header that carries it; Responses also keys its cache by it.
+    /// One stable id per session. The route uses it for a header and for the Responses cache key.
     session_id: []const u8 = "",
     /// Whether the model may call a tool.
     tool_choice: ir.ToolChoice = .auto,
@@ -145,7 +145,7 @@ pub fn generateWithTransport(gpa: std.mem.Allocator, route_transport: transport.
     defer response.deinit();
     var collector = Collector.init(gpa);
     errdefer collector.deinit();
-    // The attempt storage dies with the response, so a failure copies what the provider answered first.
+    // Copy the diagnostics before the attempt storage is released.
     errdefer if (diagnostics) |d| d.keep(response.info());
     while (try response.next()) |value| try collector.onEvent(value);
     return collector.result();
@@ -177,6 +177,7 @@ pub const Response = struct {
 
     pub fn deinit(self: *Response) void {
         const state = self.state;
+        // The stream borrows the body, so the stream ends first.
         state.stream.deinit();
         state.body.deinit();
         state.attempt.deinit();
@@ -195,7 +196,7 @@ pub fn openWithTransport(gpa: std.mem.Allocator, route_transport: transport.Tran
     state.attempt = .init(gpa);
     errdefer state.attempt.deinit();
     state.info = .{};
-    // The attempt arena dies here, so a failure copies what the provider answered first.
+    // Copy the diagnostics before the attempt storage is released.
     errdefer if (diagnostics) |d| d.keep(&state.info);
     state.body = try route_transport.open(state.attempt.allocator(), state.prepared.transport_request, &state.info);
     state.stream = .init(gpa, state.attempt.allocator(), state.body, &state.info, state.prepared.protocol);
@@ -209,8 +210,9 @@ pub const Diagnostics = struct {
 
     fn keep(self: *Diagnostics, info: *const transport.AttemptInfo) void {
         self.info = info.*;
-        self.info.request_id = if (info.request_id) |id| self.arena.dupe(u8, id) catch unreachable else null;
-        self.info.body = if (info.body) |body| self.arena.dupe(u8, body) catch unreachable else null;
+        // A caller arena that runs out drops the optional copies; the classification fields stay.
+        self.info.request_id = if (info.request_id) |id| self.arena.dupe(u8, id) catch null else null;
+        self.info.body = if (info.body) |body| self.arena.dupe(u8, body) catch null else null;
     }
 };
 

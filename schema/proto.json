@@ -485,7 +485,7 @@
     },
     {
       "name": "BlobPutParams",
-      "doc": "These are the parameters for `blob.put`. A caller names exactly one source: a file the engine reads, or the bytes.",
+      "doc": "A caller names one source for `blob.put`: an absolute path or base64 image bytes.",
       "fields": [
         {
           "name": "path",
@@ -495,7 +495,7 @@
         },
         {
           "name": "data",
-          "doc": "The image bytes in standard base64, for a caller whose bytes are in no file.",
+          "doc": "The image bytes in standard base64 when no file holds them.",
           "type": "string",
           "presence": "optional"
         }

@@ -382,25 +382,26 @@ fn exchangeOnce(client: *std.http.Client, body: *Body, uri: std.Uri, reused: *bo
     var it = head.iterateHeaders();
     next_header: while (it.next()) |header| {
         if (!validHeaderName(header.name) or !validHeaderValue(header.value)) return error.BadHeader;
-        // A repeated field joins with a comma, as the Fetch standard reads it, so a second challenge stays visible.
+        // The repair of an invalid byte can grow the value, so the budget counts the repaired bytes.
+        const value = try utf8.sanitize(gpa, header.value);
+        var kept = false;
+        defer if (!kept) gpa.free(value);
+        // Fetch `get` joins a repeated field with a comma, so a second challenge stays visible.
         for (headers.items) |*held| if (std.ascii.eqlIgnoreCase(held.name, header.name)) {
-            if (header.value.len + 2 > max_response_header_bytes - total) return error.StreamTooLong;
-            const value = try utf8.sanitize(gpa, header.value);
-            defer gpa.free(value);
+            if (value.len + 2 > max_response_header_bytes - total) return error.StreamTooLong;
             const joined = try std.mem.concat(gpa, u8, &.{ held.value, ", ", value });
             gpa.free(held.value);
             held.value = joined;
-            total += header.value.len + 2;
+            total += value.len + 2;
             continue :next_header;
         };
-        const size = header.name.len + header.value.len;
+        const size = header.name.len + value.len;
         if (headers.items.len == max_response_headers or size > max_response_header_bytes - total) return error.StreamTooLong;
         const name = try gpa.dupeZ(u8, header.name);
         errdefer gpa.free(name);
         _ = std.ascii.lowerString(name, name);
-        const value = try utf8.sanitize(gpa, header.value);
-        errdefer gpa.free(value);
         try headers.append(gpa, .{ .name = name, .value = value });
+        kept = true;
         total += size;
     }
     if (!has_body) {
@@ -408,7 +409,7 @@ fn exchangeOnce(client: *std.http.Client, body: *Body, uri: std.Uri, reused: *bo
         request.reader.state = .ready;
         body.end();
     } else if (redirect) {
-        // The unread body closes the connection at the release.
+        // The unread body marks the connection for close.
         body.end();
     }
     return .{ .status = status, .headers = try headers.toOwnedSlice(gpa), .body = if (body.ended) 0 else body.id };

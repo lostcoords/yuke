@@ -6,8 +6,8 @@
 const MAX_EVENT_CHARS = 4 * 1024 * 1024;
 
 // Follow the HTML event-stream rules: CR, LF, or CRLF end a line, and a blank line ends an event.
-/** @param {(event: SseEvent) => void} onEvent @returns {(chunk: string) => void} */
-export function sseParser(onEvent) {
+/** @param {(event: SseEvent) => void} onEvent @param {{ maxChars?: number, onRetry?: ((ms: number) => void) | undefined }} [options] @returns {(chunk: string) => void} */
+export function sseParser(onEvent, { maxChars = MAX_EVENT_CHARS, onRetry } = {}) {
   let rest = "";
   let first = true;
   /** @type {string[]} */
@@ -32,15 +32,16 @@ export function sseParser(onEvent) {
     if (value[0] === " ") value = value.slice(1);
     if (field === "data") {
       size += value.length + 1;
-      if (size > MAX_EVENT_CHARS) throw new Error("the event exceeds the size limit");
+      if (size > maxChars) throw new Error("the event exceeds the size limit");
       data.push(value);
     } else if (field === "event") event = value;
     else if (field === "id" && !value.includes("\0")) id = value;
+    else if (field === "retry" && /^[0-9]+$/.test(value)) onRetry?.(Number(value));
   };
   return (chunk) => {
     rest += chunk;
     if (first && rest.length !== 0) {
-      if (rest[0] === "﻿") rest = rest.slice(1);
+      if (rest[0] === "\ufeff") rest = rest.slice(1);
       first = rest.length === 0;
     }
     let start = 0;
@@ -55,6 +56,6 @@ export function sseParser(onEvent) {
       start = end + (end === cr && rest[end + 1] === "\n" ? 2 : 1);
     }
     rest = rest.slice(start);
-    if (rest.length > MAX_EVENT_CHARS) throw new Error("the event line exceeds the size limit");
+    if (rest.length > maxChars) throw new Error("the event line exceeds the size limit");
   };
 }

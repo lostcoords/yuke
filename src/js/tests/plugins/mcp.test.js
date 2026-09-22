@@ -1,7 +1,8 @@
 import { lines } from "yuke:spawn";
 import { fs } from "yuke:fs";
 import { interaction, plugins } from "yuke:ext";
-import { mcp, toolName, decodeMessage, toolResult } from "yuke:mcp";
+import { mcp, toolName, decodeMessage, toolResult, mirroredParams } from "yuke:mcp";
+import { headerValue } from "yuke:mcp-transport";
 import { check, equal } from "yuke:test";
 import { sseParser } from "yuke:sse";
 import { client } from "yuke:client";
@@ -125,6 +126,7 @@ if (mcpCase === "http") {
     legacy: { type: "http", url: mcpHttpBase + "/legacy", headers: token },
     old: { type: "sse", url: mcpHttpBase + "/sse", headers: token },
     denied: { url: mcpHttpBase + "/modern" },
+    mismatch: { type: "http", url: mcpHttpBase + "/mismatch", headers: token },
   } });
   globalThis.mcpReady = false;
   plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
@@ -218,6 +220,24 @@ if (mcpCase === "validation") {
   let refused = false;
   try { sseParser(() => {})("data: " + "x".repeat(4 * 1024 * 1024)); } catch { refused = true; }
   check("an endless line is refused", refused);
+  /** @type {number[]} */
+  const delays = [];
+  sseParser(() => {}, { onRetry: (ms) => delays.push(ms) })("retry: 2500\nretry: soon\n\n");
+  equal(delays.join(","), "2500");
+
+  // The spec's own examples of the header value encoding.
+  equal(headerValue("us-west1"), "us-west1");
+  equal(headerValue("Hello, 世界"), "=?base64?SGVsbG8sIOS4lueVjA==?=");
+  equal(headerValue(" padded "), "=?base64?IHBhZGRlZCA=?=");
+  equal(headerValue("line1\nline2"), "=?base64?bGluZTEKbGluZTI=?=");
+  equal(headerValue("=?base64?literal?="), "=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?=");
+  // An annotation must sit on a primitive that a chain of `properties` keys reaches.
+  const annotated = (/** @type {any} */ property) => ({ type: "object", properties: { a: property } });
+  equal(JSON.stringify(mirroredParams({ type: "object", properties: { outer: { type: "object", properties: { region: { type: "string", "x-mcp-header": "Region" } } } } })), JSON.stringify([{ name: "Region", path: ["outer", "region"] }]));
+  equal(typeof mirroredParams(annotated({ type: "number", "x-mcp-header": "N" })), "string");
+  equal(typeof mirroredParams(annotated({ type: "string", "x-mcp-header": "bad name" })), "string");
+  equal(typeof mirroredParams({ type: "object", properties: { a: { type: "array", items: { type: "string", "x-mcp-header": "Item" } } } }), "string");
+  equal(typeof mirroredParams({ type: "object", properties: { a: { type: "string", "x-mcp-header": "Twice" }, b: { type: "integer", "x-mcp-header": "twice" } } }), "string");
 }
 
 if (mcpCase === "protocol") {

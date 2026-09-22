@@ -4,6 +4,7 @@ import { env } from "yuke:env";
 import { spawn, lines } from "yuke:spawn";
 import { fetch } from "yuke:http";
 import { sseParser } from "yuke:sse";
+import { utf8 } from "yuke:utf8";
 
 /** @typedef {import("yuke:cancellation-native").CancellationSignal} CancellationSignal */
 /** @typedef {Awaited<ReturnType<typeof fetch>>} HttpResponse */
@@ -17,6 +18,13 @@ const LISTEN_RETRY_MS = 1000;
 const LISTEN_RETRY_MAX_MS = 30_000;
 const VERSION_KEY = "io.modelcontextprotocol/protocolVersion";
 const ERROR_TEXT_MAX = 200;
+// A result may carry a 7 MiB image as base64 inside JSON, so one answer reads up to this.
+const MAX_RESPONSE_CHARS = 16 * 1024 * 1024;
+const READ_CHUNK_BYTES = 1024 * 1024;
+// The method names whose routing header carries a parameter, and that parameter.
+const ROUTED = /** @type {Record<string, string>} */ ({ "tools/call": "name", "prompts/get": "name", "resources/read": "uri" });
+const SENTINEL_START = "=?base64?";
+const SENTINEL_END = "?=";
 const VAR = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
 /** @param {unknown} error @returns {string} */
@@ -61,13 +69,14 @@ export function checkTransport(config, type) {
   return "type must be stdio, http, or sse";
 }
 
-// A transport moves JSON-RPC text; the server decodes it. `closed` fires once, when the transport can carry no more.
-/** @typedef {{ message(text: string): void, closed(reason: string): void }} Sink */
+// A transport moves JSON-RPC text; the server decodes it and answers the id of the request that the text settles.
+// `closed` fires once, when the transport can carry no more; `reconnect` asks the server to start again.
+/** @typedef {{ message(text: string): number | undefined, closed(reason: string, reconnect?: boolean): void }} Sink */
 // `send` settles when the transport has carried the whole exchange; a request whose answer never came rejects.
 // `negotiated` names the legacy version after `initialize`; a transport that never hears it speaks the modern era.
-/** @typedef {{ send(message: Record<string, unknown>): Promise<void>, cancel(id: number, reason: string): void, negotiated(version: string): void, close(): Promise<void>, diagnostics(failed: boolean): string[] }} Transport */
-// What a trusted configuration runs. `identity` keys the trust record, and `describe` names the action in the prompt.
-/** @typedef {{ identity: string, describe: string, open(sink: Sink): Transport }} Endpoint */
+/** @typedef {{ send(message: Record<string, unknown>, headers?: Record<string, string>): Promise<void>, cancel(id: number, reason: string): void, negotiated(version: string): void, close(): Promise<void>, diagnostics(failed: boolean): string[] }} Transport */
+// What a trusted configuration runs. `identity` keys the trust record, `describe` names the action in the prompt, and `mirrorsParams` means the tool headers apply.
+/** @typedef {{ identity: string, describe: string, mirrorsParams: boolean, open(sink: Sink): Transport }} Endpoint */
 
 // One child process per server. Each stdout line is one message; a line that is not JSON is noise.
 /** @param {{ argv: string[], env: Record<string, string>, cwd?: string }} launch @param {Sink} sink @returns {Transport} */
@@ -127,6 +136,7 @@ function stdioEndpoint(config) {
   return {
     identity: JSON.stringify([config.command, config.args ?? [], config.cwd ?? null, entries, launch]),
     describe: "runs: " + argv.map((arg) => JSON.stringify(arg)).join(" "),
+    mirrorsParams: false,
     open: (sink) => openStdio(launch, sink),
   };
 }
@@ -137,7 +147,7 @@ function originOf(url) {
   return /^https?:\/\/[^/?#]+/i.exec(url)?.[0]?.toLowerCase() ?? "";
 }
 
-// Resolve the old transport's endpoint against the stream URL. Another origin could read the requests, so it is refused.
+// Resolve the old transport's endpoint against the stream URL. Reject a different origin because it could read the requests.
 /** @param {string} base @param {string} target @returns {string} */
 function endpointUrl(base, target) {
   const origin = originOf(base);
@@ -154,18 +164,59 @@ function mediaType(response) {
   return (end < 0 ? value : value.slice(0, end)).trim().toLowerCase();
 }
 
-/** @param {HttpResponse} response @returns {Promise<string>} */
-async function failureText(response) {
-  // An HTML error page says nothing a row can show.
-  const body = mediaType(response) === "text/html" ? (response.body.cancel(), "") : (await response.text().catch(() => "")).trim().slice(0, ERROR_TEXT_MAX);
-  return "the server answered HTTP " + response.status + (body ? ": " + body : "");
+// Read the whole body in chunks. `text()` stops at 256 KiB, and an image result is larger.
+/** @param {HttpResponse} response @param {number} max @returns {Promise<string>} */
+async function readText(response, max) {
+  try {
+    let text = "";
+    let chunk;
+    while ((chunk = await response.body.read({ maxBytes: READ_CHUNK_BYTES })) !== null) {
+      text += chunk;
+      if (text.length > max) throw new Error("the response exceeds the size limit");
+    }
+    return text;
+  } finally {
+    response.body.cancel();
+  }
 }
 
-// Hand each event of the body to `onData` until the body ends.
-/** @param {HttpResponse} response @param {(data: string, event: string) => void} onData */
-async function readEvents(response, onData) {
-  const feed = sseParser((event) => onData(event.data, event.event));
-  for await (const chunk of response.body) feed(chunk);
+// The error of a refused request. A JSON-RPC error body keeps its code and data, so a modern server's answer is not a legacy one.
+/** @param {HttpResponse} response @returns {Promise<Error>} */
+async function failure(response) {
+  if (mediaType(response) === "text/html") {
+    response.body.cancel();
+    return new Error("the server answered HTTP " + response.status);
+  }
+  const body = (await readText(response, READ_CHUNK_BYTES).catch(() => "")).trim();
+  if (mediaType(response) === "application/json") {
+    let parsed;
+    try { parsed = JSON.parse(body); } catch { parsed = null; }
+    const error = parsed?.error;
+    if (parsed?.jsonrpc === "2.0" && record(error) && Number.isSafeInteger(error.code) && typeof error.message === "string") return Object.assign(new Error(error.message), { code: error.code, data: error.data });
+  }
+  return new Error("the server answered HTTP " + response.status + (body ? ": " + body.slice(0, ERROR_TEXT_MAX) : ""));
+}
+
+// Hand each event of the body to `onEvent` until the body ends. The body is released on every exit.
+/** @param {HttpResponse} response @param {(event: import("yuke:sse").SseEvent) => void} onEvent @param {(ms: number) => void} [onRetry] */
+async function readEvents(response, onEvent, onRetry) {
+  try {
+    const feed = sseParser(onEvent, { maxChars: MAX_RESPONSE_CHARS, onRetry });
+    let chunk;
+    while ((chunk = await response.body.read({ maxBytes: READ_CHUNK_BYTES })) !== null) feed(chunk);
+  } finally {
+    response.body.cancel();
+  }
+}
+
+// A header value that is not plain visible ASCII, or that looks like the sentinel, travels as base64 in the sentinel form.
+/** @param {string} value @returns {string} */
+export function headerValue(value) {
+  const plain = /^[\x21-\x7e](?:[\x20-\x7e\t]*[\x21-\x7e])?$/.test(value) && !(value.startsWith(SENTINEL_START) && value.endsWith(SENTINEL_END));
+  if (plain) return value;
+  // QuickJS has `toBase64` on byte arrays; the bundled TypeScript library does not name it yet.
+  const bytes = /** @type {Uint8Array & { toBase64(): string }} */ (utf8.encode(value));
+  return SENTINEL_START + bytes.toBase64() + SENTINEL_END;
 }
 
 /** @param {Record<string, string>} headers @param {Record<string, string>} extra @returns {Record<string, string>} */
@@ -192,8 +243,8 @@ function openHttp(target, sink) {
   let retry = 0;
   let lastError = "";
 
-  /** @param {Record<string, unknown>} message */
-  const headersFor = (message) => {
+  /** @param {Record<string, unknown>} message @param {Record<string, string>} params_headers */
+  const headersFor = (message, params_headers) => {
     const params = /** @type {Record<string, any> | undefined} */ (message.params);
     const modern = params?._meta?.[VERSION_KEY];
     /** @type {Record<string, string>} */
@@ -201,8 +252,12 @@ function openHttp(target, sink) {
     if (typeof modern === "string") {
       // The modern body and header must agree, and the routing headers name the method and its target.
       extra["mcp-protocol-version"] = modern;
-      if (typeof message.method === "string") extra["mcp-method"] = message.method;
-      if (typeof params?.name === "string") extra["mcp-name"] = params.name;
+      if (typeof message.method === "string") {
+        extra["mcp-method"] = message.method;
+        const routed = params?.[ROUTED[message.method] ?? ""];
+        if (typeof routed === "string") extra["mcp-name"] = headerValue(routed);
+      }
+      Object.assign(extra, params_headers);
     } else if (version) extra["mcp-protocol-version"] = version;
     if (session) extra["mcp-session-id"] = session;
     return withHeaders(target.headers, extra);
@@ -211,60 +266,77 @@ function openHttp(target, sink) {
   // The legacy era may push notifications on one GET stream. A server without one answers 405.
   const listen = async () => {
     let delay = LISTEN_RETRY_MS;
+    // The server may ask for a delay, and a reconnect names the last event so the server can resume.
+    let asked = 0;
+    let lastId = "";
     while (open) {
       const signal = cancellation.create();
       listening = signal;
       try {
         const extra = /** @type {Record<string, string>} */ ({ accept: "text/event-stream", "mcp-protocol-version": version });
         if (session) extra["mcp-session-id"] = session;
+        if (lastId) extra["last-event-id"] = lastId;
         const response = await fetch(target.url, { method: "GET", headers: withHeaders(target.headers, extra), signal, timeoutMs: HTTP_WAIT_MS });
-        if (response.status === 405 || !response.ok || mediaType(response) !== "text/event-stream") { response.body.cancel(); return; }
+        if (!response.ok || mediaType(response) !== "text/event-stream") { response.body.cancel(); return; }
         delay = LISTEN_RETRY_MS;
-        await readEvents(response, (data) => { if (open) sink.message(data); });
+        await readEvents(response, (event) => {
+          lastId = event.id;
+          if (open) sink.message(event.data);
+        }, (ms) => { asked = ms; });
       } catch (error) {
         if (!open) return;
         lastError = errorText(error);
       }
-      await new Promise((resolve) => { retry = setTimeout(() => resolve(undefined), delay); });
+      await new Promise((resolve) => { retry = setTimeout(() => resolve(undefined), asked || delay); });
       delay = Math.min(delay * 2, LISTEN_RETRY_MAX_MS);
     }
   };
 
-  /** @param {Record<string, unknown>} message */
-  const send = async (message) => {
+  /** @param {Record<string, unknown>} message @param {Record<string, string>} [params_headers] */
+  const send = async (message, params_headers = {}) => {
     if (!open) throw new Error("the server is not running");
     const id = typeof message.method === "string" && typeof message.id === "number" ? message.id : undefined;
     const signal = cancellation.create();
     if (id !== undefined) exchanges.set(id, signal);
     try {
-      const response = await fetch(target.url, { method: "POST", headers: headersFor(message), body: JSON.stringify(message), signal, timeoutMs: HTTP_WAIT_MS });
+      const response = await fetch(target.url, { method: "POST", headers: headersFor(message, params_headers), body: JSON.stringify(message), signal, timeoutMs: HTTP_WAIT_MS });
       const assigned = response.headers.get("mcp-session-id");
       if (message.method === "initialize" && assigned) session = assigned;
+      // A legacy server that forgets the session wants a new `initialize`, so the server starts again.
       if (response.status === 404 && session) {
         response.body.cancel();
-        closed("the server ended the session");
+        closed("the server ended the session", true);
         throw new Error("the server ended the session");
       }
-      if (!response.ok) throw new Error(await failureText(response));
+      if (!response.ok) throw await failure(response);
       if (message.method === "notifications/initialized" && version) listen();
       if (id === undefined || response.status === 202) { response.body.cancel(); return; }
       const type = mediaType(response);
-      if (type === "application/json") { if (open) sink.message(await response.text()); return; }
+      if (type === "application/json") {
+        const text = await readText(response, MAX_RESPONSE_CHARS);
+        if (open) sink.message(text);
+        return;
+      }
       if (type !== "text/event-stream") { response.body.cancel(); throw new Error("the server answered " + (type || "no content type")); }
-      await readEvents(response, (data) => { if (open) sink.message(data); });
-      // The stream ended; a request it never answered fails, and an answered one ignores this.
-      throw new Error("the response stream ended without an answer");
+      let answered = false;
+      await readEvents(response, (event) => {
+        if (open && sink.message(event.data) === id) answered = true;
+      });
+      // A response stream must deliver the request response before it ends.
+      if (!answered) throw new Error("the response stream ended without an answer");
     } finally {
       if (id !== undefined) exchanges.delete(id);
     }
   };
 
-  /** @param {string} reason */
-  const closed = (reason) => {
+  /** @param {string} reason @param {boolean} [reconnect] */
+  const closed = (reason, reconnect = false) => {
     if (!open) return;
     open = false;
+    clearTimeout(retry);
+    if (listening) cancellation.cancel(listening);
     for (const signal of exchanges.values()) cancellation.cancel(signal);
-    sink.closed(reason);
+    sink.closed(reason, reconnect);
   };
 
   return {
@@ -310,12 +382,12 @@ function openSse(target, sink) {
   };
   (async () => {
     const response = await fetch(target.url, { method: "GET", headers: withHeaders(target.headers, { accept: "text/event-stream" }), signal: stream, timeoutMs: HTTP_WAIT_MS });
-    if (!response.ok) throw new Error(await failureText(response));
+    if (!response.ok) throw await failure(response);
     if (mediaType(response) !== "text/event-stream") { response.body.cancel(); throw new Error("the server answered no event stream"); }
-    await readEvents(response, (data, event) => {
+    await readEvents(response, (event) => {
       if (!open) return;
-      if (event === "endpoint") found(endpointUrl(target.url, data.trim()));
-      else if (event === "message") sink.message(data);
+      if (event.event === "endpoint") found(endpointUrl(target.url, event.data.trim()));
+      else if (event.event === "message") sink.message(event.data);
     });
     throw new Error("the event stream ended");
   })().catch((error) => closed(errorText(error)));
@@ -325,7 +397,7 @@ function openSse(target, sink) {
     const url = await endpoint;
     // The answer arrives on the stream, so the POST only has to be accepted.
     const response = await fetch(url, { method: "POST", headers: withHeaders(target.headers, { "content-type": "application/json" }), body: JSON.stringify(message), timeoutMs: HTTP_WAIT_MS });
-    if (!response.ok) throw new Error(await failureText(response));
+    if (!response.ok) throw await failure(response);
     response.body.cancel();
   };
   return {
@@ -351,9 +423,10 @@ function remoteEndpoint(config, type) {
   for (const [name, value] of entries) headers[name] = expand(value);
   const target = { url, headers };
   return {
-    // The store keeps a hash of this, so an expanded secret never reaches the disk.
-    identity: JSON.stringify([type, config.url, entries, target]),
+    // A rotated secret in a header changes nothing the server can do, so only the expanded URL keys the trust.
+    identity: JSON.stringify([type, config.url, entries, url]),
     describe: "connects to: " + url,
+    mirrorsParams: type === "http",
     open: (sink) => type === "http" ? openHttp(target, sink) : openSse(target, sink),
   };
 }

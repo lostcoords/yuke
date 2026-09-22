@@ -2,11 +2,11 @@
 
 const std = @import("std");
 
-/// These are the parameters for `blob.put`. A caller names exactly one source: a file the engine reads, or the bytes.
+/// A caller names one source for `blob.put`: an absolute path or base64 image bytes.
 pub const BlobPutParams = struct {
     /// An absolute path to an image file on the engine host.
     path: ?[]const u8 = null,
-    /// The image bytes in standard base64, for a caller whose bytes are in no file.
+    /// The image bytes in standard base64 when no file holds them.
     data: ?[]const u8 = null,
 };
 
