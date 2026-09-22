@@ -54,6 +54,7 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
         .output = out.dupe(u8, text) catch unreachable,
         .view = extra.view,
         .media = extra.media,
+        .tools_added = extra.tools_added,
         .is_error = call.is_error,
     };
 }
@@ -114,6 +115,7 @@ fn decisionOf(out: std.mem.Allocator, point: proto.hook.Point, text: []const u8)
 const Extra = struct {
     view: ?[]const proto.view.View = null,
     media: []const proto.content.MediaBlob = &.{},
+    tools_added: []const proto.tool.ToolDefinition = &.{},
 };
 
 /// Copy every string into `out`, because the owner frees the call JSON on its next sweep.
@@ -136,6 +138,8 @@ test "a tool result owns its view and media after the call answer leaves" {
     try std.testing.expectEqualStrings("image/png", extra.media[0].mime);
     try std.testing.expectEqual(@as(u64, 3), extra.media[0].bytes);
     try std.testing.expect(extraOf(arena.allocator(), "{\"media\":[{\"hash\":\"zz\"}]}") == null);
+    const found = extraOf(arena.allocator(), "{\"tools_added\":[{\"name\":\"mcp_read\",\"description\":\"Read.\",\"input_schema\":\"{}\"}]}").?;
+    try std.testing.expectEqualStrings("mcp_read", found.tools_added[0].name);
 }
 
 test "hook decisions own text after the call answer leaves" {

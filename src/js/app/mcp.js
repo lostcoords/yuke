@@ -25,6 +25,15 @@ const CLIENT = { name: "yuke", version: "0" };
 // The modern era carries the version and the client capabilities in every request.
 const META = { "io.modelcontextprotocol/protocolVersion": MODERN, "io.modelcontextprotocol/clientCapabilities": {}, "io.modelcontextprotocol/clientInfo": CLIENT };
 const NAME_MAX = 64;
+// The search tool the engine expects by this name; a deferred definition is reachable only through it.
+const SEARCH_TOOL = "tool_search";
+const INSTRUCTIONS_MAX = 2048;
+const SEARCH_DESCRIPTION_MAX = 4096;
+const QUERY_MAX = 500;
+const DESCRIPTION_MAX = 1024;
+const RESULT_MAX = 16 * 1024;
+const LIMIT_DEFAULT = 5;
+const LIMIT_MAX = 20;
 const MAX_PAGES = 100;
 const MAX_TOOLS = 10_000;
 const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
@@ -207,6 +216,75 @@ function checkConfig(config) {
   return null;
 }
 
+/** @param {any} answer @returns {string} */
+function instructionsOf(answer) {
+  return typeof answer.instructions === "string" ? answer.instructions.slice(0, INSTRUCTIONS_MAX) : "";
+}
+
+/** @typedef {{ name: string, description: string, input_schema: string }} ToolAddition */
+
+/** @param {string} text @returns {string[]} */
+function terms(text) {
+  return text.toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length > 1);
+}
+
+// The name weighs most; the description and the argument names and descriptions weigh one each per term.
+/** @param {ToolDefinition} definition @param {string[]} wanted @returns {number} */
+function score(definition, wanted) {
+  const name = definition.name.toLowerCase();
+  const description = definition.description.toLowerCase();
+  const properties = /** @type {Record<string, { description?: unknown }> | undefined} */ (definition.parameters.properties);
+  const params = properties === undefined ? "" : Object.entries(properties).map(([key, value]) => key + " " + (typeof value?.description === "string" ? value.description : "")).join(" ").toLowerCase();
+  let total = 0;
+  for (const term of wanted) {
+    if (name.includes(term)) total += 3;
+    if (description.includes(term)) total += 1;
+    if (params.includes(term)) total += 1;
+  }
+  return total;
+}
+
+// The search reads the whole catalog here; the request declares only what it loads, so the context stays small.
+/** @param {Server[]} servers @param {unknown} args @returns {string | { __yuke_result: true, text: string, extra: { tools_added: ToolAddition[] } }} */
+function searchCatalog(servers, args) {
+  const { query, server: only, limit: asked } = /** @type {{ query?: unknown, server?: unknown, limit?: unknown }} */ (record(args) ? args : {});
+  if (typeof query !== "string" || query.trim() === "") throw new Error("query must be a nonempty string");
+  if (query.length > QUERY_MAX) throw new Error("query must be at most " + QUERY_MAX + " characters");
+  if (only !== undefined && typeof only !== "string") throw new Error("server must be a string");
+  if (asked !== undefined && (typeof asked !== "number" || !Number.isSafeInteger(asked) || asked < 1 || asked > LIMIT_MAX)) throw new Error("limit must be an integer from 1 to " + LIMIT_MAX);
+  const limit = asked === undefined ? LIMIT_DEFAULT : asked;
+  const wanted = terms(query);
+  /** @type {{ server: string, definition: ToolDefinition, score: number }[]} */
+  const hits = [];
+  const connected = [];
+  for (const server of servers) {
+    if (server.state !== "connected") continue;
+    connected.push(server.name);
+    if (only !== undefined && server.name !== only) continue;
+    for (const definition of server.definitions) {
+      const total = score(definition, wanted);
+      if (total > 0) hits.push({ server: server.name, definition, score: total });
+    }
+  }
+  hits.sort((a, b) => b.score - a.score || (a.definition.name < b.definition.name ? -1 : 1));
+  if (hits.length === 0) return "No MCP tool matches " + JSON.stringify(query) + ". Connected servers: " + (connected.length ? connected.join(", ") : "none") + ".";
+  /** @type {string[]} */
+  const lines = [];
+  /** @type {ToolAddition[]} */
+  const added = [];
+  let bytes = 0;
+  for (const hit of hits.slice(0, limit)) {
+    const description = hit.definition.description.slice(0, DESCRIPTION_MAX);
+    const line = hit.definition.name + " (" + hit.server + "): " + description;
+    if (bytes + line.length > RESULT_MAX) break;
+    bytes += line.length + 1;
+    lines.push(line);
+    // An eager tool is in the context already, so only a deferred one is loaded.
+    if (hit.definition.defer === true) added.push({ name: hit.definition.name, description, input_schema: JSON.stringify(hit.definition.parameters) });
+  }
+  return { __yuke_result: true, text: "Found " + lines.length + " MCP tool" + (lines.length === 1 ? "" : "s") + ":\n" + lines.join("\n"), extra: { tools_added: added } };
+}
+
 class Server {
   /** @param {string} name @param {ServerConfig} config @param {Limits} limits @param {boolean} trusted @param {Context} ctx */
   constructor(name, config, limits, trusted, ctx) {
@@ -223,7 +301,10 @@ class Server {
     this.error = "";
     /** @type {"" | "modern" | "legacy"} */
     this.era = "";
+    this.instructions = "";
     this.hasTools = false;
+    // The plugin swaps its search tool when a server or its catalog changes.
+    this.onChange = () => {};
     /** @type {ChildProcess | null} */
     this.child = null;
     this.nextId = 1;
@@ -285,6 +366,7 @@ class Server {
     this.undefineTools();
     for (const id of this.waiting.keys()) this.settle(id, undefined, new Error(message));
     if (this.child) this.child.kill();
+    this.onChange();
   }
 
   /** @returns {Promise<void>} */
@@ -302,6 +384,7 @@ class Server {
     } catch (error) {
       if (this.state === "connecting") this.fail("failed", errorText(error));
     }
+    this.onChange();
   }
 
   spawnChild() {
@@ -397,12 +480,14 @@ class Server {
       complete(found, true);
       if (!Array.isArray(found.supportedVersions) || !found.supportedVersions.every((/** @type {any} */ value) => typeof value === "string") || !found.supportedVersions.includes(MODERN)) throw new Error("the server supports no protocol version this client speaks");
       this.hasTools = hasTools(found.capabilities);
+      this.instructions = instructionsOf(found);
       return;
     }
     const init = await this.request("initialize", { protocolVersion: LEGACY, capabilities: {}, clientInfo: CLIENT }, deadline - Date.now());
     complete(init, false);
     if (!LEGACY_KNOWN.includes(init.protocolVersion)) throw new Error("the server answered initialize with an unknown protocol version");
     this.hasTools = hasTools(init.capabilities);
+    this.instructions = instructionsOf(init);
     if (!record(init.serverInfo) || typeof init.serverInfo.name !== "string" || typeof init.serverInfo.version !== "string") return invalid("initialize result");
     await this.send({ jsonrpc: "2.0", method: "notifications/initialized" });
   }
@@ -419,6 +504,7 @@ class Server {
         catch (error) { this.error = errorText(error); }
       }
     } finally { this.refreshing = false; }
+    this.onChange();
   }
 
   // List every page, then swap the tool set. The run loadout is chosen once, so a change lands on the next run.
@@ -522,6 +608,7 @@ class Server {
     this.state = "stopped";
     this.refreshAgain = false;
     this.undefineTools();
+    this.onChange();
     if (!child) return;
     child.closeStdin();
     let grace = 0;
@@ -592,6 +679,34 @@ export function mcp(options = {}) {
         if (!record(config)) { problems.push(name + ": the server entry must be an object"); continue; }
         servers.push(new Server(name, config, limits, trusted, ctx));
       }
+      /** @type {(() => void) | null} */
+      let disposeSearch = null;
+      let searchDescription = "";
+      // One search tool covers every connected server. Its description names them, so the model knows when to search.
+      const refreshSearchTool = () => {
+        if (!ctx.scope.alive) return;
+        const connected = servers.filter((server) => server.state === "connected");
+        const description = connected.length === 0 ? "" : ("Search the MCP tool catalog by keywords and load the matching tools. Servers: " + connected.map((server) => server.name + (server.instructions ? " (" + server.instructions + ")" : "")).join("; ") + ".").slice(0, SEARCH_DESCRIPTION_MAX);
+        if (description === searchDescription) return;
+        searchDescription = description;
+        if (disposeSearch) { disposeSearch(); disposeSearch = null; }
+        if (description === "") return;
+        disposeSearch = ctx.tools.define({
+          name: SEARCH_TOOL,
+          description,
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Keywords that describe the tool you need." },
+              server: { type: "string", description: "Search one server only." },
+              limit: { type: "integer", description: "How many tools to load, 1 to " + LIMIT_MAX + ". The default is " + LIMIT_DEFAULT + "." },
+            },
+            required: ["query"],
+          },
+          execute: async (args) => searchCatalog(servers, args),
+        });
+      };
+      for (const server of servers) server.onChange = refreshSearchTool;
       for (const server of servers) if (server.state === "pending") server.start();
 
       // A workspace server asks once, at the first run. A yes starts it; its tools join the next run.

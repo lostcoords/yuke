@@ -8,6 +8,7 @@ const run = @import("run.zig");
 const provider = @import("../provider/provider.zig");
 const draft = @import("../session/draft.zig");
 const Session = @import("../session/session.zig").Session;
+const Loadout = @import("../session/session.zig").Loadout;
 const database = @import("../store/store.zig");
 const toolset = @import("toolset.zig");
 const registry = @import("../provider/registry.zig");
@@ -666,7 +667,7 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTo
     else if (res.is_error)
         .{ .@"error" = .{ .@"error" = res.output, .view = res.view, .duration_ms = duration } }
     else
-        .{ .completed = .{ .output = res.output, .view = res.view, .media = if (res.media.len == 0) null else res.media, .duration_ms = duration } };
+        .{ .completed = .{ .output = res.output, .view = res.view, .media = if (res.media.len == 0) null else res.media, .tools_added = if (res.tools_added.len == 0) null else res.tools_added, .duration_ms = duration } };
     try streamer.emitToolState(pt.part_id, settled);
 }
 
@@ -815,6 +816,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
         .is_error = res.is_error,
         .view = res.view,
         .media = res.media,
+        .tools_added = res.tools_added,
     });
     const outcome: toolset.Outcome = switch (after) {
         .proceed => res,
@@ -823,7 +825,18 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
         .block => |reason| return .{ .output = reason, .is_error = true },
         .canceled => return error.Canceled,
     };
-    return admitMedia(engine, arena, outcome);
+    return admitMedia(engine, arena, admitAdditions(arena, held, outcome));
+}
+
+/// A search result grants no new authority: every loaded definition must sit in the run loadout and carry an object schema.
+fn admitAdditions(arena: std.mem.Allocator, held: *const Loadout, outcome: toolset.Outcome) toolset.Outcome {
+    if (outcome.is_error) return outcome;
+    for (outcome.tools_added) |definition| {
+        if (!held.allows(definition.name)) return .{ .output = "The tool answered a definition outside the run loadout.", .is_error = true };
+        const schema = std.json.parseFromSliceLeaky(std.json.Value, arena, definition.input_schema, .{}) catch return .{ .output = "The tool answered a definition with an unreadable schema.", .is_error = true };
+        if (schema != .object) return .{ .output = "The tool answered a definition with an unreadable schema.", .is_error = true };
+    }
+    return outcome;
 }
 
 /// Admit the images a tool answered. An error state carries none, and a bad blob turns the result into an error.

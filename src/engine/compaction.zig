@@ -159,10 +159,10 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: ro
     // `context.project` refuses a history above the budget, and a compaction runs only above it.
     const covered = try context.collect(engine.deps.gpa, arena, db, sid, head, cut.first_kept_id);
     // The summary reads no blob, so a text-only modality set turns every attachment into its note.
-    const built = try provider.request_builder.build(arena, covered, .{
+    const built = (try provider.request_builder.build(arena, covered, .{
         .target = .{ .protocol = held.route.route.protocol, .model = slot.config.model },
         .modalities = .{ .input = &.{.text} },
-    });
+    })).blocks;
     if (built.len == 0) return .{ .skipped = .{ .reason = .nothing_to_summarize } };
 
     // The summary repeats the system prompt and the tools of the turn, so it reuses the cached prefix.

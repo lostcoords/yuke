@@ -36,8 +36,12 @@ pub const Loadout = struct {
     decls: []const transport_ir.Tool,
     /// The session catalog lists at least one skill. Read once, because a reload refuses an active run.
     has_skills: bool,
-    /// The first request build decided whether the deferred flags stay. The decision holds for the run.
-    deferral_applied: bool = false,
+    /// The tools the request declares. The first build decides it once from `decls`, and it holds for the run.
+    request_tools: ?[]const transport_ir.Tool = null,
+    /// How a deferred definition reaches the model: not at all, an Anthropic reference, or an addition after a search.
+    deferral: Deferral = .none,
+
+    pub const Deferral = enum { none, native, omitted };
 
     pub fn allows(self: *const Loadout, name: []const u8) bool {
         for (self.names) |allowed| if (std.mem.eql(u8, allowed, name)) return true;

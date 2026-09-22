@@ -3337,8 +3337,35 @@
           "presence": "optional"
         },
         {
+          "name": "tools_added",
+          "doc": "The definitions a tool search loaded. The transcript keeps them, so replay never reads the live catalog.",
+          "type": "[]ToolDefinition",
+          "presence": "optional"
+        },
+        {
           "name": "duration_ms",
           "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ToolDefinition",
+      "doc": "One tool definition as a search loaded it. `input_schema` is the JSON Schema text of the arguments.",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "input_schema",
+          "type": "string",
           "presence": "required"
         }
       ]

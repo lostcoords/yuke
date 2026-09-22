@@ -101,6 +101,8 @@ export interface ToolOutcome {
   is_error: boolean;
   view?: Wire.View[] | null;
   media?: Wire.MediaBlob[];
+  /** The definitions a tool search loaded. The engine admits each one against the run loadout. */
+  tools_added?: Wire.ToolDefinition[];
 }
 
 export interface PromptSection {

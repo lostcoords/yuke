@@ -45,11 +45,14 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
     const model = held.model;
     const build = held.build;
     var blobs: BlobReader = .{ .arena = arena, .io = engine.deps.io, .store = engine.deps.blobs };
-    const blocks = try provider.request_builder.build(arena, projected.messages, .{
+    const built = try provider.request_builder.build(arena, projected.messages, .{
         .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
+        .tools = build.tools,
+        .native_references = slot.tools.?.deferral == .native,
         .modalities = model.modalities,
         .blobs = blobs.lookup(),
     });
+    const tools = try provider.request_builder.declared(arena, build.tools, built.added);
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
     const secret = registry.credential(route.credential, engine.deps.execution.env, engine.nowMillis()) orelse return error.MissingCredential;
@@ -62,9 +65,9 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
         .caps = model.caps,
         .dialect = model.dialect,
     }, .{
-        .blocks = blocks,
+        .blocks = built.blocks,
         .system = build.system,
-        .tools = build.tools,
+        .tools = tools,
         .options = .{
             .max_output_tokens = build.max_output_tokens,
             // The budget shares the ceiling, so it follows whatever the chain left there.

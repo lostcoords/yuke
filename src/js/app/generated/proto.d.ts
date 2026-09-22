@@ -1012,7 +1012,16 @@ export interface ToolStateCompleted {
   readonly view?: ReadonlyArray<View>;
   /** Images the model reads beside the output. The engine admitted each blob at the tool boundary. */
   readonly media?: ReadonlyArray<MediaBlob>;
+  /** The definitions a tool search loaded. The transcript keeps them, so replay never reads the live catalog. */
+  readonly tools_added?: ReadonlyArray<ToolDefinition>;
   readonly duration_ms: number;
+}
+
+/** One tool definition as a search loaded it. `input_schema` is the JSON Schema text of the arguments. */
+export interface ToolDefinition {
+  readonly name: string;
+  readonly description: string;
+  readonly input_schema: string;
 }
 
 /** The tool call failed. */

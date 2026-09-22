@@ -47,7 +47,16 @@ pub const ToolStateCompleted = struct {
     view: ?[]const view.View = null,
     /// Images the model reads beside the output. The engine admitted each blob at the tool boundary.
     media: ?[]const content.MediaBlob = null,
+    /// The definitions a tool search loaded. The transcript keeps them, so replay never reads the live catalog.
+    tools_added: ?[]const ToolDefinition = null,
     duration_ms: u64,
+};
+
+/// One tool definition as a search loaded it. `input_schema` is the JSON Schema text of the arguments.
+pub const ToolDefinition = struct {
+    name: []const u8,
+    description: []const u8,
+    input_schema: []const u8,
 };
 
 /// The tool call failed.

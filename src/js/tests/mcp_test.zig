@@ -56,6 +56,17 @@ fn deferred(host: *Host, name: []const u8) bool {
     return host.tools.entries.items[host.tools.find(name).?].decl.defer_loading;
 }
 
+fn expectSearch(host: *Host, args: []const u8, prefix: []const u8, loaded: []const []const u8, not_loaded: []const u8) !void {
+    const call = host.calls.submit("tool_search", args, host.cwd);
+    try support.pumpUntilSettled(host, call);
+    try std.testing.expect(!call.is_error);
+    try std.testing.expect(std.mem.startsWith(u8, call.text orelse "", prefix));
+    const extra = call.extra_json orelse return error.TestExpectedEqual;
+    for (loaded) |name| try std.testing.expect(std.mem.indexOf(u8, extra, name) != null);
+    try std.testing.expect(std.mem.indexOf(u8, extra, not_loaded) == null);
+    try support.dropCall(host, call);
+}
+
 fn expectState(host: *Host, name: []const u8, want: []const u8) !void {
     const source = try std.fmt.allocPrintSentinel(std.testing.allocator, "globalThis.mcpRow = mcpStates()[\"{s}\"];", .{name}, 0);
     defer std.testing.allocator.free(source);
@@ -142,6 +153,14 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     // An MCP tool defers by default; `alwaysLoad` keeps the legacy server's tool eager.
     try std.testing.expect(deferred(host, "mcp_modern_echo"));
     try std.testing.expect(!deferred(host, "mcp_legacy_echo"));
+    // One search tool names the connected servers and loads the tools that match.
+    try std.testing.expect(support.hasTool(host, "tool_search"));
+    try std.testing.expect(!deferred(host, "tool_search"));
+    // The eager legacy tool is listed but not loaded; the two deferred ones are.
+    try expectSearch(host, "{\"query\":\"echo\"}", "Found 3 MCP tools:", &.{ "mcp_dies_echo", "mcp_modern_echo" }, "mcp_legacy_echo");
+    try expectSearch(host, "{\"query\":\"echo\",\"server\":\"modern\",\"limit\":1}", "Found 1 MCP tool:", &.{"mcp_modern_echo"}, "mcp_legacy_echo");
+    try expectCall(host, "tool_search", "{\"query\":\"nothing_like_this\"}", "No MCP tool matches \"nothing_like_this\". Connected servers: legacy, modern, dies.", false);
+    try expectCall(host, "tool_search", "{\"query\":\"\"}", "query must be a nonempty string", true);
 
     // The legacy server sent a ping after the handshake and received the empty answer.
     try expectCall(host, "mcp_legacy_echo", "{\"text\":\"there\"}", "hello says there pinged", false);

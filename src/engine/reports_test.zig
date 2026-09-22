@@ -117,7 +117,7 @@ test "child reuse reports only the current run and preserves source through prom
     try testing.expectEqual(@as(u64, 1), history.messages[0].user.source.?.child_report.run_id);
     try testing.expectEqual(@as(u64, 2), history.messages[1].user.source.?.child_report.run_id);
     // Each report projects as two user blocks: the preamble, then the body.
-    const request = try request_builder.build(a, history.messages, .{});
+    const request = (try request_builder.build(a, history.messages, .{})).blocks;
     try testing.expectEqual(@as(usize, 4), request.len);
     try testing.expectEqualStrings(second.report.?.input.content[0].text.text, request[2].value.text);
     try testing.expectEqualStrings("This run has no committed text output.", request[3].value.text);

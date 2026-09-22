@@ -694,8 +694,10 @@ test "the outline carries report and skill identity without their bodies" {
     try std.testing.expect(!skill.contains("source"));
     try std.testing.expect(std.mem.indexOf(u8, buffer.written(), body) == null);
     const stored = session.transcript.list.items[0].message;
-    const request = try request_builder.build(a, &.{stored}, .{});
-    defer a.free(request);
+    const built = try request_builder.build(a, &.{stored}, .{});
+    defer a.free(built.blocks);
+    defer a.free(built.added);
+    const request = built.blocks;
     try std.testing.expectEqualStrings(body, request[0].value.text);
 }
 

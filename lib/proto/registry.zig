@@ -174,6 +174,7 @@ pub const structs = [_]TypeEntry{
     .{ .name = "ToolStateCanceled", .ty = tool.ToolStateCanceled },
     .{ .name = "ToolStateChangedData", .ty = tool.ToolStateChangedData },
     .{ .name = "ToolStateCompleted", .ty = tool.ToolStateCompleted },
+    .{ .name = "ToolDefinition", .ty = tool.ToolDefinition },
     .{ .name = "ToolStateError", .ty = tool.ToolStateError },
     .{ .name = "ToolStatePending", .ty = tool.ToolStatePending },
     .{ .name = "ToolStateRunning", .ty = tool.ToolStateRunning },

@@ -143,9 +143,22 @@ const deferral_threshold_percent: u64 = 10;
 /// The client search tool. A deferred definition is reachable only through it.
 pub const search_tool_name = "tool_search";
 
-/// Deferral needs tool search on the route, the search tool in the loadout, and a catalog at the threshold.
+/// Anthropic with tool search expands a reference; every other route omits a deferred tool until a search adds it.
+fn decideDeferral(held: *Loadout, spec: *const registry.ModelSpec) !void {
+    const own = held.arena.allocator();
+    if (!try deferralApplies(spec, held.decls)) {
+        held.request_tools = try eagerDecls(own, held.decls);
+    } else if (spec.protocol == .anthropic_messages and spec.caps.tool_search == true) {
+        held.deferral = .native;
+        held.request_tools = held.decls;
+    } else {
+        held.deferral = .omitted;
+        held.request_tools = try omitDeferred(own, held.decls);
+    }
+}
+
+/// Deferral needs the search tool in the loadout and a deferred catalog at the threshold.
 fn deferralApplies(spec: *const registry.ModelSpec, decls: []const ai.ir.Tool) !bool {
-    if (spec.caps.tool_search != true or spec.protocol == .openai_chat) return false;
     var deferred_bytes: u64 = 0;
     var searchable = false;
     for (decls) |decl| {
@@ -159,6 +172,13 @@ fn deferralApplies(spec: *const registry.ModelSpec, decls: []const ai.ir.Tool) !
     return context.tokensFor(deferred_bytes) >= threshold;
 }
 
+/// Keep the eager declarations only. A search adds a deferred one when the model needs it.
+fn omitDeferred(own: std.mem.Allocator, decls: []const ai.ir.Tool) ![]const ai.ir.Tool {
+    var kept = try std.ArrayList(ai.ir.Tool).initCapacity(own, decls.len);
+    for (decls) |decl| if (!decl.defer_loading) kept.appendAssumeCapacity(decl);
+    return kept.items;
+}
+
 /// Copy the declarations with every defer flag cleared. A catalog with no deferred tool copies nothing.
 fn eagerDecls(own: std.mem.Allocator, decls: []const ai.ir.Tool) ![]const ai.ir.Tool {
     const any_deferred = for (decls) |decl| {
@@ -170,7 +190,7 @@ fn eagerDecls(own: std.mem.Allocator, decls: []const ai.ir.Tool) ![]const ai.ir.
     return eager;
 }
 
-test "deferral needs tool search on the route and a catalog at the threshold" {
+test "deferral needs the search tool and a catalog at the threshold, and the route picks the mode" {
     const big = "x" ** 4000;
     const decls = [_]ai.ir.Tool{
         .{ .name = "read", .description = "Read.", .input_schema = "{}" },
@@ -183,38 +203,45 @@ test "deferral needs tool search on the route and a catalog at the threshold" {
     spec.limits.context_window = 200_000; // The two schemas are under ten percent of this window.
     try std.testing.expect(!try deferralApplies(&spec, &decls));
     spec.limits.context_window = 20_000;
-    spec.caps.tool_search = null;
-    try std.testing.expect(!try deferralApplies(&spec, &decls));
-    spec.caps.tool_search = true;
-    spec.protocol = .openai_chat;
-    try std.testing.expect(!try deferralApplies(&spec, &decls));
-    spec.protocol = .anthropic_messages;
     // Without the search tool nothing could load a deferred definition, so every tool stays eager.
     try std.testing.expect(!try deferralApplies(&spec, decls[0..3]));
     try std.testing.expect(!try deferralApplies(&spec, decls[0..1]));
 
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const eager = try eagerDecls(arena.allocator(), &decls);
-    for (eager) |decl| try std.testing.expect(!decl.defer_loading);
-    try std.testing.expectEqualStrings("mcp_b", eager[2].name);
-    try std.testing.expectEqual(@as(usize, 4), eager.len);
+    var held: Loadout = .{ .arena = .init(std.testing.allocator), .names = &.{}, .decls = &decls, .has_skills = false };
+    defer held.arena.deinit();
+    try decideDeferral(&held, &spec);
+    try std.testing.expectEqual(Loadout.Deferral.native, held.deferral);
+    try std.testing.expectEqual(@as([*]const ai.ir.Tool, &decls), held.request_tools.?.ptr);
+
+    // A route without reference expansion omits the deferred tools; a search adds one later.
+    spec.protocol = .openai_responses;
+    held.request_tools = null;
+    try decideDeferral(&held, &spec);
+    try std.testing.expectEqual(Loadout.Deferral.omitted, held.deferral);
+    try std.testing.expectEqual(@as(usize, 2), held.request_tools.?.len);
+    try std.testing.expectEqualStrings(search_tool_name, held.request_tools.?[1].name);
+
+    // Under the threshold every declaration is eager, with one copy that clears the flags.
+    spec.limits.context_window = 200_000;
+    held.request_tools = null;
+    held.deferral = .none;
+    try decideDeferral(&held, &spec);
+    try std.testing.expectEqual(Loadout.Deferral.none, held.deferral);
+    try std.testing.expectEqual(@as(usize, 4), held.request_tools.?.len);
+    for (held.request_tools.?) |decl| try std.testing.expect(!decl.defer_loading);
     // A catalog with no deferred tool is returned as it is, with no copy.
-    try std.testing.expectEqual(decls[0..1].ptr, (try eagerDecls(arena.allocator(), decls[0..1])).ptr);
+    try std.testing.expectEqual(decls[0..1].ptr, (try eagerDecls(held.arena.allocator(), decls[0..1])).ptr);
 }
 
 /// Build the session request configuration once before any context decision.
 pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, model: *const registry.ModelSpec) !RequestBuild {
     const held = try loadout(engine, arena, slot);
     // The model is known here and not at the loadout, so the deferral policy applies at the first build and holds for the run.
-    if (!held.deferral_applied) {
-        held.deferral_applied = true;
-        if (!try deferralApplies(model, held.decls)) held.decls = try eagerDecls(held.arena.allocator(), held.decls);
-    }
+    if (held.request_tools == null) try decideDeferral(held, model);
     var build: RequestBuild = .{
         .model = model.upstream_id,
         .system = slot.config.system_prompt,
-        .tools = held.decls,
+        .tools = held.request_tools.?,
         .max_output_tokens = outputLimit(model),
     };
     if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"request.build")) {

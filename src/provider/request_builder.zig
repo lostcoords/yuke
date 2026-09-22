@@ -29,6 +29,10 @@ const ImageBudget = struct {
 
 pub const Options = struct {
     target: ?ai.ModelIdentity = null,
+    /// The tools the request declares. A loaded definition it lacks becomes an addition.
+    tools: []const ai.ir.Tool = &.{},
+    /// True when the route expands a `tool_reference`. Other routes add a loaded definition eagerly.
+    native_references: bool = false,
     modalities: ai.Modalities = .{},
     /// The lookup that answers a blob ref with bytes. Null resolves no attachment.
     blobs: ?BlobLookup = null,
@@ -47,10 +51,18 @@ pub const BlobLookup = struct {
 /// A bad transcript degrades the turn. The engine never crashes on stored data.
 pub const Error = error{ OutOfMemory, InvalidTranscript, UnresolvedBlob, Canceled };
 
+/// The request body has the blocks and the loaded definitions that the request does not declare yet.
+pub const Built = struct {
+    blocks: []const Block,
+    added: []const ai.ir.Tool,
+};
+
 /// Build the block IR in `gpa`. Blocks borrow transcript strings; only an outcome marker is allocated in `gpa`.
-pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, options: Options) Error![]const Block {
+pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, options: Options) Error!Built {
     var blocks: std.ArrayList(Block) = .empty;
     errdefer blocks.deinit(gpa);
+    var added: std.ArrayList(ai.ir.Tool) = .empty;
+    errdefer added.deinit(gpa);
 
     var images: ImageBudget = .{};
     for (messages) |message| switch (message) {
@@ -70,7 +82,7 @@ pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, op
             try blocks.append(gpa, .{ .role = .user, .value = try userValue(part, options, &images) });
         },
         .assistant => |assistant| {
-            try foldAssistant(gpa, &blocks, assistant, options, &images);
+            try foldAssistant(gpa, &blocks, &added, assistant, options, &images);
             // The model never sees `finish` or `error`, so a failed or stopped run tells it in one user block after its tool results.
             if (try outcomeMarker(gpa, assistant)) |text| try blocks.append(gpa, .{ .role = .user, .value = .{ .text = text } });
         },
@@ -81,7 +93,18 @@ pub fn build(gpa: std.mem.Allocator, messages: []const proto.message.Message, op
 
     // A serializer needs at least one block. An empty transcript is a bad turn, not a crash.
     if (blocks.items.len == 0) return error.InvalidTranscript;
-    return blocks.toOwnedSlice(gpa);
+    const owned_blocks = try blocks.toOwnedSlice(gpa);
+    errdefer gpa.free(owned_blocks);
+    return .{ .blocks = owned_blocks, .added = try added.toOwnedSlice(gpa) };
+}
+
+/// The tools one request declares: the request set plus every addition. No addition means no copy.
+pub fn declared(arena: std.mem.Allocator, tools: []const ai.ir.Tool, added: []const ai.ir.Tool) ![]const ai.ir.Tool {
+    if (added.len == 0) return tools;
+    const all = try arena.alloc(ai.ir.Tool, tools.len + added.len);
+    @memcpy(all[0..tools.len], tools);
+    @memcpy(all[tools.len..], added);
+    return all;
 }
 
 /// The summary is model text that arrives as a user block, so the wrapper states what it may do.
@@ -117,7 +140,7 @@ fn mediaValue(blob: proto.content.MediaBlob, options: Options, images: *ImageBud
     return .{ .media = .{ .source = .{ .bytes = bytes }, .mime = blob.mime } };
 }
 
-fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: proto.message.AssistantMessage, options: Options, images: *ImageBudget) Error!void {
+fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), added: *std.ArrayList(ai.ir.Tool), msg: proto.message.AssistantMessage, options: Options, images: *ImageBudget) Error!void {
     const replay = if (options.target) |target| provenanceMatches(msg.provenance, target) else false;
 
     for (msg.content) |part| switch (part) {
@@ -138,10 +161,39 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: pro
     for (msg.content) |part| switch (part) {
         .tool => |t| {
             const call_id = t.call_id orelse return error.InvalidTranscript;
-            try blocks.append(gpa, .{ .role = .user, .value = .{ .tool_result = try terminalToolResult(gpa, call_id, t.state, options, images) } });
+            var result = try terminalToolResult(gpa, call_id, t.state, options, images);
+            if (t.state == .completed) if (t.state.completed.tools_added) |definitions| {
+                result.tool_references = try loadDefinitions(gpa, added, definitions, options);
+            };
+            try blocks.append(gpa, .{ .role = .user, .value = .{ .tool_result = result } });
         },
         else => {},
     };
+}
+
+/// Declare each loaded definition once. A declared one needs no copy; a missing one is kept as the search found it.
+fn loadDefinitions(gpa: std.mem.Allocator, added: *std.ArrayList(ai.ir.Tool), definitions: []const proto.tool.ToolDefinition, options: Options) Error![]const []const u8 {
+    var references: std.ArrayList([]const u8) = .empty;
+    errdefer references.deinit(gpa);
+    for (definitions) |definition| {
+        // An eager declaration is in the context already, so only a deferred or missing one takes a reference.
+        const deferred = for (options.tools) |tool| {
+            if (std.mem.eql(u8, tool.name, definition.name)) break tool.defer_loading;
+        } else true;
+        if (!holds(options.tools, definition.name) and !holds(added.items, definition.name)) try added.append(gpa, .{
+            .name = definition.name,
+            .description = definition.description,
+            .input_schema = definition.input_schema,
+            .defer_loading = options.native_references,
+        });
+        if (options.native_references and deferred) try references.append(gpa, definition.name);
+    }
+    return references.toOwnedSlice(gpa);
+}
+
+fn holds(tools: []const ai.ir.Tool, name: []const u8) bool {
+    for (tools) |tool| if (std.mem.eql(u8, tool.name, name)) return true;
+    return false;
 }
 
 fn provenanceMatches(actual: ?proto.message.TurnProvenance, target: ai.ModelIdentity) bool {
@@ -224,7 +276,7 @@ test "assistant tool call yields a tool_use then a tool_result" {
         .time = .{ .created_at_ms = 0 },
     } }};
 
-    const result = try build(arena.allocator(), &messages, .{});
+    const result = (try build(arena.allocator(), &messages, .{})).blocks;
     try testing.expectEqual(@as(usize, 3), result.len);
     try testing.expectEqualStrings("let me check", result[0].value.text);
     try testing.expectEqual(ir.Role.assistant, result[1].role);
@@ -251,14 +303,14 @@ test "reasoning replays only when the provenance matches the target" {
         .provenance = .{ .protocol = .anthropic_messages, .model = "claude" },
     } }};
 
-    const dropped = try build(arena.allocator(), &messages, .{});
+    const dropped = (try build(arena.allocator(), &messages, .{})).blocks;
     try testing.expectEqual(@as(usize, 1), dropped.len); // A null target drops reasoning.
 
-    const kept = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "claude" } });
+    const kept = (try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "claude" } })).blocks;
     try testing.expectEqual(@as(usize, 2), kept.len);
     try testing.expectEqualStrings("ponder", kept[0].value.reasoning.text);
 
-    const mismatch = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "other" } });
+    const mismatch = (try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "other" } })).blocks;
     try testing.expectEqual(@as(usize, 1), mismatch.len);
 }
 
@@ -278,7 +330,7 @@ test "a model that reads no images sees a note where the attachment was" {
     } }};
 
     // A session that switches to a text-only model must still work on every later turn.
-    const text_only = try build(arena.allocator(), &messages, .{ .modalities = .{ .input = &.{.text} } });
+    const text_only = (try build(arena.allocator(), &messages, .{ .modalities = .{ .input = &.{.text} } })).blocks;
     try testing.expectEqual(@as(usize, 2), text_only.len);
     try testing.expectEqualStrings("look", text_only[0].value.text);
     try testing.expectEqualStrings("[image omitted: this model reads no images]", text_only[1].value.text);
@@ -304,14 +356,14 @@ test "a tool image resolves to result media, and a text-only model gets the note
     const messages = [_]proto.message.Message{.{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 1, .content = &content, .time = .{ .created_at_ms = 0 } } }};
 
     var spy: SpyLookup = .{ .bytes = "PNG" };
-    const seen = try build(a, &messages, .{ .modalities = .{ .input = &.{ .text, .image } }, .blobs = spy.lookup() });
+    const seen = (try build(a, &messages, .{ .modalities = .{ .input = &.{ .text, .image } }, .blobs = spy.lookup() })).blocks;
     const result = seen[1].value.tool_result;
     try testing.expectEqualStrings("PNG image, 3 B", result.content);
     try testing.expectEqual(@as(usize, 1), result.media.len);
     try testing.expectEqualStrings("PNG", result.media[0].source.bytes);
     try testing.expectEqual(@as(usize, 1), spy.hits);
 
-    const noted = try build(a, &messages, .{ .modalities = .{ .input = &.{.text} } });
+    const noted = (try build(a, &messages, .{ .modalities = .{ .input = &.{.text} } })).blocks;
     try testing.expectEqualStrings("PNG image, 3 B\n[image omitted: this model reads no images]", noted[1].value.tool_result.content);
     try testing.expectEqual(@as(usize, 0), noted[1].value.tool_result.media.len);
     try testing.expectEqual(@as(usize, 1), spy.hits);
@@ -349,7 +401,7 @@ test "the request shares an image byte budget and reads only the newest images" 
     const bytes = try a.alloc(u8, image_bytes);
     @memset(bytes, 0);
     var lookup: Lookup = .{ .bytes = bytes };
-    const built = try build(a, &messages, .{ .blobs = .{ .context = &lookup, .getFn = Lookup.get } });
+    const built = (try build(a, &messages, .{ .blobs = .{ .context = &lookup, .getFn = Lookup.get } })).blocks;
     try testing.expectEqual(@as(usize, 4), lookup.hits);
     try testing.expectEqualStrings(image_budget_note, built[0].value.text);
     const result = built[3].value.tool_result;
@@ -385,7 +437,7 @@ test "a vision model resolves the blob bytes, and a text-only model never reads 
 
     // A supplied lookup resolves to one media block with the exact bytes and mime.
     var spy: SpyLookup = .{ .bytes = "PNG" };
-    const built = try build(a, &messages, .{ .modalities = reads_images, .blobs = spy.lookup() });
+    const built = (try build(a, &messages, .{ .modalities = reads_images, .blobs = spy.lookup() })).blocks;
     try testing.expectEqual(@as(usize, 1), built.len);
     try testing.expect(built[0].value == .media);
     try testing.expectEqualStrings("PNG", built[0].value.media.source.bytes);
@@ -399,7 +451,7 @@ test "a vision model resolves the blob bytes, and a text-only model never reads 
 
     // A text-only model omits the attachment and never touches the lookup.
     var untouched: SpyLookup = .{ .bytes = "PNG" };
-    const text_only = try build(a, &messages, .{ .modalities = .{ .input = &.{.text} }, .blobs = untouched.lookup() });
+    const text_only = (try build(a, &messages, .{ .modalities = .{ .input = &.{.text} }, .blobs = untouched.lookup() })).blocks;
     try testing.expectEqualStrings("[image omitted: this model reads no images]", text_only[0].value.text);
     try testing.expectEqual(@as(usize, 0), untouched.hits);
 }
@@ -422,7 +474,7 @@ test "the media type selects the omitted-attachment note" {
             .input_id = 2,
             .time = .{ .created_at_ms = 0 },
         } }};
-        const folded = try build(arena.allocator(), &messages, reads_images);
+        const folded = (try build(arena.allocator(), &messages, reads_images)).blocks;
         try testing.expectEqualStrings(case[1], folded[0].value.text);
     }
 }
@@ -436,7 +488,7 @@ test "canceled tools state possible side effects and assistant diagnostics stay 
         .@"error" = .{ .type = "runtime_failed", .message = "private diagnostic" },
         .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "exec", .arguments = "{}", .state = .{ .canceled = .{} } } }},
     } }};
-    const request = try build(testing.allocator, &messages, .{});
+    const request = (try build(testing.allocator, &messages, .{})).blocks;
     defer testing.allocator.free(request);
     try testing.expectEqual(@as(usize, 2), request.len);
     const result = request[1].value.tool_result;
@@ -453,7 +505,7 @@ test "a canceled tool becomes an error provider result that names the side effec
         .time = .{ .created_at_ms = 1 },
         .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "spawn", .arguments = "{}", .state = .{ .canceled = .{ .duration_ms = 3 } } } }},
     } }};
-    const request = try build(testing.allocator, &messages, .{});
+    const request = (try build(testing.allocator, &messages, .{})).blocks;
     defer testing.allocator.free(request);
     try testing.expect(request[1].value.tool_result.is_error);
     try testing.expectEqualStrings("The tool call was canceled. It may have produced side effects before it stopped.", request[1].value.tool_result.content);
@@ -472,7 +524,7 @@ test "a compaction summary arrives wrapped, and the wrapper refuses it authority
         .tokens_after = 10,
         .time = .{ .created_at_ms = 1 },
     } }};
-    const request = try build(arena.allocator(), &messages, .{});
+    const request = (try build(arena.allocator(), &messages, .{})).blocks;
     try testing.expectEqual(@as(usize, 1), request.len);
     try testing.expectEqual(ir.Role.user, request[0].role);
     const text = request[0].value.text;
@@ -492,7 +544,7 @@ test "a failed run adds one user marker after its tool results, and any other fi
         .{ .assistant = .{ .id = 3, .run_id = 2, .config_rev = 0, .time = .{ .created_at_ms = 3 }, .content = &.{.{ .text = .{ .id = 0, .text = "done" } }}, .finish = .stop } },
         .{ .assistant = .{ .id = 4, .run_id = 3, .config_rev = 0, .time = .{ .created_at_ms = 4 }, .content = &.{}, .finish = .@"error", .@"error" = .{ .type = "network", .message = "the provider connection failed" } } },
     };
-    const request = try build(a, &messages, .{});
+    const request = (try build(a, &messages, .{})).blocks;
     try testing.expectEqual(@as(usize, 7), request.len);
     try testing.expect(request[1].value == .tool_result);
     try testing.expect(request[3].value == .tool_result);
@@ -515,13 +567,54 @@ test "a canceled run adds the interrupted marker after its canceled tool, or alo
         .{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .time = .{ .created_at_ms = 1 }, .content = &.{.{ .tool = .{ .id = 0, .call_id = "call_1", .name = "exec", .arguments = "{}", .state = .{ .canceled = .{ .duration_ms = 3 } } } }}, .finish = .canceled } },
         .{ .assistant = .{ .id = 2, .run_id = 2, .config_rev = 0, .time = .{ .created_at_ms = 2 }, .content = &.{}, .finish = .canceled } },
     };
-    const request = try build(a, &messages, .{});
+    const request = (try build(a, &messages, .{})).blocks;
     try testing.expectEqual(@as(usize, 4), request.len);
     try testing.expect(request[1].value == .tool_result);
     try testing.expect(request[1].value.tool_result.is_error);
     try testing.expectEqualStrings(interrupted_marker, request[2].value.text);
     try testing.expectEqual(ir.Role.user, request[3].role);
     try testing.expectEqualStrings(interrupted_marker, request[3].value.text);
+}
+
+test "a loaded definition rides as a reference on a native route and as an eager addition elsewhere" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const found = [_]proto.tool.ToolDefinition{
+        .{ .name = "mcp_read", .description = "Read.", .input_schema = "{}" },
+        .{ .name = "mcp_gone", .description = "Gone.", .input_schema = "{}" },
+    };
+    const messages = [_]proto.message.Message{.{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 0, .time = .{ .created_at_ms = 1 }, .content = &.{
+        .{ .tool = .{ .id = 0, .call_id = "call_1", .name = "tool_search", .arguments = "{}", .state = .{ .completed = .{ .output = "found", .tools_added = &found, .duration_ms = 1 } } } },
+        .{ .tool = .{ .id = 1, .call_id = "call_2", .name = "tool_search", .arguments = "{}", .state = .{ .completed = .{ .output = "again", .tools_added = found[1..], .duration_ms = 1 } } } },
+    } } }};
+    const native = [_]ai.ir.Tool{
+        .{ .name = "tool_search", .description = "Find.", .input_schema = "{}" },
+        .{ .name = "mcp_read", .description = "Read.", .input_schema = "{}", .defer_loading = true },
+    };
+    const anthropic = try build(a, &messages, .{ .tools = &native, .native_references = true });
+    try testing.expectEqualDeep(&[_][]const u8{ "mcp_read", "mcp_gone" }, anthropic.blocks[2].value.tool_result.tool_references);
+    // An eager declaration is in the context already, so it takes no reference.
+    var eager = native;
+    eager[1].defer_loading = false;
+    const listed = try build(a, &messages, .{ .tools = &eager, .native_references = true });
+    try testing.expectEqualDeep(&[_][]const u8{"mcp_gone"}, listed.blocks[2].value.tool_result.tool_references);
+    try testing.expectEqualDeep(&[_][]const u8{"mcp_gone"}, anthropic.blocks[3].value.tool_result.tool_references);
+    // The stale definition is declared once, deferred, so the reference expands from the transcript copy.
+    try testing.expectEqual(@as(usize, 1), anthropic.added.len);
+    try testing.expectEqualStrings("mcp_gone", anthropic.added[0].name);
+    try testing.expect(anthropic.added[0].defer_loading);
+    const tools = try declared(a, &native, anthropic.added);
+    try testing.expectEqual(@as(usize, 3), tools.len);
+    try testing.expectEqualStrings("mcp_gone", tools[2].name);
+
+    // A route that omits deferred tools declares both found tools eagerly from the search on.
+    const omitted = try build(a, &messages, .{ .tools = native[0..1] });
+    try testing.expectEqual(@as(usize, 0), omitted.blocks[2].value.tool_result.tool_references.len);
+    try testing.expectEqual(@as(usize, 2), omitted.added.len);
+    for (omitted.added) |tool| try testing.expect(!tool.defer_loading);
+    // The request set alone stays as it is, with no copy.
+    try testing.expectEqual(@as([*]const ai.ir.Tool, &native), (try declared(a, &native, &.{})).ptr);
 }
 
 test "a paused message replays as assistant content with no marker after it" {
@@ -533,7 +626,7 @@ test "a paused message replays as assistant content with no marker after it" {
         .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 1, .time = .{ .created_at_ms = 1 }, .finish = .pause_turn, .provenance = provenance, .content = &.{.{ .text = .{ .id = 0, .text = "searching" } }} } },
         .{ .assistant = .{ .id = 3, .run_id = 1, .config_rev = 1, .time = .{ .created_at_ms = 2 }, .finish = .stop, .provenance = provenance, .content = &.{.{ .text = .{ .id = 0, .text = "done" } }} } },
     };
-    const built = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "p/m" } });
+    const built = (try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "p/m" } })).blocks;
     try testing.expectEqual(@as(usize, 3), built.len);
     for (built[1..]) |block| try testing.expectEqual(ir.Role.assistant, block.role);
     try testing.expectEqualStrings("searching", built[1].value.text);

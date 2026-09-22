@@ -19,6 +19,8 @@ pub const Outcome = struct {
     view: ?[]const proto.view.View = null,
     /// The images beside the output. Tool output is peer input, so the engine admits each blob before it commits the result.
     media: []const proto.content.MediaBlob = &.{},
+    /// The definitions a search loaded. The engine admits each one against the run loadout.
+    tools_added: []const proto.tool.ToolDefinition = &.{},
     is_error: bool,
 };
 
