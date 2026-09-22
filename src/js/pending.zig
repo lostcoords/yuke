@@ -203,12 +203,12 @@ pub const Op = struct {
 /// The results a task answers when a stop is not the worker's own answer.
 pub const Failures = struct { canceled: Result, timed_out: Result, failed: Result };
 
-/// Run `worker(host, op, payload, *result)` under the op's cancel token until `timeout`. A canceled, late, or unstartable worker maps through `failures`.
+/// Run `worker(host, payload, *result)` under the op's cancel token until `timeout`. A canceled, late, or unstartable worker maps through `failures`.
 pub fn runTimed(host: anytype, op: *Op, timeout: std.Io.Timeout, comptime worker: anytype, payload: anytype, failures: Failures) Result {
     var result: Result = failures.canceled;
     if (op.cancel.isRequested()) return result;
     if (timeout == .deadline and timeout.deadline.durationFromNow(host.io).raw.nanoseconds <= 0) return failures.timed_out;
-    const outcome = op.cancel.runChildTimeout(host.io, timeout, worker, .{ host, op, payload, &result }) catch {
+    const outcome = op.cancel.runChildTimeout(host.io, timeout, worker, .{ host, payload, &result }) catch {
         result.deinit(host.gpa);
         return failures.timed_out;
     };

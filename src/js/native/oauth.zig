@@ -142,7 +142,7 @@ fn acceptTask(host: *Host, op: *pending.Op, request: Accept) void {
     op.finish(result);
 }
 
-fn acceptWorker(host: *Host, _: *pending.Op, listener: *Listener, result: *pending.Result) error{}!void {
+fn acceptWorker(host: *Host, listener: *Listener, result: *pending.Result) error{}!void {
     var server = &listener.server.?;
     for (0..max_stray_requests) |_| {
         const stream = server.accept(host.io) catch {

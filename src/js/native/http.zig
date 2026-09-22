@@ -300,7 +300,7 @@ fn httpTask(host: *Host, op: *pending.Op, body: *Body) void {
     op.finish(result);
 }
 
-fn httpWorker(host: *Host, _: *pending.Op, body: *Body, result: *pending.Result) error{}!void {
+fn httpWorker(host: *Host, body: *Body, result: *pending.Result) error{}!void {
     const head = exchange(host, body) catch |err| {
         body.release(true);
         result.* = switch (err) {
@@ -470,10 +470,10 @@ fn readTask(host: *Host, op: *pending.Op, read: Read) void {
     op.finish(result);
 }
 
-fn readWorker(host: *Host, op: *pending.Op, read: Read, result: *pending.Result) error{}!void {
+fn readWorker(host: *Host, read: Read, result: *pending.Result) error{}!void {
     host.io.checkCancel() catch return;
     const body = read.body;
-    std.debug.assert(body.op == op and body.request != null);
+    std.debug.assert(body.op != null and body.request != null);
     const gpa = host.gpa;
     // The body reader needs no buffer of its own; a read streams into the caller's bytes.
     const reader = body.reader orelse blk: {
