@@ -8,6 +8,7 @@ const blob = @import("../../store/blob.zig");
 const commands = @import("../../engine/commands.zig");
 const run = @import("../../engine/run.zig");
 const provider = @import("../../provider/provider.zig");
+const proto = @import("proto");
 const extensions = @import("../extensions.zig");
 const Work = @import("../../session/work.zig");
 const process = @import("../native/process.zig");
@@ -569,6 +570,82 @@ test "session cancel reaches the builtin exec process group" {
     try std.testing.expect(!processExists(pids[1]));
 }
 
+test "a JS tool's live output reaches the engine as ordered output deltas while the call runs" {
+    // The engine publishes from its task, and this thread reads after the length says a chunk landed.
+    const Recorder = struct {
+        text: std.ArrayList(u8) = .empty,
+        /// Set when a delta does not start where the text ends.
+        gap: bool = false,
+        len: std.atomic.Value(usize) = .init(0),
+
+        fn onEvent(raw: *anyopaque, note: proto.rpc.Notification) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            const delta = switch (note.params) {
+                .tool_output_delta_data => |d| d,
+                else => return,
+            };
+            if (delta.offset != self.text.items.len) self.gap = true;
+            self.text.appendSlice(std.testing.allocator, delta.delta) catch unreachable;
+            self.len.store(self.text.items.len, .release);
+        }
+    };
+    const entry =
+        \\import { plugins } from "yuke";
+        \\plugins.use({ name: "stream", apply(ctx) {
+        \\  ctx.tools.define({ name: "stream", description: "Stream.", parameters: { type: "object", properties: {} }, execute: async (_args, _signal, context) => {
+        \\    context.output("one\n");
+        \\    await new Promise((resolve) => setTimeout(resolve, 20));
+        \\    context.output("two\n");
+        \\    return "done";
+        \\  } });
+        \\} });
+    ;
+    var f: extensions.Fixture = undefined;
+    try f.init(entry, "import \"yuke:kernel\"; import \"yuke:ext\";");
+    defer f.deinit();
+    const host = f.extensions.host;
+    var recorder: Recorder = .{};
+    defer recorder.text.deinit(std.testing.allocator);
+    f.app.engine.sinks.add(.{ .ctx = &recorder, .on_event = Recorder.onEvent });
+    defer f.app.engine.sinks.remove(&recorder);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var models = try provider.config.loadBytes(f.gpa.allocator(),
+        \\{"providers":[{"id":"test-stream","base_url":"https://test.invalid",
+        \\"endpoints":[{"protocol":"anthropic_messages","key_header":"x_api_key"}],"auth":{"api_key":{"source":{"literal":"test-key"}}},"models":[{"id":"model","upstream_id":"model"}]}]}
+    );
+    _ = try f.app.store.installLocal(&models);
+    f.canned.bytes = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call-stream\",\"name\":\"stream\",\"input\":{}}}\n\n" ++
+        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":8}}\n\n" ++
+        "data: {\"type\":\"message_stop\"}\n\n";
+    const created = try commands.sessionCreate(&f.app.engine, a, .{ .workspace_path = host.cwd, .model = "test-stream/model" });
+    var launch: ?run.Launch = null;
+    _ = try commands.sessionSendInputForRpc(&f.app.engine, a, .{
+        .session_id = created.session.id,
+        .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "Stream." } }} } },
+    }, &launch, null);
+    run.Launch.release(&launch, &f.app.engine);
+    const started: std.Io.Timestamp = .now(host.io, .awake);
+    while (recorder.len.load(.acquire) < 8) {
+        if (started.durationTo(.now(host.io, .awake)).toMilliseconds() > 5000) return error.OutputDidNotStream;
+        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(10), .clock = .awake } }) catch {};
+        host.wake.reset();
+        try host.pump();
+    }
+    try std.testing.expect(!recorder.gap);
+    try std.testing.expectEqualStrings("one\ntwo\n", recorder.text.items);
+    _ = try commands.sessionCancelRun(&f.app.engine, a, .{ .session_id = created.session.id });
+    while (host.calls.live.items.len != 0 or host.ops.live.items.len != 0) {
+        if (started.durationTo(.now(host.io, .awake)).toMilliseconds() > 8000) return error.RunDidNotStop;
+        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(20), .clock = .awake } }) catch {};
+        host.wake.reset();
+        try host.pump();
+    }
+}
+
 test "yuke:exec runs commands on tasks and reports each outcome" {
     var fixture = try ReactorHost.initTmp(null);
     defer fixture.deinit();
@@ -684,6 +761,25 @@ test "tool site attributes a question and call completion cancels it" {
     call.finish();
     try host.pump();
     try std.testing.expectEqual(@as(usize, 0), host.interactions.live.items.len);
+}
+
+test "a tool writes live output through its context, and a call that ended drops more" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "native_tools/output.test.js");
+    const call = host.calls.submit("stream", "{}", "/work");
+    try support.pumpUntilSettled(host, call);
+    try std.testing.expectEqualStrings("one\ntwo\n", call.output.items);
+    // The settled call names no live tool, so a late write is dropped.
+    try host.evalModule("globalThis.lateOutput('late');", "output-late.js");
+    try std.testing.expectEqualStrings("one\ntwo\n", call.output.items);
+    try support.dropCall(host, call);
+
+    const capped = host.calls.submit("stream-cap", "{}", "/work");
+    try support.pumpUntilSettled(host, capped);
+    try std.testing.expectEqual(@as(usize, proto.meta.limits.max_tool_output_stream_bytes - 2), capped.output.items.len);
+    try std.testing.expectEqual(@as(u64, 0), capped.output_room);
+    try support.dropCall(host, capped);
 }
 
 test "a callback may remove a later listener, and a wrapped id skips a live one" {

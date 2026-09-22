@@ -5,6 +5,7 @@ const quickjs = @import("quickjs");
 const ir = @import("ai").ir;
 const pending = @import("pending.zig");
 const utf8 = @import("../utf8.zig");
+const proto = @import("proto");
 const toolset = @import("../engine/toolset.zig");
 const work = @import("../session/work.zig");
 const cancellation = @import("native/cancellation.zig");
@@ -115,6 +116,12 @@ pub const Call = struct {
     work: ?*work = null,
     /// The submitter sleeps on this. The owner sets it once, when the call settles.
     done: std.Io.Event = .unset,
+    /// A tool submitter waits on this instead. The owner sets it for new output and at the settle.
+    changed: std.Io.Event = .unset,
+    /// Live output the tool wrote and the submitter has not published. The owner and the submitter share one executor.
+    output: std.ArrayList(u8) = .empty,
+    /// The live bytes the call can still take. A cut chunk closes the stream.
+    output_room: u64 = proto.meta.limits.max_tool_output_stream_bytes,
     /// The answer text, from the host allocator. The submitter copies it before it leaves.
     text: ?[]u8 = null,
     /// One JSON object holds the view and the media of a tool result. The submitter decodes it in its turn arena.
@@ -137,6 +144,7 @@ pub const Call = struct {
         self.is_error = is_error;
         self.state = .settled;
         self.done.set(io);
+        self.changed.set(io);
     }
 
     pub fn settleExtra(self: *Call, io: std.Io, text: ?[]u8, extra_json: []u8) void {
@@ -146,6 +154,7 @@ pub const Call = struct {
         self.is_error = false;
         self.state = .settled;
         self.done.set(io);
+        self.changed.set(io);
     }
 
     /// Leave one call. The submitter calls this, so it frees nothing and enters no JavaScript.
@@ -245,6 +254,7 @@ pub const Calls = struct {
         ctx.freeValue(call.signal);
         if (call.text) |text| self.gpa.free(text);
         if (call.extra_json) |json| self.gpa.free(json);
+        call.output.deinit(self.gpa);
         self.gpa.free(call.workspace_root);
         self.gpa.destroy(call);
     }

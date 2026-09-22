@@ -39,10 +39,19 @@ export type EventHandler = Parameters<typeof import("../kernel.js").events.on>[1
 export type EventOptions = Parameters<typeof import("../kernel.js").events.on>[2];
 export type PluginApply = (context: Context) => void | Promise<void>;
 
+export interface ToolContext {
+  workspaceRoot: string;
+  sessionId?: string;
+  messageId?: number;
+  partId?: number;
+  /** Shows one chunk of live output while the tool runs. The model reads only the result; the stream stops at 1 MiB. */
+  output(text: string): void;
+}
+
 export type ToolExecute = (
   args: any,
   signal: import("yuke:cancellation-native").CancellationSignal,
-  context: { workspaceRoot: string; sessionId?: string; messageId?: number; partId?: number },
+  context: ToolContext,
 ) => Promise<unknown>;
 
 export interface ToolDefinition {

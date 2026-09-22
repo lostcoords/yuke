@@ -271,7 +271,12 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try expectCall(host, "mcp_modern_region", "{\"region\":\"世界\"}", "region header: =?base64?5LiW55WM?=", false);
     try expectCall(host, "mcp_old_echo", "{\"text\":\"hi\"}", "old sse: hi", false);
     // Each progress report restarts the 200 ms timer, so a 400 ms call ends with its answer.
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"progress\"}", "modern http: progress", false);
+    const progress = host.calls.submit("mcp_modern_echo", "{\"text\":\"progress\"}", host.cwd);
+    try support.pumpUntilSettled(host, progress);
+    try std.testing.expectEqualStrings("modern http: progress", progress.text orelse "");
+    // Each report shows as one live line of the tool part.
+    try std.testing.expectEqualStrings("progress 1/5\nprogress 2/5\nprogress 3/5\nprogress 4/5\nprogress 5/5\n", progress.output.items);
+    try support.dropCall(host, progress);
     // A filter without tool changes closes its stream, a dropped stream reconnects, and a graceful end stays closed.
     try support.pumpUntilSet(host, &peer.refuse_closed);
     try support.pumpUntilSet(host, &peer.drop_again);

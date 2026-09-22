@@ -7,6 +7,9 @@ const table = @import("tools.zig");
 const utf8 = @import("../utf8.zig");
 const pending = @import("pending.zig");
 const cancellation = @import("native/cancellation.zig");
+const module = @import("native/module.zig");
+const c = @import("quickjs_c");
+const proto = @import("proto");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -122,6 +125,9 @@ fn startTool(host: *Host, call: *table.Call) void {
             ctx.setPropertyStr(context, "messageId", ctx.newInt64(@intCast(site.message_id))) catch {};
             ctx.setPropertyStr(context, "partId", ctx.newInt64(@intCast(site.part_id))) catch {};
         }
+        // `output` is bound to this call by its signal, so it still works after a destructure.
+        var data = [_]c.JSValue{call.signal};
+        ctx.setPropertyStr(context, "output", c.JS_NewCFunctionData(ctx.ptr, jsOutput, 1, 0, 1, &data)) catch {};
     }
     // A full QuickJS heap fails the call, not the host, so the two roots go and the call settles.
     if (ctx.hasException()) {
@@ -221,6 +227,22 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
     }
 
     return stringifyValue(host, call, value);
+}
+
+/// Take one chunk of live output for the call the signal names. A call that ended drops it, and the stream cap bounds it.
+fn jsOutput(ctx_ptr: ?*c.JSContext, _: c.JSValue, argc: c_int, argv: [*c]c.JSValue, _: c_int, data: [*c]c.JSValue) callconv(.c) c.JSValue {
+    const ctx: Context = .{ .ptr = ctx_ptr };
+    if (argc < 1) return ctx.throwTypeError("output needs a string");
+    const text = module.string(ctx, argv[0]) orelse return ctx.throwTypeError("output needs a string");
+    defer ctx.freeCString(text.ptr);
+    const host = Host.fromContext(ctx);
+    const call = host.calls.callForSignal(ctx, data[0]) orelse return quickjs.UNDEFINED;
+    const kept = utf8.floor(text, call.output_room);
+    call.output_room = if (kept < text.len) 0 else call.output_room - kept;
+    if (kept == 0) return quickjs.UNDEFINED;
+    call.output.appendSlice(host.gpa, text[0..kept]) catch unreachable;
+    call.changed.set(host.io);
+    return quickjs.UNDEFINED;
 }
 
 fn stringifyValue(host: *Host, call: *table.Call, value: Value) void {

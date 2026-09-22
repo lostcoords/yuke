@@ -18,7 +18,7 @@ import { notice } from "yuke:notice";
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
 /** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "needs auth" | "failed" | "disabled" | "stopped"} ServerState */
-/** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number, cancelable: boolean, progress?: (value: number) => void }} Waiting */
+/** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number, cancelable: boolean, progress?: (value: number, report: Record<string, unknown>) => void }} Waiting */
 /** @typedef {{ name: string, path: string[] }} Mirrored */
 
 const WORKSPACE_FILE = ".mcp.json";
@@ -209,6 +209,15 @@ export function toolResult(result, modern = false) {
     if (images.length < MAX_IMAGES) images.push(block.data);
   }
   return { text, images: images ?? NO_IMAGES };
+}
+
+// One progress report as a line: the message, then the step and the total when the server names them.
+/** @param {Record<string, unknown>} report @returns {string} */
+function progressLine(report) {
+  const step = typeof report.total === "number" ? report.progress + "/" + report.total : String(report.progress);
+  // A peer message can hold line breaks, so one report stays one line.
+  const message = typeof report.message === "string" ? report.message.replace(/[\r\n]+/g, " ").trim() : "";
+  return (message !== "" ? message + " (" + step + ")" : "progress " + step) + "\n";
 }
 
 // An HTTP field name is one or more token characters.
@@ -536,8 +545,8 @@ class Server {
 
   // A handshake request is not cancelable: the legacy rules forbid a cancel of `initialize`.
   // A progress-enabled request uses its id as the token. Each larger report resets the timer, up to a cap.
-  /** @param {string} method @param {Record<string, unknown>} params @param {{ timeoutMs: number, signal?: CancellationSignal, cancelable?: boolean, received?: { bytes: number }, headers?: Record<string, string> | undefined, progress?: boolean }} options @returns {Promise<any>} */
-  request(method, params, { timeoutMs, signal, cancelable = true, received, headers, progress = false }) {
+  /** @param {string} method @param {Record<string, unknown>} params @param {{ timeoutMs: number, signal?: CancellationSignal, cancelable?: boolean, received?: { bytes: number }, headers?: Record<string, string> | undefined, progress?: ((report: Record<string, unknown>) => void) | undefined }} options @returns {Promise<any>} */
+  request(method, params, { timeoutMs, signal, cancelable = true, received, headers, progress }) {
     if (signal?.aborted) return Promise.reject(new Error("the call was canceled"));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
@@ -554,7 +563,12 @@ class Server {
       /** @type {Waiting} */
       const slot = { bytes: 0, cancelable, resolve, reject, done: () => { if (received) received.bytes = this.waiting.get(id)?.bytes ?? 0; clearTimeout(timer); if (listener !== 0) cancellation.unlisten(listener); } };
       // A report must rise, so a repeated or falling value keeps the timer as it is.
-      if (progress) slot.progress = (value) => { if (value > last) { last = value; arm(Math.min(timeoutMs, cap - Date.now())); } };
+      if (progress) slot.progress = (value, report) => {
+        if (value <= last) return;
+        last = value;
+        arm(Math.min(timeoutMs, cap - Date.now()));
+        progress(report);
+      };
       this.waiting.set(id, slot);
       /** @type {Record<string, unknown>} */
       const meta = this.era === "modern" ? { ...META } : {};
@@ -570,7 +584,7 @@ class Server {
     if (!record(params)) return;
     const { progressToken: token, progress: value } = /** @type {Record<string, unknown>} */ (params);
     if (typeof token !== "number" || typeof value !== "number" || !Number.isFinite(value)) return;
-    this.waiting.get(token)?.progress?.(value);
+    this.waiting.get(token)?.progress?.(value, /** @type {Record<string, unknown>} */ (params));
   }
 
   // The listen request carries modern tool-list changes. A broken stream retries. A graceful result, a refusal, or a new transport stops the loop.
@@ -730,7 +744,7 @@ class Server {
         parameters: tool.inputSchema.properties === undefined ? { ...tool.inputSchema, properties: {} } : tool.inputSchema,
         // A deferred definition stays out of the prompt until a tool search names it; `alwaysLoad` keeps a server eager.
         defer: this.config.alwaysLoad !== true,
-        execute: (args, signal) => this.call(tool.name, args, signal),
+        execute: (args, signal, context) => this.call(tool.name, args, signal, context),
       });
     }
     const previous = this.definitions;
@@ -764,15 +778,16 @@ class Server {
     this.definitions = [];
   }
 
-  /** @param {string} tool @param {unknown} args @param {CancellationSignal} signal @returns {Promise<string | { __yuke_result: true, text: string, extra: { media: Wire.MediaBlob[] } }>} */
-  async call(tool, args, signal) {
+  /** @param {string} tool @param {unknown} args @param {CancellationSignal} signal @param {import("./types/ext.js").ToolContext} context @returns {Promise<string | { __yuke_result: true, text: string, extra: { media: Wire.MediaBlob[] } }>} */
+  async call(tool, args, signal, context) {
     if (this.state !== "connected") throw new Error("the MCP server " + this.name + " is " + this.state);
     if (!record(args)) throw new Error("MCP tool arguments must be an object");
     const mirrored = this.mirrors.get(tool);
     const headers = mirrored ? paramHeaders(mirrored, /** @type {Record<string, unknown>} */ (args)) : undefined;
     let result;
     try {
-      result = await this.request("tools/call", { name: tool, arguments: args }, { timeoutMs: this.config.timeout ?? this.limits.callMs, signal, headers, progress: true });
+      // Each report shows as one live line; the model reads only the result.
+      result = await this.request("tools/call", { name: tool, arguments: args }, { timeoutMs: this.config.timeout ?? this.limits.callMs, signal, headers, progress: (report) => context.output(progressLine(report)) });
     } catch (error) {
       // When refresh fails, end the session and name the sign-in command.
       if (error instanceof Error && "signIn" in error) {

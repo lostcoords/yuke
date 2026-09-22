@@ -11,6 +11,20 @@ pub const Context = struct {
     workspace_root: []const u8,
     site: Site,
     work: *work,
+    /// Valid only until `ToolSet.run` returns; a tool must not keep it.
+    output: Output,
+};
+
+/// The live output of one running tool. The engine publishes each chunk as a `tool.output_delta`.
+pub const Output = struct {
+    ctx: *anyopaque,
+    write: *const fn (ctx: *anyopaque, bytes: []const u8) void,
+
+    /// A sink that drops every chunk, for a caller that shows no live output.
+    pub const discard: Output = .{ .ctx = &discard_target, .write = discardWrite };
+    var discard_target: u8 = 0;
+
+    fn discardWrite(_: *anyopaque, _: []const u8) void {}
 };
 
 /// One tool run, mapped for a tool part. `is_error` selects the completed or the error state.

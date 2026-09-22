@@ -11,6 +11,7 @@ const Session = @import("../session/session.zig").Session;
 const Loadout = @import("../session/session.zig").Loadout;
 const database = @import("../store/store.zig");
 const toolset = @import("toolset.zig");
+const utf8 = @import("../utf8.zig");
 const registry = @import("../provider/registry.zig");
 const ai = @import("ai");
 const retry = ai.retry;
@@ -662,7 +663,8 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTo
     // The session folds the state before this arena releases the tool result.
     var scratch_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer scratch_state.deinit();
-    const res = runHooked(engine, scratch_state.allocator(), slot, pt) catch {
+    var output: ToolOutput = .{ .streamer = streamer, .part_id = pt.part_id };
+    const res = runHooked(engine, scratch_state.allocator(), slot, pt, output.sink()) catch {
         const cancel_old = engine.deps.io.swapCancelProtection(.blocked);
         defer _ = engine.deps.io.swapCancelProtection(cancel_old);
         try streamer.emitToolState(pt.part_id, .{ .canceled = .{ .duration_ms = engine.nowMillis() -| started } });
@@ -679,6 +681,39 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTo
         .{ .completed = .{ .output = res.output, .view = res.view, .media = if (res.media.len == 0) null else res.media, .tools_added = if (res.tools_added.len == 0) null else res.tools_added, .duration_ms = duration } };
     try streamer.emitToolState(pt.part_id, settled);
 }
+
+/// Publish the live output of one running tool part, in order, up to the stream cap.
+const ToolOutput = struct {
+    streamer: *Streamer,
+    part_id: proto.ids.PartId,
+    offset: u64 = 0,
+    closed: bool = false,
+
+    fn sink(self: *ToolOutput) toolset.Output {
+        return .{ .ctx = self, .write = write };
+    }
+
+    fn write(raw: *anyopaque, bytes: []const u8) void {
+        const self: *ToolOutput = @ptrCast(@alignCast(raw));
+        const cap = proto.meta.limits.max_tool_output_stream_bytes;
+        std.debug.assert(self.offset <= cap);
+        if (self.closed) return;
+        // The final state carries the whole result, so a stream past the cap only stops showing more.
+        const kept = bytes[0..utf8.floor(bytes, cap - self.offset)];
+        // A shortened chunk closes the live stream, so the stream stays a prefix of the output.
+        if (kept.len < bytes.len) self.closed = true;
+        if (kept.len == 0) return;
+        // `emit` fails only on allocation, which the process treats as impossible.
+        self.streamer.emit(.{ .method = .@"tool.output_delta", .params = .{ .tool_output_delta_data = .{
+            .session_id = self.streamer.slot.sessionId(),
+            .message_id = self.streamer.slot.progress.current.?.message_id,
+            .part_id = self.part_id,
+            .delta = kept,
+            .offset = self.offset,
+        } } }) catch unreachable;
+        self.offset += kept.len;
+    }
+};
 
 fn promptChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void {
     defer slot.cancel.finish(engine.deps.io);
@@ -775,11 +810,11 @@ test "the run loadout gates a tool call, and a tool.before rewrite lands inside 
     var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer scratch.deinit();
     // `write` is outside the loadout, so the process never runs it.
-    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "write", .arguments = "{}" });
+    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "write", .arguments = "{}" }, .discard);
     try std.testing.expect(refused.is_error);
     try std.testing.expectEqual(@as(usize, 0), state.calls);
     // `read` is rewritten to `delegate`, which the loadout allows.
-    const accepted = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "read", .arguments = "{}" });
+    const accepted = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "read", .arguments = "{}" }, .discard);
     try std.testing.expect(!accepted.is_error);
     try std.testing.expectEqual(@as(usize, 1), state.calls);
     try std.testing.expectEqual(@as(usize, 1), f.slot.tools.?.names.len);
@@ -817,19 +852,19 @@ test "a tool.after replacement is the whole result, and the engine admits the me
     defer scratch.deinit();
     const pending: PendingTool = .{ .part_id = 0, .name = "read", .arguments = "{}" };
     // The replacement omits the media, so the bad ref is gone before admission.
-    const replaced = try runHooked(&f.engine, scratch.allocator(), f.slot, pending);
+    const replaced = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
     try std.testing.expect(!replaced.is_error);
     try std.testing.expectEqualStrings("clean", replaced.output);
     try std.testing.expectEqual(@as(usize, 0), replaced.media.len);
     // Without the replacement, the ref the store lacks turns the result into an error.
     state.replace = false;
-    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending);
+    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
     try std.testing.expect(refused.is_error);
     try std.testing.expect(std.mem.indexOf(u8, refused.output, "does not hold") != null);
 }
 
 /// Run one tool through its hooks. A block answers the model, and the process runs nothing.
-fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: PendingTool) !toolset.Outcome {
+fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: PendingTool, output: toolset.Output) !toolset.Outcome {
     const hooks = engine.deps.hooks;
     const held = try request_config_mod.loadout(engine, arena, slot);
     var call: ToolCall = .{ .name = pt.name, .arguments = pt.arguments };
@@ -848,6 +883,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
         .workspace_root = slot.config.root,
         .site = .{ .session_id = slot.sessionId(), .message_id = slot.progress.current.?.message_id, .part_id = pt.part_id },
         .work = &slot.work,
+        .output = output,
     });
 
     const after = hooks.askIfHeld(arena, .@"tool.after", .{
@@ -1510,4 +1546,53 @@ test "a cancel at the boundary wins over a successful response and preserves pen
     try std.testing.expectEqual(@as(usize, 1), f.session.queueDepth());
     try std.testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, StreamerFixture.session_id));
     try std.testing.expect((try database.run.latestOutcome(&f.db, a, StreamerFixture.session_id)).? == .canceled);
+}
+
+test "a running tool publishes its live output in order, and a cut on a character boundary closes the stream" {
+    const Tool = struct {
+        fn run(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, context: toolset.Context) toolset.Outcome {
+            context.output.write(context.output.ctx, "step 1\n");
+            context.output.write(context.output.ctx, "step 2\n");
+            // The cap cuts this chunk inside a character, so the cut moves back to the boundary before it.
+            const big = "x" ** (proto.meta.limits.max_tool_output_stream_bytes - 16) ++ "世界";
+            context.output.write(context.output.ctx, big);
+            // The cut closed the stream, so a later chunk never publishes, though it fits the two bytes of room.
+            context.output.write(context.output.ctx, "ok");
+            return .{ .output = "done", .is_error = false };
+        }
+    };
+    const Recorder = struct {
+        deltas: std.ArrayList(u8) = .empty,
+        offsets: [8]u64 = undefined,
+        count: usize = 0,
+
+        fn onEvent(raw: *anyopaque, note: proto.rpc.Notification) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            const delta = switch (note.params) {
+                .tool_output_delta_data => |d| d,
+                else => return,
+            };
+            self.offsets[self.count] = delta.offset;
+            self.count += 1;
+            self.deltas.appendSlice(std.testing.allocator, delta.delta) catch unreachable;
+        }
+    };
+    var f: Resources.Fixture = undefined;
+    try f.init(.{ .replies = &.{ Resources.tool_reply, ai.testing.canned_reply } });
+    defer f.deinit();
+    var recorder: Recorder = .{};
+    defer recorder.deltas.deinit(std.testing.allocator);
+    f.engine.sinks.add(.{ .ctx = &recorder, .on_event = Recorder.onEvent });
+    defer f.engine.sinks.remove(&recorder);
+    f.engine.installTools(.{ .names = Resources.serveNames(&.{"unknown"}), .run = Tool.run });
+    _ = try f.send(&.{.{ .text = .{ .text = "go" } }});
+    try f.finish(Resources.Fixture.id);
+
+    try std.testing.expectEqual(@as(usize, 3), recorder.count);
+    try std.testing.expectEqualSlices(u64, &.{ 0, 7, 14 }, recorder.offsets[0..3]);
+    const cap = proto.meta.limits.max_tool_output_stream_bytes;
+    // The stream ends before the split character, two bytes short of the cap.
+    try std.testing.expectEqual(@as(usize, cap - 2), recorder.deltas.items.len);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(recorder.deltas.items));
+    try std.testing.expect(std.mem.startsWith(u8, recorder.deltas.items, "step 1\nstep 2\n"));
 }

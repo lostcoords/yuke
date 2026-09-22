@@ -44,7 +44,20 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
     call.site = context.site;
     call.work = context.work;
     defer finishCall(host, call);
-    awaitCall(host, call) catch return fault(out, "cancellation stopped the tool call");
+    host.wake.set(host.io);
+    // Publish each output chunk while the tool runs, and the last one before the result.
+    while (true) {
+        call.changed.wait(host.io) catch return fault(out, "cancellation stopped the tool call");
+        call.changed.reset();
+        if (call.output.items.len != 0) {
+            // Move the chunk out before the sink publishes it.
+            var chunk = call.output;
+            call.output = .empty;
+            defer chunk.deinit(host.gpa);
+            context.output.write(context.output.ctx, chunk.items);
+        }
+        if (call.state == .settled) break;
+    }
     const text = call.text orelse "the tool call did not finish";
     const extra = if (call.extra_json) |json|
         extraOf(out, json) orelse return fault(out, "the tool answered an invalid view or media list")
