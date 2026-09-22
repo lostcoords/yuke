@@ -313,7 +313,7 @@ fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
     const offset = if (args.len > 1 and !tail) module.integer(ctx, args[1], 0, (1 << 53) - 1) else null;
     const max_bytes = if (args.len > 2) module.integer(ctx, args[2], 4, max_read_bytes) else null;
     if ((!tail and offset == null) or max_bytes == null) return rejected(ctx, "read needs a byte offset and a byte count from 4 to 262144");
-    return host.startTask(Read, readTask, .{ .log = host.gpa.dupe(u8, job.log) catch unreachable, .offset = offset, .complete = job.state != .running, .max_bytes = @intCast(max_bytes.?) });
+    return host.startTask(Read, readTask, .{ .log = host.gpa.dupe(u8, job.log) catch unreachable, .offset = offset, .complete = job.state != .running, .max_bytes = @intCast(max_bytes.?) }, .{});
 }
 
 fn readTask(host: *Host, op: *pending.Op, req: Read) void {

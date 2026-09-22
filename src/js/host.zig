@@ -192,13 +192,18 @@ pub const Host = struct {
         return self;
     }
 
-    /// Start one primitive on its own task and answer its promise. The task reads only what `payload` owns, a refusal rejects, and only a full QuickJS heap throws.
-    pub fn startTask(self: *Host, comptime Payload: type, comptime task: fn (*Host, *pending.Op, Payload) void, payload: Payload) quickjs.Value {
-        return self.startTaskWithSignal(Payload, task, payload, quickjs.UNDEFINED);
-    }
+    /// What a primitive binds before its task starts. The host keeps its own reference to each value.
+    pub const StartOptions = struct {
+        /// A cancellation signal, or undefined.
+        signal: quickjs.Value = quickjs.UNDEFINED,
+        /// A function that takes the live text of `pending.Op.stream`, or undefined.
+        on_text: quickjs.Value = quickjs.UNDEFINED,
+    };
 
-    /// Bind cancellation and retain tool provenance before the task can start.
-    pub fn startTaskWithSignal(self: *Host, comptime Payload: type, comptime task: fn (*Host, *pending.Op, Payload) void, payload: Payload, signal: quickjs.Value) quickjs.Value {
+    /// Start one primitive on its own task and answer its promise. The task reads only what `payload` owns, a refusal rejects, and only a full QuickJS heap throws.
+    pub fn startTask(self: *Host, comptime Payload: type, comptime task: fn (*Host, *pending.Op, Payload) void, payload: Payload, options: StartOptions) quickjs.Value {
+        const signal = options.signal;
+        std.debug.assert(self.ctx.isUndefined(options.on_text) or self.ctx.isFunction(options.on_text));
         if (!self.acceptsIo()) {
             payload.free(self.gpa);
             return pending.rejected(self.ctx, "the host is closed");
@@ -216,6 +221,7 @@ pub const Host = struct {
             return self.ctx.throw(self.ctx.getException());
         };
         started.op.signal = self.ctx.dupValue(signal);
+        started.op.on_text = self.ctx.dupValue(options.on_text);
         if (token) |held| held.retain();
         if (self.calls.callForSignal(self.ctx, signal)) |call| if (call.work) |work| {
             work.retain(&started.op.operation);
@@ -240,13 +246,13 @@ pub const Host = struct {
         call_run.abortLeft(self); // A continuation below must read a left call's signal as aborted.
         // Output reaches its callback before `settle`, so every chunk of a child arrives before a promise its exit settles.
         var faulted = self.procs.drain(self);
-        if (self.ops.settle(self.ctx)) faulted = true;
+        if (self.ops.settle(self)) faulted = true;
         // A timer fires before the drain, so a promise it settles runs its reactions in this pump.
         if (self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) faulted = true;
         try self.drainJobs();
         // The first drain settles a promise a handler awaited, the poll reads it, and the second drain runs what the handler queued.
         call_run.pump(self);
-        if (self.ops.settle(self.ctx)) faulted = true;
+        if (self.ops.settle(self)) faulted = true;
         try self.drainJobs();
         // The last drain can settle a call Promise, so this pump reads it before the owner sleeps.
         call_run.pollRunning(self);
@@ -259,7 +265,7 @@ pub const Host = struct {
 
     /// Report whether the owner has work to run. The owner asks before it sleeps.
     pub fn hasPending(self: *const Host) bool {
-        return self.runtime.isJobPending() or self.ops.anyDone() or self.engine.hasPending() or
+        return self.runtime.isJobPending() or self.ops.anyReady() or self.engine.hasPending() or
             self.calls.hasWork(self.ctx) or self.procs.hasWork() or self.timers.isDue(std.Io.Timestamp.now(self.io, .awake));
     }
 
@@ -321,7 +327,7 @@ pub const Host = struct {
         self.procs.deinit(self);
         self.jobs.deinit(self.gpa);
         self.interactions.close();
-        if (self.ops.settle(self.ctx)) {
+        if (self.ops.settle(self)) {
             self.dropPendingException();
             return error.JavaScriptFault;
         }
@@ -372,11 +378,11 @@ pub const Host = struct {
             self.oauth.reap(self.gpa);
             self.bodies.reap(self.gpa);
             if (self.procs.drain(self)) self.dropPendingException();
-            if (self.ops.settle(self.ctx)) self.dropPendingException();
+            if (self.ops.settle(self)) self.dropPendingException();
             if (self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) self.dropPendingException();
             self.drainJobs() catch return;
             if (self.ctx.promiseState(promise) != .Pending) break;
-            if (self.runtime.isJobPending() or self.ops.anyDone() or self.procs.hasWork()) continue;
+            if (self.runtime.isJobPending() or self.ops.anyReady() or self.procs.hasWork()) continue;
             const timer = self.timers.nextDeadline() orelse guard.deadline;
             const due = if (timer.nanoseconds < guard.deadline.nanoseconds) timer else guard.deadline;
             self.wake.waitTimeout(self.io, .{ .deadline = .{ .raw = due, .clock = .awake } }) catch |err| switch (err) {

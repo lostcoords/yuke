@@ -136,7 +136,7 @@ fn jsAccept(ctx: Context, _: Value, args: []const Value) Value {
     const options = module.ioOptions(host, if (args.len > 1) args[1] else quickjs.UNDEFINED, limits) catch return pending.rejected(ctx, "a sign-in option is invalid");
     defer ctx.freeValue(options.signal);
     listener.busy = true;
-    return host.startTaskWithSignal(Accept, acceptTask, .{ .listener = listener, .deadline = options.deadline }, options.signal);
+    return host.startTask(Accept, acceptTask, .{ .listener = listener, .deadline = options.deadline }, .{ .signal = options.signal });
 }
 
 fn acceptTask(host: *Host, op: *pending.Op, request: Accept) void {

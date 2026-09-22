@@ -122,7 +122,7 @@ fn jsConnect(ctx: Context, _: Value, args: []const Value) Value {
     if (host.net.full(host.gpa, max_connections)) return pending.rejectedWith(ctx, .{ .message = "the socket limit was reached", .code = "LIMIT" });
     const connection = host.net.add(host.gpa, .{ .host = host });
     const request: Request = .{ .connection = connection, .kind = .connect, .bytes = host.gpa.dupe(u8, path) catch unreachable, .deadline = options.deadline };
-    return host.startTaskWithSignal(Request, connectTask, request, options.signal);
+    return host.startTask(Request, connectTask, request, .{ .signal = options.signal });
 }
 
 fn connectionArg(host: *Host, args: []const Value) ?*Connection {
@@ -142,7 +142,7 @@ fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
     }
     if (connection.read_busy) return pending.rejectedWith(ctx, .{ .message = "a socket read is already pending", .code = "BUSY" });
     connection.read_busy = true;
-    return host.startTaskWithSignal(Request, ioTask, .{ .connection = connection, .kind = .read, .max_bytes = options.max_bytes, .deadline = options.deadline }, options.signal);
+    return host.startTask(Request, ioTask, .{ .connection = connection, .kind = .read, .max_bytes = options.max_bytes, .deadline = options.deadline }, .{ .signal = options.signal });
 }
 
 fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
@@ -162,7 +162,7 @@ fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
     }
     if (connection.write_busy) return pending.rejectedWith(ctx, .{ .message = "a socket write is already pending", .code = "BUSY" });
     connection.write_busy = true;
-    return host.startTaskWithSignal(Request, ioTask, .{ .connection = connection, .kind = .write, .bytes = host.gpa.dupe(u8, bytes) catch unreachable, .deadline = options.deadline }, options.signal);
+    return host.startTask(Request, ioTask, .{ .connection = connection, .kind = .write, .bytes = host.gpa.dupe(u8, bytes) catch unreachable, .deadline = options.deadline }, .{ .signal = options.signal });
 }
 
 fn jsClose(ctx: Context, _: Value, args: []const Value) Value {

@@ -104,7 +104,7 @@ fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
         host.gpa.free(root);
         return rejected(ctx, "the path must be a string with no NUL byte");
     };
-    return host.startTask(ReadRequest, readTask, .{ .path = path, .root = root });
+    return host.startTask(ReadRequest, readTask, .{ .path = path, .root = root }, .{});
 }
 
 /// Read bounded whole lines. The task owns the path and returns a small JSON range descriptor.
@@ -120,7 +120,7 @@ fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
         host.gpa.free(root);
         return rejected(ctx, "the read range is invalid");
     };
-    return host.startTask(ReadRequest, readRangeTask, .{ .path = path, .root = root, .range = range });
+    return host.startTask(ReadRequest, readRangeTask, .{ .path = path, .root = root, .range = range }, .{});
 }
 
 /// Read one file on a task; it writes bytes into the op and never enters JavaScript; `Host.close` cancels this group and waits for it, so a task must reach a cancellation point, and the task must stay within input and output.

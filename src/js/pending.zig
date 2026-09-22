@@ -6,6 +6,12 @@ const cancellation = @import("native/cancellation.zig");
 const cancel = @import("../cancel.zig");
 const module = @import("native/module.zig");
 const Work = @import("../session/work.zig");
+const Host = @import("host.zig").Host;
+const utf8 = @import("../utf8.zig");
+const proto = @import("proto");
+
+/// The live bytes one op streams, equal to the engine stream cap. The op drops the rest; the result still carries the answer.
+pub const max_live_bytes = proto.meta.limits.max_tool_output_stream_bytes;
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -127,12 +133,38 @@ pub const Op = struct {
     cancel: cancel.Cancel = .{},
     work: ?*Work = null,
     io: std.Io,
+    gpa: std.mem.Allocator,
     operation: Work.Operation = .{ .cancel = cancelOperation },
+    /// The owner calls this function with live text before it settles the result. A task never calls it.
+    on_text: Value = quickjs.UNDEFINED,
+    /// Live bytes a task wrote and the owner has not handed over, guarded by `live_lock`.
+    live: std.ArrayList(u8) = .empty,
+    live_lock: std.Io.Mutex = .init,
+    /// The live bytes the op can still keep, guarded by `live_lock`. A cut chunk closes the stream.
+    live_room: u64 = max_live_bytes,
+    /// Only the owner touches this buffer until it swaps it with `live` under `live_lock`.
+    live_spare: std.ArrayList(u8) = .empty,
+    /// A task sets this after it appends, so `anyReady` needs no lock.
+    live_ready: std.atomic.Value(bool) = .init(false),
 
     fn cancelOperation(operation: *Work.Operation) void {
         const self: *Op = @fieldParentPtr("operation", operation);
         std.debug.assert(!self.done.load(.acquire));
         self.cancel.request(self.io);
+    }
+
+    /// Queue live bytes for `on_text` and wake the owner. A task calls this, so it enters no JavaScript.
+    pub fn stream(self: *Op, bytes: []const u8) void {
+        std.debug.assert(!self.done.load(.acquire)); // a task streams before it finishes
+        self.live_lock.lockUncancelable(self.io);
+        // A stream can end inside a character, so only the cap cuts on a boundary.
+        const kept = if (bytes.len <= self.live_room) bytes.len else utf8.floor(bytes, self.live_room);
+        self.live.appendSlice(self.gpa, bytes[0..kept]) catch unreachable;
+        self.live_room = if (kept < bytes.len) 0 else self.live_room - kept;
+        self.live_lock.unlock(self.io);
+        if (kept == 0) return;
+        self.live_ready.store(true, .release);
+        self.wake.set(self.io);
     }
 
     /// Record the outcome and wake the owner. This runs on a task, so it enters no JavaScript and touches nothing after the wake.
@@ -196,6 +228,9 @@ pub const Ops = struct {
                 signal.operations -= 1;
             }
             ctx.freeValue(op.signal);
+            ctx.freeValue(op.on_text);
+            op.live.deinit(self.gpa);
+            op.live_spare.deinit(self.gpa);
             if (op.result) |r| r.deinit(self.gpa);
             self.gpa.destroy(op);
         }
@@ -211,7 +246,7 @@ pub const Ops = struct {
         const promise = ctx.newPromiseCapability(&funcs);
         if (ctx.isException(promise)) return null;
         const op = self.spare.pop() orelse self.gpa.create(Op) catch unreachable;
-        op.* = .{ .resolve = funcs[0], .reject = funcs[1], .wake = self.wake, .io = self.io };
+        op.* = .{ .resolve = funcs[0], .reject = funcs[1], .wake = self.wake, .io = self.io, .gpa = self.gpa };
         self.live.append(self.gpa, op) catch unreachable;
         return .{ .op = op, .promise = promise };
     }
@@ -225,25 +260,34 @@ pub const Ops = struct {
         }
     }
 
-    /// Report whether any op finished. The owner asks before it sleeps.
-    pub fn anyDone(self: *const Ops) bool {
-        for (self.live.items) |op| if (op.done.load(.acquire)) return true;
+    /// Report whether any op finished or holds live text. The owner asks before it sleeps.
+    pub fn anyReady(self: *const Ops) bool {
+        for (self.live.items) |op| if (op.done.load(.acquire) or op.live_ready.load(.acquire)) return true;
         return false;
     }
 
     /// Settle every finished op and report whether a resolver threw; a settle can start another op, so the loop re-reads the length.
-    pub fn settle(self: *Ops, ctx: Context) bool {
+    pub fn settle(self: *Ops, host: *Host) bool {
+        const ctx = host.ctx;
         var faulted = false;
         var i: usize = 0;
         while (i < self.live.items.len) {
             const op = self.live.items[i];
-            if (!op.done.load(.acquire)) {
+            const done = op.done.load(.acquire);
+            // Live text reaches its function before the result.
+            if (op.live_ready.swap(false, .acquire)) {
+                if (deliver(host, op)) faulted = true;
+            }
+            if (!done) {
                 i += 1;
                 continue;
             }
             const result = op.result.?;
             _ = self.live.orderedRemove(i);
             if (call(ctx, op, result)) faulted = true;
+            ctx.freeValue(op.on_text);
+            op.live.deinit(self.gpa);
+            op.live_spare.deinit(self.gpa);
             if (!ctx.isUndefined(op.signal)) {
                 if (cancellation.get(ctx, op.signal).?.release(ctx)) faulted = true;
             }
@@ -254,6 +298,36 @@ pub const Ops = struct {
             self.spare.append(self.gpa, op) catch unreachable;
         }
         return faulted;
+    }
+
+    /// Hand the live text to `on_text` and answer whether the function threw; the host records the fault.
+    fn deliver(host: *Host, op: *Op) bool {
+        const ctx = host.ctx;
+        op.live_lock.lockUncancelable(op.io);
+        var taken = op.live;
+        op.live = op.live_spare;
+        op.live_spare = .empty;
+        op.live_lock.unlock(op.io);
+        defer {
+            taken.clearRetainingCapacity();
+            op.live_spare = taken;
+        }
+
+        if (taken.items.len == 0) return false;
+        std.debug.assert(ctx.isFunction(op.on_text)); // only an op with `on_text` streams
+        // A writer cuts on character boundaries, but a command prints any bytes, so the text becomes valid UTF-8 first.
+        const bytes = taken.items;
+        const invalid = !std.unicode.utf8ValidateSlice(bytes);
+        const text = if (invalid) utf8.sanitize(op.gpa, bytes) catch unreachable else bytes;
+        defer if (invalid) op.gpa.free(text);
+        host.enterSlice();
+        var argv = [_]Value{ctx.newString(text)};
+        defer ctx.freeValue(argv[0]);
+        const answer = ctx.call(op.on_text, quickjs.UNDEFINED, &argv);
+        defer ctx.freeValue(answer);
+        if (!ctx.isException(answer)) return false;
+        host.noteFault();
+        return true;
     }
 
     /// Answer whether the resolver threw; the caller clears the pending exception and reports the fault.

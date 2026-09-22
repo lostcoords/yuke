@@ -1,4 +1,5 @@
 import { exec } from "yuke:exec";
+import { create, cancel } from "yuke:cancellation-native";
 const fail = [];
 const check = (name, cond) => { if (!cond) fail.push(name); };
 globalThis.result = "pending";
@@ -18,6 +19,31 @@ globalThis.result = "pending";
   check("no-log-by-default", big.log === null && ok.log === null);
   const capped = await exec("head -c 100 /dev/zero | tr '\\0' x", { maxBytes: 10 });
   check("max-bytes", capped.stdoutDropped === 90);
+  // Live text reaches onOutput in order, whole characters only, before the result settles.
+  const live = [];
+  let settled = false;
+  const streamed = exec("printf a; sleep 0.2; printf '\\344\\270'; sleep 0.2; printf '\\226'; sleep 0.2; echo x 1>&2; sleep 0.2; printf '\\344'", {
+    onOutput: (text) => live.push({ text, settled }),
+  });
+  const done = await streamed;
+  settled = true;
+  check("live-before-result", live.every((chunk) => !chunk.settled));
+  check("live-text", live.map((chunk) => chunk.text).join("") === "a\u4e16x\n\ufffd");
+  check("live-result", done.stdout === "a\u4e16\ufffd" && done.stderr === "x\n");
+  // The live text is not bound by the result cap.
+  let bytes = 0;
+  const wide = await exec("yes abcdefgh | head -c 200000", { maxBytes: 10, onOutput: (text) => { bytes += text.length; } });
+  check("live-uncapped", bytes === 200000 && wide.stdoutDropped === 199990);
+  // The live text stops at the engine stream cap, and the command still runs to its end.
+  bytes = 0;
+  const huge = await exec("head -c 3000000 /dev/zero | tr '\\0' x", { onOutput: (text) => { bytes += text.length; } });
+  check("live-cap", bytes === 1048576 && huge.code === 0);
+  // A cancel still delivers what the command printed first, and the promise rejects.
+  const signal = create();
+  const early = [];
+  let canceled = "";
+  await exec("printf start; sleep 30", { signal, onOutput: (text) => { early.push(text); cancel(signal); } }).catch((e) => { canceled = e.message; });
+  check("cancel-output", early.join("") === "start" && canceled === "the command was canceled");
   // A command with no cwd runs in the directory the host runs in.
   check("cwd", (await exec("cat marker.txt")).stdout === "found\n");
   // A refused argument rejects; it never throws at the caller.
@@ -39,6 +65,7 @@ globalThis.result = "pending";
     [["echo x", { cwd: ".", timeoutMs: 0 }], "timeoutMs must be a whole number of milliseconds up to 600000"],
     [["echo x", { maxBytes: 65537 }], "maxBytes must be a whole number of bytes up to 65536"],
     [["echo x", { log: "yes" }], "log must be a boolean"],
+    [["echo x", { onOutput: "yes" }], "onOutput must be a function"],
   ]) {
     message = "";
     try { await exec(...args); } catch (e) { message = e.message; }

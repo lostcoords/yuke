@@ -39,6 +39,8 @@ const Request = struct {
     max_bytes: u32,
     /// Null unless the caller asked for a log. The owner makes the path, because only the owner touches `Host.logs`.
     log: ?[]u8 = null,
+    /// True when the caller passed `onOutput`, so each chunk reaches the op as live text.
+    live: bool = false,
 
     fn parse(
         ctx: Context,
@@ -83,6 +85,9 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     const signal = if (ctx.isObject(options)) ctx.getPropertyStr(options, "signal") else quickjs.UNDEFINED;
     defer ctx.freeValue(signal);
     if (ctx.isException(signal)) return rejected(ctx, "the exec signal could not be read");
+    const on_output = if (ctx.isObject(options)) ctx.getPropertyStr(options, "onOutput") else quickjs.UNDEFINED;
+    defer ctx.freeValue(on_output);
+    if (!ctx.isUndefined(on_output) and !ctx.isFunction(on_output)) return rejected(ctx, "onOutput must be a function");
 
     // The task cannot touch JavaScript, so every argument is copied before it starts.
     const wants_log = module.optionalBool(ctx, options, "log") catch return rejected(ctx, "log must be a boolean");
@@ -98,7 +103,8 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
         });
     // A log directory that cannot exist costs the log, not the command.
     if (wants_log) request.log = host.logs.next(host.gpa, host.io, host.execution.env, "exec") catch null;
-    return host.startTaskWithSignal(Request, execTask, request, signal);
+    request.live = !ctx.isUndefined(on_output);
+    return host.startTask(Request, execTask, request, .{ .signal = signal, .on_text = on_output });
 }
 
 const canceled: pending.Result = .{ .failed = .{ .message = "the command was canceled" } };
@@ -128,11 +134,17 @@ fn execWorker(host: *Host, op: *pending.Op, req: Request, result: *pending.Resul
         .timeout_ms = req.timeout_ms,
         .max_stream_bytes = req.max_bytes,
         .log = req.log,
+        .live = if (req.live) .{ .ctx = op, .write = liveWrite } else null,
     }) catch |err| {
         result.* = .{ .failed = .{ .message = errorMessage(err) } };
         return;
     };
     result.* = .{ .json = encode(host.gpa, arena.allocator(), ran) };
+}
+
+fn liveWrite(ctx: *anyopaque, bytes: []const u8) void {
+    const op: *pending.Op = @ptrCast(@alignCast(ctx));
+    op.stream(bytes);
 }
 
 /// Build the result text. A command prints any bytes, so each stream becomes valid UTF-8 first.

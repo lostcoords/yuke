@@ -286,7 +286,7 @@ fn jsFetch(ctx: Context, _: Value, args: []const Value) Value {
         return pending.rejected(ctx, "the host holds 64 open response bodies");
     }
     const body = host.bodies.add(host.gpa, .{ .host = host, .parsed = request, .deadline = io_options.deadline });
-    return host.startTaskWithSignal(*Body, httpTask, body, io_options.signal);
+    return host.startTask(*Body, httpTask, body, .{ .signal = io_options.signal });
 }
 
 /// Run the head exchange under the deadline. End the body for every answer but a head, because no reader can use it.
@@ -447,7 +447,7 @@ fn startRead(ctx: Context, args: []const Value, all: bool) Value {
     }
     if (body.busy) return pending.rejected(ctx, "a body read is already pending");
     body.busy = true;
-    return host.startTaskWithSignal(Read, readTask, .{ .body = body, .all = all, .max_bytes = options.max_bytes, .deadline = options.deadline }, options.signal);
+    return host.startTask(Read, readTask, .{ .body = body, .all = all, .max_bytes = options.max_bytes, .deadline = options.deadline }, .{ .signal = options.signal });
 }
 
 fn bodyArg(host: *Host, args: []const Value) ?*Body {

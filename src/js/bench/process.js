@@ -42,10 +42,14 @@ function output(text) {
 }
 
 async function step() {
-  if (phase === "exec_short" || phase === "exec_bulk") {
+  if (phase === "exec_short" || phase === "exec_bulk" || phase === "exec_stream") {
     const command = phase === "exec_short" ? "printf ok" : `/usr/bin/head -c ${1048576 * scale} /dev/zero`;
-    const result = await exec(command, { maxBytes: 65536 }, "/tmp");
-    if (result.code !== 0 || (phase === "exec_bulk" && result.stdoutDropped === 0)) throw Error("exec result");
+    // The stream phase counts the live text, which stops at the 1 MiB cap.
+    received = 0;
+    const onOutput = phase === "exec_stream" ? (/** @type {string} */ text) => { received += text.length; } : undefined;
+    const result = await exec(command, { maxBytes: 65536, onOutput }, "/tmp");
+    if (result.code !== 0 || (phase !== "exec_short" && result.stdoutDropped === 0)) throw Error("exec result");
+    if (phase === "exec_stream" && received !== 1048576) throw Error("exec stream bytes");
   } else if (phase === "fs_read") {
     const text = await fs.readFile(readFixturePath);
     if (text.length !== readFixtureBytes) throw Error("file read bytes");

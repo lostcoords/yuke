@@ -10,6 +10,8 @@ declare module "yuke:exec" {
     maxBytes?: number;
     /** Write both streams to a private log, and keep it when a stream was cut. */
     log?: boolean;
+    /** Takes the live text of both streams in arrival order, before the result settles. `maxBytes` does not cut it, and it stops after 1 MiB. */
+    onOutput?: ((text: string) => void) | undefined;
   }
 
   interface ExecResult {

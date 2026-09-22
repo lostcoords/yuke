@@ -391,6 +391,9 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         const logged = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(1 << 20));
         defer std.testing.allocator.free(logged);
         try std.testing.expectEqual(@as(usize, 20000), logged.len);
+        // The live output is not cut, so the user sees every byte while the command runs.
+        try std.testing.expectEqual(@as(usize, 20000), call.output.items.len);
+        try std.testing.expect(std.mem.indexOfNone(u8, call.output.items, "x") == null);
         call.finish();
         try host.pump();
     }
@@ -495,7 +498,7 @@ test "exec completion detaches before call abort and host close rejects late exe
     const race = host.calls.submit("probe", "{}", root);
     try host.pump();
     const ready: std.Io.Timestamp = .now(host.io, .awake);
-    while (!host.ops.anyDone()) {
+    while (!host.ops.anyReady()) {
         if (ready.durationTo(.now(host.io, .awake)).toMilliseconds() > 5000) return error.ExecDidNotFinish;
         host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(10), .clock = .awake } }) catch {};
         host.wake.reset();
@@ -723,6 +726,32 @@ test "a throwing await handler faults once and leaves no pending exception" {
     // The next call must see a clean context, so a later read still works.
     try host.evalModule("globalThis.after = 7;", "after.js");
     try std.testing.expectEqual(@as(i32, 7), try host.evalInt("globalThis.after"));
+}
+
+test "a throwing onOutput faults the pump with its message, and the command still settles" {
+    var fixture = try ReactorHost.initTmp(null);
+    defer fixture.deinit();
+    const host = fixture.host;
+    try host.evalModule(
+        \\import { exec } from "yuke:exec";
+        \\globalThis.done = 0;
+        \\exec("printf out", { onOutput: () => { throw new Error("onOutput boom"); } }).then(() => { globalThis.done = 1; });
+    , "exec-fault.js");
+    var faults: u32 = 0;
+    var rounds: u32 = 0;
+    while (host.ops.live.items.len != 0) : (rounds += 1) {
+        if (rounds == 64) return error.PrimitiveNeverSettled;
+        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
+        host.wake.reset();
+        host.pump() catch |err| {
+            try std.testing.expectEqual(host_mod.Error.JavaScriptFault, err);
+            try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "onOutput boom") != null);
+            faults += 1;
+        };
+    }
+    try support.pumpUntilIdle(host);
+    try std.testing.expectEqual(@as(u32, 1), faults);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.done"));
 }
 
 test "run cleanup stops signaled exec without another owner pump" {

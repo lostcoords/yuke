@@ -17,6 +17,14 @@ pub const Spec = struct {
     max_stream_bytes: u32,
     /// An absolute path. The run writes both streams to it and keeps the file only when a stream was cut.
     log: ?[]const u8 = null,
+    /// The runner sends each chunk to this sink in drain order.
+    live: ?Live = null,
+};
+
+/// The live output of one command. Both drains write to it, and each chunk ends on a character boundary except at the end of a stream.
+pub const Live = struct {
+    ctx: *anyopaque,
+    write: *const fn (ctx: *anyopaque, bytes: []const u8) void,
 };
 
 /// How one command ended. The union makes an impossible pair unrepresentable.
@@ -65,6 +73,7 @@ const Drain = struct {
     file: std.Io.File,
     limit: u32,
     log: ?*Log,
+    live: ?Live,
     head: std.ArrayList(u8) = .empty,
     tail: []u8 = &.{},
     tail_len: usize = 0,
@@ -110,13 +119,13 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
 
     // The drains own the read ends from here, so every path closes them after the drains end.
     const out_pipe = try pipeAboveStdio();
-    var out: Drain = .{ .file = pipeReader(out_pipe[0]), .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null };
+    var out: Drain = .{ .file = pipeReader(out_pipe[0]), .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null, .live = spec.live };
     defer out.file.close(io);
     const err_pipe = pipeAboveStdio() catch |e| {
         _ = std.posix.system.close(out_pipe[1]);
         return e;
     };
-    var err: Drain = .{ .file = pipeReader(err_pipe[0]), .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null };
+    var err: Drain = .{ .file = pipeReader(err_pipe[0]), .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null, .live = spec.live };
     defer err.file.close(io);
 
     // The parent closes its write ends after the spawn, so a drain reaches EOF when the last child copy closes.
@@ -430,27 +439,42 @@ fn mapDrainError(err: anyerror) h.HostError {
 }
 
 /// Read one stream to its end: fill the head, then keep a moving tail, and never stop at the limit, because a full pipe blocks the writer.
+/// The Linux pipe capacity, so one read takes a full pipe and the live sink sees few chunks.
+const read_buffer_bytes = 64 * 1024;
+
 fn drain(io: std.Io, scratch: std.mem.Allocator, state: *Drain) void {
-    var buffer: [4096]u8 = undefined;
+    var buffer: [read_buffer_bytes]u8 = undefined;
     var reader = state.file.reader(io, &buffer);
-    // The head takes the odd byte, so the two ends never hold more than the limit.
-    const head_cap = state.limit - state.limit / 2;
-    const tail_cap = state.limit / 2;
+    // The bytes of a cut character wait in the reader until the rest arrives.
+    var held: usize = 0;
     while (true) {
-        const chunk = reader.interface.peekGreedy(1) catch |err| switch (err) {
-            error.EndOfStream => return,
+        const chunk = reader.interface.peekGreedy(held + 1) catch |err| switch (err) {
+            error.EndOfStream => return take(io, scratch, state, reader.interface.buffered()),
             error.ReadFailed => {
                 state.err = reader.err orelse error.Unexpected;
                 return;
             },
         };
-        const to_head = @min(chunk.len, head_cap -| state.head.items.len);
-        if (to_head != 0) state.head.appendSlice(scratch, chunk[0..to_head]) catch unreachable;
-        if (to_head < chunk.len) keepTail(scratch, state, chunk[to_head..], tail_cap);
-        if (state.log) |log| log.append(io, chunk);
-        reader.interface.toss(chunk.len); // Consume every byte, so the writer never blocks.
+        // A live sink gets whole characters, so the other stream never lands inside one.
+        const end = if (state.live != null) utf8.whole(chunk) else chunk.len;
+        take(io, scratch, state, chunk[0..end]);
+        reader.interface.toss(end); // Consume every byte but a cut character, so the writer never blocks.
+        held = chunk.len - end;
         if (state.err != null) return;
     }
+}
+
+/// Hand one run of bytes to the head, the tail, the log, and the live sink.
+fn take(io: std.Io, scratch: std.mem.Allocator, state: *Drain, bytes: []const u8) void {
+    if (bytes.len == 0) return;
+    // The head takes the odd byte, so the two ends never hold more than the limit.
+    const head_cap = state.limit - state.limit / 2;
+    const tail_cap = state.limit / 2;
+    const to_head = @min(bytes.len, head_cap -| state.head.items.len);
+    if (to_head != 0) state.head.appendSlice(scratch, bytes[0..to_head]) catch unreachable;
+    if (to_head < bytes.len) keepTail(scratch, state, bytes[to_head..], tail_cap);
+    if (state.log) |log| log.append(io, bytes);
+    if (state.live) |live| live.write(live.ctx, bytes);
 }
 
 /// Append to the tail and drop the oldest bytes above `cap`. The dropped count names the gap.
@@ -607,6 +631,46 @@ test "a stream one byte above the cap reports the gap" {
     const res = try runShell(arena.allocator(), "head -c 256 /dev/zero | tr '\\0' x", 20_000);
     try testing.expectEqual(@as(u64, 1), res.stdout_dropped);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "dropped 1 bytes") != null);
+}
+
+test "the live sink gets every byte of both streams, uncut by the result cap" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const Sink = struct {
+        lock: std.Io.Mutex = .init,
+        bytes: std.ArrayList(u8) = .empty,
+        fn write(ctx: *anyopaque, chunk: []const u8) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.lock.lockUncancelable(testing.io);
+            defer self.lock.unlock(testing.io);
+            self.bytes.appendSlice(testing.allocator, chunk) catch unreachable;
+        }
+    };
+    var sink: Sink = .{};
+    defer sink.bytes.deinit(testing.allocator);
+    var env = try utilityEnv();
+    defer env.deinit();
+
+    const res = try run(testing.io, "/tmp", execution.testContext(&env), arena.allocator(), .{
+        .command = "head -c 1000 /dev/zero | tr '\\0' x; sleep 0.1; echo err 1>&2",
+        .timeout_ms = 20_000,
+        .max_stream_bytes = 255,
+        .live = .{ .ctx = &sink, .write = Sink.write },
+    });
+    try testing.expectEqual(@as(u64, 745), res.stdout_dropped);
+    try testing.expectEqual(@as(usize, 1004), sink.bytes.items.len);
+    try testing.expect(std.mem.indexOfNone(u8, sink.bytes.items[0..1000], "x") == null);
+    try testing.expectEqualStrings("err\n", sink.bytes.items[1000..]);
+
+    // The stdout drain holds a cut character, so the stderr line never lands inside it.
+    sink.bytes.clearRetainingCapacity();
+    _ = try run(testing.io, "/tmp", execution.testContext(&env), arena.allocator(), .{
+        .command = "printf '\\344\\270'; sleep 0.2; echo x 1>&2; sleep 0.2; printf '\\226\\344'",
+        .timeout_ms = 20_000,
+        .max_stream_bytes = 255,
+        .live = .{ .ctx = &sink, .write = Sink.write },
+    });
+    try testing.expectEqualStrings("x\n\u{4e16}\xe4", sink.bytes.items);
 }
 
 test "the child leads a new session apart from the test runner" {
@@ -783,7 +847,7 @@ test "the tail keeps the exact suffix across wrap, oversize chunks, and zero cap
     const input = "abcdefghijklmnopqrstuvwxyz0123456789";
     for ([_]usize{ 0, 1, 2, 7, 16, 35, 36, 64 }) |cap| {
         for ([_]usize{ 1, 3, 8, 36 }) |chunk| {
-            var state: Drain = .{ .file = undefined, .limit = @intCast(cap), .log = null };
+            var state: Drain = .{ .file = undefined, .limit = @intCast(cap), .log = null, .live = null };
             var at: usize = 0;
             while (at < input.len) {
                 const end = @min(input.len, at + chunk);

@@ -47,6 +47,7 @@ pub const Phase = enum {
     advice_churn,
     exec_short,
     exec_bulk,
+    exec_stream,
     fs_read,
     mcp_result_reused,
     mcp_result_fresh,
@@ -73,7 +74,7 @@ pub const Phase = enum {
 
     fn group(self: Phase) Group {
         return switch (self) {
-            .exec_short, .exec_bulk, .fs_read, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
+            .exec_short, .exec_bulk, .exec_stream, .fs_read, .process_echo, .process_echo_fresh, .jobs_output, .timers_batch => .process,
             .net_echo, .net_echo_fresh => .net,
             .http_reused, .http_fresh, .http_close => .http,
             .mcp_result_reused, .mcp_result_fresh => .mcp,
