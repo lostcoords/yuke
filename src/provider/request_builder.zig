@@ -30,7 +30,7 @@ const ImageBudget = struct {
 pub const Options = struct {
     target: ?ai.ModelIdentity = null,
     /// Only a request with native discovery may replay its records.
-    replay_tool_search: bool = false,
+    tool_search: ai.ir.ToolSearch = .disabled,
     modalities: ai.Modalities = .{},
     /// The lookup that answers a blob ref with bytes. Null resolves no attachment.
     blobs: ?BlobLookup = null,
@@ -126,7 +126,7 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: pro
         .text => |t| if (t.text.len != 0) try blocks.append(gpa, .{ .role = .assistant, .value = .{ .text = t.text } }),
         .reasoning => |t| if (replay) try blocks.append(gpa, .{ .role = .assistant, .value = .{ .reasoning = .{ .text = t.text, .signature = t.signature } } }),
         .redacted_reasoning => |t| if (replay) try blocks.append(gpa, .{ .role = .assistant, .value = .{ .redacted_reasoning = t.data } }),
-        .tool_search => |value| if (replay and options.replay_tool_search and value.data.len != 0) try blocks.append(gpa, .{ .role = .assistant, .value = .{ .tool_search = .{
+        .tool_search => |value| if (replay and options.tool_search == .hosted and value.data.len != 0) try blocks.append(gpa, .{ .role = .assistant, .value = .{ .tool_search = .{
             .protocol = switch (value.protocol) {
                 .anthropic => .anthropic,
                 .openai_responses => .openai_responses,
@@ -553,10 +553,10 @@ test "native discovery replays for its model and a canceled placeholder stays ou
             .provenance = .{ .protocol = .anthropic_messages, .model = "p/m" },
         } },
     };
-    const kept = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "p/m" }, .replay_tool_search = true });
+    const kept = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "p/m" }, .tool_search = .hosted });
     try testing.expectEqual(@as(usize, 2), kept.len);
     try testing.expectEqualStrings(data, kept[1].value.tool_search.data);
-    const changed = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .openai_responses, .model = "p/m" }, .replay_tool_search = true });
+    const changed = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .openai_responses, .model = "p/m" }, .tool_search = .hosted });
     try testing.expectEqual(@as(usize, 1), changed.len);
     const eager = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "p/m" } });
     try testing.expectEqual(@as(usize, 1), eager.len);

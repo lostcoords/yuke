@@ -80,10 +80,9 @@ pub const FileModel = struct {
     flags: FileFlags = .{},
 };
 
-/// Project the file models onto the library shape in `arena`, and fill each model protocol from `endpoints`.
-pub fn modelSpecs(arena: Allocator, models: []const FileModel, endpoints: []const ai.route.Endpoint) ![]const ai.model.ModelSpec {
-    const out = try arena.alloc(ai.model.ModelSpec, models.len);
-    for (models, 0..) |m, i| out[i] = .{
+/// Project one file model onto the library shape; `arena` owns its effort levels.
+pub fn modelSpec(arena: Allocator, m: FileModel, endpoints: []const ai.route.Endpoint) !ai.model.ModelSpec {
+    return .{
         .id = m.id,
         .upstream_id = m.upstream_id,
         .protocol = try modelProtocol(m, endpoints),
@@ -106,7 +105,6 @@ pub fn modelSpecs(arena: Allocator, models: []const FileModel, endpoints: []cons
             .reasoning_budget = .from(m.flags.reasoning_budget_min, m.flags.reasoning_budget_max),
         },
     };
-    return out;
 }
 
 /// Name the endpoint one file model calls, or fail when the entry leaves the choice open.
@@ -583,12 +581,12 @@ test "the endpoint list names each path once, and a model must name one of them"
     defer loaded.deinit();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const specs = try modelSpecs(arena.allocator(), loaded.providers[0].models, loaded.providers[0].endpoints.?);
-    try testing.expectEqual(ai.route.Protocol.anthropic_messages, specs[0].protocol);
-    const filled = try modelSpecs(arena.allocator(), &.{.{ .id = "m", .upstream_id = "m" }}, &one_endpoint);
-    try testing.expectEqual(ai.route.Protocol.openai_chat, filled[0].protocol);
+    const spec = try modelSpec(arena.allocator(), loaded.providers[0].models[0], loaded.providers[0].endpoints.?);
+    try testing.expectEqual(ai.route.Protocol.anthropic_messages, spec.protocol);
+    const filled = try modelSpec(arena.allocator(), .{ .id = "m", .upstream_id = "m" }, &one_endpoint);
+    try testing.expectEqual(ai.route.Protocol.openai_chat, filled.protocol);
     // The catalog can serve several paths, so the merge refuses a model that names none.
-    try testing.expectError(error.NoEndpoint, modelSpecs(arena.allocator(), &.{.{ .id = "m", .upstream_id = "m" }}, &.{
+    try testing.expectError(error.NoEndpoint, modelSpec(arena.allocator(), .{ .id = "m", .upstream_id = "m" }, &.{
         .{ .protocol = .openai_chat }, .{ .protocol = .anthropic_messages },
     }));
 }
@@ -768,13 +766,14 @@ test "a file model decodes its flags and projects onto the library shape" {
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const specs = try modelSpecs(arena.allocator(), loaded.providers[0].models, loaded.providers[0].endpoints.?);
-    const spec = specs[0];
+    const row = loaded.providers[0];
+    const spec = try modelSpec(arena.allocator(), row.models[0], row.endpoints.?);
+    const plain = try modelSpec(arena.allocator(), row.models[1], row.endpoints.?);
 
     // The request builder reads `modalities`, so the vision flag must reach it and not only `caps`.
     try testing.expect(spec.modalities.takesInput(.image).?);
-    try testing.expect(!specs[1].modalities.takesInput(.image).?);
-    try testing.expect(specs[1].modalities.takesInput(.text).?);
+    try testing.expect(!plain.modalities.takesInput(.image).?);
+    try testing.expect(plain.modalities.takesInput(.text).?);
 
     try testing.expectEqualStrings("deepseek-reasoner", spec.upstream_id);
     try testing.expectEqualStrings("r1", spec.name); // The file writes no display name.
@@ -801,7 +800,7 @@ test "a file model may omit its limits entirely" {
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const spec = (try modelSpecs(arena.allocator(), loaded.providers[0].models, loaded.providers[0].endpoints.?))[0];
+    const spec = try modelSpec(arena.allocator(), loaded.providers[0].models[0], loaded.providers[0].endpoints.?);
     // The run falls back to its own ceiling, so a local endpoint needs no invented number.
     try testing.expect(spec.limits.max_output_tokens == null);
 }
@@ -830,8 +829,8 @@ test "local hosted search capability survives projection and a file round trip" 
         var loaded = try loadBytes(testing.allocator, bytes);
         defer loaded.deinit();
         const row = loaded.providers[0];
-        const specs = try modelSpecs(arena.allocator(), row.models, row.endpoints.?);
-        try testing.expectEqual(expected, specs[0].caps.hosted_tool_search);
+        const spec = try modelSpec(arena.allocator(), row.models[0], row.endpoints.?);
+        try testing.expectEqual(expected, spec.caps.hosted_tool_search);
         const encoded = try serialize(arena.allocator(), loaded.providers);
         var restored = try loadBytes(testing.allocator, encoded);
         defer restored.deinit();

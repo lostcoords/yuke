@@ -31,7 +31,7 @@ pub fn anthropicName(name: []const u8) bool {
 }
 
 /// Unknown fields survive replay; the supported record kinds and required fields stay closed.
-pub fn validateValue(protocol: Protocol, value: std.json.Value) error{Protocol}!void {
+fn validateValue(protocol: Protocol, value: std.json.Value) error{Protocol}!void {
     if (value != .object) return error.Protocol;
     const kind = json.fieldStr(value, "type") orelse return error.Protocol;
     switch (protocol) {

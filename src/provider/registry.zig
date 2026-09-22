@@ -217,35 +217,25 @@ fn providerRow(
 ) !Provider {
     // A file list replaces the catalog list as a whole, so a model names a path from one list only.
     const endpoints: []const ai.route.Endpoint = p.endpoints orelse (if (from_catalog) |c| c.endpoints else &.{});
-    const baked = try catalogModelsForRoute(arena, p, from_catalog);
-    // An invalid model/endpoint combination leaves the provider unavailable.
-    const merged = mergedModels(arena, p, baked, endpoints) catch |err| switch (err) {
+    const merged = mergedModels(arena, p, from_catalog, endpoints) catch |err| switch (err) {
         error.NoEndpoint, error.BadCapability => null,
         error.OutOfMemory => |e| return e,
+    };
+    const models = merged orelse fallback: {
+        var catalog_only = p;
+        catalog_only.models = &.{};
+        break :fallback try mergedModels(arena, catalog_only, from_catalog, endpoints);
     };
     return .{
         .id = p.id,
         .login_flow = if (from_catalog) |c| loginFlow(c.auth) else null,
         .name = if (from_catalog) |c| c.name else p.id,
-        .models = merged orelse baked,
-        .availability = if (merged) |models|
+        .models = models,
+        .availability = if (merged != null)
             try localAvailability(arena, p, from_catalog, env, endpoints, models)
         else
             .{ .unavailable = .needs_route },
     };
-}
-
-/// A catalog capability belongs to its endpoint, not to another host with the same model id.
-fn catalogModelsForRoute(arena: std.mem.Allocator, p: provider.config.LocalProvider, from_catalog: ?*const catalog.Provider) ![]const ModelSpec {
-    const source = from_catalog orelse return &.{};
-    for (source.models) |spec| if (spec.caps.hosted_tool_search != null and !sameCatalogRoute(p, source, spec.protocol)) {
-        const models = try arena.dupe(ModelSpec, source.models);
-        for (models) |*copy| {
-            if (copy.caps.hosted_tool_search != null and !sameCatalogRoute(p, source, copy.protocol)) copy.caps.hosted_tool_search = null;
-        }
-        return models;
-    };
-    return source.models;
 }
 
 fn sameCatalogRoute(p: provider.config.LocalProvider, source: *const catalog.Provider, protocol: ai.Protocol) bool {
@@ -271,28 +261,34 @@ fn findLocal(local: ?*const provider.config.Loaded, id: []const u8) ?provider.co
     return null;
 }
 
-/// Union the baked models with the file's. The file wins on a repeated id and appends the rest.
+/// A local model wins on its id; an inherited capability stays bound to its catalog route.
 fn mergedModels(
     arena: std.mem.Allocator,
     p: provider.config.LocalProvider,
-    baked: []const ModelSpec,
+    source: ?*const catalog.Provider,
     endpoints: []const ai.route.Endpoint,
 ) ![]const ModelSpec {
-    // The baked models already hold the effective shape, so only a file entry allocates.
-    if (p.models.len == 0) return baked;
-    const extra = try provider.config.modelSpecs(arena, p.models, endpoints);
-    if (baked.len == 0) return extra;
-
+    const baked = if (source) |c| c.models else &.{};
+    if (p.models.len == 0) {
+        for (baked) |spec| {
+            if (spec.caps.hosted_tool_search != null and !sameCatalogRoute(p, source.?, spec.protocol)) break;
+        } else return baked;
+    }
     var out: std.ArrayList(ModelSpec) = .empty;
-    try out.ensureTotalCapacityPrecise(arena, baked.len + extra.len);
-    for (baked) |m| out.appendAssumeCapacity(findSpec(extra, m.id) orelse m);
-    for (extra) |e| if (findSpec(baked, e.id) == null) out.appendAssumeCapacity(e);
+    try out.ensureTotalCapacityPrecise(arena, baked.len + p.models.len);
+    for (baked) |spec| {
+        var value = spec;
+        if (value.caps.hosted_tool_search != null and !sameCatalogRoute(p, source.?, value.protocol)) value.caps.hosted_tool_search = null;
+        out.appendAssumeCapacity(value);
+    }
+    for (p.models) |local| {
+        const value = try provider.config.modelSpec(arena, local, endpoints);
+        const index = for (baked, 0..) |spec, i| {
+            if (std.mem.eql(u8, spec.id, local.id)) break i;
+        } else null;
+        if (index) |i| out.items[i] = value else out.appendAssumeCapacity(value);
+    }
     return out.items;
-}
-
-fn findSpec(specs: []const ModelSpec, id: []const u8) ?ModelSpec {
-    for (specs) |m| if (std.mem.eql(u8, m.id, id)) return m;
-    return null;
 }
 
 /// Resolve the credential and complete the host from the catalog. The credential selects the key header on every endpoint.
@@ -588,24 +584,33 @@ test "hosted search capability reaches the public projection and revision" {
     try std.testing.expect(!std.meta.eql(refused_rev, supported_rev));
 }
 
-test "a route override copies only the model array and leaves the catalog intact" {
-    var tracked: @import("../allocations.zig") = .{ .backing = std.testing.allocator };
+test "a route override merges into one array and leaves the catalog intact" {
     const models = [_]ModelSpec{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .openai_responses, .caps = .{ .hosted_tool_search = true } }};
-    const source: catalog.Provider = .{ .id = "p", .name = "P", .auth = .{ .api_key = null }, .base_url = "https://api.example/v1", .endpoints = &.{}, .models = &models };
-    const same = try catalogModelsForRoute(tracked.allocator(), .{ .id = "p" }, &source);
-    try std.testing.expectEqual(models[0..].ptr, same.ptr);
-    try std.testing.expectEqual(@as(usize, 0), tracked.counts.allocations);
-    const changed = try catalogModelsForRoute(tracked.allocator(), .{ .id = "p", .base_url = "https://proxy.example/v1" }, &source);
-    try std.testing.expectEqual(@as(?bool, null), changed[0].caps.hosted_tool_search);
-    try std.testing.expectEqual(@as(?bool, true), models[0].caps.hosted_tool_search);
-    try std.testing.expectEqual(models[0].name.ptr, changed[0].name.ptr);
-    tracked.allocator().free(changed);
-    try std.testing.expectEqual(@as(usize, 1), tracked.counts.allocations);
-    try std.testing.expectEqual(@as(usize, 1), tracked.counts.frees);
-    try std.testing.expectEqual(@sizeOf(ModelSpec), tracked.counts.allocated_bytes);
-    try std.testing.expectEqual(@sizeOf(ModelSpec), tracked.counts.freed_bytes);
-    try std.testing.expectEqual(@sizeOf(ModelSpec), tracked.peak_bytes);
-    try std.testing.expectEqual(@as(usize, 0), tracked.counts.resize_attempts);
-    try std.testing.expectEqual(@as(usize, 0), tracked.counts.remap_attempts);
-    try std.testing.expectEqual(@as(usize, 0), tracked.liveBytes());
+    const source: catalog.Provider = .{ .id = "p", .name = "P", .auth = .{ .api_key = null }, .base_url = "https://api.example/v1", .endpoints = &.{.{ .protocol = .openai_responses }}, .models = &models };
+    const cases = [_][]const provider.config.FileModel{
+        &.{},
+        &.{.{ .id = "extra", .upstream_id = "extra", .flags = .{ .supports_hosted_tool_search = true } }},
+    };
+    for (cases) |extra| {
+        var tracked: @import("../allocations.zig") = .{ .backing = std.testing.allocator };
+        const same = try mergedModels(tracked.allocator(), .{ .id = "p" }, &source, source.endpoints);
+        try std.testing.expectEqual(models[0..].ptr, same.ptr);
+        try std.testing.expectEqual(@as(usize, 0), tracked.counts.allocations);
+        const changed = try mergedModels(tracked.allocator(), .{ .id = "p", .base_url = "https://proxy.example/v1", .models = extra }, &source, source.endpoints);
+        try std.testing.expectEqual(1 + extra.len, changed.len);
+        try std.testing.expect(changed[0].caps.hosted_tool_search == null);
+        if (extra.len != 0) try std.testing.expect(changed[1].caps.hosted_tool_search == true);
+        try std.testing.expect(models[0].caps.hosted_tool_search == true);
+        try std.testing.expectEqual(models[0].name.ptr, changed[0].name.ptr);
+        tracked.allocator().free(changed);
+        const bytes = (1 + extra.len) * @sizeOf(ModelSpec);
+        try std.testing.expectEqual(@as(usize, 1), tracked.counts.allocations);
+        try std.testing.expectEqual(@as(usize, 1), tracked.counts.frees);
+        try std.testing.expectEqual(bytes, tracked.counts.allocated_bytes);
+        try std.testing.expectEqual(bytes, tracked.counts.freed_bytes);
+        try std.testing.expectEqual(bytes, tracked.peak_bytes);
+        try std.testing.expectEqual(@as(usize, 0), tracked.counts.resize_attempts);
+        try std.testing.expectEqual(@as(usize, 0), tracked.counts.remap_attempts);
+        try std.testing.expectEqual(@as(usize, 0), tracked.liveBytes());
+    }
 }
