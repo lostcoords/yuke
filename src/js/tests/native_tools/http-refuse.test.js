@@ -22,7 +22,7 @@ async function run() {
   for (const method of [0, "get", "OPTIONS", "CONNECT", "TRACE", "bad"]) await refuses([url, { method }], "the method must be GET, POST, PUT, PATCH, HEAD, or DELETE");
   for (const method of ["GET", "HEAD", "DELETE"]) await refuses([url, { method, body: "" }], "this method must not have a body");
   for (const body of [0, {}, new Uint8Array(2)]) await refuses([url, { method: "POST", body }], "the body must be a string");
-  for (const timeoutMs of [0, -1, 0.5, NaN, Infinity, 120001, "1"]) await refuses([url, { timeoutMs }], "a fetch option is invalid");
+  for (const timeoutMs of [0, -1, 0.5, NaN, Infinity, 600001, "1"]) await refuses([url, { timeoutMs }], "a fetch option is invalid");
   for (const headers of [null, [], 1, "", new Date(), Object.create({})]) await refuses([url, { headers }], "headers must be an object");
   for (const headers of [{ "": "x" }, { "bad:name": "x" }, { "bad name": "x" }, { "a\0b": "x" }, { a: "x\r\ny" }, { a: "\x01" }, { a: 1 }, { a: null }, { A: "1", a: "2" }, { Host: "x" }, { Connection: "close" }, { "Content-Length": "0" }, { "Transfer-Encoding": "chunked" }]) {
     await refuses([url, { headers }], "a request header is invalid");

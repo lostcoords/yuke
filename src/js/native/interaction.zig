@@ -15,7 +15,6 @@ const Value = quickjs.Value;
 /// Register `yuke:interaction-native` and its one `native` object, which also states the host limits.
 pub fn install(host: *Host) void {
     module.installObject(host, "yuke:interaction-native", "native", &.{
-        .{ .name = "watchCancellation", .arity = 2, .call = jsWatchCancellation },
         .{ .name = "sessionId", .arity = 1, .call = jsSessionId },
         .{ .name = "validateSignal", .arity = 1, .call = jsValidateSignal },
         .{ .name = "request", .arity = 2, .call = jsRequest },
@@ -28,16 +27,6 @@ pub fn install(host: *Host) void {
 fn addLimits(_: *Host, ctx: Context, native: Value) void {
     module.set(ctx, native, "maxTextBytes", ctx.newInt64(interactions.max_text_bytes));
     module.set(ctx, native, "maxOptions", ctx.newInt64(interactions.max_options));
-}
-
-fn jsWatchCancellation(ctx: Context, _: Value, args: []const Value) Value {
-    const host = Host.fromContext(ctx);
-    if (args.len < 2 or !host.calls.acceptsSignal(ctx, args[1])) return pending.rejected(ctx, "the cancellation signal has no live call");
-    const id = module.integer(ctx, args[0], 1, interactions.max_safe_id) orelse return pending.rejected(ctx, "the cancellation watch needs a safe positive id");
-    return host.interactions.watchCancellation(&host.ops, ctx, id, args[1]) catch |err| return switch (err) {
-        error.Exception => module.throwPending(ctx),
-        else => pending.rejected(ctx, errorMessage(err)),
-    };
 }
 
 fn jsValidateSignal(ctx: Context, _: Value, args: []const Value) Value {

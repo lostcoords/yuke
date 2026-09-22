@@ -34,8 +34,6 @@ pub const Request = struct {
     value: proto.interaction.InteractionRequest,
     op: *pending.Op,
     sent: bool = false,
-    /// A cancellation watch: never shown, never answered by a peer.
-    hidden: bool = false,
     session_id: ?proto.ids.SessionId = null,
 };
 
@@ -57,7 +55,7 @@ pub const Table = struct {
         self.accepting = false;
         // A shutdown answers like a cancel, so a gate that waits denies instead of throwing.
         for (self.live.items) |request| {
-            request.op.finish(if (request.hidden) .{ .failed = .{ .message = "the host closed" } } else .undefined);
+            request.op.finish(.undefined);
             self.destroy(request);
         }
         self.live.clearRetainingCapacity();
@@ -91,16 +89,6 @@ pub const Table = struct {
         request.* = .{ .arena = arena, .id = id, .value = value, .op = started.op };
         self.live.append(self.gpa, request) catch unreachable;
         return started.promise;
-    }
-
-    /// A hidden request observes the exact tool signal through the same cancellation table.
-    pub fn watchCancellation(self: *Table, ops: *pending.Ops, ctx: Context, id: proto.ids.InteractionId, signal: Value) Error!Value {
-        const promise = try self.start(ops, ctx, id, "{\"type\":\"confirm\",\"title\":\"cancel\",\"message\":\"\"}");
-        const request = self.live.items[self.indexOf(id).?];
-        request.sent = true;
-        request.hidden = true;
-        self.attribute(ctx, id, null, signal);
-        return promise;
     }
 
     /// Answer the oldest question the frontend has not seen and mark it sent.
@@ -144,7 +132,7 @@ pub const Table = struct {
     pub fn respond(self: *Table, params: proto.interaction.InteractionRespondParams) Error!void {
         const index = self.indexOf(params.interaction_id) orelse return error.Unknown;
         const request = self.live.items[index];
-        if (!request.sent or request.hidden) return error.Unknown;
+        if (!request.sent) return error.Unknown;
         self.removeAt(index, try self.resultFor(request, params.response));
     }
 

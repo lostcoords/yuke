@@ -5,7 +5,7 @@ declare module "yuke:http-native" {
     method?: "GET" | "POST" | "PUT" | "PATCH" | "HEAD" | "DELETE";
     headers?: Record<string, string>;
     body?: string;
-    /** The connect and head deadline; default 30000, maximum 120000. */
+    /** The connect and head deadline; default 30000, maximum 600000. */
     timeoutMs?: number;
     signal?: CancellationSignal;
   }
@@ -19,9 +19,11 @@ declare module "yuke:http-native" {
   }
 
   export interface HttpHead {
+    /** A 3xx status answers the head alone; the caller reads `location` and decides whether to follow it. */
     status: number;
     /** The parked body, or zero when the response has none. */
     body: number;
+    /** Lowercase names. A repeated field joins its values with ", ". */
     headers: Record<string, string>;
   }
 

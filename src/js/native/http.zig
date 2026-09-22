@@ -11,9 +11,8 @@ const Context = quickjs.Context;
 const Value = quickjs.Value;
 
 pub const default_timeout_ms: u32 = 30_000;
-pub const max_timeout_ms: u32 = 120_000;
-/// A body read may wait longer than a head, so a quiet event stream stays open.
-pub const max_read_timeout_ms: u32 = 600_000;
+/// A slow tool call answers its head late, and a quiet event stream reads late, so both wait up to ten minutes.
+pub const max_timeout_ms: u32 = 600_000;
 /// `text()` refuses a body above this; a chunk read has no total cap.
 pub const max_response_bytes: usize = 256 * 1024;
 pub const default_read_bytes: u32 = 64 * 1024;
@@ -177,7 +176,7 @@ fn validHeaderValue(value: []const u8) bool {
 }
 
 const head_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_timeout_ms };
-const read_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_read_timeout_ms, .min_bytes = 4, .default_bytes = default_read_bytes, .max_bytes = max_read_bytes };
+const read_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_timeout_ms, .min_bytes = 4, .default_bytes = default_read_bytes, .max_bytes = max_read_bytes };
 const canceled: pending.Result = .{ .failed = .{ .message = "the request was canceled" } };
 const timed_out: pending.Result = .{ .failed = .{ .message = "the request timed out" } };
 const io_failed: pending.Result = .{ .failed = .{ .message = "the host could not complete the request" } };
@@ -307,7 +306,6 @@ fn httpWorker(host: *Host, op: *pending.Op, body: *Body, result: *pending.Result
         body.release(true);
         result.* = switch (err) {
             error.Canceled => canceled,
-            error.Redirect => .{ .failed = .{ .message = "the request was redirected" } },
             error.StreamTooLong, error.HttpHeadersOversize => too_long,
             else => io_failed,
         };
@@ -369,9 +367,10 @@ fn exchangeOnce(client: *std.http.Client, body: *Body, uri: std.Uri, reused: *bo
     reused.* = false;
     const head = &body.response.head;
     const status: u16 = @intFromEnum(head.status);
-    if (status >= 300 and status < 400) return error.Redirect;
+    // A redirect answers its head alone, so the caller decides whether a new origin sees the request.
+    const redirect = status >= 300 and status < 400;
     const has_body = req.method != .HEAD and status != 204 and status != 205 and !(head.transfer_encoding == .none and head.content_length == 0);
-    if (has_body and head.content_encoding != .identity) return error.UnsupportedEncoding;
+    if (has_body and !redirect and head.content_encoding != .identity) return error.UnsupportedEncoding;
 
     // The body reader invalidates the head slices, so copy the bounded headers first.
     var headers: std.ArrayList(pending.Http.Header) = .empty;
@@ -383,7 +382,17 @@ fn exchangeOnce(client: *std.http.Client, body: *Body, uri: std.Uri, reused: *bo
     var it = head.iterateHeaders();
     next_header: while (it.next()) |header| {
         if (!validHeaderName(header.name) or !validHeaderValue(header.value)) return error.BadHeader;
-        for (headers.items) |held| if (std.ascii.eqlIgnoreCase(held.name, header.name)) continue :next_header;
+        // A repeated field joins with a comma, as the Fetch standard reads it, so a second challenge stays visible.
+        for (headers.items) |*held| if (std.ascii.eqlIgnoreCase(held.name, header.name)) {
+            if (header.value.len + 2 > max_response_header_bytes - total) return error.StreamTooLong;
+            const value = try utf8.sanitize(gpa, header.value);
+            defer gpa.free(value);
+            const joined = try std.mem.concat(gpa, u8, &.{ held.value, ", ", value });
+            gpa.free(held.value);
+            held.value = joined;
+            total += header.value.len + 2;
+            continue :next_header;
+        };
         const size = header.name.len + header.value.len;
         if (headers.items.len == max_response_headers or size > max_response_header_bytes - total) return error.StreamTooLong;
         const name = try gpa.dupeZ(u8, header.name);
@@ -397,6 +406,9 @@ fn exchangeOnce(client: *std.http.Client, body: *Body, uri: std.Uri, reused: *bo
     if (!has_body) {
         // Nothing follows the head, so the connection is ready for the pool now.
         request.reader.state = .ready;
+        body.end();
+    } else if (redirect) {
+        // The unread body closes the connection at the release.
         body.end();
     }
     return .{ .status = status, .headers = try headers.toOwnedSlice(gpa), .body = if (body.ended) 0 else body.id };

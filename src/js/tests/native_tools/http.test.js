@@ -3,7 +3,6 @@ import { check, equal } from "yuke:test";
 
 // The head refuses these before any body exists.
 const failures = {
-  redirect: "the request was redirected",
   malformed: "the host could not complete the request",
   bad_status: "the host could not complete the request",
   compressed: "the host could not complete the request",
@@ -30,7 +29,9 @@ async function runPool() {
     return;
   }
   await read(httpUrl.replace(/^http:/, "HTTP:"));
-  if (httpPoolCase === "recover" || httpPoolCase === "no_replay") {
+  // A redirect answers its head, and its unread body closes the connection.
+  if (httpPoolCase === "recover" && httpMode === "redirect") equal((await fetch(httpUrl)).status, 302);
+  else if (httpPoolCase === "recover" || httpPoolCase === "no_replay") {
     let failed = false;
     try { await (await fetch(httpUrl, httpPoolCase === "no_replay" ? { method: "POST", body: "" } : undefined)).text(); }
     catch (error) { failed = true; equal(error.message, httpPoolCase === "no_replay" ? "the host could not complete the request" : failures[httpMode] ?? bodyFailures[httpMode]); }
@@ -74,8 +75,8 @@ async function run() {
   const pending = fetch(httpUrl, options);
   if (httpMode === "echo") { options.body = "changed"; options.headers.Authorization = "changed"; }
   const response = await pending;
-  equal(response.status, httpMode === "missing" ? 404 : httpMode === "empty" ? 204 : 200);
-  equal(response.ok, httpMode !== "missing");
+  equal(response.status, httpMode === "missing" ? 404 : httpMode === "empty" ? 204 : httpMode === "redirect" ? 302 : 200);
+  equal(response.ok, httpMode !== "missing" && httpMode !== "redirect");
   equal(response.headers.get("missing"), null);
   equal(response.headers.get("toString"), null);
   equal(response.headers.get(1), null);
@@ -87,10 +88,12 @@ async function run() {
   if (httpMode === "echo") {
     equal(text, expectedBody);
     equal((await response.json()).value, "世界\0");
-    equal(response.headers.get("X-NAME"), "first");
+    equal(response.headers.get("X-NAME"), "first, second");
     equal(response.headers.get("__proto__"), "safe");
   }
   if (httpMode === "head" || httpMode === "empty") equal(text, "");
+  // The caller sees the target and decides; the host never follows it.
+  if (httpMode === "redirect") { equal(text, ""); equal(response.headers.get("location"), "http://127.0.0.1:1/leak"); }
   if (["put", "patch", "delete", "hints", "close_delimited"].includes(httpMode)) equal(text, "ok");
   if (httpMode === "missing") equal((await response.json()).error, "missing");
   if (["limit", "chunk_limit", "close_limit"].includes(httpMode)) equal(text, "x".repeat(256 * 1024));

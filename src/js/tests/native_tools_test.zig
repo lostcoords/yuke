@@ -686,19 +686,20 @@ test "tool site attributes a question and call completion cancels it" {
     try std.testing.expectEqual(@as(usize, 0), host.interactions.live.items.len);
 }
 
-test "a hidden cancellation watch is never listed and no peer can answer it" {
+test "an abort listener hears the call cancel once and a removed one hears nothing" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "native_tools/wait.test.js");
     const call = host.calls.submit("wait", "{}", "/work");
     try host.pump();
     try std.testing.expect(host.interactions.takeNext() == null);
-    try std.testing.expectError(error.Unknown, host.interactions.respond(.{ .interaction_id = 7, .response = .{ .confirm = .{ .value = true } } }));
+    try std.testing.expectEqual(@as(usize, 1), host.abort_listeners.items.len);
     try host.pump();
     try support.expectString(host, "seen", "pending");
     call.finish();
     try host.pump();
     try support.expectString(host, "seen", "canceled");
+    try std.testing.expectEqual(@as(usize, 0), host.abort_listeners.items.len);
 }
 
 fn waitExecPids(host: *Host, dir: std.Io.Dir, path: []const u8) ![2]std.posix.pid_t {

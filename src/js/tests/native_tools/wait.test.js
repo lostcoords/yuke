@@ -1,7 +1,9 @@
 import { defineTool } from "yuke:tools";
-import { native } from "yuke:interaction-native";
+import * as cancellation from "yuke:cancellation-native";
 globalThis.seen = "pending";
 defineTool("wait", { description: "Wait", parameters: { type: "object", properties: {} }, execute: async (args, signal) => {
-  native.watchCancellation(7, signal).then(() => { globalThis.seen = "canceled"; }, (e) => { globalThis.seen = "failed: " + e.message; });
+  cancellation.listen(signal, () => { globalThis.seen = "canceled"; });
+  // A removed listener never hears the cancel.
+  cancellation.unlisten(cancellation.listen(signal, () => { globalThis.seen = "removed listener heard"; }));
   return new Promise(() => {});
 } });

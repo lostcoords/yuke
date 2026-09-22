@@ -51,7 +51,24 @@ pub const Waiter = struct {
     }
 };
 
+/// One abort callback. It holds the signal, so the signal outlives it.
+pub const Listener = struct {
+    id: u32,
+    signal: Value,
+    callback: Value,
+
+    pub fn free(self: Listener, ctx: Context) void {
+        ctx.freeValue(self.callback);
+        ctx.freeValue(self.signal);
+    }
+};
+
+/// A listener that never hears its abort lives until `unlisten` or host close, so the count is bounded.
+pub const max_listeners = 4096;
+
 pub fn deinit(host: *Host) void {
+    for (host.abort_listeners.items) |listener| listener.free(host.ctx);
+    host.abort_listeners.deinit(host.gpa);
     for (host.signal_waiters.items) |waiter| {
         const signal = get(host.ctx, waiter.signal).?;
         std.debug.assert(signal.operations == 0);
@@ -66,6 +83,8 @@ pub fn install(host: *Host) void {
         .{ .name = "create", .arity = 0, .call = jsCreate },
         .{ .name = "cancel", .arity = 1, .call = jsCancel },
         .{ .name = "drain", .arity = 1, .call = jsDrain },
+        .{ .name = "listen", .arity = 2, .call = jsListen },
+        .{ .name = "unlisten", .arity = 1, .call = jsUnlisten },
     });
 }
 
@@ -138,6 +157,28 @@ pub fn cancel(host: *Host, value: Value) void {
     signal.aborted = true;
     host.ops.abortSignal(host.ctx, value);
     host.interactions.cancelSignal(host.ctx, value);
+    notify(host, value);
+}
+
+/// Call each abort callback of `value` once. The list settles first, so a callback may listen or unlisten.
+fn notify(host: *Host, value: Value) void {
+    const ctx = host.ctx;
+    var heard: std.ArrayList(Listener) = .empty;
+    defer heard.deinit(host.gpa);
+    var index: usize = 0;
+    while (index < host.abort_listeners.items.len) {
+        if (!ctx.isStrictEqual(host.abort_listeners.items[index].signal, value)) {
+            index += 1;
+            continue;
+        }
+        heard.append(host.gpa, host.abort_listeners.orderedRemove(index)) catch unreachable;
+    }
+    for (heard.items) |listener| {
+        defer listener.free(ctx);
+        // A callback that throws stops no other callback and no cancellation.
+        const result = ctx.call(listener.callback, quickjs.UNDEFINED, &.{});
+        if (ctx.isException(result)) pending.dropException(ctx) else ctx.freeValue(result);
+    }
 }
 
 fn jsCreate(ctx: Context, _: Value, _: []const Value) Value {
@@ -156,6 +197,32 @@ fn jsCancel(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len != 1 or get(ctx, args[0]) == null) return ctx.throwTypeError("invalid cancellation signal");
     const host = Host.fromContext(ctx);
     if (host.acceptsIo()) cancel(host, args[0]) else get(ctx, args[0]).?.aborted = true;
+    return quickjs.UNDEFINED;
+}
+
+fn jsListen(ctx: Context, _: Value, args: []const Value) Value {
+    if (args.len != 2 or !ctx.isFunction(args[1])) return ctx.throwTypeError("listen needs a cancellation signal and a function");
+    const signal = get(ctx, args[0]) orelse return ctx.throwTypeError("invalid cancellation signal");
+    if (signal.aborted) return ctx.throwTypeError("the signal is already canceled");
+    const host = Host.fromContext(ctx);
+    if (!host.acceptsIo()) return ctx.throwTypeError("the host is closed");
+    if (host.abort_listeners.items.len == max_listeners) return ctx.throwTypeError("the host holds 4096 abort listeners");
+    const id = host.next_listener;
+    host.next_listener = if (id == std.math.maxInt(u32)) 1 else id + 1;
+    host.abort_listeners.append(host.gpa, .{ .id = id, .signal = ctx.dupValue(args[0]), .callback = ctx.dupValue(args[1]) }) catch unreachable;
+    return ctx.newUint32(id);
+}
+
+fn jsUnlisten(ctx: Context, _: Value, args: []const Value) Value {
+    if (args.len != 1) return ctx.throwTypeError("unlisten needs a listener id");
+    const id = module.integer(ctx, args[0], 1, std.math.maxInt(u32)) orelse return ctx.throwTypeError("the listener id is invalid");
+    const host = Host.fromContext(ctx);
+    for (host.abort_listeners.items, 0..) |listener, index| {
+        if (listener.id != id) continue;
+        _ = host.abort_listeners.orderedRemove(index);
+        listener.free(ctx);
+        break;
+    }
     return quickjs.UNDEFINED;
 }
 

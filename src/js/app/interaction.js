@@ -1,6 +1,7 @@
 // The shared interaction lifecycle owns each request until its answer or cancellation.
 import { events } from "yuke:kernel";
 import { native } from "yuke:interaction-native";
+import * as cancellation from "yuke:cancellation-native";
 /** @import { Context } from "yuke:ext" */
 /** @import { Answerer, Disposer, InteractionOptions, InteractionRequest, InteractionSurface } from "./types/ext.js" */
 
@@ -71,14 +72,12 @@ function allocateId() {
   return id;
 }
 
-/** @param {{ aborted: boolean } | undefined} signal @param {() => void} canceled @param {(error: unknown) => void} [failed] @returns {() => void} */
-export function watchCancellation(signal, canceled, failed = () => canceled()) {
+/** @param {import("yuke:cancellation-native").CancellationSignal | undefined} signal @param {() => void} canceled @returns {() => void} */
+export function watchCancellation(signal, canceled) {
   if (!signal) return () => {};
   if (signal.aborted) { canceled(); return () => {}; }
-  const id = allocateId();
-  let alive = true;
-  native.watchCancellation(id, signal).then(() => { if (alive) canceled(); }, (error) => { if (alive) failed(error); });
-  return () => { alive = false; native.cancel(id); };
+  const id = cancellation.listen(signal, canceled);
+  return () => cancellation.unlisten(id);
 }
 
 /** @typedef {{ answerer: Answerer, requests: Set<Disposer> }} Registration */
@@ -202,7 +201,7 @@ const rpcAnswerer = {
     if (request.type === "device_login") {
       native.notify(ctx.id, "Sign in at " + request.start.verification_url + " with code " + request.start.user_code + ". Cancel the tool to stop setup.", "info");
       request.outcome.then(resolve, reject);
-      return watchCancellation(options?.signal, () => resolve(undefined), reject);
+      return watchCancellation(options?.signal, () => resolve(undefined));
     }
     const id = allocateId();
     native.request(id, JSON.stringify(request), options?.signal).then(resolve, reject);

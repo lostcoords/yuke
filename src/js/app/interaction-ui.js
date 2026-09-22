@@ -69,7 +69,7 @@ function createAnswerer(frontend) {
       }
       const close = frontend.tui.overlay(win);
       try {
-        const unwatch = watchCancellation(options?.signal, cancel, reject);
+        const unwatch = watchCancellation(options?.signal, cancel);
         return () => { unwatch(); close(); };
       } catch (error) {
         close();

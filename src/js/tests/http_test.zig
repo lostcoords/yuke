@@ -162,11 +162,11 @@ test "fetch rejects invalid arguments without an operation" {
 }
 
 test "fetch sends headers and bodies and returns bounded text responses" {
-    inline for (.{ .reply, .echo, .head, .put, .patch, .delete, .empty, .hints, .missing, .limit, .chunk_limit, .chunked, .close_delimited, .headers_limit, .header_bytes_limit, .close_limit, .utf8 }) |mode| try run(mode, .{});
+    inline for (.{ .reply, .echo, .redirect, .head, .put, .patch, .delete, .empty, .hints, .missing, .limit, .chunk_limit, .chunked, .close_delimited, .headers_limit, .header_bytes_limit, .close_limit, .utf8 }) |mode| try run(mode, .{});
 }
 
-test "fetch refuses redirects, oversized bodies, and malformed responses" {
-    inline for (.{ .redirect, .oversize, .truncated, .malformed, .bad_status, .compressed, .stall, .slow_body, .partial_head, .upload_stall, .oversized_chunk, .close_oversize, .headers, .header_bytes }) |mode| try run(mode, .{});
+test "fetch refuses oversized bodies and malformed responses" {
+    inline for (.{ .oversize, .truncated, .malformed, .bad_status, .compressed, .stall, .slow_body, .partial_head, .upload_stall, .oversized_chunk, .close_oversize, .headers, .header_bytes }) |mode| try run(mode, .{});
 }
 
 test "plugin disposal cancels and drains fetch" {

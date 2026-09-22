@@ -1,5 +1,6 @@
 // yuke:mcp — MCP servers as yuke tools. `.mcp.json` names them; one transport carries each one.
 import { mcpState } from "yuke:mcp-native";
+import * as cancellation from "yuke:cancellation-native";
 import { fs } from "yuke:fs";
 import { env } from "yuke:env";
 import { spawn, lines } from "yuke:spawn";
@@ -41,8 +42,6 @@ const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
 const STOP_GRACE_MS = 2000;
 // A result above this reaches the model cut, with a marker that names the missing part.
 const MAX_RESULT_CHARS = 100_000;
-// A signal has no listener, so a pending call reads it on this period.
-const POLL_MS = 200;
 const VAR = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
 // Expand `${VAR}` and `${VAR:-default}`. A missing variable without a default is a config error.
@@ -512,12 +511,12 @@ class Server {
   // A handshake request is not cancelable: the legacy rules forbid a cancel of `initialize`.
   /** @param {string} method @param {Record<string, unknown>} params @param {{ timeoutMs: number, signal?: CancellationSignal, cancelable?: boolean, received?: { bytes: number } }} options @returns {Promise<any>} */
   request(method, params, { timeoutMs, signal, cancelable = true, received }) {
+    if (signal?.aborted) return Promise.reject(new Error("the call was canceled"));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.cancel(id, "the request timed out"), Math.max(1, timeoutMs));
-      const caller = signal;
-      const poll = caller === undefined ? undefined : setInterval(() => { if (caller.aborted) this.cancel(id, "the call was canceled"); }, POLL_MS);
-      this.waiting.set(id, { bytes: 0, cancelable, resolve, reject, done: () => { if (received) received.bytes = this.waiting.get(id)?.bytes ?? 0; clearTimeout(timer); if (poll !== undefined) clearInterval(poll); } });
+      const listener = signal === undefined ? 0 : cancellation.listen(signal, () => this.cancel(id, "the call was canceled"));
+      this.waiting.set(id, { bytes: 0, cancelable, resolve, reject, done: () => { if (received) received.bytes = this.waiting.get(id)?.bytes ?? 0; clearTimeout(timer); if (listener !== 0) cancellation.unlisten(listener); } });
       this.send({ jsonrpc: "2.0", id, method, params: this.era === "modern" ? { ...params, _meta: META } : params }).catch((error) => this.settle(id, undefined, error));
     });
   }
