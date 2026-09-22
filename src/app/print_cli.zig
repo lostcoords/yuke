@@ -453,7 +453,7 @@ test "a print run answers the reply text, then continues the same session as JSO
 
     const plain = try f.print(arena, "hello", .{ .model = test_model });
     try testing.expectEqual(@as(u8, 0), plain.status);
-    try testing.expectEqualStrings("Hello from the yuke mock provider.\n", plain.out);
+    try testing.expectEqualStrings("Hello from the mock provider.\n", plain.out);
     try testing.expectEqualStrings("", plain.err);
 
     // The run named the model, so the next run in this directory needs no `--model`.
@@ -461,7 +461,7 @@ test "a print run answers the reply text, then continues the same session as JSO
     try testing.expectEqual(@as(u8, 0), again.status);
     const report = try std.json.parseFromSliceLeaky(Report, arena, again.out, .{ .ignore_unknown_fields = true });
     try testing.expectEqualStrings(test_model, report.model);
-    try testing.expectEqualStrings("Hello from the yuke mock provider.", report.text);
+    try testing.expectEqualStrings("Hello from the mock provider.", report.text);
     try testing.expect(report.outcome == .turn);
     try testing.expectEqual(@as(usize, 1), report.messages.len);
     try testing.expectEqual(@as(u64, 8), report.usage.output);

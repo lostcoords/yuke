@@ -1,9 +1,10 @@
 //! An AI call composes a route, a serializer, a transport, and a stream reducer.
 
 const std = @import("std");
-const adapter = @import("adapter.zig");
 const event = @import("stream/event.zig");
 const ir = @import("request/ir.zig");
+const request_wire = @import("request.zig");
+const stream_mod = @import("stream.zig");
 const route = @import("route.zig");
 const testing_transport = @import("testing.zig");
 const transport = @import("transport.zig");
@@ -12,12 +13,15 @@ const types = @import("types.zig");
 const model_types = @import("model.zig");
 
 pub const Model = struct {
+    /// The id the wire carries. A gateway may rename a model, so a catalog model sends its upstream id.
     id: []const u8,
     route: route.Route,
     credential: route.Credential,
     /// The resolved model capabilities.
     caps: model_types.Caps = .{},
     dialect: model_types.Dialect = .{},
+    /// The output limit fills a request that names none.
+    limits: model_types.Limits = .{},
 };
 
 /// What one call sends. The blocks, the system text, and the tools are the content of the turn.
@@ -30,7 +34,8 @@ pub const Request = struct {
 
 /// Provider-neutral controls over how the model answers.
 pub const Options = struct {
-    max_output_tokens: u32 = 1024,
+    /// A null limit takes the model limit, or the endpoint default when the model states none.
+    max_output_tokens: ?u32 = null,
     reasoning: ir.ReasoningControl = .default,
     /// Constrain the response to a schema. A null schema leaves the response free.
     output_schema: ?ir.OutputSchema = null,
@@ -38,9 +43,7 @@ pub const Options = struct {
     temperature: ?f64 = null,
     /// Nucleus sampling mass. A null value leaves the endpoint default.
     top_p: ?f64 = null,
-    /// One stable key per session. Only Responses reads it, and it routes a repeated prefix to one cache.
-    cache_key: []const u8 = "",
-    /// One stable id per session. The route decides which header carries it, and some routes carry none.
+    /// One stable id per session. The route picks the header that carries it; Responses also keys its cache by it.
     session_id: []const u8 = "",
     /// Whether the model may call a tool.
     tool_choice: ir.ToolChoice = .auto,
@@ -121,16 +124,9 @@ pub const Client = struct {
         return generateTextWithTransport(gpa, self.http.transportFor(), model, prompt, options);
     }
 
-    /// Use `gpa` for call storage until this function returns.
-    pub fn stream(
-        self: *Client,
-        gpa: std.mem.Allocator,
-        model: Model,
-        request: Request,
-        context: anytype,
-        comptime onEvent: fn (@TypeOf(context), event.StreamEvent) anyerror!void,
-    ) !void {
-        return streamWithTransport(gpa, self.http.transportFor(), model, request, null, context, onEvent);
+    /// Use `gpa` for call storage until the caller invokes `Response.deinit`.
+    pub fn open(self: *Client, gpa: std.mem.Allocator, model: Model, request: Request) !Response {
+        return openWithTransport(gpa, self.http.transportFor(), model, request, null);
     }
 };
 
@@ -145,10 +141,65 @@ pub fn generateTextWithTransport(gpa: std.mem.Allocator, route_transport: transp
 
 /// Use `gpa` for call storage until the caller invokes `Result.deinit`; a failure fills `diagnostics` when the caller passes one.
 pub fn generateWithTransport(gpa: std.mem.Allocator, route_transport: transport.Transport, model: Model, request: Request, diagnostics: ?*Diagnostics) !Result {
+    var response = try openWithTransport(gpa, route_transport, model, request, diagnostics);
+    defer response.deinit();
     var collector = Collector.init(gpa);
     errdefer collector.deinit();
-    try streamWithTransport(gpa, route_transport, model, request, diagnostics, &collector, Collector.onEvent);
+    // The attempt storage dies with the response, so a failure copies what the provider answered first.
+    errdefer if (diagnostics) |d| d.keep(response.info());
+    while (try response.next()) |value| try collector.onEvent(value);
     return collector.result();
+}
+
+/// One call in flight. It owns the prepared request, the attempt storage, the response body, and the stream.
+pub const Response = struct {
+    gpa: std.mem.Allocator,
+    /// The stream points into this state, so it has a fixed address.
+    state: *State,
+
+    const State = struct {
+        prepared: PreparedRequest,
+        attempt: std.heap.ArenaAllocator,
+        info: transport.AttemptInfo,
+        body: transport.ResponseBody,
+        stream: stream_mod.Stream,
+    };
+
+    /// Answer the next event, or null at the end. Event slices expire at the next call.
+    pub fn next(self: Response) !?event.StreamEvent {
+        return self.state.stream.next();
+    }
+
+    /// What the attempt learned: the retry hints, the request id, and a failed stream's error event.
+    pub fn info(self: Response) *const transport.AttemptInfo {
+        return &self.state.info;
+    }
+
+    pub fn deinit(self: *Response) void {
+        const state = self.state;
+        state.stream.deinit();
+        state.body.deinit();
+        state.attempt.deinit();
+        state.prepared.deinit();
+        self.gpa.destroy(state);
+        self.* = undefined;
+    }
+};
+
+/// Use `gpa` for call storage until `Response.deinit`; a failure to open fills `diagnostics` when the caller passes one.
+pub fn openWithTransport(gpa: std.mem.Allocator, route_transport: transport.Transport, model: Model, request: Request, diagnostics: ?*Diagnostics) !Response {
+    const state = try gpa.create(Response.State);
+    errdefer gpa.destroy(state);
+    state.prepared = try prepare(gpa, model, request);
+    errdefer state.prepared.deinit();
+    state.attempt = .init(gpa);
+    errdefer state.attempt.deinit();
+    state.info = .{};
+    // The attempt arena dies here, so a failure copies what the provider answered first.
+    errdefer if (diagnostics) |d| d.keep(&state.info);
+    state.body = try route_transport.open(state.attempt.allocator(), state.prepared.transport_request, &state.info);
+    state.stream = .init(gpa, state.attempt.allocator(), state.body, &state.info, state.prepared.protocol);
+    return .{ .gpa = gpa, .state = state };
 }
 
 /// Hold the provider answer of a failed call; the call copies it into `arena` only on a failure.
@@ -180,70 +231,36 @@ pub fn prepare(gpa: std.mem.Allocator, model: Model, request: Request) !Prepared
     };
 }
 
-/// Use `gpa` until return; event slices expire after each callback and this function closes the response body.
-pub fn streamWithTransport(
-    gpa: std.mem.Allocator,
-    route_transport: transport.Transport,
-    model: Model,
-    request: Request,
-    diagnostics: ?*Diagnostics,
-    context: anytype,
-    comptime onEvent: fn (@TypeOf(context), event.StreamEvent) anyerror!void,
-) !void {
-    var prepared = try prepare(gpa, model, request);
-    defer prepared.deinit();
-
-    // The attempt storage dies with this call, while the prepared request outlives every attempt.
-    var attempt: std.heap.ArenaAllocator = .init(gpa);
-    defer attempt.deinit();
-    var info: transport.AttemptInfo = .{};
-    // The attempt arena dies here, so a failure copies what the provider answered first.
-    errdefer if (diagnostics) |d| d.keep(&info);
-    const body = try route_transport.open(attempt.allocator(), prepared.transport_request, &info);
-    defer body.deinit();
-
-    try consume(gpa, attempt.allocator(), body, &info, prepared.protocol, context, onEvent);
-}
-
 fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
     const options = request.options;
+    const protocol = model.route.protocol;
+    const cache = route.CachePolicy.breakpoint(model.route.cache, protocol, model.caps.cache_breakpoint);
+    const model_limit: ?u32 = if (model.limits.max_output_tokens) |limit| std.math.cast(u32, limit) orelse std.math.maxInt(u32) else null;
     const value: ir.Request = .{
         .model = model.id,
+        .wire = switch (protocol) {
+            .anthropic_messages => .{ .anthropic_messages = .{ .cache = cache } },
+            .openai_chat => .{ .openai_chat = .{
+                .thinking_format = model.dialect.thinking_format,
+                .reasoning_replay = model.dialect.reasoning_replay,
+                .max_tokens_field = model.dialect.max_tokens_field,
+            } },
+            .openai_responses => .{ .openai_responses = .{
+                .dialect = model.route.responses_dialect,
+                .cache = cache,
+                .cache_key = options.session_id,
+            } },
+        },
         .system = request.system,
         .tools = request.tools,
-        .max_output_tokens = options.max_output_tokens,
+        .max_output_tokens = options.max_output_tokens orelse model_limit,
         .reasoning = options.reasoning,
-        .thinking_format = model.dialect.thinking_format,
-        .reasoning_replay = model.dialect.reasoning_replay,
-        .max_tokens_field = model.dialect.max_tokens_field,
-        .responses_dialect = model.route.responses_dialect,
-        .cache = route.CachePolicy.markerFor(model.route.cache, model.caps.cache_breakpoint),
-        .cache_key = options.cache_key,
         .output_schema = options.output_schema,
         .temperature = options.temperature,
         .top_p = options.top_p,
         .tool_choice = options.tool_choice,
     };
-    return adapter.serialize(arena, model.route.protocol, value, request.blocks);
-}
-
-/// Use `gpa` for scratch until return; the caller owns the body, `arena`, and `info`, which keeps an error event.
-pub fn consume(
-    gpa: std.mem.Allocator,
-    arena: std.mem.Allocator,
-    body: transport.ResponseBody,
-    info: *transport.AttemptInfo,
-    protocol: types.Protocol,
-    context: anytype,
-    comptime onEvent: fn (@TypeOf(context), event.StreamEvent) anyerror!void,
-) !void {
-    switch (protocol) {
-        inline else => |value| {
-            var reducer = adapter.Adapter(value).Reducer.init(gpa);
-            defer reducer.deinit();
-            try transport.stream(gpa, arena, body, info, &reducer, context, onEvent);
-        },
-    }
+    return request_wire.serialize(arena, value, request.blocks);
 }
 
 const Collector = struct {
@@ -432,6 +449,7 @@ fn testModel(protocol: types.Protocol) Model {
         .id = "test-model",
         .route = .{ .base_url = "https://example.test/v1", .protocol = protocol, .auth = .none },
         .credential = .none,
+        .limits = .{ .max_output_tokens = 64 },
     };
 }
 
@@ -452,7 +470,7 @@ test "generate dispatches every protocol through its serializer and reducer" {
     );
 
     inline for (.{
-        .{ types.Protocol.anthropic_messages, testing_transport.canned_reply, "Hello from the yuke mock provider.", 8 },
+        .{ types.Protocol.anthropic_messages, testing_transport.canned_reply, "Hello from the mock provider.", 8 },
         .{ types.Protocol.openai_chat, chat_reply, "Hello", 0 },
         .{ types.Protocol.openai_responses, responses_reply, "Hello", 1 },
     }) |case| {
@@ -475,33 +493,31 @@ test "generate rejects an empty request before transport I/O" {
     try std.testing.expectEqual(@as(usize, 0), lifecycle.deinit_count);
 }
 
-test "stream releases the response body once on success, a callback error, and a truncation" {
+test "a response releases its body once after a full read, an early stop, and a truncation" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    const Sink = struct {
-        fail: bool,
-        seen: usize = 0,
-        fn onEvent(self: *@This(), _: event.StreamEvent) !void {
-            if (self.fail) return error.CallbackRejected;
-            self.seen += 1;
-        }
-    };
-    for ([_]struct { name: []const u8, bytes: []const u8, fail: bool, want: ?anyerror }{
-        .{ .name = "success", .bytes = testing_transport.canned_reply, .fail = false, .want = null },
-        .{ .name = "callback error", .bytes = testing_transport.canned_reply, .fail = true, .want = error.CallbackRejected },
+    for ([_]struct { name: []const u8, bytes: []const u8, stop_early: bool, want: ?anyerror }{
+        .{ .name = "success", .bytes = testing_transport.canned_reply, .stop_early = false, .want = null },
+        .{ .name = "early stop", .bytes = testing_transport.canned_reply, .stop_early = true, .want = null },
         .{ .name = "truncation", .bytes = testing_transport.sseFrame(
             \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
-        ), .fail = false, .want = error.IncompleteStream },
+        ), .stop_early = false, .want = error.IncompleteStream },
     }) |case| {
         errdefer std.debug.print("case: {s}\n", .{case.name});
         var lifecycle = LifecycleTransport{ .bytes = case.bytes };
-        var sink: Sink = .{ .fail = case.fail };
-        const result = streamWithTransport(std.testing.allocator, lifecycle.transportFor(), testModel(.anthropic_messages), .{
+        var response = try openWithTransport(std.testing.allocator, lifecycle.transportFor(), testModel(.anthropic_messages), .{
             .blocks = &blocks,
             .options = .{ .max_output_tokens = 1 },
-        }, null, &sink, Sink.onEvent);
-        if (case.want) |want| try std.testing.expectError(want, result) else {
-            try result;
-            try std.testing.expect(sink.seen > 0);
+        }, null);
+        var seen: usize = 0;
+        const drained: anyerror!void = while (response.next()) |value| {
+            if (value == null) break;
+            seen += 1;
+            if (case.stop_early) break;
+        } else |err| err;
+        response.deinit();
+        if (case.want) |want| try std.testing.expectError(want, drained) else {
+            try drained;
+            try std.testing.expect(seen > 0);
         }
         try std.testing.expectEqual(@as(usize, 1), lifecycle.open_count);
         try std.testing.expectEqual(@as(usize, 1), lifecycle.deinit_count);
@@ -523,7 +539,7 @@ test "a failed call keeps the provider answer in the caller diagnostics" {
     try std.testing.expectEqualStrings(failed_event, diagnostics.info.body.?);
 }
 
-test "prepare and consume split request lifecycle" {
+test "prepare and a stream split the request lifecycle" {
     var canned = testing_transport.CannedTransport{ .bytes = testing_transport.canned_reply };
     var prepared = try prepare(std.testing.allocator, testModel(.anthropic_messages), .{
         .blocks = &.{.{ .role = .user, .value = .{ .text = "hello" } }},
@@ -540,14 +556,26 @@ test "prepare and consume split request lifecycle" {
     var info: transport.AttemptInfo = .{};
     const body = try canned.transport().open(attempt.allocator(), prepared.transport_request, &info);
     defer body.deinit();
+    var stream = stream_mod.Stream.init(std.testing.allocator, attempt.allocator(), body, &info, prepared.protocol);
+    defer stream.deinit();
     var event_count: usize = 0;
-    const Counter = struct {
-        fn onEvent(count: *usize, _: event.StreamEvent) !void {
-            count.* += 1;
-        }
-    };
-    try consume(std.testing.allocator, attempt.allocator(), body, &info, prepared.protocol, &event_count, Counter.onEvent);
+    while (try stream.next()) |_| event_count += 1;
     try std.testing.expect(event_count > 0);
+}
+
+test "a request without a limit takes the model limit, and an absent one leaves the endpoint default" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
+    var from_model = try prepare(std.testing.allocator, testModel(.anthropic_messages), .{ .blocks = &blocks });
+    defer from_model.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, from_model.transport_request.body, "\"max_tokens\":64") != null);
+    var bare = testModel(.openai_chat);
+    bare.limits = .{};
+    var omitted = try prepare(std.testing.allocator, bare, .{ .blocks = &blocks });
+    defer omitted.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, omitted.transport_request.body, "max_tokens") == null);
+    // Anthropic has no endpoint default, so a model without a limit needs one in the request.
+    bare.route.protocol = .anthropic_messages;
+    try std.testing.expectError(error.InvalidRequest, prepare(std.testing.allocator, bare, .{ .blocks = &blocks }));
 }
 
 test "a client names its user agent at init" {

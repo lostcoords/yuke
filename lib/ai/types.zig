@@ -34,9 +34,6 @@ pub const Modalities = struct {
     }
 };
 
-/// Which cache marker a request writes. A host that caches on its own needs none.
-pub const CacheMarker = enum { none, anthropic, openai };
-
 /// Where media bytes come from. A caller resolves its own storage before it serializes.
 pub const MediaSource = union(enum) {
     /// Raw bytes. The serializer encodes them, and the caller owns them through serialization.

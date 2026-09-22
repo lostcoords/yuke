@@ -49,6 +49,9 @@ fn codeOf(reason: ai.failure.Reason) proto.enums.RunErrorCode {
         .request_too_large, .context_overflow => .context_overflow,
         .malformed_selector, .unknown_provider, .unknown_model => .unknown_model,
         .server_error, .bad_status, .bad_url, .invalid_headers, .provider_failed => .provider,
+        .invalid_request, .unsupported_content, .header_conflict => .runtime,
+        .invalid_credential => .auth,
+        .canceled => .interrupted,
     };
 }
 

@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const types = @import("types.zig");
+const ir = @import("request/ir.zig");
 
 pub const Protocol = types.Protocol;
 
@@ -16,17 +17,14 @@ pub const CachePolicy = enum {
     anthropic_breakpoint,
     openai_breakpoint,
 
-    /// Report the marker for one route and model. Only a model that states it takes one gets one.
-    pub fn markerFor(self: ?CachePolicy, accepts_breakpoint: ?bool) types.CacheMarker {
-        return if (accepts_breakpoint == true) marker(self) else .none;
-    }
-
-    /// Report the marker a request writes. A new policy must answer here.
-    pub fn marker(self: ?CachePolicy) types.CacheMarker {
-        return switch (self orelse return .none) {
-            .unsupported, .automatic => .none,
-            .anthropic_breakpoint => .anthropic,
-            .openai_breakpoint => .openai,
+    /// Report whether a request on `protocol` writes a breakpoint. Only a model that states it takes one gets one.
+    pub fn breakpoint(self: ?CachePolicy, protocol: Protocol, accepts_breakpoint: ?bool) bool {
+        if (accepts_breakpoint != true) return false;
+        // A policy names the shape of one protocol, so a mismatched route writes nothing.
+        return switch (self orelse return false) {
+            .unsupported, .automatic => false,
+            .anthropic_breakpoint => protocol == .anthropic_messages,
+            .openai_breakpoint => protocol == .openai_responses,
         };
     }
 };
@@ -91,7 +89,7 @@ pub fn validHeaders(headers: []const Header) bool {
 }
 
 /// Select the Responses flavor an endpoint speaks. The route owns it, because it follows the host.
-pub const ResponsesDialect = @import("request/ir.zig").ResponsesDialect;
+pub const ResponsesDialect = ir.ResponsesDialect;
 
 /// Select the header that carries the session id. Each value names one header, so a second host can reuse it.
 pub const SessionHeader = enum {
@@ -218,7 +216,7 @@ pub fn requestHeaders(arena: std.mem.Allocator, p: *const Route, credential: Cre
     };
     if (headerConflict(generated, identity, p.headers)) return error.HeaderConflict;
     const session = if (session_id.len != 0) p.session_header.name() else null;
-    // The engine owns the session id, so a source that pins the header would send every session to one cache.
+    // The caller owns the session id, so a source that pins the header would send every session to one cache.
     if (session) |name| if (findHeader(identity, name) != null or findHeader(p.headers, name) != null) return error.HeaderConflict;
 
     // Every check ran, so the exact count is known and the arena keeps no grown buffer.
@@ -265,16 +263,19 @@ const testing = std.testing;
 
 test "only a model that states it takes a marker is marked" {
     const anthropic: ?CachePolicy = .anthropic_breakpoint;
-    try testing.expectEqual(types.CacheMarker.anthropic, CachePolicy.markerFor(anthropic, true));
+    try testing.expect(CachePolicy.breakpoint(anthropic, .anthropic_messages, true));
 
     // MiniMax M3 caches but refuses a marker, so an unknown capability must never write one.
-    try testing.expectEqual(types.CacheMarker.none, CachePolicy.markerFor(anthropic, null));
-    try testing.expectEqual(types.CacheMarker.none, CachePolicy.markerFor(anthropic, false));
+    try testing.expect(!CachePolicy.breakpoint(anthropic, .anthropic_messages, null));
+    try testing.expect(!CachePolicy.breakpoint(anthropic, .anthropic_messages, false));
 
     // A host that caches on its own takes no marker whatever the model says.
-    try testing.expectEqual(types.CacheMarker.none, CachePolicy.markerFor(.automatic, true));
-    try testing.expectEqual(types.CacheMarker.none, CachePolicy.markerFor(null, true));
-    try testing.expectEqual(types.CacheMarker.openai, CachePolicy.markerFor(.openai_breakpoint, true));
+    try testing.expect(!CachePolicy.breakpoint(.automatic, .anthropic_messages, true));
+    try testing.expect(!CachePolicy.breakpoint(null, .anthropic_messages, true));
+    try testing.expect(CachePolicy.breakpoint(.openai_breakpoint, .openai_responses, true));
+    // A policy for another protocol's shape writes nothing.
+    try testing.expect(!CachePolicy.breakpoint(.anthropic_breakpoint, .openai_responses, true));
+    try testing.expect(!CachePolicy.breakpoint(.openai_breakpoint, .openai_chat, true));
 }
 
 test "header validation rejects what std.http asserts on" {

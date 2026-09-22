@@ -3,23 +3,33 @@
 const std = @import("std");
 const call = @import("call.zig");
 const types = @import("types.zig");
+const stream = @import("stream.zig");
 
 pub const Protocol = types.Protocol;
 pub const FinishReason = types.FinishReason;
 pub const Usage = types.Usage;
 pub const Modality = types.Modality;
 pub const Modalities = types.Modalities;
+pub const MediaSource = types.MediaSource;
 pub const ModelIdentity = types.ModelIdentity;
 pub const limits = types.limits;
 
+pub const Client = call.Client;
 pub const Model = call.Model;
 pub const Request = call.Request;
+pub const Options = call.Options;
+pub const Result = call.Result;
+pub const Content = call.Content;
 pub const PreparedRequest = call.PreparedRequest;
 pub const prepare = call.prepare;
-pub const consume = call.consume;
 pub const Diagnostics = call.Diagnostics;
 pub const generateWithTransport = call.generateWithTransport;
+pub const generateTextWithTransport = call.generateTextWithTransport;
+pub const Response = call.Response;
+pub const openWithTransport = call.openWithTransport;
+pub const Stream = stream.Stream;
 
+pub const Route = route.Route;
 pub const Credential = route.Credential;
 pub const Header = route.Header;
 

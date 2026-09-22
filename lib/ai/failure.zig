@@ -3,6 +3,7 @@
 const std = @import("std");
 const http = @import("transport/http.zig");
 const answer = @import("answer.zig");
+const route = @import("route.zig");
 
 /// Build the bounded detail line of one provider answer.
 pub const detailText = answer.detailText;
@@ -44,6 +45,11 @@ pub const Reason = enum {
     malformed_selector,
     unknown_provider,
     unknown_model,
+    invalid_request,
+    unsupported_content,
+    invalid_credential,
+    header_conflict,
+    canceled,
     unknown,
 
     /// One sentence for the caller. It names no internal error and no credential.
@@ -74,6 +80,11 @@ pub const Reason = enum {
             .malformed_selector => "the model selector is malformed",
             .unknown_provider => "the catalog holds no provider with that name",
             .unknown_model => "the catalog holds no model with that name",
+            .invalid_request => "the request is not valid for the library",
+            .unsupported_content => "the route cannot carry this attachment",
+            .invalid_credential => "the credential is not a valid header value",
+            .header_conflict => "a configured header collides with a header the library sets",
+            .canceled => "the caller canceled the request",
             .unknown => "an internal error stopped the request",
         };
     }
@@ -101,7 +112,7 @@ pub fn classify(err: anyerror) Failure {
 
         error.OutOfMemory => .{ .class = .permanent, .reason = .out_of_memory },
         error.RequestTooLarge => .{ .class = .permanent, .reason = .request_too_large },
-        // `catalog.resolve` raises these, so the library must be able to describe them.
+        // `catalog.lookup` raises these, so the library must be able to describe them.
         error.MalformedSelector => .{ .class = .permanent, .reason = .malformed_selector },
         error.UnknownProvider => .{ .class = .permanent, .reason = .unknown_provider },
         error.UnknownModel => .{ .class = .permanent, .reason = .unknown_model },
@@ -117,6 +128,16 @@ pub fn classify(err: anyerror) Failure {
         http.Error.InvalidHeaders => .{ .class = .permanent, .reason = .invalid_headers },
         http.Error.RedirectRefused => .{ .class = .permanent, .reason = .redirect_refused },
         http.Error.CertificateBundleLoadFailure => .{ .class = .permanent, .reason = .trust_store_failed },
+        // These are caller mistakes, so a repeat of the same request fails the same way.
+        error.InvalidRequest,
+        error.EmptyRequest,
+        error.UnsupportedDeferredTools,
+        error.UnsupportedLoadedTools,
+        => .{ .class = .permanent, .reason = .invalid_request },
+        error.UnsupportedContent => .{ .class = .permanent, .reason = .unsupported_content },
+        route.Error.InvalidCredential => .{ .class = .permanent, .reason = .invalid_credential },
+        route.Error.HeaderConflict => .{ .class = .permanent, .reason = .header_conflict },
+        error.Canceled => .{ .class = .permanent, .reason = .canceled },
         // A parse error never repeats. Keep it apart from a truncation.
         http.Error.MalformedResponse,
         error.Protocol,
@@ -146,10 +167,11 @@ test "every transport class names its exact connection reason, never a provider 
     }
 }
 
-test "every transport error names a reason, so none reaches a caller as unknown" {
-    // The transport owns a closed set. An unlisted member would read as a bare provider failure.
-    inline for (@typeInfo(http.Error).error_set.?) |member| {
-        const got = classify(@field(http.Error, member.name));
+test "every transport and route error names a reason, so none reaches a caller as unknown" {
+    // These are closed sets. An unlisted member would read as a bare internal failure.
+    const Named = http.Error || route.Error;
+    inline for (@typeInfo(Named).error_set.?) |member| {
+        const got = classify(@field(Named, member.name));
         try testing.expect(got.reason != .unknown);
     }
 }

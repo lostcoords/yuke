@@ -66,7 +66,6 @@ pub fn generateWith(engine: *Engine, arena: std.mem.Allocator, cancel: *Cancel, 
             .reasoning = reasoning,
             .tool_choice = .none,
             // A call repeats the turn prefix, so it stays on the cache and the upstream of its session.
-            .cache_key = request.session_id,
             .session_id = request.session_id,
         },
     }, diagnostics);
@@ -130,7 +129,7 @@ test "a call answers the model text" {
     defer f.deinit();
     var cancel: Cancel = .{};
     const answer = try f.call(&cancel, try mockMatch(f.arena.allocator(), .{ .literal = "secret" }));
-    try testing.expectEqualStrings("Hello from the yuke mock provider.", answer.text);
+    try testing.expectEqualStrings("Hello from the mock provider.", answer.text);
 }
 
 test "a cancel that landed before the call stops it before any request" {
@@ -175,7 +174,7 @@ test "a call reasons at the session level, and a level the model lacks never rea
         .max_output_tokens = 512,
         .reasoning = "low",
     });
-    try testing.expectEqualStrings("Hello from the yuke mock provider.", answer.text);
+    try testing.expectEqualStrings("Hello from the mock provider.", answer.text);
 }
 
 test "a call carries the session id in the header the host names" {

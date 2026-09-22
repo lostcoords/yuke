@@ -162,9 +162,8 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), added: *
         .tool => |t| {
             const call_id = t.call_id orelse return error.InvalidTranscript;
             var result = try terminalToolResult(gpa, call_id, t.state, options, images);
-            result.search = std.mem.eql(u8, t.name, ai.ir.search_tool_name);
             if (t.state == .completed) if (t.state.completed.tools_added) |definitions| {
-                result.tools_loaded = try loadDefinitions(gpa, added, definitions, options);
+                result.loaded = try loadDefinitions(gpa, added, definitions, options);
             };
             try blocks.append(gpa, .{ .role = .user, .value = .{ .tool_result = result } });
         },
@@ -172,25 +171,18 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), added: *
     };
 }
 
-/// Declare each loaded definition once. A declared one needs no copy; a missing one is kept as the search found it.
-fn loadDefinitions(gpa: std.mem.Allocator, added: *std.ArrayList(ai.ir.Tool), definitions: []const proto.tool.ToolDefinition, options: Options) Error![]const ai.ir.Tool {
-    var loaded: std.ArrayList(ai.ir.Tool) = .empty;
+/// Declare each loaded definition once, and name the deferred ones. A missing one is declared as the search found it.
+fn loadDefinitions(gpa: std.mem.Allocator, added: *std.ArrayList(ai.ir.Tool), definitions: []const proto.tool.ToolDefinition, options: Options) Error![]const []const u8 {
+    var loaded: std.ArrayList([]const u8) = .empty;
     errdefer loaded.deinit(gpa);
     for (definitions) |definition| {
-        const tool: ai.ir.Tool = .{ .name = definition.name, .description = definition.description, .input_schema = definition.input_schema, .defer_loading = options.native };
+        const known = ai.ir.declaredTool(options.tools, definition.name) orelse ai.ir.declaredTool(added.items, definition.name);
+        if (known == null) try added.append(gpa, .{ .name = definition.name, .description = definition.description, .input_schema = definition.input_schema, .defer_loading = options.native });
         // An eager declaration is in the context already, so only a deferred or missing one loads.
-        const deferred = for (options.tools) |declared_tool| {
-            if (std.mem.eql(u8, declared_tool.name, definition.name)) break declared_tool.defer_loading;
-        } else true;
-        if (!holds(options.tools, definition.name) and !holds(added.items, definition.name)) try added.append(gpa, tool);
-        if (options.native and deferred) try loaded.append(gpa, tool);
+        const deferred = if (known) |tool| tool.defer_loading else options.native;
+        if (options.native and deferred) try loaded.append(gpa, definition.name);
     }
     return loaded.toOwnedSlice(gpa);
-}
-
-fn holds(tools: []const ai.ir.Tool, name: []const u8) bool {
-    for (tools) |tool| if (std.mem.eql(u8, tool.name, name)) return true;
-    return false;
 }
 
 fn provenanceMatches(actual: ?proto.message.TurnProvenance, target: ai.ModelIdentity) bool {
@@ -405,7 +397,7 @@ test "the request shares an image byte budget and reads only the newest images" 
     try testing.expectEqual(@as(usize, 3), result.media.len);
     try testing.expectEqualStrings("images\n" ++ image_budget_note ++ "\n" ++ image_budget_note ++ "\n" ++ image_budget_note ++ "\n" ++ image_budget_note, result.content);
     try testing.expect(built[4].value == .media);
-    try ir.validate(a, .{ .model = "vision", .max_output_tokens = 8 }, built);
+    try ir.validate(a, .{ .model = "vision", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, built);
 }
 
 const SpyLookup = struct {
@@ -590,18 +582,16 @@ test "a loaded definition loads in place on a native route and adds eagerly else
         .{ .name = "mcp_read", .description = "Read.", .input_schema = "{}", .defer_loading = true },
     };
     const anthropic = try build(a, &messages, .{ .tools = &native, .native = true });
-    const first = anthropic.blocks[2].value.tool_result.tools_loaded;
+    const first = anthropic.blocks[2].value.tool_result.loaded;
     try testing.expectEqual(@as(usize, 2), first.len);
-    try testing.expectEqualStrings("mcp_read", first[0].name);
-    try testing.expectEqualStrings("mcp_gone", first[1].name);
-    try testing.expect(first[1].defer_loading);
+    try testing.expectEqualStrings("mcp_read", first[0]);
+    try testing.expectEqualStrings("mcp_gone", first[1]);
     // An eager declaration is in the context already, so it does not load again.
     var eager = native;
     eager[1].defer_loading = false;
     const listed = try build(a, &messages, .{ .tools = &eager, .native = true });
-    try testing.expectEqual(@as(usize, 1), listed.blocks[2].value.tool_result.tools_loaded.len);
-    try testing.expectEqualStrings("mcp_gone", listed.blocks[3].value.tool_result.tools_loaded[0].name);
-    try testing.expect(listed.blocks[3].value.tool_result.search);
+    try testing.expectEqual(@as(usize, 1), listed.blocks[2].value.tool_result.loaded.len);
+    try testing.expectEqualStrings("mcp_gone", listed.blocks[3].value.tool_result.loaded[0]);
     // The stale definition is declared once and stays deferred.
     try testing.expectEqual(@as(usize, 1), anthropic.added.len);
     try testing.expectEqualStrings("mcp_gone", anthropic.added[0].name);
@@ -612,7 +602,7 @@ test "a loaded definition loads in place on a native route and adds eagerly else
 
     // A route that omits deferred tools declares both found tools eagerly from the search on.
     const omitted = try build(a, &messages, .{ .tools = native[0..1] });
-    try testing.expectEqual(@as(usize, 0), omitted.blocks[2].value.tool_result.tools_loaded.len);
+    try testing.expectEqual(@as(usize, 0), omitted.blocks[2].value.tool_result.loaded.len);
     try testing.expectEqual(@as(usize, 2), omitted.added.len);
     for (omitted.added) |tool| try testing.expect(!tool.defer_loading);
     // The request set alone stays as it is, with no copy.

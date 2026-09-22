@@ -7,7 +7,7 @@ const answer = @import("../answer.zig");
 
 const Allocator = std.mem.Allocator;
 
-/// Define stable classes for provider answers and transport failures; the run task decides the outcome.
+/// Define stable classes for provider answers and transport failures; the caller decides the outcome.
 pub const Error = answer.Error || error{
     IdleTimeout, // The read stalled past the deadline. The request may already be held.
     RedirectRefused, // The client must not follow a 3xx response.
@@ -40,8 +40,11 @@ pub const HttpTransport = struct {
 
     /// Move the clock `std` pins at its first handshake, so a certificate that rotates mid-process still verifies.
     fn refreshCertificateClock(self: *HttpTransport) void {
-        // A concurrent first load can write a clock one rescan older, far under the one-second certificate grain.
-        if (self.client.now != null) self.client.now = std.Io.Clock.real.now(self.client.io);
+        const io = self.client.io;
+        // `std` writes the clock under this lock, so this write takes it too.
+        self.client.ca_bundle_lock.lockUncancelable(io);
+        defer self.client.ca_bundle_lock.unlock(io);
+        if (self.client.now != null) self.client.now = std.Io.Clock.real.now(io);
     }
 
     pub fn transportFor(self: *HttpTransport) transport.Transport {
@@ -80,26 +83,9 @@ pub const HttpTransport = struct {
             .reader = undefined,
         };
 
-        hb.request = self.client.request(.POST, uri, .{
-            .redirect_behavior = .not_allowed, // Never resend the key to another origin.
-            .keep_alive = false, // The client sends one request. A mid-stream connection never returns to the pool.
-            .headers = .{
-                .content_type = .{ .override = "application/json" },
-                .accept_encoding = .omit,
-                .user_agent = .{ .override = self.user_agent },
-            },
-            .extra_headers = extra[0..extra_len],
-        }) catch |err| return mapExchange(null, err);
-        // A failed send or read leaves a partial exchange. Close the connection so the pool never reuses it.
-        errdefer {
-            if (hb.request.connection) |c| c.closing = true;
-            hb.request.deinit();
-        }
-
-        // The provider may hold the request from this point. A later transport fault is ambiguous.
-        info.delivery = .possibly_sent;
-        hb.request.sendBodyComplete(request.body) catch |err| return mapExchange(hb.request.connection, err);
-        hb.response = hb.request.receiveHead(&.{}) catch |err| return mapExchange(hb.request.connection, err);
+        // Connect, send, and the head wait share the idle deadline, so a silent peer never holds the call.
+        try hb.bounded(HttpBody.exchangeHead, .{ &self.client, uri, extra[0..extra_len], request.body, self.user_agent, info }, HttpBody.abandon);
+        errdefer hb.abandon();
         try readHeaders(hb.response.head, arena, info); // The reader below invalidates these slices.
         if (hb.response.head.status != .ok) {
             const status: u16 = @intFromEnum(hb.response.head.status);
@@ -130,6 +116,12 @@ const HttpBody = struct {
         return self.peekWithIdleTimeout();
     }
 
+    /// Close the connection so the pool never reuses a partial exchange, then release the request.
+    fn abandon(self: *HttpBody) void {
+        if (self.request.connection) |c| c.closing = true;
+        self.request.deinit();
+    }
+
     /// Drop what the parser read. The reader keeps the peeked bytes until the next fill.
     fn toss(ctx: *anyopaque, count: usize) void {
         const self: *HttpBody = @ptrCast(@alignCast(ctx));
@@ -137,19 +129,29 @@ const HttpBody = struct {
         self.reader.toss(count);
     }
 
-    /// Bound each fill with the idle deadline. The child fill separates a cancel from a timeout.
+    /// Bound each fill with the idle deadline.
     fn peekWithIdleTimeout(self: *HttpBody) anyerror![]const u8 {
         // The reader already holds bytes, so this call needs no fill and no child task.
         if (self.reader.bufferedLen() > 0) return self.reader.buffered();
-        switch (self.idle_timeout) {
-            .none => return self.peekRaw(),
-            else => {},
-        }
+        return self.bounded(peekRaw, .{}, null);
+    }
 
+    /// Run `leg` in a child task under the idle deadline. The child separates a cancel from a timeout.
+    fn bounded(self: *HttpBody, comptime leg: anytype, args: anytype, comptime late: ?fn (*HttpBody) void) anyerror!Payload(leg) {
+        if (self.idle_timeout == .none) return @call(.auto, leg, .{self} ++ args);
+        const Leg = struct {
+            fn run(body: *HttpBody, done: *std.Io.Event, leg_args: @TypeOf(args)) anyerror!Payload(leg) {
+                defer done.set(body.io);
+                return @call(.auto, leg, .{body} ++ leg_args);
+            }
+        };
         var done: std.Io.Event = .unset;
-        var future = try self.io.concurrent(peekLeg, .{ self, &done });
+        var future = try self.io.concurrent(Leg.run, .{ self, &done, args });
         done.waitTimeout(self.io, self.idle_timeout) catch |err| {
-            _ = future.cancel(self.io) catch 0; // Cancel joins the child before this function returns.
+            // Cancel joins the child. A leg that finished anyway releases what it made.
+            if (future.cancel(self.io)) |_| {
+                if (late) |release| release(self);
+            } else |_| {}
             return switch (err) {
                 error.Timeout => Error.IdleTimeout,
                 else => err,
@@ -158,10 +160,27 @@ const HttpBody = struct {
         return future.await(self.io);
     }
 
-    /// Fill in a child task. Set `done` after the fill.
-    fn peekLeg(self: *HttpBody, done: *std.Io.Event) anyerror![]const u8 {
-        defer done.set(self.io);
-        return self.peekRaw();
+    fn Payload(comptime leg: anytype) type {
+        return @typeInfo(@typeInfo(@TypeOf(leg)).@"fn".return_type.?).error_union.payload;
+    }
+
+    /// Open the connection, send the body, and read the head. A failure releases the request.
+    fn exchangeHead(self: *HttpBody, client: *std.http.Client, uri: std.Uri, headers: []const std.http.Header, body: []u8, user_agent: []const u8, info: *transport.AttemptInfo) anyerror!void {
+        self.request = client.request(.POST, uri, .{
+            .redirect_behavior = .not_allowed, // Never resend the key to another origin.
+            .keep_alive = false, // The client sends one request. A mid-stream connection never returns to the pool.
+            .headers = .{
+                .content_type = .{ .override = "application/json" },
+                .accept_encoding = .omit,
+                .user_agent = .{ .override = user_agent },
+            },
+            .extra_headers = headers,
+        }) catch |err| return mapExchange(null, err);
+        errdefer self.abandon();
+        // The provider may hold the request from this point. A later transport fault is ambiguous.
+        info.delivery = .possibly_sent;
+        self.request.sendBodyComplete(body) catch |err| return mapExchange(self.request.connection, err);
+        self.response = self.request.receiveHead(&.{}) catch |err| return mapExchange(self.request.connection, err);
     }
 
     /// Return an empty slice only at the end of the stream, as ResponseBody requires.
@@ -300,7 +319,7 @@ fn readErrorBody(hb: *HttpBody, arena: Allocator) error{ OutOfMemory, Canceled }
 
 const testing = std.testing;
 
-const test_user_agent = "yuke/0.0.0-test";
+const test_user_agent = "ai-test/0";
 
 const canned_sse =
     "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n" ++
@@ -314,6 +333,7 @@ const Server = struct {
     location: ?[]const u8 = null, // A redirect target. The client must never follow it.
     request_id: ?[]const u8 = null, // Sent as `request-id` when set.
     stall: bool = false, // Send the body, then wait on `release`. Keep the stream open.
+    silent: bool = false, // Read the request, then wait on `release` and send no head.
     release: ?*std.Io.Event = null,
     err: ?anyerror = null,
     user_agent: ?[]const u8 = null, // The last User-Agent value the client sent, stored in `user_agent_buf`.
@@ -343,6 +363,10 @@ fn serveOnceInner(s: *Server) !void {
         @memcpy(s.user_agent_buf[0..h.value.len], h.value);
         s.user_agent_count += 1;
     };
+    if (s.silent) {
+        if (s.release) |r| r.wait(s.io) catch {};
+        return;
+    }
 
     var header_storage: [3]std.http.Header = .{
         .{ .name = "content-type", .value = "text/event-stream" },
@@ -502,6 +526,16 @@ test "a stalled stream returns an idle timeout" {
     var release: std.Io.Event = .unset;
     // The server sends the head, then holds the stream open with no body until the client releases it.
     var srv: Server = .{ .body = "", .status = .ok, .stall = true, .release = &release };
+    var out: ClientOut = .{ .idle = std.Io.Duration.fromMilliseconds(50), .release = &release };
+    defer out.bytes.deinit(testing.allocator);
+    try exchange(&srv, &out);
+
+    try testing.expectEqual(@as(?anyerror, Error.IdleTimeout), out.err);
+}
+
+test "a peer that never sends a head returns an idle timeout" {
+    var release: std.Io.Event = .unset;
+    var srv: Server = .{ .body = "", .status = .ok, .silent = true, .release = &release };
     var out: ClientOut = .{ .idle = std.Io.Duration.fromMilliseconds(50), .release = &release };
     defer out.bytes.deinit(testing.allocator);
     try exchange(&srv, &out);

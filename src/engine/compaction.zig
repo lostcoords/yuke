@@ -413,7 +413,7 @@ test "a compaction commits one checkpoint and ends its run" {
     const checkpoint = page.messages[page.messages.len - 1].compaction;
     try testing.expectEqual(@as(?u64, 3), checkpoint.first_kept_id);
     try testing.expectEqual(proto.enums.CompactionReason.manual, checkpoint.reason);
-    try testing.expect(std.mem.indexOf(u8, checkpoint.summary, "Hello from the yuke mock provider.") != null);
+    try testing.expect(std.mem.indexOf(u8, checkpoint.summary, "Hello from the mock provider.") != null);
     try testing.expect(checkpoint.tokens_after < checkpoint.tokens_before);
     // The run left no open marker, so a restart repairs nothing.
     const snapshot = (try database.session.snapshot(&f.db, a, TaskFixture.sid)).?;
@@ -728,7 +728,7 @@ test "an incomplete or empty summary leaves the checkpoint unchanged" {
         try seedMessage(&f.db, a, TaskFixture.sid, 7, .assistant, 70_000);
         const changed = try std.mem.replaceOwned(u8, a, ai.testing.canned_reply, "end_turn", stop);
         f.resources.transport.bytes = if (std.mem.eql(u8, stop, "end_turn"))
-            try std.mem.replaceOwned(u8, a, changed, "Hello from the yuke mock provider.", "   ")
+            try std.mem.replaceOwned(u8, a, changed, "Hello from the mock provider.", "   ")
         else
             changed;
         const outcome = try f.run(.manual);
@@ -804,7 +804,7 @@ test "a summary that grows the context does not replace the checkpoint" {
     defer arena.deinit();
     const a = arena.allocator();
     try seedCompactableHistory(&f.db, a);
-    f.resources.transport.bytes = try std.mem.replaceOwned(u8, a, ai.testing.canned_reply, "Hello from the yuke mock provider.", "x" ** 6000);
+    f.resources.transport.bytes = try std.mem.replaceOwned(u8, a, ai.testing.canned_reply, "Hello from the mock provider.", "x" ** 6000);
     const outcome = try f.run(.manual);
     try testing.expect(outcome == .failed);
     try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, outcome.failed.code);
@@ -888,7 +888,7 @@ test "repeated compaction merges the prior summary and charges only the active c
     // The merge call carries the wrapped earlier summary and the merge instruction the stub answered.
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "<context_summary>") != null);
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "Merge the context summary") != null);
-    try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "Hello from the yuke mock provider.") != null);
+    try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "Hello from the mock provider.") != null);
     const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, .{ .input_ceiling = 100_000 });
     try testing.expectEqual(@as(usize, 3), projected.messages.len);
     try testing.expectEqual(@as(u64, 6), projected.messages[1].id());
@@ -926,7 +926,7 @@ test "a smaller summary that still exceeds the request budget does not commit" {
     try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 30_000);
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 7000);
-    const reply = try std.mem.replaceOwned(u8, a, ai.testing.canned_reply, "Hello from the yuke mock provider.", "x" ** 1800);
+    const reply = try std.mem.replaceOwned(u8, a, ai.testing.canned_reply, "Hello from the mock provider.", "x" ** 1800);
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{reply} };
     f.engine.deps.route_transport = capture.transport();
     const outcome = try f.run(.manual);

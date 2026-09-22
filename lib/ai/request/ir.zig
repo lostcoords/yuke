@@ -51,10 +51,8 @@ pub const Block = struct {
         is_error: bool,
         /// Images beside the text. Each protocol places them where its result shape allows.
         media: []const Media = &.{},
-        /// The deferred definitions this result loads. Anthropic references them by name; Responses answers its search with them.
-        tools_loaded: []const Tool = &.{},
-        /// True when this result answers the search tool. Responses replays it as the native search pair.
-        search: bool = false,
+        /// The declared tools this result loads, by name. Anthropic references each one; Responses answers its search with the declarations.
+        loaded: []const []const u8 = &.{},
     };
 };
 
@@ -66,10 +64,16 @@ pub fn modalityOf(mime: []const u8) types.Modality {
     return .pdf;
 }
 
-/// A tool definition for the provider. `input_schema` holds raw JSON Schema text.
 /// The client search tool. A route with native client search declares the tool of this name natively.
 pub const search_tool_name = "tool_search";
 
+/// Find the declaration of `name`, or null.
+pub fn declaredTool(tools: []const Tool, name: []const u8) ?*const Tool {
+    for (tools) |*tool| if (std.mem.eql(u8, tool.name, name)) return tool;
+    return null;
+}
+
+/// A tool definition for the provider. `input_schema` holds raw JSON Schema text.
 pub const Tool = struct {
     name: []const u8,
     description: []const u8,
@@ -128,25 +132,43 @@ pub const ReasoningControl = union(enum) {
     effort: Effort,
 };
 
+/// The wire facts of one protocol. Its tag selects the serializer; the model and the route fill it.
+pub const Wire = union(types.Protocol) {
+    anthropic_messages: Anthropic,
+    openai_chat: Chat,
+    openai_responses: Responses,
+
+    pub const Anthropic = struct {
+        /// Write the breakpoints the route cache policy asks for.
+        cache: bool = false,
+    };
+
+    pub const Chat = struct {
+        thinking_format: ThinkingFormat = .none,
+        reasoning_replay: ReasoningReplay = .none,
+        /// A compatible host keeps the original member.
+        max_tokens_field: MaxTokensField = .max_tokens,
+    };
+
+    pub const Responses = struct {
+        /// The bound credential selects it, not the model.
+        dialect: ResponsesDialect = .standard,
+        /// Write the breakpoint the route cache policy asks for.
+        cache: bool = false,
+        /// One stable key per session routes a repeated prefix to one cache.
+        cache_key: []const u8 = "",
+    };
+};
+
 /// Provider request settings separate from the input blocks.
 pub const Request = struct {
     model: []const u8,
+    wire: Wire,
     system: []const u8 = "",
     tools: []const Tool = &.{},
-    max_output_tokens: u32,
+    /// A null limit leaves the endpoint default; Anthropic has none, so it needs a value.
+    max_output_tokens: ?u32 = null,
     reasoning: ReasoningControl = .default,
-    /// Only OpenAI-chat reads this field.
-    thinking_format: ThinkingFormat = .none,
-    /// Only OpenAI-chat reads this field.
-    reasoning_replay: ReasoningReplay = .none,
-    /// Only OpenAI-chat reads this field. A compatible host keeps the original member.
-    max_tokens_field: MaxTokensField = .max_tokens,
-    /// Only Responses reads this field. The bound credential selects it, not the model.
-    responses_dialect: ResponsesDialect = .standard,
-    /// The marker this request writes. The route cache policy selects it.
-    cache: types.CacheMarker = .none,
-    /// Only Responses reads this field. One stable key per session routes a repeated prefix to one cache.
-    cache_key: []const u8 = "",
     /// Sampling temperature. A null value leaves the endpoint default, which every host defines.
     temperature: ?f64 = null,
     /// Nucleus sampling mass. Anthropic asks that a request set this or `temperature`, not both.
@@ -164,7 +186,12 @@ pub const ToolChoice = enum { auto, none };
 pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Block) !void {
     if (request.model.len == 0 or request.model.len > types.limits.max_string_bytes) return error.InvalidRequest;
     if (request.system.len > types.limits.max_string_bytes) return error.InvalidRequest;
-    if (request.cache_key.len > types.limits.max_cache_key_bytes or !stringValid(request.cache_key)) return error.InvalidRequest;
+    switch (request.wire) {
+        // Anthropic has no default output limit.
+        .anthropic_messages => if (request.max_output_tokens == null) return error.InvalidRequest,
+        .openai_chat => {},
+        .openai_responses => |wire| if (wire.cache_key.len > types.limits.max_cache_key_bytes or !stringValid(wire.cache_key)) return error.InvalidRequest,
+    }
     if (request.max_output_tokens == 0) return error.InvalidRequest;
     if (blocks.len == 0 or blocks.len > types.limits.max_blocks) return error.InvalidRequest;
     if (request.tools.len > types.limits.max_blocks) return error.InvalidRequest;
@@ -172,12 +199,14 @@ pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Bloc
     // A saturating total needs no overflow branch, because the cap rejects the saturated value.
     var total = request.model.len +| request.system.len;
     var deferred: usize = 0;
+    var searchable = false;
     for (request.tools) |tool| {
         deferred += @intFromBool(tool.defer_loading);
+        searchable = searchable or (!tool.defer_loading and std.mem.eql(u8, tool.name, search_tool_name));
         try validateTool(arena, tool, &total);
     }
-    // A provider refuses a request whose tools all defer, because nothing could search for them.
-    if (deferred != 0 and deferred == request.tools.len) return error.InvalidRequest;
+    // A deferred tool is reachable only through an eager search tool.
+    if (deferred != 0 and !searchable) return error.InvalidRequest;
     // A non-finite value serializes to text no JSON parser accepts.
     if (request.temperature) |value| if (!std.math.isFinite(value) or value < 0) return error.InvalidRequest;
     if (request.top_p) |value| if (!std.math.isFinite(value) or value < 0 or value > 1) return error.InvalidRequest;
@@ -190,13 +219,10 @@ pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Bloc
         total +|= output.name.len +| output.schema.len;
     }
     for (blocks) |block| {
-        if (block.value == .tool_result) for (block.value.tool_result.tools_loaded) |loaded| {
-            try validateTool(arena, loaded, &total);
-            // A loaded definition must be declared too, or an Anthropic reference is stale.
-            const declared = for (request.tools) |tool| {
-                if (std.mem.eql(u8, tool.name, loaded.name)) break true;
-            } else false;
-            if (!declared) return error.InvalidRequest;
+        if (block.value == .tool_result) for (block.value.tool_result.loaded) |name| {
+            // A loaded tool must be declared, or an Anthropic reference is stale.
+            if (declaredTool(request.tools, name) == null) return error.InvalidRequest;
+            total +|= name.len;
         };
         try validateBlock(arena, block);
         total +|= blockBytes(block);
@@ -287,7 +313,7 @@ test "request validation rejects role mismatches and malformed raw JSON" {
     const testing = std.testing;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const base: Request = .{ .model = "m", .max_output_tokens = 1 };
+    const base: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1 };
 
     const bad_role = [_]Block{.{ .role = .user, .value = .{ .reasoning = .{ .text = "why", .signature = "sig" } } }};
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_role));
@@ -320,15 +346,15 @@ test "a loaded definition must be declared and valid, and one tool must stay eag
         .{ .name = search_tool_name, .description = "Find a tool.", .input_schema = "{}" },
         .{ .name = "mcp_read", .description = "Read.", .input_schema = "{}", .defer_loading = true },
     };
-    const request: Request = .{ .model = "m", .max_output_tokens = 1, .tools = &tools };
-    const found = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "found", .is_error = false, .tools_loaded = tools[1..] } } }};
+    const request: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1, .tools = &tools };
+    const found = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "found", .is_error = false, .loaded = &.{"mcp_read"} } } }};
     try validate(arena.allocator(), request, &found);
-    const gone = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "found", .is_error = false, .tools_loaded = &.{.{ .name = "mcp_gone", .description = "Gone.", .input_schema = "{}" }} } } }};
+    const gone = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "found", .is_error = false, .loaded = &.{"mcp_gone"} } } }};
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), request, &gone));
-    const broken = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "found", .is_error = false, .tools_loaded = &.{.{ .name = "mcp_read", .description = "Read.", .input_schema = "[]" }} } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), request, &broken));
-    const all_deferred: Request = .{ .model = "m", .max_output_tokens = 1, .tools = tools[1..] };
+    const all_deferred: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1, .tools = tools[1..] };
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), all_deferred, &found));
+    const unsearchable = [_]Tool{ .{ .name = "read", .description = "Read.", .input_schema = "{}" }, tools[1] };
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1, .tools = &unsearchable }, &found));
 }
 
 test "request validation enforces count, size, and token boundaries" {
@@ -336,7 +362,7 @@ test "request validation enforces count, size, and token boundaries" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const block = [_]Block{.{ .role = .user, .value = .{ .text = "hi" } }};
-    const base: Request = .{ .model = "m", .max_output_tokens = 1 };
+    const base: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1 };
 
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &.{}));
 
@@ -351,11 +377,18 @@ test "request validation enforces count, size, and token boundaries" {
 
     // The host refuses a key over the cap, so a caller learns it here and not from a 400.
     var long_key = base;
-    long_key.cache_key = "k" ** (types.limits.max_cache_key_bytes + 1);
+    long_key.wire = .{ .openai_responses = .{ .cache_key = "k" ** (types.limits.max_cache_key_bytes + 1) } };
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), long_key, &block));
     var full_key = base;
-    full_key.cache_key = "k" ** types.limits.max_cache_key_bytes;
+    full_key.wire = .{ .openai_responses = .{ .cache_key = "k" ** types.limits.max_cache_key_bytes } };
     try validate(arena.allocator(), full_key, &block);
+
+    // Anthropic has no default output limit, so its request names one; the OpenAI ones may omit it.
+    var unlimited = base;
+    unlimited.max_output_tokens = null;
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), unlimited, &block));
+    unlimited.wire = .{ .openai_chat = .{} };
+    try validate(arena.allocator(), unlimited, &block);
 
     var too_many_blocks: [types.limits.max_blocks + 1]Block = undefined;
     for (&too_many_blocks) |*item| item.* = block[0];
@@ -379,7 +412,7 @@ test "an output schema must name a JSON object" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const blocks = [_]Block{.{ .role = .user, .value = .{ .text = "hi" } }};
-    const base: Request = .{ .model = "m", .max_output_tokens = 1 };
+    const base: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1 };
     try validate(arena.allocator(), base, &blocks);
 
     var not_an_object = base;
@@ -401,7 +434,7 @@ test "a sampling value outside its domain is refused" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const blocks = [_]Block{.{ .role = .user, .value = .{ .text = "hi" } }};
-    const base: Request = .{ .model = "m", .max_output_tokens = 1 };
+    const base: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1 };
 
     var hot = base;
     hot.temperature = -0.1;

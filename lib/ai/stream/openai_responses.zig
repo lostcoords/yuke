@@ -523,7 +523,7 @@ test "tool turn: input deltas stream and authoritative arguments surface at stop
     try testing.expectEqualStrings("call_1", call.call_id);
     try testing.expectEqualStrings("run", call.name);
     try testing.expectEqualStrings("{\"cmd\":\"zig test\"}", call.arguments);
-    // A `stop` here makes the engine refuse the tool part it received.
+    // A `stop` here makes the caller refuse the tool part it received.
     try testing.expectEqual(types.FinishReason.tool_calls, h.out.items[4].done.stop_reason);
 }
 

@@ -13,14 +13,14 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
     try jw.beginObject();
 
     try json.field(&jw, "model", request.model);
-    try json.field(&jw, "max_tokens", request.max_output_tokens);
+    try json.field(&jw, "max_tokens", request.max_output_tokens.?); // `validate` requires a limit here.
     try json.field(&jw, "stream", true);
 
     try json.sampling(&jw, request.temperature, request.top_p);
 
     try writeThinking(&jw, request.reasoning);
     try writeOutputConfig(&jw, request.reasoning, request.output_schema);
-    const cache = request.cache == .anthropic;
+    const cache = request.wire.anthropic_messages.cache;
 
     if (request.system.len != 0) {
         try jw.objectField("system");
@@ -169,7 +169,7 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
             try jw.beginObject();
             try json.field(jw, "type", "tool_result");
             try json.field(jw, "tool_use_id", tr.call_id);
-            if (tr.media.len == 0 and tr.tools_loaded.len == 0) {
+            if (tr.media.len == 0 and tr.loaded.len == 0) {
                 try json.field(jw, "content", tr.content);
             } else {
                 // The API refuses an empty text block, so a result of media or references alone writes no text.
@@ -182,10 +182,10 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
                     try jw.endObject();
                 }
                 for (tr.media) |media| try writeMedia(jw, media, false);
-                for (tr.tools_loaded) |loaded| {
+                for (tr.loaded) |name| {
                     try jw.beginObject();
                     try json.field(jw, "type", "tool_reference");
-                    try json.field(jw, "tool_name", loaded.name);
+                    try json.field(jw, "tool_name", name);
                     try jw.endObject();
                 }
                 try jw.endArray();
@@ -260,7 +260,7 @@ test "a plain user turn with a system prompt" {
     try expectJson(
         \\{"model":"claude","max_tokens":1024,"stream":true,"system":[{"type":"text","text":"be brief"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}
     ,
-        .{ .model = "claude", .system = "be brief", .max_output_tokens = 1024 },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .system = "be brief", .max_output_tokens = 1024 },
         &blocks,
     );
 }
@@ -274,7 +274,7 @@ test "consecutive assistant blocks join one message" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"read"}]},{"role":"assistant","content":[{"type":"text","text":"searching"},{"type":"text","text":"done"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8 },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 },
         &blocks,
     );
 }
@@ -284,7 +284,7 @@ test "adaptive thinking rides on the request" {
     try expectJson(
         \\{"model":"MiniMax-M3","max_tokens":8,"stream":true,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "MiniMax-M3", .max_output_tokens = 8, .reasoning = .adaptive },
+        .{ .model = "MiniMax-M3", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .reasoning = .adaptive },
         &blocks,
     );
 }
@@ -294,7 +294,7 @@ test "a token budget writes the enabled shape" {
     try expectJson(
         \\{"model":"claude","max_tokens":8192,"stream":true,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8192, .reasoning = .{ .budget = 4096 } },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8192, .reasoning = .{ .budget = 4096 } },
         &blocks,
     );
 }
@@ -304,13 +304,13 @@ test "off writes disabled and the default omits the member" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"thinking":{"type":"disabled"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8, .reasoning = .off },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .reasoning = .off },
         &blocks,
     );
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8, .reasoning = .default },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .reasoning = .default },
         &blocks,
     );
 }
@@ -320,7 +320,7 @@ test "a named effort rides on output_config, not on thinking" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"output_config":{"effort":"high"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
         &blocks,
     );
 }
@@ -334,7 +334,7 @@ test "a tool call and its result coalesce by role" {
     try expectJson(
         \\{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"tool_use","id":"toolu_1","name":"run","input":{"c":1}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 64 },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 64 },
         &blocks,
     );
 }
@@ -348,21 +348,18 @@ test "a tool result with an image writes a content array and keeps the marker on
     };
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"PNG image"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}}],"is_error":false},{"type":"tool_result","tool_use_id":"toolu_2","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}}],"is_error":false,"cache_control":{"type":"ephemeral"}}]}]}
-    , .{ .model = "claude", .max_output_tokens = 8, .cache = .anthropic }, &blocks);
+    , .{ .model = "claude", .wire = .{ .anthropic_messages = .{ .cache = true } }, .max_output_tokens = 8 }, &blocks);
 }
 
 test "a tool result loads deferred tools through reference blocks" {
     const blocks = [_]ir.Block{
         .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "toolu_1", .name = "tool_search", .arguments = "{}" } } },
-        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "toolu_1", .content = "", .is_error = false, .tools_loaded = &.{
-            .{ .name = "mcp_read", .description = "Read.", .input_schema = "{}", .defer_loading = true },
-            .{ .name = "mcp_write", .description = "Write.", .input_schema = "{}", .defer_loading = true },
-        } } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "toolu_1", .content = "", .is_error = false, .loaded = &.{ "mcp_read", "mcp_write" } } } },
     };
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{}},{"name":"mcp_read","description":"Read.","defer_loading":true,"input_schema":{}},{"name":"mcp_write","description":"Write.","defer_loading":true,"input_schema":{}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"tool_reference","tool_name":"mcp_read"},{"type":"tool_reference","tool_name":"mcp_write"}],"is_error":false}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8, .tools = &.{
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .tools = &.{
             .{ .name = "tool_search", .description = "Find.", .input_schema = "{}" },
             .{ .name = "mcp_read", .description = "Read.", .input_schema = "{}", .defer_loading = true },
             .{ .name = "mcp_write", .description = "Write.", .input_schema = "{}", .defer_loading = true },
@@ -377,7 +374,7 @@ test "tools declare a raw input schema" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"run","description":"run a command","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
-        .{ .model = "claude", .tools = &tools, .max_output_tokens = 8 },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .tools = &tools, .max_output_tokens = 8 },
         &blocks,
     );
 }
@@ -390,7 +387,7 @@ test "cache marks the system block and the last content block" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"one"},{"type":"text","text":"two","cache_control":{"type":"ephemeral"}}]}]}
     ,
-        .{ .model = "claude", .system = "sys", .max_output_tokens = 8, .cache = .anthropic },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{ .cache = true } }, .system = "sys", .max_output_tokens = 8 },
         &blocks,
     );
 }
@@ -403,7 +400,7 @@ test "cache skips a trailing thinking block and marks the last eligible block" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer","cache_control":{"type":"ephemeral"}},{"type":"thinking","thinking":"ponder","signature":"sig"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8, .cache = .anthropic },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{ .cache = true } }, .max_output_tokens = 8 },
         &blocks,
     );
 }
@@ -417,7 +414,7 @@ test "an image and a document reach their own block shapes" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}},{"type":"document","source":{"type":"url","url":"https://x.test/a.pdf"}},{"type":"image","source":{"type":"file","file_id":"file_1"}}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8 },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 },
         &blocks,
     );
 }
@@ -427,7 +424,7 @@ test "anthropic reads no sound and no moving picture" {
         const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = mime } } }};
         var buf: std.Io.Writer.Allocating = .init(testing.allocator);
         defer buf.deinit();
-        try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, &blocks));
+        try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, &blocks));
     }
 }
 
@@ -436,7 +433,7 @@ test "a schema constrains the response through output_config" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8, .output_schema = .{ .schema = "{\"type\":\"object\"}" } },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .output_schema = .{ .schema = "{\"type\":\"object\"}" } },
         &blocks,
     );
 }
@@ -448,6 +445,7 @@ test "an effort and a schema share the one output_config" {
     ,
         .{
             .model = "claude",
+            .wire = .{ .anthropic_messages = .{} },
             .max_output_tokens = 8,
             .reasoning = .{ .effort = .high },
             .output_schema = .{ .schema = "{\"type\":\"object\"}" },
@@ -461,7 +459,7 @@ test "a plain-text document rides in a text source, and an unknown type is refus
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"note"}}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8 },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 },
         &text_doc,
     );
 
@@ -469,7 +467,7 @@ test "a plain-text document rides in a text source, and an unknown type is refus
     const spreadsheet = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "application/zip" } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, &spreadsheet));
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, &spreadsheet));
 }
 
 test "sampling members ride beside the token ceiling" {
@@ -477,7 +475,7 @@ test "sampling members ride beside the token ceiling" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"temperature":0.7,"top_p":0.9,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8, .temperature = 0.7, .top_p = 0.9 },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .temperature = 0.7, .top_p = 0.9 },
         &blocks,
     );
 
@@ -485,7 +483,7 @@ test "sampling members ride beside the token ceiling" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"temperature":0,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "claude", .max_output_tokens = 8, .temperature = 0 },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .temperature = 0 },
         &blocks,
     );
 }

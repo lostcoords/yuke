@@ -28,6 +28,8 @@ pub const Attempt = struct {
 
 /// Return the delay in milliseconds before the next attempt, or null when the run must stop.
 pub fn decide(policy: Policy, attempt: Attempt, jitter: f64) ?u64 {
+    std.debug.assert(policy.max_attempts >= 1);
+    std.debug.assert(policy.base_ms <= policy.cap_ms);
     std.debug.assert(attempt.number >= 1);
     std.debug.assert(jitter >= 0.0 and jitter < 1.0);
 

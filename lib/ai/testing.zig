@@ -1,10 +1,12 @@
 //! Canned transports for tests. The real path uses `HttpTransport`.
 
 const std = @import("std");
-const AttemptInfo = @import("transport.zig").AttemptInfo;
-const Request = @import("transport.zig").Request;
-const ResponseBody = @import("transport.zig").ResponseBody;
-const Transport = @import("transport.zig").Transport;
+const transport = @import("transport.zig");
+
+const AttemptInfo = transport.AttemptInfo;
+const Request = transport.Request;
+const ResponseBody = transport.ResponseBody;
+const Transport = transport.Transport;
 
 /// Replay canned bytes as one response body. A `chunk_size` of 0 fills the caller buffer.
 pub const ReplayReader = struct {
@@ -46,7 +48,7 @@ pub const canned_reply =
     ) ++ sseFrame(
         \\{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
     ) ++ sseFrame(
-        \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from the yuke mock provider."}}
+        \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from the mock provider."}}
     ) ++ sseFrame(
         \\{"type":"content_block_stop","index":0}
     ) ++ sseFrame(

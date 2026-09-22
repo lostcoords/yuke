@@ -74,9 +74,7 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
             .max_output_tokens = build.max_output_tokens,
             // The budget shares the ceiling, so it follows whatever the chain left there.
             .reasoning = try config.reasoningFor(&model, slot.config.reasoning, build.max_output_tokens),
-            // Every round of one session repeats a prefix, so the session id keeps them on one cache.
-            .cache_key = &session_hex,
-            // The ChatGPT backend reads the header, not the body key, so both carry the same id.
+            // Every round of one session repeats a prefix, so the session id keeps them on one cache and one upstream.
             .session_id = &session_hex,
         },
     });

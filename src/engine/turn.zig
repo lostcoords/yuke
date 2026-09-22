@@ -314,7 +314,9 @@ fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, stream
         body.deinit();
     }
     try slot.cancel.check(engine.deps.io);
-    try ai.consume(engine.deps.gpa, arena, body, info, request.protocol, streamer, Streamer.onEvent);
+    var stream = ai.Stream.init(engine.deps.gpa, arena, body, info, request.protocol);
+    defer stream.deinit();
+    while (try stream.next()) |ev| try streamer.onEvent(ev);
 }
 
 const Terminal = union(enum) {

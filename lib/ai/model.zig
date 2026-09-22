@@ -1,5 +1,6 @@
 //! Provider sources share this model vocabulary. A `*Patch` states what one source knows.
 
+const std = @import("std");
 const ir = @import("request/ir.zig");
 const types = @import("types.zig");
 
@@ -96,7 +97,6 @@ pub const ModelSpec = struct {
     modalities: Modalities = .{},
 };
 
-const std = @import("std");
 const testing = std.testing;
 
 test "two absent bounds mean the model takes no thinking budget" {
