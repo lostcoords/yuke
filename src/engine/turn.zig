@@ -282,13 +282,20 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, diagn
 
     const held = try round_request.snapshot(arena, engine, slot, resolved);
     const projected = request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget) catch |err| switch (err) {
-        error.ContextHistoryTooLarge => blk: {
-            try compaction.compactForRequest(engine, arena, slot, held, diagnostics);
-            break :blk try request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget);
-        },
+        error.ContextHistoryTooLarge => try compactAndProject(engine, arena, slot, held, diagnostics),
         else => return err,
     };
-    return round_request.prepare(arena, engine, slot, held, projected);
+    return round_request.prepare(arena, engine, slot, held, projected) catch |err| switch (err) {
+        // The loaded definitions in the history pushed the request over, so one compaction drops the oldest of them.
+        error.ContextHistoryTooLarge => try round_request.prepare(arena, engine, slot, held, try compactAndProject(engine, arena, slot, held, diagnostics)),
+        else => return err,
+    };
+}
+
+/// Summarize the oldest history, then project the request again under the same budget.
+fn compactAndProject(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot, diagnostics: *ai.Diagnostics) !request_context.Projection {
+    try compaction.compactForRequest(engine, arena, slot, held, diagnostics);
+    return request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget);
 }
 
 /// Open the response and stream it into the draft, in a child so a cancel can interrupt a blocked read.
@@ -689,6 +696,38 @@ const ToolCallPayload = struct {
     arguments: []const u8,
     context: request_config_mod.HookContext,
 };
+
+test "a tool that appears while tools.select runs joins the same run" {
+    const State = struct {
+        reads: usize = 0,
+
+        fn names(raw: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.reads += 1;
+            // The first read happens before the hook, the second after it, when the late tool exists.
+            return try arena.dupe([]const u8, if (self.reads == 1) &.{"read"} else &.{ "read", "late" });
+        }
+
+        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+            return point == .@"tools.select";
+        }
+
+        fn ask(_: *anyopaque, _: std.mem.Allocator, _: proto.hook.Point, _: []const u8) hookset.Decision {
+            return .proceed;
+        }
+    };
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    var state: State = .{};
+    fixture.engine.installTools(.{ .ctx = &state, .names = State.names });
+    fixture.engine.deps.hooks = .{ .ctx = &state, .holds = State.holds, .ask = State.ask };
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const held = try request_config_mod.loadout(&fixture.engine, arena.allocator(), fixture.slot);
+    try std.testing.expectEqual(@as(usize, 2), state.reads);
+    try std.testing.expect(held.allows("late"));
+}
 
 test "the run loadout gates a tool call, and a tool.before rewrite lands inside it" {
     const State = struct {

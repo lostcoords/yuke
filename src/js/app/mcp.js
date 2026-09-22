@@ -267,6 +267,10 @@ function searchCatalog(servers, args) {
     }
   }
   hits.sort((a, b) => b.score - a.score || (a.definition.name < b.definition.name ? -1 : 1));
+  // A hit far below the best match is noise from a common word, and each loaded tool costs context.
+  const best = hits[0];
+  const floor = best === undefined ? 0 : Math.ceil(best.score / 2);
+  while ((hits.at(-1)?.score ?? floor) < floor) hits.pop();
   if (hits.length === 0) return "No MCP tool matches " + JSON.stringify(query) + ". Connected servers: " + (connected.length ? connected.join(", ") : "none") + ".";
   /** @type {string[]} */
   const lines = [];
@@ -302,6 +306,8 @@ class Server {
     /** @type {"" | "modern" | "legacy"} */
     this.era = "";
     this.instructions = "";
+    /** @type {Promise<void>} The startup promise resolves within the startup limit. */
+    this.started = Promise.resolve();
     this.hasTools = false;
     // The plugin swaps its search tool when a server or its catalog changes.
     this.onChange = () => {};
@@ -370,7 +376,13 @@ class Server {
   }
 
   /** @returns {Promise<void>} */
-  async start() {
+  start() {
+    this.started = this.connect();
+    return this.started;
+  }
+
+  /** @returns {Promise<void>} */
+  async connect() {
     this.state = "connecting";
     const deadline = Date.now() + this.limits.startupMs;
     try {
@@ -710,19 +722,22 @@ export function mcp(options = {}) {
       for (const server of servers) server.onChange = refreshSearchTool;
       for (const server of servers) if (server.state === "pending") server.start();
 
-      // A workspace server asks once, at the first run. A yes starts it; its tools join the next run.
+      // The loadout follows this hook, so trust prompts and server startup finish before it.
       ctx.hook("tools.select", async () => {
-        if (asked) return;
-        asked = true;
-        for (const server of servers) {
-          if (server.state !== "untrusted") continue;
-          if (!ctx.interaction.interactive) { server.fail("disabled", "not trusted"); continue; }
-          const ok = await ctx.interaction.confirm("Start the MCP server " + server.name + "?", WORKSPACE_FILE + " runs: " + server.commandLine() + "\nRemember this decision for this workspace and server configuration.");
-          if (ok === undefined || !ctx.scope.alive || server.state !== "untrusted") continue;
-          try { mcpState.writeTrust(server.name, server.identity, ok); }
-          catch (error) { problems.push(server.name + ": " + errorText(error)); }
-          if (ok) server.start(); else server.fail("disabled", "not trusted");
+        if (!asked) {
+          asked = true;
+          for (const server of servers) {
+            if (server.state !== "untrusted") continue;
+            if (!ctx.interaction.interactive) { server.fail("disabled", "not trusted"); continue; }
+            const ok = await ctx.interaction.confirm("Start the MCP server " + server.name + "?", WORKSPACE_FILE + " runs: " + server.commandLine() + "\nRemember this decision for this workspace and server configuration.");
+            if (ok === undefined || !ctx.scope.alive || server.state !== "untrusted") continue;
+            try { mcpState.writeTrust(server.name, server.identity, ok); }
+            catch (error) { problems.push(server.name + ": " + errorText(error)); }
+            if (ok) server.start(); else server.fail("disabled", "not trusted");
+          }
         }
+        const starting = servers.filter((server) => server.state === "connecting");
+        if (starting.length !== 0) await Promise.all(starting.map((server) => server.started));
       });
 
       ctx.inject(["tui"], (ctx) => {

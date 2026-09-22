@@ -29,6 +29,8 @@ pub const Budget = struct {
 
 pub const Projection = struct {
     messages: []const proto.message.Message,
+    /// The ceiling uses this estimate. A definition from history adds to this estimate.
+    tokens: u64,
 };
 
 /// The newest compaction message. It leads the request and stands for every message it covers.
@@ -75,8 +77,9 @@ fn estimateWithHead(arena: std.mem.Allocator, db: *database.Database, session_id
 pub fn project(gpa: std.mem.Allocator, arena: std.mem.Allocator, db: *database.Database, session_id: [16]u8, budget: Budget) !Projection {
     std.debug.assert(budget.input_ceiling > 0);
     const head = try readHead(gpa, arena, db, session_id);
-    if (try estimateWithHead(arena, db, session_id, head) > budget.input_ceiling) return error.ContextHistoryTooLarge;
-    return .{ .messages = try collect(gpa, arena, db, session_id, head, null) };
+    const tokens = try estimateWithHead(arena, db, session_id, head);
+    if (tokens > budget.input_ceiling) return error.ContextHistoryTooLarge;
+    return .{ .messages = try collect(gpa, arena, db, session_id, head, null), .tokens = tokens };
 }
 
 /// Read the selected history into arena with a temporary row buffer from gpa.

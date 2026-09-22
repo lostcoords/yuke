@@ -52,6 +52,8 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
         .modalities = model.modalities,
         .blobs = blobs.lookup(),
     });
+    // A definition from history enters the request, so it counts against the same ceiling.
+    if (built.added.len != 0 and context.tokensFor(try context.jsonBytes(built.added)) > held.budget.input_ceiling - projected.tokens) return error.ContextHistoryTooLarge;
     const tools = try provider.request_builder.declared(arena, build.tools, built.added);
 
     // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.

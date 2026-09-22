@@ -117,8 +117,12 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Load
     const has_skills = try database.session.hasSkills(engine.deps.db, arena, slot.sessionId().raw);
     const Chosen = struct { tools: []const []const u8 };
     var chosen = names;
+    const selects = engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"tools.select");
     switch (engine.deps.hooks.askIfHeld(arena, .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot, has_skills) })) {
-        .proceed => {},
+        // A handler may start a server while it runs, so an answer that narrows nothing takes the table as it is now.
+        .proceed => if (selects) {
+            chosen = try tools.names(tools.ctx, arena);
+        },
         // An unreadable answer is a plugin bug, and the run fails closed like it does on a throw.
         .replace => |value| chosen = (std.json.parseFromValueLeaky(Chosen, arena, value, .{ .ignore_unknown_fields = true }) catch return error.HookAnswerInvalid).tools,
         .block => |reason| {
@@ -138,14 +142,12 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Load
     return &slot.tools.?;
 }
 
-/// Defer definitions only when they take at least this share of the context window; Claude Code uses the same default.
-const deferral_threshold_percent: u64 = 10;
 const search_tool_name = ai.ir.search_tool_name;
 
 /// A route with native client search loads a found definition in place; every other route omits it until a search adds it.
 fn decideDeferral(held: *Loadout, spec: *const registry.ModelSpec) !void {
     const own = held.arena.allocator();
-    if (!try deferralApplies(spec, held.decls)) {
+    if (!deferralApplies(held.decls)) {
         held.request_tools = try eagerDecls(own, held.decls);
     } else if (spec.caps.tool_search == true and spec.protocol != .openai_chat) {
         held.deferral = .native;
@@ -156,19 +158,15 @@ fn decideDeferral(held: *Loadout, spec: *const registry.ModelSpec) !void {
     }
 }
 
-/// Deferral needs the search tool in the loadout and a deferred catalog at the threshold.
-fn deferralApplies(spec: *const registry.ModelSpec, decls: []const ai.ir.Tool) !bool {
-    var deferred_bytes: u64 = 0;
+/// Deferral needs a deferred tool and the eager search tool that loads it. `alwaysLoad` in `.mcp.json` keeps a server eager.
+fn deferralApplies(decls: []const ai.ir.Tool) bool {
+    var deferred = false;
     var searchable = false;
     for (decls) |decl| {
-        if (decl.defer_loading) deferred_bytes += try context.jsonBytes(decl);
+        deferred = deferred or decl.defer_loading;
         searchable = searchable or (!decl.defer_loading and std.mem.eql(u8, decl.name, search_tool_name));
     }
-    if (!searchable) return false;
-    const window = spec.limits.context_window orelse context.default_context_window;
-    // The window is peer input, so the threshold divides instead of multiplying into an overflow.
-    const threshold = window / deferral_threshold_percent + @intFromBool(window % deferral_threshold_percent != 0);
-    return context.tokensFor(deferred_bytes) >= threshold;
+    return deferred and searchable;
 }
 
 /// Keep the eager declarations only. A search adds a deferred one when the model needs it.
@@ -189,23 +187,19 @@ fn eagerDecls(own: std.mem.Allocator, decls: []const ai.ir.Tool) ![]const ai.ir.
     return eager;
 }
 
-test "deferral needs the search tool and a catalog at the threshold, and the route picks the mode" {
-    const big = "x" ** 4000;
+test "deferral needs a deferred tool and the search tool, and the route picks the mode" {
     const decls = [_]ai.ir.Tool{
         .{ .name = "read", .description = "Read.", .input_schema = "{}" },
-        .{ .name = "mcp_a", .description = big, .input_schema = "{}", .defer_loading = true },
-        .{ .name = "mcp_b", .description = big, .input_schema = "{}", .defer_loading = true },
+        .{ .name = "mcp_a", .description = "A.", .input_schema = "{}", .defer_loading = true },
+        .{ .name = "mcp_b", .description = "B.", .input_schema = "{}", .defer_loading = true },
         .{ .name = search_tool_name, .description = "Find.", .input_schema = "{}" },
     };
-    var spec: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tool_search = true }, .limits = .{ .context_window = 20_000 } };
-    try std.testing.expect(try deferralApplies(&spec, &decls));
-    spec.limits.context_window = 200_000; // The two schemas are under ten percent of this window.
-    try std.testing.expect(!try deferralApplies(&spec, &decls));
-    spec.limits.context_window = 20_000;
+    try std.testing.expect(deferralApplies(&decls));
     // Without the search tool nothing could load a deferred definition, so every tool stays eager.
-    try std.testing.expect(!try deferralApplies(&spec, decls[0..3]));
-    try std.testing.expect(!try deferralApplies(&spec, decls[0..1]));
+    try std.testing.expect(!deferralApplies(decls[0..3]));
+    try std.testing.expect(!deferralApplies(decls[0..1]));
 
+    var spec: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tool_search = true } };
     var held: Loadout = .{ .arena = .init(std.testing.allocator), .names = &.{}, .decls = &decls, .has_skills = false };
     defer held.arena.deinit();
     try decideDeferral(&held, &spec);
@@ -220,13 +214,13 @@ test "deferral needs the search tool and a catalog at the threshold, and the rou
     try std.testing.expectEqual(@as(usize, 2), held.request_tools.?.len);
     try std.testing.expectEqualStrings(search_tool_name, held.request_tools.?[1].name);
 
-    // Under the threshold every declaration is eager, with one copy that clears the flags.
-    spec.limits.context_window = 200_000;
+    // Without the search tool every declaration is eager, with one copy that clears the flags.
+    held.decls = decls[0..3];
     held.request_tools = null;
     held.deferral = .none;
     try decideDeferral(&held, &spec);
     try std.testing.expectEqual(Loadout.Deferral.none, held.deferral);
-    try std.testing.expectEqual(@as(usize, 4), held.request_tools.?.len);
+    try std.testing.expectEqual(@as(usize, 3), held.request_tools.?.len);
     for (held.request_tools.?) |decl| try std.testing.expect(!decl.defer_loading);
     // A catalog with no deferred tool is returned as it is, with no copy.
     try std.testing.expectEqual(decls[0..1].ptr, (try eagerDecls(held.arena.allocator(), decls[0..1])).ptr);
