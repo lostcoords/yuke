@@ -34,7 +34,7 @@ pub fn find(id: []const u8) ?*const Provider {
 }
 
 /// The catalog revision these rows come from.
-pub const revision = "3b6d1cbb2795f1571cfb815f0f82bc2f9c84b6ccc39a8d6ec16a55bc724e883523638e63579fb8044cca1b30d279bdbbc8fd26c5c4046d61532aa608d8c3bc3e";
+pub const revision = "0a98805d49e7ed95582e180466686af3be4bb5261f44882e7894dc660f55f20b8bb728b94b8129c7ae4c45ce6a1b09146593d7ea455232efc4274881ac0003b6";
 
 pub const providers = [_]Provider{
     .{
@@ -1549,7 +1549,7 @@ pub const providers = [_]Provider{
                     .output = 15,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1571,7 +1571,7 @@ pub const providers = [_]Provider{
                     .output = 4.5,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1593,7 +1593,7 @@ pub const providers = [_]Provider{
                     .output = 1.25,
                     .cache_read = 0.02,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1614,7 +1614,7 @@ pub const providers = [_]Provider{
                     .input = 30,
                     .output = 180,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1636,7 +1636,7 @@ pub const providers = [_]Provider{
                     .output = 30,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1657,7 +1657,7 @@ pub const providers = [_]Provider{
                     .input = 30,
                     .output = 180,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .tool_search = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1680,7 +1680,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.4,
                     .cache_write = 5,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1703,7 +1703,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                     .cache_write = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1726,7 +1726,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.4,
                     .cache_write = 5,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1749,7 +1749,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1772,7 +1772,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -3114,9 +3114,9 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 384000,
                 },
                 .cost = .{
-                    .input = 0.088606,
-                    .output = 0.177212,
-                    .cache_read = 0.017721,
+                    .input = 0.07,
+                    .output = 0.14,
+                    .cache_read = 0.014,
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3209,12 +3209,12 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
-                    .max_output_tokens = 384000,
+                    .max_output_tokens = 393216,
                 },
                 .cost = .{
-                    .input = 0.9834,
-                    .output = 2.9502,
-                    .cache_read = 0.03278,
+                    .input = 0.5808,
+                    .output = 1.7424,
+                    .cache_read = 0.05808,
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3387,29 +3387,6 @@ pub const providers = [_]Provider{
                 .caps = .{ .tools = true, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "google/gemini-2.5-pro-preview-05-06",
-                .upstream_id = "google/gemini-2.5-pro-preview-05-06",
-                .name = "Gemini 2.5 Pro Preview 05-06",
-                .protocol = .openai_chat,
-                .limits = .{
-                    .context_window = 1048576,
-                    .max_output_tokens = 65535,
-                },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
-                    .cache_write = 0.375,
-                },
-                .caps = .{ .tools = true, .vision = true, .cache_breakpoint = true },
-                .modalities = .{
-                    .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{},
@@ -4014,8 +3991,8 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 3686,
                 },
                 .cost = .{
-                    .input = 0.06,
-                    .output = 0.06,
+                    .input = 0.08,
+                    .output = 0.11,
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -4526,11 +4503,11 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
-                    .max_output_tokens = 115200,
+                    .max_output_tokens = 16384,
                 },
                 .cost = .{
-                    .input = 0.2,
-                    .output = 0.696,
+                    .input = 0.1875,
+                    .output = 0.6525,
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -4592,8 +4569,8 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 117964,
                 },
                 .cost = .{
-                    .input = 0.35,
-                    .output = 1.5,
+                    .input = 0.3,
+                    .output = 1.1,
                     .cache_read = 0.04,
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
@@ -4799,7 +4776,7 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 40000,
                 },
                 .cost = .{
-                    .input = 0.55,
+                    .input = 0.4,
                     .output = 2.2,
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -5307,8 +5284,8 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 16384,
                 },
                 .cost = .{
-                    .input = 0.075,
-                    .output = 0.2,
+                    .input = 0.09375,
+                    .output = 0.25,
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5486,9 +5463,9 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 235929,
                 },
                 .cost = .{
-                    .input = 0.71,
-                    .output = 3.5,
-                    .cache_read = 0.15,
+                    .input = 0.7062,
+                    .output = 3.21,
+                    .cache_read = 0.18,
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5508,9 +5485,9 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 943718,
                 },
                 .cost = .{
-                    .input = 2.648138,
-                    .output = 13.282724,
-                    .cache_read = 0.302644,
+                    .input = 3,
+                    .output = 15,
+                    .cache_read = 0.3,
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -5685,9 +5662,8 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 235929,
                 },
                 .cost = .{
-                    .input = 0.05,
-                    .output = 0.2,
-                    .cache_read = 0.03,
+                    .input = 0.06,
+                    .output = 0.24,
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -5729,11 +5705,11 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 16384,
+                    .max_output_tokens = 235929,
                 },
                 .cost = .{
-                    .input = 0.085,
-                    .output = 0.4,
+                    .input = 0.08,
+                    .output = 0.45,
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -5775,12 +5751,12 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 182520,
+                    .max_output_tokens = 32768,
                 },
                 .cost = .{
-                    .input = 0.6,
-                    .output = 2.4,
-                    .cache_read = 0.12,
+                    .input = 0.625,
+                    .output = 3.125,
+                    .cache_read = 0.1875,
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -6029,27 +6005,6 @@ pub const providers = [_]Provider{
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "openai/gpt-4-turbo-preview",
-                .upstream_id = "openai/gpt-4-turbo-preview",
-                .name = "GPT-4 Turbo Preview",
-                .protocol = .openai_chat,
-                .limits = .{
-                    .context_window = 128000,
-                    .max_output_tokens = 4096,
-                },
-                .cost = .{
-                    .input = 10,
-                    .output = 30,
-                },
-                .caps = .{ .tools = true, .vision = false },
-                .modalities = .{
-                    .input = &.{.text},
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{},
@@ -8128,7 +8083,7 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 235929,
+                    .max_output_tokens = 32768,
                 },
                 .cost = .{
                     .input = 0.15,
@@ -8192,11 +8147,11 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 16384,
+                    .max_output_tokens = 32768,
                 },
                 .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
+                    .input = 0.13,
+                    .output = 0.52,
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -8343,12 +8298,11 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 16384,
+                    .max_output_tokens = 65536,
                 },
                 .cost = .{
-                    .input = 0.3125,
-                    .output = 1.25,
-                    .cache_read = 0.15625,
+                    .input = 0.1625,
+                    .output = 1.3,
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -9014,6 +8968,27 @@ pub const providers = [_]Provider{
                 .dialect = .{},
             },
             .{
+                .id = "stealth/union-alpha",
+                .upstream_id = "stealth/union-alpha",
+                .name = "Union Alpha",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                },
+                .caps = .{ .tools = true, .vision = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
+            .{
                 .id = "stepfun/step-3.5-flash",
                 .upstream_id = "stepfun/step-3.5-flash",
                 .name = "Step 3.5 Flash",
@@ -9273,7 +9248,7 @@ pub const providers = [_]Provider{
                     .input = 0.4,
                     .output = 0.4,
                 },
-                .caps = .{ .tools = true, .vision = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9911,9 +9886,9 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 131072,
                 },
                 .cost = .{
-                    .input = 0.6832,
-                    .output = 2.1472,
-                    .cache_read = 0.12688,
+                    .input = 1.4,
+                    .output = 4.4,
+                    .cache_read = 0.14,
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -9924,6 +9899,29 @@ pub const providers = [_]Provider{
                 .dialect = .{
                     .thinking_format = .openrouter,
                     .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "z-ai/glm-5.2:free",
+                .upstream_id = "z-ai/glm-5.2:free",
+                .name = "GLM 5.2 (free)",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 32768,
+                    .max_output_tokens = 29491,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                },
+                .caps = .{ .tools = false, .vision = false, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "xhigh" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
                 },
             },
             .{
@@ -9960,9 +9958,9 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 131072,
                 },
                 .cost = .{
-                    .input = 0.15,
-                    .output = 0.5,
-                    .cache_read = 0.03,
+                    .input = 0.09,
+                    .output = 0.3,
+                    .cache_read = 0.018,
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -10099,18 +10097,66 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "~deepseek/deepseek-flash-latest",
+                .upstream_id = "~deepseek/deepseek-flash-latest",
+                .name = "DeepSeek Flash Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 393216,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.6,
+                    .cache_read = 0.015,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
+                .id = "~deepseek/deepseek-pro-latest",
+                .upstream_id = "~deepseek/deepseek-pro-latest",
+                .name = "DeepSeek Pro Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 393216,
+                },
+                .cost = .{
+                    .input = 0.5808,
+                    .output = 1.7424,
+                    .cache_read = 0.05808,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openrouter,
+                },
+            },
+            .{
                 .id = "~deepseek/deepseek-v4-flash-latest",
                 .upstream_id = "~deepseek/deepseek-v4-flash-latest",
                 .name = "DeepSeek V4 Flash Latest",
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1310720,
-                    .max_output_tokens = 131072,
+                    .max_output_tokens = 393216,
                 },
                 .cost = .{
-                    .input = 0.0352,
-                    .output = 0.1056,
-                    .cache_read = 0.00112,
+                    .input = 0.03,
+                    .output = 0.13,
+                    .cache_read = 0.01,
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10375,12 +10421,12 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1310720,
-                    .max_output_tokens = 943718,
+                    .max_output_tokens = 235929,
                 },
                 .cost = .{
-                    .input = 0.92,
-                    .output = 3.1372,
-                    .cache_read = 0.184,
+                    .input = 0.8775,
+                    .output = 2.97,
+                    .cache_read = 0.1755,
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -12651,81 +12697,6 @@ pub const providers = [_]Provider{
         },
         .models = &.{
             .{
-                .id = "accounts/fireworks/models/deepseek-v4-flash-0731",
-                .upstream_id = "accounts/fireworks/models/deepseek-v4-flash-0731",
-                .name = "DeepSeek V4 Flash 0731",
-                .protocol = .openai_chat,
-                .limits = .{
-                    .context_window = 1000000,
-                    .max_output_tokens = 384000,
-                },
-                .cost = .{
-                    .input = 0.22,
-                    .output = 0.66,
-                    .cache_read = 0.007,
-                },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{.text},
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
-                .dialect = .{
-                    .thinking_format = .openai,
-                    .reasoning_replay = .reasoning_content,
-                },
-            },
-            .{
-                .id = "accounts/fireworks/models/deepseek-v4-flash-vision-exp",
-                .upstream_id = "accounts/fireworks/models/deepseek-v4-flash-vision-exp",
-                .name = "DeepSeek V4 Flash Vision Exp",
-                .protocol = .openai_chat,
-                .limits = .{
-                    .context_window = 1000000,
-                    .max_output_tokens = 384000,
-                },
-                .cost = .{
-                    .input = 0.22,
-                    .output = 0.66,
-                    .cache_read = 0.007,
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
-                .dialect = .{
-                    .thinking_format = .openai,
-                    .reasoning_replay = .reasoning_content,
-                },
-            },
-            .{
-                .id = "accounts/fireworks/models/deepseek-v4-pro-0813",
-                .upstream_id = "accounts/fireworks/models/deepseek-v4-pro-0813",
-                .name = "DeepSeek V4 Pro 0813",
-                .protocol = .openai_chat,
-                .limits = .{
-                    .context_window = 1000000,
-                    .max_output_tokens = 384000,
-                },
-                .cost = .{
-                    .input = 1.32,
-                    .output = 3.96,
-                    .cache_read = 0.044,
-                },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{.text},
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
-                .dialect = .{
-                    .thinking_format = .openai,
-                    .reasoning_replay = .reasoning_content,
-                },
-            },
-            .{
                 .id = "accounts/fireworks/models/deepseek-v4p1-flash",
                 .upstream_id = "accounts/fireworks/models/deepseek-v4p1-flash",
                 .name = "DeepSeek V4.1 Flash",
@@ -12745,31 +12716,6 @@ pub const providers = [_]Provider{
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
-                .dialect = .{
-                    .thinking_format = .openai,
-                    .reasoning_replay = .reasoning_content,
-                },
-            },
-            .{
-                .id = "accounts/fireworks/models/glm-5p2",
-                .upstream_id = "accounts/fireworks/models/glm-5p2",
-                .name = "GLM 5.2",
-                .protocol = .openai_chat,
-                .limits = .{
-                    .context_window = 1048575,
-                    .max_output_tokens = 131072,
-                },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.14,
-                },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{.text},
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
@@ -12816,7 +12762,7 @@ pub const providers = [_]Provider{
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
-                    .input = &.{ .image, .pdf, .text, .video },
+                    .input = &.{ .image, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
@@ -12872,56 +12818,6 @@ pub const providers = [_]Provider{
                 .dialect = .{},
             },
             .{
-                .id = "accounts/fireworks/models/kimi-k2p6",
-                .upstream_id = "accounts/fireworks/models/kimi-k2p6",
-                .name = "Kimi K2.6",
-                .protocol = .openai_chat,
-                .limits = .{
-                    .context_window = 262000,
-                    .max_output_tokens = 262000,
-                },
-                .cost = .{
-                    .input = 0.95,
-                    .output = 4,
-                    .cache_read = 0.16,
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{.{ .named = "high" }},
-                .dialect = .{
-                    .thinking_format = .openai,
-                    .reasoning_replay = .reasoning_content,
-                },
-            },
-            .{
-                .id = "accounts/fireworks/models/kimi-k2p7-code",
-                .upstream_id = "accounts/fireworks/models/kimi-k2p7-code",
-                .name = "Kimi K2.7 Code",
-                .protocol = .openai_chat,
-                .limits = .{
-                    .context_window = 262000,
-                    .max_output_tokens = 262000,
-                },
-                .cost = .{
-                    .input = 0.95,
-                    .output = 4,
-                    .cache_read = 0.19,
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{.{ .named = "high" }},
-                .dialect = .{
-                    .thinking_format = .openai,
-                    .reasoning_replay = .reasoning_content,
-                },
-            },
-            .{
                 .id = "accounts/fireworks/models/kimi-k3",
                 .upstream_id = "accounts/fireworks/models/kimi-k3",
                 .name = "Kimi K3",
@@ -12960,57 +12856,15 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
-                    .input = &.{ .image, .text, .video },
+                    .input = &.{.text},
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
-                },
-            },
-            .{
-                .id = "accounts/fireworks/models/mistral-large-3-fp8",
-                .upstream_id = "accounts/fireworks/models/mistral-large-3-fp8",
-                .name = "Mistral Large 3 675B Instruct 2512",
-                .protocol = .openai_chat,
-                .limits = .{
-                    .context_window = 262144,
-                    .max_output_tokens = 262144,
-                },
-                .cost = .{},
-                .caps = .{ .tools = true, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "accounts/fireworks/models/muse-glimmer-30b",
-                .upstream_id = "accounts/fireworks/models/muse-glimmer-30b",
-                .name = "Muse Glimmer 30B",
-                .protocol = .openai_chat,
-                .limits = .{
-                    .context_window = 131072,
-                    .max_output_tokens = 131072,
-                },
-                .cost = .{
-                    .input = 0.35,
-                    .output = 1.5,
-                    .cache_read = 0.04,
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{
-                    .thinking_format = .openai,
                 },
             },
             .{
@@ -13025,7 +12879,7 @@ pub const providers = [_]Provider{
                 .cost = .{
                     .input = 0.6,
                     .output = 2.4,
-                    .cache_read = 0.119,
+                    .cache_read = 0.12,
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13124,14 +12978,64 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
-                    .input = &.{.text},
+                    .input = &.{ .image, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
                     .thinking_format = .openai,
+                },
+            },
+            .{
+                .id = "accounts/fireworks/routers/deepseek-flash-latest",
+                .upstream_id = "accounts/fireworks/routers/deepseek-flash-latest",
+                .name = "DeepSeek Flash Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 0.22,
+                    .output = 0.66,
+                    .cache_read = 0.007,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "accounts/fireworks/routers/deepseek-pro-latest",
+                .upstream_id = "accounts/fireworks/routers/deepseek-pro-latest",
+                .name = "DeepSeek Pro Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1000000,
+                    .max_output_tokens = 384000,
+                },
+                .cost = .{
+                    .input = 1.32,
+                    .output = 3.96,
+                    .cache_read = 0.044,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
                 },
             },
             .{
@@ -13185,6 +13089,106 @@ pub const providers = [_]Provider{
                 },
             },
             .{
+                .id = "accounts/fireworks/routers/glm-fast-latest",
+                .upstream_id = "accounts/fireworks/routers/glm-fast-latest",
+                .name = "GLM 5.3 Fast (Latest)",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048572,
+                    .max_output_tokens = 262144,
+                },
+                .cost = .{
+                    .input = 2.1,
+                    .output = 6.6,
+                    .cache_read = 0.39,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "accounts/fireworks/routers/glm-flash-latest",
+                .upstream_id = "accounts/fireworks/routers/glm-flash-latest",
+                .name = "GLM Flash Latest (GLM 5.3 Flash)",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048573,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0.15,
+                    .output = 0.5,
+                    .cache_read = 0.03,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "accounts/fireworks/routers/glm-latest",
+                .upstream_id = "accounts/fireworks/routers/glm-latest",
+                .name = "GLM Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048573,
+                    .max_output_tokens = 262144,
+                },
+                .cost = .{
+                    .input = 1.4,
+                    .output = 4.4,
+                    .cache_read = 0.26,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "accounts/fireworks/routers/kimi-fast-latest",
+                .upstream_id = "accounts/fireworks/routers/kimi-fast-latest",
+                .name = "Kimi Fast Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 4.5,
+                    .output = 22.5,
+                    .cache_read = 0.45,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
                 .id = "accounts/fireworks/routers/kimi-k3-fast",
                 .upstream_id = "accounts/fireworks/routers/kimi-k3-fast",
                 .name = "Kimi K3 Fast",
@@ -13207,6 +13211,80 @@ pub const providers = [_]Provider{
                 .dialect = .{
                     .thinking_format = .openai,
                     .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "accounts/fireworks/routers/kimi-latest",
+                .upstream_id = "accounts/fireworks/routers/kimi-latest",
+                .name = "Kimi Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 1048576,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 3,
+                    .output = 15,
+                    .cache_read = 0.3,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "accounts/fireworks/routers/minimax-latest",
+                .upstream_id = "accounts/fireworks/routers/minimax-latest",
+                .name = "MiniMax Latest",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 512000,
+                    .max_output_tokens = 512000,
+                },
+                .cost = .{
+                    .input = 0.3,
+                    .output = 1.2,
+                    .cache_read = 0.06,
+                },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{.text},
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
+                .dialect = .{
+                    .thinking_format = .openai,
+                    .reasoning_replay = .reasoning_content,
+                },
+            },
+            .{
+                .id = "accounts/fireworks/routers/qwen-max-latest",
+                .upstream_id = "accounts/fireworks/routers/qwen-max-latest",
+                .name = "Qwen Max Latest (Qwen3.8 Max)",
+                .protocol = .openai_chat,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 2,
+                    .output = 6,
+                    .cache_read = 0.25,
+                },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{.{ .named = "high" }},
+                .dialect = .{
+                    .thinking_format = .openai,
                 },
             },
         },
@@ -14818,6 +14896,28 @@ pub const providers = [_]Provider{
                     .anthropic_adaptive = true,
                 },
             },
+            .{
+                .id = "union-alpha",
+                .upstream_id = "union-alpha",
+                .name = "Union Alpha Free",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                    .cache_read = 0,
+                },
+                .caps = .{ .tools = true, .vision = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
+                .dialect = .{},
+            },
         },
     },
     .{
@@ -15457,6 +15557,28 @@ pub const providers = [_]Provider{
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "xhigh" } },
+                .dialect = .{},
+            },
+            .{
+                .id = "union-alpha",
+                .upstream_id = "union-alpha",
+                .name = "Union Alpha Free",
+                .protocol = .anthropic_messages,
+                .limits = .{
+                    .context_window = 262144,
+                    .max_output_tokens = 131072,
+                },
+                .cost = .{
+                    .input = 0,
+                    .output = 0,
+                    .cache_read = 0,
+                },
+                .caps = .{ .tools = true, .vision = true },
+                .modalities = .{
+                    .input = &.{ .image, .text },
+                    .output = &.{.text},
+                },
+                .reasoning_levels = &.{},
                 .dialect = .{},
             },
         },

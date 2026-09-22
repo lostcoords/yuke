@@ -65,7 +65,9 @@ test "catalog errors have a permanent user-facing classification" {
 test "baked tool search support remains specific to the provider and model" {
     try testing.expectEqual(@as(?bool, true), bakedCaps("openai", "gpt-5.4").tool_search);
     try testing.expectEqual(@as(?bool, false), bakedCaps("openai", "gpt-5.4-nano").tool_search);
-    try testing.expectEqual(@as(?bool, null), bakedCaps("openai-codex", "gpt-5.4").tool_search);
+    // The producer states Codex support after a live verification on the backend.
+    try testing.expectEqual(@as(?bool, true), bakedCaps("openai-codex", "gpt-5.4").tool_search);
+    try testing.expectEqual(@as(?bool, false), bakedCaps("openai-codex", "gpt-5.4-nano").tool_search);
     try testing.expectEqual(@as(?bool, true), bakedCaps("anthropic", "claude-opus-4-6").tool_search);
 }
 
