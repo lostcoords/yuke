@@ -62,6 +62,11 @@ const DIES = server(String.raw`    server/discover) printf '{"jsonrpc":"2.0","id
 // A modern-only server that speaks another version, and a legacy server that answers a version this client never learned.
 const MODERN_ONLY = server(String.raw`    server/discover) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32022,"message":"Unsupported protocol version","data":{"supported":["2027-01-01"]}}}\n' "$id" ;;
 `);
+// A server that refuses the modern version but names a legacy one it shares, so the client falls back to `initialize`.
+const DOWNGRADE = server(String.raw`    server/discover) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32022,"message":"Unsupported protocol version","data":{"supported":["2099-01-01","2025-11-25"]}}}\n' "$id" ;;
+    initialize) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"downgrade","version":"1"}}}\n' "$id" ;;
+    tools/list) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}}\n' "$id" ;;
+`);
 const OLD_VERSION = server(String.raw`    server/discover) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"Method not found"}}\n' "$id" ;;
     initialize) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"1999-01-01","capabilities":{}}}\n' "$id" ;;
 `);
@@ -89,6 +94,7 @@ if (mcpCase === "servers") {
       modern: sh(MODERN),
       dies: sh(DIES),
       modernonly: sh(MODERN_ONLY),
+      downgrade: sh(DOWNGRADE),
       oldver: sh(OLD_VERSION),
       missing: { command: "${MCP_TEST_MISSING}" },
       badargs: { command: "/bin/sh", args: "-c" },
@@ -104,6 +110,15 @@ if (mcpCase === "timeout") {
   globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 100, servers: { modern: sh(MODERN) } });
   globalThis.mcpReady = false;
   plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+}
+
+// Another plugin holds the search tool name first, so the MCP plugin must try again on the next change.
+if (mcpCase === "search-conflict") {
+  globalThis.mcpReady = false;
+  plugins.use({ name: "search-holder", apply(ctx) { ctx.tools.define({ name: "tool_search", description: "Occupied name.", parameters: { type: "object", properties: {} }, execute() { return "other"; } }); } }).ready.then(() => {
+    globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 500, servers: { modern: sh(MODERN) } });
+    return plugins.use(globalThis.mcpPlugin).ready;
+  }).then(() => { globalThis.mcpReady = true; });
 }
 
 if (mcpCase === "silent") {

@@ -1,4 +1,4 @@
-// yuke:mcp — MCP servers over stdio as yuke tools. `.mcp.json` names them; one child process serves each one.
+// yuke:mcp — MCP servers as yuke tools. `.mcp.json` names them; one transport carries each one.
 import { mcpState } from "yuke:mcp-native";
 import { fs } from "yuke:fs";
 import { env } from "yuke:env";
@@ -7,13 +7,12 @@ import { showInfo } from "yuke:info-panel";
 
 /** @import { Context } from "yuke:ext" */
 /** @import { Plugin, ToolDefinition } from "./types/ext.js" */
-/** @typedef {import("yuke:spawn").ChildProcess} ChildProcess */
 /** @typedef {import("yuke:cancellation-native").CancellationSignal} CancellationSignal */
 /** @typedef {{ type?: "stdio" | "http" | "sse", command?: string, args?: string[], env?: Record<string, string>, cwd?: string, url?: string, headers?: Record<string, string>, enabled?: boolean, timeout?: number, alwaysLoad?: boolean }} ServerConfig */
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
 /** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "failed" | "disabled" | "unsupported" | "stopped"} ServerState */
-/** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number }} Waiting */
+/** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number, cancelable: boolean }} Waiting */
 
 const WORKSPACE_FILE = ".mcp.json";
 const MODERN = "2026-07-28";
@@ -32,6 +31,8 @@ const SEARCH_DESCRIPTION_MAX = 4096;
 const QUERY_MAX = 500;
 const DESCRIPTION_MAX = 1024;
 const RESULT_MAX = 16 * 1024;
+// A loaded schema above this stays out of the context; the search names the tool without it.
+const SCHEMA_MAX = 64 * 1024;
 const LIMIT_DEFAULT = 5;
 const LIMIT_MAX = 20;
 const MAX_PAGES = 100;
@@ -74,7 +75,7 @@ export function toolName(server, tool) {
   return clean.slice(0, NAME_MAX - 9) + "_" + fnv(raw).toString(16).padStart(8, "0");
 }
 
-// The model reads text. Every other block becomes a one-line description until media results land.
+// The model reads text. Every other block becomes a one-line description.
 /** @param {any[]} content @param {unknown} structured @returns {string} */
 function contentText(content, structured) {
   if (content.length === 1 && content[0].type === "text") {
@@ -205,13 +206,18 @@ export function toolResult(result, modern = false) {
 // The message for a wrong entry, or null. A missing variable shows later, when the server starts.
 /** @param {ServerConfig} config @returns {string | null} */
 function checkConfig(config) {
+  if (config.timeout !== undefined && (!Number.isSafeInteger(config.timeout) || config.timeout <= 0)) return "timeout must be a positive integer of milliseconds";
+  if (config.enabled !== undefined && typeof config.enabled !== "boolean") return "enabled must be a boolean";
+  if (config.alwaysLoad !== undefined && typeof config.alwaysLoad !== "boolean") return "alwaysLoad must be a boolean";
+  return null;
+}
+
+/** @param {ServerConfig} config @returns {string | null} */
+function checkStdio(config) {
   if (typeof config.command !== "string" || config.command === "") return "command must be a nonempty string";
   if (config.args !== undefined && !(Array.isArray(config.args) && config.args.every((arg) => typeof arg === "string"))) return "args must be an array of strings";
   if (config.env !== undefined && !(record(config.env) && Object.entries(config.env).every(([key, value]) => key !== "" && !/[=\0]/.test(key) && typeof value === "string" && !value.includes("\0")))) return "env must be an object of strings";
   if (config.cwd !== undefined && typeof config.cwd !== "string") return "cwd must be a string";
-  if (config.timeout !== undefined && (!Number.isSafeInteger(config.timeout) || config.timeout <= 0)) return "timeout must be a positive integer of milliseconds";
-  if (config.enabled !== undefined && typeof config.enabled !== "boolean") return "enabled must be a boolean";
-  if (config.alwaysLoad !== undefined && typeof config.alwaysLoad !== "boolean") return "alwaysLoad must be a boolean";
   if (config.command.includes("\0") || config.args?.some((arg) => arg.includes("\0")) || config.cwd?.includes("\0")) return "execution fields must not contain NUL";
   return null;
 }
@@ -219,6 +225,73 @@ function checkConfig(config) {
 /** @param {any} answer @returns {string} */
 function instructionsOf(answer) {
   return typeof answer.instructions === "string" ? answer.instructions.slice(0, INSTRUCTIONS_MAX) : "";
+}
+
+// A transport moves JSON-RPC text; the server decodes it. `closed` fires once, when the transport can carry no more.
+/** @typedef {{ message(text: string): void, closed(reason: string): void }} Sink */
+/** @typedef {{ send(message: Record<string, unknown>): Promise<void>, cancel(id: number, reason: string): void, close(): Promise<void>, diagnostics(failed: boolean): string[] }} Transport */
+// What a trusted configuration runs. `identity` keys the trust record, and `describe` names the action in the prompt.
+/** @typedef {{ identity: string, describe: string, open(sink: Sink): Transport }} Endpoint */
+
+// One child process per server. Each stdout line is one message; a line that is not JSON is noise.
+/** @param {{ argv: string[], env: Record<string, string>, cwd?: string }} launch @param {Sink} sink @returns {Transport} */
+function openStdio(launch, sink) {
+  let noise = 0;
+  /** @type {string | undefined} */
+  let stderr;
+  let open = true;
+  /** @param {string} reason */
+  const closed = (reason) => { if (open) { open = false; sink.closed(reason); } };
+  const child = spawn(launch.argv, { env: launch.env, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}) });
+  child.onStdout(lines((line) => {
+    const first = line.trimStart()[0];
+    if (first !== "{" && first !== "[") { noise += 1; return; }
+    if (open) sink.message(line);
+  }, () => closed("the MCP frame exceeds the line limit")));
+  child.onStderr(lines((line) => { stderr = line; }));
+  child.exited.then(
+    (exit) => closed(exit.signal != null ? "the server ended on signal " + exit.signal : "the server exited with code " + exit.code),
+    (error) => closed("the server did not start: " + errorText(error)),
+  );
+  /** @param {Record<string, unknown>} message */
+  const send = (message) => open ? child.write(JSON.stringify(message) + "\n") : Promise.reject(new Error("the server is not running"));
+  return {
+    send,
+    cancel(id, reason) { send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason } }).catch(() => {}); },
+    // The MCP stdio shutdown: stdin EOF, a grace period, then TERM and KILL through `kill`.
+    async close() {
+      open = false;
+      child.closeStdin();
+      let grace = 0;
+      const exited = await Promise.race([child.exited.then(() => true, () => true), new Promise((resolve) => { grace = setTimeout(() => resolve(false), STOP_GRACE_MS); })]);
+      clearTimeout(grace);
+      if (!exited) child.kill();
+      await child.exited.catch(() => {});
+    },
+    diagnostics(failed) {
+      /** @type {string[]} */
+      const parts = [];
+      if (failed && stderr !== undefined) parts.push("stderr: " + stderr);
+      if (noise) parts.push(noise + (noise === 1 ? " stray stdout line" : " stray stdout lines"));
+      return parts;
+    },
+  };
+}
+
+// Expand the configuration into what it runs. A missing variable throws here.
+/** @param {ServerConfig} config @returns {Endpoint} */
+function stdioEndpoint(config) {
+  const argv = [expand(config.command ?? ""), ...(config.args ?? []).map(expand)];
+  /** @type {Record<string, string>} */
+  const env = Object.create(null);
+  const entries = Object.entries(config.env ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  for (const [key, value] of entries) env[key] = expand(value);
+  const launch = { argv, env, ...(config.cwd !== undefined ? { cwd: expand(config.cwd) } : {}) };
+  return {
+    identity: JSON.stringify([config.command, config.args ?? [], config.cwd ?? null, entries, launch]),
+    describe: "runs: " + argv.map((arg) => JSON.stringify(arg)).join(" "),
+    open: (sink) => openStdio(launch, sink),
+  };
 }
 
 /** @typedef {{ name: string, description: string, input_schema: string }} ToolAddition */
@@ -279,12 +352,13 @@ function searchCatalog(servers, args) {
   let bytes = 0;
   for (const hit of hits.slice(0, limit)) {
     const description = hit.definition.description.slice(0, DESCRIPTION_MAX);
-    const line = hit.definition.name + " (" + hit.server + "): " + description;
+    // An eager tool is in the context already, so only a deferred one is loaded.
+    const schema = hit.definition.defer === true ? JSON.stringify(hit.definition.parameters) : "";
+    const line = hit.definition.name + " (" + hit.server + "): " + description + (schema.length > SCHEMA_MAX ? " [not loaded: the input schema is too large]" : "");
     if (bytes + line.length > RESULT_MAX) break;
     bytes += line.length + 1;
     lines.push(line);
-    // An eager tool is in the context already, so only a deferred one is loaded.
-    if (hit.definition.defer === true) added.push({ name: hit.definition.name, description, input_schema: JSON.stringify(hit.definition.parameters) });
+    if (schema !== "" && schema.length <= SCHEMA_MAX) added.push({ name: hit.definition.name, description, input_schema: schema });
   }
   return { __yuke_result: true, text: "Found " + lines.length + " MCP tool" + (lines.length === 1 ? "" : "s") + ":\n" + lines.join("\n"), extra: { tools_added: added } };
 }
@@ -297,22 +371,24 @@ class Server {
     this.limits = limits;
     this.ctx = ctx;
     this.workspace = !trusted;
-    this.identity = "";
-    /** @type {{ argv: string[], env: Record<string, string>, cwd?: string } | null} */
-    this.launch = null;
+    /** @type {Endpoint | null} */
+    this.endpoint = null;
     /** @type {ServerState} */
     this.state = "pending";
     this.error = "";
+    // The plugin swaps its search tool when a server or its catalog changes.
+    this.onChange = () => {};
     /** @type {"" | "modern" | "legacy"} */
     this.era = "";
     this.instructions = "";
     /** @type {Promise<void>} The startup promise resolves within the startup limit. */
     this.started = Promise.resolve();
     this.hasTools = false;
-    // The plugin swaps its search tool when a server or its catalog changes.
-    this.onChange = () => {};
-    /** @type {ChildProcess | null} */
-    this.child = null;
+    /** @type {Transport | null} */
+    this.transport = null;
+    // The last transport keeps its diagnostics for the row after it closes.
+    /** @type {Transport | null} */
+    this.last = null;
     this.nextId = 1;
     /** @type {Map<number, Waiting>} */
     this.waiting = new Map();
@@ -320,59 +396,48 @@ class Server {
     this.disposers = [];
     /** @type {ToolDefinition[]} */
     this.definitions = [];
-    /** @type {Set<string>} */
-    this.tools = new Set();
-    // The server's own tool names, in the defined order.
+    // The server's own tool names, sorted.
     /** @type {string[]} */
     this.names = [];
-    // Lines on stdout that are not JSON-RPC. A server that logs there breaks its own framing.
-    this.noise = 0;
-    // The last stderr line, for the failure row.
-    /** @type {string | undefined} */
-    this.stderr = undefined;
     this.refreshing = false;
     this.refreshAgain = false;
     const type = config.type ?? (config.url ? "http" : "stdio");
-    const problem = checkConfig(config);
+    const problem = checkConfig(config) ?? (type === "stdio" ? checkStdio(config) : null);
     if (config.enabled === false) this.state = "disabled";
     else if (type !== "stdio") this.fail("unsupported", "only stdio servers are supported");
     else if (problem !== null) this.fail("failed", problem);
     else if (!trusted) this.state = "untrusted";
     if (this.state !== "pending" && this.state !== "untrusted") return;
-    try {
-      const argv = [expand(config.command ?? ""), ...(config.args ?? []).map(expand)];
-      /** @type {Record<string, string>} */
-      const vars = Object.create(null);
-      const entries = Object.entries(config.env ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-      for (const [key, value] of entries) vars[key] = expand(value);
-      this.launch = { argv, env: vars, ...(config.cwd !== undefined ? { cwd: expand(config.cwd) } : {}) };
-      this.identity = JSON.stringify([config.command, config.args ?? [], config.cwd ?? null, entries, this.launch]);
-    } catch (error) {
+    try { this.endpoint = stdioEndpoint(config); } catch (error) {
       this.fail("failed", errorText(error));
       return;
     }
     if (!trusted) {
       try {
-        const approved = mcpState.readTrust(name, this.identity);
+        const approved = mcpState.readTrust(name, this.endpoint.identity);
         if (approved === true) this.state = "pending";
         else if (approved === false) this.fail("disabled", "not trusted");
       } catch (error) { this.error = errorText(error); }
     }
   }
 
-  /** @returns {string} */
-  commandLine() {
-    return (this.launch?.argv ?? []).map((arg) => JSON.stringify(arg)).join(" ");
-  }
-
   /** @param {ServerState} state @param {string} message */
   fail(state, message) {
+    // A late line or exit after a stop changes nothing.
+    if (this.state === "stopped") return;
     this.state = state;
     this.error = message;
     this.undefineTools();
-    for (const id of this.waiting.keys()) this.settle(id, undefined, new Error(message));
-    if (this.child) this.child.kill();
+    this.settleAll(message);
+    const transport = this.transport;
+    this.transport = null;
+    if (transport) transport.close().catch(() => {});
     this.onChange();
+  }
+
+  /** @param {string} reason */
+  settleAll(reason) {
+    for (const id of [...this.waiting.keys()]) this.settle(id, undefined, new Error(reason));
   }
 
   /** @returns {Promise<void>} */
@@ -386,7 +451,7 @@ class Server {
     this.state = "connecting";
     const deadline = Date.now() + this.limits.startupMs;
     try {
-      this.spawnChild();
+      this.open();
       await this.handshake(deadline);
       if (this.hasTools) await this.refresh(deadline);
       if (this.state === "connecting") {
@@ -399,37 +464,33 @@ class Server {
     this.onChange();
   }
 
-  spawnChild() {
-    const launch = this.launch;
-    if (!launch) throw new Error("the MCP execution configuration is unavailable");
-    const child = spawn(launch.argv, { env: launch.env, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}) });
-    this.child = child;
-    child.onStdout(lines((line) => this.receive(line), () => this.fail("failed", "the MCP frame exceeds the line limit")));
-    child.onStderr(lines((line) => { this.stderr = line; }));
-    child.exited.then((exit) => {
-      if (this.child !== child) return;
-      this.child = null;
-      const reason = exit.signal != null ? "the server ended on signal " + exit.signal : "the server exited with code " + exit.code;
-      for (const id of [...this.waiting.keys()]) this.settle(id, undefined, new Error(reason));
-      if (this.state === "connecting" || this.state === "connected") this.fail("failed", reason);
-    }, (error) => {
-      if (this.child !== child) return;
-      this.child = null;
-      this.fail("failed", "the server did not start: " + errorText(error));
+  open() {
+    const endpoint = this.endpoint;
+    if (!endpoint) throw new Error("the MCP execution configuration is unavailable");
+    /** @type {Transport} */
+    const transport = endpoint.open({
+      message: (text) => { if (this.transport === transport) this.receive(text); },
+      closed: (reason) => {
+        if (this.transport !== transport) return;
+        this.transport = null;
+        this.settleAll(reason);
+        if (this.state === "connecting" || this.state === "connected") this.fail("failed", reason);
+      },
     });
+    this.transport = transport;
+    this.last = transport;
   }
 
-  /** @param {string} line */
-  receive(line) {
-    const first = line.trimStart()[0];
-    if (first !== "{" && first !== "[") { this.noise += 1; return; }
+  /** @param {string} text */
+  receive(text) {
     let message;
-    try { message = decodeMessage(line); } catch (error) { this.fail("failed", errorText(error)); return; }
+    try { message = decodeMessage(text); } catch (error) { this.fail("failed", errorText(error)); return; }
     if (typeof message.method !== "string") {
       if (typeof message.id === "number") {
         const slot = this.waiting.get(message.id);
-        if (slot) slot.bytes = line.length;
-        this.settle(message.id, message.result, message.error === undefined ? undefined : Object.assign(new Error(message.error.message), { code: message.error.code }));
+        if (slot) slot.bytes = text.length;
+        const error = message.error === undefined ? undefined : Object.assign(new Error(message.error.message), { code: message.error.code, data: message.error.data });
+        this.settle(message.id, message.result, error);
       }
       return;
     }
@@ -444,17 +505,19 @@ class Server {
 
   /** @param {Record<string, unknown>} message @returns {Promise<void>} */
   send(message) {
-    if (!this.child) return Promise.reject(new Error("the server is not running"));
-    return this.child.write(JSON.stringify(message) + "\n");
+    if (!this.transport) return Promise.reject(new Error("the server is not running"));
+    return this.transport.send(message);
   }
 
-  /** @param {string} method @param {Record<string, unknown>} params @param {number} timeoutMs @param {CancellationSignal} [signal] @param {{ bytes: number }} [received] @returns {Promise<any>} */
-  request(method, params, timeoutMs, signal, received) {
+  // A handshake request is not cancelable: the legacy rules forbid a cancel of `initialize`.
+  /** @param {string} method @param {Record<string, unknown>} params @param {{ timeoutMs: number, signal?: CancellationSignal, cancelable?: boolean, received?: { bytes: number } }} options @returns {Promise<any>} */
+  request(method, params, { timeoutMs, signal, cancelable = true, received }) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.cancel(id, "the request timed out"), Math.max(1, timeoutMs));
-      const poll = signal === undefined ? undefined : setInterval(() => { if (signal.aborted) this.cancel(id, "the call was canceled"); }, POLL_MS);
-      this.waiting.set(id, { bytes: 0, resolve, reject, done: () => { if (received) received.bytes = this.waiting.get(id)?.bytes ?? 0; clearTimeout(timer); if (poll !== undefined) clearInterval(poll); } });
+      const caller = signal;
+      const poll = caller === undefined ? undefined : setInterval(() => { if (caller.aborted) this.cancel(id, "the call was canceled"); }, POLL_MS);
+      this.waiting.set(id, { bytes: 0, cancelable, resolve, reject, done: () => { if (received) received.bytes = this.waiting.get(id)?.bytes ?? 0; clearTimeout(timer); if (poll !== undefined) clearInterval(poll); } });
       this.send({ jsonrpc: "2.0", id, method, params: this.era === "modern" ? { ...params, _meta: META } : params }).catch((error) => this.settle(id, undefined, error));
     });
   }
@@ -471,35 +534,44 @@ class Server {
   // Tell the server to stop the work, then answer the caller; a late result finds nobody.
   /** @param {number} id @param {string} reason */
   cancel(id, reason) {
-    if (!this.waiting.has(id)) return;
-    this.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason } }).catch(() => {});
+    const slot = this.waiting.get(id);
+    if (!slot) return;
+    if (slot.cancelable) this.transport?.cancel(id, reason);
     this.settle(id, undefined, new Error(reason));
   }
 
-  // Probe the modern era first. A modern answer or a modern error settles it; any other error or a timeout means a legacy server.
+  /** @param {any} answer */
+  accept(answer) {
+    this.hasTools = hasTools(answer.capabilities);
+    this.instructions = instructionsOf(answer);
+  }
+
+  // Probe the modern era first. A modern answer settles it; a version error that names a legacy version, any other error, or a timeout means a legacy server.
   /** @param {number} deadline */
   async handshake(deadline) {
     this.era = "modern";
     let found;
     try {
-      found = await this.request("server/discover", {}, Math.min(deadline - Date.now(), this.limits.startupMs / 2));
+      found = await this.request("server/discover", {}, { timeoutMs: Math.min(deadline - Date.now(), this.limits.startupMs / 2), cancelable: false });
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === UNSUPPORTED_VERSION) throw new Error("the server supports no protocol version this client speaks");
-      if (this.state !== "connecting" || !this.child) throw error;
+      if (error instanceof Error && "code" in error && error.code === UNSUPPORTED_VERSION) {
+        const supported = /** @type {any} */ (error).data?.supported;
+        if (!Array.isArray(supported) || !supported.some((version) => LEGACY_KNOWN.includes(version))) throw new Error("the server supports no protocol version this client speaks");
+      } else if (this.state !== "connecting" || !this.transport) throw error;
       this.era = "legacy";
     }
     if (this.era === "modern") {
       complete(found, true);
-      if (!Array.isArray(found.supportedVersions) || !found.supportedVersions.every((/** @type {any} */ value) => typeof value === "string") || !found.supportedVersions.includes(MODERN)) throw new Error("the server supports no protocol version this client speaks");
-      this.hasTools = hasTools(found.capabilities);
-      this.instructions = instructionsOf(found);
-      return;
+      const versions = found.supportedVersions;
+      if (!Array.isArray(versions) || !versions.every((/** @type {any} */ value) => typeof value === "string")) return invalid("supported versions");
+      if (versions.includes(MODERN)) return this.accept(found);
+      if (!versions.some((version) => LEGACY_KNOWN.includes(version))) throw new Error("the server supports no protocol version this client speaks");
+      this.era = "legacy";
     }
-    const init = await this.request("initialize", { protocolVersion: LEGACY, capabilities: {}, clientInfo: CLIENT }, deadline - Date.now());
+    const init = await this.request("initialize", { protocolVersion: LEGACY, capabilities: {}, clientInfo: CLIENT }, { timeoutMs: deadline - Date.now(), cancelable: false });
     complete(init, false);
     if (!LEGACY_KNOWN.includes(init.protocolVersion)) throw new Error("the server answered initialize with an unknown protocol version");
-    this.hasTools = hasTools(init.capabilities);
-    this.instructions = instructionsOf(init);
+    this.accept(init);
     if (!record(init.serverInfo) || typeof init.serverInfo.name !== "string" || typeof init.serverInfo.version !== "string") return invalid("initialize result");
     await this.send({ jsonrpc: "2.0", method: "notifications/initialized" });
   }
@@ -533,7 +605,7 @@ class Server {
     let cursor;
     for (let page = 0; ; page++) {
       if (page === MAX_PAGES) return invalid("tool page limit");
-      const answer = await this.request("tools/list", cursor === undefined ? {} : { cursor }, deadline - Date.now(), undefined, received);
+      const answer = await this.request("tools/list", cursor === undefined ? {} : { cursor }, { timeoutMs: deadline - Date.now(), received });
       complete(answer, this.era === "modern");
       // UTF-8 uses at most three bytes per UTF-16 unit, so this bound needs no wire copy.
       catalog_bytes += received.bytes * 3;
@@ -589,17 +661,13 @@ class Server {
   // This synchronous swap restores the old declarations if native registration refuses a new one.
   /** @param {ToolDefinition[]} definitions */
   defineTools(definitions) {
-    for (const definition of definitions) {
-      this.disposers.push(this.ctx.tools.define(definition));
-      this.tools.add(definition.name);
-    }
+    for (const definition of definitions) this.disposers.push(this.ctx.tools.define(definition));
     this.definitions = definitions;
   }
 
   undefineTools() {
     for (const dispose of this.disposers) dispose();
     this.disposers = [];
-    this.tools.clear();
     this.names = [];
     this.definitions = [];
   }
@@ -608,26 +676,21 @@ class Server {
   async call(tool, args, signal) {
     if (this.state !== "connected") throw new Error("the MCP server " + this.name + " is " + this.state);
     if (!record(args)) throw new Error("MCP tool arguments must be an object");
-    const timeoutMs = this.config.timeout ?? this.limits.callMs;
-    const result = await this.request("tools/call", { name: tool, arguments: args }, timeoutMs, signal);
+    const result = await this.request("tools/call", { name: tool, arguments: args }, { timeoutMs: this.config.timeout ?? this.limits.callMs, signal });
     return toolResult(result, this.era === "modern");
   }
 
-  // The MCP stdio shutdown: stdin EOF, a grace period, then TERM and KILL through `kill`.
+  // Stop at once for the callers, then let the transport shut down.
   /** @returns {Promise<void>} */
   async close() {
-    const child = this.child;
     this.state = "stopped";
     this.refreshAgain = false;
     this.undefineTools();
+    this.settleAll("the MCP server stopped");
     this.onChange();
-    if (!child) return;
-    child.closeStdin();
-    let grace = 0;
-    const exited = await Promise.race([child.exited.then(() => true, () => true), new Promise((resolve) => { grace = setTimeout(() => resolve(false), STOP_GRACE_MS); })]);
-    clearTimeout(grace);
-    if (!exited) await child.kill();
-    await child.exited.catch(() => {});
+    const transport = this.transport;
+    this.transport = null;
+    if (transport) await transport.close();
   }
 
   /** @returns {[string, string]} */
@@ -637,8 +700,7 @@ class Server {
     if (this.era) parts.push(this.era);
     if (this.state === "connected") parts.push(this.names.length === 0 ? "no tools" : this.names.length + (this.names.length === 1 ? " tool: " : " tools: ") + this.names.join(", "));
     if (this.error) parts.push(this.error);
-    if (this.state === "failed" && this.stderr !== undefined) parts.push("stderr: " + this.stderr);
-    if (this.noise) parts.push(this.noise + (this.noise === 1 ? " stray stdout line" : " stray stdout lines"));
+    if (this.last) parts.push(...this.last.diagnostics(this.state === "failed"));
     return [this.name, parts.join(" · ")];
   }
 }
@@ -700,10 +762,11 @@ export function mcp(options = {}) {
         const connected = servers.filter((server) => server.state === "connected");
         const description = connected.length === 0 ? "" : ("Search the MCP tool catalog by keywords and load the matching tools. Servers: " + connected.map((server) => server.name + (server.instructions ? " (" + server.instructions + ")" : "")).join("; ") + ".").slice(0, SEARCH_DESCRIPTION_MAX);
         if (description === searchDescription) return;
-        searchDescription = description;
         if (disposeSearch) { disposeSearch(); disposeSearch = null; }
+        searchDescription = "";
         if (description === "") return;
-        disposeSearch = ctx.tools.define({
+        // A refused name leaves no search tool; the next change tries again.
+        try { disposeSearch = ctx.tools.define({
           name: SEARCH_TOOL,
           description,
           parameters: {
@@ -717,7 +780,11 @@ export function mcp(options = {}) {
             additionalProperties: false,
           },
           execute: async (args) => searchCatalog(servers, args),
-        });
+        }); } catch (error) {
+          problems.push(SEARCH_TOOL + ": " + errorText(error));
+          return;
+        }
+        searchDescription = description;
       };
       for (const server of servers) server.onChange = refreshSearchTool;
       for (const server of servers) if (server.state === "pending") server.start();
@@ -729,9 +796,10 @@ export function mcp(options = {}) {
           for (const server of servers) {
             if (server.state !== "untrusted") continue;
             if (!ctx.interaction.interactive) { server.fail("disabled", "not trusted"); continue; }
-            const ok = await ctx.interaction.confirm("Start the MCP server " + server.name + "?", WORKSPACE_FILE + " runs: " + server.commandLine() + "\nRemember this decision for this workspace and server configuration.");
+            const endpoint = /** @type {Endpoint} */ (server.endpoint);
+            const ok = await ctx.interaction.confirm("Start the MCP server " + server.name + "?", WORKSPACE_FILE + " " + endpoint.describe + "\nRemember this decision for this workspace and server configuration.");
             if (ok === undefined || !ctx.scope.alive || server.state !== "untrusted") continue;
-            try { mcpState.writeTrust(server.name, server.identity, ok); }
+            try { mcpState.writeTrust(server.name, endpoint.identity, ok); }
             catch (error) { problems.push(server.name + ": " + errorText(error)); }
             if (ok) server.start(); else server.fail("disabled", "not trusted");
           }
@@ -747,17 +815,19 @@ export function mcp(options = {}) {
         }, { "mcp:show": { title: "MCP", description: "show the MCP servers and their tools", slash: "mcp" }, "mcp:reset-trust": { title: "Reset MCP trust", description: "forget this workspace’s MCP server decisions", slash: "mcp-reset-trust" } });
       });
     },
+    // A reset server starts over as a new, untrusted instance.
     async resetTrust() {
-      for (const server of servers) {
+      for (const [index, server] of servers.entries()) {
         if (!server.workspace) continue;
-        mcpState.resetTrust(server.name);
-        if (!server.launch) continue;
+        try { mcpState.resetTrust(server.name); } catch (error) {
+          problems.push(server.name + ": " + errorText(error));
+          continue;
+        }
+        if (!server.endpoint) continue;
         await server.close();
-        server.state = server.config.enabled === false ? "disabled" : "untrusted";
-        server.error = "";
-        server.era = "";
-        server.noise = 0;
-        server.stderr = undefined;
+        const fresh = new Server(server.name, server.config, limits, false, server.ctx);
+        fresh.onChange = server.onChange;
+        servers[index] = fresh;
       }
       asked = false;
     },

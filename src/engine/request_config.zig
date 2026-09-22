@@ -158,7 +158,7 @@ fn decideDeferral(held: *Loadout, spec: *const registry.ModelSpec) !void {
     }
 }
 
-/// Deferral needs a deferred tool and the eager search tool that loads it. `alwaysLoad` in `.mcp.json` keeps a server eager.
+/// Deferral needs a deferred tool and the eager search tool that loads it.
 fn deferralApplies(decls: []const ai.ir.Tool) bool {
     var deferred = false;
     var searchable = false;

@@ -128,11 +128,18 @@ fn open(ctx: Context, args: []const Value) ?Store {
     };
 }
 
+/// Read the nonempty execution identity in the second argument, or null.
+fn identityArg(ctx: Context, args: []const Value) ?[:0]const u8 {
+    if (args.len < 2) return null;
+    const identity = module.string(ctx, args[1]) orelse return null;
+    if (identity.len != 0) return identity;
+    ctx.freeCString(identity.ptr);
+    return null;
+}
+
 fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
-    if (args.len < 2) return ctx.throwTypeError("MCP trust needs an execution identity");
-    const identity = module.string(ctx, args[1]) orelse return ctx.throwTypeError("the MCP execution identity must be a string");
+    const identity = identityArg(ctx, args) orelse return ctx.throwTypeError("the MCP execution identity must be a nonempty string");
     defer ctx.freeCString(identity.ptr);
-    if (identity.len == 0) return ctx.throwTypeError("the MCP execution identity must not be empty");
     var store = open(ctx, args) orelse return module.throwPending(ctx);
     defer store.close();
     const decision = store.read(identity) catch return ctx.throwTypeError("the MCP trust record is invalid or unreadable");
@@ -141,9 +148,8 @@ fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
 
 fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len < 3 or !ctx.isBool(args[2])) return ctx.throwTypeError("MCP trust needs a boolean decision");
-    const identity = module.string(ctx, args[1]) orelse return ctx.throwTypeError("the MCP execution identity must be a string");
+    const identity = identityArg(ctx, args) orelse return ctx.throwTypeError("the MCP execution identity must be a nonempty string");
     defer ctx.freeCString(identity.ptr);
-    if (identity.len == 0) return ctx.throwTypeError("the MCP execution identity must not be empty");
     var store = open(ctx, args) orelse return module.throwPending(ctx);
     defer store.close();
     store.write(identity, ctx.toBool(args[2]) catch unreachable) catch return ctx.throwTypeError("the MCP trust record could not be saved");

@@ -142,6 +142,7 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try expectState(host, "modern", "connected · modern · 3 tools: a.tool, a_tool, echo");
     try expectState(host, "dies", "connected · legacy · 1 tool: echo");
     try expectState(host, "modernonly", "failed · modern · the server supports no protocol version this client speaks");
+    try expectState(host, "downgrade", "connected · legacy · 1 tool: echo");
     try expectState(host, "oldver", "failed · legacy · the server answered initialize with an unknown protocol version");
     try expectState(host, "missing", "failed · the environment variable MCP_TEST_MISSING is not set");
     try expectState(host, "badargs", "failed · args must be an array of strings");
@@ -157,9 +158,9 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try std.testing.expect(support.hasTool(host, "tool_search"));
     try std.testing.expect(!deferred(host, "tool_search"));
     // The eager legacy tool is listed but not loaded; the two deferred ones are.
-    try expectSearch(host, "{\"query\":\"echo\"}", "Found 3 MCP tools:", &.{ "mcp_dies_echo", "mcp_modern_echo" }, "mcp_legacy_echo");
+    try expectSearch(host, "{\"query\":\"echo\"}", "Found 4 MCP tools:", &.{ "mcp_dies_echo", "mcp_downgrade_echo", "mcp_modern_echo" }, "mcp_legacy_echo");
     try expectSearch(host, "{\"query\":\"echo\",\"server\":\"modern\",\"limit\":1}", "Found 1 MCP tool:", &.{"mcp_modern_echo"}, "mcp_legacy_echo");
-    try expectCall(host, "tool_search", "{\"query\":\"nothing_like_this\"}", "No MCP tool matches \"nothing_like_this\". Connected servers: legacy, modern, dies.", false);
+    try expectCall(host, "tool_search", "{\"query\":\"nothing_like_this\"}", "No MCP tool matches \"nothing_like_this\". Connected servers: legacy, modern, dies, downgrade.", false);
     try expectCall(host, "tool_search", "{\"query\":\"\"}", "query must be a nonempty string", true);
 
     // The legacy server sent a ping after the handshake and received the empty answer.
@@ -198,10 +199,34 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try support.pumpUntilTrue(host, "mcpStates().dies === 'failed · legacy · the server exited with code 3 · stderr: boom'");
     try std.testing.expect(!support.hasTool(host, "mcp_dies_echo"));
 
+    // A stop answers a pending call at once; it does not wait for the server to exit.
+    const slow = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", host.cwd);
+    try host.pump();
+    try std.testing.expect(slow.state == .running);
     try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-dispose.js");
+    try support.pumpUntilSettled(host, slow);
+    try std.testing.expect(slow.is_error);
+    try std.testing.expectEqualStrings("the MCP server stopped", slow.text orelse "");
+    try support.dropCall(host, slow);
     try support.pumpUntilTrue(host, "mcpDisposed === true");
     try std.testing.expect(!support.hasTool(host, "mcp_legacy_echo"));
     try std.testing.expect(!support.hasTool(host, "mcp_modern_echo"));
+}
+
+test "a search tool name conflict clears on the next catalog change" {
+    var f: Fixture = undefined;
+    try f.init("search-conflict");
+    defer f.deinit();
+    const host = f.host;
+    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try support.pumpUntilTrue(host, "(mcpStates().config ?? '').includes('tool_search: another tool already has this name')");
+    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpHeld = true; Promise.resolve(plugins.dispose(\"search-holder\")).then(() => { globalThis.mcpHeld = false; });", "mcp-release.js");
+    try support.pumpUntilTrue(host, "mcpHeld === false");
+    try std.testing.expect(!support.hasTool(host, "tool_search"));
+    try expectCall(host, "mcp_modern_echo", "{\"text\":\"change\"}", "changed", false);
+    try support.pumpUntilTrue(host, "mcpStates().modern === 'connected · modern · 2 tools: added, echo'");
+    try std.testing.expect(support.hasTool(host, "tool_search"));
+    try std.testing.expect(!deferred(host, "tool_search"));
 }
 
 test "a workspace server starts only after the user trusts it at the first run" {
