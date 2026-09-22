@@ -507,6 +507,7 @@ test "a diff of many files stays inside the response budget" {
 }
 
 test "many huge parts each stay inside the part budget and none is dropped" {
+    const transcript = @import("../../../session/transcript.zig");
     const gpa = testing.allocator;
     const sid = SessionId.bytes([_]u8{6} ** 16);
     var sess = domain_session.Session.init(gpa, sid);
@@ -524,8 +525,8 @@ test "many huge parts each stay inside the part budget and none is dropped" {
         part.* = .{ .tool = .{
             .id = i,
             .name = "exec",
-            .arguments = huge,
-            .state = .{ .completed = .{ .output = huge, .duration_ms = 5 } },
+            .arguments = "",
+            .state = .{ .completed = .{ .output = "", .duration_ms = 5 } },
         } };
     }
     const messages = [_]proto.message.Message{.{ .assistant = .{
@@ -535,7 +536,19 @@ test "many huge parts each stay inside the part budget and none is dropped" {
         .content = content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    try seedHistory(&sess, &messages);
+    const structure_bytes = try transcript.messageBytes(messages[0]);
+    for (content) |*part| {
+        part.tool.arguments = huge[0..1];
+        part.tool.state.completed.output = huge[0..1];
+    }
+    try testing.expectEqual(structure_bytes + part_count * 2, try transcript.messageBytes(messages[0]));
+    for (content) |*part| {
+        part.tool.arguments = huge;
+        part.tool.state.completed.output = huge;
+    }
+    // ASCII x needs no JSON escape, so its byte count adds directly to the measured structure.
+    try sess.transcript.appendSized(messages[0], structure_bytes + part_count * 2 * huge.len);
+    sess.sealHistory(1, false);
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
