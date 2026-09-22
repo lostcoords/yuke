@@ -101,7 +101,6 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
 }
 
 fn summarizeChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?proto.run.RunOutcome, diagnostics: *ai.Diagnostics) !void {
-    defer slot.cancel.finish(engine.deps.io);
     try slot.cancel.check(engine.deps.io);
     try prompt.refresh(engine, arena, slot);
     const match = engine.deps.providers.merged.resolveModel(slot.config.model) orelse return error.UnknownModel;

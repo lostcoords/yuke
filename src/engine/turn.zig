@@ -56,21 +56,10 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
     var boundary_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer boundary_state.deinit();
     const boundary_arena = boundary_state.allocator();
-    consumeInitialInputs(engine, boundary_arena, slot) catch |err| {
+    begin(engine, boundary_arena, slot) catch |err| {
         commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = failure(boundary_arena, err) });
         return;
     };
-    // The prompt is built here and not at creation, because only a run task can await a hook.
-    switch (slot.cancel.runChild(engine.deps.io, promptChild, .{ engine, boundary_arena, slot })) {
-        .canceled, .aborted => {
-            commitFinal(engine, boundary_arena, slot, null, false, null, .canceled);
-            return;
-        },
-        .returned => |result| result catch |err| {
-            commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = failure(boundary_arena, err) });
-            return;
-        },
-    }
 
     while (true) {
         _ = boundary_state.reset(.retain_capacity);
@@ -87,21 +76,15 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
         // Settle any tool parts into a terminal state. The request builder rejects a pending tool.
         const has_tools = hasToolPart(live);
         if (has_tools) {
-            if (terminal == .success and terminal.success == .tool_calls) {
-                settlePendingTools(engine, boundary_arena, slot, &streamer, .run, live) catch |err| {
-                    run.faultSlot(engine, slot, err);
-                    return;
-                };
-            } else {
-                // Cancel any pending tool part; a canceled/failed stream or a malformed tool_use lands here.
-                settlePendingTools(engine, boundary_arena, slot, &streamer, .cancel, live) catch |err| {
-                    run.faultSlot(engine, slot, err);
-                    return;
-                };
-                if (terminal == .success) {
-                    commitFinal(engine, boundary_arena, slot, live, has_tools, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
-                    return;
-                }
+            // A canceled or failed stream, or a tool part without a tool_calls stop, cancels every pending tool.
+            const settle: Settle = if (terminal == .success and terminal.success == .tool_calls) .run else .cancel;
+            settlePendingTools(engine, boundary_arena, slot, &streamer, settle, live) catch |err| {
+                run.faultSlot(engine, slot, err);
+                return;
+            };
+            if (settle == .cancel and terminal == .success) {
+                commitFinal(engine, boundary_arena, slot, live, has_tools, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
+                return;
             }
         }
 
@@ -111,6 +94,15 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
         };
         if (slot.phase == .terminalized) return;
     }
+}
+
+/// Take the input accepted before the task started, then build the prompt, because only a run task can await a hook.
+fn begin(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void {
+    try consumeInitialInputs(engine, arena, slot);
+    return switch (slot.cancel.runChild(engine.deps.io, promptChild, .{ engine, arena, slot })) {
+        .canceled, .aborted => error.Canceled,
+        .returned => |result| result,
+    };
 }
 
 /// Include input accepted before the run task starts.
@@ -269,7 +261,6 @@ fn streamAttempt(
 
 fn requestChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?ai.PreparedRequest, diagnostics: *ai.Diagnostics) !void {
     std.debug.assert(out.* == null);
-    defer slot.cancel.finish(engine.deps.io);
     try slot.cancel.check(engine.deps.io);
     out.* = try roundRequest(engine, arena, slot, diagnostics);
 }
@@ -301,7 +292,6 @@ fn compactAndProject(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, 
 
 /// Open the response and stream it into the draft, in a child so a cancel can interrupt a blocked read.
 fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, request: *const ai.PreparedRequest, info: *ai.transport.AttemptInfo) !void {
-    defer slot.cancel.finish(engine.deps.io);
     try slot.cancel.check(engine.deps.io);
     const body = try engine.deps.route_transport.open(arena, request.transport_request, info);
     std.debug.assert(slot.body == null); // one body per run
@@ -653,7 +643,6 @@ fn runOneTool(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingT
 fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTool) !void {
     std.debug.assert(slot.phase == .running); // the run loop owns the slot for this round
     std.debug.assert(slot.progress.current != null); // the round opened the message
-    defer slot.cancel.finish(engine.deps.io);
     const started = engine.nowMillis();
     {
         const old = engine.deps.io.swapCancelProtection(.blocked);
@@ -716,7 +705,6 @@ const ToolOutput = struct {
 };
 
 fn promptChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void {
-    defer slot.cancel.finish(engine.deps.io);
     try slot.cancel.check(engine.deps.io);
     try prompt.refresh(engine, arena, slot);
 }
@@ -733,135 +721,6 @@ const ToolCallPayload = struct {
     arguments: []const u8,
     context: request_config_mod.HookContext,
 };
-
-test "a tool that appears while tools.select runs joins the same run" {
-    const State = struct {
-        reads: usize = 0,
-
-        fn names(raw: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
-            const self: *@This() = @ptrCast(@alignCast(raw));
-            self.reads += 1;
-            // The first read happens before the hook, the second after it, when the late tool exists.
-            return try arena.dupe([]const u8, if (self.reads == 1) &.{"read"} else &.{ "read", "late" });
-        }
-
-        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
-            return point == .@"tools.select";
-        }
-
-        fn ask(_: *anyopaque, _: std.mem.Allocator, _: proto.hook.Point, _: []const u8) hookset.Decision {
-            return .proceed;
-        }
-    };
-    var fixture: StreamerFixture = undefined;
-    try fixture.init();
-    defer fixture.deinit();
-    var state: State = .{};
-    fixture.engine.installTools(.{ .ctx = &state, .names = State.names });
-    fixture.engine.deps.hooks = .{ .ctx = &state, .holds = State.holds, .ask = State.ask };
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const held = try request_config_mod.loadout(&fixture.engine, arena.allocator(), fixture.slot);
-    try std.testing.expectEqual(@as(usize, 2), state.reads);
-    try std.testing.expect(held.allows("late"));
-}
-
-test "the run loadout gates a tool call, and a tool.before rewrite lands inside it" {
-    const State = struct {
-        calls: usize = 0,
-
-        fn names(_: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
-            return try arena.dupe([]const u8, &.{ "delegate", "read" });
-        }
-
-        fn execute(raw: *anyopaque, _: std.mem.Allocator, name: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
-            const self: *@This() = @ptrCast(@alignCast(raw));
-            std.debug.assert(std.mem.eql(u8, name, "delegate"));
-            self.calls += 1;
-            return .{ .output = "done", .is_error = false };
-        }
-
-        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
-            return point == .@"tool.before" or point == .@"tools.select";
-        }
-
-        fn ask(_: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
-            const sent = std.json.parseFromSliceLeaky(std.json.Value, arena, payload, .{}) catch unreachable;
-            const context = sent.object.get("context").?.object;
-            std.debug.assert(context.get("parent_id").? == .null);
-            std.debug.assert(context.get("depth").?.integer == 0);
-            std.debug.assert(std.mem.eql(u8, "root", context.get("agent_name").?.string));
-            if (point == .@"tools.select") {
-                const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"tools\":[\"delegate\"]}", .{}) catch unreachable;
-                return .{ .replace = value };
-            }
-            std.debug.assert(point == .@"tool.before");
-            if (!std.mem.eql(u8, sent.object.get("name").?.string, "read")) return .proceed;
-            const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"name\":\"delegate\",\"arguments\":\"{}\"}", .{}) catch unreachable;
-            return .{ .replace = value };
-        }
-    };
-    var f: StreamerFixture = undefined;
-    try f.init();
-    defer f.deinit();
-    var state: State = .{};
-    f.engine.installTools(.{ .ctx = &state, .names = State.names, .run = State.execute });
-    f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
-    var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer scratch.deinit();
-    // `write` is outside the loadout, so the process never runs it.
-    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "write", .arguments = "{}" }, .discard);
-    try std.testing.expect(refused.is_error);
-    try std.testing.expectEqual(@as(usize, 0), state.calls);
-    // `read` is rewritten to `delegate`, which the loadout allows.
-    const accepted = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "read", .arguments = "{}" }, .discard);
-    try std.testing.expect(!accepted.is_error);
-    try std.testing.expectEqual(@as(usize, 1), state.calls);
-    try std.testing.expectEqual(@as(usize, 1), f.slot.tools.?.names.len);
-}
-
-test "a tool.after replacement is the whole result, and the engine admits the media that remains" {
-    const State = struct {
-        media: [1]proto.content.MediaBlob = .{.{ .hash = .bytes(@splat(0x5a)), .mime = "image/png", .bytes = 1 }},
-        replace: bool = true,
-
-        fn execute(raw: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
-            const self: *@This() = @ptrCast(@alignCast(raw));
-            return .{ .output = "raw", .media = &self.media, .is_error = false };
-        }
-
-        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
-            return point == .@"tool.after";
-        }
-
-        fn ask(raw: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, _: []const u8) hookset.Decision {
-            const self: *@This() = @ptrCast(@alignCast(raw));
-            std.debug.assert(point == .@"tool.after");
-            if (!self.replace) return .proceed;
-            const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"output\":\"clean\",\"is_error\":false}", .{}) catch unreachable;
-            return .{ .replace = value };
-        }
-    };
-    var f: StreamerFixture = undefined;
-    try f.init();
-    defer f.deinit();
-    var state: State = .{};
-    f.engine.installTools(.{ .ctx = &state, .names = Resources.serveNames(&.{"read"}), .run = State.execute });
-    f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
-    var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer scratch.deinit();
-    const pending: PendingTool = .{ .part_id = 0, .name = "read", .arguments = "{}" };
-    // The replacement omits the media, so the bad ref is gone before admission.
-    const replaced = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
-    try std.testing.expect(!replaced.is_error);
-    try std.testing.expectEqualStrings("clean", replaced.output);
-    try std.testing.expectEqual(@as(usize, 0), replaced.media.len);
-    // Without the replacement, the ref the store lacks turns the result into an error.
-    state.replace = false;
-    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
-    try std.testing.expect(refused.is_error);
-    try std.testing.expect(std.mem.indexOf(u8, refused.output, "does not hold") != null);
-}
 
 /// Run one tool through its hooks. A block answers the model, and the process runs nothing.
 fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: PendingTool, output: toolset.Output) !toolset.Outcome {
@@ -1001,9 +860,9 @@ const StreamerFixture = struct {
         self.engine = self.resources.makeEngine(&self.db);
         errdefer self.engine.close();
         self.session = try self.engine.activate(.bytes(session_id));
-        var prepared = try RunSlot.prepare(std.testing.allocator, .{ .model = "mock", .system_prompt = system, .root = "/w" });
-        errdefer prepared.deinit();
-        self.slot = prepared.bind(
+        self.slot = try RunSlot.create(
+            std.testing.allocator,
+            .{ .model = "mock", .system_prompt = system, .root = "/w" },
             .{ .input_id = 1, .started = .{ .session_id = .bytes(session_id), .seq = 2, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 } },
             null,
             .{ .root = .bytes(session_id), .depth = 0 },
@@ -1078,8 +937,7 @@ test "a capped tool round reloads with an assistant error and failed outcome" {
     const a = arena_state.allocator();
     try fixture.persistStarted(a);
     fixture.resources.providers.merged.rows = &.{Resources.mockProvider(&.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .anthropic_messages, .caps = .{ .tools = true } }}, .{})};
-    fixture.slot.gpa.free(fixture.slot.config.model);
-    fixture.slot.config.model = try fixture.slot.gpa.dupe(u8, "mock/model");
+    fixture.slot.config.model = "mock/model";
     fixture.slot.config.max_rounds = 1;
     fixture.resources.transport.bytes = Resources.tool_reply;
     fixture.session.draft.?.deinit();
@@ -1368,8 +1226,7 @@ test "a run cancel interrupts either request hook before it settles" {
         var f: StreamerFixture = undefined;
         try f.init();
         defer f.deinit();
-        f.slot.gpa.free(f.slot.config.model);
-        f.slot.config.model = try f.slot.gpa.dupe(u8, "mock/model");
+        f.slot.config.model = "mock/model";
         f.slot.phase = .running;
         f.resources.providers.merged.rows = &.{Resources.mockProvider(&.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .openai_chat }}, .{ .protocol = .openai_chat })};
         var state: State = .{ .io = f.engine.deps.io, .slot = f.slot, .point = point };
@@ -1397,8 +1254,7 @@ test "a failed attempt keeps the provider status, request id, and detail past it
     var f: StreamerFixture = undefined;
     try f.init();
     defer f.deinit();
-    f.slot.gpa.free(f.slot.config.model);
-    f.slot.config.model = try f.slot.gpa.dupe(u8, "mock/model");
+    f.slot.config.model = "mock/model";
     f.slot.phase = .running;
     f.resources.providers.merged.rows = &.{Resources.mockProvider(&.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .openai_chat }}, .{ .protocol = .openai_chat })};
     var marker: u8 = 0;
@@ -1422,8 +1278,7 @@ test "an error event inside a 200 stream reports its class and the provider mess
     var f: StreamerFixture = undefined;
     try f.init();
     defer f.deinit();
-    f.slot.gpa.free(f.slot.config.model);
-    f.slot.config.model = try f.slot.gpa.dupe(u8, "mock/model");
+    f.slot.config.model = "mock/model";
     f.slot.phase = .running;
     f.resources.providers.merged.rows = &.{Resources.mockProvider(&.{.{ .id = "model", .upstream_id = "model", .name = "Model", .protocol = .openai_chat }}, .{ .protocol = .openai_chat })};
     // A gateway sends the 200 head, then reports the upstream failure as a chunk.
@@ -1595,4 +1450,133 @@ test "a running tool publishes its live output in order, and a cut on a characte
     try std.testing.expectEqual(@as(usize, cap - 2), recorder.deltas.items.len);
     try std.testing.expect(std.unicode.utf8ValidateSlice(recorder.deltas.items));
     try std.testing.expect(std.mem.startsWith(u8, recorder.deltas.items, "step 1\nstep 2\n"));
+}
+
+test "a tool that appears while tools.select runs joins the same run" {
+    const State = struct {
+        reads: usize = 0,
+
+        fn names(raw: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.reads += 1;
+            // The first read happens before the hook, the second after it, when the late tool exists.
+            return try arena.dupe([]const u8, if (self.reads == 1) &.{"read"} else &.{ "read", "late" });
+        }
+
+        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+            return point == .@"tools.select";
+        }
+
+        fn ask(_: *anyopaque, _: std.mem.Allocator, _: proto.hook.Point, _: []const u8) hookset.Decision {
+            return .proceed;
+        }
+    };
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    var state: State = .{};
+    fixture.engine.installTools(.{ .ctx = &state, .names = State.names });
+    fixture.engine.deps.hooks = .{ .ctx = &state, .holds = State.holds, .ask = State.ask };
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const held = try request_config_mod.loadout(&fixture.engine, arena.allocator(), fixture.slot);
+    try std.testing.expectEqual(@as(usize, 2), state.reads);
+    try std.testing.expect(held.allows("late"));
+}
+
+test "the run loadout gates a tool call, and a tool.before rewrite lands inside it" {
+    const State = struct {
+        calls: usize = 0,
+
+        fn names(_: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
+            return try arena.dupe([]const u8, &.{ "delegate", "read" });
+        }
+
+        fn execute(raw: *anyopaque, _: std.mem.Allocator, name: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            std.debug.assert(std.mem.eql(u8, name, "delegate"));
+            self.calls += 1;
+            return .{ .output = "done", .is_error = false };
+        }
+
+        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+            return point == .@"tool.before" or point == .@"tools.select";
+        }
+
+        fn ask(_: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
+            const sent = std.json.parseFromSliceLeaky(std.json.Value, arena, payload, .{}) catch unreachable;
+            const context = sent.object.get("context").?.object;
+            std.debug.assert(context.get("parent_id").? == .null);
+            std.debug.assert(context.get("depth").?.integer == 0);
+            std.debug.assert(std.mem.eql(u8, "root", context.get("agent_name").?.string));
+            if (point == .@"tools.select") {
+                const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"tools\":[\"delegate\"]}", .{}) catch unreachable;
+                return .{ .replace = value };
+            }
+            std.debug.assert(point == .@"tool.before");
+            if (!std.mem.eql(u8, sent.object.get("name").?.string, "read")) return .proceed;
+            const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"name\":\"delegate\",\"arguments\":\"{}\"}", .{}) catch unreachable;
+            return .{ .replace = value };
+        }
+    };
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var state: State = .{};
+    f.engine.installTools(.{ .ctx = &state, .names = State.names, .run = State.execute });
+    f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
+    var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer scratch.deinit();
+    // `write` is outside the loadout, so the process never runs it.
+    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "write", .arguments = "{}" }, .discard);
+    try std.testing.expect(refused.is_error);
+    try std.testing.expectEqual(@as(usize, 0), state.calls);
+    // `read` is rewritten to `delegate`, which the loadout allows.
+    const accepted = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "read", .arguments = "{}" }, .discard);
+    try std.testing.expect(!accepted.is_error);
+    try std.testing.expectEqual(@as(usize, 1), state.calls);
+    try std.testing.expectEqual(@as(usize, 1), f.slot.tools.?.names.len);
+}
+
+test "a tool.after replacement is the whole result, and the engine admits the media that remains" {
+    const State = struct {
+        media: [1]proto.content.MediaBlob = .{.{ .hash = .bytes(@splat(0x5a)), .mime = "image/png", .bytes = 1 }},
+        replace: bool = true,
+
+        fn execute(raw: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            return .{ .output = "raw", .media = &self.media, .is_error = false };
+        }
+
+        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+            return point == .@"tool.after";
+        }
+
+        fn ask(raw: *anyopaque, arena: std.mem.Allocator, point: proto.hook.Point, _: []const u8) hookset.Decision {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            std.debug.assert(point == .@"tool.after");
+            if (!self.replace) return .proceed;
+            const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"output\":\"clean\",\"is_error\":false}", .{}) catch unreachable;
+            return .{ .replace = value };
+        }
+    };
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var state: State = .{};
+    f.engine.installTools(.{ .ctx = &state, .names = Resources.serveNames(&.{"read"}), .run = State.execute });
+    f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
+    var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer scratch.deinit();
+    const pending: PendingTool = .{ .part_id = 0, .name = "read", .arguments = "{}" };
+    // The replacement omits the media, so the bad ref is gone before admission.
+    const replaced = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
+    try std.testing.expect(!replaced.is_error);
+    try std.testing.expectEqualStrings("clean", replaced.output);
+    try std.testing.expectEqual(@as(usize, 0), replaced.media.len);
+    // Without the replacement, the ref the store lacks turns the result into an error.
+    state.replace = false;
+    const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
+    try std.testing.expect(refused.is_error);
+    try std.testing.expect(std.mem.indexOf(u8, refused.output, "does not hold") != null);
 }

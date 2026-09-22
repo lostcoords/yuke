@@ -11,6 +11,10 @@ const ids = proto.ids;
 const reports = @import("reports.zig");
 const session_events = @import("events.zig");
 const admission = @import("admission.zig");
+const Input = @import("../session/input.zig");
+const sql = @import("sql");
+const turn = @import("turn.zig");
+const compaction = @import("compaction.zig");
 
 const Database = database.Database;
 const session_store = database.session;
@@ -46,21 +50,10 @@ pub fn beginTurn(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id
     defer tx.deinit();
     const input_id = try event_store.allocInputId(db, arena, session_id);
     const run_id = try event_store.allocRunId(db, arena, session_id);
-    const user_message_id = try event_store.allocMessageId(db, arena, session_id);
-    const user_now = util.nowMillis(io);
-    const user_message: proto.message.Message = .{ .user = .{
-        .id = user_message_id,
-        .content = input.content,
-        .input_id = input_id,
-        .source = input.source,
-        .skill_name = input.skill_name,
-        .time = .{ .created_at_ms = user_now },
-    } };
-    const commit = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), user_now, user_message);
-    // Build the commit slice before COMMIT, so a late allocation failure cannot orphan the durable run.
+    const now = util.nowMillis(io);
     const commits = try arena.alloc(message_store.Commit, 1);
-    commits[0] = commit;
-    const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, user_now);
+    commits[0] = try commitInput(db, io, arena, session_id, input, input_id, now, now);
+    const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, now);
     try tx.commit();
     return .{
         .handle = .{ .input_id = input_id, .started = started },
@@ -107,28 +100,26 @@ pub fn consumeEntries(db: *Database, io: std.Io, arena: std.mem.Allocator, sessi
     const commits = try arena.alloc(message_store.Commit, queued.len);
     const now = util.nowMillis(io);
 
-    for (queued, 0..) |entry, i| {
-        const user_message_id = try event_store.allocMessageId(db, arena, session_id);
-        const user_message: proto.message.Message = .{ .user = .{
-            .id = user_message_id,
-            .content = entry.input.content,
-            .source = entry.input.source,
-            .skill_name = entry.input.skill_name,
-            .input_id = entry.input.input_id,
-            .time = .{ .created_at_ms = entry.input.queued_at_ms },
-        } };
-        commits[i] = try message_store.appendCommittedMessage(
-            db,
-            arena,
-            session_id,
-            util.newId(io),
-            now,
-            user_message,
-        );
+    for (queued, commits) |entry, *commit| {
+        const input: Input = .{ .content = entry.input.content, .source = entry.input.source, .skill_name = entry.input.skill_name };
+        commit.* = try commitInput(db, io, arena, session_id, input, entry.input.input_id, entry.input.queued_at_ms, now);
         try input_store.consume(db, arena, session_id, entry.input.input_id);
     }
-
     return commits;
+}
+
+/// Commit one input as a user message in the caller's transaction.
+fn commitInput(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, input: Input, input_id: ids.InputId, created_at_ms: u64, now: u64) !message_store.Commit {
+    std.debug.assert(sql.inTransaction(db.conn));
+    const message: proto.message.Message = .{ .user = .{
+        .id = try event_store.allocMessageId(db, arena, session_id),
+        .content = input.content,
+        .input_id = input_id,
+        .source = input.source,
+        .skill_name = input.skill_name,
+        .time = .{ .created_at_ms = created_at_ms },
+    } };
+    return message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), now, message);
 }
 
 /// The response gate must launch a prepared run exactly once through an optional token.
@@ -281,16 +272,16 @@ pub fn prepareContext(engine: *Engine, arena: std.mem.Allocator, rt: *Session, e
     return .{ .snapshot = snapshot, .tree = try admission.location(engine, arena, rt.id) };
 }
 
-/// Copy the session configuration into a slot before its start transaction.
-pub fn prepareSlot(engine: *Engine, arena: std.mem.Allocator, rt: *Session, context: Preparation, kind: proto.enums.RunKind) !RunSlot.Prepared {
+/// Read the configuration of a run slot before its start transaction, so no read can fail after the commit.
+pub fn slotConfig(engine: *Engine, arena: std.mem.Allocator, rt: *Session, context: Preparation, kind: proto.enums.RunKind) !session.Config {
     std.debug.assert(rt.active_run == null);
     const prompt = if (try session_store.prompt(engine.deps.db, arena, rt.id.raw)) |stored| stored.text else "";
-    return RunSlot.prepare(engine.deps.gpa, .{ .model = context.snapshot.model, .reasoning = context.snapshot.reasoning, .system_prompt = prompt, .max_rounds = if (kind == .turn) context.snapshot.max_rounds else null, .root = context.snapshot.root, .name = context.snapshot.name });
+    return .{ .model = context.snapshot.model, .reasoning = context.snapshot.reasoning, .system_prompt = prompt, .max_rounds = if (kind == .turn) context.snapshot.max_rounds else null, .root = context.snapshot.root, .name = context.snapshot.name };
 }
 
-/// Bind a durable start to the prepared slot.
-pub fn bindPrepared(prepared: *RunSlot.Prepared, context: Preparation, started: Started) *RunSlot {
-    return prepared.bind(started.handle, if (context.snapshot.parent_id) |id| .bytes(id) else null, context.tree);
+/// Create the slot of a committed start. Only an allocation follows the commit.
+pub fn createSlot(engine: *Engine, config: session.Config, context: Preparation, started: Started) !*RunSlot {
+    return RunSlot.create(engine.deps.gpa, config, started.handle, if (context.snapshot.parent_id) |id| .bytes(id) else null, context.tree);
 }
 
 /// Emit the durable start after the caller folds any user commits.
@@ -309,10 +300,9 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
 
     // The arena holds store values until the slot owns its prompt and run ids.
     const session_id = rt.id;
-    var prepared = try prepareSlot(engine, arena, rt, context, .turn);
-    errdefer prepared.deinit();
+    const config = try slotConfig(engine, arena, rt, context, .turn);
     const started = try beginQueuedTurn(engine.deps.db, engine.deps.io, arena, session_id.raw, context.snapshot.config_rev);
-    const slot = bindPrepared(&prepared, context, started);
+    const slot = try createSlot(engine, config, context, started);
     // Publish the user commits before run.started to retire the queue in sequence order.
     session_events.publishUserCommits(engine, rt, started.user_commits);
     std.debug.assert(rt.queueDepth() == 0);
@@ -341,8 +331,7 @@ pub fn prepareCompaction(engine: *Engine, rt: *Session, reason: proto.enums.Comp
     const context = try prepareContext(engine, arena, rt, true);
     std.debug.assert(rt.active_run == null);
     const sid = rt.id.raw;
-    var prepared = try prepareSlot(engine, arena, rt, context, .compaction);
-    errdefer prepared.deinit();
+    const config = try slotConfig(engine, arena, rt, context, .compaction);
 
     const started_at = engine.nowMillis();
     var tx = try engine.deps.db.begin();
@@ -360,7 +349,7 @@ pub fn prepareCompaction(engine: *Engine, rt: *Session, reason: proto.enums.Comp
     try tx.commit();
 
     const started_result: Started = .{ .handle = .{ .input_id = 0, .started = started }, .user_commits = &.{} };
-    const slot = bindPrepared(&prepared, context, started_result);
+    const slot = try createSlot(engine, config, context, started_result);
     rt.active_run = slot;
     emitStarted(engine, rt, started_result);
     session_events.announceActivity(engine, rt); // A compaction opens no round, so nothing else says it runs.
@@ -395,10 +384,6 @@ pub fn startPendingCompaction(engine: *Engine, rt: *Session) bool {
 
 const testing = std.testing;
 const zio = @import("zio");
-const Input = @import("../session/input.zig");
-const sql = @import("sql");
-const turn = @import("turn.zig");
-const compaction = @import("compaction.zig");
 const test_resources = @import("test_resources.zig");
 const commands = @import("commands.zig");
 

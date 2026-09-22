@@ -76,10 +76,8 @@ pub fn refresh(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void 
         try tx.commit();
         break :blk rendered;
     };
-    // The slot owns its prompt for the run, so the fresh text replaces the copy the prepare made.
-    const owned = try slot.gpa.dupe(u8, text);
-    slot.gpa.free(slot.config.system_prompt);
-    slot.config.system_prompt = owned;
+    // The slot arena keeps the old copy until the run ends; a run refreshes its prompt at most once.
+    slot.config.system_prompt = try slot.arena.allocator().dupe(u8, text);
 }
 
 /// The calendar date of `created_at_ms` in UTC, as `YYYY-MM-DD`.

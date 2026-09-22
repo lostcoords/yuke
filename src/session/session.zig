@@ -67,7 +67,8 @@ pub const RunProgress = struct {
 };
 
 pub const RunSlot = struct {
-    gpa: std.mem.Allocator,
+    /// Owns the slot and every string of `config`, so `destroy` frees the run with one call.
+    arena: std.heap.ArenaAllocator,
     handle: RunHandle,
     progress: RunProgress = .{},
     config: Config,
@@ -99,59 +100,29 @@ pub const RunSlot = struct {
         retrying: proto.activity.ActivityStateRetrying,
     };
 
-    pub const Prepared = struct {
-        gpa: std.mem.Allocator,
-        slot: ?*RunSlot,
-        config: Config,
-
-        pub fn bind(self: *Prepared, handle: RunHandle, parent_id: ?ids.SessionId, location: Location) *RunSlot {
-            const slot = self.slot orelse unreachable;
-            if (parent_id == null) std.debug.assert(location.depth == 0) else std.debug.assert(location.depth > 0);
-            self.slot = null;
-            slot.* = .{
-                .gpa = self.gpa,
-                .handle = handle,
-                .config = self.config,
-                .parent_id = parent_id,
-                .tree_root = location.root,
-                .depth = location.depth,
-            };
-            return slot;
-        }
-
-        pub fn deinit(self: *Prepared) void {
-            const slot = self.slot orelse return;
-            freeConfig(self.gpa, self.config);
-            self.gpa.destroy(slot);
-            self.slot = null;
-        }
-    };
-
     pub const Location = struct {
         root: ids.SessionId,
         depth: u32,
     };
 
-    /// Copy the borrowed strings of `source` once; the slot frees them when the run ends.
-    pub fn prepare(gpa: std.mem.Allocator, source: Config) !Prepared {
+    /// Create a started run; the slot copies the borrowed strings of `source` into its own arena.
+    pub fn create(gpa: std.mem.Allocator, source: Config, handle: RunHandle, parent_id: ?ids.SessionId, location: Location) !*RunSlot {
         std.debug.assert(source.root.len > 0);
-        var config: Config = .{ .model = &.{}, .system_prompt = &.{}, .max_rounds = source.max_rounds, .root = &.{} };
-        errdefer freeConfig(gpa, config);
-        config.model = try gpa.dupe(u8, source.model);
-        config.reasoning = try gpa.dupe(u8, source.reasoning);
-        config.system_prompt = try gpa.dupe(u8, source.system_prompt);
-        config.root = try gpa.dupe(u8, source.root);
-        config.name = if (source.name) |name| try gpa.dupe(u8, name) else null;
-        const slot = try gpa.create(RunSlot);
-        return .{ .gpa = gpa, .slot = slot, .config = config };
-    }
-
-    fn freeConfig(gpa: std.mem.Allocator, config: Config) void {
-        gpa.free(config.model);
-        gpa.free(config.reasoning);
-        gpa.free(config.system_prompt);
-        gpa.free(config.root);
-        if (config.name) |name| gpa.free(name);
+        if (parent_id == null) std.debug.assert(location.depth == 0) else std.debug.assert(location.depth > 0);
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        errdefer arena.deinit();
+        const a = arena.allocator();
+        const slot = try a.create(RunSlot);
+        const config: Config = .{
+            .model = try a.dupe(u8, source.model),
+            .reasoning = try a.dupe(u8, source.reasoning),
+            .system_prompt = try a.dupe(u8, source.system_prompt),
+            .max_rounds = source.max_rounds,
+            .root = try a.dupe(u8, source.root),
+            .name = if (source.name) |name| try a.dupe(u8, name) else null,
+        };
+        slot.* = .{ .arena = arena, .handle = handle, .config = config, .parent_id = parent_id, .tree_root = location.root, .depth = location.depth };
+        return slot;
     }
 
     pub fn sessionId(self: *const RunSlot) ids.SessionId {
@@ -167,8 +138,7 @@ pub const RunSlot = struct {
         std.debug.assert(self.body == null);
         std.debug.assert(self.round == .none); // every round closes before the run ends
         std.debug.assert(self.work.pending == 0);
-        freeConfig(self.gpa, self.config);
-        self.gpa.destroy(self);
+        self.arena.deinit();
     }
 };
 

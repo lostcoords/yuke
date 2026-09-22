@@ -27,18 +27,13 @@ pub const Cancel = struct {
         self.event.set(io);
     }
 
-    /// Report that the child finished, so the caller stops waiting for it.
-    pub fn finish(self: *Cancel, io: std.Io) void {
-        self.event.set(io);
-    }
-
     /// Return `error.Canceled` when this call site or the owning task stopped.
     pub fn check(self: *const Cancel, io: std.Io) !void {
         try io.checkCancel();
         if (self.isRequested()) return error.Canceled;
     }
 
-    /// Run `f` in a child task, so a cancel can interrupt a blocked call.
+    /// Run `f` in a child task, so a cancel can interrupt a blocked call; the end of `f` wakes the caller.
     pub fn runChild(self: *Cancel, io: std.Io, comptime f: anytype, args: anytype) ChildResult {
         return self.runChildTimeout(io, .none, f, args) catch unreachable;
     }
@@ -46,8 +41,13 @@ pub const Cancel = struct {
     /// A deadline cancels and joins the child before it returns Timeout.
     pub fn runChildTimeout(self: *Cancel, io: std.Io, timeout: std.Io.Timeout, comptime f: anytype, args: anytype) error{Timeout}!ChildResult {
         self.event.reset();
-
-        var child = io.concurrent(f, args) catch |err| return .{ .returned = err };
+        const Child = struct {
+            fn run(cancel: *Cancel, child_io: std.Io, child_args: @TypeOf(args)) @typeInfo(@TypeOf(f)).@"fn".return_type.? {
+                defer cancel.event.set(child_io);
+                return @call(.auto, f, child_args);
+            }
+        };
+        var child = io.concurrent(Child.run, .{ self, io, args }) catch |err| return .{ .returned = err };
         const deadline = timeout.toDeadline(io);
         while (!self.isRequested()) {
             self.event.waitTimeout(io, deadline) catch |err| {
@@ -93,14 +93,13 @@ test "a prior cancel survives a child reset and a retry delay" {
     cancel.request(testing.io);
     var interrupted = false;
     const Child = struct {
-        fn run(token: *Cancel, was_interrupted: *bool) error{}!void {
-            defer token.finish(std.testing.io);
+        fn run(was_interrupted: *bool) error{}!void {
             std.Io.sleep(std.testing.io, .fromSeconds(2), .awake) catch {
                 was_interrupted.* = true;
             };
         }
     };
-    try testing.expect(cancel.runChild(testing.io, Child.run, .{ &cancel, &interrupted }) == .canceled);
+    try testing.expect(cancel.runChild(testing.io, Child.run, .{&interrupted}) == .canceled);
     try testing.expect(interrupted);
     try testing.expect(try cancel.holdFor(testing.io, 60_000));
 }

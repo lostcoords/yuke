@@ -215,8 +215,7 @@ fn ioTask(host: *Host, op: *pending.Op, request: Request) void {
     op.finish(result);
 }
 
-fn worker(host: *Host, op: *pending.Op, request: Request, result: *pending.Result) error{}!void {
-    defer op.cancel.finish(host.io);
+fn worker(host: *Host, _: *pending.Op, request: Request, result: *pending.Result) error{}!void {
     host.io.checkCancel() catch return;
     const connection = request.connection;
     switch (request.kind) {

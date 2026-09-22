@@ -300,8 +300,7 @@ fn httpTask(host: *Host, op: *pending.Op, body: *Body) void {
     op.finish(result);
 }
 
-fn httpWorker(host: *Host, op: *pending.Op, body: *Body, result: *pending.Result) error{}!void {
-    defer op.cancel.finish(host.io);
+fn httpWorker(host: *Host, _: *pending.Op, body: *Body, result: *pending.Result) error{}!void {
     const head = exchange(host, body) catch |err| {
         body.release(true);
         result.* = switch (err) {
@@ -472,7 +471,6 @@ fn readTask(host: *Host, op: *pending.Op, read: Read) void {
 }
 
 fn readWorker(host: *Host, op: *pending.Op, read: Read, result: *pending.Result) error{}!void {
-    defer op.cancel.finish(host.io);
     host.io.checkCancel() catch return;
     const body = read.body;
     std.debug.assert(body.op == op and body.request != null);

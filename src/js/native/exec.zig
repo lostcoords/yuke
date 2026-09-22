@@ -124,7 +124,6 @@ fn execTask(host: *Host, op: *pending.Op, req: Request) void {
 
 /// The worker touches no QuickJS values and signals its supervisor before return.
 fn execWorker(host: *Host, op: *pending.Op, req: Request, result: *pending.Result) error{}!void {
-    defer op.cancel.finish(host.io);
     host.io.checkCancel() catch return;
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     const ran = process.run(host.io, req.root, host.execution, arena.allocator(), .{

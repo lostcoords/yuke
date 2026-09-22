@@ -401,8 +401,7 @@ test "process activity uses live engine state and scoped coalesced notifications
     // A child has no pane, but its prepared run already belongs to this process.
     const sid = SessionId.bytes(std.mem.toBytes(@as(u128, 3)));
     const resident = tree.app.engine.sessions.get(sid).?;
-    var prepared = try domain_session.RunSlot.prepare(host.gpa, .{ .model = "bench/model", .system_prompt = "", .root = "/bench" });
-    const slot = prepared.bind(.{
+    const slot = try domain_session.RunSlot.create(host.gpa, .{ .model = "bench/model", .system_prompt = "", .root = "/bench" }, .{
         .input_id = 1,
         .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },
     }, .bytes(std.mem.toBytes(@as(u128, 1))), .{ .root = .bytes(std.mem.toBytes(@as(u128, 1))), .depth = 1 });
