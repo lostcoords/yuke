@@ -51,6 +51,8 @@ pub const Block = struct {
         is_error: bool,
         /// Images beside the text. Each protocol places them where its result shape allows.
         media: []const Media = &.{},
+        /// The deferred tools this result loads by name. Only Anthropic expands them from the declared tools.
+        tool_references: []const []const u8 = &.{},
     };
 };
 
@@ -164,12 +166,16 @@ pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Bloc
 
     // A saturating total needs no overflow branch, because the cap rejects the saturated value.
     var total = request.model.len +| request.system.len;
+    var deferred: usize = 0;
     for (request.tools) |tool| {
+        deferred += @intFromBool(tool.defer_loading);
         if (tool.name.len == 0 or !stringValid(tool.name) or !stringValid(tool.description)) return error.InvalidRequest;
         try validateObject(arena, tool.input_schema);
         total +|= tool.name.len +| tool.description.len +| tool.input_schema.len;
         if (total > types.limits.max_request_bytes) return error.RequestTooLarge;
     }
+    // A provider refuses a request whose tools all defer, because nothing could search for them.
+    if (deferred != 0 and deferred == request.tools.len) return error.InvalidRequest;
     // A non-finite value serializes to text no JSON parser accepts.
     if (request.temperature) |value| if (!std.math.isFinite(value) or value < 0) return error.InvalidRequest;
     if (request.top_p) |value| if (!std.math.isFinite(value) or value < 0 or value > 1) return error.InvalidRequest;
@@ -182,6 +188,13 @@ pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Bloc
         total +|= output.name.len +| output.schema.len;
     }
     for (blocks) |block| {
+        if (block.value == .tool_result) for (block.value.tool_result.tool_references) |name| {
+            // A reference must name a declared tool, or the result is stale.
+            const declared = for (request.tools) |tool| {
+                if (std.mem.eql(u8, tool.name, name)) break true;
+            } else false;
+            if (!declared) return error.InvalidRequest;
+        };
         try validateBlock(arena, block);
         total +|= blockBytes(block);
         if (total > types.limits.max_request_bytes) return error.RequestTooLarge;
@@ -198,6 +211,7 @@ fn blockBytes(block: Block) usize {
         .tool_result => |value| blk: {
             var total = value.call_id.len +| value.content.len;
             for (value.media) |media| total +|= mediaBytes(media);
+            for (value.tool_references) |name| total +|= name.len;
             break :blk total;
         },
     };
@@ -241,6 +255,7 @@ fn validateBlock(arena: std.mem.Allocator, block: Block) !void {
             if (block.role != .user or value.call_id.len == 0) return error.InvalidRequest;
             if (!stringValid(value.call_id) or !stringValid(value.content)) return error.InvalidRequest;
             for (value.media) |media| try validateMedia(media);
+            for (value.tool_references) |name| if (name.len == 0 or !stringValid(name)) return error.InvalidRequest;
         },
     }
 }
@@ -287,6 +302,25 @@ test "request validation rejects role mismatches and malformed raw JSON" {
 
     const empty_media = [_]Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "" }, .mime = "image/png" } } }};
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &empty_media));
+}
+
+test "a tool reference must name a declared tool, and one tool must stay eager" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const tools = [_]Tool{
+        .{ .name = "tool_search", .description = "Find a tool.", .input_schema = "{}" },
+        .{ .name = "mcp_read", .description = "Read.", .input_schema = "{}", .defer_loading = true },
+    };
+    const request: Request = .{ .model = "m", .max_output_tokens = 1, .tools = &tools };
+    const found = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "found", .is_error = false, .tool_references = &.{"mcp_read"} } } }};
+    try validate(arena.allocator(), request, &found);
+    const gone = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "found", .is_error = false, .tool_references = &.{"mcp_gone"} } } }};
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), request, &gone));
+    const blank = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "found", .is_error = false, .tool_references = &.{""} } } }};
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), request, &blank));
+    const all_deferred: Request = .{ .model = "m", .max_output_tokens = 1, .tools = tools[1..] };
+    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), all_deferred, &found));
 }
 
 test "request validation enforces count, size, and token boundaries" {

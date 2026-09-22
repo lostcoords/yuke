@@ -9,7 +9,7 @@ import { showInfo } from "yuke:info-panel";
 /** @import { Plugin, ToolDefinition } from "./types/ext.js" */
 /** @typedef {import("yuke:spawn").ChildProcess} ChildProcess */
 /** @typedef {import("yuke:cancellation-native").CancellationSignal} CancellationSignal */
-/** @typedef {{ type?: "stdio" | "http" | "sse", command?: string, args?: string[], env?: Record<string, string>, cwd?: string, url?: string, headers?: Record<string, string>, enabled?: boolean, timeout?: number }} ServerConfig */
+/** @typedef {{ type?: "stdio" | "http" | "sse", command?: string, args?: string[], env?: Record<string, string>, cwd?: string, url?: string, headers?: Record<string, string>, enabled?: boolean, timeout?: number, alwaysLoad?: boolean }} ServerConfig */
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
 /** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "failed" | "disabled" | "unsupported" | "stopped"} ServerState */
@@ -202,6 +202,7 @@ function checkConfig(config) {
   if (config.cwd !== undefined && typeof config.cwd !== "string") return "cwd must be a string";
   if (config.timeout !== undefined && (!Number.isSafeInteger(config.timeout) || config.timeout <= 0)) return "timeout must be a positive integer of milliseconds";
   if (config.enabled !== undefined && typeof config.enabled !== "boolean") return "enabled must be a boolean";
+  if (config.alwaysLoad !== undefined && typeof config.alwaysLoad !== "boolean") return "alwaysLoad must be a boolean";
   if (config.command.includes("\0") || config.args?.some((arg) => arg.includes("\0")) || config.cwd?.includes("\0")) return "execution fields must not contain NUL";
   return null;
 }
@@ -467,6 +468,8 @@ class Server {
         name,
         description: tool.description || tool.title || "The " + tool.name + " tool of the " + this.name + " MCP server.",
         parameters: tool.inputSchema.properties === undefined ? { ...tool.inputSchema, properties: {} } : tool.inputSchema,
+        // A deferred definition stays out of the prompt until a tool search names it; `alwaysLoad` keeps a server eager.
+        defer: this.config.alwaysLoad !== true,
         execute: (args, signal) => this.call(tool.name, args, signal),
       });
     }

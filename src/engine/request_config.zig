@@ -110,7 +110,7 @@ pub fn hookContext(engine: *const Engine, slot: *const RunSlot, has_skills: bool
 }
 
 /// The tools this run may see, chosen once at its first request. `tools.select` may narrow the list; the answer holds for the run.
-pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*const Loadout {
+pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Loadout {
     if (slot.tools) |*held| return held;
     const tools = engine.deps.tools;
     const names = try tools.names(tools.ctx, arena);
@@ -138,9 +138,79 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*cons
     return &slot.tools.?;
 }
 
+/// Defer definitions only when they take at least this share of the context window; Claude Code uses the same default.
+const deferral_threshold_percent: u64 = 10;
+/// The client search tool. A deferred definition is reachable only through it.
+pub const search_tool_name = "tool_search";
+
+/// Deferral needs tool search on the route, the search tool in the loadout, and a catalog at the threshold.
+fn deferralApplies(spec: *const registry.ModelSpec, decls: []const ai.ir.Tool) !bool {
+    if (spec.caps.tool_search != true or spec.protocol == .openai_chat) return false;
+    var deferred_bytes: u64 = 0;
+    var searchable = false;
+    for (decls) |decl| {
+        if (decl.defer_loading) deferred_bytes += try context.jsonBytes(decl);
+        searchable = searchable or (!decl.defer_loading and std.mem.eql(u8, decl.name, search_tool_name));
+    }
+    if (!searchable) return false;
+    const window = spec.limits.context_window orelse context.default_context_window;
+    // The window is peer input, so the threshold divides instead of multiplying into an overflow.
+    const threshold = window / deferral_threshold_percent + @intFromBool(window % deferral_threshold_percent != 0);
+    return context.tokensFor(deferred_bytes) >= threshold;
+}
+
+/// Copy the declarations with every defer flag cleared. A catalog with no deferred tool copies nothing.
+fn eagerDecls(own: std.mem.Allocator, decls: []const ai.ir.Tool) ![]const ai.ir.Tool {
+    const any_deferred = for (decls) |decl| {
+        if (decl.defer_loading) break true;
+    } else false;
+    if (!any_deferred) return decls;
+    const eager = try own.dupe(ai.ir.Tool, decls);
+    for (eager) |*decl| decl.defer_loading = false;
+    return eager;
+}
+
+test "deferral needs tool search on the route and a catalog at the threshold" {
+    const big = "x" ** 4000;
+    const decls = [_]ai.ir.Tool{
+        .{ .name = "read", .description = "Read.", .input_schema = "{}" },
+        .{ .name = "mcp_a", .description = big, .input_schema = "{}", .defer_loading = true },
+        .{ .name = "mcp_b", .description = big, .input_schema = "{}", .defer_loading = true },
+        .{ .name = search_tool_name, .description = "Find.", .input_schema = "{}" },
+    };
+    var spec: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tool_search = true }, .limits = .{ .context_window = 20_000 } };
+    try std.testing.expect(try deferralApplies(&spec, &decls));
+    spec.limits.context_window = 200_000; // The two schemas are under ten percent of this window.
+    try std.testing.expect(!try deferralApplies(&spec, &decls));
+    spec.limits.context_window = 20_000;
+    spec.caps.tool_search = null;
+    try std.testing.expect(!try deferralApplies(&spec, &decls));
+    spec.caps.tool_search = true;
+    spec.protocol = .openai_chat;
+    try std.testing.expect(!try deferralApplies(&spec, &decls));
+    spec.protocol = .anthropic_messages;
+    // Without the search tool nothing could load a deferred definition, so every tool stays eager.
+    try std.testing.expect(!try deferralApplies(&spec, decls[0..3]));
+    try std.testing.expect(!try deferralApplies(&spec, decls[0..1]));
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const eager = try eagerDecls(arena.allocator(), &decls);
+    for (eager) |decl| try std.testing.expect(!decl.defer_loading);
+    try std.testing.expectEqualStrings("mcp_b", eager[2].name);
+    try std.testing.expectEqual(@as(usize, 4), eager.len);
+    // A catalog with no deferred tool is returned as it is, with no copy.
+    try std.testing.expectEqual(decls[0..1].ptr, (try eagerDecls(arena.allocator(), decls[0..1])).ptr);
+}
+
 /// Build the session request configuration once before any context decision.
 pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, model: *const registry.ModelSpec) !RequestBuild {
     const held = try loadout(engine, arena, slot);
+    // The model is known here and not at the loadout, so the deferral policy applies at the first build and holds for the run.
+    if (!held.deferral_applied) {
+        held.deferral_applied = true;
+        if (!try deferralApplies(model, held.decls)) held.decls = try eagerDecls(held.arena.allocator(), held.decls);
+    }
     var build: RequestBuild = .{
         .model = model.upstream_id,
         .system = slot.config.system_prompt,

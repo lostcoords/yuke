@@ -50,6 +50,8 @@ export interface ToolDefinition {
   description: string;
   parameters: Record<string, unknown>;
   execute: ToolExecute;
+  /** Request deferred loading until a tool search names the definition. */
+  defer?: boolean;
 }
 
 export interface Capabilities {

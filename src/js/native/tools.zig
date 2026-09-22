@@ -58,7 +58,14 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     };
     defer ctx.freeCString(schema_text.ptr);
 
-    host.tools.register(name, description_text, schema_text, execute) catch |err| {
+    const deferred = ctx.getPropertyStr(args[1], "defer");
+    defer ctx.freeValue(deferred);
+    if (!ctx.isStrictEqual(deferred, quickjs.UNDEFINED) and !ctx.isBool(deferred)) {
+        ctx.freeValue(execute);
+        return ctx.throwTypeError("the tool defer flag must be a boolean");
+    }
+    const defer_loading = ctx.isBool(deferred) and (ctx.toBool(deferred) catch unreachable);
+    host.tools.register(name, description_text, schema_text, defer_loading, execute) catch |err| {
         ctx.freeValue(execute);
         return ctx.throwTypeError(registerMessage(err));
     };

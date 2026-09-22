@@ -36,6 +36,8 @@ pub const Loadout = struct {
     decls: []const transport_ir.Tool,
     /// The session catalog lists at least one skill. Read once, because a reload refuses an active run.
     has_skills: bool,
+    /// The first request build decided whether the deferred flags stay. The decision holds for the run.
+    deferral_applied: bool = false,
 
     pub fn allows(self: *const Loadout, name: []const u8) bool {
         for (self.names) |allowed| if (std.mem.eql(u8, allowed, name)) return true;

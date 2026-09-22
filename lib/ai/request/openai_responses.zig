@@ -114,6 +114,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
             .tool_result => |tool_result| {
                 try closeMessage(&jw, &message);
                 try jw.beginObject();
+                if (tool_result.tool_references.len != 0) return error.UnsupportedToolReferences;
                 try json.field(&jw, "type", "function_call_output");
                 try json.field(&jw, "call_id", tool_result.call_id);
                 if (tool_result.media.len == 0) {

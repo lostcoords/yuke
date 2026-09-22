@@ -119,7 +119,7 @@ pub fn tokensFor(bytes: u64) u64 {
     return bytes / 3 + @intFromBool(bytes % 3 != 0);
 }
 
-fn jsonBytes(value: anytype) !u64 {
+pub fn jsonBytes(value: anytype) !u64 {
     var buffer: [0]u8 = .{};
     var out = std.Io.Writer.Discarding.init(&buffer);
     try std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, &out.writer);

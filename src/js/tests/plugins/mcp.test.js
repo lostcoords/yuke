@@ -85,7 +85,7 @@ if (mcpCase === "servers") {
     startupMs: 3000,
     callMs: 500,
     servers: {
-      legacy: { ...sh(LEGACY), env: { ...env, GREETING: "${MCP_TEST_GREETING:-hi}" } },
+      legacy: { ...sh(LEGACY), env: { ...env, GREETING: "${MCP_TEST_GREETING:-hi}" }, alwaysLoad: true },
       modern: sh(MODERN),
       dies: sh(DIES),
       modernonly: sh(MODERN_ONLY),

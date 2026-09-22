@@ -52,6 +52,10 @@ const Fixture = struct {
     }
 };
 
+fn deferred(host: *Host, name: []const u8) bool {
+    return host.tools.entries.items[host.tools.find(name).?].decl.defer_loading;
+}
+
 fn expectState(host: *Host, name: []const u8, want: []const u8) !void {
     const source = try std.fmt.allocPrintSentinel(std.testing.allocator, "globalThis.mcpRow = mcpStates()[\"{s}\"];", .{name}, 0);
     defer std.testing.allocator.free(source);
@@ -135,6 +139,9 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     // The two names that clean to one yuke name both exist.
     try std.testing.expect(support.hasTool(host, "mcp_modern_a_tool"));
     try std.testing.expect(support.hasTool(host, "mcp_modern_a_tool_2"));
+    // An MCP tool defers by default; `alwaysLoad` keeps the legacy server's tool eager.
+    try std.testing.expect(deferred(host, "mcp_modern_echo"));
+    try std.testing.expect(!deferred(host, "mcp_legacy_echo"));
 
     // The legacy server sent a ping after the handshake and received the empty answer.
     try expectCall(host, "mcp_legacy_echo", "{\"text\":\"there\"}", "hello says there pinged", false);

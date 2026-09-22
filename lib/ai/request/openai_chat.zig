@@ -270,6 +270,7 @@ fn writeImageLabel(jw: *std.json.Stringify, call_id: []const u8) !void {
 }
 
 fn writeToolResult(jw: *std.json.Stringify, tool_result: ir.Block.ToolResult) !void {
+    if (tool_result.tool_references.len != 0) return error.UnsupportedToolReferences;
     try jw.beginObject();
     try json.field(jw, "role", "tool");
     try json.field(jw, "tool_call_id", tool_result.call_id);
