@@ -6,6 +6,7 @@ import { headerValue } from "yuke:mcp-transport";
 import { check, equal } from "yuke:test";
 import { sseParser } from "yuke:sse";
 import { client } from "yuke:client";
+import { fetch } from "yuke:http";
 
 // The shell servers answer one JSON-RPC line per request. `sed` reads the id, the method, and the text argument.
 const READ = String.raw`while IFS= read -r line; do
@@ -128,6 +129,34 @@ if (mcpCase === "http") {
     denied: { url: mcpHttpBase + "/modern" },
     mismatch: { type: "http", url: mcpHttpBase + "/mismatch", headers: token },
   } });
+  globalThis.mcpReady = false;
+  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+}
+
+// One server behind OAuth. The test browser follows the authorization redirect to the loopback callback, as a real browser does.
+if (mcpCase === "oauth") {
+  globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 2000, servers: {
+    secure: { type: "http", url: mcpHttpBase + "/secure" },
+    lockedsse: { type: "sse", url: mcpHttpBase + "/secure-sse" },
+  } });
+  globalThis.browse = async (/** @type {string} */ url) => {
+    const authorize = await fetch(url);
+    authorize.body.cancel();
+    const back = await fetch(/** @type {string} */ (authorize.headers.get("location")));
+    globalThis.callbackPage = await back.text();
+  };
+  globalThis.mcpReady = false;
+  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+}
+
+// A confidential client whose secret needs form encoding before HTTP Basic.
+if (mcpCase === "oauth-secret") {
+  globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 2000, servers: { private: { type: "http", url: mcpHttpBase + "/secure", oauth: { clientId: "client-2", clientSecret: "s p!c" } } } });
+  globalThis.browse = async (/** @type {string} */ url) => {
+    const authorize = await fetch(url);
+    authorize.body.cancel();
+    await (await fetch(/** @type {string} */ (authorize.headers.get("location")))).text();
+  };
   globalThis.mcpReady = false;
   plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
 }

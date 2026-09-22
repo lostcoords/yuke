@@ -40,7 +40,7 @@ const Fixture = struct {
         const global = self.host.ctx.getGlobalObject();
         defer self.host.ctx.freeValue(global);
         try self.host.ctx.setPropertyStr(global, "mcpCase", self.host.ctx.newString(case));
-        if (std.mem.eql(u8, case, "http")) {
+        if (std.mem.eql(u8, case, "http") or std.mem.startsWith(u8, case, "oauth")) {
             const peer = try HttpPeer.create(std.testing.allocator, self.rt.io());
             self.peer = peer;
             peer.wake = &self.host.wake;
@@ -261,7 +261,8 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     // The modern probe fails outside a session, so the client falls back to `initialize` and keeps the session.
     try expectState(host, "legacy", "connected · legacy · 1 tool: echo");
     try expectState(host, "old", "connected · legacy · 1 tool: echo");
-    try expectState(host, "denied", "failed · legacy · the server answered HTTP 401: unauthorized");
+    // A 401 with no stored grant waits for a sign-in.
+    try expectState(host, "denied", "needs auth · run /mcp-login denied");
 
     // A progress notification before the answer changes nothing.
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"hi\"}", "modern http: hi", false);
@@ -295,6 +296,66 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
     try std.testing.expectEqual(@as(usize, 0), host.abort_listeners.items.len);
     try std.testing.expectEqual(@as(?anyerror, null), peer.failure);
+}
+
+test "an MCP server behind OAuth signs in through the browser, refreshes its token, and signs out" {
+    var f: Fixture = undefined;
+    try f.init("oauth");
+    defer f.deinit();
+    const host = f.host;
+    const peer = f.peer.?;
+    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try expectState(host, "secure", "needs auth · run /mcp-login secure");
+    // An old-transport stream that answers 401 waits for a sign-in too.
+    try expectState(host, "lockedsse", "needs auth · run /mcp-login lockedsse");
+    // An answer with another state or another issuer is refused before any code reaches the token endpoint.
+    peer.fault = .bad_state;
+    try login(host, "the sign-in answer does not match its request");
+    peer.fault = .bad_issuer;
+    try login(host, "the sign-in answer names another issuer");
+    try std.testing.expectEqual(@as(u32, 0), peer.token_requests);
+    peer.fault = .none;
+    try login(host, "");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("callbackPage.includes('sign-in is complete') ? 1 : 0"));
+    try support.pumpUntilTrue(host, "mcpStates().secure === 'connected · modern · 1 tool: echo'");
+    try expectCall(host, "mcp_secure_echo", "{\"text\":\"hi\"}", "secure: hi", false);
+    // A stale token answers 401; the client spends the refresh token once and retries the call.
+    try expectCall(host, "mcp_secure_echo", "{\"text\":\"revoke\"}", "secure: revoke", false);
+    try expectCall(host, "mcp_secure_echo", "{\"text\":\"after\"}", "secure: after", false);
+    try std.testing.expectEqual(@as(u32, 1), peer.refreshes);
+    // The grant is private: one 0600 file in a 0700 directory, named by a digest.
+    var dir = try f.tmp.dir.openDir(std.testing.io, "yuke/mcp-oauth", .{ .iterate = true });
+    defer dir.close(std.testing.io);
+    var it = dir.iterate();
+    const entry = (try it.next(std.testing.io)).?;
+    try std.testing.expectEqual(@as(usize, 69), entry.name.len);
+    var name: [69]u8 = undefined;
+    @memcpy(&name, entry.name);
+    const info = try dir.statFile(std.testing.io, &name, .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), info.permissions.toMode() & 0o777);
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o700), (try dir.stat(std.testing.io)).permissions.toMode() & 0o777);
+    try host.evalModule("globalThis.signedOut = false; mcpPlugin.logout('secure').then(() => { globalThis.signedOut = true; });", "mcp-logout.js");
+    try support.pumpUntilTrue(host, "signedOut && mcpStates().secure === 'needs auth · run /mcp-login secure'");
+    try std.testing.expectError(error.FileNotFound, dir.statFile(std.testing.io, &name, .{}));
+}
+
+/// Sign in to `secure` and expect the error text, or success for an empty one.
+fn login(host: *Host, want_error: []const u8) !void {
+    try host.evalModule("globalThis.signError = ''; globalThis.signed = false; mcpPlugin.login('secure', browse).then(() => { globalThis.signed = true; }, (e) => { globalThis.signError = e.message; });", "mcp-login.js");
+    try support.pumpUntilTrue(host, "signed || signError !== ''");
+    try support.expectString(host, "signError", want_error);
+}
+
+test "a confidential MCP client sends its form-encoded secret in HTTP Basic" {
+    var f: Fixture = undefined;
+    try f.init("oauth-secret");
+    defer f.deinit();
+    const host = f.host;
+    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try host.evalModule("globalThis.signError = ''; globalThis.signed = false; mcpPlugin.login('private', browse).then(() => { globalThis.signed = true; }, (e) => { globalThis.signError = e.message; });", "mcp-login-secret.js");
+    try support.pumpUntilTrue(host, "signed || signError !== ''");
+    try support.expectString(host, "signError", "");
+    try support.pumpUntilTrue(host, "mcpStates().private === 'connected · modern · 1 tool: echo'");
 }
 
 test "a workspace server starts only after the user trusts it at the first run" {

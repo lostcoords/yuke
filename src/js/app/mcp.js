@@ -5,6 +5,9 @@ import { fs } from "yuke:fs";
 import { showInfo } from "yuke:info-panel";
 import { checkTransport, endpointFor, headerValue } from "yuke:mcp-transport";
 import { client } from "yuke:client";
+import { signIn, forget } from "yuke:mcp-oauth";
+import { openUrl } from "yuke:browser";
+import { notice } from "yuke:notice";
 
 /** @import { Context } from "yuke:ext" */
 /** @import { Plugin, ToolDefinition } from "./types/ext.js" */
@@ -14,7 +17,7 @@ import { client } from "yuke:client";
 /** @typedef {import("yuke:mcp-transport").Endpoint} Endpoint */
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
-/** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "failed" | "disabled" | "stopped"} ServerState */
+/** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "needs auth" | "failed" | "disabled" | "stopped"} ServerState */
 /** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number, cancelable: boolean }} Waiting */
 /** @typedef {{ name: string, path: string[] }} Mirrored */
 
@@ -382,6 +385,8 @@ class Server {
     // The server's own tool names, sorted.
     /** @type {string[]} */
     this.names = [];
+    // The last `WWW-Authenticate` challenge; a sign-in reads the authorization server from it.
+    this.challenge = "";
     // The mirrored parameters of each HTTP tool, and the tools an invalid annotation dropped.
     /** @type {Map<string, Mirrored[]>} */
     this.mirrors = new Map();
@@ -446,9 +451,20 @@ class Server {
         if (this.refreshAgain) this.refreshTools();
       }
     } catch (error) {
-      if (this.state === "connecting") this.fail("failed", errorText(error));
+      if (this.state === "connecting") this.refuse(error);
     }
     this.onChange();
+  }
+
+  // A 401 that no stored grant fixes asks for a sign-in; any other error fails the server.
+  /** @param {unknown} error */
+  refuse(error) {
+    if (error instanceof Error && "signIn" in error) {
+      this.challenge = String(error.signIn);
+      // No handshake answered, so the era is unknown.
+      this.era = "";
+      this.fail("needs auth", "run /mcp-login " + this.name);
+    } else this.fail("failed", errorText(error));
   }
 
   open() {
@@ -458,14 +474,14 @@ class Server {
     /** @type {Transport} */
     const transport = endpoint.open({
       message: (text) => this.transport === transport ? this.receive(text) : undefined,
-      closed: (reason, reconnect) => {
+      closed: (reason, options) => {
         if (this.transport !== transport) return;
         this.transport = null;
         this.settleAll(reason);
         const connected = this.state === "connected";
-        if (connected || this.state === "connecting") this.fail("failed", reason);
+        if (connected || this.state === "connecting") this.refuse(options?.signIn !== undefined ? Object.assign(new Error(reason), { signIn: options.signIn }) : new Error(reason));
         // A connected server that ended its session gets a new one; a handshake still runs its own attempt.
-        if (connected && reconnect) this.start();
+        if (connected && options?.reconnect) this.start();
       },
     });
     this.transport = transport;
@@ -549,7 +565,7 @@ class Server {
       if (error instanceof Error && "code" in error && error.code === UNSUPPORTED_VERSION) {
         const supported = /** @type {any} */ (error).data?.supported;
         if (!Array.isArray(supported) || !supported.some((version) => LEGACY_KNOWN.includes(version))) throw new Error("the server supports no protocol version this client speaks");
-      } else if (this.state !== "connecting" || !this.transport || (error instanceof Error && "code" in error && error.code === HEADER_MISMATCH)) throw error;
+      } else if (this.state !== "connecting" || !this.transport || (error instanceof Error && (("code" in error && error.code === HEADER_MISMATCH) || "signIn" in error))) throw error;
       this.era = "legacy";
     }
     if (this.era === "modern") {
@@ -686,7 +702,17 @@ class Server {
     if (!record(args)) throw new Error("MCP tool arguments must be an object");
     const mirrored = this.mirrors.get(tool);
     const headers = mirrored ? paramHeaders(mirrored, /** @type {Record<string, unknown>} */ (args)) : undefined;
-    const result = await this.request("tools/call", { name: tool, arguments: args }, { timeoutMs: this.config.timeout ?? this.limits.callMs, signal, headers });
+    let result;
+    try {
+      result = await this.request("tools/call", { name: tool, arguments: args }, { timeoutMs: this.config.timeout ?? this.limits.callMs, signal, headers });
+    } catch (error) {
+      // When refresh fails, end the session and name the sign-in command.
+      if (error instanceof Error && "signIn" in error) {
+        this.refuse(error);
+        throw new Error("the MCP server " + this.name + " needs a sign-in: run /mcp-login " + this.name);
+      }
+      throw error;
+    }
     const { text, images } = toolResult(result, this.era === "modern");
     /** @type {Wire.MediaBlob[]} */
     const media = [];
@@ -740,7 +766,9 @@ async function readServers(path, problems) {
   }
 }
 
-/** @param {McpOptions} [options] @returns {Plugin & { rows(): [string, string][], resetTrust(): Promise<void> }} */
+/** @typedef {Plugin & { rows(): [string, string][], resetTrust(): Promise<void>, login(name: string, open?: (url: string) => Promise<void> | void): Promise<void>, logout(name: string): Promise<void> }} McpPlugin */
+
+/** @param {McpOptions} [options] @returns {McpPlugin} */
 export function mcp(options = {}) {
   /** @type {Limits} */
   const limits = { startupMs: options.startupMs ?? 10_000, callMs: options.callMs ?? 60_000 };
@@ -750,7 +778,26 @@ export function mcp(options = {}) {
   /** @type {string[]} */
   const problems = [];
   let asked = false;
-  /** @type {Plugin & { rows(): [string, string][], resetTrust(): Promise<void> }} */
+  // Start a server again as a new instance, with the same trust; a fresh endpoint holds no cached token.
+  /** @param {number} index */
+  const restart = async (index) => {
+    const server = /** @type {Server} */ (servers[index]);
+    await server.close();
+    const fresh = new Server(server.name, server.config, limits, !server.workspace, server.ctx);
+    fresh.onChange = server.onChange;
+    servers[index] = fresh;
+    if (fresh.state === "pending") fresh.start();
+    return fresh;
+  };
+  /** @param {string} name @returns {number} */
+  const remoteIndex = (name) => {
+    const index = servers.findIndex((server) => server.name === name);
+    if (index < 0) throw new Error("no MCP server is named " + name);
+    const endpoint = /** @type {Server} */ (servers[index]).endpoint;
+    if (!endpoint?.signsIn) throw new Error("the MCP server " + name + " takes no sign-in");
+    return index;
+  };
+  /** @type {McpPlugin} */
   const plugin = {
     name: "mcp",
     /** @param {Context} ctx */
@@ -828,8 +875,40 @@ export function mcp(options = {}) {
         ctx.tui.command(null, {
           "mcp:show": () => showInfo(ctx, "mcp", plugin.rows()),
           "mcp:reset-trust": () => plugin.resetTrust(),
-        }, { "mcp:show": { title: "MCP", description: "show the MCP servers and their tools", slash: "mcp" }, "mcp:reset-trust": { title: "Reset MCP trust", description: "forget this workspace’s MCP server decisions", slash: "mcp-reset-trust" } });
+          "mcp:login": (/** @type {string | undefined} */ query) => {
+            // Without a name, the first server that waits for a sign-in is the one.
+            const name = query?.trim() || servers.find((server) => server.state === "needs auth")?.name;
+            if (!name) { notice.show("no MCP server needs a sign-in"); return; }
+            notice.show("MCP " + name + ": sign in in the browser");
+            plugin.login(name).then(() => notice.show("MCP " + name + ": signed in"), (error) => notice.show("MCP " + name + ": " + errorText(error)));
+          },
+          "mcp:logout": (/** @type {string | undefined} */ query) => {
+            const name = query?.trim();
+            if (!name) { notice.show("name the MCP server to sign out of"); return; }
+            plugin.logout(name).then(() => notice.show("MCP " + name + ": signed out"), (error) => notice.show("MCP " + name + ": " + errorText(error)));
+          },
+        }, {
+          "mcp:show": { title: "MCP", description: "show the MCP servers and their tools", slash: "mcp" },
+          "mcp:reset-trust": { title: "Reset MCP trust", description: "forget this workspace’s MCP server decisions", slash: "mcp-reset-trust" },
+          "mcp:login": { title: "MCP sign-in", description: "sign in to an MCP server over OAuth", slash: "mcp-login", args: true },
+          "mcp:logout": { title: "MCP sign-out", description: "forget the sign-in of an MCP server", slash: "mcp-logout", args: true },
+        });
       });
+    },
+    // Sign in, then start the server again when it waited for the sign-in; a running server keeps its session.
+    async login(name, open = openUrl) {
+      const index = remoteIndex(name);
+      const server = /** @type {Server} */ (servers[index]);
+      const url = /** @type {string} */ (server.endpoint?.url);
+      const oauth = server.config.oauth;
+      await signIn(url, { challenge: server.challenge, config: oauth ? oauth : {}, open });
+      if (server.state === "needs auth" || server.state === "failed") await restart(index);
+    },
+    // Forget the grant and start again, so the server asks for a new sign-in.
+    async logout(name) {
+      const index = remoteIndex(name);
+      forget(/** @type {string} */ (/** @type {Server} */ (servers[index]).endpoint?.url));
+      if (/** @type {Server} */ (servers[index]).state !== "untrusted") await restart(index);
     },
     // A reset server starts over as a new, untrusted instance.
     async resetTrust() {

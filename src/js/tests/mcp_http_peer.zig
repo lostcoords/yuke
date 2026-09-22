@@ -67,6 +67,18 @@ pub const Peer = struct {
     changed: std.atomic.Value(bool) = .init(false),
     /// The legacy session is "s-<generation>"; an `expire` call moves to the next one, so the old id answers 404.
     generation: std.atomic.Value(u32) = .init(1),
+    /// The OAuth server state: the access token generation, the last refresh token, and the pending PKCE challenge.
+    token_generation: u32 = 1,
+    /// A fault the next authorization answer carries, and the count of token requests, so a test proves a refused answer spends no code.
+    fault: enum { none, bad_state, bad_issuer } = .none,
+    token_requests: u32 = 0,
+    refreshes: u32 = 0,
+    refresh_token: [32]u8 = undefined,
+    refresh_len: usize = 0,
+    challenge: [64]u8 = undefined,
+    challenge_len: usize = 0,
+    redirect: [128]u8 = undefined,
+    redirect_len: usize = 0,
     /// The modern slow call saw its stream close.
     cancel_seen: std.Io.Event = .unset,
     deleted: std.atomic.Value(bool) = .init(false),
@@ -124,6 +136,8 @@ pub const Peer = struct {
         var request = try server.receiveHead();
         const target = request.head.target;
         const out = &writer.interface;
+        // Route OAuth metadata, authorization, token, and protected-resource requests.
+        if (std.mem.startsWith(u8, target, "/.well-known/") or std.mem.startsWith(u8, target, "/as/") or std.mem.eql(u8, target, "/secure")) return self.guarded(&request, out, target);
         if (!std.mem.eql(u8, header(&request, "x-token") orelse "", "secret")) return plain(out, "401 Unauthorized", "unauthorized");
 
         if (request.head.method == .GET) {
@@ -263,6 +277,106 @@ pub const Peer = struct {
         return plain(out, "404 Not Found", "");
     }
 
+    /// The OAuth authorization server and one MCP server that takes its bearer tokens.
+    fn guarded(self: *Peer, request: *std.http.Server.Request, out: *std.Io.Writer, target: []const u8) !void {
+        var text_buf: [1024]u8 = undefined;
+        if (request.head.method == .GET and std.mem.eql(u8, target, "/.well-known/oauth-protected-resource/secure")) {
+            return json(out, "", "{{\"resource\":\"{s}/secure\",\"authorization_servers\":[\"{s}/as\"],\"scopes_supported\":[\"mcp\"]}}", .{ self.base, self.base });
+        }
+        if (request.head.method == .GET and std.mem.eql(u8, target, "/.well-known/oauth-authorization-server/as")) {
+            return json(out, "", "{{\"issuer\":\"{s}/as\",\"authorization_endpoint\":\"{s}/as/authorize\",\"token_endpoint\":\"{s}/as/token\",\"registration_endpoint\":\"{s}/as/register\",\"code_challenge_methods_supported\":[\"S256\"],\"authorization_response_iss_parameter_supported\":true}}", .{ self.base, self.base, self.base, self.base });
+        }
+        // An old-transport stream behind OAuth answers 401 without a token.
+        if (request.head.method == .GET and std.mem.eql(u8, target, "/secure-sse")) {
+            try out.print("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer resource_metadata=\"{s}/.well-known/oauth-protected-resource/secure\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", .{self.base});
+            return out.flush();
+        }
+        if (request.head.method == .GET and std.mem.startsWith(u8, target, "/as/authorize?")) {
+            const query = target["/as/authorize?".len..];
+            var resource_buf: [128]u8 = undefined;
+            var expected_buf: [128]u8 = undefined;
+            const expected = try std.fmt.bufPrint(&expected_buf, "{s}/secure", .{self.base});
+            if (!std.mem.eql(u8, param(query, "code_challenge_method", &text_buf) orelse "", "S256") or
+                !(std.mem.eql(u8, param(query, "client_id", &text_buf) orelse "", "client-1") or std.mem.eql(u8, param(query, "client_id", &text_buf) orelse "", "client-2")) or
+                !std.mem.eql(u8, param(query, "resource", &resource_buf) orelse "", expected)) return plain(out, "400 Bad Request", "bad authorize");
+            const challenge = param(query, "code_challenge", &text_buf) orelse return plain(out, "400 Bad Request", "no challenge");
+            @memcpy(self.challenge[0..challenge.len], challenge);
+            self.challenge_len = challenge.len;
+            const redirect = param(query, "redirect_uri", &text_buf) orelse return plain(out, "400 Bad Request", "no redirect");
+            @memcpy(self.redirect[0..redirect.len], redirect);
+            self.redirect_len = redirect.len;
+            // The state goes back unchanged, and the issuer answers RFC 9207.
+            const state = if (self.fault == .bad_state) "wrong" else raw(query, "state") orelse return plain(out, "400 Bad Request", "no state");
+            try out.print("HTTP/1.1 302 Found\r\nLocation: {s}?code=code-1&state={s}&iss=", .{ self.redirect[0..self.redirect_len], state });
+            const issuer = if (self.fault == .bad_issuer) "http://127.0.0.1:1" else self.base;
+            for (issuer) |c| switch (c) {
+                ':' => try out.writeAll("%3A"),
+                '/' => try out.writeAll("%2F"),
+                else => try out.writeByte(c),
+            };
+            try out.writeAll("%2Fas\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            return out.flush();
+        }
+        var authorization_buf: [128]u8 = undefined;
+        const authorization = copy(&authorization_buf, header(request, "authorization"));
+        var body_buf: [1024]u8 = undefined;
+        const body = try request.readerExpectNone(&body_buf).allocRemaining(self.gpa, .limited(64 * 1024));
+        defer self.gpa.free(body);
+        if (std.mem.eql(u8, target, "/as/register")) {
+            if (std.mem.indexOf(u8, body, "\"redirect_uris\":[\"http://127.0.0.1:") == null) return plain(out, "400 Bad Request", "bad registration");
+            return json(out, "", "{{\"client_id\":\"client-1\"}}", .{});
+        }
+        if (std.mem.eql(u8, target, "/as/token")) {
+            self.token_requests += 1;
+            // A confidential client sends its form-encoded id and secret in HTTP Basic.
+            const basic = "Basic " ++ comptime base64Of("client-2:s+p%21c");
+            if (authorization.len != 0 and !std.mem.eql(u8, authorization, basic)) return json(out, "", "{{\"error\":\"invalid_client\"}}", .{});
+            return self.token(out, body, &text_buf);
+        }
+        if (!std.mem.eql(u8, target, "/secure")) return plain(out, "404 Not Found", "");
+        var expected_buf: [64]u8 = undefined;
+        if (!std.mem.eql(u8, authorization, try std.fmt.bufPrint(&expected_buf, "Bearer tok-{d}", .{self.token_generation}))) {
+            try out.print("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer resource_metadata=\"{s}/.well-known/oauth-protected-resource/secure\", scope=\"mcp\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", .{self.base});
+            return out.flush();
+        }
+        const parsed = try std.json.parseFromSlice(std.json.Value, self.gpa, body, .{});
+        defer parsed.deinit();
+        const message = parsed.value.object;
+        const method = if (message.get("method")) |value| value.string else "";
+        const reply_id = if (message.get("id")) |value| value.integer else return plain(out, "202 Accepted", "");
+        if (std.mem.eql(u8, method, "server/discover")) {
+            return json(out, "", "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"supportedVersions\":[\"2026-07-28\"],\"capabilities\":{{\"tools\":{{}}}}}}}}", .{reply_id});
+        }
+        if (std.mem.eql(u8, method, "tools/list")) {
+            return json(out, "", "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"tools\":[{{\"name\":\"echo\",\"inputSchema\":{{\"type\":\"object\"}}}}]}}}}", .{reply_id});
+        }
+        const text = message.get("params").?.object.get("arguments").?.object.get("text").?.string;
+        // A revoke makes the current token stale, so the next request must refresh.
+        if (std.mem.eql(u8, text, "revoke")) self.token_generation += 1;
+        return json(out, "", "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"content\":[{{\"type\":\"text\",\"text\":\"secure: {s}\"}}]}}}}", .{ reply_id, text });
+    }
+
+    /// Exchange a code after the PKCE check, or rotate a refresh token.
+    fn token(self: *Peer, out: *std.Io.Writer, body: []const u8, buf: *[1024]u8) !void {
+        const grant = param(body, "grant_type", buf) orelse return plain(out, "400 Bad Request", "no grant");
+        if (std.mem.eql(u8, grant, "authorization_code")) {
+            var redirect_buf: [128]u8 = undefined;
+            if (!std.mem.eql(u8, param(body, "code", buf) orelse "", "code-1") or
+                !std.mem.eql(u8, param(body, "redirect_uri", &redirect_buf) orelse "", self.redirect[0..self.redirect_len])) return plain(out, "400 Bad Request", "bad code");
+            const verifier = param(body, "code_verifier", buf) orelse return plain(out, "400 Bad Request", "no verifier");
+            var digest: [32]u8 = undefined;
+            std.crypto.hash.sha2.Sha256.hash(verifier, &digest, .{});
+            var encoded: [43]u8 = undefined;
+            if (!std.mem.eql(u8, std.base64.url_safe_no_pad.Encoder.encode(&encoded, &digest), self.challenge[0..self.challenge_len])) return plain(out, "400 Bad Request", "bad verifier");
+        } else if (std.mem.eql(u8, grant, "refresh_token")) {
+            if (!std.mem.eql(u8, param(body, "refresh_token", buf) orelse "", self.refresh_token[0..self.refresh_len])) return json(out, "", "{{\"error\":\"invalid_grant\"}}", .{});
+            self.refreshes += 1;
+        } else return plain(out, "400 Bad Request", "bad grant");
+        const refresh = try std.fmt.bufPrint(&self.refresh_token, "refresh-{d}", .{self.token_generation});
+        self.refresh_len = refresh.len;
+        return json(out, "", "{{\"access_token\":\"tok-{d}\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"{s}\"}}", .{ self.token_generation, refresh });
+    }
+
     fn currentSession(self: *Peer, buf: *[16]u8) []const u8 {
         return std.fmt.bufPrint(buf, "s-{d}", .{self.generation.load(.acquire)}) catch unreachable;
     }
@@ -277,6 +391,30 @@ fn header(request: *std.http.Server.Request, name: []const u8) ?[]const u8 {
     var it = request.iterateHeaders();
     while (it.next()) |h| if (std.ascii.eqlIgnoreCase(h.name, name)) return h.value;
     return null;
+}
+
+fn base64Of(comptime text: []const u8) [std.base64.standard.Encoder.calcSize(text.len)]u8 {
+    var out: [std.base64.standard.Encoder.calcSize(text.len)]u8 = undefined;
+    _ = std.base64.standard.Encoder.encode(&out, text);
+    return out;
+}
+
+/// The raw value of one form or query parameter.
+fn raw(query: []const u8, key: []const u8) ?[]const u8 {
+    var pairs = std.mem.splitScalar(u8, query, '&');
+    while (pairs.next()) |pair| {
+        const equals = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+        if (std.mem.eql(u8, pair[0..equals], key)) return pair[equals + 1 ..];
+    }
+    return null;
+}
+
+/// The decoded value of one form or query parameter, in `buf`.
+fn param(query: []const u8, key: []const u8, buf: []u8) ?[]const u8 {
+    const value = raw(query, key) orelse return null;
+    if (value.len > buf.len) return null;
+    @memcpy(buf[0..value.len], value);
+    return std.Uri.percentDecodeInPlace(buf[0..value.len]);
 }
 
 fn copy(buf: *[128]u8, value: ?[]const u8) []const u8 {

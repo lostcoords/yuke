@@ -5,10 +5,13 @@ import { spawn, lines } from "yuke:spawn";
 import { fetch } from "yuke:http";
 import { sseParser } from "yuke:sse";
 import { utf8 } from "yuke:utf8";
+import { authFor } from "yuke:mcp-oauth";
 
 /** @typedef {import("yuke:cancellation-native").CancellationSignal} CancellationSignal */
 /** @typedef {Awaited<ReturnType<typeof fetch>>} HttpResponse */
-/** @typedef {{ type?: string, command?: string, args?: string[], env?: Record<string, string>, cwd?: string, url?: string, headers?: Record<string, string>, enabled?: boolean, timeout?: number, alwaysLoad?: boolean }} ServerConfig */
+/** @typedef {import("yuke:mcp-oauth").OAuthConfig} OAuthConfig */
+/** @typedef {{ type?: string, command?: string, args?: string[], env?: Record<string, string>, cwd?: string, url?: string, headers?: Record<string, string>, oauth?: OAuthConfig | false, enabled?: boolean, timeout?: number, alwaysLoad?: boolean }} ServerConfig */
+/** @typedef {{ url: string, headers: Record<string, string>, auth: import("yuke:mcp-oauth").Auth | null }} Target */
 
 const STOP_GRACE_MS = 2000;
 // The server's own timers bound a call, so an HTTP exchange waits as long as the host allows.
@@ -48,6 +51,9 @@ function expand(text) {
 function checkRemote(config) {
   if (typeof config.url !== "string" || !/^https?:\/\/[^/?#]/i.test(config.url)) return "url must be an http or https URL";
   if (config.headers !== undefined && !(record(config.headers) && Object.values(config.headers).every((value) => typeof value === "string"))) return "headers must be an object of strings";
+  const oauth = config.oauth;
+  const valid = oauth === undefined || oauth === false || (record(oauth) && (oauth.clientId === undefined || typeof oauth.clientId === "string") && (oauth.clientSecret === undefined || typeof oauth.clientSecret === "string") && (oauth.scopes === undefined || (Array.isArray(oauth.scopes) && oauth.scopes.every((scope) => typeof scope === "string"))));
+  if (!valid) return "oauth must be false or an object with a string clientId, a string clientSecret, and string scopes";
   return null;
 }
 
@@ -70,13 +76,14 @@ export function checkTransport(config, type) {
 }
 
 // A transport moves JSON-RPC text; the server decodes it and answers the id of the request that the text settles.
-// `closed` fires once, when the transport can carry no more; `reconnect` asks the server to start again.
-/** @typedef {{ message(text: string): number | undefined, closed(reason: string, reconnect?: boolean): void }} Sink */
+// `closed` fires once, when the transport can carry no more; `reconnect` asks the server to start again, and `signIn` carries a 401 challenge.
+/** @typedef {{ message(text: string): number | undefined, closed(reason: string, options?: { reconnect?: boolean, signIn?: string }): void }} Sink */
 // `send` settles when the transport has carried the whole exchange; a request whose answer never came rejects.
 // `negotiated` names the legacy version after `initialize`; a transport that never hears it speaks the modern era.
 /** @typedef {{ send(message: Record<string, unknown>, headers?: Record<string, string>): Promise<void>, cancel(id: number, reason: string): void, negotiated(version: string): void, close(): Promise<void>, diagnostics(failed: boolean): string[] }} Transport */
 // What a trusted configuration runs. `identity` keys the trust record, `describe` names the action in the prompt, and `mirrorsParams` means the tool headers apply.
-/** @typedef {{ identity: string, describe: string, mirrorsParams: boolean, open(sink: Sink): Transport }} Endpoint */
+// A remote endpoint names its `url`, and `signsIn` means an OAuth sign-in can give it a token.
+/** @typedef {{ identity: string, describe: string, mirrorsParams: boolean, url?: string, signsIn?: boolean, open(sink: Sink): Transport }} Endpoint */
 
 // One child process per server. Each stdout line is one message; a line that is not JSON is noise.
 /** @param {{ argv: string[], env: Record<string, string>, cwd?: string }} launch @param {Sink} sink @returns {Transport} */
@@ -229,8 +236,37 @@ function withHeaders(headers, extra) {
   return merged;
 }
 
+// Create a sign-in error and preserve the server challenge.
+/** @param {HttpResponse} response @returns {Error} */
+function signInError(response) {
+  response.body.cancel();
+  return Object.assign(new Error("the server needs a sign-in"), { signIn: response.headers.get("www-authenticate") ?? "" });
+}
+
+// Send one request with the bearer header of a signed-in server. A 401 renews the token once; a second 401 asks for a sign-in.
+/** @param {Target} target @param {string} url @param {{ method: "GET" | "POST" | "DELETE", extra: Record<string, string>, body?: string, signal?: CancellationSignal }} request @returns {Promise<HttpResponse>} */
+async function exchange(target, url, { method, extra, body, signal }) {
+  /** @param {string | null} sent */
+  const attempt = (sent) => fetch(url, {
+    method,
+    headers: withHeaders(target.headers, sent ? { ...extra, authorization: sent } : extra),
+    ...(body !== undefined ? { body } : {}),
+    ...(signal !== undefined ? { signal } : {}),
+    timeoutMs: HTTP_WAIT_MS,
+  });
+  const auth = target.auth;
+  const sent = auth ? await auth.header() : null;
+  const response = await attempt(sent);
+  if (response.status !== 401 || !auth) return response;
+  const challenge = signInError(response);
+  if (!(await auth.renew(sent))) throw challenge;
+  const again = await attempt(await auth.header());
+  if (again.status === 401) throw signInError(again);
+  return again;
+}
+
 // Streamable HTTP: one POST per message. A request's answer arrives as JSON or on its own event stream.
-/** @param {{ url: string, headers: Record<string, string> }} target @param {Sink} sink @returns {Transport} */
+/** @param {Target} target @param {Sink} sink @returns {Transport} */
 function openHttp(target, sink) {
   let open = true;
   // The legacy era keeps a session and names its version in a header; the modern era has neither.
@@ -260,7 +296,7 @@ function openHttp(target, sink) {
       Object.assign(extra, params_headers);
     } else if (version) extra["mcp-protocol-version"] = version;
     if (session) extra["mcp-session-id"] = session;
-    return withHeaders(target.headers, extra);
+    return extra;
   };
 
   // The legacy era may push notifications on one GET stream. A server without one answers 405.
@@ -276,7 +312,7 @@ function openHttp(target, sink) {
         const extra = /** @type {Record<string, string>} */ ({ accept: "text/event-stream", "mcp-protocol-version": version });
         if (session) extra["mcp-session-id"] = session;
         if (lastId) extra["last-event-id"] = lastId;
-        const response = await fetch(target.url, { method: "GET", headers: withHeaders(target.headers, extra), signal, timeoutMs: HTTP_WAIT_MS });
+        const response = await exchange(target, target.url, { method: "GET", extra, signal });
         if (!response.ok || mediaType(response) !== "text/event-stream") { response.body.cancel(); return; }
         delay = LISTEN_RETRY_MS;
         await readEvents(response, (event) => {
@@ -299,13 +335,13 @@ function openHttp(target, sink) {
     const signal = cancellation.create();
     if (id !== undefined) exchanges.set(id, signal);
     try {
-      const response = await fetch(target.url, { method: "POST", headers: headersFor(message, params_headers), body: JSON.stringify(message), signal, timeoutMs: HTTP_WAIT_MS });
+      const response = await exchange(target, target.url, { method: "POST", extra: headersFor(message, params_headers), body: JSON.stringify(message), signal });
       const assigned = response.headers.get("mcp-session-id");
       if (message.method === "initialize" && assigned) session = assigned;
       // A legacy server that forgets the session wants a new `initialize`, so the server starts again.
       if (response.status === 404 && session) {
         response.body.cancel();
-        closed("the server ended the session", true);
+        closed("the server ended the session", { reconnect: true });
         throw new Error("the server ended the session");
       }
       if (!response.ok) throw await failure(response);
@@ -329,14 +365,14 @@ function openHttp(target, sink) {
     }
   };
 
-  /** @param {string} reason @param {boolean} [reconnect] */
-  const closed = (reason, reconnect = false) => {
+  /** @param {string} reason @param {{ reconnect?: boolean }} [options] */
+  const closed = (reason, options) => {
     if (!open) return;
     open = false;
     clearTimeout(retry);
     if (listening) cancellation.cancel(listening);
     for (const signal of exchanges.values()) cancellation.cancel(signal);
-    sink.closed(reason, reconnect);
+    sink.closed(reason, options);
   };
 
   return {
@@ -354,14 +390,14 @@ function openHttp(target, sink) {
       if (listening) cancellation.cancel(listening);
       for (const signal of exchanges.values()) cancellation.cancel(signal);
       // A legacy session ends with DELETE; a failure changes nothing for the client.
-      if (session) await fetch(target.url, { method: "DELETE", headers: withHeaders(target.headers, { "mcp-session-id": session, "mcp-protocol-version": version }) }).then((response) => response.body.cancel(), () => {});
+      if (session) await exchange(target, target.url, { method: "DELETE", extra: { "mcp-session-id": session, "mcp-protocol-version": version } }).then((response) => response.body.cancel(), () => {});
     },
     diagnostics() { return lastError ? ["listen: " + lastError] : []; },
   };
 }
 
 // The old HTTP+SSE transport: one GET stream carries every server message, and its first event names the POST endpoint.
-/** @param {{ url: string, headers: Record<string, string> }} target @param {Sink} sink @returns {Transport} */
+/** @param {Target} target @param {Sink} sink @returns {Transport} */
 function openSse(target, sink) {
   let open = true;
   const stream = cancellation.create();
@@ -372,16 +408,18 @@ function openSse(target, sink) {
   /** @type {Promise<string>} */
   const endpoint = new Promise((resolve, reject) => { found = resolve; lost = reject; });
   endpoint.catch(() => {});
-  /** @param {string} reason */
-  const closed = (reason) => {
+  /** @param {unknown} error */
+  const closed = (error) => {
+    const reason = errorText(error);
     lost(new Error(reason));
     if (!open) return;
     open = false;
     cancellation.cancel(stream);
-    sink.closed(reason);
+    // A 401 on the stream keeps its challenge, so the server can ask for a sign-in.
+    sink.closed(reason, error instanceof Error && "signIn" in error ? { signIn: String(error.signIn) } : undefined);
   };
   (async () => {
-    const response = await fetch(target.url, { method: "GET", headers: withHeaders(target.headers, { accept: "text/event-stream" }), signal: stream, timeoutMs: HTTP_WAIT_MS });
+    const response = await exchange(target, target.url, { method: "GET", extra: { accept: "text/event-stream" }, signal: stream });
     if (!response.ok) throw await failure(response);
     if (mediaType(response) !== "text/event-stream") { response.body.cancel(); throw new Error("the server answered no event stream"); }
     await readEvents(response, (event) => {
@@ -390,13 +428,13 @@ function openSse(target, sink) {
       else if (event.event === "message") sink.message(event.data);
     });
     throw new Error("the event stream ended");
-  })().catch((error) => closed(errorText(error)));
+  })().catch(closed);
   /** @param {Record<string, unknown>} message */
   const send = async (message) => {
     if (!open) throw new Error("the server is not running");
     const url = await endpoint;
     // The answer arrives on the stream, so the POST only has to be accepted.
-    const response = await fetch(url, { method: "POST", headers: withHeaders(target.headers, { "content-type": "application/json" }), body: JSON.stringify(message), timeoutMs: HTTP_WAIT_MS });
+    const response = await exchange(target, url, { method: "POST", extra: { "content-type": "application/json" }, body: JSON.stringify(message) });
     if (!response.ok) throw await failure(response);
     response.body.cancel();
   };
@@ -421,12 +459,17 @@ function remoteEndpoint(config, type) {
   /** @type {Record<string, string>} */
   const headers = Object.create(null);
   for (const [name, value] of entries) headers[name] = expand(value);
-  const target = { url, headers };
+  // A configured Authorization header or `oauth: false` means the user owns the credential.
+  const owned = config.oauth === false || Object.keys(headers).some((name) => name.toLowerCase() === "authorization");
+  /** @type {Target} */
+  const target = { url, headers, auth: owned ? null : authFor(url) };
   return {
     // A rotated secret in a header changes nothing the server can do, so only the expanded URL keys the trust.
     identity: JSON.stringify([type, config.url, entries, url]),
     describe: "connects to: " + url,
     mirrorsParams: type === "http",
+    url,
+    signsIn: target.auth !== null,
     open: (sink) => type === "http" ? openHttp(target, sink) : openSse(target, sink),
   };
 }

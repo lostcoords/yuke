@@ -5,7 +5,7 @@ import { strokeOf } from "yuke:keys";
 import { ui } from "yuke:ui";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
-import { exec } from "yuke:exec";
+import { openUrl } from "yuke:browser";
 import { loadCatalog, providerState, providerStateLabel, reloadCatalog } from "yuke:catalog";
 
 /** @import { Context } from "yuke:ext" */
@@ -46,13 +46,6 @@ function providerRows() {
   return reloadCatalog()
     .then(() => client.authList())
     .then((r) => r.providers.map((p) => ({ ...p, state: providerState(p.provider_id) })));
-}
-
-// Open a URL with the OS opener; the quote keeps the URL out of shell syntax, and `setsid -f` keeps the browser out of the group that `exec` ends.
-/** @param {string} url @returns {void} */
-function openUrl(url) {
-  const quoted = "'" + url.replace(/'/g, "'\\''") + "'";
-  exec("open " + quoted + " 2>/dev/null || setsid -f xdg-open " + quoted + " >/dev/null 2>&1").catch(() => {});
 }
 
 // The device-code step: the URL to open and the code to enter. The engine polls; this window only waits.

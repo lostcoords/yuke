@@ -12,6 +12,7 @@ const utf8_module = @import("native/utf8.zig");
 const env_module = @import("native/env.zig");
 const mcp_module = @import("native/mcp.zig");
 const net_module = @import("native/net.zig");
+const oauth_module = @import("native/oauth.zig");
 const exec_module = @import("native/exec.zig");
 const http_module = @import("native/http.zig");
 const process_module = @import("native/process.zig");
@@ -110,6 +111,8 @@ pub const Host = struct {
     jobs: jobs_module.Jobs = .{},
 
     net: net_module.Connections = .{},
+    /// The loopback listeners of MCP sign-ins. Each one takes one callback.
+    oauth: oauth_module.Listeners = .{},
 
     /// The shared `fetch` client. It loads the root bundle once and takes a fresh clock for each request.
     http: http_module.Client = .{},
@@ -183,7 +186,7 @@ pub const Host = struct {
             http_module.install,  utf8_module.install,    net_module.install,         exec_module.install,
             timers_mod.install,   process_module.install, jobs_module.install,        diff_module.install,
             tools_module.install, hooks_module.install,   interaction_module.install, cancellation.install,
-            mcp_module.install,
+            mcp_module.install,   oauth_module.install,
         };
         for (installers) |install| install(self);
         return self;
@@ -230,6 +233,7 @@ pub const Host = struct {
         std.debug.assert(self.phase == .open);
         self.enterSlice();
         self.net.reap(self.gpa);
+        self.oauth.reap(self.gpa);
         self.bodies.reap(self.gpa);
         // Engine events reach JavaScript here, on the owner, never from an engine task.
         if (engine_module.drain(self.engine, self.ctx)) return error.JavaScriptFault;
@@ -303,9 +307,11 @@ pub const Host = struct {
         call_run.abortAll(self);
         self.endChildren();
         self.net.closeAll();
+        self.oauth.closeAll();
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
         self.tasks.cancel(self.io);
         self.net.deinit(self.gpa);
+        self.oauth.deinit(self.gpa);
         // Only idle response bodies remain after all HTTP tasks return.
         self.bodies.closeAll();
         // Every body has released its connection, so the client can free the pool.
@@ -363,6 +369,7 @@ pub const Host = struct {
             self.wake.reset();
             self.enterSlice();
             self.net.reap(self.gpa);
+            self.oauth.reap(self.gpa);
             self.bodies.reap(self.gpa);
             if (self.procs.drain(self)) self.dropPendingException();
             if (self.ops.settle(self.ctx)) self.dropPendingException();
@@ -1009,6 +1016,7 @@ test {
     _ = @import("tests/http_test.zig");
     _ = @import("tests/mcp_test.zig");
     _ = @import("native/mcp.zig");
+    _ = @import("native/oauth.zig");
     _ = @import("timers.zig");
     _ = @import("native/jobs.zig");
     _ = @import("tests/interaction_test.zig");
