@@ -19,7 +19,17 @@ session_id: proto.ids.SessionId,
 stream_offset: usize = 0,
 source_bytes: usize = 0,
 
-pub fn create(host: *Host, io: std.Io, scale: u32, native_stream: bool) !*Projection {
+/// The stream phase grows no live part, the text part of message 2, or the tool output part of message 2.
+pub const Stream = enum { none, text, tool };
+
+/// The part id of the running tool in message 2.
+pub const tool_part_id: proto.ids.PartId = 1;
+/// One step of tool output: build-log lines about the size of one pipe read in a busy build.
+const tool_chunk = "[ 42%] Building CXX object src/engine/CMakeFiles/engine.dir/turn.cpp.o\n" ** 14;
+/// The output a tool held before the first step, so each read already passes one page.
+const tool_seed_bytes = 64 * 1024;
+
+pub fn create(host: *Host, io: std.Io, scale: u32, stream: Stream) !*Projection {
     std.debug.assert(scale > 0);
     const gpa = host.gpa;
     const self = try gpa.create(Projection);
@@ -46,7 +56,7 @@ pub fn create(host: *Host, io: std.Io, scale: u32, native_stream: bool) !*Projec
         .time = .{ .created_at_ms = 1 },
     } }};
     try paging.seedHistory(session, &messages);
-    if (native_stream) {
+    if (stream != .none) {
         try session.apply(.{ .message_started_data = .{
             .session_id = sid,
             .message_id = 2,
@@ -60,6 +70,21 @@ pub fn create(host: *Host, io: std.Io, scale: u32, native_stream: bool) !*Projec
             .part = .{ .text = .{ .id = 0, .text = body } },
         } });
         self.stream_offset = body.len;
+    }
+    if (stream == .tool) {
+        try session.apply(.{ .message_part_added_data = .{
+            .session_id = sid,
+            .message_id = 2,
+            .part = .{ .tool = .{ .id = tool_part_id, .name = "exec", .arguments = "{\"command\":\"make\"}", .state = .pending } },
+        } });
+        try session.apply(.{ .tool_state_changed_data = .{
+            .session_id = sid,
+            .message_id = 2,
+            .part_id = tool_part_id,
+            .state = .{ .running = .{ .started_at_ms = 3 } },
+        } });
+        self.stream_offset = 0;
+        while (self.stream_offset < tool_seed_bytes) try self.appendTool();
     }
     self.source_bytes = body.len;
     const ctx = host.ctx;
@@ -87,6 +112,19 @@ pub fn appendNative(self: *Projection, step: usize) !void {
         .offset = self.stream_offset,
     } });
     self.stream_offset += delta.len;
+}
+
+/// Append one chunk of output to the running tool, as the engine does for a `tool.output_delta`.
+pub fn appendTool(self: *Projection) !void {
+    if (self.stream_offset + tool_chunk.len > proto.meta.limits.max_tool_output_stream_bytes) return error.ToolStreamFull;
+    try self.session.apply(.{ .tool_output_delta_data = .{
+        .session_id = self.session_id,
+        .message_id = 2,
+        .part_id = tool_part_id,
+        .delta = tool_chunk,
+        .offset = self.stream_offset,
+    } });
+    self.stream_offset += tool_chunk.len;
 }
 
 pub fn destroy(self: *Projection) void {

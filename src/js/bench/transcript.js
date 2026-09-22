@@ -44,6 +44,12 @@ const PREVIEW_ASSISTANT_ID = 2;
 const PREVIEW_REASONING_ID = 9;
 const NATIVE_STREAM_MESSAGE_ID = 2;
 const NATIVE_STREAM_PART_ID = 0;
+const TOOL_STREAM_PART_ID = 1;
+
+// The native stream phases read message 2 from the engine.
+function nativeStream() {
+  return phase === "stream_native" || phase === "stream_tool";
+}
 const streamPrefix = "Stable paragraph.\n\n".repeat(16) + "Tail";
 const streamSuffix = Array.from({ length: 256 }, (_, i) => "stable-suffix-" + i + " 世界 e\u0301 👩‍💻").join("\n");
 const nativeDeltas = [" word", " 世界", " e\u0301", " 👩‍💻", "\n\n"];
@@ -109,8 +115,8 @@ function configurePreview(scale) {
 function options() {
   return {
     textOf: id => texts.get(id) || "",
-    partsOf: id => id === activeId ? live : phase === "stream_native" && id === NATIVE_STREAM_MESSAGE_ID ? nativeLive : parts.get(id) || [],
-    partOf: (id, pid) => (id === activeId ? live : phase === "stream_native" && id === NATIVE_STREAM_MESSAGE_ID ? nativeLive : parts.get(id) || []).find(p => p.id === pid) || null,
+    partsOf: id => id === activeId ? live : nativeStream() && id === NATIVE_STREAM_MESSAGE_ID ? nativeLive : parts.get(id) || [],
+    partOf: (id, pid) => (id === activeId ? live : nativeStream() && id === NATIVE_STREAM_MESSAGE_ID ? nativeLive : parts.get(id) || []).find(p => p.id === pid) || null,
   };
 }
 
@@ -118,7 +124,7 @@ function fresh() {
   const t = new Transcript(options());
   /** @type {MessageDescriptor | null} */
   const active = phase === "stream" ? { id: activeId, type: "assistant" }
-    : phase === "stream_native" ? { id: NATIVE_STREAM_MESSAGE_ID, type: "assistant" } : null;
+    : nativeStream() ? { id: NATIVE_STREAM_MESSAGE_ID, type: "assistant" } : null;
   t.setOutline(outline, active);
   if (phase === "preview") {
     for (const message of outline) if (message.type === "assistant") {
@@ -161,6 +167,15 @@ function start(name, scale, w, h) {
     nativeTextUnits = part.text.length;
     nativeInitialText = part.text;
   }
+  if (phase === "stream_tool") {
+    const snapshot = /** @type {SessionOutline} */ (client.sessionOutline(globalThis.PROJECTION_SESSION));
+    if (!snapshot) throw new Error("tool stream session missing");
+    outline = snapshot.messages;
+    const text = client.sessionPart(globalThis.PROJECTION_SESSION, NATIVE_STREAM_MESSAGE_ID, NATIVE_STREAM_PART_ID);
+    const tool = client.sessionPart(globalThis.PROJECTION_SESSION, NATIVE_STREAM_MESSAGE_ID, TOOL_STREAM_PART_ID);
+    if (!text || text.type !== "text" || !tool || tool.type !== "tool" || tool.state.type !== "running") throw new Error("tool stream part missing");
+    nativeLive = [text, tool];
+  }
   live = [
     { type: "text", id: 1, text: streamPrefix },
     { type: "text", id: 2, text: streamSuffix },
@@ -187,6 +202,18 @@ function step() {
     live[0] = { ...part, text: part.text + delta };
     streamSuffixOffset += delta.length;
     transcript.setActive(activeId, 1);
+  }
+  if (phase === "stream_tool") {
+    // The app reads one part again for each delta digest, the same as this step.
+    const previous = nativeLive[1];
+    const tool = client.sessionPart(globalThis.PROJECTION_SESSION, NATIVE_STREAM_MESSAGE_ID, TOOL_STREAM_PART_ID, previous);
+    if (!tool || tool.type !== "tool" || tool.state.type !== "running") throw new Error("tool stream part missing");
+    nativeLive = [/** @type {Wire.AssistantPart} */ (nativeLive[0]), tool];
+    transcript.setActive(NATIVE_STREAM_MESSAGE_ID, TOOL_STREAM_PART_ID);
+    const total = transcript.rowCount(width);
+    transcript.pager.toBottom();
+    paint(transcript, true);
+    return Math.min(height, total);
   }
   if (phase === "stream_native") {
     const delta = nativeDeltas[i % nativeDeltas.length] || "";
@@ -256,7 +283,7 @@ function verify(withChecksum = true) {
   }
   if (actual.length === 0 || !actual.some(r => r.segments?.some(s => s.text.length > 0))) throw new Error("empty benchmark output");
   if (phase === "paint" || phase === "selection") paint(reference);
-  if (phase === "stream_native") paint(reference, true);
+  if (nativeStream()) paint(reference, true);
   return withChecksum ? checksum(encoded) : 0;
 }
 

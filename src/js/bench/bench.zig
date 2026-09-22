@@ -23,6 +23,7 @@ pub const Phase = enum {
     scroll,
     stream,
     stream_native,
+    stream_tool,
     paint,
     colors,
     selection,
@@ -220,8 +221,12 @@ pub const Harness = struct {
             self.phase = phase;
             return;
         }
-        if (phase == .projection or phase == .stream_native)
-            self.projection = try Projection.create(self.host, self.host.io, scale, phase == .stream_native);
+        if (phase == .projection or phase == .stream_native or phase == .stream_tool)
+            self.projection = try Projection.create(self.host, self.host.io, scale, switch (phase) {
+                .stream_native => .text,
+                .stream_tool => .tool,
+                else => .none,
+            });
         const ctx = self.host.ctx;
         const args = [_]quickjs.Value{
             ctx.newString(@tagName(phase)),
@@ -363,6 +368,7 @@ pub const Harness = struct {
                 try (self.projection orelse unreachable).appendNative(self.native_step);
                 self.native_step += 1;
             }
+            if (phase == .stream_tool) try (self.projection orelse unreachable).appendTool();
             const rows = try self.call(self.step_fn, &.{});
             if (rows <= 0) return error.EmptyBenchmarkOutput;
         }
