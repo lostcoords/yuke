@@ -2,19 +2,24 @@
 
 const std = @import("std");
 
-/// These are the parameters for `blob.put`. The engine reads the file, so no bytes cross the wire.
+/// These are the parameters for `blob.put`. A caller names exactly one source: a file the engine reads, or the bytes.
 pub const BlobPutParams = struct {
     /// An absolute path to an image file on the engine host.
-    path: []const u8,
+    path: ?[]const u8 = null,
+    /// The image bytes in standard base64, for a caller whose bytes are in no file.
+    data: ?[]const u8 = null,
 };
 
 const testing = std.testing;
 
-test "blob put parameters need a string path" {
+test "blob put parameters name a string path or string data" {
     const a = testing.allocator;
     const parsed = try std.json.parseFromSlice(BlobPutParams, a, "{\"path\":\"/tmp/shot.png\"}", .{});
     defer parsed.deinit();
-    try testing.expectEqualStrings("/tmp/shot.png", parsed.value.path);
-    try testing.expectError(error.MissingField, std.json.parseFromSlice(BlobPutParams, a, "{}", .{}));
+    try testing.expectEqualStrings("/tmp/shot.png", parsed.value.path.?);
+    const bytes = try std.json.parseFromSlice(BlobPutParams, a, "{\"data\":\"iVBORw0KGgo=\"}", .{});
+    defer bytes.deinit();
+    try testing.expectEqualStrings("iVBORw0KGgo=", bytes.value.data.?);
     try testing.expectError(error.UnexpectedToken, std.json.parseFromSlice(BlobPutParams, a, "{\"path\":7}", .{}));
+    try testing.expectError(error.UnexpectedToken, std.json.parseFromSlice(BlobPutParams, a, "{\"data\":7}", .{}));
 }

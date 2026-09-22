@@ -21,6 +21,20 @@ fn putImage(f: *Fixture, name: []const u8, data: []const u8) !proto.content.Medi
     return commands.blobPut(&f.engine, f.arena.allocator(), .{ .path = path });
 }
 
+test "blob.put takes exactly one source, and base64 data stores the same blob as the file" {
+    var f: Fixture = undefined;
+    try f.init(.{});
+    defer f.deinit();
+    const a = f.arena.allocator();
+    const from_file = try putImage(&f, "shot.png", png);
+    var encoded: [std.base64.standard.Encoder.calcSize(png.len)]u8 = undefined;
+    const data = std.base64.standard.Encoder.encode(&encoded, png);
+    const from_data = try commands.blobPut(&f.engine, a, .{ .data = data });
+    try testing.expectEqualSlices(u8, &from_file.hash.raw, &from_data.hash.raw);
+    try testing.expectError(error.BlobSourceInvalid, commands.blobPut(&f.engine, a, .{}));
+    try testing.expectError(error.BlobSourceInvalid, commands.blobPut(&f.engine, a, .{ .path = "/x.png", .data = data }));
+}
+
 test "initialize reports the blob store directory" {
     var f: Fixture = undefined;
     try f.init(.{});

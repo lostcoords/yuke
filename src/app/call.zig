@@ -131,6 +131,8 @@ fn failureFor(err: anyerror) ?Failure {
         error.SessionHasChildren => .{ .code = .session_has_children, .message = "the session has children" },
         error.UnknownSkill => .{ .code = .unknown_skill, .message = "the session catalog has no skill with this name" },
         error.SkillUnreadable => .{ .code = .bad_request, .message = "the engine cannot read the skill file" },
+        error.BlobSourceInvalid => .{ .code = .bad_request, .message = "a blob names exactly one of path and data" },
+        error.BlobDataInvalid => .{ .code = .bad_request, .message = "the blob data is not standard base64" },
         error.BlobPathNotAbsolute => .{ .code = .bad_request, .message = "the blob path must be absolute" },
         error.BlobUnreadable => .{ .code = .bad_request, .message = "the engine cannot read the blob file" },
         error.BlobNotRegularFile => .{ .code = .bad_request, .message = "the blob path is not a regular file" },
@@ -180,7 +182,8 @@ test "a bad blob attachment refuses as a bad request, but a store write failure 
         error.BlobPathNotAbsolute, error.BlobUnreadable,  error.BlobNotRegularFile,
         error.BlobEmpty,           error.BlobTooLarge,    error.BlobUnsupportedType,
         error.BlobMissing,         error.BlobMismatch,    error.BlobTooManyImages,
-        error.BlobUnsupportedPart, error.HomeUnavailable,
+        error.BlobUnsupportedPart, error.HomeUnavailable, error.BlobSourceInvalid,
+        error.BlobDataInvalid,
     };
     for (bad) |err| try std.testing.expectEqual(proto.enums.ErrorCode.bad_request, failureFor(err).?.code);
     try std.testing.expectEqual(proto.enums.ErrorCode.runtime_failed, failureFor(error.BlobStoreFailed).?.code);

@@ -19,6 +19,8 @@ pub const max_images_per_input: usize = proto.meta.limits.max_input_images;
 pub const sniff_bytes = 12;
 
 pub const PutError = error{
+    BlobSourceInvalid,
+    BlobDataInvalid,
     BlobPathNotAbsolute,
     BlobUnreadable,
     BlobNotRegularFile,
@@ -54,6 +56,22 @@ pub const Store = struct {
         if (stat.size > max_bytes) return error.BlobTooLarge;
         const data = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(max_bytes + 1)) catch |err|
             return if (err == error.StreamTooLong) error.BlobTooLarge else ioFail(err, error.BlobUnreadable);
+        return self.keep(io, arena, data);
+    }
+
+    /// Decode standard base64 image bytes into the store and describe them. The bytes decide the type, not the caller.
+    pub fn putBase64(self: Store, io: std.Io, arena: std.mem.Allocator, text: []const u8) PutError!MediaBlob {
+        const decoder = std.base64.standard.Decoder;
+        const size = decoder.calcSizeForSlice(text) catch return error.BlobDataInvalid;
+        if (size > max_bytes) return error.BlobTooLarge;
+        const data = try arena.alloc(u8, size);
+        decoder.decode(data, text) catch return error.BlobDataInvalid;
+        return self.keep(io, arena, data);
+    }
+
+    /// Store `data` under its hash. A second put of the same bytes is a no-op.
+    fn keep(self: Store, io: std.Io, arena: std.mem.Allocator, data: []const u8) PutError!MediaBlob {
+        std.debug.assert(data.len <= max_bytes);
         if (data.len == 0) return error.BlobEmpty;
         const mime = sniff(data) orelse return error.BlobUnsupportedType;
 
@@ -292,6 +310,25 @@ test "put refuses what the store must never hold" {
     @memcpy(big[0..8], "\x89PNG\r\n\x1a\n");
     try testing.expectError(error.BlobTooLarge, f.store.put(testing.io, a, try f.file("big.png", big)));
     try testing.expectError(error.FileNotFound, std.Io.Dir.accessAbsolute(testing.io, f.store.dir, .{})); // Nothing was written.
+}
+
+test "base64 bytes land under the same hash as the file, and bad data never reaches the store" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    var encoded: [std.base64.standard.Encoder.calcSize(png_1x1.len)]u8 = undefined;
+    const from_data = try f.store.putBase64(testing.io, a, std.base64.standard.Encoder.encode(&encoded, png_1x1));
+    const from_file = try f.store.put(testing.io, a, try f.file("shot.png", png_1x1));
+    try testing.expectEqualSlices(u8, &from_file.hash.raw, &from_data.hash.raw);
+    try testing.expectEqualStrings("image/png", from_data.mime);
+    try f.store.unlink(testing.io, a, from_data.hash);
+
+    try testing.expectError(error.BlobDataInvalid, f.store.putBase64(testing.io, a, "not base64!"));
+    try testing.expectError(error.BlobEmpty, f.store.putBase64(testing.io, a, ""));
+    // The bytes decide the type, so a caller cannot store a document as an image.
+    try testing.expectError(error.BlobUnsupportedType, f.store.putBase64(testing.io, a, "JVBERi0xLjcK"));
+    try testing.expectError(error.FileNotFound, std.Io.Dir.accessAbsolute(testing.io, try std.fs.path.join(a, &.{ f.store.dir, "x" }), .{}));
 }
 
 test "admit accepts only refs that match the stored bytes" {

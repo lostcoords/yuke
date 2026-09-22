@@ -38,10 +38,12 @@ export interface MediaBlob {
   readonly bytes: number;
 }
 
-/** These are the parameters for `blob.put`. The engine reads the file, so no bytes cross the wire. */
+/** These are the parameters for `blob.put`. A caller names exactly one source: a file the engine reads, or the bytes. */
 export interface BlobPutParams {
   /** An absolute path to an image file on the engine host. */
-  readonly path: string;
+  readonly path?: string;
+  /** The image bytes in standard base64, for a caller whose bytes are in no file. */
+  readonly data?: string;
 }
 
 /** These are the parameters for `auth.cancel_login`. */

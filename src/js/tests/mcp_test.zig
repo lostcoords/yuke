@@ -183,6 +183,11 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try expectCall(host, "mcp_modern_echo", "[]", "MCP tool arguments must be an object", true);
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"fail\"}", "no such thing", true);
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"media\"}", "[image image/png, 3 bytes]\n[resource file:///x x]\nwhy", false);
+    // The image block also attaches as media, beside the line that names it.
+    const media = host.calls.submit("mcp_modern_echo", "{\"text\":\"media\"}", host.cwd);
+    try support.pumpUntilSettled(host, media);
+    try std.testing.expect(std.mem.indexOf(u8, media.extra_json orelse "", "\"media\":[{\"hash\":\"abab") != null);
+    try support.dropCall(host, media);
     try expectCall(host, "mcp_modern_echo", "{\"text\":\"structured\"}", "{\"n\":1}", false);
     const marker = "\n[truncated 20000 characters]";
     const big = try std.testing.allocator.alloc(u8, 100_000 + marker.len);

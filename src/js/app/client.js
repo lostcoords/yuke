@@ -123,6 +123,12 @@ function blobPut(path) {
   return request("blob.put", { path });
 }
 
+// Store image bytes a tool received in base64, such as an MCP image block. The engine names the type from the bytes.
+/** @param {string} data @returns {Promise<Wire.MediaBlob>} */
+function blobPutData(data) {
+  return request("blob.put", { data });
+}
+
 // The concatenated text of one message. A page echoes the next byte offset, or null at the end.
 /** @param {string} sessionId @param {number} messageId @returns {string} */
 function sessionWholeText(sessionId, messageId) {
@@ -357,6 +363,7 @@ export const client = {
   skillLoad,
   sessionQueue,
   blobPut,
+  blobPutData,
   sessionWholeText,
   sessionParts,
   sessionPart,

@@ -485,13 +485,19 @@
     },
     {
       "name": "BlobPutParams",
-      "doc": "These are the parameters for `blob.put`. The engine reads the file, so no bytes cross the wire.",
+      "doc": "These are the parameters for `blob.put`. A caller names exactly one source: a file the engine reads, or the bytes.",
       "fields": [
         {
           "name": "path",
           "doc": "An absolute path to an image file on the engine host.",
           "type": "string",
-          "presence": "required"
+          "presence": "optional"
+        },
+        {
+          "name": "data",
+          "doc": "The image bytes in standard base64, for a caller whose bytes are in no file.",
+          "type": "string",
+          "presence": "optional"
         }
       ]
     },

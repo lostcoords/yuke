@@ -4,6 +4,7 @@ import * as cancellation from "yuke:cancellation-native";
 import { fs } from "yuke:fs";
 import { showInfo } from "yuke:info-panel";
 import { checkTransport, endpointFor } from "yuke:mcp-transport";
+import { client } from "yuke:client";
 
 /** @import { Context } from "yuke:ext" */
 /** @import { Plugin, ToolDefinition } from "./types/ext.js" */
@@ -40,6 +41,10 @@ const LIMIT_MAX = 20;
 const MAX_PAGES = 100;
 const MAX_TOOLS = 10_000;
 const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
+// One result attaches at most this many images, as one input does.
+const MAX_IMAGES = 8;
+// A text result shares this empty list, so it allocates none.
+const NO_IMAGES = Object.freeze(/** @type {string[]} */ ([]));
 // A result above this reaches the model cut, with a marker that names the missing part.
 const MAX_RESULT_CHARS = 100_000;
 
@@ -177,7 +182,8 @@ function validateContent(block) {
   }
 }
 
-/** @param {any} result @param {boolean} [modern] @returns {string} */
+// The text the model reads, and the base64 image bytes that go beside it.
+/** @param {any} result @param {boolean} [modern] @returns {{ text: string, images: readonly string[] }} */
 export function toolResult(result, modern = false) {
   if (record(result) && modern && result.resultType === "input_required") throw new Error("the tool asks for input, which this client cannot answer");
   complete(result, modern);
@@ -187,7 +193,14 @@ export function toolResult(result, modern = false) {
   for (const block of result.content) validateContent(block);
   const text = contentText(result.content, result.structuredContent);
   if (result.isError === true) throw new Error(text || "the tool failed");
-  return text;
+  /** @type {string[] | null} */
+  let images = null;
+  for (const block of result.content) {
+    if (block.type !== "image") continue;
+    images ??= [];
+    if (images.length < MAX_IMAGES) images.push(block.data);
+  }
+  return { text, images: images ?? NO_IMAGES };
 }
 
 // The message for a wrong entry, or null. A missing variable shows later, when the server starts.
@@ -582,12 +595,17 @@ class Server {
     this.definitions = [];
   }
 
-  /** @param {string} tool @param {unknown} args @param {CancellationSignal} signal @returns {Promise<string>} */
+  /** @param {string} tool @param {unknown} args @param {CancellationSignal} signal @returns {Promise<string | { __yuke_result: true, text: string, extra: { media: Wire.MediaBlob[] } }>} */
   async call(tool, args, signal) {
     if (this.state !== "connected") throw new Error("the MCP server " + this.name + " is " + this.state);
     if (!record(args)) throw new Error("MCP tool arguments must be an object");
     const result = await this.request("tools/call", { name: tool, arguments: args }, { timeoutMs: this.config.timeout ?? this.limits.callMs, signal });
-    return toolResult(result, this.era === "modern");
+    const { text, images } = toolResult(result, this.era === "modern");
+    /** @type {Wire.MediaBlob[]} */
+    const media = [];
+    // The text line still names an image the store refuses, such as an SVG, so the model knows of it.
+    for (const data of images) await client.blobPutData(data).then((blob) => { media.push(blob); }, () => {});
+    return media.length === 0 ? text : { __yuke_result: true, text, extra: { media } };
   }
 
   // Stop at once for the callers, then let the transport shut down.

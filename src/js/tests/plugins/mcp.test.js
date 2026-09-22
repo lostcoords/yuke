@@ -4,6 +4,7 @@ import { interaction, plugins } from "yuke:ext";
 import { mcp, toolName, decodeMessage, toolResult } from "yuke:mcp";
 import { check, equal } from "yuke:test";
 import { sseParser } from "yuke:sse";
+import { client } from "yuke:client";
 
 // The shell servers answer one JSON-RPC line per request. `sed` reads the id, the method, and the text argument.
 const READ = String.raw`while IFS= read -r line; do
@@ -87,6 +88,8 @@ if (mcpCase === "servers") {
   equal(long, toolName("server", "x".repeat(80)));
   check("a different long name hashes differently", long !== toolName("server", "x".repeat(79) + "y"));
 
+  // The store refuses the fake bytes below, so this stand-in answers the blob a real image would get.
+  client.blobPutData = async (data) => ({ hash: /** @type {any} */ ("ab".repeat(32)), mime: "image/png", bytes: data.length * 3 / 4 });
   globalThis.mcpPlugin = mcp({
     startupMs: 3000,
     callMs: 500,
@@ -186,9 +189,12 @@ if (mcpCase === "validation") {
     ].map((block) => ({ content: [block] })),
   ]) rejects("bad result " + JSON.stringify(result), () => toolResult(result));
   rejects("modern tag required", () => toolResult({ content: [] }, true));
-  equal(toolResult({ content: [] }), "");
-  equal(toolResult({ resultType: "complete", content: [{ type: "text", text: "ok", extension: 1 }] }, true), "ok");
-  equal(toolResult({ content: [{ type: "text", text: "x".repeat(99999) }, { type: "text", text: "yy" }] }), "x".repeat(99999) + "\n\n[truncated 2 characters]");
+  equal(toolResult({ content: [] }).text, "");
+  equal(toolResult({ resultType: "complete", content: [{ type: "text", text: "ok", extension: 1 }] }, true).text, "ok");
+  equal(toolResult({ content: [{ type: "text", text: "x".repeat(99999) }, { type: "text", text: "yy" }] }).text, "x".repeat(99999) + "\n\n[truncated 2 characters]");
+  // Only image blocks attach, and one result attaches at most eight.
+  const shots = toolResult({ content: [...Array.from({ length: 9 }, (_, i) => ({ type: "image", data: "i" + i, mimeType: "image/png" })), { type: "audio", data: "a", mimeType: "audio/wav" }] });
+  equal(shots.images.join(","), "i0,i1,i2,i3,i4,i5,i6,i7");
   let overflow = 0;
   const got = [];
   const feed = lines((line) => got.push(line), () => overflow++);

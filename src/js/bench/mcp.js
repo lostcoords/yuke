@@ -16,7 +16,7 @@ function start(phase, scale) {
 }
 
 function step() {
-  const text = toolResult(fresh ? JSON.parse(wire) : result);
+  const { text } = toolResult(fresh ? JSON.parse(wire) : result);
   if (length <= 100000 && text.length !== length) throw Error("MCP result mismatch");
   steps++;
   return text.length;

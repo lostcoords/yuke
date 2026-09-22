@@ -248,9 +248,14 @@ pub fn initialize(engine: *Engine, _: std.mem.Allocator) !proto.misc.InitializeR
     };
 }
 
-/// Handle blob.put: copy one image file into the store and return the ref an input may carry.
+/// Handle blob.put: store one image from a file or from base64 bytes, and return the ref an input may carry.
 pub fn blobPut(engine: *Engine, arena: std.mem.Allocator, params: proto.blob.BlobPutParams) !proto.content.MediaBlob {
-    return engine.deps.blobs.put(engine.deps.io, arena, params.path);
+    if (params.path) |path| {
+        if (params.data != null) return error.BlobSourceInvalid;
+        return engine.deps.blobs.put(engine.deps.io, arena, path);
+    }
+    const data = params.data orelse return error.BlobSourceInvalid;
+    return engine.deps.blobs.putBase64(engine.deps.io, arena, data);
 }
 
 /// Handle session.config: return one config revision and the session's system prompt; return the current config for a null config_rev and UnknownConfigRev for an absent revision.
