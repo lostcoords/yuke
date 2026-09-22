@@ -1,18 +1,19 @@
-// yuke:mcp — MCP servers as yuke tools. `.mcp.json` names them; one transport carries each one.
+// yuke:mcp — MCP servers as yuke tools. `.mcp.json` names them; `yuke:mcp-transport` carries each one.
 import { mcpState } from "yuke:mcp-native";
 import * as cancellation from "yuke:cancellation-native";
 import { fs } from "yuke:fs";
-import { env } from "yuke:env";
-import { spawn, lines } from "yuke:spawn";
 import { showInfo } from "yuke:info-panel";
+import { checkTransport, endpointFor } from "yuke:mcp-transport";
 
 /** @import { Context } from "yuke:ext" */
 /** @import { Plugin, ToolDefinition } from "./types/ext.js" */
 /** @typedef {import("yuke:cancellation-native").CancellationSignal} CancellationSignal */
-/** @typedef {{ type?: "stdio" | "http" | "sse", command?: string, args?: string[], env?: Record<string, string>, cwd?: string, url?: string, headers?: Record<string, string>, enabled?: boolean, timeout?: number, alwaysLoad?: boolean }} ServerConfig */
+/** @typedef {import("yuke:mcp-transport").ServerConfig} ServerConfig */
+/** @typedef {import("yuke:mcp-transport").Transport} Transport */
+/** @typedef {import("yuke:mcp-transport").Endpoint} Endpoint */
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
-/** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "failed" | "disabled" | "unsupported" | "stopped"} ServerState */
+/** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "failed" | "disabled" | "stopped"} ServerState */
 /** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number, cancelable: boolean }} Waiting */
 
 const WORKSPACE_FILE = ".mcp.json";
@@ -39,21 +40,8 @@ const LIMIT_MAX = 20;
 const MAX_PAGES = 100;
 const MAX_TOOLS = 10_000;
 const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
-const STOP_GRACE_MS = 2000;
 // A result above this reaches the model cut, with a marker that names the missing part.
 const MAX_RESULT_CHARS = 100_000;
-const VAR = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
-
-// Expand `${VAR}` and `${VAR:-default}`. A missing variable without a default is a config error.
-/** @param {string} text @returns {string} */
-function expand(text) {
-  return text.replace(VAR, (_, name, fallback) => {
-    const value = env.get(name);
-    if (value !== undefined) return value;
-    if (fallback !== undefined) return fallback;
-    throw new Error("the environment variable " + name + " is not set");
-  });
-}
 
 /** @param {unknown} error @returns {string} */
 const errorText = (error) => (error instanceof Error ? error.message : String(error));
@@ -211,86 +199,9 @@ function checkConfig(config) {
   return null;
 }
 
-/** @param {ServerConfig} config @returns {string | null} */
-function checkStdio(config) {
-  if (typeof config.command !== "string" || config.command === "") return "command must be a nonempty string";
-  if (config.args !== undefined && !(Array.isArray(config.args) && config.args.every((arg) => typeof arg === "string"))) return "args must be an array of strings";
-  if (config.env !== undefined && !(record(config.env) && Object.entries(config.env).every(([key, value]) => key !== "" && !/[=\0]/.test(key) && typeof value === "string" && !value.includes("\0")))) return "env must be an object of strings";
-  if (config.cwd !== undefined && typeof config.cwd !== "string") return "cwd must be a string";
-  if (config.command.includes("\0") || config.args?.some((arg) => arg.includes("\0")) || config.cwd?.includes("\0")) return "execution fields must not contain NUL";
-  return null;
-}
-
 /** @param {any} answer @returns {string} */
 function instructionsOf(answer) {
   return typeof answer.instructions === "string" ? answer.instructions.slice(0, INSTRUCTIONS_MAX) : "";
-}
-
-// A transport moves JSON-RPC text; the server decodes it. `closed` fires once, when the transport can carry no more.
-/** @typedef {{ message(text: string): void, closed(reason: string): void }} Sink */
-/** @typedef {{ send(message: Record<string, unknown>): Promise<void>, cancel(id: number, reason: string): void, close(): Promise<void>, diagnostics(failed: boolean): string[] }} Transport */
-// What a trusted configuration runs. `identity` keys the trust record, and `describe` names the action in the prompt.
-/** @typedef {{ identity: string, describe: string, open(sink: Sink): Transport }} Endpoint */
-
-// One child process per server. Each stdout line is one message; a line that is not JSON is noise.
-/** @param {{ argv: string[], env: Record<string, string>, cwd?: string }} launch @param {Sink} sink @returns {Transport} */
-function openStdio(launch, sink) {
-  let noise = 0;
-  /** @type {string | undefined} */
-  let stderr;
-  let open = true;
-  /** @param {string} reason */
-  const closed = (reason) => { if (open) { open = false; sink.closed(reason); } };
-  const child = spawn(launch.argv, { env: launch.env, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}) });
-  child.onStdout(lines((line) => {
-    const first = line.trimStart()[0];
-    if (first !== "{" && first !== "[") { noise += 1; return; }
-    if (open) sink.message(line);
-  }, () => closed("the MCP frame exceeds the line limit")));
-  child.onStderr(lines((line) => { stderr = line; }));
-  child.exited.then(
-    (exit) => closed(exit.signal != null ? "the server ended on signal " + exit.signal : "the server exited with code " + exit.code),
-    (error) => closed("the server did not start: " + errorText(error)),
-  );
-  /** @param {Record<string, unknown>} message */
-  const send = (message) => open ? child.write(JSON.stringify(message) + "\n") : Promise.reject(new Error("the server is not running"));
-  return {
-    send,
-    cancel(id, reason) { send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason } }).catch(() => {}); },
-    // The MCP stdio shutdown: stdin EOF, a grace period, then TERM and KILL through `kill`.
-    async close() {
-      open = false;
-      child.closeStdin();
-      let grace = 0;
-      const exited = await Promise.race([child.exited.then(() => true, () => true), new Promise((resolve) => { grace = setTimeout(() => resolve(false), STOP_GRACE_MS); })]);
-      clearTimeout(grace);
-      if (!exited) child.kill();
-      await child.exited.catch(() => {});
-    },
-    diagnostics(failed) {
-      /** @type {string[]} */
-      const parts = [];
-      if (failed && stderr !== undefined) parts.push("stderr: " + stderr);
-      if (noise) parts.push(noise + (noise === 1 ? " stray stdout line" : " stray stdout lines"));
-      return parts;
-    },
-  };
-}
-
-// Expand the configuration into what it runs. A missing variable throws here.
-/** @param {ServerConfig} config @returns {Endpoint} */
-function stdioEndpoint(config) {
-  const argv = [expand(config.command ?? ""), ...(config.args ?? []).map(expand)];
-  /** @type {Record<string, string>} */
-  const env = Object.create(null);
-  const entries = Object.entries(config.env ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  for (const [key, value] of entries) env[key] = expand(value);
-  const launch = { argv, env, ...(config.cwd !== undefined ? { cwd: expand(config.cwd) } : {}) };
-  return {
-    identity: JSON.stringify([config.command, config.args ?? [], config.cwd ?? null, entries, launch]),
-    describe: "runs: " + argv.map((arg) => JSON.stringify(arg)).join(" "),
-    open: (sink) => openStdio(launch, sink),
-  };
 }
 
 /** @typedef {{ name: string, description: string, input_schema: string }} ToolAddition */
@@ -401,13 +312,12 @@ class Server {
     this.refreshing = false;
     this.refreshAgain = false;
     const type = config.type ?? (config.url ? "http" : "stdio");
-    const problem = checkConfig(config) ?? (type === "stdio" ? checkStdio(config) : null);
+    const problem = checkConfig(config) ?? checkTransport(config, type);
     if (config.enabled === false) this.state = "disabled";
-    else if (type !== "stdio") this.fail("unsupported", "only stdio servers are supported");
     else if (problem !== null) this.fail("failed", problem);
     else if (!trusted) this.state = "untrusted";
     if (this.state !== "pending" && this.state !== "untrusted") return;
-    try { this.endpoint = stdioEndpoint(config); } catch (error) {
+    try { this.endpoint = endpointFor(config, type); } catch (error) {
       this.fail("failed", errorText(error));
       return;
     }
@@ -572,6 +482,7 @@ class Server {
     if (!LEGACY_KNOWN.includes(init.protocolVersion)) throw new Error("the server answered initialize with an unknown protocol version");
     this.accept(init);
     if (!record(init.serverInfo) || typeof init.serverInfo.name !== "string" || typeof init.serverInfo.version !== "string") return invalid("initialize result");
+    this.transport?.negotiated(init.protocolVersion);
     await this.send({ jsonrpc: "2.0", method: "notifications/initialized" });
   }
 

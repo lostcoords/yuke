@@ -4,6 +4,7 @@ const std = @import("std");
 const zio = @import("zio");
 const support = @import("support.zig");
 const Host = @import("../host.zig").Host;
+const HttpPeer = @import("mcp_http_peer.zig").Peer;
 
 /// One reactor host in an empty directory, so the plugin reads no real `.mcp.json` file.
 const Fixture = struct {
@@ -13,9 +14,12 @@ const Fixture = struct {
     root_buf: [std.fs.max_path_bytes]u8,
     root_len: usize,
     env: std.process.Environ.Map,
+    /// The loopback MCP peer of the HTTP case.
+    peer: ?*HttpPeer = null,
 
     /// The host keeps a pointer to `env`, so the fixture initializes in place and never moves.
     fn init(self: *Fixture, case: [:0]const u8) !void {
+        self.peer = null;
         self.tmp = std.testing.tmpDir(.{});
         errdefer self.tmp.cleanup();
         self.root_len = try self.tmp.dir.realPath(std.testing.io, &self.root_buf);
@@ -27,6 +31,7 @@ const Fixture = struct {
         try self.tmp.dir.createDirPath(std.testing.io, "workspace");
         self.root_len = try self.tmp.dir.realPathFile(std.testing.io, "workspace", &self.root_buf);
         try self.env.put("MCP_TEST_GREETING", "hello");
+        try self.env.put("MCP_TEST_TOKEN", "secret");
         self.rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
         errdefer self.rt.deinit();
         self.host = support.createHostWith(self.rt.io(), self.root());
@@ -35,6 +40,12 @@ const Fixture = struct {
         const global = self.host.ctx.getGlobalObject();
         defer self.host.ctx.freeValue(global);
         try self.host.ctx.setPropertyStr(global, "mcpCase", self.host.ctx.newString(case));
+        if (std.mem.eql(u8, case, "http")) {
+            const peer = try HttpPeer.create(std.testing.allocator, self.rt.io());
+            self.peer = peer;
+            peer.wake = &self.host.wake;
+            try self.host.ctx.setPropertyStr(global, "mcpHttpBase", self.host.ctx.newString(peer.base));
+        }
         try support.eval(self.host, "plugins/mcp.test.js");
     }
 
@@ -44,6 +55,8 @@ const Fixture = struct {
     }
 
     fn deinit(self: *Fixture) void {
+        // The peer sets the host's wake, so its tasks end before the host does.
+        if (self.peer) |peer| peer.destroy();
         support.destroyHost(self.host);
         self.rt.deinit();
         self.env.deinit();
@@ -146,7 +159,8 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try expectState(host, "oldver", "failed · legacy · the server answered initialize with an unknown protocol version");
     try expectState(host, "missing", "failed · the environment variable MCP_TEST_MISSING is not set");
     try expectState(host, "badargs", "failed · args must be an array of strings");
-    try expectState(host, "remote", "unsupported · only stdio servers are supported");
+    try expectState(host, "socket", "failed · type must be stdio, http, or sse");
+    try expectState(host, "ftp", "failed · url must be an http or https URL");
     try expectState(host, "off", "disabled");
     // The two names that clean to one yuke name both exist.
     try std.testing.expect(support.hasTool(host, "mcp_modern_a_tool"));
@@ -227,6 +241,39 @@ test "a search tool name conflict clears on the next catalog change" {
     try support.pumpUntilTrue(host, "mcpStates().modern === 'connected · modern · 2 tools: added, echo'");
     try std.testing.expect(support.hasTool(host, "tool_search"));
     try std.testing.expect(!deferred(host, "tool_search"));
+}
+
+test "MCP servers over Streamable HTTP and the old SSE transport connect, call, cancel, and end the session" {
+    var f: Fixture = undefined;
+    try f.init("http");
+    defer f.deinit();
+    const host = f.host;
+    const peer = f.peer.?;
+    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try expectState(host, "modern", "connected · modern · 2 tools: echo, slow");
+    // The modern probe fails outside a session, so the client falls back to `initialize` and keeps the session.
+    try expectState(host, "legacy", "connected · legacy · 1 tool: echo");
+    try expectState(host, "old", "connected · legacy · 1 tool: echo");
+    try expectState(host, "denied", "failed · legacy · the server answered HTTP 401: unauthorized");
+
+    // A progress notification before the answer changes nothing.
+    try expectCall(host, "mcp_modern_echo", "{\"text\":\"hi\"}", "modern http: hi", false);
+    try expectCall(host, "mcp_old_echo", "{\"text\":\"hi\"}", "old sse: hi", false);
+    // A timeout closes the modern stream, which is the modern cancel.
+    try expectCall(host, "mcp_modern_slow", "{}", "the request timed out", true);
+    try support.pumpUntilSet(host, &peer.cancel_seen);
+    // The legacy GET stream carries the list change, and the next list names the new tool.
+    try expectCall(host, "mcp_legacy_echo", "{\"text\":\"change\"}", "legacy http: change", false);
+    try support.pumpUntilTrue(host, "mcpStates().legacy === 'connected · legacy · 2 tools: added, echo'");
+
+    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-http-dispose.js");
+    try support.pumpUntilTrue(host, "mcpDisposed === true");
+    try std.testing.expect(peer.deleted.load(.acquire));
+    try host.close();
+    try std.testing.expectEqual(@as(usize, 0), host.bodies.live.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+    try std.testing.expectEqual(@as(usize, 0), host.abort_listeners.items.len);
+    try std.testing.expectEqual(@as(?anyerror, null), peer.failure);
 }
 
 test "a workspace server starts only after the user trusts it at the first run" {

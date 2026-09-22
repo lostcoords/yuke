@@ -3,6 +3,7 @@ import { fs } from "yuke:fs";
 import { interaction, plugins } from "yuke:ext";
 import { mcp, toolName, decodeMessage, toolResult } from "yuke:mcp";
 import { check, equal } from "yuke:test";
+import { sseParser } from "yuke:sse";
 
 // The shell servers answer one JSON-RPC line per request. `sed` reads the id, the method, and the text argument.
 const READ = String.raw`while IFS= read -r line; do
@@ -98,7 +99,8 @@ if (mcpCase === "servers") {
       oldver: sh(OLD_VERSION),
       missing: { command: "${MCP_TEST_MISSING}" },
       badargs: { command: "/bin/sh", args: "-c" },
-      remote: { url: "https://example.com/mcp" },
+      socket: { type: "ws", url: "https://example.com/mcp" },
+      ftp: { url: "ftp://example.com/mcp" },
       off: { command: "/bin/sh", enabled: false },
     },
   });
@@ -108,6 +110,19 @@ if (mcpCase === "servers") {
 
 if (mcpCase === "timeout") {
   globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 100, servers: { modern: sh(MODERN) } });
+  globalThis.mcpReady = false;
+  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+}
+
+// Three remote flavors on one loopback peer, and one server without the token the peer wants.
+if (mcpCase === "http") {
+  const token = { "X-Token": "${MCP_TEST_TOKEN}" };
+  globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 2000, servers: {
+    modern: { type: "http", url: mcpHttpBase + "/modern", headers: token, timeout: 200 },
+    legacy: { type: "http", url: mcpHttpBase + "/legacy", headers: token },
+    old: { type: "sse", url: mcpHttpBase + "/sse", headers: token },
+    denied: { url: mcpHttpBase + "/modern" },
+  } });
   globalThis.mcpReady = false;
   plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
 }
@@ -182,6 +197,21 @@ if (mcpCase === "validation") {
   feed("tail\nlast\n");
   equal(overflow, 2);
   equal(got.join(","), "ok,last");
+
+  // Event-stream framing: every line ending, a CRLF split across chunks, a BOM, comments, and joined data lines.
+  /** @type {import("yuke:sse").SseEvent[]} */
+  const events = [];
+  const parse = sseParser((event) => events.push(event));
+  for (const chunk of ["\ufeffdata: one\r", "\n\r\n: note\nevent: endpoint\ndata:/x\rdata:  two\n\n", "id: 7\ndata: three\n", "\nid: bad\0\ndata: four\n\ndata: tail"]) parse(chunk);
+  equal(JSON.stringify(events), JSON.stringify([
+    { event: "message", data: "one", id: "" },
+    { event: "endpoint", data: "/x\n two", id: "" },
+    { event: "message", data: "three", id: "7" },
+    { event: "message", data: "four", id: "7" },
+  ]));
+  let refused = false;
+  try { sseParser(() => {})("data: " + "x".repeat(4 * 1024 * 1024)); } catch { refused = true; }
+  check("an endless line is refused", refused);
 }
 
 if (mcpCase === "protocol") {
