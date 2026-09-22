@@ -1,5 +1,6 @@
 // yuke:mcp — MCP servers as yuke tools. `.mcp.json` names them; `yuke:mcp-transport` carries each one.
-import { mcpState } from "yuke:mcp-native";
+import * as mcpNative from "yuke:mcp-native";
+import { sha256 } from "yuke:oauth-native";
 import * as cancellation from "yuke:cancellation-native";
 import { fs } from "yuke:fs";
 import { showInfo } from "yuke:info-panel";
@@ -360,6 +361,21 @@ function searchCatalog(servers, args) {
   return { __yuke_result: true, text: "Found " + lines.length + " MCP tool" + (lines.length === 1 ? "" : "s") + ":\n" + lines.join("\n"), extra: { tools_added: added } };
 }
 
+// A trust record keeps a digest of the server identity, so a changed command or URL asks again.
+/** @param {string} name @param {string} identity @returns {boolean | undefined} */
+function readTrust(name, identity) {
+  const text = mcpNative.readRecord("mcp-trust", name);
+  if (text === undefined) return undefined;
+  let saved;
+  try { saved = JSON.parse(text); } catch { return undefined; }
+  return record(saved) && saved.identity === sha256(identity) && typeof saved.approved === "boolean" ? saved.approved : undefined;
+}
+
+/** @param {string} name @param {string} identity @param {boolean} approved */
+function writeTrust(name, identity, approved) {
+  mcpNative.writeRecord("mcp-trust", name, JSON.stringify({ approved, identity: sha256(identity) }));
+}
+
 class Server {
   /** @param {string} name @param {ServerConfig} config @param {Limits} limits @param {boolean} trusted @param {Context} ctx */
   constructor(name, config, limits, trusted, ctx) {
@@ -424,7 +440,7 @@ class Server {
     }
     if (!trusted) {
       try {
-        const approved = mcpState.readTrust(name, this.endpoint.identity);
+        const approved = readTrust(name, this.endpoint.identity);
         if (approved === true) this.state = "pending";
         else if (approved === false) this.fail("disabled", "not trusted");
       } catch (error) { this.error = errorText(error); }
@@ -890,7 +906,7 @@ export function mcp(options = {}) {
       /** @type {[Record<string, ServerConfig>, boolean][]} */
       const sources = [[options.servers ?? {}, true]];
       try {
-        const user = mcpState.configPath();
+        const user = mcpNative.configPath();
         if (user !== undefined) sources.push([await readServers(user, problems), true]);
       } catch (error) { problems.push(errorText(error)); }
       sources.push([await readServers(WORKSPACE_FILE, problems), false]);
@@ -946,7 +962,7 @@ export function mcp(options = {}) {
             const endpoint = /** @type {Endpoint} */ (server.endpoint);
             const ok = await ctx.interaction.confirm("Start the MCP server " + server.name + "?", WORKSPACE_FILE + " " + endpoint.describe + "\nRemember this decision for this workspace and server configuration.");
             if (ok === undefined || !ctx.scope.alive || server.state !== "untrusted") continue;
-            try { mcpState.writeTrust(server.name, endpoint.identity, ok); }
+            try { writeTrust(server.name, endpoint.identity, ok); }
             catch (error) { problems.push(server.name + ": " + errorText(error)); }
             if (ok) server.start(); else server.fail("disabled", "not trusted");
           }
@@ -998,7 +1014,7 @@ export function mcp(options = {}) {
     async resetTrust() {
       for (const [index, server] of servers.entries()) {
         if (!server.workspace) continue;
-        try { mcpState.resetTrust(server.name); } catch (error) {
+        try { mcpNative.removeRecord("mcp-trust", server.name); } catch (error) {
           problems.push(server.name + ": " + errorText(error));
           continue;
         }

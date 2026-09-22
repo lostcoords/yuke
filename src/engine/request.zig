@@ -82,25 +82,17 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
 
     // A replaced field lives in the prepared arena, so a retry resends it after the build arena is gone.
     const owned = prepared.arena.allocator();
-    switch (engine.deps.hooks.askIfHeld(arena, .@"request.send", RequestSend{
+    if (try engine.deps.hooks.decide(RequestSend, arena, slot.runId(), .@"request.send", RequestSend{
         .url = prepared.transport_request.url,
         .headers = prepared.transport_request.headers,
         .body = prepared.transport_request.body,
-    })) {
-        .proceed => {},
-        .replace => |value| if (std.json.parseFromValueLeaky(RequestSend, owned, value, .{ .ignore_unknown_fields = true })) |sent| {
-            prepared.transport_request = .{
-                .url = sent.url,
-                .headers = sent.headers,
-                // An HTTP writer shifts the body it sends, so it needs bytes it may write to.
-                .body = try owned.dupe(u8, sent.body),
-            };
-        } else |_| {},
-        .block => |reason| {
-            std.log.warn("run {d} stopped at request.send: {s}", .{ slot.runId(), reason });
-            return error.HookBlocked;
-        },
-        .canceled => return error.Canceled,
+    })) |sent| {
+        prepared.transport_request = .{
+            .url = try owned.dupe(u8, sent.url),
+            .headers = try proto.dupe(owned, sent.headers),
+            // An HTTP writer shifts the body it sends, so it needs bytes it may write to.
+            .body = try owned.dupe(u8, sent.body),
+        };
     }
     return prepared;
 }

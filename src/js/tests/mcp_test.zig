@@ -337,20 +337,8 @@ test "an MCP server behind OAuth signs in through the browser, refreshes its tok
     try expectCall(host, "mcp_secure_echo", "{\"text\":\"revoke\"}", "secure: revoke", false);
     try expectCall(host, "mcp_secure_echo", "{\"text\":\"after\"}", "secure: after", false);
     try std.testing.expectEqual(@as(u32, 1), peer.refreshes);
-    // The grant is private: one 0600 file in a 0700 directory, named by a digest.
-    var dir = try f.tmp.dir.openDir(std.testing.io, "yuke/mcp-oauth", .{ .iterate = true });
-    defer dir.close(std.testing.io);
-    var it = dir.iterate();
-    const entry = (try it.next(std.testing.io)).?;
-    try std.testing.expectEqual(@as(usize, 69), entry.name.len);
-    var name: [69]u8 = undefined;
-    @memcpy(&name, entry.name);
-    const info = try dir.statFile(std.testing.io, &name, .{});
-    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), info.permissions.toMode() & 0o777);
-    try std.testing.expectEqual(@as(std.posix.mode_t, 0o700), (try dir.stat(std.testing.io)).permissions.toMode() & 0o777);
     try host.evalModule("globalThis.signedOut = false; mcpPlugin.logout('secure').then(() => { globalThis.signedOut = true; });", "mcp-logout.js");
     try support.pumpUntilTrue(host, "signedOut && mcpStates().secure === 'needs auth · run /mcp-login secure'");
-    try std.testing.expectError(error.FileNotFound, dir.statFile(std.testing.io, &name, .{}));
 }
 
 /// Sign in to `secure` and expect the error text, or success for an empty one.

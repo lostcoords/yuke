@@ -1,11 +1,10 @@
-//! OAuth helpers for MCP sign-in: secure random values, SHA-256 for PKCE, one loopback callback, and private token records.
+//! OAuth helpers for MCP sign-in: secure random values, SHA-256 for PKCE, and one loopback callback.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
 const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 const pending = @import("../pending.zig");
-const paths = @import("../../paths.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -14,7 +13,6 @@ const base64url = std.base64.url_safe_no_pad.Encoder;
 
 /// One sign-in holds one listener, so a small bound is enough.
 pub const max_listeners = 4;
-pub const max_record_bytes = 64 * 1024;
 const default_timeout_ms = 300_000;
 const max_timeout_ms = 900_000;
 /// A browser opens and closes some connections that carry no callback, so the listener skips at most this many.
@@ -69,9 +67,6 @@ pub fn install(host: *Host) void {
         .{ .name = "listen", .arity = 0, .call = jsListen },
         .{ .name = "accept", .arity = 2, .call = jsAccept },
         .{ .name = "close", .arity = 1, .call = jsClose },
-        .{ .name = "readRecord", .arity = 1, .call = jsReadRecord },
-        .{ .name = "writeRecord", .arity = 2, .call = jsWriteRecord },
-        .{ .name = "removeRecord", .arity = 1, .call = jsRemoveRecord },
     });
 }
 
@@ -188,112 +183,4 @@ fn answer(host: *Host, stream: std.Io.net.Stream) !?[]u8 {
 fn jsClose(ctx: Context, _: Value, args: []const Value) Value {
     if (Host.fromContext(ctx).oauth.findArg(ctx, args)) |listener| listener.close();
     return quickjs.UNDEFINED;
-}
-
-/// The private directory that holds one record per server, named by a digest of the key, so no URL reaches a file name.
-fn recordDir(host: *Host, alloc: std.mem.Allocator) !std.Io.Dir {
-    const base = (try paths.dataDir(alloc, host.execution.env)) orelse return error.HomeUnavailable;
-    const path = try std.fs.path.join(alloc, &.{ base, "mcp-oauth" });
-    const dir = try std.Io.Dir.cwd().createDirPathOpen(host.io, path, .{
-        .permissions = .fromMode(0o700),
-        .open_options = .{ .follow_symlinks = false },
-    });
-    errdefer dir.close(host.io);
-    // A directory made before this code, or by another tool, may be open to others; the grants inside are secrets.
-    const info = try dir.stat(host.io);
-    if (info.permissions.toMode() & 0o077 != 0) try dir.setPermissions(host.io, .fromMode(0o700));
-    return dir;
-}
-
-fn recordName(key: []const u8) [64 + 5]u8 {
-    var digest: [Sha256.digest_length]u8 = undefined;
-    Sha256.hash(key, &digest, .{});
-    var name: [64 + 5]u8 = undefined;
-    name[0..64].* = std.fmt.bytesToHex(digest, .lower);
-    name[64..].* = ".json".*;
-    return name;
-}
-
-/// Read the key argument. A null answer means that a TypeError is pending.
-fn keyArg(ctx: Context, args: []const Value) ?[:0]const u8 {
-    if (args.len == 0) {
-        _ = ctx.throwTypeError("a sign-in record needs a key");
-        return null;
-    }
-    const key = module.string(ctx, args[0]) orelse {
-        _ = ctx.throwTypeError("the sign-in record key must be a string");
-        return null;
-    };
-    if (key.len != 0) return key;
-    ctx.freeCString(key.ptr);
-    _ = ctx.throwTypeError("the sign-in record key must not be empty");
-    return null;
-}
-
-/// Answer the record text for the key, or undefined when none exists.
-fn jsReadRecord(ctx: Context, _: Value, args: []const Value) Value {
-    const key = keyArg(ctx, args) orelse return module.throwPending(ctx);
-    defer ctx.freeCString(key.ptr);
-    const host = Host.fromContext(ctx);
-    var arena: std.heap.ArenaAllocator = .init(host.gpa);
-    defer arena.deinit();
-    var dir = recordDir(host, arena.allocator()) catch return ctx.throwTypeError("the private sign-in directory is unavailable");
-    defer dir.close(host.io);
-    const name = recordName(key);
-    const text = dir.readFileAlloc(host.io, &name, arena.allocator(), .limited(max_record_bytes)) catch |err| return switch (err) {
-        error.FileNotFound => quickjs.UNDEFINED,
-        else => ctx.throwTypeError("the sign-in record is unreadable"),
-    };
-    return ctx.newString(text);
-}
-
-/// Replace the record for the key. The file is private and replaced whole, so a reader never sees half a record.
-fn jsWriteRecord(ctx: Context, _: Value, args: []const Value) Value {
-    if (args.len != 2) return ctx.throwTypeError("a sign-in record needs a key and a text");
-    const text = module.string(ctx, args[1]) orelse return ctx.throwTypeError("the sign-in record must be a string");
-    defer ctx.freeCString(text.ptr);
-    if (text.len > max_record_bytes) return ctx.throwTypeError("the sign-in record exceeds 64 KiB");
-    const key = keyArg(ctx, args) orelse return module.throwPending(ctx);
-    defer ctx.freeCString(key.ptr);
-    const host = Host.fromContext(ctx);
-    var arena: std.heap.ArenaAllocator = .init(host.gpa);
-    defer arena.deinit();
-    var dir = recordDir(host, arena.allocator()) catch return ctx.throwTypeError("the private sign-in directory is unavailable");
-    defer dir.close(host.io);
-    const name = recordName(key);
-    writeRecord(host.io, dir, &name, text) catch return ctx.throwTypeError("the sign-in record could not be saved");
-    return quickjs.UNDEFINED;
-}
-
-fn writeRecord(io: std.Io, dir: std.Io.Dir, name: []const u8, text: []const u8) !void {
-    var atomic = try dir.createFileAtomic(io, name, .{ .permissions = .fromMode(0o600), .replace = true });
-    defer atomic.deinit(io);
-    try atomic.file.setPermissions(io, .fromMode(0o600));
-    var writer = atomic.file.writer(io, &.{});
-    try writer.interface.writeAll(text);
-    try writer.interface.flush();
-    try atomic.replace(io);
-}
-
-fn jsRemoveRecord(ctx: Context, _: Value, args: []const Value) Value {
-    const key = keyArg(ctx, args) orelse return module.throwPending(ctx);
-    defer ctx.freeCString(key.ptr);
-    const host = Host.fromContext(ctx);
-    var arena: std.heap.ArenaAllocator = .init(host.gpa);
-    defer arena.deinit();
-    var dir = recordDir(host, arena.allocator()) catch return ctx.throwTypeError("the private sign-in directory is unavailable");
-    defer dir.close(host.io);
-    const name = recordName(key);
-    dir.deleteFile(host.io, &name) catch |err| switch (err) {
-        error.FileNotFound => {},
-        else => return ctx.throwTypeError("the sign-in record could not be removed"),
-    };
-    return quickjs.UNDEFINED;
-}
-
-test "a record name is a digest of the key, so no URL reaches the file system" {
-    const name = recordName("https://mcp.example.com/mcp");
-    try std.testing.expect(std.mem.endsWith(u8, &name, ".json"));
-    try std.testing.expect(std.mem.indexOf(u8, &name, "example") == null);
-    try std.testing.expectEqualSlices(u8, &name, &recordName("https://mcp.example.com/mcp"));
 }

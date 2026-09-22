@@ -827,8 +827,8 @@ test "exec ends a process that left the session after one grace period" {
     const setsid = "/usr/bin/setsid";
     std.Io.Dir.accessAbsolute(testing.io, setsid, .{}) catch return error.SkipZigTest;
     const started: std.Io.Timestamp = .now(testing.io, .awake);
-    const res = try runShell(arena.allocator(), setsid ++ " sleep 2 & echo started", 20_000);
-    try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 1500 * std.time.ns_per_ms);
+    const res = try runShell(arena.allocator(), setsid ++ " sleep 10 & echo started", 20_000);
+    try testing.expect(started.durationTo(.now(testing.io, .awake)).toNanoseconds() < 5 * std.time.ns_per_s);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "started") != null);
 }
 

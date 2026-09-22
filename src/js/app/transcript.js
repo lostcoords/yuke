@@ -3,9 +3,8 @@ import { Pager, rowText, rowSourceSpan, rowSourceAt } from "yuke:pager";
 import { term } from "yuke:term";
 import { root, isWheel } from "yuke:core";
 import { clip, caretAtCol, wrapOffsets, wrapPreview, nextGrapheme } from "yuke:text-input";
-import { strokeOf } from "yuke:keys";
 import { Document, isLinear, normalizeSource } from "yuke:md";
-import { Window, NAV_KEYS } from "yuke:ui";
+import { Window, ScrollView } from "yuke:ui";
 import { byteLabel } from "yuke:format";
 
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
@@ -633,15 +632,12 @@ function toolRows(part, width, expanded, tree) {
 }
 
 // A scrolling overlay over labelled sections, so a tool and a reasoning part share one detail window.
-class PartDetails {
-  /** @param {readonly { label: string, text: string, empty: string }[]} sections */
-  constructor(sections) {
+class PartDetails extends ScrollView {
+  /** @param {readonly { label: string, text: string, empty: string }[]} sections @param {() => void} onClose */
+  constructor(sections, onClose) {
+    super(onClose);
     this.sections = sections;
-    this.pager = new Pager();
     this.width = -1;
-    this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    /** @type {Window | null} */
-    this.win = null;
   }
 
   /** @param {number} width @returns {TranscriptRow[]} */
@@ -658,43 +654,18 @@ class PartDetails {
 
   /** @param {Rect} bounds @returns {void} */
   layout(bounds) {
-    this.rect = bounds;
+    super.layout(bounds);
     if (this.width !== bounds.w) {
       this.width = bounds.w;
       this.pager.setRows(this.rows(bounds.w));
     }
   }
-
-  draw() {
-    this.pager.draw(this.rect);
-  }
-
-  /** @param {HostEvent} event @returns {boolean} */
-  onKey(event) {
-    if (event.type !== "key") return false;
-    const stroke = strokeOf(event);
-    if (stroke === "esc" || stroke === "q") root.popOverlay(/** @type {Window} */ (this.win));
-    else {
-      const nav = NAV_KEYS[stroke];
-      if (nav) nav(this.pager);
-    }
-    root.invalidate();
-    return true;
-  }
-
-  /** @param {MouseEvent} event @returns {boolean} */
-  onMouse(event) {
-    const handled = this.pager.onMouse(event);
-    if (handled) root.invalidate();
-    return handled;
-  }
 }
 
 /** @param {string} title @param {readonly { label: string, text: string, empty: string }[]} sections @returns {void} */
 function openDetails(title, sections) {
-  const content = new PartDetails(sections);
+  const content = new PartDetails(sections, () => root.popOverlay(win));
   const win = new Window({ title, footer: "j/k scroll · pgup/pgdn · esc close", border: "rounded", width: max => Math.round(max * 0.9), height: max => Math.round(max * 0.85), content });
-  content.win = win;
   root.pushOverlay(win);
 }
 

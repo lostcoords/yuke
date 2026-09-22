@@ -1,8 +1,6 @@
 // yuke:jobs-ui — background jobs in the TUI: a status count, the /jobs list, and a live output view.
 import { root } from "yuke:core";
-import { ui, Window, NAV_KEYS } from "yuke:ui";
-import { Pager } from "yuke:pager";
-import { strokeOf } from "yuke:keys";
+import { ui, Window, ScrollView } from "yuke:ui";
 import { list, get, stop, read, name, endLabel, shortCommand } from "yuke:jobs";
 import { focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
@@ -10,7 +8,6 @@ import { elapsedLabel } from "yuke:indicator";
 
 /** @import { Context as PluginContext } from "yuke:ext" */
 /** @import { InjectContext as Context } from "./types/ext.js" */
-/** @import { Rect, HostMouseEvent } from "./types/core.js" */
 /** @typedef {import("yuke:jobs").Job} Job */
 
 /** @param {unknown} error */
@@ -33,12 +30,11 @@ const OUTPUT_LINES = 5000;
 const LINE_CHARS = 4096;
 
 // A live view of one job log: each tick reads the bytes after the last read, and the pager follows the tail.
-export class JobOutput {
+export class JobOutput extends ScrollView {
   /** @param {Job} job @param {() => void} onClose */
   constructor(job, onClose) {
+    super(onClose);
     this.job = job;
-    this.onClose = onClose;
-    this.pager = new Pager();
     /** @type {import("./types/pager.js").TranscriptRow[]} */
     this.rows = [];
     this.first = 0;
@@ -66,8 +62,6 @@ export class JobOutput {
     this.offset = null;
     this.reading = false;
     this.again = false;
-    /** @type {Rect} */
-    this.rect = { x: 0, y: 0, w: 0, h: 0 };
   }
 
   // Read the new bytes; a long log starts at a whole line near its end, a request during a read runs after it, and an ended job reads to the end.
@@ -115,29 +109,17 @@ export class JobOutput {
     root.invalidate();
   }
 
-  /** @param {Rect} rect */
-  layout(rect) { this.rect = rect; }
-
-  draw() { this.pager.draw(this.rect); }
-
   /** @returns {{ periodMs: number } | null} */
   needsTick() { return this.job.state === "running" ? { periodMs: 500 } : null; }
 
   tick() { this.read().catch(failed); }
 
-  /** @param {HostEvent} event @returns {boolean} */
-  onKey(event) {
-    if (event.type !== "key" || event.event === "release") return true;
-    const stroke = strokeOf(event);
-    if (stroke === "esc" || stroke === "q") this.onClose();
-    else if (stroke === "x" && this.job.state === "running") stop(this.job.id).catch(failed);
-    else NAV_KEYS[stroke]?.(this.pager);
-    root.invalidate();
+  /** @param {string} stroke @returns {boolean} */
+  onStroke(stroke) {
+    if (stroke !== "x" || this.job.state !== "running") return false;
+    stop(this.job.id).catch(failed);
     return true;
   }
-
-  /** @param {HostMouseEvent} event @returns {boolean} */
-  onMouse(event) { return this.pager.onMouse(event); }
 }
 
 /** @param {Context} ctx @param {Job} job */

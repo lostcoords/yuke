@@ -51,7 +51,7 @@ pub fn refresh(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void 
     var sections = seed;
     // A handler may register another during the ask, which bumps the counter. The build is stored under the value it was asked for.
     const generation = engine.prompt_generation;
-    switch (engine.deps.hooks.askIfHeld(arena, .@"prompt.build", .{
+    if (try engine.deps.hooks.decide(Answer, arena, slot.runId(), .@"prompt.build", .{
         .context = Context{
             .session_id = slot.sessionId(),
             .parent_id = slot.parent_id,
@@ -65,19 +65,9 @@ pub fn refresh(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void 
         .instructions = instructions,
         .skills = skills,
         .sections = seed,
-    })) {
-        .proceed => {},
-        // An unreadable answer is a plugin bug, and the run fails closed like it does on a throw.
-        .replace => |value| {
-            const answer = std.json.parseFromValueLeaky(Answer, arena, value, .{ .ignore_unknown_fields = true }) catch return error.HookAnswerInvalid;
-            if (!prompts.valid(answer.sections)) return error.HookAnswerInvalid;
-            sections = answer.sections;
-        },
-        .block => |reason| {
-            std.log.warn("run {d} stopped at prompt.build: {s}", .{ slot.runId(), reason });
-            return error.HookBlocked;
-        },
-        .canceled => return error.Canceled,
+    })) |answer| {
+        if (!prompts.valid(answer.sections)) return error.HookAnswerInvalid;
+        sections = answer.sections;
     }
     const text = blk: {
         var tx = try db.begin();

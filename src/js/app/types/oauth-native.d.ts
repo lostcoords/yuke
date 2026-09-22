@@ -9,9 +9,4 @@ declare module "yuke:oauth-native" {
   export function accept(id: number, options?: { timeoutMs?: number; signal?: import("yuke:cancellation-native").CancellationSignal }): Promise<string>;
   /** Closes a listener that never took its callback; repeat calls are safe. */
   export function close(id: number): void;
-  /** Answers the private record for the key, or undefined. */
-  export function readRecord(key: string): string | undefined;
-  /** Replaces the private record for the key; at most 64 KiB. */
-  export function writeRecord(key: string, text: string): void;
-  export function removeRecord(key: string): void;
 }

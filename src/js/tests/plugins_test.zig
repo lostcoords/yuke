@@ -16,7 +16,8 @@ fn createTimeoutHost() *Host {
 fn expectStopDeadline(host: *Host, start: std.Io.Timestamp) !void {
     const elapsed = start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds();
     try std.testing.expect(elapsed >= stop_timeout_ms);
-    try std.testing.expect(elapsed < stop_timeout_ms * 5 / 2);
+    // The bound stays under the one-second default, so a host that ignores its own deadline fails.
+    try std.testing.expect(elapsed < 1000);
 }
 
 test "plugin stop deadlines belong to each host and default to one second" {

@@ -118,18 +118,11 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Load
     const Chosen = struct { tools: []const []const u8 };
     var chosen = names;
     const selects = engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"tools.select");
-    switch (engine.deps.hooks.askIfHeld(arena, .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot, has_skills) })) {
+    if (try engine.deps.hooks.decide(Chosen, arena, slot.runId(), .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot, has_skills) })) |answer| {
+        chosen = answer.tools;
+    } else if (selects) {
         // A handler may start a server while it runs, so an answer that narrows nothing takes the table as it is now.
-        .proceed => if (selects) {
-            chosen = try tools.names(tools.ctx, arena);
-        },
-        // An unreadable answer is a plugin bug, and the run fails closed like it does on a throw.
-        .replace => |value| chosen = (std.json.parseFromValueLeaky(Chosen, arena, value, .{ .ignore_unknown_fields = true }) catch return error.HookAnswerInvalid).tools,
-        .block => |reason| {
-            std.log.warn("run {d} stopped at tools.select: {s}", .{ slot.runId(), reason });
-            return error.HookBlocked;
-        },
-        .canceled => return error.Canceled,
+        chosen = try tools.names(tools.ctx, arena);
     }
     var held: Loadout = .{ .arena = .init(engine.deps.gpa), .names = &.{}, .decls = &.{}, .has_skills = has_skills };
     errdefer held.arena.deinit();
@@ -237,25 +230,13 @@ pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, mo
         .tools = held.request_tools.?,
         .max_output_tokens = outputLimit(model),
     };
-    if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"request.build")) {
-        const hook_payload = .{
-            .model = build.model,
-            .system = build.system,
-            .tools = build.tools,
-            .max_output_tokens = build.max_output_tokens,
-            .context = hookContext(engine, slot, held.has_skills),
-        };
-        switch (engine.deps.hooks.askIfHeld(arena, .@"request.build", hook_payload)) {
-            .proceed => {},
-            .replace => |value| build = std.json.parseFromValueLeaky(RequestBuild, arena, value, .{ .ignore_unknown_fields = true }) catch return error.HookAnswerInvalid,
-            .block => |reason| {
-                // The wire message names a class, so record the reason before the error loses it.
-                std.log.warn("run {d} stopped at request.build: {s}", .{ slot.runId(), reason });
-                return error.HookBlocked;
-            },
-            .canceled => return error.Canceled,
-        }
-    }
+    if (try engine.deps.hooks.decide(RequestBuild, arena, slot.runId(), .@"request.build", .{
+        .model = build.model,
+        .system = build.system,
+        .tools = build.tools,
+        .max_output_tokens = build.max_output_tokens,
+        .context = hookContext(engine, slot, held.has_skills),
+    })) |answer| build = answer;
 
     if (build.system.len > proto.meta.limits.max_message_string_bytes) return error.PromptTooLarge;
     return build;

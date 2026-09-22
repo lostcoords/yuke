@@ -1,5 +1,6 @@
 // yuke:mcp-oauth — OAuth 2.1 sign-in for MCP servers over HTTP: discovery, registration, PKCE with a loopback callback, and refresh.
 import * as native from "yuke:oauth-native";
+import * as mcpNative from "yuke:mcp-native";
 import { fetch } from "yuke:http";
 
 /** @typedef {{ client_id: string, client_secret?: string }} Client */
@@ -179,7 +180,7 @@ function grantOf(token, base, previous) {
 // The stored grant for a server, or null. A record from another version that lacks a field reads as absent.
 /** @param {string} url @returns {Grant | null} */
 export function stored(url) {
-  const text = native.readRecord(url);
+  const text = mcpNative.readRecord("mcp-oauth", url);
   if (text === undefined) return null;
   let grant;
   try { grant = JSON.parse(text); } catch { return null; }
@@ -189,7 +190,7 @@ export function stored(url) {
 
 /** @param {string} url */
 export function forget(url) {
-  native.removeRecord(url);
+  mcpNative.removeRecord("mcp-oauth", url);
 }
 
 // The challenge scope is what the current operation needs, so configured scopes join it and never replace it.
@@ -230,7 +231,7 @@ export async function signIn(url, { challenge = "", config = {}, open, signal })
     if (!answer.code) throw new Error("the sign-in answer holds no code");
     const token = await tokenRequest(found.meta.token_endpoint, client, { grant_type: "authorization_code", code: answer.code, redirect_uri: redirect, code_verifier: verifier, resource: found.resource });
     const grant = grantOf(token, { client, token_endpoint: found.meta.token_endpoint, issuer: found.issuer, resource: found.resource });
-    native.writeRecord(url, JSON.stringify(grant));
+    mcpNative.writeRecord("mcp-oauth", url, JSON.stringify(grant));
     return grant;
   } finally {
     native.close(listener.id);
@@ -249,7 +250,7 @@ async function refreshed(url, grant) {
     return current && current.access_token !== grant.access_token ? current : null;
   }
   const next = grantOf(token, { client: grant.client, token_endpoint: grant.token_endpoint, issuer: grant.issuer, resource: grant.resource }, grant);
-  native.writeRecord(url, JSON.stringify(next));
+  mcpNative.writeRecord("mcp-oauth", url, JSON.stringify(next));
   return next;
 }
 

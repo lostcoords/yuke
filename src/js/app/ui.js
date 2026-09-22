@@ -5,6 +5,7 @@ import { config, events } from "yuke:kernel";
 import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme } from "yuke:text-input";
 import { strokeOf } from "yuke:keys";
 import { fuzzyRank } from "yuke:fzy";
+import { Pager } from "yuke:pager";
 
 /** @import { HostMouseEvent as MouseEvent, Rect, StyleGroup } from "./types/core.js" */
 /** @import { BorderSet, ComposerOptions, ComposerSnapshot, ComposerSpan, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PickerAction, PickOptions, Projection, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */
@@ -65,6 +66,43 @@ export const NAV_KEYS = Object.freeze(Object.assign(Object.create(null), /** @ty
   end: (t) => t.navEdge(1),
   G: (t) => t.navEdge(1),
 })));
+
+// A scrolling overlay body: the nav keys and the wheel move it, and esc or q closes it.
+export class ScrollView {
+  /** @param {() => void} onClose */
+  constructor(onClose) {
+    this.onClose = onClose;
+    this.pager = new Pager();
+    /** @type {Rect} */
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
+  }
+
+  /** @param {Rect} rect */
+  layout(rect) { this.rect = rect; }
+
+  draw() { this.pager.draw(this.rect); }
+
+  // A subclass may take a stroke before the nav keys; true means it used the stroke.
+  /** @param {string} _stroke @returns {boolean} */
+  onStroke(_stroke) { return false; }
+
+  /** @param {HostEvent} event @returns {boolean} */
+  onKey(event) {
+    if (event.type !== "key" || event.event === "release") return true;
+    const stroke = strokeOf(event);
+    if (stroke === "esc" || stroke === "q") this.onClose();
+    else if (!this.onStroke(stroke)) NAV_KEYS[stroke]?.(this.pager);
+    root.invalidate();
+    return true;
+  }
+
+  /** @param {MouseEvent} event @returns {boolean} */
+  onMouse(event) {
+    const handled = this.pager.onMouse(event);
+    if (handled) root.invalidate();
+    return handled;
+  }
+}
 
 // A row from `format` may be a bare string or a record; fold both into one shape.
 /** @param {string | ListItem | null | undefined} cell @returns {ListItem} */

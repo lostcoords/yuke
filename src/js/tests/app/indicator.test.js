@@ -7,6 +7,7 @@ import { loadCatalog } from "yuke:catalog";
 import { elapsedLabel, phaseLabel, indicatorLine } from "yuke:indicator";
 import { stripRows, queuedText, queueOf } from "yuke:queue";
 import { contextBar, sessionCost } from "yuke:context";
+import { rowText } from "yuke:pager";
 import { chat } from "yuke:defaults";
 const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0, ...o });
 const settle = async () => { for (let i = 0; i < 64; i++) await Promise.resolve(); };
@@ -80,7 +81,7 @@ check("strip-folds", many.length === 3 && many[2].text === " ↳ … 2 more queu
 command.perform("context:show");
 await settle();
 check("context-open", root.overlays.length === 1);
-check("context-instructions", root.overlays[0].content.rows.some((row) => row[0] === "workspace AGENTS" && row[1] === "/work/AGENTS.md"));
+check("context-instructions", root.overlays[0].content.pager.source.rows(80, 0, 100).some((row) => /^workspace AGENTS +\/work\/AGENTS\.md$/.test(rowText(row))));
 root.onEvent(key("esc"));
 check("context-closed", root.overlays.length === 0);
 // The pure helpers.

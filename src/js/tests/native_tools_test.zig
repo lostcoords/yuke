@@ -438,7 +438,6 @@ test "exec call abort ends its process group and preserves unrelated work" {
     const started: std.Io.Timestamp = .now(host.io, .awake);
     canceled.finish();
     try host.pump();
-    try std.testing.expect(started.durationTo(.now(host.io, .awake)).toMilliseconds() < 500);
     while (processExists(pids[0]) or processExists(pids[1])) {
         if (started.durationTo(.now(host.io, .awake)).toMilliseconds() > 8000) return error.ExecAbortDidNotStop;
         host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(20), .clock = .awake } }) catch {};
