@@ -128,8 +128,8 @@ pub fn refreshOnce(runtime: *App, margin_ms: u64) !bool {
     const arena = arena_state.allocator();
 
     // A rotating refresh token is spent exactly once and several yuke processes may share this file, so the lock covers the whole refresh (disk read, expiry check, network call, write); a lock only around the write would still send the same token twice.
-    const path = runtime.store.path orelse return false;
-    const lock = CredentialLock.acquire(runtime.gpa, runtime.io, path) catch |err| {
+    const lock_path = runtime.store.lock_path orelse return false;
+    const lock = CredentialLock.acquire(runtime.io, lock_path) catch |err| {
         // Keep the cancel, so the scheduler leaves its wait loop.
         if (err == error.Canceled) return error.Canceled;
         std.log.warn("cannot lock the credential file: {t}", .{err});

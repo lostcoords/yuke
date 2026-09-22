@@ -1,4 +1,4 @@
-//! An advisory lock protects a shared `providers.json`; it covers the whole refresh—the disk read, expiry check, network call, and write—because a rotating refresh token is spent once, the provider rotates it, and the loser's grant dies, while a sibling lock file keeps the lock when `providers.json` replaces its inode.
+//! An advisory lock in the data directory protects a shared `providers.json`; it covers the whole refresh because a rotating refresh token is spent once, and a separate lock file survives when `providers.json` replaces its inode.
 
 const std = @import("std");
 const zio = @import("zio");
@@ -12,18 +12,17 @@ const retry_ms: u64 = 25;
 
 file: std.Io.File,
 
-/// Take the lock beside `providers_path`; return null when the file system gives no lock, and `error.Busy` when another process holds it for the whole wait.
-pub fn acquire(gpa: std.mem.Allocator, io: std.Io, providers_path: []const u8) !?CredentialLock {
-    return acquireFor(gpa, io, providers_path, wait_ms);
+/// Take the lock at `lock_path`; return null when the file system gives no lock, and `error.Busy` when another process holds it for the whole wait.
+pub fn acquire(io: std.Io, lock_path: []const u8) !?CredentialLock {
+    return acquireFor(io, lock_path, wait_ms);
 }
 
 /// Take the lock with the given wait bound. A test waits a short bound where a refresh waits the full one.
-fn acquireFor(gpa: std.mem.Allocator, io: std.Io, providers_path: []const u8, wait: u64) !?CredentialLock {
+fn acquireFor(io: std.Io, lock_path: []const u8, wait: u64) !?CredentialLock {
     std.debug.assert(wait >= retry_ms);
-    const path = try std.mem.concat(gpa, u8, &.{ providers_path, ".lock" });
-    defer gpa.free(path);
+    std.debug.assert(std.fs.path.isAbsolute(lock_path));
 
-    const file = try std.Io.Dir.createFileAbsolute(io, path, .{
+    const file = try std.Io.Dir.createFileAbsolute(io, lock_path, .{
         .truncate = false,
         .permissions = std.Io.File.Permissions.fromMode(0o600),
     });
@@ -56,14 +55,14 @@ test "one holder blocks a second acquire and a release lets it through" {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const len = try tmp.dir.realPath(io, &buf);
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = try std.fmt.bufPrint(&path_buf, "{s}/providers.json", .{buf[0..len]});
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/providers.lock", .{buf[0..len]});
 
-    const first = (try acquire(std.testing.allocator, io, path)) orelse return; // no locks here
+    const first = (try acquire(io, path)) orelse return; // no locks here
     // A second acquire in this process must stay busy for the short bound, not report a free lock.
-    const second = acquireFor(std.testing.allocator, io, path, 100);
+    const second = acquireFor(io, path, 100);
     try std.testing.expectError(error.Busy, second);
 
     first.release(io);
-    const third = (try acquire(std.testing.allocator, io, path)) orelse return;
+    const third = (try acquire(io, path)) orelse return;
     third.release(io);
 }

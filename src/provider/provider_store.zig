@@ -10,6 +10,8 @@ io: std.Io,
 env: *const std.process.Environ.Map,
 /// The engine owns this path and frees it. Null means no config directory exists.
 path: ?[]u8 = null,
+/// The refresh lock in the data directory. Set together with `path`; null means no lock.
+lock_path: ?[]u8 = null,
 /// The `providers.json` layer. Replace it only through `edit`.
 local: ?provider.config.Loaded = null,
 /// One merged snapshot serves catalog reads and provider requests.
@@ -25,6 +27,7 @@ pub fn deinit(self: *@This()) void {
     self.merged.deinit();
     if (self.local) |*loaded| loaded.deinit();
     if (self.path) |owned| self.gpa.free(owned);
+    if (self.lock_path) |owned| self.gpa.free(owned);
     self.* = undefined;
 }
 

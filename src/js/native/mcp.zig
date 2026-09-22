@@ -1,4 +1,4 @@
-//! Private MCP trust records contain execution digests, never commands or environment secrets.
+//! Private MCP trust records live in the data directory and hold execution digests, never commands or secrets.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -46,7 +46,7 @@ const Store = struct {
         var arena: std.heap.ArenaAllocator = .init(gpa);
         errdefer arena.deinit();
         const alloc = arena.allocator();
-        const base = (try paths.configDir(alloc, env)) orelse return error.HomeUnavailable;
+        const base = (try paths.dataDir(alloc, env)) orelse return error.HomeUnavailable;
         const workspace = try std.Io.Dir.realPathFileAbsoluteAlloc(io, cwd, alloc);
         const workspace_key = digest(workspace);
         const path = try std.fs.path.join(alloc, &.{ base, "mcp-trust", &workspace_key });
@@ -171,7 +171,7 @@ test "MCP trust persists per workspace, server, and execution identity" {
     defer t.allocator.free(other);
     var env: std.process.Environ.Map = .init(t.allocator);
     defer env.deinit();
-    try env.put("XDG_CONFIG_HOME", base);
+    try env.put("XDG_DATA_HOME", base);
     {
         var store = try Store.open(t.allocator, t.io, &env, cwd, "server");
         defer store.close();
@@ -198,6 +198,6 @@ test "MCP trust persists per workspace, server, and execution identity" {
     try t.expectEqual(false, try store.read("command"));
     try store.reset();
     try t.expectEqual(null, try store.read("command"));
-    try env.put("XDG_CONFIG_HOME", cwd);
+    try env.put("XDG_DATA_HOME", cwd);
     try t.expectError(error.WorkspaceTrustPath, Store.open(t.allocator, t.io, &env, cwd, "server"));
 }

@@ -21,8 +21,9 @@ const Fixture = struct {
         self.root_len = try self.tmp.dir.realPath(std.testing.io, &self.root_buf);
         self.env = .init(std.testing.allocator);
         errdefer self.env.deinit();
-        // The private config directory is outside the test workspace.
+        // The private config and data directories are outside the test workspace.
         try self.env.put("XDG_CONFIG_HOME", self.root());
+        try self.env.put("XDG_DATA_HOME", self.root());
         try self.tmp.dir.createDirPath(std.testing.io, "workspace");
         self.root_len = try self.tmp.dir.realPathFile(std.testing.io, "workspace", &self.root_buf);
         try self.env.put("MCP_TEST_GREETING", "hello");

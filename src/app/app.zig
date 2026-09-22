@@ -72,6 +72,8 @@ pub const App = struct {
         // The app owns this path, because an invalid file fails startup and `auth.set_api_key` rewrites it.
         self.store.path = try configFilePath(gpa, context.env, "providers.json");
         if (self.store.path != null) {
+            // The lock is machine state, so it lives beside the store and never in a dotfiles config tree.
+            self.store.lock_path = try std.fs.path.join(gpa, &.{ data_dir, paths.providers_lock_file });
             // An absent or empty file installs an empty layer, which every reader treats like none.
             _ = try self.store.reload();
             std.log.info("loaded {d} provider(s) from providers.json", .{self.store.local.?.providers.len});
