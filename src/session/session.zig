@@ -305,7 +305,6 @@ pub const Session = struct {
         return switch (d.final) {
             .reasoning => |r| dr.finalizeReasoning(d.part_id, r.signature),
             .redacted_reasoning => |r| dr.finalizeRedacted(d.part_id, r.data),
-            .tool_search => |value| dr.finalizeToolSearch(d.part_id, value.data),
         };
     }
 

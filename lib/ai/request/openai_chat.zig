@@ -8,8 +8,7 @@ const types = @import("../types.zig");
 
 /// Write the OpenAI Chat Completions request body to `w`.
 pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) !void {
-    if (request.tool_search != .disabled) return error.UnsupportedToolSearch;
-    for (request.tools) |tool| if (tool.defer_loading) return error.UnsupportedToolSearch;
+    for (request.tools) |tool| if (tool.defer_loading) return error.UnsupportedDeferredTools;
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
 
@@ -148,7 +147,7 @@ fn writeUserMessage(jw: *std.json.Stringify, results: []const ir.Block, blocks: 
                 try writeTextBlock(jw, text);
             },
             .media => |media| try writeMedia(jw, media),
-            .reasoning, .redacted_reasoning, .tool_search, .tool_use, .tool_result => return error.UnsupportedContent,
+            .reasoning, .redacted_reasoning, .tool_use, .tool_result => return error.UnsupportedContent,
         }
     }
     try jw.endArray();
@@ -178,7 +177,6 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, repl
             .tool_use => has_tool_calls = true,
             // A host that takes no replay drops the block. It is never a reason to fail the turn.
             .reasoning, .redacted_reasoning => has_reasoning = true,
-            .tool_search => return error.UnsupportedToolSearch,
             .media, .tool_result => return error.UnsupportedContent,
         }
     }
@@ -190,7 +188,7 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, repl
         try jw.beginArray();
         for (blocks) |block| switch (block.value) {
             .text => |text| try writeTextBlock(jw, text),
-            .tool_use, .reasoning, .redacted_reasoning, .tool_search => {},
+            .tool_use, .reasoning, .redacted_reasoning => {},
             else => unreachable,
         };
         try jw.endArray();
@@ -217,7 +215,7 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, repl
         try jw.objectField("tool_calls");
         try jw.beginArray();
         for (blocks) |block| switch (block.value) {
-            .reasoning, .redacted_reasoning, .tool_search => {},
+            .reasoning, .redacted_reasoning => {},
             .tool_use => |tool_use| {
                 try jw.beginObject();
                 try json.field(jw, "id", tool_use.call_id);
@@ -669,15 +667,10 @@ test "sampling members reach the chat request" {
 test "Chat Completions refuses native deferral instead of silent eager exposure" {
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
-    try testing.expectError(error.UnsupportedToolSearch, serialize(&buf.writer, .{
+    try testing.expectError(error.UnsupportedDeferredTools, serialize(&buf.writer, .{
         .model = "chat",
         .max_output_tokens = 100,
         .tools = &.{.{ .name = "mcp_read", .description = "read", .input_schema = "{}", .defer_loading = true }},
-    }, &.{.{ .role = .user, .value = .{ .text = "read" } }}));
-    try testing.expectError(error.UnsupportedToolSearch, serialize(&buf.writer, .{
-        .model = "chat",
-        .max_output_tokens = 100,
-        .tool_search = .hosted,
     }, &.{.{ .role = .user, .value = .{ .text = "read" } }}));
     try testing.expectEqual(@as(usize, 0), buf.written().len);
 }

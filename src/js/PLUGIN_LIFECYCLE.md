@@ -1,7 +1,7 @@
 # Plugin lifecycle
 
 `plugins.use({ name, apply, stop? })` installs one plugin.
-`apply(ctx, config)` returns `void` or `Promise<void>`.
+`apply(ctx)` returns `void` or `Promise<void>`.
 It must not return a disposer.
 The optional `stop(ctx)` returns `void` or `Promise<void>`.
 

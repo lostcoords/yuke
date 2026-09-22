@@ -158,7 +158,6 @@ pub const Route = struct {
 /// A pinned header can collide with a generated one, and a pinned header is source input.
 pub const Error = error{ HeaderConflict, InvalidCredential, InvalidHeaders } || std.mem.Allocator.Error;
 
-/// Map each protocol to its stream path.
 const protocol_path = std.enums.EnumArray(Protocol, []const u8).init(.{
     .anthropic_messages = "/messages",
     .openai_chat = "/chat/completions",
@@ -181,23 +180,6 @@ pub const Credential = union(enum) {
         access_token: []const u8,
         headers: []const Header = &.{},
     };
-
-    /// Return the credential value, or null when the route presents none.
-    pub fn token(self: Credential) ?[]const u8 {
-        return switch (self) {
-            .none => null,
-            .api_key => |key| key,
-            .oauth => |grant| grant.access_token,
-        };
-    }
-
-    /// Return the identity headers the grant pins. An API key pins none.
-    pub fn pinned(self: Credential) []const Header {
-        return switch (self) {
-            .oauth => |grant| grant.headers,
-            .none, .api_key => &.{},
-        };
-    }
 };
 
 /// Report whether the generated, pinned, and configured headers name one header twice.
@@ -222,10 +204,18 @@ pub const Request = struct {
 /// Build the headers one route sends, in order: the credential, the identity headers, the route headers, the session id.
 pub fn requestHeaders(arena: std.mem.Allocator, p: *const Route, credential: Credential, session_id: []const u8) Error![]Header {
     const generated = p.auth.headerName();
-    const secret = credential.token();
+    const secret: ?[]const u8 = switch (credential) {
+        .none => null,
+        .api_key => |key| key,
+        .oauth => |grant| grant.access_token,
+    };
     if ((generated == null) != (secret == null)) return error.InvalidCredential;
 
-    const identity = credential.pinned();
+    // A grant pins identity headers; an API key pins none.
+    const identity: []const Header = switch (credential) {
+        .oauth => |grant| grant.headers,
+        .none, .api_key => &.{},
+    };
     if (headerConflict(generated, identity, p.headers)) return error.HeaderConflict;
     const session = if (session_id.len != 0) p.session_header.name() else null;
     // The engine owns the session id, so a source that pins the header would send every session to one cache.
@@ -239,7 +229,7 @@ pub fn requestHeaders(arena: std.mem.Allocator, p: *const Route, credential: Cre
         const key = secret.?; // The credential check proves that this route has a secret.
         out[i] = .{ .name = name, .value = switch (p.auth.api_key) {
             .x_api_key => try arena.dupe(u8, key),
-            .authorization_bearer => try bearer(arena, key),
+            .authorization_bearer => try std.mem.concat(arena, u8, &.{ "Bearer ", key }),
         } };
         i += 1;
     }
@@ -264,10 +254,6 @@ pub fn request(arena: std.mem.Allocator, p: *const Route, credential: Credential
         .headers = try requestHeaders(arena, p, credential, session_id),
         .body = body,
     };
-}
-
-fn bearer(gpa: std.mem.Allocator, token_value: []const u8) Error![]u8 {
-    return std.mem.concat(gpa, u8, &.{ "Bearer ", token_value });
 }
 
 fn findHeader(headers: []const Header, name: []const u8) ?[]const u8 {

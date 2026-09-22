@@ -17,7 +17,6 @@ pub const Block = struct {
         redacted_reasoning: []const u8,
         tool_use: ToolUse,
         tool_result: ToolResult,
-        tool_search: @import("../tool_search.zig").Record,
     };
 
     /// One attachment. Its media type selects the block each protocol writes.
@@ -68,7 +67,7 @@ pub const Tool = struct {
     name: []const u8,
     description: []const u8,
     input_schema: []const u8,
-    /// Defer this definition only when the request enables native tool search.
+    /// Exclude the definition from the prompt until a tool search names it.
     defer_loading: bool = false,
     /// OpenAI strict mode is off by default. A non-strict schema returns 400 when strict mode is on.
     strict: bool = false,
@@ -147,16 +146,8 @@ pub const Request = struct {
     top_p: ?f64 = null,
     /// Constrain the response to a schema. A null schema leaves the response free.
     output_schema: ?OutputSchema = null,
-    /// Whether the model may call a tool, including native search.
+    /// Whether the model may call a tool.
     tool_choice: ToolChoice = .auto,
-    tool_search: ToolSearch = .disabled,
-};
-
-/// Native discovery is separate from each tool's deferral flag.
-pub const ToolSearch = enum {
-    disabled,
-    /// Anthropic uses BM25; Responses uses server execution.
-    hosted,
 };
 
 /// The tool controls every host understands.
@@ -174,7 +165,6 @@ pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Bloc
     // A saturating total needs no overflow branch, because the cap rejects the saturated value.
     var total = request.model.len +| request.system.len;
     for (request.tools) |tool| {
-        if (tool.defer_loading and request.tool_search == .disabled) return error.InvalidRequest;
         if (tool.name.len == 0 or !stringValid(tool.name) or !stringValid(tool.description)) return error.InvalidRequest;
         try validateObject(arena, tool.input_schema);
         total +|= tool.name.len +| tool.description.len +| tool.input_schema.len;
@@ -192,7 +182,6 @@ pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Bloc
         total +|= output.name.len +| output.schema.len;
     }
     for (blocks) |block| {
-        if (block.value == .tool_search and request.tool_search == .disabled) return error.InvalidRequest;
         try validateBlock(arena, block);
         total +|= blockBytes(block);
         if (total > types.limits.max_request_bytes) return error.RequestTooLarge;
@@ -203,7 +192,6 @@ pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Bloc
 fn blockBytes(block: Block) usize {
     return switch (block.value) {
         .text, .redacted_reasoning => |value| value.len,
-        .tool_search => |value| value.data.len,
         .media => |media| mediaBytes(media),
         .reasoning => |value| value.text.len +| value.signature.len,
         .tool_use => |value| value.call_id.len +| value.name.len +| value.arguments.len,
@@ -232,10 +220,6 @@ fn validateMedia(media: Block.Media) !void {
 
 fn validateBlock(arena: std.mem.Allocator, block: Block) !void {
     switch (block.value) {
-        .tool_search => |value| {
-            if (block.role != .assistant) return error.InvalidRequest;
-            try value.validate(arena);
-        },
         .text => |value| if (!stringValid(value)) return error.InvalidRequest,
         .media => |media| {
             if (block.role != .user) return error.InvalidRequest;

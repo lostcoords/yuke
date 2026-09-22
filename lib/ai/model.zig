@@ -28,15 +28,12 @@ pub const Cost = struct {
 
 pub const Caps = struct {
     tools: ?bool = null,
-    /// Hosted search requires explicit support for the resolved model and endpoint.
-    hosted_tool_search: ?bool = null,
+    /// Deferred tools and tool references need explicit support for the resolved model and endpoint.
+    tool_search: ?bool = null,
     /// True when the model takes some attachment. Read `Modalities` to learn which kind.
     vision: ?bool = null,
-    structured_output: ?bool = null,
     /// Whether the model can stop reasoning. Null is unknown, so a caller may still ask.
     disable_reasoning: ?bool = null,
-    /// Whether the model caches a repeated prefix at all, by any mechanism.
-    prompt_caching: ?bool = null,
     /// Whether the model accepts an explicit marker. MiniMax M3 caches and refuses one.
     cache_breakpoint: ?bool = null,
 };
@@ -97,8 +94,6 @@ pub const ModelSpec = struct {
     reasoning_levels: []const ReasoningLevel = &.{},
     dialect: Dialect = .{},
     modalities: Modalities = .{},
-    /// A release stage such as `beta`. The set is open, so an unknown stage is carried as it stands.
-    status: ?[]const u8 = null,
 };
 
 const std = @import("std");

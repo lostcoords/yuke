@@ -17,7 +17,6 @@ pub const Part = union(enum) {
     text: Text,
     reasoning: Reasoning,
     redacted_reasoning: RedactedReasoning,
-    tool_search: message.ToolSearchPart,
     tool: Tool,
 
     pub const Text = struct {
@@ -55,7 +54,7 @@ pub const Part = union(enum) {
         switch (self.*) {
             .text => |*t| t.text.deinit(gpa),
             .reasoning => |*r| r.text.deinit(gpa),
-            .redacted_reasoning, .tool_search => {},
+            .redacted_reasoning => {},
             .tool => |*t| t.output.deinit(gpa),
         }
     }
@@ -80,7 +79,6 @@ pub const Part = union(enum) {
                 .id = r.id,
                 .data = try arena.dupe(u8, r.data),
             } },
-            .tool_search => |value| return .{ .tool_search = try proto.dupe(arena, value) },
             .tool => |t| {
                 // Seed output from an active snapshot. A live part starts empty.
                 var output: std.ArrayList(u8) = .empty;
@@ -190,13 +188,6 @@ pub const Draft = struct {
         part.redacted_reasoning.data = try a.dupe(u8, data);
     }
 
-    pub fn finalizeToolSearch(self: *Draft, part_id: ids.PartId, data: []const u8) Error!void {
-        const part = self.partAt(part_id);
-        std.debug.assert(part.* == .tool_search);
-        std.debug.assert(part.tool_search.data.len == 0 and data.len != 0);
-        part.tool_search.data = try self.arena.allocator().dupe(u8, data);
-    }
-
     /// Give an active tool priority over reasoning after it and return its `tool_name`, which stays valid until it changes.
     pub fn deriveStreamingState(self: *const Draft, run_started_at_ms: u64) activity.ActivityState {
         if (self.firstRunningTool()) |t| return .{ .running_tool = .{
@@ -259,7 +250,7 @@ pub const Draft = struct {
             .text => |*t| &t.text,
             .reasoning => |*r| &r.text,
             // The engine streams bytes into a text or reasoning part only.
-            .redacted_reasoning, .tool_search, .tool => unreachable,
+            .redacted_reasoning, .tool => unreachable,
         };
     }
 
@@ -294,7 +285,6 @@ pub fn partToWire(p: *const Part) message.AssistantPart {
         .text => |*t| .{ .text = .{ .id = t.id, .text = t.text.items } },
         .reasoning => |*r| .{ .reasoning = .{ .id = r.id, .text = r.text.items, .signature = r.signature } },
         .redacted_reasoning => |*r| .{ .redacted_reasoning = .{ .id = r.id, .data = r.data } },
-        .tool_search => |value| .{ .tool_search = value },
         .tool => |*t| .{ .tool = .{
             .id = t.id,
             .call_id = t.call_id,
@@ -494,16 +484,4 @@ test "toActiveDraft carries the parts and the streamed output" {
     const snapshot = try d.toActiveDraft(scratch.allocator());
     try testing.expectEqualStrings("hello", snapshot.message.content[0].text.text);
     try testing.expectEqualStrings("out", snapshot.message.content[1].tool.state.running.output.?);
-}
-
-test "a native search part owns its final payload and survives wire conversion" {
-    var d = try Draft.init(testing.allocator, started());
-    defer d.deinit();
-    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .tool_search = .{ .id = 0, .protocol = .openai_responses } } });
-    var bytes = "{\"type\":\"tool_search_call\"}".*;
-    try d.finalizeToolSearch(0, &bytes);
-    @memset(&bytes, 'x');
-    const part = partToWire(&d.parts.items[0]);
-    try testing.expectEqualStrings("{\"type\":\"tool_search_call\"}", part.tool_search.data);
-    try testing.expectEqual(message.ToolSearchProtocol.openai_responses, part.tool_search.protocol);
 }

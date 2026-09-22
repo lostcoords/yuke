@@ -35,7 +35,6 @@ pub const ReplayReader = struct {
     fn deinitNoop(_: *anyopaque) void {}
 };
 
-/// Wrap a JSON event body as one SSE event.
 pub fn sseFrame(comptime json: []const u8) []const u8 {
     return "data: " ++ json ++ "\n\n";
 }

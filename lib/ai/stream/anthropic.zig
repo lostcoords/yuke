@@ -5,7 +5,6 @@ const event = @import("event.zig");
 const json = @import("json.zig");
 const answer = @import("../answer.zig");
 const types = @import("../types.zig");
-const search = @import("../tool_search.zig");
 
 const StreamEvent = event.StreamEvent;
 
@@ -129,19 +128,13 @@ pub const Reducer = struct {
             kind = .tool;
             call_id = json.fieldStr(cb, "id") orelse return error.Protocol;
             name = json.fieldStr(cb, "name") orelse return error.Protocol;
-        } else if (std.mem.eql(u8, cb_type, "server_tool_use") and search.anthropicName(json.fieldStr(cb, "name") orelse "")) {
-            kind = .tool_search;
-            call_id = json.fieldStr(cb, "id") orelse return error.Protocol;
-            name = json.fieldStr(cb, "name") orelse return error.Protocol;
-        } else if (std.mem.eql(u8, cb_type, "tool_search_tool_result")) {
-            kind = .tool_search;
         } else {
             ignored = true;
         }
 
         try self.blocks.append(self.gpa, .{ .kind = kind, .ignored = ignored });
         const block = &self.blocks.items[index];
-        if (kind == .tool_search) block.data = try search.encode(self.gpa, .anthropic, cb) else if (data.len != 0) block.data = try json.own(self.gpa, data);
+        if (data.len != 0) block.data = try json.own(self.gpa, data);
         if (call_id.len != 0) block.call_id = try json.own(self.gpa, call_id);
         if (name.len != 0) block.name = try json.own(self.gpa, name);
 
@@ -184,7 +177,7 @@ pub const Reducer = struct {
             if (block.kind != .reasoning) return error.Protocol;
             try block.signature.appendSlice(self.gpa, json.fieldStr(delta, "signature") orelse return error.Protocol);
         } else if (std.mem.eql(u8, delta_type, "input_json_delta")) {
-            if (block.kind != .tool and !(block.kind == .tool_search and block.name.len != 0)) return error.Protocol;
+            if (block.kind != .tool) return error.Protocol;
             const fragment = json.fieldStr(delta, "partial_json") orelse return error.Protocol;
             try json.checkToolArgSize(block.args.items.len, fragment, event.max_tool_arg_bytes);
             try block.args.appendSlice(self.gpa, fragment);
@@ -199,19 +192,7 @@ pub const Reducer = struct {
         block.open = false;
         if (block.ignored) return;
 
-        if (block.kind == .tool_search and block.args.items.len != 0) {
-            var arena: std.heap.ArenaAllocator = .init(self.gpa);
-            defer arena.deinit();
-            const a = arena.allocator();
-            var value = try json.parse(block.data, a);
-            const input = try json.parse(block.args.items, a);
-            try value.object.put(a, "input", input);
-            const data = try search.encode(self.gpa, .anthropic, value);
-            self.gpa.free(block.data);
-            block.data = data;
-        }
         const result: event.BlockResult = switch (block.kind) {
-            .tool_search => .{ .tool_search = .{ .protocol = .anthropic, .data = block.data } },
             .text => .text,
             .reasoning => .{ .reasoning = .{ .signature = block.signature.items } },
             .redacted_reasoning => .{ .redacted_reasoning = .{ .data = block.data } },
@@ -599,64 +580,4 @@ test "a null usage count reads as absent rather than failing the turn" {
         },
         else => {},
     };
-}
-
-test "hosted search preserves streamed input and references without a local tool call" {
-    var h = Harness.init();
-    defer h.deinit();
-    try h.feed(&.{
-        \\{"type":"message_start","message":{"usage":{}}}
-        ,
-        \\{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv_1","name":"tool_search_tool_bm25","input":{}}}
-        ,
-        \\{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"weather\"}"}}
-        ,
-        \\{"type":"content_block_stop","index":0}
-        ,
-        \\{"type":"content_block_start","index":1,"content_block":{"type":"tool_search_tool_result","tool_use_id":"srv_1","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"mcp_weather"}]},"extension":true}}
-        ,
-        \\{"type":"content_block_stop","index":1}
-        ,
-        \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{}}
-        ,
-        \\{"type":"message_stop"}
-    });
-    var stops: usize = 0;
-    for (h.out.items) |e| if (e == .block_stopped) {
-        try testing.expect(e.block_stopped.result == .tool_search);
-        const record = e.block_stopped.result.tool_search;
-        _ = try record.summarize(h.arena.allocator());
-        try testing.expectEqual(@import("../tool_search.zig").Protocol.anthropic, record.protocol);
-        if (stops == 0) try testing.expect(std.mem.indexOf(u8, record.data, "weather") != null);
-        if (stops == 1) try testing.expect(std.mem.indexOf(u8, record.data, "\"extension\":true") != null);
-        stops += 1;
-    };
-    try testing.expectEqual(@as(usize, 2), stops);
-    try testing.expectEqual(types.FinishReason.stop, h.out.items[h.out.items.len - 1].done.stop_reason);
-}
-
-test "hosted search refuses malformed references" {
-    var h = Harness.init();
-    defer h.deinit();
-    try h.feed(&.{
-        \\{"type":"message_start","message":{"usage":{}}}
-    });
-    try testing.expectError(error.Protocol, h.feed(&.{
-        \\{"type":"content_block_start","index":0,"content_block":{"type":"tool_search_tool_result","tool_use_id":"srv_1","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":false}]}}}
-    }));
-}
-
-test "native search releases partial state at every allocation failure" {
-    const frames = [_][]const u8{
-        \\{"type":"message_start","message":{"usage":{}}}
-        ,
-        \\{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv_1","name":"tool_search_tool_bm25","input":{}}}
-        ,
-        \\{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"read\"}"}}
-        ,
-        \\{"type":"content_block_stop","index":0}
-        ,
-        \\{"type":"message_stop"}
-    };
-    try testing.checkAllAllocationFailures(testing.allocator, @import("testing.zig").decodeAll(Reducer), .{@as([]const []const u8, &frames)});
 }

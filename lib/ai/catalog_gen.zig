@@ -33,13 +33,6 @@ pub fn find(id: []const u8) ?*const Provider {
     return null;
 }
 
-/// Return the model that `provider_id` serves under `model_id`, or null.
-pub fn findModel(provider_id: []const u8, model_id: []const u8) ?*const model.ModelSpec {
-    const row = find(provider_id) orelse return null;
-    for (row.models) |*spec| if (std.mem.eql(u8, spec.id, model_id)) return spec;
-    return null;
-}
-
 /// The catalog revision these rows come from.
 pub const revision = "3b6d1cbb2795f1571cfb815f0f82bc2f9c84b6ccc39a8d6ec16a55bc724e883523638e63579fb8044cca1b30d279bdbbc8fd26c5c4046d61532aa608d8c3bc3e";
 
@@ -70,7 +63,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -93,7 +86,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -116,7 +109,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.1,
                     .cache_write = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -143,7 +136,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.1,
                     .cache_write = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -170,7 +163,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -193,7 +186,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -216,7 +209,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -239,7 +232,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -262,7 +255,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -285,7 +278,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -308,7 +301,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                     .cache_write = 3.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -335,7 +328,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                     .cache_write = 3.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -362,7 +355,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                     .cache_write = 3.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -385,7 +378,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -438,7 +431,7 @@ pub const providers = [_]Provider{
                     .output = 8,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -460,7 +453,7 @@ pub const providers = [_]Provider{
                     .output = 1.6,
                     .cache_read = 0.1,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -482,7 +475,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -504,7 +497,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -526,7 +519,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -548,7 +541,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -570,7 +563,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 0.125,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -592,7 +585,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.025,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -614,7 +607,7 @@ pub const providers = [_]Provider{
                     .output = 0.4,
                     .cache_read = 0.005,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -635,7 +628,7 @@ pub const providers = [_]Provider{
                     .input = 15,
                     .output = 120,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -657,7 +650,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 0.125,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -679,7 +672,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -700,7 +693,7 @@ pub const providers = [_]Provider{
                     .input = 21,
                     .output = 168,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -722,7 +715,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -744,7 +737,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -766,7 +759,7 @@ pub const providers = [_]Provider{
                     .output = 15,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -788,7 +781,7 @@ pub const providers = [_]Provider{
                     .output = 4.5,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -810,7 +803,7 @@ pub const providers = [_]Provider{
                     .output = 1.25,
                     .cache_read = 0.02,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -831,7 +824,7 @@ pub const providers = [_]Provider{
                     .input = 30,
                     .output = 180,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = false, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -853,7 +846,7 @@ pub const providers = [_]Provider{
                     .output = 30,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -874,7 +867,7 @@ pub const providers = [_]Provider{
                     .input = 30,
                     .output = 180,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = false, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .tool_search = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -897,7 +890,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.4,
                     .cache_write = 5,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -920,7 +913,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                     .cache_write = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -943,7 +936,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.4,
                     .cache_write = 5,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -966,7 +959,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -989,7 +982,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .hosted_tool_search = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1047,7 +1040,7 @@ pub const providers = [_]Provider{
                     .output = 30,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = false, .vision = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.image},
@@ -1069,7 +1062,7 @@ pub const providers = [_]Provider{
                     .output = 24,
                     .cache_read = 0.4,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text },
                     .output = &.{ .audio, .text },
@@ -1091,7 +1084,7 @@ pub const providers = [_]Provider{
                     .output = 8,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1112,7 +1105,7 @@ pub const providers = [_]Provider{
                     .input = 20,
                     .output = 80,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1228,7 +1221,7 @@ pub const providers = [_]Provider{
                     .output = 8,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1250,7 +1243,7 @@ pub const providers = [_]Provider{
                     .output = 1.6,
                     .cache_read = 0.1,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1272,7 +1265,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1294,7 +1287,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1316,7 +1309,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1338,7 +1331,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1360,7 +1353,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 0.125,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1382,7 +1375,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.025,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1404,7 +1397,7 @@ pub const providers = [_]Provider{
                     .output = 0.4,
                     .cache_read = 0.005,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1425,7 +1418,7 @@ pub const providers = [_]Provider{
                     .input = 15,
                     .output = 120,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1447,7 +1440,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 0.125,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1469,7 +1462,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1490,7 +1483,7 @@ pub const providers = [_]Provider{
                     .input = 21,
                     .output = 168,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1512,7 +1505,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1534,7 +1527,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1556,7 +1549,7 @@ pub const providers = [_]Provider{
                     .output = 15,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1578,7 +1571,7 @@ pub const providers = [_]Provider{
                     .output = 4.5,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1600,7 +1593,7 @@ pub const providers = [_]Provider{
                     .output = 1.25,
                     .cache_read = 0.02,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1621,7 +1614,7 @@ pub const providers = [_]Provider{
                     .input = 30,
                     .output = 180,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -1643,7 +1636,7 @@ pub const providers = [_]Provider{
                     .output = 30,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1664,7 +1657,7 @@ pub const providers = [_]Provider{
                     .input = 30,
                     .output = 180,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1687,7 +1680,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.4,
                     .cache_write = 5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1710,7 +1703,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                     .cache_write = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1733,7 +1726,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.4,
                     .cache_write = 5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1756,7 +1749,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1779,7 +1772,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1837,7 +1830,7 @@ pub const providers = [_]Provider{
                     .output = 30,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = false, .vision = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.image},
@@ -1859,7 +1852,7 @@ pub const providers = [_]Provider{
                     .output = 24,
                     .cache_read = 0.4,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text },
                     .output = &.{ .audio, .text },
@@ -1881,7 +1874,7 @@ pub const providers = [_]Provider{
                     .output = 8,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -1902,7 +1895,7 @@ pub const providers = [_]Provider{
                     .input = 20,
                     .output = 80,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -2000,7 +1993,7 @@ pub const providers = [_]Provider{
                     .output = 1.6,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2022,7 +2015,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.75,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2044,7 +2037,7 @@ pub const providers = [_]Provider{
                     .output = 1.4,
                     .cache_read = 0.18,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2065,7 +2058,7 @@ pub const providers = [_]Provider{
                     .input = 0.8,
                     .output = 1.6,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2086,7 +2079,7 @@ pub const providers = [_]Provider{
                     .input = 0.3,
                     .output = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -2109,7 +2102,7 @@ pub const providers = [_]Provider{
                     .input = 0.06,
                     .output = 0.24,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -2130,7 +2123,7 @@ pub const providers = [_]Provider{
                     .input = 0.035,
                     .output = 0.14,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2152,7 +2145,7 @@ pub const providers = [_]Provider{
                     .output = 12.5,
                     .cache_read = 0.625,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -2173,7 +2166,7 @@ pub const providers = [_]Provider{
                     .input = 0.8,
                     .output = 3.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -2194,7 +2187,7 @@ pub const providers = [_]Provider{
                     .input = 2.5,
                     .output = 5,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2217,7 +2210,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                     .cache_write = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -2240,7 +2233,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2265,7 +2258,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2290,7 +2283,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.1,
                     .cache_write = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2315,7 +2308,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1.5,
                     .cache_write = 18.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2340,7 +2333,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1.5,
                     .cache_write = 18.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2365,7 +2358,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2390,7 +2383,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2415,7 +2408,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2440,7 +2433,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2465,7 +2458,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2490,7 +2483,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                     .cache_write = 3.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2515,7 +2508,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                     .cache_write = 3.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2540,7 +2533,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                     .cache_write = 3.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2565,7 +2558,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -2589,7 +2582,7 @@ pub const providers = [_]Provider{
                     .output = 0.8,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2610,7 +2603,7 @@ pub const providers = [_]Provider{
                     .input = 0.42,
                     .output = 1.25,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -2633,7 +2626,7 @@ pub const providers = [_]Provider{
                     .input = 0.25,
                     .output = 2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -2656,7 +2649,7 @@ pub const providers = [_]Provider{
                     .input = 0.075,
                     .output = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -2679,7 +2672,7 @@ pub const providers = [_]Provider{
                     .input = 0.5,
                     .output = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -2702,7 +2695,7 @@ pub const providers = [_]Provider{
                     .input = 0.5,
                     .output = 3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -2725,7 +2718,7 @@ pub const providers = [_]Provider{
                     .input = 0.25,
                     .output = 2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -2748,7 +2741,7 @@ pub const providers = [_]Provider{
                     .input = 0.1,
                     .output = 0.4,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -2772,7 +2765,7 @@ pub const providers = [_]Provider{
                     .output = 0.2,
                     .cache_read = 0.1,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -2793,7 +2786,7 @@ pub const providers = [_]Provider{
                     .input = 0.2,
                     .output = 0.9,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2814,7 +2807,7 @@ pub const providers = [_]Provider{
                     .input = 2.5,
                     .output = 10,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2835,7 +2828,7 @@ pub const providers = [_]Provider{
                     .input = 0.15,
                     .output = 0.6,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2856,7 +2849,7 @@ pub const providers = [_]Provider{
                     .input = 2.5,
                     .output = 10,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2877,7 +2870,7 @@ pub const providers = [_]Provider{
                     .input = 0.0375,
                     .output = 0.15,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2898,7 +2891,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2921,7 +2914,7 @@ pub const providers = [_]Provider{
                     .input = 0.2574,
                     .output = 1.0287,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2942,7 +2935,7 @@ pub const providers = [_]Provider{
                     .input = 0.25,
                     .output = 1,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2964,7 +2957,7 @@ pub const providers = [_]Provider{
                     .output = 0.95,
                     .cache_read = 0.13,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -2987,7 +2980,7 @@ pub const providers = [_]Provider{
                     .input = 0.7,
                     .output = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3009,7 +3002,7 @@ pub const providers = [_]Provider{
                     .output = 2.15,
                     .cache_read = 0.35,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3030,7 +3023,7 @@ pub const providers = [_]Provider{
                     .input = 0.8,
                     .output = 0.8,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3054,7 +3047,7 @@ pub const providers = [_]Provider{
                     .output = 1,
                     .cache_read = 0.135,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3078,7 +3071,7 @@ pub const providers = [_]Provider{
                     .output = 0.4,
                     .cache_read = 0.1345,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3101,7 +3094,7 @@ pub const providers = [_]Provider{
                     .input = 0.27,
                     .output = 0.41,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3125,7 +3118,7 @@ pub const providers = [_]Provider{
                     .output = 0.177212,
                     .cache_read = 0.017721,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3150,7 +3143,7 @@ pub const providers = [_]Provider{
                     .output = 0.12,
                     .cache_read = 0.012,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3174,7 +3167,7 @@ pub const providers = [_]Provider{
                     .output = 0.66,
                     .cache_read = 0.007,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -3198,7 +3191,7 @@ pub const providers = [_]Provider{
                     .output = 3.2,
                     .cache_read = 0.135,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3223,7 +3216,7 @@ pub const providers = [_]Provider{
                     .output = 2.9502,
                     .cache_read = 0.03278,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3247,7 +3240,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.003,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -3270,7 +3263,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -3295,7 +3288,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                     .cache_write = 0.083333,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3320,7 +3313,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                     .cache_write = 0.083333,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = false, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{ .image, .text },
@@ -3343,7 +3336,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.01,
                     .cache_write = 0.083333,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3368,7 +3361,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.125,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3391,7 +3384,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.125,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text },
                     .output = &.{.text},
@@ -3414,7 +3407,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.125,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3437,7 +3430,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.05,
                     .cache_write = 0.083333,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3463,7 +3456,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{ .image, .text },
@@ -3486,7 +3479,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = false, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{ .image, .text },
@@ -3507,7 +3500,7 @@ pub const providers = [_]Provider{
                     .input = 0.5,
                     .output = 3,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{ .image, .text },
@@ -3530,7 +3523,7 @@ pub const providers = [_]Provider{
                     .input = 0.5,
                     .output = 3,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{ .image, .text },
@@ -3555,7 +3548,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.025,
                     .cache_write = 0.083333,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3578,7 +3571,7 @@ pub const providers = [_]Provider{
                     .input = 0.25,
                     .output = 1.5,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{ .image, .text },
@@ -3603,7 +3596,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.025,
                     .cache_write = 0.083333,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3628,7 +3621,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3654,7 +3647,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3680,7 +3673,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.15,
                     .cache_write = 0.083333,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3705,7 +3698,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                     .cache_write = 0.083333,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3730,7 +3723,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.075,
                     .cache_write = 0.041667,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3755,7 +3748,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.075,
                     .cache_write = 0.041667,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3780,7 +3773,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.075,
                     .cache_write = 0.041667,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -3803,7 +3796,7 @@ pub const providers = [_]Provider{
                     .input = 0.65,
                     .output = 0.65,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -3824,7 +3817,7 @@ pub const providers = [_]Provider{
                     .input = 0.05,
                     .output = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -3846,7 +3839,7 @@ pub const providers = [_]Provider{
                     .output = 0.45,
                     .cache_read = 0.04,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -3867,7 +3860,7 @@ pub const providers = [_]Provider{
                     .input = 0.05,
                     .output = 0.1,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -3889,7 +3882,7 @@ pub const providers = [_]Provider{
                     .output = 0.3,
                     .cache_read = 0.05,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -3912,7 +3905,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -3936,7 +3929,7 @@ pub const providers = [_]Provider{
                     .output = 0.34,
                     .cache_read = 0.05,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -3959,7 +3952,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -3982,7 +3975,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{ .audio, .text },
@@ -4003,7 +3996,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{ .audio, .text },
@@ -4024,7 +4017,7 @@ pub const providers = [_]Provider{
                     .input = 0.06,
                     .output = 0.06,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4045,7 +4038,7 @@ pub const providers = [_]Provider{
                     .input = 0.017,
                     .output = 0.112,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4067,7 +4060,7 @@ pub const providers = [_]Provider{
                     .output = 0.25,
                     .cache_read = 0.015,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4091,7 +4084,7 @@ pub const providers = [_]Provider{
                     .output = 0.75,
                     .cache_read = 0.025,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4115,7 +4108,7 @@ pub const providers = [_]Provider{
                     .output = 0.15,
                     .cache_read = 0.004,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4139,7 +4132,7 @@ pub const providers = [_]Provider{
                     .output = 0.063,
                     .cache_read = 0.0042,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4163,7 +4156,7 @@ pub const providers = [_]Provider{
                     .output = 0.18,
                     .cache_read = 0.012,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4186,7 +4179,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4209,7 +4202,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4233,7 +4226,7 @@ pub const providers = [_]Provider{
                     .output = 0.18,
                     .cache_read = 0.012,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -4256,7 +4249,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -4280,7 +4273,7 @@ pub const providers = [_]Provider{
                     .output = 0.23,
                     .cache_read = 0.05,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4302,7 +4295,7 @@ pub const providers = [_]Provider{
                     .output = 0.15,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4324,7 +4317,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4346,7 +4339,7 @@ pub const providers = [_]Provider{
                     .output = 2.96,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4367,7 +4360,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4388,7 +4381,7 @@ pub const providers = [_]Provider{
                     .input = 0.4,
                     .output = 0.75,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4410,7 +4403,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.006,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4433,7 +4426,7 @@ pub const providers = [_]Provider{
                     .input = 0.4,
                     .output = 0.4,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4455,7 +4448,7 @@ pub const providers = [_]Provider{
                     .output = 0.08,
                     .cache_read = 0.025,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4476,7 +4469,7 @@ pub const providers = [_]Provider{
                     .input = 0.027,
                     .output = 0.201,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4497,7 +4490,7 @@ pub const providers = [_]Provider{
                     .input = 0.05,
                     .output = 0.33,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4518,7 +4511,7 @@ pub const providers = [_]Provider{
                     .input = 0.1,
                     .output = 0.32,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4539,7 +4532,7 @@ pub const providers = [_]Provider{
                     .input = 0.2,
                     .output = 0.696,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -4560,7 +4553,7 @@ pub const providers = [_]Provider{
                     .input = 0.1,
                     .output = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -4581,7 +4574,7 @@ pub const providers = [_]Provider{
                     .input = 0.18,
                     .output = 0.18,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -4603,7 +4596,7 @@ pub const providers = [_]Provider{
                     .output = 1.5,
                     .cache_read = 0.04,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -4627,7 +4620,7 @@ pub const providers = [_]Provider{
                     .output = 4.25,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -4651,7 +4644,7 @@ pub const providers = [_]Provider{
                     .output = 4.25,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -4675,7 +4668,7 @@ pub const providers = [_]Provider{
                     .output = 0.2,
                     .cache_read = 0.002,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -4699,7 +4692,7 @@ pub const providers = [_]Provider{
                     .output = 4.25,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -4723,7 +4716,7 @@ pub const providers = [_]Provider{
                     .output = 0.2,
                     .cache_read = 0.002,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -4746,7 +4739,7 @@ pub const providers = [_]Provider{
                     .input = 0.07,
                     .output = 0.14,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4767,7 +4760,7 @@ pub const providers = [_]Provider{
                     .input = 0.62,
                     .output = 0.62,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4788,7 +4781,7 @@ pub const providers = [_]Provider{
                     .input = 0.2,
                     .output = 1.1,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -4809,7 +4802,7 @@ pub const providers = [_]Provider{
                     .input = 0.55,
                     .output = 2.2,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4832,7 +4825,7 @@ pub const providers = [_]Provider{
                     .input = 0.255,
                     .output = 1.02,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4854,7 +4847,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4876,7 +4869,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4898,7 +4891,7 @@ pub const providers = [_]Provider{
                     .output = 1.08,
                     .cache_read = 0.027,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4920,7 +4913,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -4942,7 +4935,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -4966,7 +4959,7 @@ pub const providers = [_]Provider{
                     .output = 0.9,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .pdf, .text },
                     .output = &.{.text},
@@ -4988,7 +4981,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.04,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .pdf, .text },
                     .output = &.{.text},
@@ -5010,7 +5003,7 @@ pub const providers = [_]Provider{
                     .output = 0.2,
                     .cache_read = 0.02,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5032,7 +5025,7 @@ pub const providers = [_]Provider{
                     .output = 0.1,
                     .cache_read = 0.01,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5054,7 +5047,7 @@ pub const providers = [_]Provider{
                     .output = 0.15,
                     .cache_read = 0.015,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5076,7 +5069,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .pdf, .text },
                     .output = &.{.text},
@@ -5098,7 +5091,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .pdf, .text },
                     .output = &.{.text},
@@ -5120,7 +5113,7 @@ pub const providers = [_]Provider{
                     .output = 1.5,
                     .cache_read = 0.05,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -5142,7 +5135,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.04,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -5163,7 +5156,7 @@ pub const providers = [_]Provider{
                     .input = 1.5,
                     .output = 7.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -5187,7 +5180,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.04,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -5208,7 +5201,7 @@ pub const providers = [_]Provider{
                     .input = 0.019,
                     .output = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5230,7 +5223,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.02,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .pdf, .text },
                     .output = &.{.text},
@@ -5251,7 +5244,7 @@ pub const providers = [_]Provider{
                     .input = 0.05,
                     .output = 0.08,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5273,7 +5266,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.015,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5296,7 +5289,7 @@ pub const providers = [_]Provider{
                     .input = 0.351,
                     .output = 0.555,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5317,7 +5310,7 @@ pub const providers = [_]Provider{
                     .input = 0.075,
                     .output = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5339,7 +5332,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .pdf, .text },
                     .output = &.{.text},
@@ -5361,7 +5354,7 @@ pub const providers = [_]Provider{
                     .output = 0.3,
                     .cache_read = 0.01,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .audio, .pdf, .text },
                     .output = &.{.text},
@@ -5382,7 +5375,7 @@ pub const providers = [_]Provider{
                     .input = 0.57,
                     .output = 2.3,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5403,7 +5396,7 @@ pub const providers = [_]Provider{
                     .input = 0.6,
                     .output = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5425,7 +5418,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5447,7 +5440,7 @@ pub const providers = [_]Provider{
                     .output = 2.25,
                     .cache_read = 0.07,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5472,7 +5465,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.16,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5497,7 +5490,7 @@ pub const providers = [_]Provider{
                     .output = 3.5,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5519,7 +5512,7 @@ pub const providers = [_]Provider{
                     .output = 13.282724,
                     .cache_read = 0.302644,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -5542,7 +5535,7 @@ pub const providers = [_]Provider{
                     .input = 0.8,
                     .output = 1.2,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5563,7 +5556,7 @@ pub const providers = [_]Provider{
                     .input = 0.9,
                     .output = 1.9,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5584,7 +5577,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5607,7 +5600,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5630,7 +5623,7 @@ pub const providers = [_]Provider{
                     .input = 1,
                     .output = 1,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5651,7 +5644,7 @@ pub const providers = [_]Provider{
                     .input = 0.7,
                     .output = 0.7,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5672,7 +5665,7 @@ pub const providers = [_]Provider{
                     .input = 1,
                     .output = 3,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5696,7 +5689,7 @@ pub const providers = [_]Provider{
                     .output = 0.2,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5719,7 +5712,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text, .video },
                     .output = &.{.text},
@@ -5742,7 +5735,7 @@ pub const providers = [_]Provider{
                     .input = 0.085,
                     .output = 0.4,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5765,7 +5758,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5789,7 +5782,7 @@ pub const providers = [_]Provider{
                     .output = 2.4,
                     .cache_read = 0.12,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5812,7 +5805,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5835,7 +5828,7 @@ pub const providers = [_]Provider{
                     .input = 0.2,
                     .output = 0.2,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5858,7 +5851,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -5882,7 +5875,7 @@ pub const providers = [_]Provider{
                     .output = 0.2,
                     .cache_read = 0.04,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5905,7 +5898,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5928,7 +5921,7 @@ pub const providers = [_]Provider{
                     .input = 0.5,
                     .output = 1.5,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5949,7 +5942,7 @@ pub const providers = [_]Provider{
                     .input = 1,
                     .output = 2,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5970,7 +5963,7 @@ pub const providers = [_]Provider{
                     .input = 3,
                     .output = 4,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -5991,7 +5984,7 @@ pub const providers = [_]Provider{
                     .input = 1.5,
                     .output = 2,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -6012,7 +6005,7 @@ pub const providers = [_]Provider{
                     .input = 30,
                     .output = 60,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -6033,7 +6026,7 @@ pub const providers = [_]Provider{
                     .input = 10,
                     .output = 30,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -6054,7 +6047,7 @@ pub const providers = [_]Provider{
                     .input = 10,
                     .output = 30,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -6076,7 +6069,7 @@ pub const providers = [_]Provider{
                     .output = 8,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6098,7 +6091,7 @@ pub const providers = [_]Provider{
                     .output = 1.6,
                     .cache_read = 0.1,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6120,7 +6113,7 @@ pub const providers = [_]Provider{
                     .output = 0.4,
                     .cache_read = 0.025,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6142,7 +6135,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6163,7 +6156,7 @@ pub const providers = [_]Provider{
                     .input = 5,
                     .output = 15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6185,7 +6178,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6207,7 +6200,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6229,7 +6222,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6251,7 +6244,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6273,7 +6266,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 0.125,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6297,7 +6290,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 1.25,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{ .image, .text },
@@ -6319,7 +6312,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{ .image, .text },
@@ -6341,7 +6334,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.025,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6365,7 +6358,7 @@ pub const providers = [_]Provider{
                     .output = 0.4,
                     .cache_read = 0.005,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6388,7 +6381,7 @@ pub const providers = [_]Provider{
                     .input = 15,
                     .output = 120,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6412,7 +6405,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 0.125,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6436,7 +6429,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 0.13,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -6460,7 +6453,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 0.125,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -6484,7 +6477,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -6508,7 +6501,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6532,7 +6525,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6554,7 +6547,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -6577,7 +6570,7 @@ pub const providers = [_]Provider{
                     .input = 21,
                     .output = 168,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6601,7 +6594,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6625,7 +6618,7 @@ pub const providers = [_]Provider{
                     .output = 15,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6649,7 +6642,7 @@ pub const providers = [_]Provider{
                     .output = 15,
                     .cache_read = 2,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{ .image, .text },
@@ -6673,7 +6666,7 @@ pub const providers = [_]Provider{
                     .output = 4.5,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6697,7 +6690,7 @@ pub const providers = [_]Provider{
                     .output = 1.25,
                     .cache_read = 0.02,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6720,7 +6713,7 @@ pub const providers = [_]Provider{
                     .input = 30,
                     .output = 180,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6744,7 +6737,7 @@ pub const providers = [_]Provider{
                     .output = 30,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6767,7 +6760,7 @@ pub const providers = [_]Provider{
                     .input = 30,
                     .output = 180,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6792,7 +6785,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                     .cache_write = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6817,7 +6810,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                     .cache_write = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6842,7 +6835,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6867,7 +6860,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6892,7 +6885,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6917,7 +6910,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6942,7 +6935,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6967,7 +6960,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -6990,7 +6983,7 @@ pub const providers = [_]Provider{
                     .input = 2.5,
                     .output = 10,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .audio, .text },
                     .output = &.{ .audio, .text },
@@ -7011,7 +7004,7 @@ pub const providers = [_]Provider{
                     .input = 0.6,
                     .output = 2.4,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .audio, .text },
                     .output = &.{ .audio, .text },
@@ -7033,7 +7026,7 @@ pub const providers = [_]Provider{
                     .output = 30,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -7054,7 +7047,7 @@ pub const providers = [_]Provider{
                     .input = 0.037,
                     .output = 0.17,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7078,7 +7071,7 @@ pub const providers = [_]Provider{
                     .output = 0.13,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7102,7 +7095,7 @@ pub const providers = [_]Provider{
                     .output = 0.3,
                     .cache_read = 0.0375,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7126,7 +7119,7 @@ pub const providers = [_]Provider{
                     .output = 60,
                     .cache_read = 7.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -7149,7 +7142,7 @@ pub const providers = [_]Provider{
                     .input = 150,
                     .output = 600,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -7173,7 +7166,7 @@ pub const providers = [_]Provider{
                     .output = 8,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -7197,7 +7190,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.55,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .pdf, .text },
                     .output = &.{.text},
@@ -7221,7 +7214,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.55,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .pdf, .text },
                     .output = &.{.text},
@@ -7244,7 +7237,7 @@ pub const providers = [_]Provider{
                     .input = 20,
                     .output = 80,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -7268,7 +7261,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.275,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -7292,7 +7285,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.275,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -7312,7 +7305,7 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 2000000,
                 },
                 .cost = .{},
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{ .image, .text },
@@ -7330,7 +7323,7 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 128000,
                 },
                 .cost = .{},
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7351,7 +7344,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -7369,7 +7362,7 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 128000,
                 },
                 .cost = .{},
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7387,7 +7380,7 @@ pub const providers = [_]Provider{
                     .max_output_tokens = 200000,
                 },
                 .cost = .{},
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7408,7 +7401,7 @@ pub const providers = [_]Provider{
                     .input = 0.15,
                     .output = 1.5,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -7431,7 +7424,7 @@ pub const providers = [_]Provider{
                     .input = 1,
                     .output = 1,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -7452,7 +7445,7 @@ pub const providers = [_]Provider{
                     .input = 2,
                     .output = 8,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7475,7 +7468,7 @@ pub const providers = [_]Provider{
                     .input = 3,
                     .output = 15,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -7496,7 +7489,7 @@ pub const providers = [_]Provider{
                     .input = 3,
                     .output = 15,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -7517,7 +7510,7 @@ pub const providers = [_]Provider{
                     .input = 2,
                     .output = 8,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -7541,7 +7534,7 @@ pub const providers = [_]Provider{
                     .output = 0.18,
                     .cache_read = 0.009,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7564,7 +7557,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7588,7 +7581,7 @@ pub const providers = [_]Provider{
                     .output = 0.12,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7611,7 +7604,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7634,7 +7627,7 @@ pub const providers = [_]Provider{
                     .input = 0.36,
                     .output = 0.4,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7655,7 +7648,7 @@ pub const providers = [_]Provider{
                     .input = 0.1,
                     .output = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7676,7 +7669,7 @@ pub const providers = [_]Provider{
                     .input = 0.66,
                     .output = 1,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7699,7 +7692,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.052,
                     .cache_write = 0.325,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7720,7 +7713,7 @@ pub const providers = [_]Provider{
                     .input = 0.26,
                     .output = 0.78,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7742,7 +7735,7 @@ pub const providers = [_]Provider{
                     .output = 1,
                     .cache_read = 0.4,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -7763,7 +7756,7 @@ pub const providers = [_]Provider{
                     .input = 0.12,
                     .output = 0.24,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7786,7 +7779,7 @@ pub const providers = [_]Provider{
                     .input = 0.455,
                     .output = 1.82,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7810,7 +7803,7 @@ pub const providers = [_]Provider{
                     .output = 0.35,
                     .cache_read = 0.0175,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7831,7 +7824,7 @@ pub const providers = [_]Provider{
                     .input = 0.23,
                     .output = 2.3,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7852,7 +7845,7 @@ pub const providers = [_]Provider{
                     .input = 0.12,
                     .output = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7875,7 +7868,7 @@ pub const providers = [_]Provider{
                     .input = 0.04815,
                     .output = 0.19305,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7896,7 +7889,7 @@ pub const providers = [_]Provider{
                     .input = 0.2,
                     .output = 2.4,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7917,7 +7910,7 @@ pub const providers = [_]Provider{
                     .input = 0.08,
                     .output = 0.28,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7940,7 +7933,7 @@ pub const providers = [_]Provider{
                     .input = 0.117,
                     .output = 0.455,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7964,7 +7957,7 @@ pub const providers = [_]Provider{
                     .output = 1,
                     .cache_read = 0.1,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -7985,7 +7978,7 @@ pub const providers = [_]Provider{
                     .input = 0.07,
                     .output = 0.28,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8008,7 +8001,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.039,
                     .cache_write = 0.24375,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8030,7 +8023,7 @@ pub const providers = [_]Provider{
                     .output = 0.8,
                     .cache_read = 0.07,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8053,7 +8046,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.13,
                     .cache_write = 0.8125,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8076,7 +8069,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.156,
                     .cache_write = 0.975,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8097,7 +8090,7 @@ pub const providers = [_]Provider{
                     .input = 0.78,
                     .output = 3.9,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8120,7 +8113,7 @@ pub const providers = [_]Provider{
                     .input = 0.09,
                     .output = 1.1,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8141,7 +8134,7 @@ pub const providers = [_]Provider{
                     .input = 0.15,
                     .output = 1.2,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8163,7 +8156,7 @@ pub const providers = [_]Provider{
                     .output = 1.9,
                     .cache_read = 0.1,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -8184,7 +8177,7 @@ pub const providers = [_]Provider{
                     .input = 0.4,
                     .output = 4,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -8205,7 +8198,7 @@ pub const providers = [_]Provider{
                     .input = 0.15,
                     .output = 0.6,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -8226,7 +8219,7 @@ pub const providers = [_]Provider{
                     .input = 0.2,
                     .output = 2.4,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -8247,7 +8240,7 @@ pub const providers = [_]Provider{
                     .input = 0.104,
                     .output = 0.416,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -8268,7 +8261,7 @@ pub const providers = [_]Provider{
                     .input = 0.117,
                     .output = 0.455,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -8289,7 +8282,7 @@ pub const providers = [_]Provider{
                     .input = 0.18,
                     .output = 2.1,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -8310,7 +8303,7 @@ pub const providers = [_]Provider{
                     .input = 0.26,
                     .output = 2.08,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8333,7 +8326,7 @@ pub const providers = [_]Provider{
                     .input = 0.195,
                     .output = 1.56,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8357,7 +8350,7 @@ pub const providers = [_]Provider{
                     .output = 1.25,
                     .cache_read = 0.15625,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8381,7 +8374,7 @@ pub const providers = [_]Provider{
                     .output = 3.5,
                     .cache_read = 0.225,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8404,7 +8397,7 @@ pub const providers = [_]Provider{
                     .input = 0.1,
                     .output = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8427,7 +8420,7 @@ pub const providers = [_]Provider{
                     .input = 0.065,
                     .output = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8450,7 +8443,7 @@ pub const providers = [_]Provider{
                     .input = 0.26,
                     .output = 1.56,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8474,7 +8467,7 @@ pub const providers = [_]Provider{
                     .output = 1.8,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8498,7 +8491,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8522,7 +8515,7 @@ pub const providers = [_]Provider{
                     .output = 0.9,
                     .cache_read = 0.05,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8546,7 +8539,7 @@ pub const providers = [_]Provider{
                     .output = 1.125,
                     .cache_write = 0.234375,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8570,7 +8563,7 @@ pub const providers = [_]Provider{
                     .output = 6.162,
                     .cache_write = 1.28375,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8594,7 +8587,7 @@ pub const providers = [_]Provider{
                     .output = 1.95,
                     .cache_write = 0.40625,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8619,7 +8612,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.006,
                     .cache_write = 0.038,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8644,7 +8637,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.295,
                     .cache_write = 1.84375,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8669,7 +8662,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.064,
                     .cache_write = 0.4,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -8693,7 +8686,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8717,7 +8710,7 @@ pub const providers = [_]Provider{
                     .output = 2.55,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8742,7 +8735,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.016,
                     .cache_write = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8767,7 +8760,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8790,7 +8783,7 @@ pub const providers = [_]Provider{
                     .input = 0.1,
                     .output = 0.1,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -8811,7 +8804,7 @@ pub const providers = [_]Provider{
                     .input = 0.1,
                     .output = 0.2,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8832,7 +8825,7 @@ pub const providers = [_]Provider{
                     .input = 0.85,
                     .output = 1.25,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8853,7 +8846,7 @@ pub const providers = [_]Provider{
                     .input = 1,
                     .output = 3,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8875,7 +8868,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -8899,7 +8892,7 @@ pub const providers = [_]Provider{
                     .output = 30,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -8923,7 +8916,7 @@ pub const providers = [_]Provider{
                     .output = 30,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -8947,7 +8940,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -8970,7 +8963,7 @@ pub const providers = [_]Provider{
                     .input = 0.04,
                     .output = 0.05,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -8991,7 +8984,7 @@ pub const providers = [_]Provider{
                     .input = 0.85,
                     .output = 0.85,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9012,7 +9005,7 @@ pub const providers = [_]Provider{
                     .input = 0.65,
                     .output = 0.75,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9033,7 +9026,7 @@ pub const providers = [_]Provider{
                     .input = 0.1,
                     .output = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9055,7 +9048,7 @@ pub const providers = [_]Provider{
                     .output = 1.15,
                     .cache_read = 0.04,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -9078,7 +9071,7 @@ pub const providers = [_]Provider{
                     .input = 0.14,
                     .output = 0.57,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = false, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9101,7 +9094,7 @@ pub const providers = [_]Provider{
                     .input = 0.044,
                     .output = 0.177,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9122,7 +9115,7 @@ pub const providers = [_]Provider{
                     .input = 0.074,
                     .output = 0.295,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9143,7 +9136,7 @@ pub const providers = [_]Provider{
                     .input = 0.074,
                     .output = 0.295,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9165,7 +9158,7 @@ pub const providers = [_]Provider{
                     .output = 0.528,
                     .cache_read = 0.033,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9189,7 +9182,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9213,7 +9206,7 @@ pub const providers = [_]Provider{
                     .output = 2.501,
                     .cache_read = 0.042,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9237,7 +9230,7 @@ pub const providers = [_]Provider{
                     .output = 0.5,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9259,7 +9252,7 @@ pub const providers = [_]Provider{
                     .output = 0.8,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9280,7 +9273,7 @@ pub const providers = [_]Provider{
                     .input = 0.4,
                     .output = 0.4,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9302,7 +9295,7 @@ pub const providers = [_]Provider{
                     .output = 4.05,
                     .cache_read = 0.17,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text },
                     .output = &.{.text},
@@ -9326,7 +9319,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.1,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text },
                     .output = &.{.text},
@@ -9349,7 +9342,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text },
                     .output = &.{.text},
@@ -9372,7 +9365,7 @@ pub const providers = [_]Provider{
                     .input = 0,
                     .output = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text },
                     .output = &.{.text},
@@ -9395,7 +9388,7 @@ pub const providers = [_]Provider{
                     .input = 0.35,
                     .output = 0.65,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9417,7 +9410,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.015,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9441,7 +9434,7 @@ pub const providers = [_]Provider{
                     .output = 0.36,
                     .cache_read = 0.018,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9464,7 +9457,7 @@ pub const providers = [_]Provider{
                     .input = 0.6,
                     .output = 6,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = false },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9486,7 +9479,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -9510,7 +9503,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -9534,7 +9527,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -9558,7 +9551,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -9582,7 +9575,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -9606,7 +9599,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -9628,7 +9621,7 @@ pub const providers = [_]Provider{
                     .output = 0.28,
                     .cache_read = 0.0028,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text, .video },
                     .output = &.{.text},
@@ -9653,7 +9646,7 @@ pub const providers = [_]Provider{
                     .output = 0.87,
                     .cache_read = 0.0036,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9678,7 +9671,7 @@ pub const providers = [_]Provider{
                     .output = 2.2,
                     .cache_read = 0.11,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9702,7 +9695,7 @@ pub const providers = [_]Provider{
                     .output = 0.85,
                     .cache_read = 0.025,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9726,7 +9719,7 @@ pub const providers = [_]Provider{
                     .output = 1.8,
                     .cache_read = 0.11,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -9750,7 +9743,7 @@ pub const providers = [_]Provider{
                     .output = 1.75,
                     .cache_read = 0.08,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9774,7 +9767,7 @@ pub const providers = [_]Provider{
                     .output = 0.9,
                     .cache_read = 0.055,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -9798,7 +9791,7 @@ pub const providers = [_]Provider{
                     .output = 1.75,
                     .cache_read = 0.08,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9822,7 +9815,7 @@ pub const providers = [_]Provider{
                     .input = 0.0605,
                     .output = 0.4,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9847,7 +9840,7 @@ pub const providers = [_]Provider{
                     .output = 1.92,
                     .cache_read = 0.12,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9872,7 +9865,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.24,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9897,7 +9890,7 @@ pub const providers = [_]Provider{
                     .output = 3.036,
                     .cache_read = 0.1794,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9922,7 +9915,7 @@ pub const providers = [_]Provider{
                     .output = 2.1472,
                     .cache_read = 0.12688,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9947,7 +9940,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -9971,7 +9964,7 @@ pub const providers = [_]Provider{
                     .output = 0.5,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -9995,7 +9988,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.24,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -10020,7 +10013,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10045,7 +10038,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.1,
                     .cache_write = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10070,7 +10063,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10095,7 +10088,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10119,7 +10112,7 @@ pub const providers = [_]Provider{
                     .output = 0.1056,
                     .cache_read = 0.00112,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -10144,7 +10137,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.075,
                     .cache_write = 0.041667,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -10169,7 +10162,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -10193,7 +10186,7 @@ pub const providers = [_]Provider{
                     .output = 10.95,
                     .cache_read = 0.23,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -10218,7 +10211,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10243,7 +10236,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                     .cache_write = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10267,7 +10260,7 @@ pub const providers = [_]Provider{
                     .output = 4.5,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10292,7 +10285,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10317,7 +10310,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10341,7 +10334,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10365,7 +10358,7 @@ pub const providers = [_]Provider{
                     .output = 0.25,
                     .cache_read = 0.015,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -10389,7 +10382,7 @@ pub const providers = [_]Provider{
                     .output = 3.1372,
                     .cache_read = 0.184,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -10426,7 +10419,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.003,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -10451,7 +10444,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.003,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -10476,7 +10469,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.003,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -10501,7 +10494,7 @@ pub const providers = [_]Provider{
                     .output = 0.87,
                     .cache_read = 0.003625,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -10561,7 +10554,6 @@ pub const providers = [_]Provider{
                     .input = &.{.text},
                     .output = &.{.audio},
                 },
-                .status = "beta",
                 .reasoning_levels = &.{},
                 .dialect = .{},
             },
@@ -10580,7 +10572,6 @@ pub const providers = [_]Provider{
                     .input = &.{.text},
                     .output = &.{.audio},
                 },
-                .status = "beta",
                 .reasoning_levels = &.{},
                 .dialect = .{},
             },
@@ -10680,7 +10671,6 @@ pub const providers = [_]Provider{
                     .input = &.{.text},
                     .output = &.{.text},
                 },
-                .status = "beta",
                 .reasoning_levels = &.{},
                 .dialect = .{},
             },
@@ -10702,7 +10692,6 @@ pub const providers = [_]Provider{
                     .input = &.{.text},
                     .output = &.{.text},
                 },
-                .status = "beta",
                 .reasoning_levels = &.{},
                 .dialect = .{},
             },
@@ -10720,7 +10709,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -10744,7 +10733,7 @@ pub const providers = [_]Provider{
                     .output = 0.3,
                     .cache_read = 0.0375,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -10767,12 +10756,11 @@ pub const providers = [_]Provider{
                     .input = 0.075,
                     .output = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
                 },
-                .status = "beta",
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
                 .dialect = .{
                     .thinking_format = .openai,
@@ -10792,7 +10780,7 @@ pub const providers = [_]Provider{
                     .output = 3,
                     .cache_read = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -10815,7 +10803,7 @@ pub const providers = [_]Provider{
                     .input = 0.8,
                     .output = 4,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -10888,7 +10876,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10910,7 +10898,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10932,7 +10920,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10956,7 +10944,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -10980,7 +10968,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -11004,7 +10992,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -11028,7 +11016,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -11153,7 +11141,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -11175,7 +11163,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -11197,7 +11185,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = false, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = false, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -11221,7 +11209,7 @@ pub const providers = [_]Provider{
                     .output = 2.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -11245,7 +11233,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -11269,7 +11257,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -11293,7 +11281,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -11648,7 +11636,7 @@ pub const providers = [_]Provider{
                     .input = 1.5,
                     .output = 7.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -11671,7 +11659,7 @@ pub const providers = [_]Provider{
                     .input = 1.5,
                     .output = 7.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -11945,12 +11933,11 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.14,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
                 },
-                .status = "beta",
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
                     .thinking_format = .openai,
@@ -12004,7 +11991,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12026,7 +12013,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -12047,7 +12034,7 @@ pub const providers = [_]Provider{
                     .input = 0.3,
                     .output = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12068,7 +12055,7 @@ pub const providers = [_]Provider{
                     .input = 0.17,
                     .output = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -12115,7 +12102,7 @@ pub const providers = [_]Provider{
                     .output = 3.75,
                     .cache_read = 0.125,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12160,7 +12147,7 @@ pub const providers = [_]Provider{
                     .output = 0.28,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12185,7 +12172,7 @@ pub const providers = [_]Provider{
                     .output = 3.48,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12210,7 +12197,7 @@ pub const providers = [_]Provider{
                     .output = 3.96,
                     .cache_read = 0.13,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12235,7 +12222,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.006,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -12259,7 +12246,7 @@ pub const providers = [_]Provider{
                     .input = 0.06,
                     .output = 0.12,
                 },
-                .caps = .{ .tools = false, .vision = false, .structured_output = true },
+                .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12280,7 +12267,7 @@ pub const providers = [_]Provider{
                     .input = 0.39,
                     .output = 0.97,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -12344,7 +12331,7 @@ pub const providers = [_]Provider{
                     .output = 4.5,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -12368,7 +12355,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.19,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12390,7 +12377,7 @@ pub const providers = [_]Provider{
                     .output = 15,
                     .cache_read = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -12415,7 +12402,7 @@ pub const providers = [_]Provider{
                     .output = 3.6,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12461,7 +12448,7 @@ pub const providers = [_]Provider{
                     .input = 0.05,
                     .output = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12506,7 +12493,7 @@ pub const providers = [_]Provider{
                     .output = 4.05,
                     .cache_read = 0.17,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text },
                     .output = &.{.text},
@@ -12530,7 +12517,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12555,7 +12542,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12580,7 +12567,7 @@ pub const providers = [_]Provider{
                     .output = 0.5,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -12617,7 +12604,7 @@ pub const providers = [_]Provider{
                     .input = 0.35,
                     .output = 0.75,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12640,7 +12627,7 @@ pub const providers = [_]Provider{
                     .input = 0.99,
                     .output = 1.49,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -12677,7 +12664,7 @@ pub const providers = [_]Provider{
                     .output = 0.66,
                     .cache_read = 0.007,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12702,7 +12689,7 @@ pub const providers = [_]Provider{
                     .output = 0.66,
                     .cache_read = 0.007,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -12727,7 +12714,7 @@ pub const providers = [_]Provider{
                     .output = 3.96,
                     .cache_read = 0.044,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12752,7 +12739,7 @@ pub const providers = [_]Provider{
                     .output = 0.66,
                     .cache_read = 0.007,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -12777,7 +12764,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.14,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12802,7 +12789,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12827,7 +12814,7 @@ pub const providers = [_]Provider{
                     .output = 0.5,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -12852,7 +12839,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.015,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -12876,7 +12863,7 @@ pub const providers = [_]Provider{
                     .output = 4.05,
                     .cache_read = 0.17,
                 },
-                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text },
                     .output = &.{.text},
@@ -12898,7 +12885,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.16,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -12923,7 +12910,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.19,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -12948,7 +12935,7 @@ pub const providers = [_]Provider{
                     .output = 15,
                     .cache_read = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -12973,7 +12960,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -13016,7 +13003,7 @@ pub const providers = [_]Provider{
                     .output = 1.5,
                     .cache_read = 0.04,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -13040,7 +13027,7 @@ pub const providers = [_]Provider{
                     .output = 2.4,
                     .cache_read = 0.119,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13064,7 +13051,7 @@ pub const providers = [_]Provider{
                     .output = 0.2,
                     .cache_read = 0.01,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13088,7 +13075,7 @@ pub const providers = [_]Provider{
                     .output = 1.6,
                     .cache_read = 0.08,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -13112,7 +13099,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13137,7 +13124,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13161,7 +13148,7 @@ pub const providers = [_]Provider{
                     .output = 6.6,
                     .cache_read = 0.21,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13186,7 +13173,7 @@ pub const providers = [_]Provider{
                     .output = 6.6,
                     .cache_read = 0.39,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13211,7 +13198,7 @@ pub const providers = [_]Provider{
                     .output = 22.5,
                     .cache_read = 0.45,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -13271,7 +13258,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13294,7 +13281,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.03,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13317,7 +13304,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.06,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13340,7 +13327,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.06,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13363,7 +13350,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.06,
                     .cache_write = 0.375,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13385,7 +13372,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -13425,7 +13412,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0,
                     .cache_write = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13448,7 +13435,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13471,7 +13458,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13494,7 +13481,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.1,
                     .cache_write = 1.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13521,7 +13508,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13544,7 +13531,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13567,7 +13554,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13590,7 +13577,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13613,7 +13600,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 6.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13636,7 +13623,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                     .cache_write = 3.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13663,7 +13650,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                     .cache_write = 3.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13690,7 +13677,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.3,
                     .cache_write = 3.75,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13713,7 +13700,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -13735,7 +13722,7 @@ pub const providers = [_]Provider{
                     .output = 0.28,
                     .cache_read = 0.028,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13759,7 +13746,7 @@ pub const providers = [_]Provider{
                     .output = 0.28,
                     .cache_read = 0.028,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -13783,7 +13770,7 @@ pub const providers = [_]Provider{
                     .output = 3.84,
                     .cache_read = 0.145,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13807,7 +13794,7 @@ pub const providers = [_]Provider{
                     .output = 3.2,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13831,7 +13818,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13855,7 +13842,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13879,7 +13866,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -13903,7 +13890,7 @@ pub const providers = [_]Provider{
                     .output = 0.5,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -13927,7 +13914,7 @@ pub const providers = [_]Provider{
                     .output = 8.5,
                     .cache_read = 0.107,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -13949,7 +13936,7 @@ pub const providers = [_]Provider{
                     .output = 8.5,
                     .cache_read = 0.107,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -13971,7 +13958,7 @@ pub const providers = [_]Provider{
                     .output = 0.4,
                     .cache_read = 0.005,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -13993,7 +13980,7 @@ pub const providers = [_]Provider{
                     .output = 8.5,
                     .cache_read = 0.107,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -14015,7 +14002,7 @@ pub const providers = [_]Provider{
                     .output = 8.5,
                     .cache_read = 0.107,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -14037,7 +14024,7 @@ pub const providers = [_]Provider{
                     .output = 10,
                     .cache_read = 0.125,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -14059,7 +14046,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.025,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -14081,7 +14068,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -14103,7 +14090,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14125,7 +14112,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14147,7 +14134,7 @@ pub const providers = [_]Provider{
                     .output = 14,
                     .cache_read = 0.175,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -14169,7 +14156,7 @@ pub const providers = [_]Provider{
                     .output = 15,
                     .cache_read = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14191,7 +14178,7 @@ pub const providers = [_]Provider{
                     .output = 4.5,
                     .cache_read = 0.075,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14213,7 +14200,7 @@ pub const providers = [_]Provider{
                     .output = 1.25,
                     .cache_read = 0.02,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14235,7 +14222,7 @@ pub const providers = [_]Provider{
                     .output = 180,
                     .cache_read = 30,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14257,7 +14244,7 @@ pub const providers = [_]Provider{
                     .output = 30,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14279,7 +14266,7 @@ pub const providers = [_]Provider{
                     .output = 180,
                     .cache_read = 30,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = false, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14302,7 +14289,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                     .cache_write = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14325,7 +14312,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.2,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14348,7 +14335,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                     .cache_write = 3.125,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14371,7 +14358,7 @@ pub const providers = [_]Provider{
                     .cache_read = 1,
                     .cache_write = 12.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14393,7 +14380,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -14415,7 +14402,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -14437,7 +14424,7 @@ pub const providers = [_]Provider{
                     .output = 2,
                     .cache_read = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -14459,7 +14446,7 @@ pub const providers = [_]Provider{
                     .output = 3,
                     .cache_read = 0.08,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -14483,7 +14470,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.16,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -14507,7 +14494,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.19,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -14529,7 +14516,7 @@ pub const providers = [_]Provider{
                     .output = 15,
                     .cache_read = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -14553,7 +14540,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                     .cache_read = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -14575,7 +14562,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                     .cache_read = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text, .video },
                     .output = &.{.text},
@@ -14597,7 +14584,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -14619,7 +14606,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -14641,7 +14628,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -14663,7 +14650,7 @@ pub const providers = [_]Provider{
                     .output = 4.25,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -14685,7 +14672,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                     .cache_read = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -14707,7 +14694,7 @@ pub const providers = [_]Provider{
                     .output = 4.25,
                     .cache_read = 0.15,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -14729,7 +14716,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                     .cache_read = 0,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -14751,7 +14738,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                     .cache_read = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -14773,7 +14760,7 @@ pub const providers = [_]Provider{
                     .output = 0,
                     .cache_read = 0,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -14796,7 +14783,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                     .cache_write = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -14821,7 +14808,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.05,
                     .cache_write = 0.625,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -14860,7 +14847,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.003,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -14884,7 +14871,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.003,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -14908,7 +14895,7 @@ pub const providers = [_]Provider{
                     .output = 1.98,
                     .cache_read = 0.022,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -14932,7 +14919,7 @@ pub const providers = [_]Provider{
                     .output = 0.6,
                     .cache_read = 0.003,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -14956,7 +14943,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -14978,7 +14965,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -15002,7 +14989,7 @@ pub const providers = [_]Provider{
                     .output = 4.4,
                     .cache_read = 0.26,
                 },
-                .caps = .{ .tools = true, .vision = false, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -15026,7 +15013,7 @@ pub const providers = [_]Provider{
                     .output = 0.5,
                     .cache_read = 0.03,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -15051,7 +15038,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.02,
                     .cache_write = 0.25,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -15073,7 +15060,7 @@ pub const providers = [_]Provider{
                     .output = 6,
                     .cache_read = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .image, .text },
                     .output = &.{.text},
@@ -15095,7 +15082,7 @@ pub const providers = [_]Provider{
                     .output = 0.58,
                     .cache_read = 0.035,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -15117,7 +15104,7 @@ pub const providers = [_]Provider{
                     .output = 2.501,
                     .cache_read = 0.042,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -15139,7 +15126,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.16,
                 },
-                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -15161,7 +15148,7 @@ pub const providers = [_]Provider{
                     .output = 4,
                     .cache_read = 0.19,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -15183,7 +15170,7 @@ pub const providers = [_]Provider{
                     .output = 15,
                     .cache_read = 0.3,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -15207,7 +15194,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.006,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -15231,7 +15218,7 @@ pub const providers = [_]Provider{
                     .output = 0.28,
                     .cache_read = 0.0028,
                 },
-                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .text, .video },
                     .output = &.{.text},
@@ -15253,7 +15240,7 @@ pub const providers = [_]Provider{
                     .output = 0.87,
                     .cache_read = 0.003625,
                 },
-                .caps = .{ .tools = true, .vision = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -15275,7 +15262,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -15297,7 +15284,7 @@ pub const providers = [_]Provider{
                     .output = 1.2,
                     .cache_read = 0.06,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -15321,7 +15308,7 @@ pub const providers = [_]Provider{
                     .output = 0.2,
                     .cache_read = 0.002,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -15343,7 +15330,7 @@ pub const providers = [_]Provider{
                     .output = 0.2,
                     .cache_read = 0.002,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = false, .prompt_caching = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
                     .output = &.{.text},
@@ -15366,7 +15353,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.05,
                     .cache_write = 0.625,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -15391,7 +15378,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.5,
                     .cache_write = 3.125,
                 },
-                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{.text},
                     .output = &.{.text},
@@ -15416,7 +15403,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.04,
                     .cache_write = 0.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -15441,7 +15428,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.016,
                     .cache_write = 0.2,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},
@@ -15464,7 +15451,7 @@ pub const providers = [_]Provider{
                     .cache_read = 0.25,
                     .cache_write = 2.5,
                 },
-                .caps = .{ .tools = true, .vision = true, .structured_output = true, .disable_reasoning = true, .prompt_caching = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .text, .video },
                     .output = &.{.text},

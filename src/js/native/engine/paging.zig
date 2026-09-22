@@ -79,7 +79,7 @@ fn assistantPartText(p: proto.message.AssistantPart, part_id: u64, field: []cons
     return switch (p) {
         .text => |t| if (t.id == part_id and std.mem.eql(u8, field, "text")) t.text else null,
         .reasoning => |r| if (r.id == part_id and std.mem.eql(u8, field, "text")) r.text else null,
-        .redacted_reasoning, .tool_search => null,
+        .redacted_reasoning => null,
         .tool => |t| if (t.id != part_id) null else toolFieldText(t, field),
     };
 }

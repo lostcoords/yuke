@@ -45,14 +45,9 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
         try json.field(&jw, "instructions", default_instructions);
     }
 
-    if (request.tools.len != 0 or request.tool_search == .hosted) {
+    if (request.tools.len != 0) {
         try jw.objectField("tools");
         try jw.beginArray();
-        if (request.tool_search == .hosted) {
-            try jw.beginObject();
-            try json.field(&jw, "type", "tool_search");
-            try jw.endObject();
-        }
         for (request.tools) |tool| {
             try jw.beginObject();
             try json.field(&jw, "type", "function");
@@ -106,11 +101,6 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
                 if (data.len == 0) continue;
                 try closeMessage(&jw, &message);
                 try writeReasoningItem(&jw, null, data);
-            },
-            .tool_search => |value| {
-                if (value.protocol != .openai_responses) return error.UnsupportedToolSearch;
-                try closeMessage(&jw, &message);
-                try json.writeRawJson(&jw, value.data);
             },
             .tool_use => |tool_use| {
                 try closeMessage(&jw, &message);
@@ -486,27 +476,4 @@ test "the codex dialect refuses the sampling members too" {
         .{ .model = "gpt-5", .max_output_tokens = 8, .temperature = 0.7, .top_p = 0.9, .responses_dialect = .codex },
         &blocks,
     );
-}
-
-test "native search replays loaded schemas after the stable tool prefix" {
-    const tools = [_]ir.Tool{.{ .name = "mcp_weather", .description = "Weather.", .input_schema = "{}", .defer_loading = true }};
-    const search_data =
-        \\{"type":"tool_search_output","id":"ts_1","execution":"server","call_id":null,"status":"completed","tools":[{"type":"function","name":"mcp_weather","parameters":{},"defer_loading":true}]}
-    ;
-    const blocks = [_]ir.Block{
-        .{ .role = .user, .value = .{ .text = "weather" } },
-        .{ .role = .assistant, .value = .{ .tool_search = .{ .protocol = .openai_responses, .data = search_data } } },
-    };
-    const request: ir.Request = .{ .model = "gpt-5.6", .tools = &tools, .tool_search = .hosted, .max_output_tokens = 100, .cache_key = "session" };
-    var before: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer before.deinit();
-    var after: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer after.deinit();
-    try serialize(&before.writer, request, blocks[0..1]);
-    try serialize(&after.writer, request, &blocks);
-    const prefix = std.mem.indexOf(u8, before.written(), "\"input\":").?;
-    try testing.expectEqualStrings(before.written()[0..prefix], after.written()[0..prefix]);
-    try testing.expect(std.mem.indexOf(u8, after.written(), search_data) != null);
-    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, after.written(), "\"type\":\"tool_search\""));
-    try testing.expect(std.mem.indexOf(u8, before.written(), "\"defer_loading\":true") != null);
 }

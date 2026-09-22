@@ -1,5 +1,3 @@
-//! These JSON accessors support the stream reducers.
-
 const std = @import("std");
 
 pub inline fn parse(data: []const u8, scratch: std.mem.Allocator) error{ Protocol, OutOfMemory }!std.json.Value {
@@ -74,13 +72,6 @@ pub fn fieldObj(v: std.json.Value, key: []const u8) ?std.json.ObjectMap {
 pub fn childObj(o: std.json.ObjectMap, key: []const u8) ?std.json.ObjectMap {
     return switch (o.get(key) orelse return null) {
         .object => |c| c,
-        else => null,
-    };
-}
-
-pub fn childStr(o: std.json.ObjectMap, key: []const u8) ?[]const u8 {
-    return switch (o.get(key) orelse return null) {
-        .string => |s| s,
         else => null,
     };
 }

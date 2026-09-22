@@ -271,14 +271,14 @@ fn mergedModels(
     const baked = if (source) |c| c.models else &.{};
     if (p.models.len == 0) {
         for (baked) |spec| {
-            if (spec.caps.hosted_tool_search != null and !sameCatalogRoute(p, source.?, spec.protocol)) break;
+            if (spec.caps.tool_search != null and !sameCatalogRoute(p, source.?, spec.protocol)) break;
         } else return baked;
     }
     var out: std.ArrayList(ModelSpec) = .empty;
     try out.ensureTotalCapacityPrecise(arena, baked.len + p.models.len);
     for (baked) |spec| {
         var value = spec;
-        if (value.caps.hosted_tool_search != null and !sameCatalogRoute(p, source.?, value.protocol)) value.caps.hosted_tool_search = null;
+        if (value.caps.tool_search != null and !sameCatalogRoute(p, source.?, value.protocol)) value.caps.tool_search = null;
         out.appendAssumeCapacity(value);
     }
     for (p.models) |local| {
@@ -500,7 +500,7 @@ fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, spec: ModelSpec)
         .default_reasoning = defaultReasoning(names),
         .supports_vision = spec.caps.vision,
         .supports_tools = spec.caps.tools,
-        .supports_hosted_tool_search = spec.caps.hosted_tool_search,
+        .supports_tool_search = spec.caps.tool_search,
         .cost = .{
             .input = spec.cost.input,
             .output = spec.cost.output,
@@ -565,18 +565,18 @@ test "the default effort never lands on the disable sentinel" {
     try testing.expectEqualStrings("", defaultReasoning(&.{"off"}));
 }
 
-test "hosted search capability reaches the public projection and revision" {
+test "tool search capability reaches the public projection and revision" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     var spec: ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .openai_responses };
     const unknown = try modelInfo(arena.allocator(), "p", spec);
-    spec.caps.hosted_tool_search = true;
+    spec.caps.tool_search = true;
     const supported = try modelInfo(arena.allocator(), "p", spec);
-    spec.caps.hosted_tool_search = false;
+    spec.caps.tool_search = false;
     const refused = try modelInfo(arena.allocator(), "p", spec);
-    try std.testing.expectEqual(@as(?bool, null), unknown.supports_hosted_tool_search);
-    try std.testing.expectEqual(@as(?bool, true), supported.supports_hosted_tool_search);
-    try std.testing.expectEqual(@as(?bool, false), refused.supports_hosted_tool_search);
+    try std.testing.expectEqual(@as(?bool, null), unknown.supports_tool_search);
+    try std.testing.expectEqual(@as(?bool, true), supported.supports_tool_search);
+    try std.testing.expectEqual(@as(?bool, false), refused.supports_tool_search);
     const unknown_rev = try revisionOf(std.testing.allocator, &.{}, &.{unknown});
     const supported_rev = try revisionOf(std.testing.allocator, &.{}, &.{supported});
     const refused_rev = try revisionOf(std.testing.allocator, &.{}, &.{refused});
@@ -585,11 +585,11 @@ test "hosted search capability reaches the public projection and revision" {
 }
 
 test "a route override merges into one array and leaves the catalog intact" {
-    const models = [_]ModelSpec{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .openai_responses, .caps = .{ .hosted_tool_search = true } }};
+    const models = [_]ModelSpec{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .openai_responses, .caps = .{ .tool_search = true } }};
     const source: catalog.Provider = .{ .id = "p", .name = "P", .auth = .{ .api_key = null }, .base_url = "https://api.example/v1", .endpoints = &.{.{ .protocol = .openai_responses }}, .models = &models };
     const cases = [_][]const provider.config.FileModel{
         &.{},
-        &.{.{ .id = "extra", .upstream_id = "extra", .flags = .{ .supports_hosted_tool_search = true } }},
+        &.{.{ .id = "extra", .upstream_id = "extra", .flags = .{ .supports_tool_search = true } }},
     };
     for (cases) |extra| {
         var tracked: @import("../allocations.zig") = .{ .backing = std.testing.allocator };
@@ -598,9 +598,9 @@ test "a route override merges into one array and leaves the catalog intact" {
         try std.testing.expectEqual(@as(usize, 0), tracked.counts.allocations);
         const changed = try mergedModels(tracked.allocator(), .{ .id = "p", .base_url = "https://proxy.example/v1", .models = extra }, &source, source.endpoints);
         try std.testing.expectEqual(1 + extra.len, changed.len);
-        try std.testing.expect(changed[0].caps.hosted_tool_search == null);
-        if (extra.len != 0) try std.testing.expect(changed[1].caps.hosted_tool_search == true);
-        try std.testing.expect(models[0].caps.hosted_tool_search == true);
+        try std.testing.expect(changed[0].caps.tool_search == null);
+        if (extra.len != 0) try std.testing.expect(changed[1].caps.tool_search == true);
+        try std.testing.expect(models[0].caps.tool_search == true);
         try std.testing.expectEqual(models[0].name.ptr, changed[0].name.ptr);
         tracked.allocator().free(changed);
         const bytes = (1 + extra.len) * @sizeOf(ModelSpec);

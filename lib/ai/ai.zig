@@ -9,25 +9,17 @@ pub const FinishReason = types.FinishReason;
 pub const Usage = types.Usage;
 pub const Modality = types.Modality;
 pub const Modalities = types.Modalities;
-pub const MediaSource = types.MediaSource;
 pub const ModelIdentity = types.ModelIdentity;
 pub const limits = types.limits;
 
-pub const Client = call.Client;
 pub const Model = call.Model;
 pub const Request = call.Request;
-pub const Options = call.Options;
-pub const Result = call.Result;
-pub const Content = call.Content;
 pub const PreparedRequest = call.PreparedRequest;
 pub const prepare = call.prepare;
 pub const consume = call.consume;
 pub const Diagnostics = call.Diagnostics;
 pub const generateWithTransport = call.generateWithTransport;
-pub const generateTextWithTransport = call.generateTextWithTransport;
-pub const streamWithTransport = call.streamWithTransport;
 
-pub const Route = route.Route;
 pub const Credential = route.Credential;
 pub const Header = route.Header;
 
@@ -35,7 +27,6 @@ pub const Header = route.Header;
 pub const ir = @import("request/ir.zig");
 /// The neutral stream events one call emits.
 pub const event = @import("stream/event.zig");
-pub const tool_search = @import("tool_search.zig");
 /// The model vocabulary every provider source shares.
 pub const model = @import("model.zig");
 /// How one request reaches a provider, and the credential headers it presents.

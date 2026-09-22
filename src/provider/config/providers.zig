@@ -29,7 +29,7 @@ pub const Error = error{
     DuplicateEndpoint,
     /// A Responses dialect on a path that is not the Responses API.
     BadDialect,
-    /// Hosted search needs a compatible protocol and tool support.
+    /// Tool search needs a compatible protocol and tool support.
     BadCapability,
     /// A key header on a grant, which is always a bearer.
     BadKeyHeader,
@@ -56,7 +56,7 @@ pub const CredentialSource = union(enum) {
 pub const FileFlags = struct {
     supports_vision: bool = false,
     supports_tools: bool = true,
-    supports_hosted_tool_search: ?bool = null,
+    supports_tool_search: ?bool = null,
     reasoning_replay: ai.ir.ReasoningReplay = .none,
     thinking_format: ai.ir.ThinkingFormat = .none,
     anthropic_adaptive: bool = false,
@@ -90,7 +90,7 @@ pub fn modelSpec(arena: Allocator, m: FileModel, endpoints: []const ai.route.End
         .name = m.id,
         .limits = m.limits,
         .cost = m.cost,
-        .caps = .{ .tools = m.flags.supports_tools, .vision = m.flags.supports_vision, .hosted_tool_search = m.flags.supports_hosted_tool_search },
+        .caps = .{ .tools = m.flags.supports_tools, .vision = m.flags.supports_vision, .tool_search = m.flags.supports_tool_search },
         // The request builder gates each attachment on `modalities`, so the vision flag must reach it too.
         .modalities = .{
             .input = if (m.flags.supports_vision) &.{ .text, .image } else &.{.text},
@@ -116,7 +116,7 @@ fn modelProtocol(m: FileModel, endpoints: []const ai.route.Endpoint) error{ NoEn
 }
 
 fn validateSearchCapability(m: FileModel, protocol: ?ai.route.Protocol) error{BadCapability}!void {
-    if (m.flags.supports_hosted_tool_search == true and
+    if (m.flags.supports_tool_search == true and
         (protocol == .openai_chat or !m.flags.supports_tools)) return error.BadCapability;
 }
 
@@ -360,8 +360,7 @@ fn resolveProvider(fp: FileProvider) Error!LocalProvider {
             if (std.mem.eql(u8, prev.id, fm.id)) return error.DuplicateModel;
         }
         // The catalog can name the endpoints, so only a declared list is checked here; the merge checks the rest.
-        try validateSearchCapability(fm, fm.protocol);
-        if (fp.endpoints) |endpoints| _ = try modelProtocol(fm, endpoints);
+        if (fp.endpoints) |endpoints| _ = try modelProtocol(fm, endpoints) else try validateSearchCapability(fm, fm.protocol);
         if (fm.reasoning_levels.len > proto.meta.limits.max_reasoning_levels) return error.BadReasoningLevel;
         for (fm.reasoning_levels, 0..) |level, level_i| {
             if (level) |name| {
@@ -818,9 +817,9 @@ test "the shipped sample document still loads" {
     try testing.expectEqual(@as(?ai.route.Protocol, .anthropic_messages), loaded.providers[2].models[0].protocol);
 }
 
-test "local hosted search capability survives projection and a file round trip" {
+test "local tool search capability survives projection and a file round trip" {
     const document =
-        \\{"providers":[{"id":"local","base_url":"https://example.test/v1","endpoints":[{"protocol":"openai_responses"}],"models":[{"id":"m","upstream_id":"m","flags":{"supports_hosted_tool_search":STATE}}]}]}
+        \\{"providers":[{"id":"local","base_url":"https://example.test/v1","endpoints":[{"protocol":"openai_responses"}],"models":[{"id":"m","upstream_id":"m","flags":{"supports_tool_search":STATE}}]}]}
     ;
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -830,15 +829,15 @@ test "local hosted search capability survives projection and a file round trip" 
         defer loaded.deinit();
         const row = loaded.providers[0];
         const spec = try modelSpec(arena.allocator(), row.models[0], row.endpoints.?);
-        try testing.expectEqual(expected, spec.caps.hosted_tool_search);
+        try testing.expectEqual(expected, spec.caps.tool_search);
         const encoded = try serialize(arena.allocator(), loaded.providers);
         var restored = try loadBytes(testing.allocator, encoded);
         defer restored.deinit();
-        try testing.expectEqual(expected, restored.providers[0].models[0].flags.supports_hosted_tool_search);
+        try testing.expectEqual(expected, restored.providers[0].models[0].flags.supports_tool_search);
     }
     const supported = try std.mem.replaceOwned(u8, arena.allocator(), document, "STATE", "true");
     const chat = try std.mem.replaceOwned(u8, arena.allocator(), supported, "openai_responses", "openai_chat");
     try testing.expectError(error.BadCapability, loadBytes(testing.allocator, chat));
-    const no_tools = try std.mem.replaceOwned(u8, arena.allocator(), supported, "\"supports_hosted_tool_search\":true", "\"supports_hosted_tool_search\":true,\"supports_tools\":false");
+    const no_tools = try std.mem.replaceOwned(u8, arena.allocator(), supported, "\"supports_tool_search\":true", "\"supports_tool_search\":true,\"supports_tools\":false");
     try testing.expectError(error.BadCapability, loadBytes(testing.allocator, no_tools));
 }

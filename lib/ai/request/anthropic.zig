@@ -33,16 +33,9 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
         try jw.endArray();
     }
 
-    if (request.tools.len != 0 or request.tool_search == .hosted) {
+    if (request.tools.len != 0) {
         try jw.objectField("tools");
         try jw.beginArray();
-        if (request.tool_search == .hosted) {
-            for (request.tools) |decl| if (std.mem.eql(u8, decl.name, "tool_search_tool_bm25")) return error.InvalidRequest;
-            try jw.beginObject();
-            try json.field(&jw, "type", "tool_search_tool_bm25_20251119");
-            try json.field(&jw, "name", "tool_search_tool_bm25");
-            try jw.endObject();
-        }
         for (request.tools) |tool| {
             try jw.beginObject();
             try json.field(&jw, "name", tool.name);
@@ -138,10 +131,6 @@ fn endMessage(jw: *std.json.Stringify) !void {
 
 fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
     switch (block.value) {
-        .tool_search => |value| {
-            if (value.protocol != .anthropic) return error.UnsupportedToolSearch;
-            try json.writeRawJson(jw, value.data);
-        },
         .text => |t| {
             try jw.beginObject();
             try json.field(jw, "type", "text");
@@ -246,7 +235,7 @@ fn lastCacheable(blocks: []const ir.Block) ?usize {
     while (i > 0) {
         i -= 1;
         switch (blocks[i].value) {
-            .reasoning, .redacted_reasoning, .tool_search => {},
+            .reasoning, .redacted_reasoning => {},
             .text, .media, .tool_use, .tool_result => return i,
         }
     }
@@ -473,45 +462,4 @@ test "sampling members ride beside the token ceiling" {
         .{ .model = "claude", .max_output_tokens = 8, .temperature = 0 },
         &blocks,
     );
-}
-
-test "native search adds references after a stable deferred tool prefix" {
-    const tools = [_]ir.Tool{
-        .{ .name = "read", .description = "Read.", .input_schema = "{}" },
-        .{ .name = "mcp_weather", .description = "Weather.", .input_schema = "{}", .defer_loading = true },
-    };
-    const search_data =
-        \\{"type":"tool_search_tool_result","tool_use_id":"srv_1","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"mcp_weather"}]}}
-    ;
-    const blocks = [_]ir.Block{
-        .{ .role = .user, .value = .{ .text = "weather" } },
-        .{ .role = .assistant, .value = .{ .tool_search = .{ .protocol = .anthropic, .data = search_data } } },
-    };
-    const request: ir.Request = .{ .model = "claude", .system = "stable", .tools = &tools, .tool_search = .hosted, .max_output_tokens = 100, .cache = .anthropic };
-    var before: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer before.deinit();
-    var after: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer after.deinit();
-    try serialize(&before.writer, request, blocks[0..1]);
-    try serialize(&after.writer, request, &blocks);
-    const prefix = std.mem.indexOf(u8, before.written(), "\"messages\":").?;
-    try testing.expectEqualStrings(before.written()[0..prefix], after.written()[0..prefix]);
-    try testing.expect(std.mem.indexOf(u8, after.written(), search_data) != null);
-    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, after.written(), "\"defer_loading\":true"));
-    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, after.written(), "tool_search_tool_bm25_20251119"));
-    try testing.expect(std.mem.indexOf(u8, after.written(), "\"text\":\"weather\",\"cache_control\"") != null);
-}
-
-test "native search cannot shadow an ordinary tool name" {
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try testing.expectError(error.InvalidRequest, serialize(&buf.writer, .{
-        .model = "claude",
-        .max_output_tokens = 100,
-        .tool_search = .hosted,
-        .tools = &.{
-            .{ .name = "tool_search_tool_bm25", .description = "local", .input_schema = "{}" },
-            .{ .name = "mcp_read", .description = "read", .input_schema = "{}", .defer_loading = true },
-        },
-    }, &.{.{ .role = .user, .value = .{ .text = "read" } }}));
 }

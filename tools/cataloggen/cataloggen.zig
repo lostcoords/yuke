@@ -51,13 +51,6 @@ const preamble =
     \\    return null;
     \\}
     \\
-    \\/// Return the model that `provider_id` serves under `model_id`, or null.
-    \\pub fn findModel(provider_id: []const u8, model_id: []const u8) ?*const model.ModelSpec {
-    \\    const row = find(provider_id) orelse return null;
-    \\    for (row.models) |*spec| if (std.mem.eql(u8, spec.id, model_id)) return spec;
-    \\    return null;
-    \\}
-    \\
     \\
 ;
 
@@ -175,7 +168,7 @@ fn emitProvider(run: *Run, provider: std.json.ObjectMap) !void {
     var model_ids: std.StringHashMapUnmanaged(void) = .empty;
     for (try array(provider, "models")) |item| {
         const spec = try object(item);
-        // The generated `findModel` answers the first row, so a repeated id would hide a model.
+        // A repeated model id would hide a model, so the table refuses it.
         if ((try model_ids.getOrPut(run.arena, try string(spec, "id"))).found_existing) return Error.InvalidDocument;
         // A model on a path the host does not serve could never be called, so the table refuses it.
         const protocol = std.meta.stringToEnum(vocab.types.Protocol, try string(spec, "protocol")) orelse return Error.InvalidDocument;
@@ -235,21 +228,16 @@ fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
         try boolean(flags, "supports_tools"),
         try boolean(flags, "supports_vision"),
     });
-    if (flags.contains("supports_hosted_tool_search")) {
-        const supported = try boolean(flags, "supports_hosted_tool_search");
+    if (flags.contains("supports_tool_search")) {
+        const supported = try boolean(flags, "supports_tool_search");
         if (supported and (std.mem.eql(u8, protocol, "openai_chat") or !try boolean(flags, "supports_tools"))) return Error.InvalidDocument;
     }
-    try emitOptionalBool(w, flags, "supports_hosted_tool_search", "hosted_tool_search");
+    try emitOptionalBool(w, flags, "supports_tool_search", "tool_search");
     // Preserve source capabilities without a model-name heuristic.
-    try emitOptionalBool(w, flags, "supports_structured_output", "structured_output");
     try emitOptionalBool(w, flags, "can_disable_reasoning", "disable_reasoning");
-    try emitOptionalBool(w, flags, "supports_prompt_caching", "prompt_caching");
     try emitOptionalBool(w, flags, "supports_cache_breakpoint", "cache_breakpoint");
     try w.writeAll(" },\n");
     try emitModalities(run, try object(try member(spec, "modalities")));
-    if (try member(spec, "status") != .null) {
-        try w.print("                .status = \"{f}\",\n", .{std.zig.fmtString(try string(spec, "status"))});
-    }
 
     // The level set is open, so any name reaches the table as it stands.
     try w.writeAll("                .reasoning_levels = &.{");
@@ -448,7 +436,6 @@ test "a provider and its model reach the generated table" {
     // The kinds a model reads decide whether a request may carry an attachment at all.
     try testing.expect(std.mem.indexOf(u8, out, ".input = &.{ .text, .image },") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".output = &.{.text},") != null);
-    try testing.expect(std.mem.indexOf(u8, out, ".status = \"beta\",") != null);
 
     // A null price is not a zero price, so the member stays absent and the field default holds.
     try testing.expect(std.mem.indexOf(u8, out, ".cache_write") == null);
@@ -591,15 +578,11 @@ test "a stated capability reaches the table, and an absent one stays unknown" {
     // The fixture states the two required flags alone, so every optional capability stays absent.
     const bare = try generate(a, one_provider);
     try testing.expect(std.mem.indexOf(u8, bare, ".caps = .{ .tools = true, .vision = true },") != null);
-    try testing.expect(std.mem.indexOf(u8, bare, ".structured_output") == null);
     try testing.expect(std.mem.indexOf(u8, bare, ".cache_breakpoint") == null);
 
     // A stated false is a value, not an unknown, so it must reach the table as false.
-    const stated = try withFlags(a, "\"supports_vision\":true,\"supports_structured_output\":true," ++
-        "\"can_disable_reasoning\":false,\"supports_prompt_caching\":true,\"supports_cache_breakpoint\":false");
-    try testing.expect(std.mem.indexOf(u8, stated.text, ".structured_output = true,") != null);
+    const stated = try withFlags(a, "\"supports_vision\":true,\"can_disable_reasoning\":false,\"supports_cache_breakpoint\":false");
     try testing.expect(std.mem.indexOf(u8, stated.text, ".disable_reasoning = false,") != null);
-    try testing.expect(std.mem.indexOf(u8, stated.text, ".prompt_caching = true,") != null);
     try testing.expect(std.mem.indexOf(u8, stated.text, ".cache_breakpoint = false") != null);
 }
 
@@ -607,7 +590,7 @@ test "a capability that is not a boolean fails the run" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const broken = try std.mem.replaceOwned(u8, a, one_provider, "\"supports_vision\":true", "\"supports_vision\":true,\"supports_prompt_caching\":\"yes\"");
+    const broken = try std.mem.replaceOwned(u8, a, one_provider, "\"supports_vision\":true", "\"supports_vision\":true,\"supports_cache_breakpoint\":\"yes\"");
     try testing.expectError(Error.InvalidDocument, generate(a, broken));
 }
 
@@ -649,20 +632,20 @@ test "a document with no provider is rejected" {
     );
 }
 
-test "hosted search capability preserves true false and unknown" {
+test "tool search capability preserves true false and unknown" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const unknown = try generate(a, one_provider);
-    try testing.expect(std.mem.indexOf(u8, unknown, ".hosted_tool_search") == null);
+    try testing.expect(std.mem.indexOf(u8, unknown, ".tool_search") == null);
     inline for (.{ "true", "false" }) |value| {
-        const stated = try withFlags(a, "\"supports_vision\":true,\"supports_hosted_tool_search\":" ++ value);
-        try testing.expect(std.mem.indexOf(u8, stated.text, ".hosted_tool_search = " ++ value) != null);
+        const stated = try withFlags(a, "\"supports_vision\":true,\"supports_tool_search\":" ++ value);
+        try testing.expect(std.mem.indexOf(u8, stated.text, ".tool_search = " ++ value) != null);
     }
     inline for (.{ "null", "1", "\"true\"" }) |value| {
-        try testing.expectError(Error.InvalidDocument, withFlags(a, "\"supports_vision\":true,\"supports_hosted_tool_search\":" ++ value));
+        try testing.expectError(Error.InvalidDocument, withFlags(a, "\"supports_vision\":true,\"supports_tool_search\":" ++ value));
     }
-    const supported = try std.mem.replaceOwned(u8, a, one_provider, "\"supports_vision\":true", "\"supports_vision\":true,\"supports_hosted_tool_search\":true");
+    const supported = try std.mem.replaceOwned(u8, a, one_provider, "\"supports_vision\":true", "\"supports_vision\":true,\"supports_tool_search\":true");
     const chat = try std.mem.replaceOwned(u8, a, supported, "anthropic_messages", "openai_chat");
     try testing.expectError(Error.InvalidDocument, generate(a, chat));
     const no_tools = try std.mem.replaceOwned(u8, a, supported, "\"supports_tools\":true", "\"supports_tools\":false");

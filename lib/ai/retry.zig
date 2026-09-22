@@ -46,7 +46,6 @@ pub fn decide(policy: Policy, attempt: Attempt, jitter: f64) ?u64 {
     return @max(asked, computed); // A server delay is a floor, so `retry-after: 0` cannot skip the backoff.
 }
 
-/// Return the computed delay for the attempt that just failed.
 fn backoff(policy: Policy, number: u8, jitter: f64) u64 {
     const shift: u6 = @intCast(@min(number - 1, 16));
     const raw = policy.base_ms *| (@as(u64, 1) << shift);

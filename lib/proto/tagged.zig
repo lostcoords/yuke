@@ -88,8 +88,6 @@ test "tagged unions round-trip one representative value each" {
         .{ .union_type = message.AssistantPart, .json = "{\"type\":\"text\",\"id\":7,\"text\":\"hello\"}" },
         .{ .union_type = message.PartFinal, .json = "{\"type\":\"reasoning\",\"signature\":\"sig\"}" },
         .{ .union_type = message.PartFinal, .json = "{\"type\":\"redacted_reasoning\",\"data\":\"opaque\"}" },
-        .{ .union_type = message.AssistantPart, .json = "{\"type\":\"tool_search\",\"id\":0,\"protocol\":\"anthropic\",\"data\":\"{}\"}" },
-        .{ .union_type = message.PartFinal, .json = "{\"type\":\"tool_search\",\"data\":\"{}\"}" },
         .{ .union_type = input.Input, .json = "{\"type\":\"content\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}" },
         .{ .union_type = run.RunOutcome, .json = "{\"type\":\"failed\",\"code\":\"timeout\",\"message\":\"provider timed out\"}" },
         .{ .union_type = tool.ToolState, .json = "{\"type\":\"running\",\"started_at_ms\":100,\"output\":\"partial\"}" },

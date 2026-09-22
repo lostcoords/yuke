@@ -824,7 +824,7 @@
           "presence": "optional"
         },
         {
-          "name": "supports_hosted_tool_search",
+          "name": "supports_tool_search",
           "type": "bool",
           "presence": "optional"
         },
@@ -1933,38 +1933,6 @@
         {
           "name": "state",
           "type": "ToolState",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "ToolSearchPart",
-      "doc": "This part preserves native search JSON in its original block position.",
-      "fields": [
-        {
-          "name": "id",
-          "type": "PartId",
-          "presence": "required"
-        },
-        {
-          "name": "protocol",
-          "type": "ToolSearchProtocol",
-          "presence": "required"
-        },
-        {
-          "name": "data",
-          "type": "string",
-          "presence": "defaulted"
-        }
-      ]
-    },
-    {
-      "name": "ToolSearchFinal",
-      "doc": "The engine attaches a validated native search record at block stop.",
-      "fields": [
-        {
-          "name": "data",
-          "type": "string",
           "presence": "required"
         }
       ]
@@ -3716,10 +3684,6 @@
         {
           "tag": "tool",
           "type": "ToolPart"
-        },
-        {
-          "tag": "tool_search",
-          "type": "ToolSearchPart"
         }
       ]
     },
@@ -3754,10 +3718,6 @@
         {
           "tag": "redacted_reasoning",
           "type": "RedactedReasoningFinal"
-        },
-        {
-          "tag": "tool_search",
-          "type": "ToolSearchFinal"
         }
       ]
     },
@@ -4783,21 +4743,6 @@
         {
           "name": "openai_chat",
           "wire": "openai_chat"
-        },
-        {
-          "name": "openai_responses",
-          "wire": "openai_responses"
-        }
-      ]
-    },
-    {
-      "name": "ToolSearchProtocol",
-      "doc": "The native search formats this client can replay.",
-      "numeric": false,
-      "values": [
-        {
-          "name": "anthropic",
-          "wire": "anthropic"
         },
         {
           "name": "openai_responses",
