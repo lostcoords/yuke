@@ -224,7 +224,8 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, repl
                 try jw.objectField("function");
                 try jw.beginObject();
                 try json.field(jw, "name", tool_use.name);
-                try json.field(jw, "arguments", tool_use.arguments);
+                // A caller may send no arguments; the endpoint reads a JSON object text.
+                try json.field(jw, "arguments", if (tool_use.arguments.len == 0) "{}" else tool_use.arguments);
                 try jw.endObject();
                 try jw.endObject();
             },
@@ -378,6 +379,7 @@ fn writeReasoning(
 
 const testing = std.testing;
 const expectJson = request_testing.forSerializer(serialize).expectJson;
+const expectError = request_testing.forSerializer(serialize).expectError;
 
 // The live bug: a replayed reasoning block used to fail the whole turn.
 test "a host with no replay drops the reasoning block instead of failing" {
@@ -650,9 +652,7 @@ test "a part refuses a source its shape cannot carry" {
     };
     for (cases) |media| {
         const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = media } }};
-        var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-        defer buf.deinit();
-        try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "m", .wire = .{ .openai_chat = .{} }, .max_output_tokens = 8 }, &blocks));
+        try expectError(error.UnsupportedContent, .{ .model = "m", .wire = .{ .openai_chat = .{} }, .max_output_tokens = 8 }, &blocks);
     }
 }
 
@@ -676,4 +676,14 @@ test "Chat Completions refuses native deferral instead of silent eager exposure"
         .tools = &.{.{ .name = "mcp_read", .description = "read", .input_schema = "{}", .defer_loading = true }},
     }, &.{.{ .role = .user, .value = .{ .text = "read" } }}));
     try testing.expectEqual(@as(usize, 0), buf.written().len);
+}
+
+test "a call with no arguments sends the empty object" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "c", .name = "ls", .arguments = "" } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "ok", .is_error = false } } },
+    };
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{"name":"ls","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c","content":"ok"}]}
+    , .{ .model = "m", .wire = .{ .openai_chat = .{} }, .max_output_tokens = 8 }, &blocks);
 }

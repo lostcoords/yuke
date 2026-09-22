@@ -9,7 +9,7 @@ const ir = @import("../request/ir.zig");
 
 const StreamEvent = event.StreamEvent;
 
-pub const Error = error{ Protocol, OutOfMemory } || answer.Error;
+pub const Error = json.Error;
 
 const ResponsesEvent = enum {
     @"response.created",
@@ -81,14 +81,14 @@ pub const Reducer = struct {
         const blocks = self.blocks.items;
         for (blocks) |*block| {
             block.args.deinit(self.gpa);
-            json.release(self.gpa, block.call_id);
-            json.release(self.gpa, block.name);
-            json.release(self.gpa, block.data);
-            if (block.authoritative_args) |arguments| json.release(self.gpa, arguments);
+            self.gpa.free(block.call_id);
+            self.gpa.free(block.name);
+            self.gpa.free(block.data);
+            if (block.authoritative_args) |arguments| self.gpa.free(arguments);
         }
         self.blocks.deinit(self.gpa);
         self.outputs.deinit(self.gpa);
-        json.release(self.gpa, self.raw_stop_reason);
+        self.gpa.free(self.raw_stop_reason);
         self.* = undefined;
     }
 
@@ -126,7 +126,7 @@ pub const Reducer = struct {
     }
 
     fn onOutputItemAdded(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const index = try outputIndex(root);
+        const index = try json.fieldIndex(root, "output_index");
         const item = json.fieldGet(root, "item") orelse return error.Protocol;
         const item_type = json.fieldStr(item, "type") orelse return error.Protocol;
 
@@ -150,8 +150,8 @@ pub const Reducer = struct {
         const name = if (search) ir.search_tool_name else json.fieldStr(item, "name") orelse return error.Protocol;
         const block = try self.addBlock(.tool);
         // The search item may name its call only when it is done.
-        if (json.fieldStr(item, "call_id")) |call_id| block.call_id = try json.own(self.gpa, call_id) else if (!search) return error.Protocol;
-        block.name = try json.own(self.gpa, name);
+        if (json.fieldStr(item, "call_id")) |call_id| block.call_id = try self.gpa.dupe(u8, call_id) else if (!search) return error.Protocol;
+        block.name = try self.gpa.dupe(u8, name);
         const id: event.BlockId = @intCast(self.blocks.items.len - 1);
         entry.value_ptr.kind = .tool;
         entry.value_ptr.tool = id;
@@ -159,7 +159,7 @@ pub const Reducer = struct {
     }
 
     fn onContentPartAdded(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        _ = try contentIndex(root);
+        _ = try json.fieldIndex(root, "content_index");
         const output = try self.outputFor(root);
         const part = json.fieldGet(root, "part") orelse return error.Protocol;
         const part_type = json.fieldStr(part, "type") orelse return error.Protocol;
@@ -199,8 +199,7 @@ pub const Reducer = struct {
         const block = try self.openBlock(id);
         const fragment = json.fieldStr(root, "delta") orelse return error.Protocol;
         if (block.authoritative_args != null) return error.Protocol;
-        try json.checkToolArgSize(block.args.items.len, fragment, event.max_tool_arg_bytes);
-        try block.args.appendSlice(self.gpa, fragment);
+        try json.appendArgs(self.gpa, &block.args, fragment);
         try out.append(self.gpa, .{ .tool_input_delta = .{ .block = id, .partial_json = fragment } });
     }
 
@@ -211,7 +210,7 @@ pub const Reducer = struct {
     }
 
     fn onContentPartDone(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        _ = try contentIndex(root);
+        _ = try json.fieldIndex(root, "content_index");
         const output = try self.outputFor(root);
         const part = json.fieldGet(root, "part") orelse return error.Protocol;
         const part_type = json.fieldStr(part, "type") orelse return error.Protocol;
@@ -226,7 +225,7 @@ pub const Reducer = struct {
         if (block.authoritative_args != null) return error.Protocol;
         const arguments = json.fieldStr(root, "arguments") orelse return error.Protocol;
         // Keep the accumulated buffer when the echo matches. Own a different value.
-        if (!std.mem.eql(u8, arguments, block.args.items)) block.authoritative_args = try json.own(self.gpa, arguments);
+        if (!std.mem.eql(u8, arguments, block.args.items)) block.authoritative_args = try self.gpa.dupe(u8, arguments);
     }
 
     fn onOutputItemDone(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
@@ -248,7 +247,7 @@ pub const Reducer = struct {
                     break :blk new_id;
                 };
                 if (id) |rid| {
-                    if (encrypted.len != 0) (try self.openBlock(rid)).data = try json.own(self.gpa, encrypted);
+                    if (encrypted.len != 0) (try self.openBlock(rid)).data = try self.gpa.dupe(u8, encrypted);
                     try self.stopBlockIfOpen(rid, out);
                 }
             },
@@ -265,15 +264,17 @@ pub const Reducer = struct {
                     return;
                 };
                 if (search) {
-                    if (block.call_id.len == 0) block.call_id = try json.own(self.gpa, json.fieldStr(item, "call_id") orelse return error.Protocol);
-                    // The search arguments arrive as one object, so the block takes its JSON text.
+                    if (block.call_id.len == 0) block.call_id = try self.gpa.dupe(u8, json.fieldStr(item, "call_id") orelse return error.Protocol);
+                    // The search arguments arrive as one object, so the block writes its JSON text in place.
                     const object = json.fieldGet(item, "arguments") orelse return error.Protocol;
                     if (object != .object) return error.Protocol;
-                    const text = try std.json.Stringify.valueAlloc(self.gpa, object, .{});
-                    defer self.gpa.free(text);
-                    try json.checkToolArgSize(0, text, event.max_tool_arg_bytes);
                     block.args.clearRetainingCapacity();
-                    try block.args.appendSlice(self.gpa, text);
+                    var writer: std.Io.Writer.Allocating = .fromArrayList(self.gpa, &block.args);
+                    const written = std.json.Stringify.value(object, .{}, &writer.writer);
+                    // The block owns the buffer again before any exit, so its deinit frees it.
+                    block.args = writer.toArrayList();
+                    written catch return error.OutOfMemory;
+                    if (block.args.items.len > event.max_tool_arg_bytes) return error.Protocol;
                     try self.stopBlock(id, out);
                     return;
                 }
@@ -285,7 +286,7 @@ pub const Reducer = struct {
                     if (block.authoritative_args) |echo| {
                         if (!std.mem.eql(u8, echo, arguments)) return error.Protocol;
                     } else if (!std.mem.eql(u8, arguments, block.args.items)) {
-                        block.authoritative_args = try json.own(self.gpa, arguments);
+                        block.authoritative_args = try self.gpa.dupe(u8, arguments);
                     }
                 }
                 try self.stopBlock(id, out);
@@ -350,12 +351,12 @@ pub const Reducer = struct {
             try self.stopBlockIfOpen(@intCast(i), out);
         }
         self.done_emitted = true;
-        try json.appendDone(self.gpa, out, self.stop_reason, self.raw_stop_reason, self.usage);
+        try out.append(self.gpa, .{ .done = .{ .stop_reason = self.stop_reason, .raw_stop_reason = self.raw_stop_reason, .usage = self.usage } });
     }
 
     /// Find the item an event names. An `item_id` that names another item rejects the frame.
     fn outputFor(self: *Reducer, root: std.json.Value) Error!*Output {
-        const output = self.outputs.getPtr(try outputIndex(root)) orelse return error.Protocol;
+        const output = self.outputs.getPtr(try json.fieldIndex(root, "output_index")) orelse return error.Protocol;
         try checkItemId(output, json.fieldStr(root, "item_id"));
         return output;
     }
@@ -418,7 +419,7 @@ pub const Reducer = struct {
             .tool => .{ .tool = .{
                 .call_id = block.call_id,
                 .name = block.name,
-                .arguments = if (block.authoritative_args) |arguments| arguments else if (block.args.items.len == 0) "{}" else block.args.items,
+                .arguments = block.authoritative_args orelse json.arguments(block.args.items),
             } },
         };
         try out.append(self.gpa, .{ .block_stopped = .{ .block = id, .result = result } });
@@ -444,16 +445,6 @@ fn checkItemId(output: *const Output, id: ?[]const u8) Error!void {
     const hash = itemIdHash(id);
     if (output.item_id == 0 or hash == 0) return;
     if (output.item_id != hash) return error.Protocol;
-}
-
-/// The output index must be present, non-negative, and representable as `usize`.
-fn outputIndex(root: std.json.Value) Error!usize {
-    return json.fieldIndex(root, "output_index") orelse error.Protocol;
-}
-
-/// The content index must be present, non-negative, and representable as `usize`.
-fn contentIndex(root: std.json.Value) Error!usize {
-    return json.fieldIndex(root, "content_index") orelse error.Protocol;
 }
 
 /// Name the block one content part belongs to. An unmapped part type is a no-op, never a failure.
@@ -884,6 +875,19 @@ test "malformed JSON degrades to a protocol error" {
     var h = Harness.init();
     defer h.deinit();
     try testing.expectError(error.Protocol, h.feed(&.{"{not json"}));
+}
+
+test "a client search call frees everything on allocation failure at every point" {
+    // The search arguments move into the block buffer through a writer, so every failure point must leave the block owner.
+    try testing.checkAllAllocationFailures(testing.allocator, stream_testing.decodeAll(Reducer), .{
+        &.{
+            \\{"type":"response.output_item.added","output_index":0,"item":{"type":"tool_search_call","execution":"client","call_id":"call_9","status":"in_progress"}}
+            ,
+            \\{"type":"response.output_item.done","output_index":0,"item":{"type":"tool_search_call","execution":"client","call_id":"call_9","status":"completed","arguments":{"query":"read","limit":2}}}
+            ,
+            \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+        },
+    });
 }
 
 test "decode frees everything on allocation failure at every point" {

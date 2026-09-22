@@ -47,12 +47,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
         }
         try jw.endArray();
         // This host spells the control as an object, so only a refusal writes the member.
-        if (request.tool_choice == .none) {
-            try jw.objectField("tool_choice");
-            try jw.beginObject();
-            try json.field(&jw, "type", "none");
-            try jw.endObject();
-        }
+        if (request.tool_choice == .none) try json.nested(&jw, "tool_choice", "type", "none");
     }
 
     // A thinking block cannot carry the marker. Mark the last eligible block.
@@ -119,7 +114,7 @@ fn writeOutputConfig(jw: *std.json.Stringify, reasoning: ir.ReasoningControl, sc
 
 fn beginMessage(jw: *std.json.Stringify, role: ir.Role) !void {
     try jw.beginObject();
-    try json.field(jw, "role", if (role == .user) "user" else "assistant");
+    try json.field(jw, "role", @tagName(role));
     try jw.objectField("content");
     try jw.beginArray();
 }
@@ -254,6 +249,7 @@ fn writeCacheControl(jw: *std.json.Stringify) !void {
 
 const testing = std.testing;
 const expectJson = request_testing.forSerializer(serialize).expectJson;
+const expectError = request_testing.forSerializer(serialize).expectError;
 
 test "a plain user turn with a system prompt" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
@@ -422,9 +418,7 @@ test "an image and a document reach their own block shapes" {
 test "anthropic reads no sound and no moving picture" {
     inline for (.{ "audio/mpeg", "video/mp4" }) |mime| {
         const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = mime } } }};
-        var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-        defer buf.deinit();
-        try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, &blocks));
+        try expectError(error.UnsupportedContent, .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, &blocks);
     }
 }
 
@@ -465,9 +459,7 @@ test "a plain-text document rides in a text source, and an unknown type is refus
 
     // A document is a PDF or plain text; anything else has no source shape and must not be mislabelled.
     const spreadsheet = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "application/zip" } } }};
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, &spreadsheet));
+    try expectError(error.UnsupportedContent, .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, &spreadsheet);
 }
 
 test "sampling members ride beside the token ceiling" {

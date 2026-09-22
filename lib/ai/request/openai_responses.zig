@@ -54,23 +54,15 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
         try jw.objectField("tools");
         try jw.beginArray();
         for (request.tools) |tool| {
-            try jw.beginObject();
             if (native and std.mem.eql(u8, tool.name, ir.search_tool_name)) {
+                try jw.beginObject();
                 try json.field(&jw, "type", "tool_search");
                 try json.field(&jw, "execution", "client");
                 try json.field(&jw, "description", tool.description);
                 try jw.objectField("parameters");
                 try json.writeRawJson(&jw, tool.input_schema);
-            } else {
-                try json.field(&jw, "type", "function");
-                try json.field(&jw, "name", tool.name);
-                try json.field(&jw, "description", tool.description);
-                if (tool.defer_loading) try json.field(&jw, "defer_loading", true);
-                try jw.objectField("parameters");
-                try json.writeRawJson(&jw, tool.input_schema);
-                try json.field(&jw, "strict", tool.strict);
-            }
-            try jw.endObject();
+                try jw.endObject();
+            } else try writeFunctionTool(&jw, tool, tool.defer_loading);
         }
         try jw.endArray();
         try json.field(&jw, "tool_choice", @tagName(request.tool_choice));
@@ -78,7 +70,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
 
     try jw.objectField("input");
     try jw.beginArray();
-    var message: ?Message = null;
+    var message: ?ir.Role = null;
     for (blocks, 0..) |block, index| {
         switch (block.value) {
             .text => |text| switch (block.role) {
@@ -129,7 +121,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
                     try json.field(&jw, "type", "function_call");
                     try json.field(&jw, "call_id", tool_use.call_id);
                     try json.field(&jw, "name", tool_use.name);
-                    try json.field(&jw, "arguments", tool_use.arguments);
+                    // A caller may send no arguments; the endpoint reads a JSON object text.
+                    try json.field(&jw, "arguments", if (tool_use.arguments.len == 0) "{}" else tool_use.arguments);
                 }
                 try jw.endObject();
             },
@@ -176,25 +169,23 @@ fn lastUserText(blocks: []const ir.Block) ?usize {
     return null;
 }
 
-const Message = enum { user, assistant };
-
-fn ensureMessage(jw: *std.json.Stringify, message: *?Message, role: Message) !void {
+fn ensureMessage(jw: *std.json.Stringify, message: *?ir.Role, role: ir.Role) !void {
     if (message.* == role) return;
     try closeMessage(jw, message);
     try beginMessage(jw, role);
     message.* = role;
 }
 
-fn closeMessage(jw: *std.json.Stringify, message: *?Message) !void {
+fn closeMessage(jw: *std.json.Stringify, message: *?ir.Role) !void {
     if (message.* == null) return;
     try endMessage(jw);
     message.* = null;
 }
 
-fn beginMessage(jw: *std.json.Stringify, role: Message) !void {
+fn beginMessage(jw: *std.json.Stringify, role: ir.Role) !void {
     try jw.beginObject();
     try json.field(jw, "type", "message");
-    try json.field(jw, "role", if (role == .user) "user" else "assistant");
+    try json.field(jw, "role", @tagName(role));
     try jw.objectField("content");
     try jw.beginArray();
 }
@@ -254,6 +245,19 @@ fn writeTextFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void {
     try jw.endObject();
 }
 
+/// Write one function tool. A tool that a search loads keeps `defer_loading`.
+fn writeFunctionTool(jw: *std.json.Stringify, tool: ir.Tool, defer_loading: bool) !void {
+    try jw.beginObject();
+    try json.field(jw, "type", "function");
+    try json.field(jw, "name", tool.name);
+    try json.field(jw, "description", tool.description);
+    if (defer_loading) try json.field(jw, "defer_loading", true);
+    try jw.objectField("parameters");
+    try json.writeRawJson(jw, tool.input_schema);
+    try json.field(jw, "strict", tool.strict);
+    try jw.endObject();
+}
+
 /// Report whether the call a result answers is the search tool. The call comes before its result.
 fn answersSearch(before: []const ir.Block, call_id: []const u8) bool {
     var index = before.len;
@@ -275,16 +279,8 @@ fn writeSearchOutput(jw: *std.json.Stringify, tools: []const ir.Tool, tool_resul
     try jw.objectField("tools");
     try jw.beginArray();
     for (tool_result.loaded) |name| {
-        const loaded = ir.declaredTool(tools, name).?; // `validate` proves each loaded tool is declared.
-        try jw.beginObject();
-        try json.field(jw, "type", "function");
-        try json.field(jw, "name", loaded.name);
-        try json.field(jw, "description", loaded.description);
-        try json.field(jw, "defer_loading", true);
-        try jw.objectField("parameters");
-        try json.writeRawJson(jw, loaded.input_schema);
-        try json.field(jw, "strict", loaded.strict);
-        try jw.endObject();
+        // `validate` proves each loaded tool is declared.
+        try writeFunctionTool(jw, ir.declaredTool(tools, name).?.*, true);
     }
     try jw.endArray();
     try jw.endObject();
@@ -328,6 +324,7 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
 
 const testing = std.testing;
 const expectJson = request_testing.forSerializer(serialize).expectJson;
+const expectError = request_testing.forSerializer(serialize).expectError;
 
 test "a plain user turn with a system prompt" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
@@ -435,9 +432,7 @@ test "a deferred catalog declares the client search tool and replays a search as
         &blocks,
     );
     // Without a deferred tool the search tool is an ordinary function and a loaded definition has no place.
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try testing.expectError(error.UnsupportedLoadedTools, serialize(&buf.writer, .{ .model = "gpt-5", .wire = .{ .openai_responses = .{} }, .tools = tools[0..1], .max_output_tokens = 8 }, &blocks));
+    try expectError(error.UnsupportedLoadedTools, .{ .model = "gpt-5", .wire = .{ .openai_responses = .{} }, .tools = tools[0..1], .max_output_tokens = 8 }, &blocks);
 }
 
 test "tools declare a flat raw schema with strict mode" {
@@ -472,9 +467,7 @@ test "a schema constrains the response through the text format" {
 test "this api reads no sound, so audio never reaches an input part" {
     // The Responses input union is text, image and file alone; audio needs Chat Completions.
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "audio/wav" } } }};
-    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer buf.deinit();
-    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .wire = .{ .openai_responses = .{} }, .max_output_tokens = 8 }, &blocks));
+    try expectError(error.UnsupportedContent, .{ .model = "gpt-5", .wire = .{ .openai_responses = .{} }, .max_output_tokens = 8 }, &blocks);
 }
 
 test "each attachment kind reaches its own input part" {
@@ -559,4 +552,14 @@ test "the codex dialect refuses the sampling members too" {
         .{ .model = "gpt-5", .wire = .{ .openai_responses = .{ .dialect = .codex } }, .max_output_tokens = 8, .temperature = 0.7, .top_p = 0.9 },
         &blocks,
     );
+}
+
+test "a call with no arguments sends the empty object" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "c", .name = "ls", .arguments = "" } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "ok", .is_error = false } } },
+    };
+    try expectJson(
+        \\{"model":"m","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call","call_id":"c","name":"ls","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}
+    , .{ .model = "m", .wire = .{ .openai_responses = .{} }, .max_output_tokens = 8 }, &blocks);
 }

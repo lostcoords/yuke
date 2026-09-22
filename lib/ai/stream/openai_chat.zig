@@ -8,7 +8,7 @@ const types = @import("../types.zig");
 
 const StreamEvent = event.StreamEvent;
 
-pub const Error = error{ Protocol, OutOfMemory } || answer.Error;
+pub const Error = json.Error;
 
 /// An active content block. The reducer owns its terminal fields until `deinit`.
 const Block = struct {
@@ -39,11 +39,11 @@ pub const Reducer = struct {
     pub fn deinit(self: *Reducer) void {
         for (self.blocks.items) |*b| {
             b.args.deinit(self.gpa);
-            json.release(self.gpa, b.call_id);
-            json.release(self.gpa, b.name);
+            self.gpa.free(b.call_id);
+            self.gpa.free(b.name);
         }
         self.blocks.deinit(self.gpa);
-        json.release(self.gpa, self.raw_stop_reason);
+        self.gpa.free(self.raw_stop_reason);
         self.* = undefined;
     }
 
@@ -68,7 +68,7 @@ pub const Reducer = struct {
 
         if (choices.items.len > 1) return error.Protocol; // The request sets n to 1.
         if (choices.items.len == 1) {
-            const index = json.fieldIndex(choices.items[0], "index") orelse return error.Protocol;
+            const index = try json.fieldIndex(choices.items[0], "index");
             if (index != 0) return error.Protocol;
             try self.onChoice(choices.items[0], out);
         }
@@ -130,11 +130,11 @@ pub const Reducer = struct {
             try self.stopOpen(out);
         }
         try self.stopTools(out);
-        return self.startBlock(kind, null, "", "", out);
+        return self.startBlock(kind, null, out);
     }
 
     fn onToolCall(self: *Reducer, call: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const index = try toolIndex(call);
+        const index = try json.fieldIndex(call, "index");
         // Only `index` is required on a chunk, so an entry with no function carries nothing to add.
         const function = json.fieldGet(call, "function") orelse return;
         const function_object = switch (function) {
@@ -143,7 +143,7 @@ pub const Reducer = struct {
         };
         try self.stopOpen(out);
         const block_index = self.findTool(index) orelse blk: {
-            break :blk try self.startBlock(.tool, index, (try identity(call, "id")) orelse "", (try identity(function, "name")) orelse "", out);
+            break :blk try self.startBlock(.tool, index, out);
         };
         const block = &self.blocks.items[block_index];
         if (!block.open) return error.Protocol; // The decode boundary returns an error for closed stream state.
@@ -155,8 +155,7 @@ pub const Reducer = struct {
 
         if (function_object.get("arguments")) |arguments| switch (arguments) {
             .string => |fragment| {
-                try json.checkToolArgSize(block.args.items.len, fragment, event.max_tool_arg_bytes);
-                try block.args.appendSlice(self.gpa, fragment);
+                try json.appendArgs(self.gpa, &block.args, fragment);
                 try out.append(self.gpa, .{ .tool_input_delta = .{ .block = @intCast(block_index), .partial_json = fragment } });
             },
             .null => {},
@@ -177,8 +176,6 @@ pub const Reducer = struct {
         self: *Reducer,
         kind: event.BlockKind,
         tool_index: ?usize,
-        call_id: []const u8,
-        name: []const u8,
         out: *std.ArrayList(StreamEvent),
     ) Error!usize {
         std.debug.assert(self.open_block == null);
@@ -186,9 +183,6 @@ pub const Reducer = struct {
         try self.blocks.append(self.gpa, .{ .kind = kind, .tool_index = tool_index });
         const index = self.blocks.items.len - 1;
         std.debug.assert(index < event.max_blocks);
-        const block = &self.blocks.items[index];
-        if (call_id.len != 0) block.call_id = try json.own(self.gpa, call_id);
-        if (name.len != 0) block.name = try json.own(self.gpa, name);
         try out.append(self.gpa, .{ .block_started = .{ .block = @intCast(index), .kind = kind } });
         if (kind != .tool) self.open_block = index;
         return index;
@@ -208,7 +202,7 @@ pub const Reducer = struct {
             if (!std.mem.eql(u8, destination.*, bytes)) return error.Protocol;
             return;
         }
-        destination.* = try json.own(self.gpa, bytes);
+        destination.* = try self.gpa.dupe(u8, bytes);
     }
 
     /// Stop the open block. A stopped block never reopens.
@@ -239,7 +233,7 @@ pub const Reducer = struct {
             .tool => .{ .tool = .{
                 .call_id = block.call_id,
                 .name = block.name,
-                .arguments = if (block.args.items.len == 0) "{}" else block.args.items,
+                .arguments = json.arguments(block.args.items),
             } },
         };
         try out.append(self.gpa, .{ .block_stopped = .{ .block = @intCast(index), .result = result } });
@@ -254,7 +248,7 @@ pub const Reducer = struct {
         // A refusal outranks the finish reason, because the model declined the request.
         if (self.refused) self.stop_reason = .refusal;
         self.done_emitted = true;
-        try json.appendDone(self.gpa, out, self.stop_reason, self.raw_stop_reason, self.usage);
+        try out.append(self.gpa, .{ .done = .{ .stop_reason = self.stop_reason, .raw_stop_reason = self.raw_stop_reason, .usage = self.usage } });
     }
 };
 
@@ -265,11 +259,6 @@ fn mapStopReason(raw: []const u8) types.FinishReason {
     if (std.mem.eql(u8, raw, "function_call")) return .tool_calls;
     if (std.mem.eql(u8, raw, "content_filter")) return .content_filter;
     return .unknown;
-}
-
-/// The tool index must be present, non-negative, and representable as `usize`.
-fn toolIndex(call: std.json.Value) Error!usize {
-    return json.fieldIndex(call, "index") orelse error.Protocol;
 }
 
 fn identity(value: std.json.Value, key: []const u8) Error!?[]const u8 {

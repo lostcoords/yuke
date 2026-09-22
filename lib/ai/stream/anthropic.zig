@@ -8,7 +8,7 @@ const types = @import("../types.zig");
 
 const StreamEvent = event.StreamEvent;
 
-pub const Error = error{ Protocol, OutOfMemory } || answer.Error;
+pub const Error = json.Error;
 
 const AnthropicEvent = enum {
     message_start,
@@ -52,12 +52,12 @@ pub const Reducer = struct {
         for (self.blocks.items) |*b| {
             b.args.deinit(self.gpa);
             b.signature.deinit(self.gpa);
-            json.release(self.gpa, b.call_id);
-            json.release(self.gpa, b.name);
-            json.release(self.gpa, b.data);
+            self.gpa.free(b.call_id);
+            self.gpa.free(b.name);
+            self.gpa.free(b.data);
         }
         self.blocks.deinit(self.gpa);
-        json.release(self.gpa, self.raw_stop_reason);
+        self.gpa.free(self.raw_stop_reason);
         self.* = undefined;
     }
 
@@ -104,7 +104,7 @@ pub const Reducer = struct {
     }
 
     fn onBlockStart(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const index = try blockIndex(root);
+        const index = try json.fieldIndex(root, "index");
         if (index != self.blocks.items.len) return error.Protocol; // Block indexes must arrive in dense order.
         if (self.blocks.items.len >= event.max_blocks) return error.Protocol;
 
@@ -134,9 +134,9 @@ pub const Reducer = struct {
 
         try self.blocks.append(self.gpa, .{ .kind = kind, .ignored = ignored });
         const block = &self.blocks.items[index];
-        if (data.len != 0) block.data = try json.own(self.gpa, data);
-        if (call_id.len != 0) block.call_id = try json.own(self.gpa, call_id);
-        if (name.len != 0) block.name = try json.own(self.gpa, name);
+        if (data.len != 0) block.data = try self.gpa.dupe(u8, data);
+        if (call_id.len != 0) block.call_id = try self.gpa.dupe(u8, call_id);
+        if (name.len != 0) block.name = try self.gpa.dupe(u8, name);
 
         // A dropped block emits nothing, so the neutral ids stay dense from 0 for the fold.
         if (!ignored) {
@@ -160,7 +160,7 @@ pub const Reducer = struct {
     }
 
     fn onBlockDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const index = try blockIndex(root);
+        const index = try json.fieldIndex(root, "index");
         const block = try self.openBlock(index);
         if (block.ignored) return;
 
@@ -179,15 +179,14 @@ pub const Reducer = struct {
         } else if (std.mem.eql(u8, delta_type, "input_json_delta")) {
             if (block.kind != .tool) return error.Protocol;
             const fragment = json.fieldStr(delta, "partial_json") orelse return error.Protocol;
-            try json.checkToolArgSize(block.args.items.len, fragment, event.max_tool_arg_bytes);
-            try block.args.appendSlice(self.gpa, fragment);
+            try json.appendArgs(self.gpa, &block.args, fragment);
             try out.append(self.gpa, .{ .tool_input_delta = .{ .block = block.emitted_id, .partial_json = fragment } });
         }
         // Unknown delta types are no-ops.
     }
 
     fn onBlockStop(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
-        const index = try blockIndex(root);
+        const index = try json.fieldIndex(root, "index");
         const block = try self.openBlock(index);
         block.open = false;
         if (block.ignored) return;
@@ -199,7 +198,7 @@ pub const Reducer = struct {
             .tool => .{ .tool = .{
                 .call_id = block.call_id,
                 .name = block.name,
-                .arguments = if (block.args.items.len == 0) "{}" else block.args.items,
+                .arguments = json.arguments(block.args.items),
             } },
         };
         try out.append(self.gpa, .{ .block_stopped = .{ .block = block.emitted_id, .result = result } });
@@ -225,7 +224,7 @@ pub const Reducer = struct {
         if (self.done_emitted) return error.Protocol;
         for (self.blocks.items) |b| if (b.open and !b.ignored) return error.Protocol; // An emitted block closes before the done event.
         self.done_emitted = true;
-        try json.appendDone(self.gpa, out, self.stop_reason, self.raw_stop_reason, self.usage);
+        try out.append(self.gpa, .{ .done = .{ .stop_reason = self.stop_reason, .raw_stop_reason = self.raw_stop_reason, .usage = self.usage } });
     }
 
     fn openBlock(self: *Reducer, index: usize) Error!*Block {
@@ -246,11 +245,6 @@ fn mapStopReason(raw: []const u8) types.FinishReason {
     if (std.mem.eql(u8, raw, "pause_turn")) return .pause;
     // The reducer keeps only the raw value for a new reason.
     return .unknown;
-}
-
-/// Return the block index from an event. Reject a missing, negative, or huge value.
-fn blockIndex(root: std.json.Value) Error!usize {
-    return json.fieldIndex(root, "index") orelse error.Protocol;
 }
 
 const testing = std.testing;
