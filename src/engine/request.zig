@@ -48,7 +48,7 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
     const built = try provider.request_builder.build(arena, projected.messages, .{
         .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
         .tools = build.tools,
-        .native_references = slot.tools.?.deferral == .native,
+        .native = slot.tools.?.deferral == .native,
         .modalities = model.modalities,
         .blobs = blobs.lookup(),
     });

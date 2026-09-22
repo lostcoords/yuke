@@ -702,6 +702,7 @@ export function mcp(options = {}) {
               limit: { type: "integer", description: "How many tools to load, 1 to " + LIMIT_MAX + ". The default is " + LIMIT_DEFAULT + "." },
             },
             required: ["query"],
+            additionalProperties: false,
           },
           execute: async (args) => searchCatalog(servers, args),
         });

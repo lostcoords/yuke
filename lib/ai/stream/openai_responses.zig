@@ -5,6 +5,7 @@ const event = @import("event.zig");
 const json = @import("json.zig");
 const answer = @import("../answer.zig");
 const types = @import("../types.zig");
+const ir = @import("../request/ir.zig");
 
 const StreamEvent = event.StreamEvent;
 
@@ -142,12 +143,14 @@ pub const Reducer = struct {
             entry.value_ptr.kind = .reasoning; // The reasoning block starts on the first delta.
             return;
         }
-        if (!std.mem.eql(u8, item_type, "function_call")) return;
+        // A client search call is a call of the search tool; the model answers to its declared name.
+        const search = std.mem.eql(u8, item_type, "tool_search_call") and std.mem.eql(u8, json.fieldStr(item, "execution") orelse "", "client");
+        if (!search and !std.mem.eql(u8, item_type, "function_call")) return;
 
-        const call_id = json.fieldStr(item, "call_id") orelse return error.Protocol;
-        const name = json.fieldStr(item, "name") orelse return error.Protocol;
+        const name = if (search) ir.search_tool_name else json.fieldStr(item, "name") orelse return error.Protocol;
         const block = try self.addBlock(.tool);
-        block.call_id = try json.own(self.gpa, call_id);
+        // The search item may name its call only when it is done.
+        if (json.fieldStr(item, "call_id")) |call_id| block.call_id = try json.own(self.gpa, call_id) else if (!search) return error.Protocol;
         block.name = try json.own(self.gpa, name);
         const id: event.BlockId = @intCast(self.blocks.items.len - 1);
         entry.value_ptr.kind = .tool;
@@ -251,15 +254,29 @@ pub const Reducer = struct {
             },
             .ignored => {},
             .tool => {
-                if (!std.mem.eql(u8, item_type, "function_call")) return error.Protocol;
                 const id = output.tool orelse return error.Protocol;
                 const block = try self.openBlock(id);
+                const search = std.mem.eql(u8, block.name, ir.search_tool_name) and std.mem.eql(u8, item_type, "tool_search_call");
+                if (!search and !std.mem.eql(u8, item_type, "function_call")) return error.Protocol;
                 // A status other than `completed` marks a call the model never finished. Drop it.
                 if (json.fieldStr(item, "status")) |status| if (!std.mem.eql(u8, status, "completed")) {
                     block.open = false;
                     block.dropped = true;
                     return;
                 };
+                if (search) {
+                    if (block.call_id.len == 0) block.call_id = try json.own(self.gpa, json.fieldStr(item, "call_id") orelse return error.Protocol);
+                    // The search arguments arrive as one object, so the block takes its JSON text.
+                    const object = json.fieldGet(item, "arguments") orelse return error.Protocol;
+                    if (object != .object) return error.Protocol;
+                    const text = try std.json.Stringify.valueAlloc(self.gpa, object, .{});
+                    defer self.gpa.free(text);
+                    try json.checkToolArgSize(0, text, event.max_tool_arg_bytes);
+                    block.args.clearRetainingCapacity();
+                    try block.args.appendSlice(self.gpa, text);
+                    try self.stopBlock(id, out);
+                    return;
+                }
                 if (json.fieldGet(item, "arguments")) |value| {
                     const arguments = switch (value) {
                         .string => |arguments| arguments,
@@ -511,6 +528,24 @@ test "tool turn: input deltas stream and authoritative arguments surface at stop
 }
 
 // This is the shape that opencode zen relays: every item opens before the first one closes.
+test "a client search call becomes a call of the search tool with its arguments as JSON" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"type":"tool_search_call","execution":"client","call_id":"call_9","status":"in_progress"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"type":"tool_search_call","execution":"client","call_id":"call_9","status":"completed","arguments":{"query":"read","limit":2}}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{}}}
+    });
+    try testing.expectEqual(event.BlockKind.tool, h.out.items[0].block_started.kind);
+    const call = h.out.items[1].block_stopped.result.tool;
+    try testing.expectEqualStrings("call_9", call.call_id);
+    try testing.expectEqualStrings(ir.search_tool_name, call.name);
+    try testing.expectEqualStrings("{\"query\":\"read\",\"limit\":2}", call.arguments);
+    try testing.expectEqual(types.FinishReason.tool_calls, h.out.items[2].done.stop_reason);
+}
+
 test "parallel tool items interleave and each block keeps its own call" {
     var h = Harness.init();
     defer h.deinit();

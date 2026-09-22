@@ -45,18 +45,30 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
         try json.field(&jw, "instructions", default_instructions);
     }
 
+    // A deferred tool needs the native search tool, so a request that defers declares the search tool natively.
+    const native = for (request.tools) |tool| {
+        if (tool.defer_loading) break true;
+    } else false;
     if (request.tools.len != 0) {
         try jw.objectField("tools");
         try jw.beginArray();
         for (request.tools) |tool| {
             try jw.beginObject();
-            try json.field(&jw, "type", "function");
-            try json.field(&jw, "name", tool.name);
-            try json.field(&jw, "description", tool.description);
-            if (tool.defer_loading) try json.field(&jw, "defer_loading", true);
-            try jw.objectField("parameters");
-            try json.writeRawJson(&jw, tool.input_schema);
-            try json.field(&jw, "strict", tool.strict);
+            if (native and std.mem.eql(u8, tool.name, ir.search_tool_name)) {
+                try json.field(&jw, "type", "tool_search");
+                try json.field(&jw, "execution", "client");
+                try json.field(&jw, "description", tool.description);
+                try jw.objectField("parameters");
+                try json.writeRawJson(&jw, tool.input_schema);
+            } else {
+                try json.field(&jw, "type", "function");
+                try json.field(&jw, "name", tool.name);
+                try json.field(&jw, "description", tool.description);
+                if (tool.defer_loading) try json.field(&jw, "defer_loading", true);
+                try jw.objectField("parameters");
+                try json.writeRawJson(&jw, tool.input_schema);
+                try json.field(&jw, "strict", tool.strict);
+            }
             try jw.endObject();
         }
         try jw.endArray();
@@ -105,16 +117,29 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
             .tool_use => |tool_use| {
                 try closeMessage(&jw, &message);
                 try jw.beginObject();
-                try json.field(&jw, "type", "function_call");
-                try json.field(&jw, "call_id", tool_use.call_id);
-                try json.field(&jw, "name", tool_use.name);
-                try json.field(&jw, "arguments", tool_use.arguments);
+                if (native and std.mem.eql(u8, tool_use.name, ir.search_tool_name)) {
+                    try json.field(&jw, "type", "tool_search_call");
+                    try json.field(&jw, "execution", "client");
+                    try json.field(&jw, "call_id", tool_use.call_id);
+                    try json.field(&jw, "status", "completed");
+                    try jw.objectField("arguments");
+                    try json.writeRawJson(&jw, tool_use.arguments);
+                } else {
+                    try json.field(&jw, "type", "function_call");
+                    try json.field(&jw, "call_id", tool_use.call_id);
+                    try json.field(&jw, "name", tool_use.name);
+                    try json.field(&jw, "arguments", tool_use.arguments);
+                }
                 try jw.endObject();
             },
             .tool_result => |tool_result| {
                 try closeMessage(&jw, &message);
+                if (native and tool_result.search) {
+                    try writeSearchOutput(&jw, tool_result);
+                    continue;
+                }
                 try jw.beginObject();
-                if (tool_result.tool_references.len != 0) return error.UnsupportedToolReferences;
+                if (tool_result.tools_loaded.len != 0) return error.UnsupportedLoadedTools;
                 try json.field(&jw, "type", "function_call_output");
                 try json.field(&jw, "call_id", tool_result.call_id);
                 if (tool_result.media.len == 0) {
@@ -225,6 +250,30 @@ fn writeTextFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void {
     try json.field(jw, "type", "json_schema");
     try json.schemaMembers(jw, output.name, output.schema, output.strict);
     try jw.endObject();
+    try jw.endObject();
+}
+
+/// Answer a client search with its definitions. The API loads them at the end of the context, so the cache holds.
+fn writeSearchOutput(jw: *std.json.Stringify, tool_result: ir.Block.ToolResult) !void {
+    try jw.beginObject();
+    try json.field(jw, "type", "tool_search_output");
+    try json.field(jw, "execution", "client");
+    try json.field(jw, "call_id", tool_result.call_id);
+    try json.field(jw, "status", "completed");
+    try jw.objectField("tools");
+    try jw.beginArray();
+    for (tool_result.tools_loaded) |loaded| {
+        try jw.beginObject();
+        try json.field(jw, "type", "function");
+        try json.field(jw, "name", loaded.name);
+        try json.field(jw, "description", loaded.description);
+        try json.field(jw, "defer_loading", true);
+        try jw.objectField("parameters");
+        try json.writeRawJson(jw, loaded.input_schema);
+        try json.field(jw, "strict", loaded.strict);
+        try jw.endObject();
+    }
+    try jw.endArray();
     try jw.endObject();
 }
 
@@ -354,6 +403,28 @@ test "a reasoning block with no signature is omitted" {
         .{ .model = "gpt-5", .max_output_tokens = 8 },
         &blocks,
     );
+}
+
+test "a deferred catalog declares the client search tool and replays a search as its native pair" {
+    const tools = [_]ir.Tool{
+        .{ .name = ir.search_tool_name, .description = "Find.", .input_schema = "{\"type\":\"object\"}" },
+        .{ .name = "mcp_read", .description = "Read.", .input_schema = "{}", .defer_loading = true },
+    };
+    const blocks = [_]ir.Block{
+        .{ .role = .user, .value = .{ .text = "go" } },
+        .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_1", .name = ir.search_tool_name, .arguments = "{\"query\":\"read\"}" } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "found", .is_error = false, .tools_loaded = tools[1..], .search = true } } },
+    };
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"tool_search","execution":"client","description":"Find.","parameters":{"type":"object"}},{"type":"function","name":"mcp_read","description":"Read.","defer_loading":true,"parameters":{},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]},{"type":"tool_search_call","execution":"client","call_id":"call_1","status":"completed","arguments":{"query":"read"}},{"type":"tool_search_output","execution":"client","call_id":"call_1","status":"completed","tools":[{"type":"function","name":"mcp_read","description":"Read.","defer_loading":true,"parameters":{},"strict":false}]}]}
+    ,
+        .{ .model = "gpt-5", .tools = &tools, .max_output_tokens = 8 },
+        &blocks,
+    );
+    // Without a deferred tool the search tool is an ordinary function and a loaded definition has no place.
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try testing.expectError(error.UnsupportedLoadedTools, serialize(&buf.writer, .{ .model = "gpt-5", .tools = tools[0..1], .max_output_tokens = 8 }, &blocks));
 }
 
 test "tools declare a flat raw schema with strict mode" {

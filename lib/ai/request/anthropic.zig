@@ -169,7 +169,7 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
             try jw.beginObject();
             try json.field(jw, "type", "tool_result");
             try json.field(jw, "tool_use_id", tr.call_id);
-            if (tr.media.len == 0 and tr.tool_references.len == 0) {
+            if (tr.media.len == 0 and tr.tools_loaded.len == 0) {
                 try json.field(jw, "content", tr.content);
             } else {
                 // The API refuses an empty text block, so a result of media or references alone writes no text.
@@ -182,10 +182,10 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
                     try jw.endObject();
                 }
                 for (tr.media) |media| try writeMedia(jw, media, false);
-                for (tr.tool_references) |name| {
+                for (tr.tools_loaded) |loaded| {
                     try jw.beginObject();
                     try json.field(jw, "type", "tool_reference");
-                    try json.field(jw, "tool_name", name);
+                    try json.field(jw, "tool_name", loaded.name);
                     try jw.endObject();
                 }
                 try jw.endArray();
@@ -354,7 +354,10 @@ test "a tool result with an image writes a content array and keeps the marker on
 test "a tool result loads deferred tools through reference blocks" {
     const blocks = [_]ir.Block{
         .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "toolu_1", .name = "tool_search", .arguments = "{}" } } },
-        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "toolu_1", .content = "", .is_error = false, .tool_references = &.{ "mcp_read", "mcp_write" } } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "toolu_1", .content = "", .is_error = false, .tools_loaded = &.{
+            .{ .name = "mcp_read", .description = "Read.", .input_schema = "{}", .defer_loading = true },
+            .{ .name = "mcp_write", .description = "Write.", .input_schema = "{}", .defer_loading = true },
+        } } } },
     };
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{}},{"name":"mcp_read","description":"Read.","defer_loading":true,"input_schema":{}},{"name":"mcp_write","description":"Write.","defer_loading":true,"input_schema":{}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"tool_reference","tool_name":"mcp_read"},{"type":"tool_reference","tool_name":"mcp_write"}],"is_error":false}]}]}

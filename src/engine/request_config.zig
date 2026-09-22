@@ -140,15 +140,14 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Load
 
 /// Defer definitions only when they take at least this share of the context window; Claude Code uses the same default.
 const deferral_threshold_percent: u64 = 10;
-/// The client search tool. A deferred definition is reachable only through it.
-pub const search_tool_name = "tool_search";
+const search_tool_name = ai.ir.search_tool_name;
 
-/// Anthropic with tool search expands a reference; every other route omits a deferred tool until a search adds it.
+/// A route with native client search loads a found definition in place; every other route omits it until a search adds it.
 fn decideDeferral(held: *Loadout, spec: *const registry.ModelSpec) !void {
     const own = held.arena.allocator();
     if (!try deferralApplies(spec, held.decls)) {
         held.request_tools = try eagerDecls(own, held.decls);
-    } else if (spec.protocol == .anthropic_messages and spec.caps.tool_search == true) {
+    } else if (spec.caps.tool_search == true and spec.protocol != .openai_chat) {
         held.deferral = .native;
         held.request_tools = held.decls;
     } else {
@@ -213,8 +212,8 @@ test "deferral needs the search tool and a catalog at the threshold, and the rou
     try std.testing.expectEqual(Loadout.Deferral.native, held.deferral);
     try std.testing.expectEqual(@as([*]const ai.ir.Tool, &decls), held.request_tools.?.ptr);
 
-    // A route without reference expansion omits the deferred tools; a search adds one later.
-    spec.protocol = .openai_responses;
+    // A route without native search omits the deferred tools; a search adds one later.
+    spec.protocol = .openai_chat;
     held.request_tools = null;
     try decideDeferral(&held, &spec);
     try std.testing.expectEqual(Loadout.Deferral.omitted, held.deferral);
