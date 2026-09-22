@@ -15,7 +15,7 @@ pub const LocalHost = struct {
 
     pub fn readRange(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, range: h.Range, limits: h.ReadLimits) h.HostError!h.FileRead {
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
-        try requireRegularFile(self.io, full);
+        const file_size = (try requireRegularFile(self.io, full)).size;
         var file = std.Io.Dir.cwd().openFile(self.io, full, .{}) catch |err| return mapError(err);
         defer file.close(self.io);
         // One buffered line at a time. The scan never holds the whole file, whatever its size.
@@ -29,7 +29,7 @@ pub const LocalHost = struct {
         // One byte more than the limit lets a line at the limit find its delimiter.
         const line_buf = scratch.alloc(u8, limits.max_line_bytes + 1) catch unreachable;
         return .{
-            .text = scan(scratch, &reader.interface, line_buf, range, limits) catch |err| switch (err) {
+            .text = scan(scratch, &reader.interface, line_buf, range, limits, file_size) catch |err| switch (err) {
                 error.InvalidUtf8 => return error.InvalidUtf8,
                 // The open call accepts a directory on POSIX. The first read reports this case.
                 error.ReadFailed => return if (reader.err) |e| mapError(e) else error.HostFailure,
@@ -41,9 +41,10 @@ pub const LocalHost = struct {
     pub fn readFrom(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, offset: ?u64, max_bytes: u32, complete: bool) h.HostError!h.BytesRead {
         std.debug.assert(max_bytes > 0);
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
-        try requireRegularFile(self.io, full);
+        _ = try requireRegularFile(self.io, full);
         var file = std.Io.Dir.cwd().openFile(self.io, full, .{}) catch |err| return mapError(err);
         defer file.close(self.io);
+        // The open file gives the size, so a path that changes after the stat cannot mislabel the read.
         const size = (file.stat(self.io) catch |err| return mapError(err)).size;
         if (max_bytes < 4) return error.HostFailure;
         const start = if (offset) |at| @min(at, size) else size -| max_bytes;
@@ -58,7 +59,7 @@ pub const LocalHost = struct {
 
     pub fn readAllInto(self: *LocalHost, scratch: std.mem.Allocator, output: std.mem.Allocator, path: []const u8, max_bytes: u32) h.HostError![]u8 {
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
-        try requireRegularFile(self.io, full);
+        _ = try requireRegularFile(self.io, full);
         const text = std.Io.Dir.cwd().readFileAlloc(self.io, full, output, .limited(max_bytes)) catch |err| return mapError(err);
         // A caller may write the returned bytes. The local host validates every byte.
         if (!std.unicode.utf8ValidateSlice(text)) {
@@ -141,7 +142,7 @@ const ScanError = error{ InvalidUtf8, ReadFailed };
 const NextByte = enum { newline, other, eof };
 
 /// Stream the requested lines and stop at the first limit. `line_buf` holds one line, so memory follows the limits, not the file size.
-fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, range: h.Range, limits: h.ReadLimits) ScanError!h.RangeRead {
+fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, range: h.Range, limits: h.ReadLimits, file_size: u64) ScanError!h.RangeRead {
     std.debug.assert(limits.max_lines > 0 and limits.max_line_bytes > 0);
     std.debug.assert(line_buf.len == limits.max_line_bytes + 1);
     // A first line must always fit. Otherwise a capped read makes no progress and the model repeats it.
@@ -156,7 +157,8 @@ fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, rang
         };
     }
 
-    var text: std.ArrayList(u8) = .empty;
+    // The text fits the smaller of the byte cap and the file, so one allocation holds it.
+    var text: std.ArrayList(u8) = std.ArrayList(u8).initCapacity(scratch, @intCast(@min(limits.max_bytes, file_size))) catch unreachable;
     var writer: std.Io.Writer = .fixed(line_buf);
     var long_lines: u32 = 0;
     var kept: u32 = 0;
@@ -259,9 +261,11 @@ fn mapError(err: NativeError) h.HostError {
 }
 
 /// Reject a path that is not a regular file, because a FIFO or a device blocks a read forever. A read follows a symlink, a write must not.
-fn requireRegularFile(io: std.Io, path: []const u8) h.HostError!void {
+/// Stat the path before the open to reject a special file, and return the stat of a regular file.
+fn requireRegularFile(io: std.Io, path: []const u8) h.HostError!std.Io.File.Stat {
     const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch |err| return mapError(err);
     if (stat.kind != .file) return error.NotAFile;
+    return stat;
 }
 
 /// Convert a filesystem timestamp to epoch milliseconds. A time before the epoch reads as zero.

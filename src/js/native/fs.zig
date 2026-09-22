@@ -137,12 +137,24 @@ fn readTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
 fn readRangeTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer req.free(host.gpa);
     var call = Call.open(host, req.root);
-    defer call.close();
-    const got = call.local.readRange(call.alloc(), req.path, req.range, read_limits) catch |err|
+    const got = call.local.readRange(call.alloc(), req.path, req.range, read_limits) catch |err| {
+        call.close();
         return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
-    const json = encodeRange(host.gpa, got);
-    op.finish(.{ .json = json });
+    };
+    const answer = call.alloc().create(RangeAnswer) catch unreachable;
+    answer.* = switch (got) {
+        .text => |range| .{ .text = .{ .text = range.text, .next = range.next_line, .long_lines = range.long_lines } },
+        .image => |path| .{ .image = .{ .image_path = path } },
+    };
+    // The result takes the arena, so the text reaches the script with no copy on the task.
+    op.finish(.{ .object = .init(call.arena, answer) });
 }
+
+/// The object `readRange` answers: `{ text, next, longLines }` or `{ imagePath }`.
+const RangeAnswer = union(enum) {
+    text: struct { text: []const u8, next: ?u32, long_lines: u32 },
+    image: struct { image_path: []const u8 },
+};
 
 fn rangeArg(ctx: Context, args: []const Value, idx: usize) error{InvalidOption}!os.Range {
     if (args.len <= idx or !ctx.isObject(args[idx]) or ctx.isArray(args[idx])) return .{};
@@ -154,20 +166,6 @@ fn boundArg(ctx: Context, obj: Value, name: [:0]const u8) error{InvalidOption}!?
     defer ctx.freeValue(value);
     if (ctx.isUndefined(value) or ctx.isNull(value)) return null;
     return @intCast(module.integer(ctx, value, 1, std.math.maxInt(u32)) orelse return error.InvalidOption);
-}
-
-fn encodeRange(gpa: std.mem.Allocator, got: os.FileRead) [:0]u8 {
-    var aw: std.Io.Writer.Allocating = .init(gpa);
-    switch (got) {
-        .text => |range| std.json.Stringify.value(.{
-            .text = range.text,
-            .next = range.next_line,
-            .longLines = range.long_lines,
-        }, .{ .emit_null_optional_fields = true }, &aw.writer) catch unreachable,
-        .image => |path| std.json.Stringify.value(.{ .imagePath = path }, .{}, &aw.writer) catch unreachable,
-    }
-    var list = aw.toArrayList();
-    return list.toOwnedSliceSentinel(gpa, 0) catch unreachable;
 }
 
 /// Replace a file's whole content. It answers the byte count it wrote.

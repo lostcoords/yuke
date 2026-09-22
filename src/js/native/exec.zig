@@ -127,7 +127,6 @@ fn execWorker(host: *Host, op: *pending.Op, req: Request, result: *pending.Resul
     defer op.cancel.finish(host.io);
     host.io.checkCancel() catch return;
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
-    defer arena.deinit();
     const ran = process.run(host.io, req.root, host.execution, arena.allocator(), .{
         .command = req.command,
         .cwd = req.cwd,
@@ -136,10 +135,14 @@ fn execWorker(host: *Host, op: *pending.Op, req: Request, result: *pending.Resul
         .log = req.log,
         .live = if (req.live) .{ .ctx = op, .write = liveWrite } else null,
     }) catch |err| {
+        arena.deinit();
         result.* = .{ .failed = .{ .message = errorMessage(err) } };
         return;
     };
-    result.* = .{ .json = encode(host.gpa, arena.allocator(), ran) };
+    const answer = arena.allocator().create(Answer) catch unreachable;
+    answer.* = .of(arena.allocator(), ran);
+    // The owner builds the object from the arena, so no JSON text sits between the task and the script.
+    result.* = .{ .object = .init(arena, answer) };
 }
 
 fn liveWrite(ctx: *anyopaque, bytes: []const u8) void {
@@ -147,24 +150,31 @@ fn liveWrite(ctx: *anyopaque, bytes: []const u8) void {
     op.stream(bytes);
 }
 
-/// Build the result text. A command prints any bytes, so each stream becomes valid UTF-8 first.
-fn encode(gpa: std.mem.Allocator, scratch: std.mem.Allocator, r: process.Result) [:0]u8 {
-    const stdout = if (std.unicode.utf8ValidateSlice(r.stdout)) r.stdout else utf8.sanitize(scratch, r.stdout) catch unreachable;
-    const stderr = if (std.unicode.utf8ValidateSlice(r.stderr)) r.stderr else utf8.sanitize(scratch, r.stderr) catch unreachable;
-    var aw: std.Io.Writer.Allocating = .init(gpa);
-    std.json.Stringify.value(.{
-        .stdout = stdout,
-        .stderr = stderr,
-        .code = if (r.outcome == .exited) @as(?u8, r.outcome.exited) else null,
-        .signal = if (r.outcome == .signaled) @as(?u8, r.outcome.signaled) else null,
-        .timedOut = r.outcome == .timed_out,
-        .stdoutDropped = r.stdout_dropped,
-        .stderrDropped = r.stderr_dropped,
-        .log = r.log,
-    }, .{}, &aw.writer) catch unreachable;
-    var list = aw.toArrayList();
-    return list.toOwnedSliceSentinel(gpa, 0) catch unreachable;
-}
+/// The object a script reads. `code` and `signal` are null unless that outcome happened.
+const Answer = struct {
+    stdout: []const u8,
+    stderr: []const u8,
+    code: ?u8,
+    signal: ?u8,
+    timed_out: bool,
+    stdout_dropped: u64,
+    stderr_dropped: u64,
+    log: ?[]const u8,
+
+    /// A command prints any bytes, so each stream becomes valid UTF-8 in `scratch` first.
+    fn of(scratch: std.mem.Allocator, r: process.Result) Answer {
+        return .{
+            .stdout = if (std.unicode.utf8ValidateSlice(r.stdout)) r.stdout else utf8.sanitize(scratch, r.stdout) catch unreachable,
+            .stderr = if (std.unicode.utf8ValidateSlice(r.stderr)) r.stderr else utf8.sanitize(scratch, r.stderr) catch unreachable,
+            .code = if (r.outcome == .exited) r.outcome.exited else null,
+            .signal = if (r.outcome == .signaled) r.outcome.signaled else null,
+            .timed_out = r.outcome == .timed_out,
+            .stdout_dropped = r.stdout_dropped,
+            .stderr_dropped = r.stderr_dropped,
+            .log = r.log,
+        };
+    }
+};
 
 /// Map a host error to the sentence a script reads. The set is closed, so a new one needs a message.
 fn errorMessage(err: os.HostError) []const u8 {
@@ -182,47 +192,34 @@ fn errorMessage(err: os.HostError) []const u8 {
 
 const testing = std.testing;
 
-test "the result names the outcome that happened and nothing else" {
+test "the answer names the outcome that happened and nothing else" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
 
-    try testing.expectEqualStrings(
-        "{\"stdout\":\"out\\n\",\"stderr\":\"\",\"code\":3,\"signal\":null,\"timedOut\":false," ++
-            "\"stdoutDropped\":0,\"stderrDropped\":0,\"log\":null}",
-        encode(a, a, .{ .stdout = "out\n", .stderr = "", .outcome = .{ .exited = 3 } }),
-    );
+    const exited: Answer = .of(a, .{ .stdout = "out\n", .stderr = "", .outcome = .{ .exited = 3 }, .stdout_dropped = 12, .stderr_dropped = 34 });
+    try testing.expectEqual(@as(?u8, 3), exited.code);
+    try testing.expectEqual(@as(?u8, null), exited.signal);
+    try testing.expect(!exited.timed_out);
+    try testing.expectEqual(@as(u64, 12), exited.stdout_dropped);
+    try testing.expectEqual(@as(u64, 34), exited.stderr_dropped);
     // A signal and a deadline leave `code` null, so a caller never reads a made-up zero.
-    try testing.expectEqualStrings(
-        "{\"stdout\":\"\",\"stderr\":\"\",\"code\":null,\"signal\":9,\"timedOut\":false," ++
-            "\"stdoutDropped\":0,\"stderrDropped\":0,\"log\":null}",
-        encode(a, a, .{ .stdout = "", .stderr = "", .outcome = .{ .signaled = 9 } }),
-    );
-    try testing.expectEqualStrings(
-        "{\"stdout\":\"\",\"stderr\":\"\",\"code\":null,\"signal\":null,\"timedOut\":true," ++
-            "\"stdoutDropped\":0,\"stderrDropped\":0,\"log\":null}",
-        encode(a, a, .{ .stdout = "", .stderr = "", .outcome = .timed_out }),
-    );
-    try testing.expectEqualStrings(
-        "{\"stdout\":\"head\",\"stderr\":\"tail\",\"code\":0,\"signal\":null,\"timedOut\":false," ++
-            "\"stdoutDropped\":12,\"stderrDropped\":34,\"log\":null}",
-        encode(a, a, .{ .stdout = "head", .stderr = "tail", .outcome = .{ .exited = 0 }, .stdout_dropped = 12, .stderr_dropped = 34 }),
-    );
+    const signaled: Answer = .of(a, .{ .stdout = "", .stderr = "", .outcome = .{ .signaled = 9 } });
+    try testing.expectEqual(@as(?u8, null), signaled.code);
+    try testing.expectEqual(@as(?u8, 9), signaled.signal);
+    const timed_out: Answer = .of(a, .{ .stdout = "", .stderr = "", .outcome = .timed_out });
+    try testing.expectEqual(@as(?u8, null), timed_out.code);
+    try testing.expectEqual(@as(?u8, null), timed_out.signal);
+    try testing.expect(timed_out.timed_out);
 }
 
-// A command prints any bytes, but the result must be a JSON string the parser accepts.
-test "the result holds valid text whatever the command printed" {
+// A command prints any bytes, but a script reads valid text with its control bytes kept.
+test "the answer holds valid text whatever the command printed" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
 
-    const json = encode(a, a, .{ .stdout = "ok\xe6\x96", .stderr = "\x00\x01", .outcome = .{ .exited = 0 } });
-    try testing.expect(std.unicode.utf8ValidateSlice(json));
-    try testing.expect(std.mem.indexOf(u8, json, "ok\u{FFFD}\u{FFFD}") != null);
-
-    // The text must parse back to what a script reads, control bytes included.
-    const Shape = struct { stdout: []const u8, stderr: []const u8 };
-    const parsed = try std.json.parseFromSliceLeaky(Shape, a, json, .{ .ignore_unknown_fields = true });
-    try testing.expectEqualStrings("ok\u{FFFD}\u{FFFD}", parsed.stdout);
-    try testing.expectEqualStrings("\x00\x01", parsed.stderr);
+    const answer: Answer = .of(a, .{ .stdout = "ok\xe6\x96", .stderr = "\x00\x01", .outcome = .{ .exited = 0 } });
+    try testing.expectEqualStrings("ok\u{FFFD}\u{FFFD}", answer.stdout);
+    try testing.expectEqualStrings("\x00\x01", answer.stderr);
 }

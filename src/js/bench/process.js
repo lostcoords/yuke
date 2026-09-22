@@ -12,6 +12,8 @@ let view = null;
 let child = null;
 const readFixturePath = "/tmp/yuke-bench-read-fixture";
 const readFixtureBytes = 3 * 1024 * 1024;
+const rangeFixturePath = "/tmp/yuke-bench-range-fixture";
+const rangeFixtureLine = "const value = compute(input, options);\n";
 const chunk = "x".repeat(4095) + "\n";
 /** @type {import("yuke:jobs-native").Job} */
 const job = { id: 1, state: "running", command: "bench", startedAt: 0, sessionId: null, cwd: "/tmp", log: "", code: null, signal: null, endedAt: null, stopRequested: false };
@@ -29,6 +31,7 @@ async function start(name, count) {
     child.onStdout(output);
   }
   if (phase === "fs_read") await fs.writeFile(readFixturePath, "x".repeat(readFixtureBytes));
+  if (phase === "fs_range") await fs.writeFile(rangeFixturePath, rangeFixtureLine.repeat(3000));
   await step();
   await step();
   steps = 0;
@@ -50,6 +53,10 @@ async function step() {
     const result = await exec(command, { maxBytes: 65536, onOutput }, "/tmp");
     if (result.code !== 0 || (phase !== "exec_short" && result.stdoutDropped === 0)) throw Error("exec result");
     if (phase === "exec_stream" && received !== 1048576) throw Error("exec stream bytes");
+  } else if (phase === "fs_range") {
+    // The read tool path: the byte cap stops the range, so the answer holds about 64 KiB and a next line.
+    const got = await fs.readRange(rangeFixturePath, { start: 1, end: 3000 });
+    if (!("text" in got) || got.text.length < 60000 || got.next === null) throw Error("range read");
   } else if (phase === "fs_read") {
     const text = await fs.readFile(readFixturePath);
     if (text.length !== readFixtureBytes) throw Error("file read bytes");

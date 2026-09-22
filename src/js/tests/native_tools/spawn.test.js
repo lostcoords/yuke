@@ -82,7 +82,9 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   const quick = await startJob("echo out; echo bad 1>&2; echo \"$PYTHONUNBUFFERED\"; exit 3", { root: "/tmp" });
   await until(() => jobs.get(quick.id)?.state === "exited");
   check("job-exit", jobs.get(quick.id)?.code === 3 && (await jobs.stop(quick.id))?.state === "exited");
-  check("job-log", (await jobs.read(quick.id, 0, 4096)).text === "out\nbad\n1\n");
+  const log = await jobs.read(quick.id, 0, 4096);
+  // The host builds the answer object directly, so its keys and numbers must match the public shape exactly.
+  check("job-log", JSON.stringify(log) === JSON.stringify({ start: 0, complete: true, text: "out\nbad\n1\n", next: 10, size: 10 }));
   check("job-stop", (await jobs.stop(long.id))?.stopRequested && (await jobs.wait(long.id))?.state === "exited" && jobs.list().some((j) => j.id === long.id && j.sessionId === "01010101010101010101010101010101" && j.cwd === "/tmp"));
   check("job-events", changes.join(",") === `${long.id} running,${quick.id} running,${quick.id} exited,${long.id} running,${long.id} exited`);
   check("job-public", !("start" in jobs) && jobs.get(999) === null && jobs.list()[0]?.id === quick.id && jobs.list().every((j) => j.state !== "mutated"));

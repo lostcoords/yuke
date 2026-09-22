@@ -37,7 +37,7 @@ pub const Outcome = union(enum) {
     timed_out,
 };
 
-/// What one command produced. `stdout` and `stderr` come from `scratch`.
+/// What one command produced. `stdout`, `stderr`, and `log` come from `scratch`.
 pub const Result = struct {
     stdout: []const u8,
     stderr: []const u8,
@@ -68,6 +68,8 @@ const Log = struct {
     }
 };
 
+const notice_format = "\n[The tool dropped {d} bytes here.]\n";
+
 /// One drain leg: it reads one stream to its end and keeps its head and its tail, because a build prints its error last.
 const Drain = struct {
     file: std.Io.File,
@@ -81,25 +83,28 @@ const Drain = struct {
     dropped: u64 = 0,
     err: ?anyerror = null,
 
-    /// Join the head and the tail from `scratch`, with one notice at a gap; the notice counts the codepoint the cap cut in half.
+    /// Join the head, one gap notice, and the tail in one `scratch` buffer. The notice also counts the bytes of a cut character.
     fn text(self: *Drain, scratch: std.mem.Allocator) []const u8 {
         if (self.tail_len == 0 and self.dropped == 0) return self.head.items;
-        const tail_bytes = scratch.alloc(u8, self.tail_len) catch unreachable;
-        const split = @min(self.tail_len, self.tail.len - self.tail_at);
-        @memcpy(tail_bytes[0..split], self.tail[self.tail_at..][0..split]);
-        @memcpy(tail_bytes[split..], self.tail[0 .. self.tail_len - split]);
         // With no gap the two ends stay adjacent, so the join restores the exact stream.
         const gap = self.dropped != 0;
         const head = if (gap) self.head.items[0..utf8.whole(self.head.items)] else self.head.items;
+        // The ring lands after room for the longest notice, then moves back next to the notice.
+        const max_notice = std.fmt.count(notice_format, .{std.math.maxInt(u64)});
+        const joined = scratch.alloc(u8, head.len + max_notice + self.tail_len) catch unreachable;
+        @memcpy(joined[0..head.len], head);
+        const ring = joined[head.len + max_notice ..];
+        const split = @min(self.tail_len, self.tail.len - self.tail_at);
+        @memcpy(ring[0..split], self.tail[self.tail_at..][0..split]);
+        @memcpy(ring[split..], self.tail[0 .. self.tail_len - split]);
         // After a gap the tail starts at its first whole line, or at its first whole character with no newline.
-        const tail_start = if (!gap) 0 else if (std.mem.indexOfScalar(u8, tail_bytes, '\n')) |newline| newline + 1 else utf8.head(tail_bytes);
-        const tail = tail_bytes[tail_start..];
-        const trimmed = (self.head.items.len - head.len) + (self.tail_len - tail.len);
-        var joined: std.ArrayList(u8) = .empty;
-        joined.appendSlice(scratch, head) catch unreachable;
-        if (gap) joined.print(scratch, "\n[The tool dropped {d} bytes here.]\n", .{self.dropped + trimmed}) catch unreachable;
-        joined.appendSlice(scratch, tail) catch unreachable;
-        return joined.toOwnedSlice(scratch) catch unreachable;
+        const tail_start = if (!gap) 0 else if (std.mem.indexOfScalar(u8, ring, '\n')) |newline| newline + 1 else utf8.head(ring);
+        const tail = ring[tail_start..];
+        const trimmed = (self.head.items.len - head.len) + tail_start;
+        const notice = if (gap) std.fmt.bufPrint(joined[head.len..][0..max_notice], notice_format, .{self.dropped + trimmed}) catch unreachable else "";
+        const tail_at = head.len + notice.len;
+        std.mem.copyForwards(u8, joined[tail_at..][0..tail.len], tail);
+        return joined[0 .. tail_at + tail.len];
     }
 };
 
@@ -169,7 +174,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     if (err.err) |e| if (!abandoned) return mapDrainError(e);
 
     const cut = out.dropped + err.dropped != 0;
-    const kept: ?[]const u8 = if (log) |*l| if (cut and !l.failed.load(.monotonic)) spec.log.? else blk: {
+    const kept: ?[]const u8 = if (log) |*l| if (cut and !l.failed.load(.monotonic)) scratch.dupe(u8, spec.log.?) catch unreachable else blk: {
         std.Io.Dir.deleteFileAbsolute(io, spec.log.?) catch {};
         break :blk null;
     } else null;
@@ -671,6 +676,18 @@ test "the live sink gets every byte of both streams, uncut by the result cap" {
         .live = .{ .ctx = &sink, .write = Sink.write },
     });
     try testing.expectEqualStrings("x\n\u{4e16}\xe4", sink.bytes.items);
+}
+
+test "the gap notice counts the halves of the characters the cap cut at both ends" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // The 255-byte cap keeps a 128-byte head that ends inside an "é" and a 127-byte tail that starts inside one.
+    const res = try runShell(a, "printf a; i=0; while [ $i -lt 200 ]; do printf '\\303\\251'; i=$((i+1)); done", 20_000);
+    const e63 = "é" ** 63;
+    try testing.expectEqualStrings("a" ++ e63 ++ "\n[The tool dropped 148 bytes here.]\n" ++ e63, res.stdout);
+    try testing.expectEqual(@as(u64, 146), res.stdout_dropped);
 }
 
 test "the child leads a new session apart from the test runner" {

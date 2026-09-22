@@ -5,6 +5,9 @@ globalThis.done = 0;
 (async () => {
   // A relative path anchors at the directory the host runs in.
   check("read", await fs.readFile("hello.txt") === "one\ntwo\n");
+  // The host builds the range object directly, so its keys, nulls, and numbers must match the public shape exactly.
+  check("range-end", JSON.stringify(await fs.readRange("hello.txt", { start: 1, end: 1 })) === '{"text":"one\\n","next":null,"longLines":0}');
+  check("range-limit", JSON.stringify(await fs.readRange("hello.txt", { start: 2 })) === '{"text":"two\\n","next":null,"longLines":0}');
   check("write-count", await fs.writeFile("made.txt", "abc") === 3);
   check("read-back", await fs.readFile("made.txt") === "abc");
   const info = await fs.stat("made.txt");

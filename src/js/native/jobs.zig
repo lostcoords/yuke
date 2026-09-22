@@ -319,14 +319,14 @@ fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
 fn readTask(host: *Host, op: *pending.Op, req: Read) void {
     defer req.free(host.gpa);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
-    defer arena.deinit();
     var local: LocalHost = .{ .io = host.io, .root = "/", .env = host.execution.env };
-    const got = local.readFrom(arena.allocator(), req.log, req.offset, req.max_bytes, req.complete) catch
+    const got = local.readFrom(arena.allocator(), req.log, req.offset, req.max_bytes, req.complete) catch {
+        arena.deinit();
         return op.finish(.{ .failed = .{ .message = "the host could not read the job log" } });
-    var aw: std.Io.Writer.Allocating = .init(host.gpa);
-    std.json.Stringify.value(got, .{}, &aw.writer) catch unreachable;
-    var list = aw.toArrayList();
-    op.finish(.{ .json = list.toOwnedSliceSentinel(host.gpa, 0) catch unreachable });
+    };
+    const read = arena.allocator().create(@TypeOf(got)) catch unreachable;
+    read.* = got;
+    op.finish(.{ .object = .init(arena, read) });
 }
 
 fn jobOf(ctx: Context, args: []const Value) ?*Job {

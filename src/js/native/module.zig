@@ -145,6 +145,54 @@ pub fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
     ctx.setPropertyStr(obj, name, value) catch {};
 }
 
+/// Build a JavaScript value from Zig data: a struct becomes an object with camelCase keys, and a tagged union becomes its payload.
+pub fn toJs(ctx: Context, value: anytype) Value {
+    const T = @TypeOf(value);
+    switch (@typeInfo(T)) {
+        .bool => return ctx.newBool(value),
+        // A value past the i64 range becomes a double, as a JSON number would.
+        .int => return if (std.math.cast(i64, value)) |small| ctx.newInt64(small) else ctx.newNumber(@floatFromInt(value)),
+        .optional => return if (value) |inner| toJs(ctx, inner) else quickjs.NULL,
+        .pointer => |pointer| {
+            comptime std.debug.assert(pointer.size == .slice and pointer.child == u8);
+            return ctx.newString(value);
+        },
+        .@"struct" => |info| {
+            const object = ctx.newObject();
+            if (ctx.isException(object)) return object;
+            inline for (info.fields) |field| set(ctx, object, comptime camelCase(field.name), toJs(ctx, @field(value, field.name)));
+            if (!ctx.hasException()) return object;
+            ctx.freeValue(object);
+            return throwPending(ctx);
+        },
+        .@"union" => switch (value) {
+            inline else => |payload| return toJs(ctx, payload),
+        },
+        else => @compileError("toJs cannot convert " ++ @typeName(T)),
+    }
+}
+
+/// Turn a Zig field name into the JavaScript key: `timed_out` becomes `timedOut`.
+fn camelCase(comptime name: []const u8) [:0]const u8 {
+    comptime {
+        var out: [name.len:0]u8 = undefined;
+        var len: usize = 0;
+        var upper = false;
+        for (name) |char| {
+            if (char == '_') {
+                upper = true;
+                continue;
+            }
+            out[len] = if (upper) std.ascii.toUpper(char) else char;
+            len += 1;
+            upper = false;
+        }
+        out[len] = 0;
+        const key: [len:0]u8 = out[0..len :0].*;
+        return &key;
+    }
+}
+
 /// Set one indexed property, or drop the value once the QuickJS heap is full.
 pub inline fn setIndex(ctx: Context, obj: Value, index: usize, value: Value) void {
     if (ctx.hasException()) return ctx.freeValue(value);
@@ -237,6 +285,29 @@ pub fn Table(comptime T: type) type {
             self.* = .{};
         }
     };
+}
+
+test "toJs builds objects with camelCase keys, null for an absent optional, and the payload of a union" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    const ctx = host.ctx;
+    const Answer = union(enum) {
+        text: struct { text: []const u8, next_line: ?u32, long_lines: u32, size: u64, huge: u64, complete: bool },
+        image: struct { image_path: []const u8 },
+    };
+    const cases = [_]struct { value: Answer, json: []const u8 }{
+        .{ .value = .{ .text = .{ .text = "a\x00b", .next_line = null, .long_lines = 3, .size = 1 << 40, .huge = 1 << 63, .complete = true } }, .json = "{\"text\":\"a\\u0000b\",\"nextLine\":null,\"longLines\":3,\"size\":1099511627776,\"huge\":9223372036854776000,\"complete\":true}" },
+        .{ .value = .{ .image = .{ .image_path = "/tmp/a.png" } }, .json = "{\"imagePath\":\"/tmp/a.png\"}" },
+    };
+    for (cases) |case| {
+        const value = toJs(ctx, case.value);
+        defer ctx.freeValue(value);
+        const json = ctx.jsonStringify(value, quickjs.UNDEFINED, quickjs.UNDEFINED);
+        defer ctx.freeValue(json);
+        const text = string(ctx, json).?;
+        defer ctx.freeCString(text.ptr);
+        try std.testing.expectEqualStrings(case.json, text);
+    }
 }
 
 test "integer checks exact bounds before and after the float conversion" {

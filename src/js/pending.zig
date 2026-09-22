@@ -54,6 +54,25 @@ pub const Http = struct {
     }
 };
 
+/// A structured answer the owner builds with `module.toJs`. The arena owns every byte the value points to, and its child is the host allocator.
+pub const Object = struct {
+    arena: std.heap.ArenaAllocator.State,
+    value: *const anyopaque,
+    build: *const fn (ctx: Context, value: *const anyopaque) Value,
+
+    /// Take the arena and a value it holds. The task must not use the arena after this.
+    pub fn init(arena: std.heap.ArenaAllocator, value: anytype) Object {
+        const T = @typeInfo(@TypeOf(value)).pointer.child;
+        const Build = struct {
+            fn build(ctx: Context, raw: *const anyopaque) Value {
+                const typed: *const T = @ptrCast(@alignCast(raw));
+                return module.toJs(ctx, typed.*);
+            }
+        };
+        return .{ .arena = arena.state, .value = value, .build = Build.build };
+    }
+};
+
 /// A task transfers owned buffers to the owner; failure messages and codes are static.
 pub const Result = union(enum) {
     bytes: struct { buffer: []u8, len: usize },
@@ -61,8 +80,7 @@ pub const Result = union(enum) {
     http: Http,
     null_value,
     text: []u8,
-    /// A structured answer, as the JSON text the owner parses. QuickJS reads it to the sentinel.
-    json: [:0]u8,
+    object: Object,
     boolean: bool,
     undefined,
     failed: Failure,
@@ -72,7 +90,7 @@ pub const Result = union(enum) {
             .bytes => |bytes| gpa.free(bytes.buffer),
             .http => |http| http.deinit(gpa),
             .text => |text| gpa.free(text),
-            .json => |bytes| gpa.free(bytes),
+            .object => |object| object.arena.promote(gpa).deinit(),
             else => {},
         }
     }
@@ -339,8 +357,7 @@ pub const Ops = struct {
             .http => |http| http.toJs(ctx),
             .null_value => quickjs.NULL,
             .text => |text| ctx.newString(text),
-            // A task builds this text, so a parse failure is our bug, not the caller's input.
-            .json => |bytes| ctx.parseJSON(bytes, "yuke:primitive"),
+            .object => |object| object.build(ctx, object.value),
             .boolean => |value| ctx.newBool(value),
             .undefined => quickjs.UNDEFINED,
             .failed => |failure| errorWith(ctx, failure) orelse quickjs.UNDEFINED,
