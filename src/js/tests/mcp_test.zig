@@ -270,6 +270,15 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try expectCall(host, "mcp_modern_region", "{\"region\":\"eu-west1\"}", "region header: eu-west1", false);
     try expectCall(host, "mcp_modern_region", "{\"region\":\"世界\"}", "region header: =?base64?5LiW55WM?=", false);
     try expectCall(host, "mcp_old_echo", "{\"text\":\"hi\"}", "old sse: hi", false);
+    // Each progress report restarts the 200 ms timer, so a 400 ms call ends with its answer.
+    try expectCall(host, "mcp_modern_echo", "{\"text\":\"progress\"}", "modern http: progress", false);
+    // A filter without tool changes closes its stream, a dropped stream reconnects, and a graceful end stays closed.
+    try support.pumpUntilSet(host, &peer.refuse_closed);
+    try support.pumpUntilSet(host, &peer.drop_again);
+    try std.testing.expectEqual(@as(u32, 1), peer.end_listens);
+    // The subscription stream carries the list change, and the next list names the new tool.
+    try expectCall(host, "mcp_modern_echo", "{\"text\":\"mchange\"}", "modern http: mchange", false);
+    try support.pumpUntilTrue(host, "mcpStates().modern.startsWith('connected · modern · 4 tools: added, echo, region, slow')");
     // A timeout closes the modern stream, which is the modern cancel.
     try expectCall(host, "mcp_modern_slow", "{}", "the request timed out", true);
     try support.pumpUntilSet(host, &peer.cancel_seen);

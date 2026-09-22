@@ -16,9 +16,9 @@ import { authFor } from "yuke:mcp-oauth";
 const STOP_GRACE_MS = 2000;
 // The server's own timers bound a call, so an HTTP exchange waits as long as the host allows.
 const HTTP_WAIT_MS = 600_000;
-// A GET stream that breaks reconnects after this delay, doubled up to the cap.
-const LISTEN_RETRY_MS = 1000;
-const LISTEN_RETRY_MAX_MS = 30_000;
+// A notification stream that breaks reconnects after this delay, doubled up to the cap.
+export const LISTEN_RETRY_MS = 1000;
+export const LISTEN_RETRY_MAX_MS = 30_000;
 const VERSION_KEY = "io.modelcontextprotocol/protocolVersion";
 const ERROR_TEXT_MAX = 200;
 // A result may carry a 7 MiB image as base64 inside JSON, so one answer reads up to this.
@@ -192,16 +192,16 @@ async function readText(response, max) {
 async function failure(response) {
   if (mediaType(response) === "text/html") {
     response.body.cancel();
-    return new Error("the server answered HTTP " + response.status);
+    return Object.assign(new Error("the server answered HTTP " + response.status), { status: response.status });
   }
   const body = (await readText(response, READ_CHUNK_BYTES).catch(() => "")).trim();
   if (mediaType(response) === "application/json") {
     let parsed;
     try { parsed = JSON.parse(body); } catch { parsed = null; }
     const error = parsed?.error;
-    if (parsed?.jsonrpc === "2.0" && record(error) && Number.isSafeInteger(error.code) && typeof error.message === "string") return Object.assign(new Error(error.message), { code: error.code, data: error.data });
+    if (parsed?.jsonrpc === "2.0" && record(error) && Number.isSafeInteger(error.code) && typeof error.message === "string") return Object.assign(new Error(error.message), { code: error.code, data: error.data, status: response.status });
   }
-  return new Error("the server answered HTTP " + response.status + (body ? ": " + body.slice(0, ERROR_TEXT_MAX) : ""));
+  return Object.assign(new Error("the server answered HTTP " + response.status + (body ? ": " + body.slice(0, ERROR_TEXT_MAX) : "")), { status: response.status });
 }
 
 // Hand each event of the body to `onEvent` until the body ends. The body is released on every exit.

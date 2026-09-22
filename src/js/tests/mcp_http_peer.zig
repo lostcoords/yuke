@@ -64,6 +64,14 @@ pub const Peer = struct {
     /// The legacy GET stream and the old transport's stream.
     pushes: Channel = .{},
     events: Channel = .{},
+    /// The subscription stream carries modern tool-list changes.
+    subscription: Channel = .{},
+    modern_changed: std.atomic.Value(bool) = .init(false),
+    /// The other stream endings: a refused filter the client closes, a drop it reconnects, and a graceful end it keeps closed.
+    refuse_closed: std.Io.Event = .unset,
+    drop_listens: u32 = 0,
+    drop_again: std.Io.Event = .unset,
+    end_listens: u32 = 0,
     changed: std.atomic.Value(bool) = .init(false),
     /// The legacy session is "s-<generation>"; an `expire` call moves to the next one, so the old id answers 404.
     generation: std.atomic.Value(u32) = .init(1),
@@ -101,6 +109,7 @@ pub const Peer = struct {
         self.tasks.cancel(self.io);
         self.pushes.deinit(self.gpa);
         self.events.deinit(self.gpa);
+        self.subscription.deinit(self.gpa);
         self.server.deinit(self.io);
         self.gpa.free(self.base);
         self.gpa.destroy(self);
@@ -182,6 +191,14 @@ pub const Peer = struct {
         const id = if (message.get("id")) |value| value.integer else null;
         const params = if (message.get("params")) |value| value.object else null;
         const name = if (params) |p| if (p.get("name")) |value| value.string else "" else "";
+        // The test server uses the request id as the progress token.
+        const progress_token: i64 = token: {
+            const p = params orelse break :token 0;
+            const meta = p.get("_meta") orelse break :token 0;
+            if (meta != .object) break :token 0;
+            const value = meta.object.get("progressToken") orelse break :token 0;
+            break :token if (value == .integer) value.integer else 0;
+        };
         const text = text: {
             const p = params orelse break :text "";
             const arguments = p.get("arguments") orelse break :text "";
@@ -194,24 +211,59 @@ pub const Peer = struct {
             try out.print("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}", .{ mismatch_body.len, mismatch_body });
             return out.flush();
         }
-        if (std.mem.eql(u8, target, "/modern")) {
+        if (std.mem.startsWith(u8, target, "/modern")) {
             // The body and the header name the same version, and the routing headers match the body.
             if (!std.mem.eql(u8, version, "2026-07-28")) return plain(out, "400 Bad Request", "version");
             if (!std.mem.eql(u8, routed_method, method)) return plain(out, "400 Bad Request", "method");
             if (std.mem.eql(u8, method, "tools/call") and !std.mem.eql(u8, routed_name, name)) return plain(out, "400 Bad Request", "name");
             const reply_id = id orelse return plain(out, "202 Accepted", "");
             if (std.mem.eql(u8, method, "server/discover")) {
-                return json(out, "", "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"supportedVersions\":[\"2026-07-28\"],\"capabilities\":{{\"tools\":{{}}}}}}}}", .{reply_id});
+                return json(out, "", "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"supportedVersions\":[\"2026-07-28\"],\"capabilities\":{{\"tools\":{{\"listChanged\":true}}}}}}}}", .{reply_id});
             }
             try streamHead(out);
+            // The subscription stream acknowledges first, then carries each tool list change until the client closes it.
+            if (std.mem.eql(u8, method, "subscriptions/listen")) {
+                if (std.mem.eql(u8, target, "/modern-refuse")) {
+                    try out.print("event: message\ndata: {{\"jsonrpc\":\"2.0\",\"method\":\"notifications/subscriptions/acknowledged\",\"params\":{{\"notifications\":{{}}}}}}\n\n", .{});
+                    try out.flush();
+                    _ = server.receiveHead() catch {};
+                    self.refuse_closed.set(self.io);
+                    return;
+                }
+                if (std.mem.eql(u8, target, "/modern-drop")) {
+                    self.drop_listens += 1;
+                    if (self.drop_listens == 2) self.drop_again.set(self.io);
+                    return;
+                }
+                if (std.mem.eql(u8, target, "/modern-end")) {
+                    self.end_listens += 1;
+                    try out.print("event: message\ndata: {{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\"}}}}\n\n", .{reply_id});
+                    return out.flush();
+                }
+                try out.print("event: message\ndata: {{\"jsonrpc\":\"2.0\",\"method\":\"notifications/subscriptions/acknowledged\",\"params\":{{\"_meta\":{{\"io.modelcontextprotocol/subscriptionId\":{d}}},\"notifications\":{{\"toolsListChanged\":true}}}}}}\n\n", .{reply_id});
+                try out.flush();
+                return self.subscription.drain(self, out);
+            }
             if (std.mem.eql(u8, method, "tools/list")) {
-                try out.print(": keepalive\n\nevent: message\ndata: {{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"tools\":[{{\"name\":\"echo\",\"inputSchema\":{{\"type\":\"object\"}}}},{{\"name\":\"slow\",\"inputSchema\":{{\"type\":\"object\"}}}},{s},{s}]}}}}\n\n", .{ reply_id, region_tool, broken_tool });
+                try out.print(": keepalive\n\nevent: message\ndata: {{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"tools\":[{{\"name\":\"echo\",\"inputSchema\":{{\"type\":\"object\"}}}},{{\"name\":\"slow\",\"inputSchema\":{{\"type\":\"object\"}}}},{s},{s}{s}]}}}}\n\n", .{ reply_id, region_tool, broken_tool, if (self.modern_changed.load(.acquire)) ",{\"name\":\"added\",\"inputSchema\":{\"type\":\"object\"}}" else "" });
                 return out.flush();
             }
             // The mirrored parameter comes back, so the test reads the header the client sent.
             if (std.mem.eql(u8, name, "region")) {
                 try out.print("event: message\ndata: {{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"resultType\":\"complete\",\"content\":[{{\"type\":\"text\",\"text\":\"region header: {s}\"}}]}}}}\n\n", .{ reply_id, region });
                 return out.flush();
+            }
+            // The test delays each report by 80 ms, so the 200 ms timer must reset.
+            if (std.mem.eql(u8, text, "progress")) {
+                for (1..6) |step| {
+                    try out.print("event: message\ndata: {{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{{\"progressToken\":{d},\"progress\":{d},\"total\":5}}}}\n\n", .{ progress_token, step });
+                    try out.flush();
+                    try std.Io.sleep(self.io, .fromMilliseconds(80), .awake);
+                }
+            }
+            if (std.mem.eql(u8, text, "mchange")) {
+                self.modern_changed.store(true, .release);
+                try self.subscription.push(self, "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/subscriptionId\":1}}}");
             }
             if (std.mem.eql(u8, name, "slow")) {
                 try out.writeAll(": working\n\n");

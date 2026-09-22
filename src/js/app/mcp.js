@@ -3,7 +3,7 @@ import { mcpState } from "yuke:mcp-native";
 import * as cancellation from "yuke:cancellation-native";
 import { fs } from "yuke:fs";
 import { showInfo } from "yuke:info-panel";
-import { checkTransport, endpointFor, headerValue } from "yuke:mcp-transport";
+import { checkTransport, endpointFor, headerValue, LISTEN_RETRY_MS, LISTEN_RETRY_MAX_MS } from "yuke:mcp-transport";
 import { client } from "yuke:client";
 import { signIn, forget } from "yuke:mcp-oauth";
 import { openUrl } from "yuke:browser";
@@ -18,7 +18,7 @@ import { notice } from "yuke:notice";
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
 /** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "needs auth" | "failed" | "disabled" | "stopped"} ServerState */
-/** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number, cancelable: boolean }} Waiting */
+/** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number, cancelable: boolean, progress?: (value: number) => void }} Waiting */
 /** @typedef {{ name: string, path: string[] }} Mirrored */
 
 const WORKSPACE_FILE = ".mcp.json";
@@ -47,6 +47,8 @@ const LIMIT_MAX = 20;
 const MAX_PAGES = 100;
 const MAX_TOOLS = 10_000;
 const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
+// A call that reports progress restarts its timer on each report, up to this many times its timeout in all.
+const PROGRESS_CAP = 10;
 // One result attaches at most this many images, as one input does.
 const MAX_IMAGES = 8;
 // A text result shares this empty list, so it allocates none.
@@ -370,6 +372,13 @@ class Server {
     /** @type {Promise<void>} The startup promise resolves within the startup limit. */
     this.started = Promise.resolve();
     this.hasTools = false;
+    // The server promises tool list changes; a modern one delivers them on a subscription stream.
+    this.listChanged = false;
+    // The server acknowledged a subscription without the tool list, so no stream opens again.
+    this.listenRefused = false;
+    this.listenTimer = 0;
+    // The id of the open subscription request, so a refused filter can close its stream.
+    this.listenId = 0;
     /** @type {Transport | null} */
     this.transport = null;
     // The last transport keeps its diagnostics for the row after it closes.
@@ -417,6 +426,7 @@ class Server {
   fail(state, message) {
     // A late line or exit after a stop changes nothing.
     if (this.state === "stopped") return;
+    clearTimeout(this.listenTimer);
     this.state = state;
     this.error = message;
     this.undefineTools();
@@ -449,6 +459,7 @@ class Server {
       if (this.state === "connecting") {
         this.state = "connected";
         if (this.refreshAgain) this.refreshTools();
+        if (this.era === "modern" && this.listChanged) this.listen();
       }
     } catch (error) {
       if (this.state === "connecting") this.refuse(error);
@@ -508,6 +519,12 @@ class Server {
       return undefined;
     }
     if (message.method === "notifications/tools/list_changed" && this.hasTools) this.refreshTools();
+    else if (message.method === "notifications/progress") this.progress(message.params);
+    // The acknowledgment names the subset the server honors; a stream without tool changes serves nothing, so it closes.
+    else if (message.method === "notifications/subscriptions/acknowledged" && message.params?.notifications?.toolsListChanged !== true) {
+      this.listenRefused = true;
+      if (this.listenId !== 0) this.transport?.cancel(this.listenId, "the server honors no tool list changes");
+    }
     return undefined;
   }
 
@@ -518,16 +535,66 @@ class Server {
   }
 
   // A handshake request is not cancelable: the legacy rules forbid a cancel of `initialize`.
-  /** @param {string} method @param {Record<string, unknown>} params @param {{ timeoutMs: number, signal?: CancellationSignal, cancelable?: boolean, received?: { bytes: number }, headers?: Record<string, string> | undefined }} options @returns {Promise<any>} */
-  request(method, params, { timeoutMs, signal, cancelable = true, received, headers }) {
+  // A progress-enabled request uses its id as the token. Each larger report resets the timer, up to a cap.
+  /** @param {string} method @param {Record<string, unknown>} params @param {{ timeoutMs: number, signal?: CancellationSignal, cancelable?: boolean, received?: { bytes: number }, headers?: Record<string, string> | undefined, progress?: boolean }} options @returns {Promise<any>} */
+  request(method, params, { timeoutMs, signal, cancelable = true, received, headers, progress = false }) {
     if (signal?.aborted) return Promise.reject(new Error("the call was canceled"));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => this.cancel(id, "the request timed out"), Math.max(1, timeoutMs));
+      let timer = 0;
+      /** @param {number} ms */
+      const arm = (ms) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => this.cancel(id, "the request timed out"), Math.max(1, ms));
+      };
+      arm(timeoutMs);
+      const cap = Date.now() + timeoutMs * PROGRESS_CAP;
+      let last = -Infinity;
       const listener = signal === undefined ? 0 : cancellation.listen(signal, () => this.cancel(id, "the call was canceled"));
-      this.waiting.set(id, { bytes: 0, cancelable, resolve, reject, done: () => { if (received) received.bytes = this.waiting.get(id)?.bytes ?? 0; clearTimeout(timer); if (listener !== 0) cancellation.unlisten(listener); } });
-      this.send({ jsonrpc: "2.0", id, method, params: this.era === "modern" ? { ...params, _meta: META } : params }, headers).catch((error) => this.settle(id, undefined, error));
+      /** @type {Waiting} */
+      const slot = { bytes: 0, cancelable, resolve, reject, done: () => { if (received) received.bytes = this.waiting.get(id)?.bytes ?? 0; clearTimeout(timer); if (listener !== 0) cancellation.unlisten(listener); } };
+      // A report must rise, so a repeated or falling value keeps the timer as it is.
+      if (progress) slot.progress = (value) => { if (value > last) { last = value; arm(Math.min(timeoutMs, cap - Date.now())); } };
+      this.waiting.set(id, slot);
+      /** @type {Record<string, unknown>} */
+      const meta = this.era === "modern" ? { ...META } : {};
+      if (progress) meta.progressToken = id;
+      const sent = Object.keys(meta).length === 0 ? params : { ...params, _meta: meta };
+      this.send({ jsonrpc: "2.0", id, method, params: sent }, headers).catch((error) => this.settle(id, undefined, error));
     });
+  }
+
+  // Route one progress report to the request whose id is its token. A report for no active request changes nothing.
+  /** @param {unknown} params */
+  progress(params) {
+    if (!record(params)) return;
+    const { progressToken: token, progress: value } = /** @type {Record<string, unknown>} */ (params);
+    if (typeof token !== "number" || typeof value !== "number" || !Number.isFinite(value)) return;
+    this.waiting.get(token)?.progress?.(value);
+  }
+
+  // The listen request carries modern tool-list changes. A broken stream retries. A graceful result, a refusal, or a new transport stops the loop.
+  async listen() {
+    const transport = this.transport;
+    let delay = LISTEN_RETRY_MS;
+    while (this.state === "connected" && this.transport === transport && transport && !this.listenRefused) {
+      const id = this.nextId++;
+      this.listenId = id;
+      try {
+        await transport.send({ jsonrpc: "2.0", id, method: "subscriptions/listen", params: { _meta: META, notifications: { toolsListChanged: true } } });
+        // STDIO keeps the subscription on the pipe. HTTP ends a graceful subscription with a result.
+        return;
+      } catch (error) {
+        if (this.transport !== transport) return;
+        // A sign-in or an HTTP refusal does not heal with time, so only a broken stream retries.
+        if (error instanceof Error && "signIn" in error) return this.refuse(error);
+        if (error instanceof Error && ("status" in error || "code" in error)) return;
+      } finally {
+        this.listenId = 0;
+      }
+      await new Promise((resolve) => { this.listenTimer = setTimeout(() => resolve(undefined), delay); });
+      delay = Math.min(delay * 2, LISTEN_RETRY_MAX_MS);
+    }
   }
 
   /** @param {number} id @param {unknown} result @param {Error} [error] */
@@ -551,6 +618,7 @@ class Server {
   /** @param {any} answer */
   accept(answer) {
     this.hasTools = hasTools(answer.capabilities);
+    this.listChanged = this.hasTools && answer.capabilities.tools.listChanged === true;
     this.instructions = instructionsOf(answer);
   }
 
@@ -704,7 +772,7 @@ class Server {
     const headers = mirrored ? paramHeaders(mirrored, /** @type {Record<string, unknown>} */ (args)) : undefined;
     let result;
     try {
-      result = await this.request("tools/call", { name: tool, arguments: args }, { timeoutMs: this.config.timeout ?? this.limits.callMs, signal, headers });
+      result = await this.request("tools/call", { name: tool, arguments: args }, { timeoutMs: this.config.timeout ?? this.limits.callMs, signal, headers, progress: true });
     } catch (error) {
       // When refresh fails, end the session and name the sign-in command.
       if (error instanceof Error && "signIn" in error) {
@@ -726,6 +794,7 @@ class Server {
   async close() {
     this.state = "stopped";
     this.refreshAgain = false;
+    clearTimeout(this.listenTimer);
     this.undefineTools();
     this.settleAll("the MCP server stopped");
     this.onChange();

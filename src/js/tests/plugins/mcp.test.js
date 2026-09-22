@@ -128,6 +128,9 @@ if (mcpCase === "http") {
     old: { type: "sse", url: mcpHttpBase + "/sse", headers: token },
     denied: { url: mcpHttpBase + "/modern" },
     mismatch: { type: "http", url: mcpHttpBase + "/mismatch", headers: token },
+    refuse: { type: "http", url: mcpHttpBase + "/modern-refuse", headers: token },
+    drop: { type: "http", url: mcpHttpBase + "/modern-drop", headers: token },
+    end: { type: "http", url: mcpHttpBase + "/modern-end", headers: token },
   } });
   globalThis.mcpReady = false;
   plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
