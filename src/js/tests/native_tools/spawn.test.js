@@ -21,7 +21,7 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   check("cat-order", echoed === "one\ntwo\n" && catExit.code === 0 && catExit.signal === null);
 
   const blocked = spawn(["/bin/sh", "-c", "sleep 30"]);
-  const queued = blocked.write("x".repeat(1024 * 1024)).catch(() => {});
+  const queued = blocked.write("x".repeat(1024).repeat(1024)).catch(() => {});
   let full = false;
   try { await blocked.write("x"); } catch (e) { full = e.message.includes("queue is full"); }
   check("stdin-byte-limit", full);
@@ -36,7 +36,7 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   deaf.onStdout((text) => { said += text; });
   await until(() => said.includes("ready"));
   let epipe = "";
-  try { await deaf.write("x".repeat(200000)); } catch (e) { epipe = e.message; }
+  try { await deaf.write("x".repeat(1000).repeat(200)); } catch (e) { epipe = e.message; }
   check("write-epipe", epipe === "the process closed its input");
   deaf.kill();
   await deaf.exited;

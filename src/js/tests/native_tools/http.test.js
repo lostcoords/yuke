@@ -49,7 +49,8 @@ async function run() {
     headers: { "Content-Type": "application/json", Authorization: "Bearer test", "User-Agent": "yuke-test", "Accept-Encoding": "gzip" },
   } : httpMode === "head" ? { method: "HEAD" } : Object.create(null);
   if (["put", "patch", "delete"].includes(httpMode)) options.method = httpMode.toUpperCase();
-  if (httpMode === "upload_stall") { options.method = "POST"; options.body = "x".repeat(16 * 1024 * 1024); }
+  // Repeat a block to avoid the per-character fill loop in QuickJS.
+  if (httpMode === "upload_stall") { options.method = "POST"; options.body = "x".repeat(1024).repeat(16 * 1024); }
   options.timeoutMs = ["stall", "partial_head", "slow_body", "upload_stall"].includes(httpMode) ? 50 : 2000;
   if (failures[httpMode]) {
     try { await fetch(httpUrl, options); } catch (error) { equal(error.message, failures[httpMode]); return; }

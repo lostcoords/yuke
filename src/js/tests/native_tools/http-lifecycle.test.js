@@ -1,7 +1,8 @@
 import { fetch, plugins } from "yuke";
 import { equal } from "yuke:test";
 
-const options = () => httpMode === "upload_stall" ? { method: "POST", body: "x".repeat(16 * 1024 * 1024) } : {};
+// Repeat a block to avoid the per-character fill loop in QuickJS.
+const options = () => httpMode === "upload_stall" ? { method: "POST", body: "x".repeat(1024).repeat(16 * 1024) } : {};
 const outcome = signal => fetch(httpUrl, { ...options(), signal }).then(response => {
   const read = response.text();
   globalThis.httpReadStarted = true;

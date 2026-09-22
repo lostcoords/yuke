@@ -162,8 +162,8 @@ if (mcpCase === "validation") {
   let overflow = 0;
   const got = [];
   const feed = lines((line) => got.push(line), () => overflow++);
-  feed("x".repeat(1024 * 1024 + 1) + "\nok\n");
-  feed("x".repeat(1024 * 1024 + 1));
+  feed("x".repeat(1024).repeat(1024) + "x\nok\n");
+  feed("x".repeat(1024).repeat(1024) + "x");
   feed("tail\nlast\n");
   equal(overflow, 2);
   equal(got.join(","), "ok,last");
