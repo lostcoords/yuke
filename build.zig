@@ -8,6 +8,7 @@ pub fn build(b: *std.Build) void {
     const test_filter = b.option([]const u8, "test-filter", "Run tests whose names contain this text");
     const strip = b.option(bool, "strip", "Omit the debug info from the yuke binary");
     const test_filters: []const []const u8 = if (test_filter) |filter| &.{filter} else &.{};
+    const test_shards = b.option(u32, "test-shards", "Split the src tests over this many processes") orelse 8;
 
     // A Debug test run spends most of its time in QuickJS and SQLite, so the C dependencies build optimized.
     const dep_optimize: std.builtin.OptimizeMode = if (optimize == .Debug) .ReleaseSafe else optimize;
@@ -157,8 +158,22 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = app_imports,
     });
-    const run_layer_tests = addTestRun(b, "src", "Run process and JavaScript host tests", tests, test_filters);
-    b.step("test-js", "Run process and JavaScript host tests").dependOn(&run_layer_tests.step);
+    // One compile serves every shard; each shard is a process that runs every n-th test.
+    const src_tests = b.addTest(.{
+        .name = "src",
+        .root_module = tests,
+        .filters = test_filters,
+        .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .server },
+    });
+    const run_layer_tests = b.step("test-src", "Run process and JavaScript host tests");
+    for (0..test_shards) |shard| {
+        const run = b.addRunArtifact(src_tests);
+        run.addArg(b.fmt("--shard={d}/{d}", .{ shard, test_shards }));
+        run_layer_tests.dependOn(&run.step);
+    }
+    b.step("test-js", "Run process and JavaScript host tests").dependOn(run_layer_tests);
+    const install_src_tests = b.addInstallArtifact(src_tests, .{});
+    b.step("test-src-bin", "Install the src test binary; run it with --shard=i/n to time each test").dependOn(&install_src_tests.step);
 
     // Fail the build if the committed queries drift from the SQL sources.
     const database_sqlgen_check = b.addRunArtifact(sqlgen_exe);
@@ -242,7 +257,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_proto_tests.step);
     test_step.dependOn(&run_ai_tests.step);
     test_step.dependOn(&run_term_tests.step);
-    test_step.dependOn(&run_layer_tests.step);
+    test_step.dependOn(run_layer_tests);
     test_step.dependOn(&database_sqlgen_check.step);
     test_step.dependOn(generator_tests);
 
