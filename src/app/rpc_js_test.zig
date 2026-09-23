@@ -172,7 +172,7 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
         \\{"id":"stop","method":"job.stop","params":{"id":1}}
     );
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"id\":\"stop\",\"result\":{\"job\":{\"id\":1,") != null);
-    try host.evalModule("import { events } from \"yuke:kernel\"; globalThis.ended = 0; events.on(\"jobs.changed\", (job) => { if (job.state === \"exited\" && job.stopRequested) ended = 1; });", "rpc-job-end.js");
+    try host.evalModule("import { events } from \"yuke:kernel\"; globalThis.ended = 0; events.on(\"jobs.changed\", (job) => { if (job.state === \"exited\" && job.stop_requested) ended = 1; });", "rpc-job-end.js");
     try support.pumpUntilTrue(host, "globalThis.ended === 1");
     f.stream.flushNotifications();
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "\"state\":\"exited\",\"stop_requested\":true,\"signal\":15,") != null);

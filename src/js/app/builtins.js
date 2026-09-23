@@ -206,20 +206,20 @@ function endLine(text) {
 
 /** @param {string | undefined} sessionId @returns {Job[]} */
 function sessionJobs(sessionId) {
-  return listJobs().filter(j => j.sessionId === (sessionId ?? null));
+  return listJobs().filter(j => (j.session_id ?? null) === (sessionId ?? null));
 }
 
 /** @param {Job} job @returns {string} */
 function jobState(job) {
-  return job.stopRequested ? `${jobName(job)} ${endLabel(job)}: ${shortCommand(job.command)}` : job.state === "exited" ? `${jobName(job)} exited (${endLabel(job)}): ${shortCommand(job.command)}` : `${jobName(job)} ${job.state}: ${shortCommand(job.command)}`;
+  return job.stop_requested ? `${jobName(job)} ${endLabel(job)}: ${shortCommand(job.command)}` : job.state === "exited" ? `${jobName(job)} exited (${endLabel(job)}): ${shortCommand(job.command)}` : `${jobName(job)} ${job.state}: ${shortCommand(job.command)}`;
 }
 
 // A job that exits by itself tells its session once, in exit order, even when its log cannot be read; a stop sends nothing.
 /** @type {Promise<unknown>} */
 let exitMessages = Promise.resolve();
 events.on("jobs.changed", (/** @type {Job} */ job) => {
-  const sessionId = job.sessionId;
-  if (job.state === "running" || job.stopRequested || sessionId === null) return;
+  const sessionId = job.session_id;
+  if (job.state === "running" || job.stop_requested || sessionId === undefined) return;
   const tail = jobTail(job.id, 20).catch(() => "");
   exitMessages = exitMessages
     .then(() => tail)
@@ -241,7 +241,7 @@ async function startBackground(command, context) {
 /** @param {string} name @param {string} id @param {ToolContext} context @returns {Job} */
 function jobOf(name, id, context) {
   const job = /^j[1-9][0-9]*$/.test(id) ? getJob(Number(id.slice(1))) : null;
-  if (job && job.sessionId === (context?.sessionId ?? null)) return job;
+  if (job && (job.session_id ?? null) === (context?.sessionId ?? null)) return job;
   const ids = sessionJobs(context?.sessionId).map(jobName);
   return invalid(name, `the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
 }

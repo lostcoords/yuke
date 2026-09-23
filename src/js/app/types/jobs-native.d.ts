@@ -1,20 +1,6 @@
 declare module "yuke:jobs-native" {
-  interface Job {
-    id: number;
-    /** The session that started the job, or null. */
-    sessionId: string | null;
-    command: string;
-    cwd: string;
-    /** The private log that holds both streams without host metadata. */
-    log: string;
-    state: "running" | "exited" | "failed";
-    stopRequested: boolean;
-    code: number | null;
-    signal: number | null;
-    /** Epoch milliseconds. */
-    startedAt: number;
-    endedAt: number | null;
-  }
+  /** The wire job and the private log that holds both streams without host metadata. */
+  type Job = Wire.Job & { log: string };
 
   /** Starts a shell line as a job; `ended` resolves with the final job. */
   export function start(command: string, sessionId?: string | null, workspaceRoot?: string): Promise<{ job: Job; ended: Promise<Job> }>;

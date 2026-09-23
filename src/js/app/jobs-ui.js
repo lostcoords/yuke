@@ -15,7 +15,7 @@ function failed(error) { notice.show("jobs · " + (/** @type {Error} */ (error)?
 
 /** @param {Job} job @param {number} now @returns {string} */
 function jobState(job, now) {
-  return job.state === "running" && !job.stopRequested ? "running " + elapsedLabel(now - job.startedAt) : endLabel(job);
+  return job.state === "running" && !job.stop_requested ? "running " + elapsedLabel(now - job.started_at_ms) : endLabel(job);
 }
 
 /** @param {Job[]} jobs @returns {string} */
@@ -160,14 +160,14 @@ export function openJobs(ctx) {
     title: summary(items), footer: "↵ output · x stop · X stop all · esc close",
     border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.6),
     key: (job) => job.id,
-    format: (job) => ({ marker: job.state === "running" ? "•" : "·", indent: 2, text: name(job) + "  " + shortCommand(job.command) + "  ", detail: job.sessionId === (current ?? null) ? "this session" : "", right: jobState(job, Date.now()) }),
+    format: (job) => ({ marker: job.state === "running" ? "•" : "·", indent: 2, text: name(job) + "  " + shortCommand(job.command) + "  ", detail: (job.session_id ?? null) === (current ?? null) ? "this session" : "", right: jobState(job, Date.now()) }),
     onAccept: (job) => { close(); openOutput(ctx, get(job.id) ?? job); },
     onCancel: () => close(),
     keymap: {
       x: (_event, content) => { const job = content.list.selected(); if (job && job.state === "running") stop(job.id).catch(failed); },
       X: () => {
         const running = items.filter((j) => j.state === "running");
-        Promise.all(running.map((j) => stop(j.id))).then((ended) => notice.show("jobs · stop requested for " + ended.filter((j) => j?.stopRequested).length), failed);
+        Promise.all(running.map((j) => stop(j.id))).then((ended) => notice.show("jobs · stop requested for " + ended.filter((j) => j?.stop_requested).length), failed);
       },
     },
   });

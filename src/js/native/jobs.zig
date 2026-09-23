@@ -179,21 +179,26 @@ pub fn install(host: *Host) void {
     });
 }
 
-/// Build the JavaScript view of a job. Each call builds a new object, so a caller never edits the table.
+/// Build the JavaScript view of a job: the wire job and its private log path. Each call builds a new object, so a caller never edits the table.
 pub fn toValue(ctx: Context, job: *const Job) Value {
-    const obj = ctx.newObject();
-    module.set(ctx, obj, "id", ctx.newInt32(@intCast(job.id)));
-    module.set(ctx, obj, "sessionId", if (job.session_id) |id| ctx.newString(&std.fmt.bytesToHex(id.raw, .lower)) else quickjs.NULL);
-    module.set(ctx, obj, "command", ctx.newString(job.command));
-    module.set(ctx, obj, "cwd", ctx.newString(job.cwd));
-    module.set(ctx, obj, "log", ctx.newString(job.log));
-    module.set(ctx, obj, "stopRequested", ctx.newBool(job.stop_requested));
-    module.set(ctx, obj, "state", ctx.newString(@tagName(job.state)));
-    module.set(ctx, obj, "code", if (job.code) |c| ctx.newInt32(c) else quickjs.NULL);
-    module.set(ctx, obj, "signal", if (job.signal) |s| ctx.newInt32(s) else quickjs.NULL);
-    module.set(ctx, obj, "startedAt", ctx.newFloat64(@floatFromInt(job.started_at_ms)));
-    module.set(ctx, obj, "endedAt", if (job.ended_at_ms) |ms| ctx.newFloat64(@floatFromInt(ms)) else quickjs.NULL);
-    return obj;
+    var text: std.Io.Writer.Allocating = .init(Host.fromContext(ctx).gpa);
+    defer text.deinit();
+    var jw: std.json.Stringify = .{ .writer = &text.writer };
+    const view = wire(job);
+    jw.beginObject() catch unreachable;
+    inline for (@typeInfo(proto.job.Job).@"struct".fields) |field| {
+        const value = @field(view, field.name);
+        // The wire omits an absent field, so the view leaves it undefined too.
+        const present = if (@typeInfo(field.type) == .optional) value != null else true;
+        if (present) {
+            jw.objectField(field.name) catch unreachable;
+            jw.write(value) catch unreachable;
+        }
+    }
+    jw.objectField("log") catch unreachable;
+    jw.write(job.log) catch unreachable;
+    jw.endObject() catch unreachable;
+    return ctx.parseJSON(text.written(), "yuke:jobs");
 }
 
 /// Start a shell line as a job with both streams on a private log. It resolves `{ job, ended }`, and `ended` resolves with the final job.

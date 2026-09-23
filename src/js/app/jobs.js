@@ -19,7 +19,7 @@ export async function start(command, options = {}) {
 export async function stop(id) {
   const before = native.get(id);
   const job = native.stop(id);
-  if (job?.stopRequested && !before?.stopRequested) events.emit("jobs.changed", job);
+  if (job?.stop_requested && !before?.stop_requested) events.emit("jobs.changed", job);
   return job;
 }
 
@@ -54,9 +54,9 @@ export function name(job) {
 /** @param {Job} job @returns {string} */
 export function endLabel(job) {
   if (job.state === "failed") return "process wait failed";
-  if (job.stopRequested) return job.state === "running" ? "stop requested" : "stopped";
+  if (job.stop_requested) return job.state === "running" ? "stop requested" : "stopped";
   if (job.state === "running") return "running";
-  return job.signal !== null ? "signal " + job.signal : "exit code " + job.code;
+  return job.signal !== undefined ? "signal " + job.signal : "exit code " + job.exit_code;
 }
 
 // The last lines of a job log; the read covers the last 8 KiB.

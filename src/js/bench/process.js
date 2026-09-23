@@ -16,7 +16,7 @@ const rangeFixturePath = "/tmp/yuke-bench-range-fixture";
 const rangeFixtureLine = "const value = compute(input, options);\n";
 const chunk = "x".repeat(4095) + "\n";
 /** @type {import("yuke:jobs-native").Job} */
-const job = { id: 1, state: "running", command: "bench", startedAt: 0, sessionId: null, cwd: "/tmp", log: "", code: null, signal: null, endedAt: null, stopRequested: false };
+const job = { id: 1, state: "running", command: "bench", started_at_ms: 0, cwd: "/tmp", log: "", stop_requested: false };
 
 /** @param {string} name @param {number} count */
 async function start(name, count) {
