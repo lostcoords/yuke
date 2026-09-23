@@ -664,7 +664,7 @@
         },
         {
           "name": "credential_kind",
-          "doc": "The credential that serves this provider, or null when it holds none. The wire never carries the secret.",
+          "doc": "The kind of credential that serves this provider, or null when it holds none.",
           "type": "AuthCredentialKind",
           "presence": "optional"
         },

@@ -133,7 +133,12 @@ fn invoke(comptime spec: anytype, runtime: *App, host: *Host, arena: std.mem.All
     const handler = @field(bindings, @tagName(spec.name));
     const args = @typeInfo(@TypeOf(handler)).@"fn".params;
     const Owner = args[0].type.?;
-    const owner = if (Owner == *App) runtime else if (Owner == *Host) host else &runtime.engine;
+    const owner = switch (Owner) {
+        *App => runtime,
+        *Host => host,
+        *@TypeOf(runtime.engine) => &runtime.engine,
+        else => @compileError("a command binding names an unknown owner"),
+    };
     return switch (args.len) {
         2 => handler(owner, arena),
         3 => handler(owner, arena, params),

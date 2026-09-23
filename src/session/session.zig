@@ -154,7 +154,7 @@ pub const Session = struct {
     gpa: std.mem.Allocator,
     id: ids.SessionId,
     draft: ?Draft = null,
-    /// The inputs the durable queue holds, oldest first. The store owns their content.
+    /// The inputs in the durable queue, oldest first; the store owns their content.
     pending: std.ArrayList(Queued) = .empty,
     transcript: Transcript,
     base_seq: ids.Seq = 0,

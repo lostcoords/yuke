@@ -198,7 +198,7 @@ CREATE TABLE pending_inputs (
         REFERENCES sessions(id) ON DELETE CASCADE,
     input_id     INTEGER NOT NULL CHECK (input_id BETWEEN 1 AND 9007199254740991),
     seq          INTEGER NOT NULL CHECK (seq BETWEEN 1 AND 9007199254740991),
-    -- The source of an engine input; null for a user input. The input.queued event holds the content.
+    -- The source of an engine input, or null for a user input; the input.queued event holds the content.
     source       TEXT CHECK (source IN ('parent_instruction', 'child_report', 'child_input_canceled', 'engine_interruption')),
 
     PRIMARY KEY (session_id, input_id),

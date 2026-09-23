@@ -25,12 +25,16 @@ fn methodOf(comptime Params: type) proto.enums.MethodName {
     };
 }
 
+/// Report whether a handler waits on this command: only a content input reaches `input.before`.
+pub fn gates(host: *const Host, params: anytype) bool {
+    const input: ?proto.input.Input = if (@TypeOf(params) == Create) params.initial_input else params.input;
+    return host.hooks.holds(point) and input != null and input.? == .content;
+}
+
 /// Submit the hook for a content input that a handler waits on, or return null to run the command now. The call borrows `arena`.
 pub fn submit(host: *Host, arena: std.mem.Allocator, params: anytype) ?*tools.Call {
-    if (!host.hooks.holds(point)) return null;
-    const held: ?proto.input.Input = if (@TypeOf(params) == Create) params.initial_input else params.input;
-    const input = held orelse return null;
-    if (input != .content) return null;
+    if (!gates(host, params)) return null;
+    const input: proto.input.Input = if (@TypeOf(params) == Create) params.initial_input.? else params.input;
     const options: std.json.Stringify.Options = .{ .emit_null_optional_fields = false };
     // A proposed session has no id yet, so a create names an explicit null and the rest of its parameters.
     const json = if (@TypeOf(params) == Create) blk: {

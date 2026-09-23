@@ -59,7 +59,7 @@ pub const StoredPrompt = struct { text: []const u8, generation: u64 };
 /// The stale generation. A run builds the prompt again when the stored value differs from the engine's.
 pub const stale_generation: u64 = 0;
 
-/// Render the stored sections. The sections are the only stored form, so the text can never drift from them.
+/// Render the stored sections, which are the only stored form of the prompt.
 pub fn prompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?StoredPrompt {
     const row = (try db.queries.select_prompt.maybeOne(arena, .{ .session_id = id })) orelse return null;
     return .{ .text = try prompt_mod.render(arena, try promptSections(db, arena, id)), .generation = row.value.generation };

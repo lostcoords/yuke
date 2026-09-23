@@ -97,24 +97,27 @@ pub const Rpc = struct {
         if (!self.host.hooks.holds(.@"input.before")) return false;
         var arena: std.heap.ArenaAllocator = .init(self.gpa);
         const a = arena.allocator();
-        // A bad parameter object runs now, so the command path answers it.
+        // A bad parameter object and an input no handler reads run now, so the command path answers them.
         const input = inputOf(a, request) orelse {
             arena.deinit();
             return false;
         };
+        const gated = switch (input) {
+            inline else => |params| input_gate.gates(self.host, params),
+        };
+        if (!gated) {
+            arena.deinit();
+            return false;
+        }
         if (self.inputs.items.len == queue_slots) {
             arena.deinit();
             self.flushNotifications();
             if (request.id) |id| self.writeFailure(id, .queue_full, "too many requests are pending") catch |err| self.failWrite(err);
             return true;
         }
-        const submitted = switch (input) {
+        const record = switch (input) {
             inline else => |params| input_gate.submit(self.host, a, params),
-        };
-        const record = submitted orelse {
-            arena.deinit();
-            return false;
-        };
+        }.?;
         const id = if (request.id) |value| a.dupe(u8, value) catch unreachable else null;
         self.inputs.append(self.gpa, .{ .arena = arena, .id = id, .input = input, .call = record }) catch unreachable;
         return true;

@@ -127,14 +127,17 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Load
     const own = held.arena.allocator();
     var kept: std.ArrayList(ai.ir.Tool) = .empty;
     for (served) |decl| {
-        if (chosen) |answer| for (answer.tools) |name| {
-            if (std.mem.eql(u8, name, decl.name)) break;
-        } else continue;
+        if (chosen) |answer| if (!named(answer.tools, decl.name)) continue;
         try kept.append(own, try proto.dupe(own, decl));
     }
     held.decls = kept.items;
     slot.tools = held;
     return &slot.tools.?;
+}
+
+fn named(names: []const []const u8, name: []const u8) bool {
+    for (names) |item| if (std.mem.eql(u8, item, name)) return true;
+    return false;
 }
 
 const search_tool_name = ai.ir.search_tool_name;

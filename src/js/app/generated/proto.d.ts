@@ -115,7 +115,7 @@ export interface ProviderInfo {
   readonly id: string;
   readonly name: string;
   readonly state: ProviderState;
-  /** The credential that serves this provider, or null when it holds none. The wire never carries the secret. */
+  /** The kind of credential that serves this provider, or null when it holds none. */
   readonly credential_kind?: AuthCredentialKind;
   /** True when the engine can start a login flow for this provider. */
   readonly can_login: boolean;

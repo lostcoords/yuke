@@ -172,7 +172,7 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: ro
 
 /// Ask the session model for the summary text with the system prompt and the tools of the turn, so the call reuses the cached prefix.
 fn summaryCall(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot, blocks: []const ai.ir.Block, diagnostics: *ai.Diagnostics) ![]const u8 {
-    try slot.cancel.check(engine.deps.io); // A cancel that already landed reports no other refusal.
+    try slot.cancel.check(engine.deps.io); // A cancel that arrived before the call stops it first.
     // One call repeats no prefix, so it writes no cache breakpoint that it can never read back.
     var route = held.route.route;
     route.cache = null;

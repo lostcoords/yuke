@@ -680,7 +680,7 @@ function errorLabel(error) {
   return "⚠ " + parts.join(" · ");
 }
 
-// The text of a user or compaction message: its text parts in order. One part answers its own string, so nothing is copied.
+// Join the text parts of a user or compaction message; a single part returns its string without a copy.
 /** @param {readonly MessagePart[]} parts @returns {string} */
 function textOfParts(parts) {
   /** @type {string | null} */
@@ -689,7 +689,7 @@ function textOfParts(parts) {
   return text ?? "";
 }
 
-// A child report is two text parts. The user reads the body; the preamble is the model's and stays out of the rows.
+// A child report has two text parts, and the rows show only the body, not the preamble of the model.
 /** @param {readonly MessagePart[]} parts @param {string} text @returns {string} */
 function reportBody(parts, text) {
   const texts = parts.filter((part) => part && part.type === "text");
@@ -697,7 +697,7 @@ function reportBody(parts, text) {
   return last && last.type === "text" ? last.text : text;
 }
 
-// A user message with an attachment draws each label where its part sits. The client completes a cut text before a part arrives here.
+// Put each attachment label of a user message at the position of its part.
 /** @param {readonly MessagePart[]} parts @param {string} text @returns {string} */
 function userBody(parts, text) {
   if (!parts.some(isMedia)) return text;
@@ -1216,7 +1216,7 @@ export class Transcript {
     return rows;
   }
 
-  // Every part of one message. A reader fault reads as no parts, so one bad read cannot break a frame.
+  // Read every part of one message; a reader fault gives no parts, so one bad read cannot break a frame.
   /** @param {number} id @returns {readonly MessagePart[]} */
   _allParts(id) {
     try {
