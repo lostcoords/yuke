@@ -112,7 +112,7 @@ pub const Fixture = struct {
         self.canned = .{ .bytes = ai.testing.canned_reply };
         // One context, so a split between the two owners is a test failure and not a silent drift.
         const context = execution.testContext(&self.env);
-        try app_fixture.init(&self.app, self.gpa.allocator(), self.reactor.io(), root, context, self.canned.transport());
+        try app_fixture.init(&self.app, self.gpa.allocator(), self.reactor.io(), root, self.canned.transport(), context);
         try app_fixture.installModel(&self.app);
         try self.extensions.init(self.gpa.allocator(), self.reactor.io(), &self.app, .{
             .host = .{ .cwd = root, .execution = context },

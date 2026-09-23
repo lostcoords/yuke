@@ -163,6 +163,29 @@ pub fn pumpUntilTrue(host: *Host, expression: [:0]const u8) !void {
     if (try host.evalInt(expression) == 0) return error.ConditionNeverTrue;
 }
 
+/// What one tool call must answer. A null root runs the call in the host workspace.
+pub const Answer = struct {
+    root: ?[]const u8 = null,
+    is_error: bool = false,
+    text: union(enum) { contains: []const u8, ends: []const u8, equals: []const u8 },
+};
+
+/// Submit one tool call from session 01…01, wait for it, check its answer, and drop it.
+pub fn expectTool(host: *Host, name: []const u8, args: []const u8, want: Answer) !void {
+    const call = host.calls.submit(name, args, want.root orelse host.cwd);
+    call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
+    try pumpUntilSettled(host, call);
+    errdefer std.debug.print("{s} {s} -> {s}\n", .{ name, args, call.text orelse "" });
+    try std.testing.expectEqual(want.is_error, call.is_error);
+    const text = call.text orelse "";
+    switch (want.text) {
+        .contains => |part| try std.testing.expect(std.mem.indexOf(u8, text, part) != null),
+        .ends => |part| try std.testing.expect(std.mem.endsWith(u8, text, part)),
+        .equals => |whole| try std.testing.expectEqualStrings(whole, text),
+    }
+    try dropCall(host, call);
+}
+
 pub fn hasTool(host: *Host, name: []const u8) bool {
     for (host.tools.entries.items) |entry| if (std.mem.eql(u8, entry.decl.name, name)) return true;
     return false;

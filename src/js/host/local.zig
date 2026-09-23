@@ -29,7 +29,7 @@ pub const LocalHost = struct {
         // One byte more than the limit lets a line at the limit find its delimiter.
         const line_buf = scratch.alloc(u8, limits.max_line_bytes + 1) catch unreachable;
         return .{
-            .text = scan(scratch, &reader.interface, line_buf, range, limits, file_size) catch |err| switch (err) {
+            .text = scan(scratch, &reader.interface, line_buf, file_size, range, limits) catch |err| switch (err) {
                 error.InvalidUtf8 => return error.InvalidUtf8,
                 // The open call accepts a directory on POSIX. The first read reports this case.
                 error.ReadFailed => return if (reader.err) |e| mapError(e) else error.HostFailure,
@@ -142,7 +142,7 @@ const ScanError = error{ InvalidUtf8, ReadFailed };
 const NextByte = enum { newline, other, eof };
 
 /// Stream the requested lines and stop at the first limit. `line_buf` holds one line, so memory follows the limits, not the file size.
-fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, range: h.Range, limits: h.ReadLimits, file_size: u64) ScanError!h.RangeRead {
+fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, file_size: u64, range: h.Range, limits: h.ReadLimits) ScanError!h.RangeRead {
     std.debug.assert(limits.max_lines > 0 and limits.max_line_bytes > 0);
     std.debug.assert(line_buf.len == limits.max_line_bytes + 1);
     // A first line must always fit. Otherwise a capped read makes no progress and the model repeats it.

@@ -16,7 +16,7 @@ pub const Paint = struct {
         errdefer self.sink.deinit();
         self.out = .init(gpa);
         errdefer self.out.deinit();
-        self.render = try term_pkg.Render.init(std.testing.io, gpa, &self.env_map, .{});
+        self.render = try term_pkg.Render.init(std.testing.io, gpa, &self.env_map);
         errdefer self.render.deinit(&self.sink.writer);
         try self.render.resize(&self.sink.writer, .{ .rows = rows, .cols = cols, .x_pixel = 0, .y_pixel = 0 });
     }

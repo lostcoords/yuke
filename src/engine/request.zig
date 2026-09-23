@@ -33,7 +33,7 @@ pub fn snapshot(
     const model = try proto.dupe(arena, r.model.*);
     slot.protocol = provider.protocolToProto(route.route.protocol);
 
-    const build = try config.buildConfig(arena, engine, slot, &model);
+    const build = try config.buildConfig(engine, arena, slot, &model);
 
     const budget = try context.Budget.forRequest(model.limits.context_window, build.max_output_tokens, build.system, build.tools);
     return .{ .route = route, .model = model, .build = build, .budget = budget };

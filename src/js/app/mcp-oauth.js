@@ -32,7 +32,7 @@ function form(fields) {
 
 // The parameters of a request target. A repeated key keeps its first value, and a bad escape reads as absent.
 /** @param {string} target @returns {Record<string, string>} */
-export function queryOf(target) {
+function queryOf(target) {
   /** @type {Record<string, string>} */
   const out = Object.create(null);
   const start = target.indexOf("?");
@@ -87,7 +87,7 @@ async function getJson(url) {
 
 // The parameters of a Bearer challenge in `WWW-Authenticate`.
 /** @param {string} header @returns {Record<string, string>} */
-export function challengeOf(header) {
+function challengeOf(header) {
   /** @type {Record<string, string>} */
   const out = Object.create(null);
   for (const [, key = "", value = ""] of header.matchAll(/([A-Za-z_]+)="([^"]*)"/g)) if (!(key in out)) out[key] = value;
@@ -179,7 +179,7 @@ function grantOf(token, base, previous) {
 
 // The stored grant for a server, or null. A record from another version that lacks a field reads as absent.
 /** @param {string} url @returns {Grant | null} */
-export function stored(url) {
+function stored(url) {
   const text = mcpNative.readRecord("mcp-oauth", url);
   if (text === undefined) return null;
   let grant;

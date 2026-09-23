@@ -862,10 +862,10 @@ const StreamerFixture = struct {
         self.session = try self.engine.activate(.bytes(session_id));
         self.slot = try RunSlot.create(
             std.testing.allocator,
-            .{ .model = "mock", .system_prompt = system, .root = "/w" },
             .{ .input_id = 1, .started = .{ .session_id = .bytes(session_id), .seq = 2, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 } },
             null,
             .{ .root = .bytes(session_id), .depth = 0 },
+            .{ .model = "mock", .system_prompt = system, .root = "/w" },
         );
         self.slot.progress = .{ .current = .{ .message_id = 2 } };
         self.session.active_run = self.slot;

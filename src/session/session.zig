@@ -106,7 +106,7 @@ pub const RunSlot = struct {
     };
 
     /// Create a started run; the slot copies the borrowed strings of `source` into its own arena.
-    pub fn create(gpa: std.mem.Allocator, source: Config, handle: RunHandle, parent_id: ?ids.SessionId, location: Location) !*RunSlot {
+    pub fn create(gpa: std.mem.Allocator, handle: RunHandle, parent_id: ?ids.SessionId, location: Location, source: Config) !*RunSlot {
         std.debug.assert(source.root.len > 0);
         if (parent_id == null) std.debug.assert(location.depth == 0) else std.debug.assert(location.depth > 0);
         var arena: std.heap.ArenaAllocator = .init(gpa);

@@ -10,7 +10,7 @@ const Engine = @import("../engine/Engine.zig");
 const builtin = @import("builtin");
 
 /// Initialize caller-owned app memory; the caller must call `App.deinit` before it moves.
-pub fn init(app: *App, gpa: std.mem.Allocator, io: std.Io, blob_dir: []const u8, context: execution.Context, route_transport: ai.transport.Transport) !void {
+pub fn init(app: *App, gpa: std.mem.Allocator, io: std.Io, blob_dir: []const u8, route_transport: ai.transport.Transport, context: execution.Context) !void {
     const owned_dir = try gpa.dupe(u8, blob_dir);
     errdefer gpa.free(owned_dir);
     app.* = .{

@@ -14,7 +14,7 @@ import { elapsedLabel } from "yuke:indicator";
 function failed(error) { notice.show("jobs · " + (/** @type {Error} */ (error)?.message || String(error))); }
 
 /** @param {Job} job @param {number} now @returns {string} */
-export function jobState(job, now) {
+function jobState(job, now) {
   return job.state === "running" && !job.stopRequested ? "running " + elapsedLabel(now - job.startedAt) : endLabel(job);
 }
 

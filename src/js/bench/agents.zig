@@ -23,7 +23,7 @@ pub fn create(host: *Host, count: u32, shape: Shape) !*Tree {
     const self = try host.gpa.create(Tree);
     errdefer host.gpa.destroy(self);
     self.* = .{ .gpa = host.gpa, .app = undefined, .transport = .{ .bytes = "" } };
-    try fixture.init(&self.app, host.gpa, host.io, host.cwd, host.execution, self.transport.transport());
+    try fixture.init(&self.app, host.gpa, host.io, host.cwd, self.transport.transport(), host.execution);
     errdefer self.app.deinit();
     var tx = try self.app.db.begin();
     defer tx.deinit();

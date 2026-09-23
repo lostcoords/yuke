@@ -175,9 +175,9 @@ pub fn reload(self: *@This()) !bool {
 }
 
 /// Rebuild the merged view from the layers the store already holds.
-pub fn rebuild(self: *@This()) !bool {
+pub fn rebuild(self: *@This()) !void {
     const next = try self.load(if (self.local) |*loaded| loaded else null);
-    return self.swap(next);
+    _ = self.swap(next);
 }
 
 fn load(self: *@This(), local: ?*provider.config.Loaded) !provider_registry.Registry {

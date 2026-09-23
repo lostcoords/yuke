@@ -26,11 +26,6 @@ pub const Block = struct {
         mime: []const u8,
         /// The name a provider requires beside file bytes. An image needs none.
         filename: []const u8 = "",
-
-        /// Classify the media type. An unknown type is a document, which every protocol can refuse.
-        pub fn modality(self: Media) types.Modality {
-            return modalityOf(self.mime);
-        }
     };
 
     pub const Reasoning = struct {

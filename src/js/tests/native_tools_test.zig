@@ -325,8 +325,8 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     const host = fixture.host;
     try support.eval(host, "native_tools/builtins-test.test.js");
 
-    try expectCall(host, "read", "{\"path\":\"a.txt\",\"start\":2,\"end\":3}", root, false, "2: two\n3: two");
-    try expectCall(host, "read", "{\"path\":\"long.txt\"}", root, false, "[The tool cut 1 line(s) at 8000 bytes.]");
+    try support.expectTool(host, "read", "{\"path\":\"a.txt\",\"start\":2,\"end\":3}", .{ .root = root, .text = .{ .contains = "2: two\n3: two" } });
+    try support.expectTool(host, "read", "{\"path\":\"long.txt\"}", .{ .root = root, .text = .{ .contains = "[The tool cut 1 line(s) at 8000 bytes.]" } });
     // An image reads as one media ref. The host anchors the relative path before the engine reads the file.
     {
         const call = host.calls.submit("read", "{\"path\":\"shot.png\",\"start\":2,\"end\":2}", root);
@@ -339,10 +339,10 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         try host.pump();
     }
     // A binary file that has no image signature keeps the text error.
-    try expectCall(host, "read", "{\"path\":\"blob.bin\"}", root, true, "read: the file holds invalid UTF-8");
-    try expectCall(host, "read", "{\"path\":\"missing.txt\"}", root, true, "read: the path does not exist");
-    try expectCall(host, "read", "{\"path\":1}", root, true, "read: the argument path must be a string");
-    try expectCall(host, "read", "{\"path\":\"a.txt\",\"file_path\":\"a.txt\"}", root, true, "read: the argument file_path does not exist. The arguments are: path, start, end.");
+    try support.expectTool(host, "read", "{\"path\":\"blob.bin\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the file holds invalid UTF-8" } });
+    try support.expectTool(host, "read", "{\"path\":\"missing.txt\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the path does not exist" } });
+    try support.expectTool(host, "read", "{\"path\":1}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the argument path must be a string" } });
+    try support.expectTool(host, "read", "{\"path\":\"a.txt\",\"file_path\":\"a.txt\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the argument file_path does not exist. The arguments are: path, start, end." } });
     {
         const call = host.calls.submit("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", root);
         try support.pumpUntilSettled(host, call);
@@ -377,7 +377,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         call.finish();
         try host.pump();
     }
-    try expectCall(host, "exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", root, false, "out\n[stderr]\nerr\n[exit code: 3]");
+    try support.expectTool(host, "exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", .{ .root = root, .text = .{ .contains = "out\n[stderr]\nerr\n[exit code: 3]" } });
     {
         const call = host.calls.submit("exec", "{\"command\":\"head -c 20000 /dev/zero | tr '\\\\0' x\"}", root);
         try support.pumpUntilSettled(host, call);
@@ -397,7 +397,7 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         call.finish();
         try host.pump();
     }
-    try expectCall(host, "exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", root, false, "[The command passed its 300 ms timeout.");
+    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", .{ .root = root, .text = .{ .contains = "[The command passed its 300 ms timeout." } });
 }
 
 test "a user edit tool overrides the baked edit tool" {
@@ -870,37 +870,6 @@ fn processExists(pid: std.posix.pid_t) bool {
     return true;
 }
 
-/// Submit one tool call from session 01…01, wait for it, and check that its text holds `part`.
-fn expectTool(host: *Host, name: []const u8, args: []const u8, is_error: bool, part: []const u8) !void {
-    return expectToolMatch(host, name, args, is_error, part, .holds);
-}
-
-/// Check the tail instead, so a test can pin what does not trail the text.
-fn expectToolEnd(host: *Host, name: []const u8, args: []const u8, is_error: bool, part: []const u8) !void {
-    return expectToolMatch(host, name, args, is_error, part, .ends);
-}
-
-fn expectToolMatch(host: *Host, name: []const u8, args: []const u8, is_error: bool, part: []const u8, match: enum { holds, ends }) !void {
-    const call = host.calls.submit(name, args, "/tmp");
-    call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
-    try support.pumpUntilSettled(host, call);
-    errdefer std.debug.print("{s} {s} -> {s}\n", .{ name, args, call.text orelse "" });
-    try std.testing.expectEqual(is_error, call.is_error);
-    switch (match) {
-        .holds => try std.testing.expect(std.mem.indexOf(u8, call.text.?, part) != null),
-        .ends => try std.testing.expect(std.mem.endsWith(u8, call.text.?, part)),
-    }
-    try support.dropCall(host, call);
-}
-
-fn expectCall(host: *Host, name: []const u8, args: []const u8, root: []const u8, is_error: bool, part: []const u8) !void {
-    const call = host.calls.submit(name, args, root);
-    try support.pumpUntilSettled(host, call);
-    try std.testing.expectEqual(is_error, call.is_error);
-    try std.testing.expect(std.mem.indexOf(u8, call.text.?, part) != null);
-    try support.dropCall(host, call);
-}
-
 test "background jobs start, list, stop, and report a natural exit once to their session" {
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
@@ -915,24 +884,24 @@ test "background jobs start, list, stop, and report a natural exit once to their
         \\client.sessionSendInput = async (id, content) => { sent.push(content[0].text); return {}; };
     , "job-messages.js");
 
-    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", false, "[job j1 started: sleep 30.");
-    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", false, "[job j1 already runs this command.");
-    try expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true,\"timeout_ms\":5}", true, "Remove one of the two arguments");
-    try expectToolEnd(host, "exec", "{\"command\":\"echo hi\"}", false, "hi\n[exit code: 0]");
-    try expectTool(host, "jobs", "{}", false, "[j1 running: sleep 30. Log: ");
-    try expectTool(host, "jobs", "{\"id\":\"j1\"}", false, "[j1 running: sleep 30. Log: ");
-    try expectTool(host, "jobs", "{\"stop\":true}", true, "the argument stop needs the argument id");
-    try expectTool(host, "jobs", "{\"id\":\"j9\"}", true, "the job j9 does not exist. The jobs are: j1.");
-    try expectTool(host, "exec", "{\"command\":\"echo done; exit 2\",\"background\":true}", false, "[job j2 started");
-    try expectTool(host, "jobs", "{\"id\":\"j1\",\"stop\":true}", false, "[j1 stop requested: sleep 30]");
+    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", .{ .text = .{ .contains = "[job j1 started: sleep 30." } });
+    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", .{ .text = .{ .contains = "[job j1 already runs this command." } });
+    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true,\"timeout_ms\":5}", .{ .is_error = true, .text = .{ .contains = "Remove one of the two arguments" } });
+    try support.expectTool(host, "exec", "{\"command\":\"echo hi\"}", .{ .text = .{ .ends = "hi\n[exit code: 0]" } });
+    try support.expectTool(host, "jobs", "{}", .{ .text = .{ .contains = "[j1 running: sleep 30. Log: " } });
+    try support.expectTool(host, "jobs", "{\"id\":\"j1\"}", .{ .text = .{ .contains = "[j1 running: sleep 30. Log: " } });
+    try support.expectTool(host, "jobs", "{\"stop\":true}", .{ .is_error = true, .text = .{ .contains = "the argument stop needs the argument id" } });
+    try support.expectTool(host, "jobs", "{\"id\":\"j9\"}", .{ .is_error = true, .text = .{ .contains = "the job j9 does not exist. The jobs are: j1." } });
+    try support.expectTool(host, "exec", "{\"command\":\"echo done; exit 2\",\"background\":true}", .{ .text = .{ .contains = "[job j2 started" } });
+    try support.expectTool(host, "jobs", "{\"id\":\"j1\",\"stop\":true}", .{ .text = .{ .contains = "[j1 stop requested: sleep 30]" } });
     try support.pumpUntilTrue(host, "globalThis.j1Ended");
-    try expectTool(host, "jobs", "{\"id\":\"j1\",\"stop\":true}", false, "[j1 stopped: sleep 30]");
+    try support.expectTool(host, "jobs", "{\"id\":\"j1\",\"stop\":true}", .{ .text = .{ .contains = "[j1 stopped: sleep 30]" } });
     try support.pumpUntilTrue(host, "sent.length === 1");
     try support.pumpUntilIdle(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
         \\sent.length === 1 && sent[0].startsWith("[job j2 exited (exit code 2): echo done; exit 2. Log: ") && sent[0].endsWith("]\ndone") ? 1 : 0
     ));
-    try expectTool(host, "jobs", "{\"id\":\"j2\",\"stop\":true}", false, "[j2 exited (exit code 2): echo done; exit 2]");
+    try support.expectTool(host, "jobs", "{\"id\":\"j2\",\"stop\":true}", .{ .text = .{ .contains = "[j2 exited (exit code 2): echo done; exit 2]" } });
 }
 
 test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves its exit" {

@@ -282,7 +282,7 @@ test "a request reaches a command and answers with its result" {
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: app.App = undefined;
-    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), canned.transport());
+    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], canned.transport(), execution.testContext(&env));
     defer runtime.deinit();
     try app_fixture.installModel(&runtime);
 
@@ -401,10 +401,10 @@ test "process activity uses live engine state and scoped coalesced notifications
     // A child has no pane, but its prepared run already belongs to this process.
     const sid = SessionId.bytes(std.mem.toBytes(@as(u128, 3)));
     const resident = tree.app.engine.sessions.get(sid).?;
-    const slot = try domain_session.RunSlot.create(host.gpa, .{ .model = "bench/model", .system_prompt = "", .root = "/bench" }, .{
+    const slot = try domain_session.RunSlot.create(host.gpa, .{
         .input_id = 1,
         .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },
-    }, .bytes(std.mem.toBytes(@as(u128, 1))), .{ .root = .bytes(std.mem.toBytes(@as(u128, 1))), .depth = 1 });
+    }, .bytes(std.mem.toBytes(@as(u128, 1))), .{ .root = .bytes(std.mem.toBytes(@as(u128, 1))), .depth = 1 }, .{ .model = "bench/model", .system_prompt = "", .root = "/bench" });
     defer slot.destroy();
     resident.active_run = slot;
     defer resident.active_run = null;

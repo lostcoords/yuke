@@ -77,7 +77,7 @@ pub const App = struct {
             // An absent or empty file installs an empty layer, which every reader treats like none.
             _ = try self.store.reload();
             std.log.info("loaded {d} provider(s) from providers.json", .{self.store.local.?.providers.len});
-        } else _ = try self.store.rebuild();
+        } else try self.store.rebuild();
 
         // The engine borrows every process resource, so it is built after all of them exist.
         self.engine = Engine.init(.{
@@ -229,7 +229,7 @@ test "a catalog replacement announces the merged revision" {
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
-    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&test_env), test_transport.transport());
+    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], test_transport.transport(), execution.testContext(&test_env));
     defer runtime.deinit();
 
     const Seen = struct {

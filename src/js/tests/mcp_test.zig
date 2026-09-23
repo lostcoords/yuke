@@ -87,14 +87,6 @@ fn expectState(host: *Host, name: []const u8, want: []const u8) !void {
     try support.expectString(host, "mcpRow", want);
 }
 
-fn expectCall(host: *Host, name: []const u8, args: []const u8, want: []const u8, want_error: bool) !void {
-    const call = host.calls.submit(name, args, host.cwd);
-    try support.pumpUntilSettled(host, call);
-    try std.testing.expectEqualStrings(want, call.text orelse "");
-    try std.testing.expectEqual(want_error, call.is_error);
-    try support.dropCall(host, call);
-}
-
 /// The first run of a session calls `tools.select`, where the plugin asks for trust.
 fn askSelect(host: *Host) !void {
     const call = host.calls.submitHook("tools.select", "{\"tools\":[],\"context\":{}}");
@@ -132,7 +124,7 @@ test "an MCP call timeout cancels the request and ignores its late reply" {
     try std.testing.expect(call.is_error);
     try std.testing.expectEqualStrings("the request timed out", call.text orelse "");
     try std.testing.expect(start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds() >= 100);
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"after-timeout\"}", "canceled: yes", false);
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"after-timeout\"}", .{ .text = .{ .equals = "canceled: yes" } });
     try std.testing.expect(call.is_error);
     try std.testing.expectEqualStrings("the request timed out", call.text orelse "");
     try support.dropCall(host, call);
@@ -174,47 +166,47 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     // The eager legacy tool is listed but not loaded; the two deferred ones are.
     try expectSearch(host, "{\"query\":\"echo\"}", "Found 4 MCP tools:", &.{ "mcp_dies_echo", "mcp_downgrade_echo", "mcp_modern_echo" }, "mcp_legacy_echo");
     try expectSearch(host, "{\"query\":\"echo\",\"server\":\"modern\",\"limit\":1}", "Found 1 MCP tool:", &.{"mcp_modern_echo"}, "mcp_legacy_echo");
-    try expectCall(host, "tool_search", "{\"query\":\"nothing_like_this\"}", "No MCP tool matches \"nothing_like_this\". Connected servers: legacy, modern, dies, downgrade.", false);
-    try expectCall(host, "tool_search", "{\"query\":\"\"}", "query must be a nonempty string", true);
+    try support.expectTool(host, "tool_search", "{\"query\":\"nothing_like_this\"}", .{ .text = .{ .equals = "No MCP tool matches \"nothing_like_this\". Connected servers: legacy, modern, dies, downgrade." } });
+    try support.expectTool(host, "tool_search", "{\"query\":\"\"}", .{ .is_error = true, .text = .{ .equals = "query must be a nonempty string" } });
 
     // The legacy server sent a ping after the handshake and received the empty answer.
-    try expectCall(host, "mcp_legacy_echo", "{\"text\":\"there\"}", "hello says there pinged", false);
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"x\"}", "modern: x", false);
-    try expectCall(host, "mcp_modern_echo", "[]", "MCP tool arguments must be an object", true);
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"fail\"}", "no such thing", true);
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"media\"}", "[image image/png, 3 bytes]\n[resource file:///x x]\nwhy", false);
+    try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"there\"}", .{ .text = .{ .equals = "hello says there pinged" } });
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"x\"}", .{ .text = .{ .equals = "modern: x" } });
+    try support.expectTool(host, "mcp_modern_echo", "[]", .{ .is_error = true, .text = .{ .equals = "MCP tool arguments must be an object" } });
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"fail\"}", .{ .is_error = true, .text = .{ .equals = "no such thing" } });
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"media\"}", .{ .text = .{ .equals = "[image image/png, 3 bytes]\n[resource file:///x x]\nwhy" } });
     // The image block also attaches as media, beside the line that names it.
     const media = host.calls.submit("mcp_modern_echo", "{\"text\":\"media\"}", host.cwd);
     try support.pumpUntilSettled(host, media);
     try std.testing.expect(std.mem.indexOf(u8, media.extra_json orelse "", "\"media\":[{\"hash\":\"abab") != null);
     try support.dropCall(host, media);
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"structured\"}", "{\"n\":1}", false);
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"structured\"}", .{ .text = .{ .equals = "{\"n\":1}" } });
     const marker = "\n[truncated 20000 characters]";
     const big = try std.testing.allocator.alloc(u8, 100_000 + marker.len);
     defer std.testing.allocator.free(big);
     @memset(big[0..100_000], 'x');
     @memcpy(big[100_000..], marker);
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"big\"}", big, false);
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"input\"}", "the tool asks for input, which this client cannot answer", true);
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"big\"}", .{ .text = .{ .equals = big } });
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"input\"}", .{ .is_error = true, .text = .{ .equals = "the tool asks for input, which this client cannot answer" } });
     try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpConflict = false; plugins.use({ name: \"mcp-conflict\", apply(ctx) { ctx.tools.define({ name: \"mcp_modern_added\", description: \"Occupied name.\", parameters: { type: \"object\", properties: {} }, execute() { return \"other\"; } }); } }).ready.then(() => { globalThis.mcpConflict = true; });", "mcp-conflict.js");
     try support.pumpUntilTrue(host, "mcpConflict === true");
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"change\"}", "changed", false);
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"change\"}", .{ .text = .{ .equals = "changed" } });
     try support.pumpUntilTrue(host, "mcpStates().modern.includes('another tool already has this name')");
     try std.testing.expect(support.hasTool(host, "mcp_modern_a_tool"));
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"restored\"}", "modern: restored", false);
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"restored\"}", .{ .text = .{ .equals = "modern: restored" } });
     try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpConflict = true; Promise.resolve(plugins.dispose(\"mcp-conflict\")).then(() => { globalThis.mcpConflict = false; });", "mcp-unconflict.js");
     try support.pumpUntilTrue(host, "mcpConflict === false");
     // A list change installs a new tool set and removes the old yuke names first.
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"change\"}", "changed", false);
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"change\"}", .{ .text = .{ .equals = "changed" } });
     try support.pumpUntilTrue(host, "mcpStates().modern === 'connected · modern · 2 tools: added, echo'");
     try std.testing.expect(support.hasTool(host, "mcp_modern_added"));
     try std.testing.expect(!support.hasTool(host, "mcp_modern_a_tool"));
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"badchange\"}", "changed", false);
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"badchange\"}", .{ .text = .{ .equals = "changed" } });
     try support.pumpUntilTrue(host, "mcpStates().modern.includes('invalid MCP tool input schema')");
     try std.testing.expect(support.hasTool(host, "mcp_modern_added"));
-    try expectCall(host, "mcp_modern_added", "{\"text\":\"still\"}", "modern: still", false);
+    try support.expectTool(host, "mcp_modern_added", "{\"text\":\"still\"}", .{ .text = .{ .equals = "modern: still" } });
     // A server that exits during a call fails the call and removes its tools.
-    try expectCall(host, "mcp_dies_echo", "{}", "the server exited with code 3", true);
+    try support.expectTool(host, "mcp_dies_echo", "{}", .{ .is_error = true, .text = .{ .equals = "the server exited with code 3" } });
     try support.pumpUntilTrue(host, "mcpStates().dies === 'failed · legacy · the server exited with code 3 · stderr: boom'");
     try std.testing.expect(!support.hasTool(host, "mcp_dies_echo"));
 
@@ -242,7 +234,7 @@ test "a search tool name conflict clears on the next catalog change" {
     try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpHeld = true; Promise.resolve(plugins.dispose(\"search-holder\")).then(() => { globalThis.mcpHeld = false; });", "mcp-release.js");
     try support.pumpUntilTrue(host, "mcpHeld === false");
     try std.testing.expect(!support.hasTool(host, "tool_search"));
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"change\"}", "changed", false);
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"change\"}", .{ .text = .{ .equals = "changed" } });
     try support.pumpUntilTrue(host, "mcpStates().modern === 'connected · modern · 2 tools: added, echo'");
     try std.testing.expect(support.hasTool(host, "tool_search"));
     try std.testing.expect(!deferred(host, "tool_search"));
@@ -265,11 +257,11 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try expectState(host, "denied", "needs auth · run /mcp-login denied");
 
     // A progress notification before the answer changes nothing.
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"hi\"}", "modern http: hi", false);
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"hi\"}", .{ .text = .{ .equals = "modern http: hi" } });
     // An annotated argument travels in its header too, encoded when it is not plain ASCII.
-    try expectCall(host, "mcp_modern_region", "{\"region\":\"eu-west1\"}", "region header: eu-west1", false);
-    try expectCall(host, "mcp_modern_region", "{\"region\":\"世界\"}", "region header: =?base64?5LiW55WM?=", false);
-    try expectCall(host, "mcp_old_echo", "{\"text\":\"hi\"}", "old sse: hi", false);
+    try support.expectTool(host, "mcp_modern_region", "{\"region\":\"eu-west1\"}", .{ .text = .{ .equals = "region header: eu-west1" } });
+    try support.expectTool(host, "mcp_modern_region", "{\"region\":\"世界\"}", .{ .text = .{ .equals = "region header: =?base64?5LiW55WM?=" } });
+    try support.expectTool(host, "mcp_old_echo", "{\"text\":\"hi\"}", .{ .text = .{ .equals = "old sse: hi" } });
     // Each progress report restarts the 200 ms timer, so a 400 ms call ends with its answer.
     const progress = host.calls.submit("mcp_modern_echo", "{\"text\":\"progress\"}", host.cwd);
     try support.pumpUntilSettled(host, progress);
@@ -282,10 +274,10 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try support.pumpUntilSet(host, &peer.drop_again);
     try std.testing.expectEqual(@as(u32, 1), peer.end_listens);
     // The subscription stream carries the list change, and the next list names the new tool.
-    try expectCall(host, "mcp_modern_echo", "{\"text\":\"mchange\"}", "modern http: mchange", false);
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"mchange\"}", .{ .text = .{ .equals = "modern http: mchange" } });
     try support.pumpUntilTrue(host, "mcpStates().modern.startsWith('connected · modern · 4 tools: added, echo, region, slow')");
     // A timeout closes the modern stream, which is the modern cancel.
-    try expectCall(host, "mcp_modern_slow", "{}", "the request timed out", true);
+    try support.expectTool(host, "mcp_modern_slow", "{}", .{ .is_error = true, .text = .{ .equals = "the request timed out" } });
     try support.pumpUntilSet(host, &peer.cancel_seen);
     // An answer above 256 KiB arrives whole, cut only at the model's result limit.
     const big = host.calls.submit("mcp_legacy_echo", "{\"text\":\"big\"}", host.cwd);
@@ -294,12 +286,12 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try std.testing.expect(std.mem.endsWith(u8, big.text orelse "", "[truncated 207200 characters]"));
     try support.dropCall(host, big);
     // A forgotten session fails the call that finds it, and the server starts a new session.
-    try expectCall(host, "mcp_legacy_echo", "{\"text\":\"expire\"}", "legacy http: expire", false);
-    try expectCall(host, "mcp_legacy_echo", "{\"text\":\"late\"}", "the server ended the session", true);
+    try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"expire\"}", .{ .text = .{ .equals = "legacy http: expire" } });
+    try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"late\"}", .{ .is_error = true, .text = .{ .equals = "the server ended the session" } });
     try support.pumpUntilTrue(host, "mcpStates().legacy === 'connected · legacy · 1 tool: echo'");
-    try expectCall(host, "mcp_legacy_echo", "{\"text\":\"again\"}", "legacy http: again", false);
+    try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"again\"}", .{ .text = .{ .equals = "legacy http: again" } });
     // The legacy GET stream carries the list change, and the next list names the new tool.
-    try expectCall(host, "mcp_legacy_echo", "{\"text\":\"change\"}", "legacy http: change", false);
+    try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"change\"}", .{ .text = .{ .equals = "legacy http: change" } });
     try support.pumpUntilTrue(host, "mcpStates().legacy === 'connected · legacy · 2 tools: added, echo'");
 
     try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-http-dispose.js");
@@ -332,10 +324,10 @@ test "an MCP server behind OAuth signs in through the browser, refreshes its tok
     try login(host, "");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("callbackPage.includes('sign-in is complete') ? 1 : 0"));
     try support.pumpUntilTrue(host, "mcpStates().secure === 'connected · modern · 1 tool: echo'");
-    try expectCall(host, "mcp_secure_echo", "{\"text\":\"hi\"}", "secure: hi", false);
+    try support.expectTool(host, "mcp_secure_echo", "{\"text\":\"hi\"}", .{ .text = .{ .equals = "secure: hi" } });
     // A stale token answers 401; the client spends the refresh token once and retries the call.
-    try expectCall(host, "mcp_secure_echo", "{\"text\":\"revoke\"}", "secure: revoke", false);
-    try expectCall(host, "mcp_secure_echo", "{\"text\":\"after\"}", "secure: after", false);
+    try support.expectTool(host, "mcp_secure_echo", "{\"text\":\"revoke\"}", .{ .text = .{ .equals = "secure: revoke" } });
+    try support.expectTool(host, "mcp_secure_echo", "{\"text\":\"after\"}", .{ .text = .{ .equals = "secure: after" } });
     try std.testing.expectEqual(@as(u32, 1), peer.refreshes);
     try host.evalModule("globalThis.signedOut = false; mcpPlugin.logout('secure').then(() => { globalThis.signedOut = true; });", "mcp-logout.js");
     try support.pumpUntilTrue(host, "signedOut && mcpStates().secure === 'needs auth · run /mcp-login secure'");
@@ -388,7 +380,7 @@ test "a workspace server starts only after the user trusts it at the first run" 
     try askSelect(host);
     try support.pumpUntilTrue(host, "mcpStates().ws === 'connected · legacy · 1 tool: echo · 1 stray stdout line'");
     try std.testing.expect(support.hasTool(host, "mcp_ws_echo"));
-    try expectCall(host, "mcp_ws_echo", "{\"text\":\"you\"}", "hello says you pinged", false);
+    try support.expectTool(host, "mcp_ws_echo", "{\"text\":\"you\"}", .{ .text = .{ .equals = "hello says you pinged" } });
     try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpReorder = true; globalThis.mcpTimeout = 800; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-approved-reload.js");
     try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
     try askSelect(host);

@@ -282,7 +282,7 @@ fn writeToolResult(jw: *std.json.Stringify, tool_result: ir.Block.ToolResult) !v
 
 /// Write one attachment. This endpoint names a different part for each kind.
 fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
-    switch (media.modality()) {
+    switch (ir.modalityOf(media.mime)) {
         .image => {
             try jw.beginObject();
             try json.field(jw, "type", "image_url");

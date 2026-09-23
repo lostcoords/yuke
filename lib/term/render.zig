@@ -1,7 +1,6 @@
 const std = @import("std");
 const xvaxis = @import("xvaxis/main.zig");
 
-pub const Options = xvaxis.Vaxis.Options;
 pub const Window = xvaxis.Window;
 pub const Winsize = xvaxis.Winsize;
 
@@ -14,13 +13,8 @@ pub const Render = struct {
     /// True inside tmux. A clipboard write then needs the passthrough sequence.
     tmux: bool,
 
-    pub fn init(
-        io: std.Io,
-        alloc: std.mem.Allocator,
-        env_map: *const std.process.Environ.Map,
-        opts: Options,
-    ) !Render {
-        var vx = try xvaxis.Vaxis.init(io, alloc, env_map, opts);
+    pub fn init(io: std.Io, alloc: std.mem.Allocator, env_map: *const std.process.Environ.Map) !Render {
+        var vx = try xvaxis.Vaxis.init(io, alloc, env_map, .{});
         vx.caps.unicode = .unicode;
         vx.screen.width_method = .unicode;
         return .{
@@ -153,7 +147,7 @@ test "bracketed paste sets the mode and deinit resets it" {
     defer out.deinit();
 
     {
-        var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+        var r = try Render.init(io, std.testing.allocator, &env_map);
         defer r.deinit(&out.writer);
 
         try r.setBracketedPaste(&out.writer, true);
@@ -173,7 +167,7 @@ test "mouse mode sets 1002;1004;1006 and deinit resets it" {
     defer out.deinit();
 
     {
-        var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+        var r = try Render.init(io, std.testing.allocator, &env_map);
         defer r.deinit(&out.writer);
 
         try r.setMouseMode(&out.writer, true);
@@ -193,7 +187,7 @@ test "enableTui after resetState restores alt-screen modes" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var r = try Render.init(io, std.testing.allocator, &env_map);
     defer r.deinit(&out.writer);
 
     try r.enableTui(&out.writer);
@@ -223,7 +217,7 @@ test "a mouse disable stops deinit from resetting the mode twice" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var r = try Render.init(io, std.testing.allocator, &env_map);
     try r.setMouseMode(&out.writer, true);
     try r.setMouseMode(&out.writer, false);
     out.clearRetainingCapacity();
@@ -242,7 +236,7 @@ test "copyToClipboard emits base64 OSC 52 and refuses an oversize payload" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var r = try Render.init(io, std.testing.allocator, &env_map);
     defer r.deinit(&out.writer);
 
     try r.copyToClipboard(&out.writer, "hello");
@@ -263,7 +257,7 @@ test "a tmux session also gets the passthrough clipboard sequence" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var r = try Render.init(io, std.testing.allocator, &env_map);
     defer r.deinit(&out.writer);
     try std.testing.expect(r.tmux);
 
@@ -280,7 +274,7 @@ test "init stores a 0x0 back-buffer and render writes nothing" {
     var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
 
-    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var r = try Render.init(io, std.testing.allocator, &env_map);
     var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer deinit_writer.deinit();
     defer r.deinit(&deinit_writer.writer);
@@ -299,7 +293,7 @@ test "resize then draw then render emits the cell" {
     var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
 
-    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var r = try Render.init(io, std.testing.allocator, &env_map);
     var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer deinit_writer.deinit();
     defer r.deinit(&deinit_writer.writer);
@@ -319,7 +313,7 @@ test "a render write error forces a full redraw" {
     var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
 
-    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var r = try Render.init(io, std.testing.allocator, &env_map);
     var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer deinit_writer.deinit();
     defer r.deinit(&deinit_writer.writer);
@@ -349,7 +343,7 @@ test "a repeat render of the same screen with a visible cursor writes nothing" {
     var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
 
-    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var r = try Render.init(io, std.testing.allocator, &env_map);
     var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer deinit_writer.deinit();
     defer r.deinit(&deinit_writer.writer);
@@ -381,7 +375,7 @@ test "a secondary cursor list is freed after a reset" {
     var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
 
-    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    var r = try Render.init(io, std.testing.allocator, &env_map);
     var deinit_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer deinit_writer.deinit();
     defer r.deinit(&deinit_writer.writer);

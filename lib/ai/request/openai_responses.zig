@@ -289,7 +289,7 @@ fn writeSearchOutput(jw: *std.json.Stringify, tools: []const ir.Tool, tool_resul
 /// Write one attachment. Responses names the image URL as a plain string, not an object.
 fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
     try jw.beginObject();
-    switch (media.modality()) {
+    switch (ir.modalityOf(media.mime)) {
         .image => {
             try json.field(jw, "type", "input_image");
             switch (media.source) {

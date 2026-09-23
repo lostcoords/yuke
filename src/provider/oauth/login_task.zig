@@ -307,7 +307,7 @@ const Probe = struct {
     fn init(self: *Probe, io: std.Io, replies: []const oauth.CannedHttp.Reply) !void {
         self.* = .{ .env = .init(testing.allocator), .canned = .{ .replies = replies } };
         self.blobs = testing.tmpDir(.{});
-        try app_fixture.init(&self.runtime, testing.allocator, io, self.blob_dir[0..try self.blobs.dir.realPath(testing.io, &self.blob_dir)], execution.testContext(&self.env), self.transport.transport());
+        try app_fixture.init(&self.runtime, testing.allocator, io, self.blob_dir[0..try self.blobs.dir.realPath(testing.io, &self.blob_dir)], self.transport.transport(), execution.testContext(&self.env));
     }
 
     fn deinit(self: *Probe) void {

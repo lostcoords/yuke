@@ -280,8 +280,8 @@ pub fn slotConfig(engine: *Engine, arena: std.mem.Allocator, rt: *Session, conte
 }
 
 /// Create the slot of a committed start. Only an allocation follows the commit.
-pub fn createSlot(engine: *Engine, config: session.Config, context: Preparation, started: Started) !*RunSlot {
-    return RunSlot.create(engine.deps.gpa, config, started.handle, if (context.snapshot.parent_id) |id| .bytes(id) else null, context.tree);
+pub fn createSlot(engine: *Engine, context: Preparation, started: Started, config: session.Config) !*RunSlot {
+    return RunSlot.create(engine.deps.gpa, started.handle, if (context.snapshot.parent_id) |id| .bytes(id) else null, context.tree, config);
 }
 
 /// Emit the durable start after the caller folds any user commits.
@@ -302,7 +302,7 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
     const session_id = rt.id;
     const config = try slotConfig(engine, arena, rt, context, .turn);
     const started = try beginQueuedTurn(engine.deps.db, engine.deps.io, arena, session_id.raw, context.snapshot.config_rev);
-    const slot = try createSlot(engine, config, context, started);
+    const slot = try createSlot(engine, context, started, config);
     // Publish the user commits before run.started to retire the queue in sequence order.
     session_events.publishUserCommits(engine, rt, started.user_commits);
     std.debug.assert(rt.queueDepth() == 0);
@@ -349,7 +349,7 @@ pub fn prepareCompaction(engine: *Engine, rt: *Session, reason: proto.enums.Comp
     try tx.commit();
 
     const started_result: Started = .{ .handle = .{ .input_id = 0, .started = started }, .user_commits = &.{} };
-    const slot = try createSlot(engine, config, context, started_result);
+    const slot = try createSlot(engine, context, started_result, config);
     rt.active_run = slot;
     emitStarted(engine, rt, started_result);
     session_events.announceActivity(engine, rt); // A compaction opens no round, so nothing else says it runs.

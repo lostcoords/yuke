@@ -90,7 +90,7 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
     var file_w = tty.writerStreaming(&write_buf);
     const writer = &file_w.interface;
 
-    var render = try term_pkg.Render.init(io, gpa, extensions.host.execution.env, .{});
+    var render = try term_pkg.Render.init(io, gpa, extensions.host.execution.env);
     defer render.deinit(writer);
     try render.enableTui(writer);
 

@@ -139,9 +139,9 @@ test "auth.list reports the providers the environment offers, not only the file"
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
-    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), transport.transport());
+    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], transport.transport(), execution.testContext(&env));
     defer runtime.deinit();
-    _ = try runtime.store.rebuild();
+    try runtime.store.rebuild();
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -176,9 +176,9 @@ test "catalog.reload reads the file again and reports whether the revision moved
     defer blobs.cleanup();
     var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
-    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], execution.testContext(&env), transport.transport());
+    try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], transport.transport(), execution.testContext(&env));
     defer runtime.deinit();
-    _ = try runtime.store.rebuild();
+    try runtime.store.rebuild();
 
     var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir = dir_buf[0..try tmp.dir.realPath(rt.io(), &dir_buf)];

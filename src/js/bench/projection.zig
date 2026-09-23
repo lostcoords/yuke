@@ -36,7 +36,7 @@ pub fn create(host: *Host, io: std.Io, scale: u32, stream: Stream) !*Projection 
     errdefer gpa.destroy(self);
     self.* = .{ .gpa = gpa, .app = undefined, .transport = .{ .bytes = "" }, .session = undefined, .session_id = undefined };
     // The bench never puts a blob, so the host working directory stands in for the store.
-    try app_fixture.init(&self.app, gpa, io, host.cwd, host.execution, self.transport.transport());
+    try app_fixture.init(&self.app, gpa, io, host.cwd, self.transport.transport(), host.execution);
     errdefer self.app.deinit();
     const sid = proto.ids.SessionId.bytes([_]u8{7} ** 16);
     const session = try self.app.engine.sessions.getOrCreate(sid);

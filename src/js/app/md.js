@@ -986,4 +986,3 @@ export class Document {
   }
 }
 
-export { segment, parseInline };

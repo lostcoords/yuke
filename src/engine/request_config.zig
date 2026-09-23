@@ -220,7 +220,7 @@ test "deferral needs a deferred tool and the search tool, and the route picks th
 }
 
 /// Build the session request configuration once before any context decision.
-pub fn buildConfig(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, model: *const registry.ModelSpec) !RequestBuild {
+pub fn buildConfig(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, model: *const registry.ModelSpec) !RequestBuild {
     const held = try loadout(engine, arena, slot);
     // The model is known here and not at the loadout, so the deferral policy applies at the first build and holds for the run.
     if (held.request_tools == null) try decideDeferral(held, model);

@@ -29,14 +29,13 @@ export function agentsLabel(count) {
 }
 
 // Read the activity again. The pane pinned the session, so a null read means the pane let it go.
-/** @param {string} sessionId @returns {Wire.SessionActivity | null} */
+/** @param {string} sessionId */
 export function refreshActivity(sessionId) {
   const activity = client.sessionActivity(sessionId);
   if (activity) live.set(sessionId, activity);
   else live.delete(sessionId);
   events.emit("activity.changed", sessionId, activity);
   root.invalidate();
-  return activity;
 }
 
 /** @param {string} sessionId @returns {void} */

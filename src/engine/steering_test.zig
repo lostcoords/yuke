@@ -164,10 +164,6 @@ const Fixture = struct {
         const first = std.mem.indexOfScalar(Phase, self.phases.items, .waiting) orelse return &.{};
         return self.phases.items[first..];
     }
-
-    fn history(self: *Fixture) ![]const proto.message.Message {
-        return self.base.history();
-    }
 };
 
 const tool_reply = Resources.tool_reply;
@@ -184,7 +180,7 @@ test "input during a response or hook joins the next round in FIFO order" {
         const two = try f.send("steer two");
         try testing.expect(one == .queued and two == .queued);
         try testing.expectEqual(@as(u64, 2), try database.input.count(&f.base.db, f.base.arena.allocator(), Fixture.id.raw));
-        try testing.expectEqual(@as(usize, 1), (try f.history()).len);
+        try testing.expectEqual(@as(usize, 1), (try f.base.history()).len);
         try f.finish();
         try testing.expectEqual(@as(usize, 2), f.requests.items.len);
         try testing.expect(std.mem.indexOf(u8, f.requests.items[0], "steer one") == null);
@@ -194,7 +190,7 @@ test "input during a response or hook joins the next round in FIFO order" {
             try testing.expectEqual(@as(u64, 0), f.build_activity.?.queued);
             try testing.expect(f.build_activity.?.state == .building);
         }
-        const messages = try f.history();
+        const messages = try f.base.history();
         try testing.expectEqual(@as(usize, 5), messages.len);
         for (messages, 1..) |message, id| try testing.expectEqual(id, message.id());
         try testing.expectEqual(one.queued.input_id, messages[2].user.input_id);
@@ -235,7 +231,7 @@ test "input before launch joins the first request without an early assistant id"
     try f.finish();
     try testing.expectEqual(@as(usize, 1), f.requests.items.len);
     try testing.expect(std.mem.indexOf(u8, f.requests.items[0], "before launch") != null);
-    const messages = try f.history();
+    const messages = try f.base.history();
     try testing.expectEqual(@as(usize, 3), messages.len);
     try testing.expectEqual(@as(u64, 2), messages[1].user.id);
     try testing.expectEqual(@as(u64, 3), messages[2].assistant.id);
@@ -255,7 +251,7 @@ test "cancel preserves pending input unless clear_queue is set" {
             try f.finish();
             try testing.expectEqual(@as(usize, if (clear) 1 else 2), f.run_starts);
             var found = false;
-            for (try f.history()) |message| {
+            for (try f.base.history()) |message| {
                 if (message == .user and message.user.input_id == queued.queued.input_id) found = true;
                 if (message == .assistant and message.assistant.run_id == 1) {
                     try testing.expect(stage == .stream);
@@ -278,7 +274,7 @@ test "steering respects the pinned round limit and leaves excess input for a new
     _ = try commands.sessionPatch(&f.base.engine, a, .{ .session_id = Fixture.id, .patch = .{ .max_rounds = 4 } });
     _ = try f.send("next run after cap");
     try f.finish();
-    const messages = try f.history();
+    const messages = try f.base.history();
     try testing.expectEqual(@as(usize, 4), messages.len);
     try testing.expectEqualStrings("max_rounds", messages[1].assistant.@"error".?.type);
     try testing.expectEqual(@as(u64, 1), messages[1].assistant.run_id);
@@ -322,7 +318,7 @@ test "a protected child report joins its active parent at the next boundary" {
     try testing.expectEqual(@as(i64, 1), (try f.base.db.queries.child_report_credits.one(a, .{ .parent_id = Fixture.id.raw })).value.used);
     try testing.expectError(error.ProtectedInput, commands.sessionCancelInput(&f.base.engine, a, .{ .session_id = Fixture.id, .input_id = report.input.input_id }));
     try f.finish();
-    const messages = try f.history();
+    const messages = try f.base.history();
     try testing.expectEqual(@as(usize, 4), messages.len);
     try testing.expectEqual(report.input.input_id, messages[2].user.input_id);
     try testing.expectEqualStrings("worker", messages[2].user.source.?.child_report.name);
@@ -370,7 +366,7 @@ test "input during automatic compaction waits for the next round and keeps messa
     try testing.expectEqual(@as(usize, 3), f.requests.items.len);
     try testing.expect(std.mem.indexOf(u8, f.requests.items[1], "steer during summary") == null);
     try testing.expect(std.mem.indexOf(u8, f.requests.items[2], "steer during summary") != null);
-    const messages = try f.history();
+    const messages = try f.base.history();
     try testing.expectEqual(@as(usize, 9), messages.len);
     for (messages, 1..) |message, id| try testing.expectEqual(id, message.id());
     try testing.expect(messages[5] == .compaction);

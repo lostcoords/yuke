@@ -196,7 +196,7 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
 fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media, cache: bool) !void {
     const plain_text = std.mem.startsWith(u8, media.mime, "text/");
     const document = plain_text or std.mem.eql(u8, media.mime, "application/pdf");
-    const kind: []const u8 = switch (media.modality()) {
+    const kind: []const u8 = switch (ir.modalityOf(media.mime)) {
         .image => "image",
         // A document is a PDF or plain text, and no other type has a source shape on this API.
         .pdf => if (document) "document" else return error.UnsupportedContent,
