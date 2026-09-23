@@ -1,8 +1,10 @@
 import { net } from "yuke:net";
 
+/** @import { Socket } from "yuke:net-native" */
+
 let fresh = false, steps = 0;
 let bytes = new Uint8Array();
-/** @type {import("../app/net.js").Socket | undefined} */
+/** @type {Socket | undefined} */
 let connection;
 
 /** @param {string} name @param {number} scale */

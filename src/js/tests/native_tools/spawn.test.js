@@ -1,6 +1,8 @@
 import { exec } from "yuke:exec";
 import { spawn as spawnNative } from "yuke:process";
 import { spawn as spawnWith, lines } from "yuke:spawn";
+import { start as startJob, jobs } from "yuke:jobs";
+import { events } from "yuke:kernel";
 // The test host has no PATH, so every child names the utility directories.
 const env = { PATH: "/usr/bin:/bin" };
 const spawn = (argv, options = {}) => spawnWith(argv, { ...options, env: { ...env, ...(options.env ?? {}) } });
@@ -71,8 +73,6 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   }
 
   // The job table emits a fresh copy of each change, a stop of an exited job keeps its real end, and the log ends with the exit line.
-  const { start: startJob, jobs } = await import("yuke:jobs");
-  const { events } = await import("yuke:kernel");
   const changes = [];
   const off = events.on("jobs.changed", (job) => { changes.push(`${job.id} ${job.state}`); job.state = "mutated"; });
   let uppercase = "";

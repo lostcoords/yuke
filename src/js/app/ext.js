@@ -2,10 +2,10 @@
 import * as cancellation from "yuke:cancellation-native";
 import { events } from "yuke:kernel";
 import { bindInteraction } from "yuke:interaction";
-export { interaction } from "yuke:interaction";
 import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:hooks";
 import { native } from "yuke:engine-native";
+export { interaction } from "yuke:interaction";
 
 /** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginAsync, PluginHandle, Release, ReleaseEntry, ScopeEntry, ScopeLife, ToolDefinition } from "./types/ext.js" */
 

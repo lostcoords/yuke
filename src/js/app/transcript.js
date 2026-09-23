@@ -11,6 +11,7 @@ import { byteLabel } from "yuke:format";
 /** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
 /** @import { ActionEntry, ActionPlan, MessageDescriptor, PartCache, PartHit, PartOf, PartState, PartsOf, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions } from "./types/transcript.js" */
 /** @import { MessagePart } from "yuke:engine-native" */
+/** @import { Block } from "./types/md.js" */
 
 // Left gutter for a transcript row marker; the body indents past it.
 const TX_GUTTER = 2;
@@ -1538,7 +1539,7 @@ export class Transcript {
       rows.length = ends.at(-1) || 0;
       for (let i = ends.length; i < doc._blocks.length; i++) {
         if (i) rows.push({ segments: [{ text: "", group: "MdText" }], indent: TX_GUTTER, key: id, partId: part.id, kind: "text" });
-        const block = /** @type {import("./types/md.js").Block} */ (doc._blocks[i]);
+        const block = /** @type {Block} */ (doc._blocks[i]);
         for (const r of doc._blockRows(block, contentW)) rows.push({ segments: r.segments, indent: TX_GUTTER, key: id, partId: part.id, kind: "text" });
         ends.push(rows.length);
       }

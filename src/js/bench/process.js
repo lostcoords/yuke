@@ -3,19 +3,22 @@ import { fs } from "yuke:fs";
 import { spawn } from "yuke:spawn";
 import { JobOutput } from "yuke:jobs-ui";
 
+/** @import { Job } from "yuke:jobs-native" */
+/** @import { ChildProcess } from "yuke:spawn" */
+
 let phase = "", scale = 1, received = 0, steps = 0, expected = 0;
 /** @type {(() => void) | null} */
 let complete = null;
 /** @type {JobOutput | null} */
 let view = null;
-/** @type {import("../app/spawn.js").ChildProcess | null} */
+/** @type {ChildProcess | null} */
 let child = null;
 const readFixturePath = "/tmp/yuke-bench-read-fixture";
 const readFixtureBytes = 3 * 1024 * 1024;
 const rangeFixturePath = "/tmp/yuke-bench-range-fixture";
 const rangeFixtureLine = "const value = compute(input, options);\n";
 const chunk = "x".repeat(4095) + "\n";
-/** @type {import("yuke:jobs-native").Job} */
+/** @type {Job} */
 const job = { id: 1, state: "running", command: "bench", started_at_ms: 0, cwd: "/tmp", log: "", stop_requested: false };
 
 /** @param {string} name @param {number} count */

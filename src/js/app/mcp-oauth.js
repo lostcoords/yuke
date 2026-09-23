@@ -3,6 +3,8 @@ import * as native from "yuke:oauth-native";
 import * as mcpNative from "yuke:mcp-native";
 import { fetch } from "yuke:http";
 
+/** @import { CancellationSignal } from "yuke:cancellation-native" */
+
 /** @typedef {{ client_id: string, client_secret?: string }} Client */
 /** @typedef {{ access_token: string, refresh_token?: string, expires_at?: number, scope?: string, client: Client, token_endpoint: string, issuer: string, resource: string }} Grant */
 /** @typedef {{ clientId?: string, clientSecret?: string, scopes?: string[] }} OAuthConfig */
@@ -204,7 +206,7 @@ function scopeFor(configured, challenged) {
 }
 
 // Sign in to one server: discover, register, authorize in the browser, and store the grant.
-/** @param {string} url @param {{ challenge?: string, config?: OAuthConfig, open(url: string): Promise<void> | void, signal?: import("yuke:cancellation-native").CancellationSignal }} options @returns {Promise<Grant>} */
+/** @param {string} url @param {{ challenge?: string, config?: OAuthConfig, open(url: string): Promise<void> | void, signal?: CancellationSignal }} options @returns {Promise<Grant>} */
 export async function signIn(url, { challenge = "", config = {}, open, signal }) {
   const found = await discover(url, challenge);
   const listener = native.listen();

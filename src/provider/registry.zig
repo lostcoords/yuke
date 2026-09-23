@@ -5,6 +5,7 @@ const ai = @import("ai");
 const proto = @import("proto");
 const provider = @import("provider.zig");
 const login_runtime = @import("oauth/login_runtime.zig");
+const Allocations = @import("../allocations.zig");
 const catalog = ai.catalog;
 
 const model = ai.model;
@@ -616,7 +617,7 @@ test "a route override merges into one array and leaves the catalog intact" {
         &.{.{ .id = "extra", .upstream_id = "extra", .flags = .{ .supports_tool_search = true } }},
     };
     for (cases) |extra| {
-        var tracked: @import("../allocations.zig") = .{ .backing = std.testing.allocator };
+        var tracked: Allocations = .{ .backing = std.testing.allocator };
         const same = try mergedModels(tracked.allocator(), .{ .id = "p" }, &source, source.endpoints);
         try std.testing.expectEqual(models[0..].ptr, same.ptr);
         try std.testing.expectEqual(@as(usize, 0), tracked.counts.allocations);

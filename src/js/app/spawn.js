@@ -2,7 +2,7 @@
 
 import * as native from "yuke:process";
 
-/** @typedef {import("yuke:process").ProcessExit} ProcessExit */
+/** @import { ProcessExit } from "yuke:process" */
 /** @typedef {{ cwd?: string, env?: Record<string, string>, workspaceRoot?: string }} SpawnOptions */
 /** @typedef {{ onStdout(listener: (text: string) => void): void, onStderr(listener: (text: string) => void): void, write(text: string): Promise<void>, closeStdin(): void, kill(): boolean, exited: Promise<ProcessExit> }} ChildProcess */
 

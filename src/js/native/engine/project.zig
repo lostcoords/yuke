@@ -5,6 +5,7 @@ const proto = @import("proto");
 const utf8 = @import("../../../utf8.zig");
 const domain_session = @import("../../../session/session.zig");
 const domain_draft = @import("../../../session/draft.zig");
+const transcript = @import("../../../session/transcript.zig");
 
 const SessionId = proto.ids.SessionId;
 const paging = @import("paging.zig");
@@ -507,7 +508,6 @@ test "a diff of many files stays inside the response budget" {
 }
 
 test "many huge parts each stay inside the part budget and none is dropped" {
-    const transcript = @import("../../../session/transcript.zig");
     const gpa = testing.allocator;
     const sid = SessionId.bytes([_]u8{6} ** 16);
     var sess = domain_session.Session.init(gpa, sid);

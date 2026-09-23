@@ -8,6 +8,9 @@ import { sseParser } from "yuke:sse";
 import { client } from "yuke:client";
 import { fetch } from "yuke:http";
 
+/** @import { ServerConfig } from "yuke:mcp-transport" */
+/** @import { SseEvent } from "yuke:sse" */
+
 // The shell servers answer one JSON-RPC line per request. `sed` reads the id, the method, and the text argument.
 const READ = String.raw`while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -76,7 +79,7 @@ const OLD_VERSION = server(String.raw`    server/discover) printf '{"jsonrpc":"2
 `);
 
 const env = { PATH: "/usr/bin:/bin" };
-/** @param {string} script @returns {import("yuke:mcp").ServerConfig} */
+/** @param {string} script @returns {ServerConfig} */
 const sh = (script) => ({ command: "/bin/sh", args: ["-c", script], env });
 
 /** @returns {Record<string, string>} */
@@ -239,7 +242,7 @@ if (mcpCase === "validation") {
   equal(got.join(","), "ok,last");
 
   // Event-stream framing: every line ending, a CRLF split across chunks, a BOM, comments, and joined data lines.
-  /** @type {import("yuke:sse").SseEvent[]} */
+  /** @type {SseEvent[]} */
   const events = [];
   const parse = sseParser((event) => events.push(event));
   for (const chunk of ["\ufeffdata: one\r", "\n\r\n: note\nevent: endpoint\ndata:/x\rdata:  two\n\n", "id: 7\ndata: three\n", "\nid: bad\0\ndata: four\n\ndata: tail"]) parse(chunk);

@@ -2,6 +2,7 @@
 import { events } from "yuke:kernel";
 import { native } from "yuke:interaction-native";
 import * as cancellation from "yuke:cancellation-native";
+/** @import { CancellationSignal } from "yuke:cancellation-native" */
 /** @import { Context } from "yuke:ext" */
 /** @import { Answerer, Disposer, InteractionOptions, InteractionRequest, InteractionSurface } from "./types/ext.js" */
 
@@ -72,7 +73,7 @@ function allocateId() {
   return id;
 }
 
-/** @param {import("yuke:cancellation-native").CancellationSignal | undefined} signal @param {() => void} canceled @returns {() => void} */
+/** @param {CancellationSignal | undefined} signal @param {() => void} canceled @returns {() => void} */
 export function watchCancellation(signal, canceled) {
   if (!signal) return () => {};
   if (signal.aborted) { canceled(); return () => {}; }

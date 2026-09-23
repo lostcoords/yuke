@@ -1,5 +1,6 @@
 //! This module exports the yuke wire protocol types.
 
+const std = @import("std");
 pub const instructions = @import("instructions.zig");
 
 pub const ids = @import("ids.zig");
@@ -28,5 +29,5 @@ pub const clone = @import("clone.zig");
 pub const dupe = clone.dupe;
 
 test {
-    @import("std").testing.refAllDecls(@This());
+    std.testing.refAllDecls(@This());
 }

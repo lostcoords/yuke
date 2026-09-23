@@ -1,7 +1,9 @@
 declare module "yuke:net-native" {
+  import type { CancellationSignal } from "yuke:cancellation-native";
+
   export interface Options {
     /** Cancellation or timeout closes the connection and interrupts its other operation. */
-    signal?: import("yuke:cancellation-native").CancellationSignal;
+    signal?: CancellationSignal;
     /** The total operation deadline in milliseconds; default 5000, maximum 600000. */
     timeoutMs?: number;
   }

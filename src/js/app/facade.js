@@ -22,5 +22,5 @@ export { client } from "yuke:client";
 /** @typedef {import("./types/ext.js").AdviceOptions} AdviceOptions */
 /** @typedef {import("./types/ext.js").InteractionSurface} InteractionSurface */
 /** @typedef {import("yuke:kernel").ConfigPatch} ConfigPatch */
-/** @typedef {import("yuke:jobs").Job} Job */
+/** @typedef {import("yuke:jobs-native").Job} Job */
 

@@ -1,7 +1,6 @@
 import * as native from "yuke:http-native";
 
-/** @typedef {import("yuke:http-native").FetchOptions} FetchOptions */
-/** @typedef {import("yuke:http-native").ReadOptions} ReadOptions */
+/** @import { FetchOptions, HttpHead, ReadOptions } from "yuke:http-native" */
 
 class Headers {
   /** @param {Record<string, string>} values */
@@ -48,7 +47,7 @@ class Body {
 }
 
 class Response {
-  /** @param {import("yuke:http-native").HttpHead} head @param {ReadOptions} defaults */
+  /** @param {HttpHead} head @param {ReadOptions} defaults */
   constructor(head, defaults) {
     this.status = head.status;
     this.ok = head.status >= 200 && head.status < 300;

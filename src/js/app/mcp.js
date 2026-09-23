@@ -11,11 +11,9 @@ import { openUrl } from "yuke:browser";
 import { notice } from "yuke:notice";
 
 /** @import { Context } from "yuke:ext" */
-/** @import { Plugin, ToolDefinition } from "./types/ext.js" */
-/** @typedef {import("yuke:cancellation-native").CancellationSignal} CancellationSignal */
-/** @typedef {import("yuke:mcp-transport").ServerConfig} ServerConfig */
-/** @typedef {import("yuke:mcp-transport").Transport} Transport */
-/** @typedef {import("yuke:mcp-transport").Endpoint} Endpoint */
+/** @import { Plugin, ToolContext, ToolDefinition } from "./types/ext.js" */
+/** @import { CancellationSignal } from "yuke:cancellation-native" */
+/** @import { Endpoint, ServerConfig, Transport } from "yuke:mcp-transport" */
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
 /** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "needs auth" | "failed" | "disabled" | "stopped"} ServerState */
@@ -788,7 +786,7 @@ class Server {
     this.definitions = [];
   }
 
-  /** @param {string} tool @param {unknown} args @param {CancellationSignal} signal @param {import("./types/ext.js").ToolContext} context @returns {Promise<string | { __yuke_result: true, text: string, extra: { media: Wire.MediaBlob[] } }>} */
+  /** @param {string} tool @param {unknown} args @param {CancellationSignal} signal @param {ToolContext} context @returns {Promise<string | { __yuke_result: true, text: string, extra: { media: Wire.MediaBlob[] } }>} */
   async call(tool, args, signal, context) {
     if (this.state !== "connected") throw new Error("the MCP server " + this.name + " is " + this.state);
     if (!record(args)) throw new Error("MCP tool arguments must be an object");

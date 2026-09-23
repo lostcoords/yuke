@@ -3,7 +3,7 @@
 import * as native from "yuke:jobs-native";
 import { events } from "yuke:kernel";
 
-/** @typedef {import("yuke:jobs-native").Job} Job */
+/** @import { Job } from "yuke:jobs-native" */
 
 export const { list, get, read } = native;
 

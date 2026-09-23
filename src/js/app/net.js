@@ -1,7 +1,6 @@
 import * as native from "yuke:net-native";
 
-/** @typedef {import("yuke:net-native").ConnectOptions} ConnectOptions */
-/** @typedef {import("yuke:net-native").Socket} Socket */
+/** @import { ConnectOptions, Socket } from "yuke:net-native" */
 
 export const net = {
   /** @param {ConnectOptions} options @returns {Promise<Socket>} */

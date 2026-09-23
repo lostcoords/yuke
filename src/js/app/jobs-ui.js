@@ -8,7 +8,8 @@ import { elapsedLabel } from "yuke:indicator";
 
 /** @import { Context as PluginContext } from "yuke:ext" */
 /** @import { InjectContext as Context } from "./types/ext.js" */
-/** @typedef {import("yuke:jobs").Job} Job */
+/** @import { Job } from "yuke:jobs-native" */
+/** @import { TranscriptRow } from "./types/pager.js" */
 
 /** @param {unknown} error */
 function failed(error) { notice.show("jobs · " + (/** @type {Error} */ (error)?.message || String(error))); }
@@ -35,7 +36,7 @@ export class JobOutput extends ScrollView {
   constructor(job, onClose) {
     super(onClose);
     this.job = job;
-    /** @type {import("./types/pager.js").TranscriptRow[]} */
+    /** @type {TranscriptRow[]} */
     this.rows = [];
     this.first = 0;
     this.complete = false;
@@ -48,7 +49,7 @@ export class JobOutput extends ScrollView {
         const end = count + (this.partial ? 1 : 0);
         const shown = [];
         for (let i = top; i < Math.min(top + height, end + (this.complete ? 1 : 0)); i++) {
-          if (i < count) shown.push(/** @type {import("./types/pager.js").TranscriptRow} */ (this.rows[(this.first + skip + i) % this.rows.length]));
+          if (i < count) shown.push(/** @type {TranscriptRow} */ (this.rows[(this.first + skip + i) % this.rows.length]));
           else shown.push({ text: i < end ? this.partial ?? "" : `[${endLabel(this.job)}]`, group: "TxToolBody" });
         }
         return shown;

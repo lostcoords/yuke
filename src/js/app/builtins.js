@@ -12,20 +12,22 @@ import { byteLabel } from "yuke:format";
 /** @import { DiffFile as ParsedDiffFile } from "yuke:diff" */
 /** @import { RangeRead } from "yuke:fs" */
 /** @typedef {Record<string, unknown>} ToolArgs */
-/** @typedef {import("yuke:cancellation-native").CancellationSignal} ToolSignal */
-/** @typedef {import("./types/ext.js").ToolContext} ToolContext */
+/** @import { CancellationSignal as ToolSignal } from "yuke:cancellation-native" */
+/** @import { Context } from "yuke:ext" */
+/** @import { Job } from "yuke:jobs-native" */
+/** @import { ToolContext, ToolDefinition as NamedToolDefinition } from "./types/ext.js" */
 /** @typedef {{ old_start: number, old_lines: number, new_start: number, new_lines: number, lines: string[] }} DiffHunk */
 /** @typedef {{ path: string, hunks: DiffHunk[] }} DiffFile */
 /** @typedef {{ type: "diff", files: DiffFile[] }} DiffView */
 /** @typedef {{ view?: DiffView[], media?: Wire.MediaBlob[] }} ResultExtra */
 /** @typedef {{ __yuke_result: true, text: string, extra: ResultExtra | null }} BuiltinResult */
-/** @typedef {Omit<import("./types/ext.js").ToolDefinition, "name">} ToolDefinition */
+/** @typedef {Omit<NamedToolDefinition, "name">} ToolDefinition */
 
 /** @param {string} text @param {ResultExtra | null} extra @returns {BuiltinResult} */
 const result = (text, extra) => ({ __yuke_result: true, text, extra });
 
 // A user tool with the same name wins, so the built-in steps aside.
-/** @param {import("yuke:ext").Context} ctx @param {string} name @param {ToolDefinition} definition @returns {void} */
+/** @param {Context} ctx @param {string} name @param {ToolDefinition} definition @returns {void} */
 function builtin(ctx, name, definition) {
   if (hasTool(name)) return;
   const properties = /** @type {{ properties: Record<string, unknown> }} */ (definition.parameters);
@@ -202,7 +204,6 @@ function endLine(text) {
   return text.length === 0 || text.endsWith("\n") ? text : `${text}\n`;
 }
 
-/** @typedef {import("yuke:jobs").Job} Job */
 
 /** @param {string | undefined} sessionId @returns {Job[]} */
 function sessionJobs(sessionId) {
@@ -305,7 +306,7 @@ async function skill(args, _signal, context) {
 
 export const builtins = {
   name: "builtins",
-  /** @param {import("yuke:ext").Context} ctx */
+  /** @param {Context} ctx */
   apply(ctx) {
     builtin(ctx, "read", {
       description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range. A PNG, JPEG, GIF, or WebP file returns the image.",

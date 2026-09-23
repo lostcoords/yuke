@@ -1,5 +1,6 @@
 //! Strict typed SQLite queries over zqlite.
 
+const std = @import("std");
 const query = @import("query.zig");
 
 pub const Blob = query.Blob;
@@ -18,5 +19,5 @@ pub const prepare = query.prepare;
 pub const prepareAll = query.prepareAll;
 
 test {
-    @import("std").testing.refAllDecls(@This());
+    std.testing.refAllDecls(@This());
 }

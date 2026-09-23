@@ -7,11 +7,12 @@ import { sseParser } from "yuke:sse";
 import { utf8 } from "yuke:utf8";
 import { authFor, record, errorText } from "yuke:mcp-oauth";
 
-/** @typedef {import("yuke:cancellation-native").CancellationSignal} CancellationSignal */
+/** @import { CancellationSignal } from "yuke:cancellation-native" */
+/** @import { Auth, OAuthConfig } from "yuke:mcp-oauth" */
+/** @import { SseEvent } from "yuke:sse" */
 /** @typedef {Awaited<ReturnType<typeof fetch>>} HttpResponse */
-/** @typedef {import("yuke:mcp-oauth").OAuthConfig} OAuthConfig */
 /** @typedef {{ type?: string, command?: string, args?: string[], env?: Record<string, string>, cwd?: string, url?: string, headers?: Record<string, string>, oauth?: OAuthConfig | false, enabled?: boolean, timeout?: number, alwaysLoad?: boolean }} ServerConfig */
-/** @typedef {{ url: string, headers: Record<string, string>, auth: import("yuke:mcp-oauth").Auth | null }} Target */
+/** @typedef {{ url: string, headers: Record<string, string>, auth: Auth | null }} Target */
 
 const STOP_GRACE_MS = 2000;
 // The server's own timers bound a call, so an HTTP exchange waits as long as the host allows.
@@ -206,7 +207,7 @@ async function failure(response) {
 }
 
 // Hand each event of the body to `onEvent` until the body ends. The body is released on every exit.
-/** @param {HttpResponse} response @param {(event: import("yuke:sse").SseEvent) => void} onEvent @param {(ms: number) => void} [onRetry] */
+/** @param {HttpResponse} response @param {(event: SseEvent) => void} onEvent @param {(ms: number) => void} [onRetry] */
 async function readEvents(response, onEvent, onRetry) {
   try {
     const feed = sseParser(onEvent, { maxChars: MAX_RESPONSE_CHARS, onRetry });
