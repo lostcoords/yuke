@@ -1,5 +1,6 @@
-//! The protocol type registry for the oracle and generator.
+//! The protocol types the generator and the clone checks read, derived from the declarations of the wire modules.
 
+const std = @import("std");
 const instructions = @import("instructions.zig");
 const activity = @import("activity.zig");
 const auth = @import("auth.zig");
@@ -19,241 +20,73 @@ const run = @import("run.zig");
 const session = @import("session.zig");
 const tool = @import("tool.zig");
 const view = @import("view.zig");
+const ids = @import("ids.zig");
 
 pub const TypeEntry = struct { name: []const u8, ty: type };
-pub const EnumEntry = struct { name: []const u8, ty: type };
 pub const AliasEntry = struct { name: []const u8, base: []const u8 };
 
-pub const structs = [_]TypeEntry{
-    .{ .name = "Client", .ty = initialize.Client },
-    .{ .name = "ContentText", .ty = content.ContentText },
-    .{ .name = "ContentImage", .ty = content.ContentImage },
-    .{ .name = "ContentAudio", .ty = content.ContentAudio },
-    .{ .name = "ContentFile", .ty = content.ContentFile },
-    .{ .name = "MediaBlob", .ty = content.MediaBlob },
-    .{ .name = "BlobPutParams", .ty = blob.BlobPutParams },
-    .{ .name = "AuthCancelLoginParams", .ty = auth.AuthCancelLoginParams },
-    .{ .name = "AuthChangedData", .ty = auth.AuthChangedData },
-    .{ .name = "AuthListResult", .ty = auth.AuthListResult },
-    .{ .name = "AuthLoginResult", .ty = auth.AuthLoginResult },
-    .{ .name = "AuthLoginFinishedData", .ty = auth.AuthLoginFinishedData },
-    .{ .name = "AuthLoginOutcomeCanceled", .ty = auth.AuthLoginOutcomeCanceled },
-    .{ .name = "AuthLoginOutcomeFailed", .ty = auth.AuthLoginOutcomeFailed },
-    .{ .name = "AuthLoginOutcomeSucceeded", .ty = auth.AuthLoginOutcomeSucceeded },
-    .{ .name = "AuthLoginParams", .ty = auth.AuthLoginParams },
-    .{ .name = "AuthRemoveParams", .ty = auth.AuthRemoveParams },
-    .{ .name = "AuthProvider", .ty = auth.AuthProvider },
-    .{ .name = "AuthSetApiKeyParams", .ty = auth.AuthSetApiKeyParams },
-    .{ .name = "CatalogChangedData", .ty = catalog.CatalogChangedData },
-    .{ .name = "CatalogListParams", .ty = catalog.CatalogListParams },
-    .{ .name = "CatalogListResultFull", .ty = catalog.CatalogListResultFull },
-    .{ .name = "ProviderInfo", .ty = catalog.ProviderInfo },
-    .{ .name = "CatalogListResultUnchanged", .ty = catalog.CatalogListResultUnchanged },
-    .{ .name = "CatalogReloadResult", .ty = catalog.CatalogReloadResult },
-    .{ .name = "ModelCost", .ty = catalog.ModelCost },
-    .{ .name = "ModelInfo", .ty = catalog.ModelInfo },
-    .{ .name = "Request", .ty = rpc.Request },
-    .{ .name = "ResponseOk", .ty = rpc.ResponseOk },
-    .{ .name = "ResponseError", .ty = rpc.ResponseError },
-    .{ .name = "Notification", .ty = rpc.Notification },
-    .{ .name = "ActivityStateBuilding", .ty = activity.ActivityStateBuilding },
-    .{ .name = "ActivityStateCompacting", .ty = activity.ActivityStateCompacting },
-    .{ .name = "ActivityStateIdle", .ty = activity.ActivityStateIdle },
-    .{ .name = "ActivityStateReasoning", .ty = activity.ActivityStateReasoning },
-    .{ .name = "ActivityStateRetrying", .ty = activity.ActivityStateRetrying },
-    .{ .name = "ActivityStateRunningTool", .ty = activity.ActivityStateRunningTool },
-    .{ .name = "ActivityStateStreaming", .ty = activity.ActivityStateStreaming },
-    .{ .name = "ActivityStateWaiting", .ty = activity.ActivityStateWaiting },
-    .{ .name = "InputCanceledData", .ty = input.InputCanceledData },
-    .{ .name = "InputContent", .ty = input.InputContent },
-    .{ .name = "InputQueuedData", .ty = input.InputQueuedData },
-    .{ .name = "InteractionRequestedData", .ty = interaction.InteractionRequestedData },
-    .{ .name = "InteractionConfirm", .ty = interaction.InteractionConfirm },
-    .{ .name = "InteractionSelect", .ty = interaction.InteractionSelect },
-    .{ .name = "InteractionInput", .ty = interaction.InteractionInput },
-    .{ .name = "InteractionRespondParams", .ty = interaction.InteractionRespondParams },
-    .{ .name = "InteractionConfirmed", .ty = interaction.InteractionConfirmed },
-    .{ .name = "InteractionValue", .ty = interaction.InteractionValue },
-    .{ .name = "Job", .ty = job.Job },
-    .{ .name = "JobChangedData", .ty = job.JobChangedData },
-    .{ .name = "JobListParams", .ty = job.JobListParams },
-    .{ .name = "JobListResult", .ty = job.JobListResult },
-    .{ .name = "JobReadParams", .ty = job.JobReadParams },
-    .{ .name = "JobReadResult", .ty = job.JobReadResult },
-    .{ .name = "JobStopParams", .ty = job.JobStopParams },
-    .{ .name = "JobStopResult", .ty = job.JobStopResult },
-    .{ .name = "InputSkill", .ty = input.InputSkill },
-    .{ .name = "SkillInfo", .ty = skill.SkillInfo },
-    .{ .name = "SkillLoadParams", .ty = skill.SkillLoadParams },
-    .{ .name = "SkillLoadResult", .ty = skill.SkillLoadResult },
-    .{ .name = "ActiveDraft", .ty = message.ActiveDraft },
-    .{ .name = "AssistantMessage", .ty = message.AssistantMessage },
-    .{ .name = "CompactionMessage", .ty = message.CompactionMessage },
-    .{ .name = "MessageCommittedData", .ty = message.MessageCommittedData },
-    .{ .name = "MessageDiscardedData", .ty = message.MessageDiscardedData },
-    .{ .name = "MessageError", .ty = message.MessageError },
-    .{ .name = "MessagePartAddedData", .ty = message.MessagePartAddedData },
-    .{ .name = "MessagePartFinalizedData", .ty = message.MessagePartFinalizedData },
-    .{ .name = "MessageStartedData", .ty = message.MessageStartedData },
-    .{ .name = "MessageTime", .ty = message.MessageTime },
-    .{ .name = "PartDelta", .ty = message.PartDelta },
-    .{ .name = "ReasoningFinal", .ty = message.ReasoningFinal },
-    .{ .name = "ReasoningPart", .ty = message.ReasoningPart },
-    .{ .name = "RedactedReasoningFinal", .ty = message.RedactedReasoningFinal },
-    .{ .name = "RedactedReasoningPart", .ty = message.RedactedReasoningPart },
-    .{ .name = "TextPart", .ty = message.TextPart },
-    .{ .name = "TokenUsage", .ty = message.TokenUsage },
-    .{ .name = "ToolPart", .ty = message.ToolPart },
-    .{ .name = "TurnProvenance", .ty = message.TurnProvenance },
-    .{ .name = "UserMessage", .ty = message.UserMessage },
-    .{ .name = "ConfigChangedData", .ty = misc.ConfigChangedData },
-    .{ .name = "CreateSession", .ty = misc.CreateSession },
-    .{ .name = "CreatedTime", .ty = misc.CreatedTime },
-    .{ .name = "EngineInfo", .ty = misc.EngineInfo },
-    .{ .name = "Empty", .ty = misc.Empty },
-    .{ .name = "ErrorObject", .ty = misc.ErrorObject },
-    .{ .name = "InitializeResult", .ty = misc.InitializeResult },
-    .{ .name = "Notice", .ty = misc.Notice },
-    .{ .name = "ToolSite", .ty = input.ToolSite },
-    .{ .name = "ChildReport", .ty = input.ChildReport },
-    .{ .name = "ChildReportUsage", .ty = input.ChildReportUsage },
-    .{ .name = "ChildInputCanceled", .ty = input.ChildInputCanceled },
-    .{ .name = "EngineInterruption", .ty = input.EngineInterruption },
-    .{ .name = "QueuedInput", .ty = misc.QueuedInput },
-    .{ .name = "Session", .ty = misc.Session },
-    .{ .name = "TranscriptTruncatedData", .ty = misc.TranscriptTruncatedData },
-    .{ .name = "RunCanceledTiming", .ty = run.RunCanceledTiming },
-    .{ .name = "RunConfig", .ty = run.RunConfig },
-    .{ .name = "RunDoneData", .ty = run.RunDoneData },
-    .{ .name = "RunOutcomeCanceled", .ty = run.RunOutcomeCanceled },
-    .{ .name = "RunOutcomeCompacted", .ty = run.RunOutcomeCompacted },
-    .{ .name = "RunOutcomeFailed", .ty = run.RunOutcomeFailed },
-    .{ .name = "RunOutcomeSkipped", .ty = run.RunOutcomeSkipped },
-    .{ .name = "RunOutcomeTurn", .ty = run.RunOutcomeTurn },
-    .{ .name = "RunStartedData", .ty = run.RunStartedData },
-    .{ .name = "SessionActivity", .ty = session.SessionActivity },
-    .{ .name = "SessionActivityChangedData", .ty = session.SessionActivityChangedData },
-    .{ .name = "SessionCancelInputParams", .ty = session.SessionCancelInputParams },
-    .{ .name = "SessionCancelInputResult", .ty = session.SessionCancelInputResult },
-    .{ .name = "SessionCancelRunParams", .ty = session.SessionCancelRunParams },
-    .{ .name = "SessionCancelRunResult", .ty = session.SessionCancelRunResult },
-    .{ .name = "SessionCompactParams", .ty = session.SessionCompactParams },
-    .{ .name = "SessionCompactResult", .ty = session.SessionCompactResult },
-    .{ .name = "SessionConfigParams", .ty = session.SessionConfigParams },
-    .{ .name = "InstructionSource", .ty = instructions.InstructionSource },
-    .{ .name = "SessionConfigResult", .ty = session.SessionConfigResult },
-    .{ .name = "SessionForkParams", .ty = session.SessionForkParams },
-    .{ .name = "SessionGetParams", .ty = session.SessionGetParams },
-    .{ .name = "ContextChanges", .ty = session.ContextChanges },
-    .{ .name = "SessionReloadContextParams", .ty = session.SessionReloadContextParams },
-    .{ .name = "SessionReloadContextResult", .ty = session.SessionReloadContextResult },
-    .{ .name = "SessionHistoryParams", .ty = session.SessionHistoryParams },
-    .{ .name = "SessionHistoryResult", .ty = session.SessionHistoryResult },
-    .{ .name = "SessionListItem", .ty = session.SessionListItem },
-    .{ .name = "SessionListParams", .ty = session.SessionListParams },
-    .{ .name = "SessionListResult", .ty = session.SessionListResult },
-    .{ .name = "SessionOriginChild", .ty = session.SessionOriginChild },
-    .{ .name = "SessionOriginFork", .ty = session.SessionOriginFork },
-    .{ .name = "SessionOriginRoot", .ty = session.SessionOriginRoot },
-    .{ .name = "SessionPatch", .ty = session.SessionPatch },
-    .{ .name = "SessionPatchParams", .ty = session.SessionPatchParams },
-    .{ .name = "SessionPopulationAll", .ty = session.SessionPopulationAll },
-    .{ .name = "SessionPopulationChildren", .ty = session.SessionPopulationChildren },
-    .{ .name = "SessionPopulationTopLevel", .ty = session.SessionPopulationTopLevel },
-    .{ .name = "SessionQueueParams", .ty = session.SessionQueueParams },
-    .{ .name = "SessionQueueResult", .ty = session.SessionQueueResult },
-    .{ .name = "SessionRemoveParams", .ty = session.SessionRemoveParams },
-    .{ .name = "SessionRemovedData", .ty = session.SessionRemovedData },
-    .{ .name = "SessionResult", .ty = session.SessionResult },
-    .{ .name = "ChildSession", .ty = session.ChildSession },
-    .{ .name = "SessionRewindParams", .ty = session.SessionRewindParams },
-    .{ .name = "SessionSendInputParams", .ty = session.SessionSendInputParams },
-    .{ .name = "SessionSendInputResultQueued", .ty = session.SessionSendInputResultQueued },
-    .{ .name = "SessionSendInputResultStarted", .ty = session.SessionSendInputResultStarted },
-    .{ .name = "SessionSummaryChangedData", .ty = session.SessionSummaryChangedData },
-    .{ .name = "ToolStateCanceled", .ty = tool.ToolStateCanceled },
-    .{ .name = "ToolStateChangedData", .ty = tool.ToolStateChangedData },
-    .{ .name = "ToolStateCompleted", .ty = tool.ToolStateCompleted },
-    .{ .name = "ToolDefinition", .ty = tool.ToolDefinition },
-    .{ .name = "ToolStateError", .ty = tool.ToolStateError },
-    .{ .name = "ToolStatePending", .ty = tool.ToolStatePending },
-    .{ .name = "ToolStateRunning", .ty = tool.ToolStateRunning },
-    .{ .name = "DiffFile", .ty = view.DiffFile },
-    .{ .name = "DiffHunk", .ty = view.DiffHunk },
-    .{ .name = "ViewDiff", .ty = view.ViewDiff },
-    .{ .name = "ViewJson", .ty = view.ViewJson },
-    .{ .name = "ViewMarkdown", .ty = view.ViewMarkdown },
-    .{ .name = "ViewText", .ty = view.ViewText },
-};
+/// The wire modules in the order the schema lists their types.
+const modules = .{ initialize, content, blob, auth, catalog, rpc, activity, input, instructions, interaction, job, skill, message, misc, run, session, tool, view, enums };
 
-pub const tagged_unions = [_]TypeEntry{
-    .{ .name = "ContentPart", .ty = content.ContentPart },
-    .{ .name = "AuthLoginOutcome", .ty = auth.AuthLoginOutcome },
-    .{ .name = "CatalogListResult", .ty = catalog.CatalogListResult },
-    .{ .name = "ActivityState", .ty = activity.ActivityState },
-    .{ .name = "Input", .ty = input.Input },
-    .{ .name = "InputSource", .ty = input.InputSource },
-    .{ .name = "InteractionRequest", .ty = interaction.InteractionRequest },
-    .{ .name = "InteractionResponse", .ty = interaction.InteractionResponse },
-    .{ .name = "AssistantPart", .ty = message.AssistantPart },
-    .{ .name = "Message", .ty = message.Message },
-    .{ .name = "PartFinal", .ty = message.PartFinal },
-    .{ .name = "RunOutcome", .ty = run.RunOutcome },
-    .{ .name = "SessionOrigin", .ty = session.SessionOrigin },
-    .{ .name = "SessionPopulation", .ty = session.SessionPopulation },
-    .{ .name = "SessionSendInputResult", .ty = session.SessionSendInputResult },
-    .{ .name = "ToolState", .ty = tool.ToolState },
-    .{ .name = "View", .ty = view.View },
-};
+pub const structs = collect(.structure);
+pub const tagged_unions = collect(.tagged_union);
+/// The unions of `rpc.zig` wrap a whole payload, so their arms carry no `type` tag.
+pub const envelope_unions = collect(.envelope_union);
+pub const string_enums = collect(.string_enum);
+/// An enum with a signed tag carries a number on the wire, like `ErrorCode`.
+pub const numeric_enums = collect(.numeric_enum);
 
-pub const envelope_unions = [_]TypeEntry{
-    .{ .name = "RequestParams", .ty = rpc.RequestParams },
-    .{ .name = "ResponseResult", .ty = rpc.ResponseResult },
-    .{ .name = "BroadcastData", .ty = rpc.BroadcastData },
-    .{ .name = "Response", .ty = rpc.Response },
-};
-
-pub const string_enums = [_]EnumEntry{
-    .{ .name = "InstructionScope", .ty = instructions.InstructionScope },
-    .{ .name = "InputQueueReason", .ty = session.InputQueueReason },
-    .{ .name = "AuthCredentialKind", .ty = enums.AuthCredentialKind },
-    .{ .name = "BroadcastName", .ty = enums.BroadcastName },
-    .{ .name = "RunErrorCode", .ty = enums.RunErrorCode },
-    .{ .name = "MethodName", .ty = enums.MethodName },
-    .{ .name = "NoticeLevel", .ty = enums.NoticeLevel },
-    .{ .name = "RunKind", .ty = enums.RunKind },
-    .{ .name = "CompactSkipReason", .ty = enums.CompactSkipReason },
-    .{ .name = "StopReason", .ty = enums.StopReason },
-    .{ .name = "CompactStatus", .ty = enums.CompactStatus },
-    .{ .name = "SessionView", .ty = enums.SessionView },
-    .{ .name = "CompactionReason", .ty = enums.CompactionReason },
-    .{ .name = "ProviderProtocol", .ty = enums.ProviderProtocol },
-    .{ .name = "ProviderState", .ty = enums.ProviderState },
-    .{ .name = "JobState", .ty = job.JobState },
-};
-
-pub const numeric_enums = [_]EnumEntry{
-    .{ .name = "ErrorCode", .ty = enums.ErrorCode },
-};
-
-pub const aliases = [_]AliasEntry{
-    .{ .name = "ProviderId", .base = "string" },
+/// Every identifier type of `ids.zig`, then the broadcast payloads that share one type under two names.
+pub const aliases = idAliases() ++ [_]AliasEntry{
     .{ .name = "MessagePartDeltaData", .base = "PartDelta" },
     .{ .name = "ToolOutputDeltaData", .base = "PartDelta" },
-    .{ .name = "InstructionHash", .base = "[32]u8" },
-    .{ .name = "BlobHash", .base = "[32]u8" },
-    .{ .name = "CatalogRev", .base = "[64]u8" },
-    .{ .name = "ModelId", .base = "string" },
-    .{ .name = "SessionId", .base = "[16]u8" },
-    .{ .name = "LoginId", .base = "[32]u8" },
-    .{ .name = "RequestId", .base = "string" },
-    .{ .name = "MessageId", .base = "u64" },
-    .{ .name = "RunId", .base = "u64" },
-    .{ .name = "InputId", .base = "u64" },
-    .{ .name = "PartId", .base = "u64" },
-    .{ .name = "Seq", .base = "u64" },
-    .{ .name = "SessionRevision", .base = "u64" },
-    .{ .name = "ConfigRev", .base = "u64" },
-    .{ .name = "InteractionId", .base = "u64" },
-    .{ .name = "JobId", .base = "u32" },
 };
+
+const Kind = enum { structure, tagged_union, envelope_union, string_enum, numeric_enum };
+
+fn kindOf(comptime module: type, comptime T: type) ?Kind {
+    return switch (@typeInfo(T)) {
+        // A field of type `type` marks a comptime table, such as `MethodSpec`, which never crosses the wire.
+        .@"struct" => |info| for (info.fields) |field| {
+            if (field.type == type) break null;
+        } else .structure,
+        .@"union" => if (module == rpc) .envelope_union else .tagged_union,
+        .@"enum" => |info| if (@typeInfo(info.tag_type).int.signedness == .signed) .numeric_enum else .string_enum,
+        else => null,
+    };
+}
+
+fn collect(comptime kind: Kind) []const TypeEntry {
+    comptime {
+        @setEvalBranchQuota(200_000);
+        var out: []const TypeEntry = &.{};
+        for (modules) |module| {
+            for (@typeInfo(module).@"struct".decls) |decl| {
+                const value = @field(module, decl.name);
+                if (@TypeOf(value) != type) continue;
+                // A re-export names a type another module declares, so only the declaring name counts.
+                if (!std.mem.endsWith(u8, @typeName(value), "." ++ decl.name)) continue;
+                if (kindOf(module, value) == kind) out = out ++ [_]TypeEntry{.{ .name = decl.name, .ty = value }};
+            }
+        }
+        return out;
+    }
+}
+
+fn idAliases() []const AliasEntry {
+    comptime {
+        var out: []const AliasEntry = &.{};
+        for (@typeInfo(ids).@"struct".decls) |decl| {
+            const value = @field(ids, decl.name);
+            if (@TypeOf(value) != type) continue;
+            const base = switch (@typeInfo(value)) {
+                .int => @typeName(value),
+                .pointer => "string",
+                .@"struct" => std.fmt.comptimePrint("[{d}]u8", .{@typeInfo(@FieldType(value, "raw")).array.len}),
+                else => @compileError("unsupported identifier type " ++ @typeName(value)),
+            };
+            out = out ++ [_]AliasEntry{.{ .name = decl.name, .base = base }};
+        }
+        return out;
+    }
+}

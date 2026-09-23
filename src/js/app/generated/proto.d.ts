@@ -9,6 +9,13 @@ export interface Client {
   readonly version: string;
 }
 
+/** A content-addressed blob in the engine store. The `bytes` field is the size, not the payload. */
+export interface MediaBlob {
+  readonly hash: BlobHash;
+  readonly mime: string;
+  readonly bytes: number;
+}
+
 /** This part holds plain text. */
 export interface ContentText {
   readonly text: string;
@@ -29,13 +36,6 @@ export interface ContentAudio {
 export interface ContentFile {
   readonly source: MediaBlob;
   readonly filename?: string;
-}
-
-/** A content-addressed blob in the engine store. The `bytes` field is the size, not the payload. */
-export interface MediaBlob {
-  readonly hash: BlobHash;
-  readonly mime: string;
-  readonly bytes: number;
 }
 
 /** A caller names one source for `blob.put`: an absolute path or base64 image bytes. */
@@ -61,13 +61,6 @@ export interface AuthListResult {
   readonly providers: ReadonlyArray<AuthProvider>;
 }
 
-/** The engine returns these device authorization details only to the connection that sent the request. */
-export interface AuthLoginResult {
-  readonly login_id: LoginId;
-  readonly verification_url: string;
-  readonly user_code: string;
-}
-
 /** This payload describes `auth.login_finished`. */
 export interface AuthLoginFinishedData {
   readonly login_id: LoginId;
@@ -89,6 +82,13 @@ export type AuthLoginOutcomeSucceeded = Record<string, never>;
 /** These are the parameters for `auth.login`. */
 export interface AuthLoginParams {
   readonly provider_id: ProviderId;
+}
+
+/** The engine returns these device authorization details only to the connection that sent the request. */
+export interface AuthLoginResult {
+  readonly login_id: LoginId;
+  readonly verification_url: string;
+  readonly user_code: string;
 }
 
 /** These parameters select the local credential to remove, an API key or a grant. */
@@ -248,6 +248,42 @@ export interface ActivityStateWaiting {
   readonly started_at_ms: number;
 }
 
+/** One tool call: the session, the message, and the part that hold it. */
+export interface ToolSite {
+  readonly session_id: SessionId;
+  readonly message_id: MessageId;
+  readonly part_id: PartId;
+}
+
+export interface ChildReport {
+  readonly session_id: SessionId;
+  readonly run_id: RunId;
+  readonly name: string;
+  readonly outcome: RunOutcome;
+  readonly partial: boolean;
+  readonly truncated: boolean;
+  readonly usage: ChildReportUsage;
+}
+
+/** This type sums the usage of the committed assistant messages in one child run. */
+export interface ChildReportUsage {
+  readonly rounds: number;
+  readonly tool_calls: number;
+  readonly tokens: TokenUsage;
+  readonly duration_ms?: number;
+}
+
+export interface ChildInputCanceled {
+  readonly session_id: SessionId;
+  readonly name: string;
+  readonly input_ids: ReadonlyArray<InputId>;
+}
+
+export interface EngineInterruption {
+  readonly run_id: RunId;
+  readonly kind: RunKind;
+}
+
 /** This payload describes `input.canceled`. */
 export interface InputCanceledData {
   readonly session_id: SessionId;
@@ -265,6 +301,20 @@ export interface InputQueuedData {
   readonly session_id: SessionId;
   readonly seq: Seq;
   readonly input: QueuedInput;
+}
+
+/** This input names a skill. The engine loads the body and appends one user message. */
+export interface InputSkill {
+  readonly name: string;
+  /** The engine appends this text after the body. */
+  readonly arguments?: string;
+}
+
+export interface InstructionSource {
+  readonly scope: InstructionScope;
+  readonly path: string;
+  readonly canonical_path: string;
+  readonly content_hash: InstructionHash;
 }
 
 /** This payload asks the connected frontend to put one question to the user. */
@@ -318,11 +368,6 @@ export interface Job {
   readonly ended_at_ms?: number;
 }
 
-/** This payload describes `job.changed`: a job started, received a stop request, or ended. */
-export interface JobChangedData {
-  readonly job: Job;
-}
-
 /** These parameters filter the job list to one session. */
 export interface JobListParams {
   readonly session_id?: SessionId;
@@ -331,6 +376,16 @@ export interface JobListParams {
 /** The jobs, newest first. The host keeps every running job and the 32 jobs that ended last. */
 export interface JobListResult {
   readonly jobs: ReadonlyArray<Job>;
+}
+
+/** These are the parameters for `job.stop`. */
+export interface JobStopParams {
+  readonly id: JobId;
+}
+
+/** The job as it is when the stop starts. Its end arrives as `job.changed`. */
+export interface JobStopResult {
+  readonly job: Job;
 }
 
 /** These parameters read the job output from a byte offset. `max_bytes` is from 4 to 262144; a null offset selects the tail. */
@@ -349,21 +404,9 @@ export interface JobReadResult {
   readonly size: number;
 }
 
-/** These are the parameters for `job.stop`. */
-export interface JobStopParams {
-  readonly id: JobId;
-}
-
-/** The job as it is when the stop starts. Its end arrives as `job.changed`. */
-export interface JobStopResult {
+/** This payload describes `job.changed`: a job started, received a stop request, or ended. */
+export interface JobChangedData {
   readonly job: Job;
-}
-
-/** This input names a skill. The engine loads the body and appends one user message. */
-export interface InputSkill {
-  readonly name: string;
-  /** The engine appends this text after the body. */
-  readonly arguments?: string;
 }
 
 /** The session snapshots this catalog entry at creation. The loader reads the body at invocation. */
@@ -455,14 +498,6 @@ export interface MessagePartAddedData {
   readonly part: AssistantPart;
 }
 
-/** This payload describes `message.part_finalized`. The engine sends it at block stop. */
-export interface MessagePartFinalizedData {
-  readonly session_id: SessionId;
-  readonly message_id: MessageId;
-  readonly part_id: PartId;
-  readonly final: PartFinal;
-}
-
 /** This payload describes `message.started` when the engine opens a draft. */
 export interface MessageStartedData {
   readonly session_id: SessionId;
@@ -492,16 +527,24 @@ export interface ReasoningFinal {
   readonly signature: string;
 }
 
+/** The engine attaches the opaque redacted reasoning data at block stop. */
+export interface RedactedReasoningFinal {
+  readonly data: string;
+}
+
+/** This payload describes `message.part_finalized`. The engine sends it at block stop. */
+export interface MessagePartFinalizedData {
+  readonly session_id: SessionId;
+  readonly message_id: MessageId;
+  readonly part_id: PartId;
+  readonly final: PartFinal;
+}
+
 /** This payload describes a reasoning part in an assistant message. Its fields borrow their data. */
 export interface ReasoningPart {
   readonly id: PartId;
   readonly text: string;
   readonly signature: string;
-}
-
-/** The engine attaches the opaque redacted reasoning data at block stop. */
-export interface RedactedReasoningFinal {
-  readonly data: string;
 }
 
 /** This payload holds opaque, safety-redacted model reasoning. Its fields borrow their data. */
@@ -607,42 +650,6 @@ export interface Notice {
   readonly level: NoticeLevel;
   readonly source: string;
   readonly message: string;
-}
-
-/** One tool call: the session, the message, and the part that hold it. */
-export interface ToolSite {
-  readonly session_id: SessionId;
-  readonly message_id: MessageId;
-  readonly part_id: PartId;
-}
-
-export interface ChildReport {
-  readonly session_id: SessionId;
-  readonly run_id: RunId;
-  readonly name: string;
-  readonly outcome: RunOutcome;
-  readonly partial: boolean;
-  readonly truncated: boolean;
-  readonly usage: ChildReportUsage;
-}
-
-/** This type sums the usage of the committed assistant messages in one child run. */
-export interface ChildReportUsage {
-  readonly rounds: number;
-  readonly tool_calls: number;
-  readonly tokens: TokenUsage;
-  readonly duration_ms?: number;
-}
-
-export interface ChildInputCanceled {
-  readonly session_id: SessionId;
-  readonly name: string;
-  readonly input_ids: ReadonlyArray<InputId>;
-}
-
-export interface EngineInterruption {
-  readonly run_id: RunId;
-  readonly kind: RunKind;
 }
 
 /** This input waits for the next round or run. */
@@ -806,13 +813,6 @@ export interface SessionConfigParams {
   readonly config_rev?: ConfigRev;
 }
 
-export interface InstructionSource {
-  readonly scope: InstructionScope;
-  readonly path: string;
-  readonly canonical_path: string;
-  readonly content_hash: InstructionHash;
-}
-
 /** This result describes `session.config.get`. */
 export interface SessionConfigResult {
   readonly config: RunConfig;
@@ -823,30 +823,6 @@ export interface SessionConfigResult {
 export interface SessionForkParams {
   readonly session_id: SessionId;
   readonly before_message_id?: MessageId;
-}
-
-/** These are the parameters for `session.get`. */
-export interface SessionGetParams {
-  readonly session_id: SessionId;
-  /** Compare the stored AGENTS.md and skill snapshots with the files on disk. */
-  readonly check_files?: boolean;
-}
-
-/** Which stored snapshots differ from the files on disk. */
-export interface ContextChanges {
-  readonly instructions: boolean;
-  readonly skills: boolean;
-}
-
-/** These are the parameters for `session.reload_context`. */
-export interface SessionReloadContextParams {
-  readonly session_id: SessionId;
-}
-
-/** This result lists the replaced snapshots. */
-export interface SessionReloadContextResult {
-  readonly instruction_sources: ReadonlyArray<InstructionSource>;
-  readonly skills: ReadonlyArray<SkillInfo>;
 }
 
 /** These are the parameters for `session.history`. */
@@ -864,6 +840,19 @@ export interface SessionHistoryResult {
   readonly has_more: boolean;
 }
 
+/** These are the parameters for `session.get`. */
+export interface SessionGetParams {
+  readonly session_id: SessionId;
+  /** Compare the stored AGENTS.md and skill snapshots with the files on disk. */
+  readonly check_files?: boolean;
+}
+
+/** Which stored snapshots differ from the files on disk. */
+export interface ContextChanges {
+  readonly instructions: boolean;
+  readonly skills: boolean;
+}
+
 /** This row summarizes a session for `session.list`, `session.get`, and session broadcasts. Its fields borrow their data. */
 export interface SessionListItem {
   readonly session: Session;
@@ -875,6 +864,17 @@ export interface SessionListItem {
   readonly skills?: ReadonlyArray<SkillInfo>;
   /** Only session.get with check_files includes this field. */
   readonly context_changes?: ContextChanges;
+}
+
+/** These are the parameters for `session.reload_context`. */
+export interface SessionReloadContextParams {
+  readonly session_id: SessionId;
+}
+
+/** This result lists the replaced snapshots. */
+export interface SessionReloadContextResult {
+  readonly instruction_sources: ReadonlyArray<InstructionSource>;
+  readonly skills: ReadonlyArray<SkillInfo>;
 }
 
 /** These are the `session.list` input fields. They borrow their data. */
@@ -1084,65 +1084,15 @@ export type InstructionScope =
   | "workspace"
 ;
 
+export type JobState =
+  | "running"
+  | "exited"
+  | "failed"
+;
+
 export type InputQueueReason =
   | "session_busy"
   | "concurrency_limit"
-;
-
-/** Workspace execution environment; advertised engine capability; numeric JSON-RPC and yuke error codes. */
-export type ErrorCode =
-  /** bad_request */
-  | -32602
-  /** bad_protocol */
-  | -32600
-  /** unknown_method */
-  | -32601
-  /** unknown_session */
-  | -31000
-  /** stale_cursor */
-  | -31002
-  /** unknown_message */
-  | -31003
-  /** unknown_part */
-  | -31004
-  /** unknown_input */
-  | -31005
-  /** unknown_config_rev */
-  | -31006
-  /** unknown_skill */
-  | -31009
-  /** input_already_started */
-  | -31010
-  /** queue_full */
-  | -31011
-  /** run_mismatch */
-  | -31012
-  /** session_busy */
-  | -31015
-  /** session_has_children */
-  | -31016
-  /** runtime_failed */
-  | -31017
-  /** invalid_patch */
-  | -31018
-  /** unsupported_model */
-  | -31019
-  /** unsupported_reasoning */
-  | -31020
-  /** not_implemented */
-  | -31022
-  /** unknown_provider */
-  | -31023
-  /** unknown_interaction */
-  | -31024
-  /** unknown_job */
-  | -31029
-  /** auth_required */
-  | -31028
-  /** internal */
-  | -32603
-  /** overloaded */
-  | -31021
 ;
 
 export type AuthCredentialKind =
@@ -1343,10 +1293,60 @@ export type ProviderState =
   | "expired"
 ;
 
-export type JobState =
-  | "running"
-  | "exited"
-  | "failed"
+/** Workspace execution environment; advertised engine capability; numeric JSON-RPC and yuke error codes. */
+export type ErrorCode =
+  /** bad_request */
+  | -32602
+  /** bad_protocol */
+  | -32600
+  /** unknown_method */
+  | -32601
+  /** unknown_session */
+  | -31000
+  /** stale_cursor */
+  | -31002
+  /** unknown_message */
+  | -31003
+  /** unknown_part */
+  | -31004
+  /** unknown_input */
+  | -31005
+  /** unknown_config_rev */
+  | -31006
+  /** unknown_skill */
+  | -31009
+  /** input_already_started */
+  | -31010
+  /** queue_full */
+  | -31011
+  /** run_mismatch */
+  | -31012
+  /** session_busy */
+  | -31015
+  /** session_has_children */
+  | -31016
+  /** runtime_failed */
+  | -31017
+  /** invalid_patch */
+  | -31018
+  /** unsupported_model */
+  | -31019
+  /** unsupported_reasoning */
+  | -31020
+  /** not_implemented */
+  | -31022
+  /** unknown_provider */
+  | -31023
+  /** unknown_interaction */
+  | -31024
+  /** unknown_job */
+  | -31029
+  /** auth_required */
+  | -31028
+  /** internal */
+  | -32603
+  /** overloaded */
+  | -31021
 ;
 
 /** This type describes one part of a message's content. */
@@ -1569,14 +1569,11 @@ export type Response =
   | ResponseError
 ;
 
-/** This string identifies a provider. */
-export type ProviderId = string;
+/** This ID uses 16 raw bytes and 32 lowercase hexadecimal characters on the wire. */
+export type SessionId = string;
 
-/** The broadcast uses this shared message-part delta payload. */
-export type MessagePartDeltaData = PartDelta;
-
-/** The broadcast uses this shared tool-output delta payload. */
-export type ToolOutputDeltaData = PartDelta;
+/** This ID uses 32 raw bytes and 64 lowercase hexadecimal characters on the wire. */
+export type LoginId = string;
 
 /** The SHA-256 of one instruction file: 32 raw bytes, 64 hexadecimal characters on the wire. */
 export type InstructionHash = string;
@@ -1586,18 +1583,6 @@ export type BlobHash = string;
 
 /** This ID uses 64 raw bytes and 128 lowercase hexadecimal characters on the wire. */
 export type CatalogRev = string;
-
-/** This string identifies a model. */
-export type ModelId = string;
-
-/** This ID uses 16 raw bytes and 32 lowercase hexadecimal characters on the wire. */
-export type SessionId = string;
-
-/** This ID uses 32 raw bytes and 64 lowercase hexadecimal characters on the wire. */
-export type LoginId = string;
-
-/** This string identifies a request. */
-export type RequestId = string;
 
 /** This numeric ID identifies a message. */
 export type MessageId = number;
@@ -1625,6 +1610,21 @@ export type InteractionId = number;
 
 /** This numeric ID identifies a background job for the life of one host. */
 export type JobId = number;
+
+/** This string identifies a provider. */
+export type ProviderId = string;
+
+/** This string identifies a model. */
+export type ModelId = string;
+
+/** This string identifies a request. */
+export type RequestId = string;
+
+/** The broadcast uses this shared message-part delta payload. */
+export type MessagePartDeltaData = PartDelta;
+
+/** The broadcast uses this shared tool-output delta payload. */
+export type ToolOutputDeltaData = PartDelta;
 
 export interface Methods {
   /** Establish the connection and negotiate the protocol version. */

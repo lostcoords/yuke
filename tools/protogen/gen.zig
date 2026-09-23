@@ -10,182 +10,71 @@ const meta = proto.meta;
 const rpc = proto.rpc;
 
 const TypeEntry = registry.TypeEntry;
-const AliasUse = struct { owner: []const u8, field: []const u8, alias: []const u8 };
 
-const alias_uses = [_]AliasUse{
-    .{ .owner = "AuthProvider", .field = "provider_id", .alias = "ProviderId" },
-    .{ .owner = "AuthLoginParams", .field = "provider_id", .alias = "ProviderId" },
-    .{ .owner = "AuthLoginResult", .field = "login_id", .alias = "LoginId" },
-    .{ .owner = "AuthCancelLoginParams", .field = "login_id", .alias = "LoginId" },
-    .{ .owner = "AuthRemoveParams", .field = "provider_id", .alias = "ProviderId" },
-    .{ .owner = "AuthSetApiKeyParams", .field = "provider_id", .alias = "ProviderId" },
-    .{ .owner = "AuthLoginFinishedData", .field = "login_id", .alias = "LoginId" },
-    .{ .owner = "AuthLoginFinishedData", .field = "provider_id", .alias = "ProviderId" },
-    .{ .owner = "SessionSummaryChangedData", .field = "revision", .alias = "SessionRevision" },
-    .{ .owner = "SessionActivityChangedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionRemovedData", .field = "revision", .alias = "SessionRevision" },
-    .{ .owner = "SessionRemovedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "Job", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "Job", .field = "id", .alias = "JobId" },
-    .{ .owner = "JobStopParams", .field = "id", .alias = "JobId" },
-    .{ .owner = "JobReadParams", .field = "id", .alias = "JobId" },
-    .{ .owner = "JobListParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "CatalogChangedData", .field = "catalog_rev", .alias = "CatalogRev" },
-    .{ .owner = "MessageCommittedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "MessageCommittedData", .field = "seq", .alias = "Seq" },
-    .{ .owner = "RunStartedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "RunStartedData", .field = "seq", .alias = "Seq" },
-    .{ .owner = "RunStartedData", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "RunStartedData", .field = "config_rev", .alias = "ConfigRev" },
-    .{ .owner = "RunDoneData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "RunDoneData", .field = "seq", .alias = "Seq" },
-    .{ .owner = "RunDoneData", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "ConfigChangedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "ConfigChangedData", .field = "seq", .alias = "Seq" },
-    .{ .owner = "TranscriptTruncatedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "TranscriptTruncatedData", .field = "seq", .alias = "Seq" },
-    .{ .owner = "TranscriptTruncatedData", .field = "first_removed_id", .alias = "MessageId" },
-    .{ .owner = "MessageStartedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "MessageStartedData", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "MessageStartedData", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "MessageStartedData", .field = "config_rev", .alias = "ConfigRev" },
-    .{ .owner = "MessageDiscardedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "MessageDiscardedData", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "MessagePartAddedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "MessagePartAddedData", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "MessagePartFinalizedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "MessagePartFinalizedData", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "MessagePartFinalizedData", .field = "part_id", .alias = "PartId" },
-    .{ .owner = "ToolStateChangedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "ToolStateChangedData", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "ToolStateChangedData", .field = "part_id", .alias = "PartId" },
-    .{ .owner = "InputQueuedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "InputQueuedData", .field = "seq", .alias = "Seq" },
-    .{ .owner = "InputCanceledData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "InputCanceledData", .field = "seq", .alias = "Seq" },
-    .{ .owner = "InputCanceledData", .field = "input_id", .alias = "InputId" },
-    .{ .owner = "ModelInfo", .field = "id", .alias = "ModelId" },
-    .{ .owner = "CatalogListParams", .field = "since_rev", .alias = "CatalogRev" },
-    .{ .owner = "CatalogListResultUnchanged", .field = "catalog_rev", .alias = "CatalogRev" },
-    .{ .owner = "CatalogReloadResult", .field = "catalog_rev", .alias = "CatalogRev" },
-    .{ .owner = "CatalogListResultFull", .field = "catalog_rev", .alias = "CatalogRev" },
-    .{ .owner = "Request", .field = "id", .alias = "RequestId" },
-    .{ .owner = "ResponseOk", .field = "id", .alias = "RequestId" },
-    .{ .owner = "ResponseError", .field = "id", .alias = "RequestId" },
-    .{ .owner = "InitializeResult", .field = "session_revision", .alias = "SessionRevision" },
-    .{ .owner = "InitializeResult", .field = "catalog_rev", .alias = "CatalogRev" },
-    .{ .owner = "QueuedInput", .field = "input_id", .alias = "InputId" },
-    .{ .owner = "SessionSendInputParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionSendInputResultStarted", .field = "input_id", .alias = "InputId" },
-    .{ .owner = "SessionSendInputResultStarted", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "SessionSendInputResultQueued", .field = "input_id", .alias = "InputId" },
-    .{ .owner = "InstructionSource", .field = "content_hash", .alias = "InstructionHash" },
-    .{ .owner = "InteractionRequestedData", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionCancelInputParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionGetParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionQueueParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionCancelInputParams", .field = "input_id", .alias = "InputId" },
-    .{ .owner = "SessionCancelInputResult", .field = "canceled_input", .alias = "InputId" },
-    .{ .owner = "SessionCancelRunParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionCancelRunParams", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "SessionCancelRunResult", .field = "canceled_run", .alias = "RunId" },
-    .{ .owner = "SessionCancelRunResult", .field = "cleared_inputs", .alias = "InputId" },
-    .{ .owner = "SessionCancelRunResult", .field = "cleared_compaction", .alias = "RunId" },
-    .{ .owner = "PartDelta", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "PartDelta", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "PartDelta", .field = "part_id", .alias = "PartId" },
-    .{ .owner = "SessionPatchParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionRemoveParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "RunOutcomeCompacted", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "SessionForkParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionForkParams", .field = "before_message_id", .alias = "MessageId" },
-    .{ .owner = "SessionCompactParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionCompactResult", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "SessionRewindParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionRewindParams", .field = "before_message_id", .alias = "MessageId" },
-    .{ .owner = "SessionOriginFork", .field = "source_id", .alias = "SessionId" },
-    .{ .owner = "Session", .field = "id", .alias = "SessionId" },
-    .{ .owner = "Session", .field = "config_rev", .alias = "ConfigRev" },
-    .{ .owner = "RunConfig", .field = "config_rev", .alias = "ConfigRev" },
-    .{ .owner = "SessionActivity", .field = "pending_compaction", .alias = "RunId" },
-    .{ .owner = "SessionPopulationChildren", .field = "parent_id", .alias = "SessionId" },
-    .{ .owner = "SessionListResult", .field = "revision", .alias = "SessionRevision" },
-    .{ .owner = "ActivityStateBuilding", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "ActivityStateWaiting", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "ActivityStateStreaming", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "ActivityStateReasoning", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "ActivityStateReasoning", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "ActivityStateReasoning", .field = "part_id", .alias = "PartId" },
-    .{ .owner = "ActivityStateRunningTool", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "ActivityStateRunningTool", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "ActivityStateRunningTool", .field = "part_id", .alias = "PartId" },
-    .{ .owner = "ActivityStateRetrying", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "ActivityStateCompacting", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "SessionHistoryParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionHistoryParams", .field = "before_message_id", .alias = "MessageId" },
-    .{ .owner = "SessionHistoryResult", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionConfigParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SessionConfigParams", .field = "config_rev", .alias = "ConfigRev" },
-    .{ .owner = "SessionReloadContextParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "SkillLoadParams", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "MediaBlob", .field = "hash", .alias = "BlobHash" },
-    .{ .owner = "TextPart", .field = "id", .alias = "PartId" },
-    .{ .owner = "ReasoningPart", .field = "id", .alias = "PartId" },
-    .{ .owner = "RedactedReasoningPart", .field = "id", .alias = "PartId" },
-    .{ .owner = "ToolPart", .field = "id", .alias = "PartId" },
-    .{ .owner = "ToolSite", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "ToolSite", .field = "message_id", .alias = "MessageId" },
-    .{ .owner = "ToolSite", .field = "part_id", .alias = "PartId" },
-    .{ .owner = "ChildReport", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "ChildReport", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "ChildInputCanceled", .field = "session_id", .alias = "SessionId" },
-    .{ .owner = "ChildInputCanceled", .field = "input_ids", .alias = "InputId" },
-    .{ .owner = "EngineInterruption", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "UserMessage", .field = "id", .alias = "MessageId" },
-    .{ .owner = "UserMessage", .field = "input_id", .alias = "InputId" },
-    .{ .owner = "AssistantMessage", .field = "id", .alias = "MessageId" },
-    .{ .owner = "AssistantMessage", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "AssistantMessage", .field = "config_rev", .alias = "ConfigRev" },
-    .{ .owner = "CompactionMessage", .field = "id", .alias = "MessageId" },
-    .{ .owner = "CompactionMessage", .field = "run_id", .alias = "RunId" },
-    .{ .owner = "CompactionMessage", .field = "first_kept_id", .alias = "MessageId" },
-    .{ .owner = "Broadcast", .field = "message.part_delta", .alias = "MessagePartDeltaData" },
-    .{ .owner = "Broadcast", .field = "tool.output_delta", .alias = "ToolOutputDeltaData" },
-    .{ .owner = "BroadcastData", .field = "message_part_delta_data", .alias = "MessagePartDeltaData" },
-    .{ .owner = "BroadcastData", .field = "tool_output_delta_data", .alias = "ToolOutputDeltaData" },
-};
+/// A field with one of these names holds that identifier in every wire type, so the schema names the alias the Zig type erases.
+const field_aliases = std.StaticStringMap([]const u8).initComptime(.{
+    .{ "provider_id", "ProviderId" },
+    .{ "login_id", "LoginId" },
+    .{ "revision", "SessionRevision" },
+    .{ "session_id", "SessionId" },
+    .{ "catalog_rev", "CatalogRev" },
+    .{ "seq", "Seq" },
+    .{ "run_id", "RunId" },
+    .{ "config_rev", "ConfigRev" },
+    .{ "first_removed_id", "MessageId" },
+    .{ "message_id", "MessageId" },
+    .{ "part_id", "PartId" },
+    .{ "input_id", "InputId" },
+    .{ "since_rev", "CatalogRev" },
+    .{ "session_revision", "SessionRevision" },
+    .{ "content_hash", "InstructionHash" },
+    .{ "canceled_input", "InputId" },
+    .{ "canceled_run", "RunId" },
+    .{ "cleared_inputs", "InputId" },
+    .{ "cleared_compaction", "RunId" },
+    .{ "before_message_id", "MessageId" },
+    .{ "source_id", "SessionId" },
+    .{ "pending_compaction", "RunId" },
+    .{ "parent_id", "SessionId" },
+    .{ "hash", "BlobHash" },
+    .{ "input_ids", "InputId" },
+    .{ "first_kept_id", "MessageId" },
+    .{ "message.part_delta", "MessagePartDeltaData" },
+    .{ "tool.output_delta", "ToolOutputDeltaData" },
+    .{ "message_part_delta_data", "MessagePartDeltaData" },
+    .{ "tool_output_delta_data", "ToolOutputDeltaData" },
+});
+
+/// A field named `id` holds the identifier of its owner.
+const id_aliases = std.StaticStringMap([]const u8).initComptime(.{
+    .{ "Job", "JobId" },
+    .{ "JobStopParams", "JobId" },
+    .{ "JobReadParams", "JobId" },
+    .{ "ModelInfo", "ModelId" },
+    .{ "Request", "RequestId" },
+    .{ "ResponseOk", "RequestId" },
+    .{ "ResponseError", "RequestId" },
+    .{ "Session", "SessionId" },
+    .{ "TextPart", "PartId" },
+    .{ "ReasoningPart", "PartId" },
+    .{ "RedactedReasoningPart", "PartId" },
+    .{ "ToolPart", "PartId" },
+    .{ "UserMessage", "MessageId" },
+    .{ "AssistantMessage", "MessageId" },
+    .{ "CompactionMessage", "MessageId" },
+});
 
 comptime {
     @setEvalBranchQuota(100000);
-    for (alias_uses, 0..) |use, index| {
-        if (std.mem.eql(u8, use.owner, "Broadcast")) {
-            var has_broadcast = false;
-            for (rpc.broadcasts) |spec| {
-                if (std.mem.eql(u8, @tagName(spec.name), use.field)) has_broadcast = true;
-            }
-            if (!has_broadcast) @compileError("unknown broadcast alias: " ++ use.field);
-        } else if (std.mem.eql(u8, use.owner, "BroadcastData")) {
-            var has_field = false;
-            for (registry.envelope_unions) |entry| {
-                if (std.mem.eql(u8, entry.name, use.owner)) has_field = @hasField(entry.ty, use.field);
-            }
-            if (!has_field) @compileError("unknown alias field: " ++ use.owner ++ "." ++ use.field);
-        } else {
-            var has_field = false;
-            for (registry.structs) |entry| {
-                if (std.mem.eql(u8, entry.name, use.owner)) has_field = @hasField(entry.ty, use.field);
-            }
-            if (!has_field) @compileError("unknown alias field: " ++ use.owner ++ "." ++ use.field);
-        }
-        var has_alias = false;
+    for (field_aliases.values() ++ id_aliases.values()) |alias| {
         for (registry.aliases) |entry| {
-            if (std.mem.eql(u8, entry.name, use.alias)) has_alias = true;
-        }
-        if (!has_alias) @compileError("unknown alias: " ++ use.alias);
-        for (alias_uses[0..index]) |previous| {
-            if (std.mem.eql(u8, previous.owner, use.owner) and std.mem.eql(u8, previous.field, use.field))
-                @compileError("duplicate alias field: " ++ use.owner ++ "." ++ use.field);
-        }
+            if (std.mem.eql(u8, entry.name, alias)) break;
+        } else @compileError("unknown alias: " ++ alias);
+    }
+    for (id_aliases.keys()) |owner| {
+        for (registry.structs) |entry| {
+            if (std.mem.eql(u8, entry.name, owner) and @hasField(entry.ty, "id")) break;
+        } else @compileError("no id field in: " ++ owner);
     }
 }
 
@@ -195,10 +84,8 @@ fn shortName(comptime name: []const u8) []const u8 {
 }
 
 fn aliasFor(comptime owner: []const u8, comptime field: []const u8) ?[]const u8 {
-    inline for (alias_uses) |use| {
-        if (std.mem.eql(u8, owner, use.owner) and std.mem.eql(u8, field, use.field)) return use.alias;
-    }
-    return null;
+    if (std.mem.eql(u8, field, "id")) return id_aliases.get(owner);
+    return field_aliases.get(field);
 }
 
 fn writeTypeText(w: *std.Io.Writer, comptime owner: []const u8, comptime field: []const u8, comptime T: type) !void {
@@ -295,7 +182,7 @@ fn writeUnion(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.St
     try jw.endObject();
 }
 
-fn writeEnum(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.StringHashMap([]const u8), entry: registry.EnumEntry, numeric: bool) !void {
+fn writeEnum(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.StringHashMap([]const u8), entry: TypeEntry, numeric: bool) !void {
     try jw.beginObject();
     try writeNameDoc(jw, docs, entry.name);
     try jw.objectField("numeric");
@@ -415,10 +302,8 @@ fn emit(a: std.mem.Allocator, io: std.Io, w: *std.Io.Writer) !void {
     try jw.endArray();
     try jw.objectField("enumerations");
     try jw.beginArray();
-    inline for (registry.string_enums, 0..) |entry, i| {
-        try writeEnum(a, &jw, &docs, entry, false);
-        if (i == 1) inline for (registry.numeric_enums) |numeric| try writeEnum(a, &jw, &docs, numeric, true);
-    }
+    inline for (registry.string_enums) |entry| try writeEnum(a, &jw, &docs, entry, false);
+    inline for (registry.numeric_enums) |entry| try writeEnum(a, &jw, &docs, entry, true);
     try jw.endArray();
     try jw.objectField("aliases");
     try jw.beginArray();
