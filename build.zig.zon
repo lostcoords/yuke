@@ -13,8 +13,8 @@
             .hash = "zio-0.16.0-xHbVVCrEJQA3I2YcOIVmHUdj-3GF-BcJSClWPHcQXG1V",
         },
         .quickjs = .{
-            .url = "git+https://github.com/xyaman/zig-quickjs#2b117935faf481f844a155bcc447b73ccf998b12",
-            .hash = "quickjs-0.2.0-pXITarHJAQC62-aJ-RyBlrD-UbPC-lE8v-h6PWgdRNXV",
+            .url = "git+https://github.com/xyaman/zig-quickjs#1d755fd54ac7b978ab60531d873be0bbf5608e5b",
+            .hash = "quickjs-0.2.0-pXITasLVAQCdxtx4OR37UvMIr1xEDEcN128Be-megZB0",
         },
         .uucode = .{
             .url = "git+https://github.com/jacobsandlund/uucode#2826a37a4562284fdacd8fa029d49509cc9bffcd",

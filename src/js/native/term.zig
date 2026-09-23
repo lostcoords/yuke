@@ -501,7 +501,7 @@ test "colors accept exact hex and integer indices" {
         try std.testing.expect(term_pkg.Color.eql(case[1], actual));
     }
     try std.testing.expect(!term_pkg.Color.eql(.{ .index = 0 }, .{ .rgb = .{ 0, 0, 0 } }));
-    for ([_][]const u8{
+    for ([_][:0]const u8{
         "'#123'",    "'#12345'",               "'#1234567'", "'#12345678'", "'123456'",        "'#gg0000'",
         "'#12_456'", "'#12+456'",              "' #123456'", "'#123456 '",  "'#12345\\u0000'",
         "'#１２３４５６'",
@@ -518,7 +518,7 @@ test "colors accept exact hex and integer indices" {
 test "style colors preserve defaults and propagate property faults" {
     const host = support.createHost();
     defer support.destroyHost(host);
-    for ([_][]const u8{ "({})", "({ fg: '#bad', bg: 256, ul: [1, 2, 3] })" }) |source| {
+    for ([_][:0]const u8{ "({})", "({ fg: '#bad', bg: 256, ul: [1, 2, 3] })" }) |source| {
         const value = try host.ctx.eval(source, "color.js", .{});
         defer host.ctx.freeValue(value);
         try std.testing.expect(term_pkg.Style.eql(.{}, try parseStyle(host.ctx, value)));

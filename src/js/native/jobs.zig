@@ -198,7 +198,9 @@ pub fn toValue(ctx: Context, job: *const Job) Value {
     jw.objectField("log") catch unreachable;
     jw.write(job.log) catch unreachable;
     jw.endObject() catch unreachable;
-    return ctx.parseJSON(text.written(), "yuke:jobs");
+    text.writer.writeByte(0) catch unreachable; // JS_ParseJSON finds the end of the text at a NUL byte.
+    const json = text.written();
+    return ctx.parseJSON(json[0 .. json.len - 1 :0], "yuke:jobs");
 }
 
 /// Start a shell line as a job with both streams on a private log. It resolves `{ job, ended }`, and `ended` resolves with the final job.

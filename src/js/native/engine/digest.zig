@@ -133,17 +133,15 @@ pub const Engine = struct {
     /// Keep the whole event for a login, because the overlay reads the outcome and the failure text.
     fn keepAuth(self: *Engine, note: proto.rpc.Notification) void {
         if (note.method != .@"auth.login_finished") return;
-        if (self.index_auth.items.len >= max_auth_notes) self.gpa.free(self.index_auth.orderedRemove(0).text);
-        const text = std.json.Stringify.valueAlloc(self.gpa, note, .{ .emit_null_optional_fields = false }) catch unreachable;
-        self.index_auth.append(self.gpa, .{ .text = text }) catch unreachable;
+        if (self.index_auth.items.len >= max_auth_notes) self.gpa.free(self.index_auth.orderedRemove(0));
+        self.index_auth.append(self.gpa, noteOf(self.gpa, note)) catch unreachable;
     }
 
     /// Keep the notice body because a fact name cannot carry its text.
     fn keepNotice(self: *Engine, note: proto.rpc.Notification) void {
         if (note.method != .notice) return;
-        if (self.index_notices.items.len >= max_notice_notes) self.gpa.free(self.index_notices.orderedRemove(0).text);
-        const text = std.json.Stringify.valueAlloc(self.gpa, note.params.notice, .{ .emit_null_optional_fields = false }) catch unreachable;
-        self.index_notices.append(self.gpa, .{ .text = text }) catch unreachable;
+        if (self.index_notices.items.len >= max_notice_notes) self.gpa.free(self.index_notices.orderedRemove(0));
+        self.index_notices.append(self.gpa, noteOf(self.gpa, note.params.notice)) catch unreachable;
     }
 
     fn markDirty(self: *Engine, id: SessionId, change: Change) void {
@@ -161,8 +159,14 @@ pub const Engine = struct {
 /// The facts one drain carries. A digest coalesces them, so a repeat within a frame reads as one.
 const FactSet = std.EnumSet(proto.enums.BroadcastName);
 
-/// One login outcome or notice as the sink gets it: JSON the drain parses into the event.
-const Note = struct { text: []u8 };
+/// One login outcome or notice as JSON with a NUL end, because JS_ParseJSON finds the end at a NUL byte.
+const Note = [:0]u8;
+
+fn noteOf(gpa: std.mem.Allocator, value: anytype) Note {
+    var text: std.Io.Writer.Allocating = .init(gpa);
+    std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, &text.writer) catch unreachable;
+    return text.toOwnedSliceSentinel(0) catch unreachable;
+}
 
 /// How one session changed since the last drain. A view redraws differently for each kind.
 const Change = struct {
@@ -327,7 +331,7 @@ fn emitIndex(engine: *Engine, ctx: Context, facts: FactSet, auth: []const Note, 
 
 /// Free the owned serialized entries in one queue.
 fn freeNotes(gpa: std.mem.Allocator, list: *std.ArrayListUnmanaged(Note)) void {
-    for (list.items) |note| gpa.free(note.text);
+    for (list.items) |note| gpa.free(note);
     list.deinit(gpa);
 }
 
@@ -336,7 +340,7 @@ fn setNotes(ctx: Context, ev: Value, entries: []const Note, property: [:0]const 
     const notes = ctx.newArray();
     for (entries, 0..) |note, index| {
         if (ctx.hasException()) break;
-        module.setIndex(ctx, notes, index, ctx.parseJSON(note.text, property));
+        module.setIndex(ctx, notes, index, ctx.parseJSON(note, property));
     }
     module.set(ctx, ev, property, notes);
 }

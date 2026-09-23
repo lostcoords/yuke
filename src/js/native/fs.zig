@@ -246,8 +246,10 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     var aw: std.Io.Writer.Allocating = .init(host.gpa);
     defer aw.deinit();
     std.json.Stringify.value(pageOf(arena, path, page), .{}, &aw.writer) catch unreachable;
+    aw.writer.writeByte(0) catch unreachable; // JS_ParseJSON finds the end of the text at a NUL byte.
+    const json = aw.written();
     // The page is our own JSON, so the parse fails only once the QuickJS heap is full.
-    const value = ctx.parseJSON(aw.written(), "yuke:fs");
+    const value = ctx.parseJSON(json[0 .. json.len - 1 :0], "yuke:fs");
     if (ctx.isException(value)) return module.throwPending(ctx);
     return resolved(ctx, value);
 }
