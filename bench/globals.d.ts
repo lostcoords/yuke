@@ -1,6 +1,7 @@
 declare var FIXTURE: string;
 declare var PROJECTION_TEXT: string;
 declare var PROJECTION_SESSION: string;
+declare var PROJECTION_DRAFT: number;
 declare var bench: {
   start(name: string, scale: number, width: number, height: number, colors?: string): number | Promise<number>;
   step(): number | Promise<number>;

@@ -33,6 +33,7 @@ let phase = "", width = 0, height = 0, iteration = 0;
 let streamSuffixOffset = 0;
 let nativeTextUnits = 0;
 let nativeInitialText = "";
+let nextPart = 1;
 /** @type {MessagePart | null} */
 let projected = null;
 /** @type {(() => void) | null} */
@@ -46,9 +47,13 @@ const NATIVE_STREAM_MESSAGE_ID = 2;
 const NATIVE_STREAM_PART_ID = 0;
 const TOOL_STREAM_PART_ID = 1;
 
-// The native stream phases read message 2 from the engine.
+// The native stream phases read their draft from the engine: message 2, or the draft after the seeded exchanges.
 function nativeStream() {
-  return phase === "stream_native" || phase === "stream_tool";
+  return phase === "stream_native" || phase === "stream_tool" || phase === "stream_part";
+}
+
+function draftId() {
+  return phase === "stream_part" ? globalThis.PROJECTION_DRAFT : NATIVE_STREAM_MESSAGE_ID;
 }
 const streamPrefix = "Stable paragraph.\n\n".repeat(16) + "Tail";
 const streamSuffix = Array.from({ length: 256 }, (_, i) => "stable-suffix-" + i + " 世界 e\u0301 👩‍💻").join("\n");
@@ -113,6 +118,16 @@ function configurePreview(scale) {
 
 /** @returns {TranscriptOptions} */
 function options() {
+  // The part stream reads every message through the native client, the same as a chat pane.
+  if (phase === "stream_part") {
+    const session = globalThis.PROJECTION_SESSION;
+    return {
+      textOf: id => client.sessionWholeText(session, id),
+      partsOf: id => client.sessionParts(session, id),
+      partOf: (id, partId, previous) => client.sessionPart(session, id, partId, previous),
+      partTextPage: (id, partId, field, offset, limit) => client.partTextPage(session, id, partId, field, offset, limit),
+    };
+  }
   return {
     textOf: id => texts.get(id) || "",
     partsOf: id => id === activeId ? live : nativeStream() && id === NATIVE_STREAM_MESSAGE_ID ? nativeLive : parts.get(id) || [],
@@ -124,7 +139,7 @@ function fresh() {
   const t = new Transcript(options());
   /** @type {MessageDescriptor | null} */
   const active = phase === "stream" ? { id: activeId, type: "assistant" }
-    : nativeStream() ? { id: NATIVE_STREAM_MESSAGE_ID, type: "assistant" } : null;
+    : nativeStream() ? { id: draftId(), type: "assistant" } : null;
   t.setOutline(outline, active);
   if (phase === "preview") {
     for (const message of outline) if (message.type === "assistant") {
@@ -176,6 +191,12 @@ function start(name, scale, w, h) {
     if (!text || text.type !== "text" || !tool || tool.type !== "tool" || tool.state.type !== "running") throw new Error("tool stream part missing");
     nativeLive = [text, tool];
   }
+  if (phase === "stream_part") {
+    const snapshot = /** @type {SessionOutline} */ (client.sessionOutline(globalThis.PROJECTION_SESSION));
+    if (!snapshot) throw new Error("part stream session missing");
+    outline = snapshot.messages;
+    nextPart = 1;
+  }
   live = [
     { type: "text", id: 1, text: streamPrefix },
     { type: "text", id: 2, text: streamSuffix },
@@ -210,6 +231,14 @@ function step() {
     if (!tool || tool.type !== "tool" || tool.state.type !== "running") throw new Error("tool stream part missing");
     nativeLive = [/** @type {Wire.AssistantPart} */ (nativeLive[0]), tool];
     transcript.setActive(NATIVE_STREAM_MESSAGE_ID, TOOL_STREAM_PART_ID);
+    const total = transcript.rowCount(width);
+    transcript.pager.toBottom();
+    paint(transcript, true);
+    return Math.min(height, total);
+  }
+  if (phase === "stream_part") {
+    // The engine added one tool call to the draft before this step, so the action group grows by one.
+    transcript.setActive(draftId(), nextPart++);
     const total = transcript.rowCount(width);
     transcript.pager.toBottom();
     paint(transcript, true);

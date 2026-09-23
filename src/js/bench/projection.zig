@@ -18,9 +18,12 @@ session: *Session,
 session_id: proto.ids.SessionId,
 stream_offset: usize = 0,
 source_bytes: usize = 0,
+/// The draft of the `part` stream and the id its next tool call takes.
+draft_id: proto.ids.MessageId = 2,
+next_part: proto.ids.PartId = 1,
 
-/// The stream phase grows no live part, the text part of message 2, or the tool output part of message 2.
-pub const Stream = enum { none, text, tool };
+/// The stream phase grows no live part, the text part of message 2, the tool output part of message 2, or the part count of a draft after `scale` exchanges.
+pub const Stream = enum { none, text, tool, part };
 
 /// The part id of the running tool in message 2.
 pub const tool_part_id: proto.ids.PartId = 1;
@@ -42,6 +45,11 @@ pub fn create(host: *Host, io: std.Io, scale: u32, stream: Stream) !*Projection 
     const session = try self.app.engine.sessions.getOrCreate(sid);
     self.session = session;
     self.session_id = sid;
+    if (stream == .part) {
+        try self.seedExchanges(scale);
+        try self.publish(host, "");
+        return self;
+    }
     const unit = "A paragraph 世界 é 👩‍💻.\n\n";
     const body = try gpa.alloc(u8, unit.len * 2048 * scale);
     defer gpa.free(body);
@@ -87,14 +95,61 @@ pub fn create(host: *Host, io: std.Io, scale: u32, stream: Stream) !*Projection 
         while (self.stream_offset < tool_seed_bytes) try self.appendTool();
     }
     self.source_bytes = body.len;
+    try self.publish(host, body);
+    return self;
+}
+
+/// Hand the session to the JavaScript bench and attach the engine.
+fn publish(self: *Projection, host: *Host, body: []const u8) !void {
     const ctx = host.ctx;
     const global = ctx.getGlobalObject();
     defer ctx.freeValue(global);
     try ctx.setPropertyStr(global, "PROJECTION_TEXT", ctx.newString(body));
-    try ctx.setPropertyStr(global, "PROJECTION_SESSION", ctx.newString(&std.fmt.bytesToHex(sid.raw, .lower)));
+    try ctx.setPropertyStr(global, "PROJECTION_SESSION", ctx.newString(&std.fmt.bytesToHex(self.session_id.raw, .lower)));
+    try ctx.setPropertyStr(global, "PROJECTION_DRAFT", ctx.newInt64(@intCast(self.draft_id)));
     try ctx.setPropertyStr(global, "STREAM_NATIVE_INITIAL_BYTES", ctx.newUint32(@intCast(body.len)));
     host.engine.attach(&self.app);
-    return self;
+}
+
+/// Commit `scale` exchanges, each a user line and an answer with text around one finished tool call, then open a draft.
+fn seedExchanges(self: *Projection, scale: u32) !void {
+    const messages = try self.gpa.alloc(proto.message.Message, 2 * scale);
+    defer self.gpa.free(messages);
+    const question = [_]proto.content.ContentPart{.{ .text = .{ .text = "Run the build and fix the first error." } }};
+    const answer = [_]proto.message.AssistantPart{
+        .{ .text = .{ .id = 0, .text = "I run the build first." } },
+        .{ .tool = .{ .id = 1, .name = "exec", .arguments = "{\"command\":\"zig build\"}", .state = .{ .completed = .{ .output = "Build Summary: 42/42 steps succeeded", .duration_ms = 1200 } } } },
+        .{ .text = .{ .id = 2, .text = "The build passes." } },
+    };
+    for (0..scale) |i| {
+        const id: proto.ids.MessageId = 2 * i + 1;
+        messages[2 * i] = .{ .user = .{ .id = id, .content = &question, .input_id = i + 1, .time = .{ .created_at_ms = id } } };
+        messages[2 * i + 1] = .{ .assistant = .{ .id = id + 1, .run_id = i + 1, .config_rev = 0, .content = &answer, .time = .{ .created_at_ms = id + 1 } } };
+    }
+    try paging.seedHistory(self.session, messages);
+    self.draft_id = 2 * scale + 1;
+    try self.session.apply(.{ .message_started_data = .{
+        .session_id = self.session_id,
+        .message_id = self.draft_id,
+        .run_id = scale + 1,
+        .config_rev = 0,
+        .created_at_ms = self.draft_id,
+    } });
+    try self.session.apply(.{ .message_part_added_data = .{
+        .session_id = self.session_id,
+        .message_id = self.draft_id,
+        .part = .{ .text = .{ .id = 0, .text = "Next I run the tests." } },
+    } });
+}
+
+/// Start one more tool call in the draft, as the engine does when the model opens a call.
+pub fn appendPart(self: *Projection) !void {
+    try self.session.apply(.{ .message_part_added_data = .{
+        .session_id = self.session_id,
+        .message_id = self.draft_id,
+        .part = .{ .tool = .{ .id = self.next_part, .name = "exec", .arguments = "{\"command\":\"zig build test\"}", .state = .pending } },
+    } });
+    self.next_part += 1;
 }
 
 pub fn sourceBytes(self: *const Projection) u64 {
