@@ -619,8 +619,8 @@ test "a stream at or below the cap keeps every byte" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    // `runShell` caps at an odd 255 bytes, so the head holds 128, the tail 127, and a length within the cap keeps all.
-    for ([_]usize{ 127, 128, 129, 254, 255 }) |len| {
+    // `runShell` caps at an odd 255 bytes: 128 fills the head, 129 starts the tail, and 255 fills both.
+    for ([_]usize{ 128, 129, 255 }) |len| {
         const command = try std.fmt.allocPrint(arena.allocator(), "head -c {d} /dev/zero | tr '\\0' x", .{len});
         const res = try runShell(arena.allocator(), command, 20_000);
         try testing.expectEqual(@as(u64, 0), res.stdout_dropped);

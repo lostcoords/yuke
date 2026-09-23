@@ -13,8 +13,6 @@ pub const ReplayReader = struct {
     bytes: []const u8,
     chunk_size: usize = 0,
     offset: usize = 0,
-    /// The read fails with this error after it delivers every byte.
-    after: ?anyerror = null,
 
     pub fn body(self: *ReplayReader) ResponseBody {
         return .{ .ctx = self, .vtable = &vtable };
@@ -25,7 +23,7 @@ pub const ReplayReader = struct {
     fn peek(ctx: *anyopaque) anyerror![]const u8 {
         const self: *ReplayReader = @ptrCast(@alignCast(ctx));
         const remaining = self.bytes[self.offset..];
-        if (remaining.len == 0) return if (self.after) |err| err else "";
+        if (remaining.len == 0) return "";
         if (self.chunk_size == 0) return remaining;
         return remaining[0..@min(self.chunk_size, remaining.len)];
     }

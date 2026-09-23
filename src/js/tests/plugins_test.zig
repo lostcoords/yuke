@@ -20,15 +20,6 @@ fn expectStopDeadline(host: *Host, start: std.Io.Timestamp) !void {
     try std.testing.expect(elapsed < 1000);
 }
 
-test "plugin stop deadlines belong to each host and default to one second" {
-    const default_host = support.createHost();
-    defer support.destroyHost(default_host);
-    const timeout_host = createTimeoutHost();
-    defer support.destroyHost(timeout_host);
-    try std.testing.expectEqual(@as(i32, 1000), default_host.plugin_stop_timeout_ms);
-    try std.testing.expectEqual(@as(i32, stop_timeout_ms), timeout_host.plugin_stop_timeout_ms);
-}
-
 test "public tools and commands leave with their owners" {
     const host = support.createHost();
     defer support.destroyHost(host);

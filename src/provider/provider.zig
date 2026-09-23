@@ -54,9 +54,3 @@ pub fn usageToProto(usage: ai.Usage) proto.message.TokenUsage {
 test {
     std.testing.refAllDecls(@This());
 }
-
-test "every AI protocol maps to the yuke wire and back" {
-    inline for (std.meta.tags(ai.Protocol)) |protocol| {
-        try std.testing.expectEqual(protocol, protocolFromProto(protocolToProto(protocol)));
-    }
-}

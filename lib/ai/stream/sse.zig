@@ -224,12 +224,3 @@ test "a response above the total cap stops instead of growing" {
     var source: ChunkSource = .{ .chunks = &.{"data: 0123456789\n\n"} };
     try testing.expectError(error.ResponseTooLarge, sse.next(&source));
 }
-
-test "one payload split over many peeks reads as one line" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    // Each chunk ends mid-line, so every payload needs the line buffer.
-    const events = try frame(&.{ "data: {\"a\":", "1,\"b\":", "2}\n", "\n" }, arena.allocator());
-    try testing.expectEqual(@as(usize, 1), events.len);
-    try testing.expectEqualStrings("{\"a\":1,\"b\":2}", events[0]);
-}

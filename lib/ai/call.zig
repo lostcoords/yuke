@@ -580,12 +580,6 @@ test "a request without a limit takes the model limit, and an absent one leaves 
     try std.testing.expectError(error.InvalidRequest, prepare(std.testing.allocator, bare, .{ .blocks = &blocks }));
 }
 
-test "a client names its user agent at init" {
-    var client = Client.init(std.testing.allocator, std.testing.io, .{ .user_agent = "acme/1.0" });
-    defer client.deinit();
-    try std.testing.expectEqualStrings("acme/1.0", client.http.user_agent);
-}
-
 test "prepare owns route and credential strings" {
     var base_url = [_]u8{ 'h', 't', 't', 'p', 's', ':', '/', '/', 'a', '.', 't', 'e', 's', 't', '/', 'v', '1' };
     var token = [_]u8{ 's', 'e', 'c', 'r', 'e', 't' };

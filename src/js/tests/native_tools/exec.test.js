@@ -22,7 +22,7 @@ globalThis.result = "pending";
   // Live text reaches onOutput in order, whole characters only, before the result settles.
   const live = [];
   let settled = false;
-  const streamed = exec("printf a; sleep 0.2; printf '\\344\\270'; sleep 0.2; printf '\\226'; sleep 0.2; echo x 1>&2; sleep 0.2; printf '\\344'", {
+  const streamed = exec("printf a; sleep 0.05; printf '\\344\\270'; sleep 0.05; printf '\\226'; sleep 0.05; echo x 1>&2; sleep 0.05; printf '\\344'", {
     onOutput: (text) => live.push({ text, settled }),
   });
   const done = await streamed;

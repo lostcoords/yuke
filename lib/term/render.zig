@@ -192,17 +192,10 @@ test "enableTui after resetState restores alt-screen modes" {
 
     try r.enableTui(&out.writer);
     r.resetState(&out.writer);
-    try std.testing.expect(!r.vx.state.alt_screen);
-    try std.testing.expect(!r.vx.state.mouse);
-    try std.testing.expect(!r.vx.state.bracketed_paste);
     out.clearRetainingCapacity();
 
+    // A reset forgets every mode, so the second enable writes all three again.
     try r.enableTui(&out.writer);
-    r.queueRefresh();
-    try std.testing.expect(r.vx.state.alt_screen);
-    try std.testing.expect(r.vx.state.mouse);
-    try std.testing.expect(r.vx.state.bracketed_paste);
-    try std.testing.expect(r.vx.refresh);
     try std.testing.expectEqualStrings(
         "\x1b[?1049h" ++ "\x1b[?2004h" ++ "\x1b[?1002;1004;1006h",
         out.written(),

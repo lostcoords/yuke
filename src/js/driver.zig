@@ -458,36 +458,22 @@ test "tickTask wakes for a timer set while it sleeps with no deadline" {
     host.wake.set(host.io);
 }
 
-test "tickTask paces engine wakes to the frame gap" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
-    defer rt.deinit();
-
+test "tickDue paces engine work and due timers to the frame gap" {
     const host = support.createHost();
     defer support.destroyHost(host);
+    const last: std.Io.Timestamp = .now(host.io, .awake);
+    try std.testing.expectEqual(null, tickDue(host, last));
 
-    // No owner drains here, so the engine stays pending and the task must not flood the channel.
+    // Pending engine work waits one frame after the last tick, so a busy engine never floods the channel.
     host.engine.index_dirty = true;
+    try std.testing.expectEqual(last.addDuration(engine_frame).nanoseconds, tickDue(host, last).?.nanoseconds);
+    host.engine.index_dirty = false;
 
-    var slot: [1]Msg = undefined;
-    var ch = Channel.init(&slot);
-    var group: zio.Group = .init;
-    defer group.cancel();
-    try group.spawn(tickTask, .{ host, &ch });
-
-    const start = zio.now();
-    var ticks: u32 = 0;
-    while (start.untilNow(.monotonic).toMilliseconds() < 120) : (ticks += 1) {
-        const msg = try ch.receive();
-        try std.testing.expect(msg == .tick);
-    }
-    // The gap between two ticks is tens of milliseconds, so the window holds a handful and never a flood.
-    try std.testing.expect(ticks >= 1 and ticks < 12);
-
-    host.paint.quit_requested = true;
-    host.wake.set(host.io);
+    // A timer due inside the frame waits for the frame; a later timer keeps its own deadline.
+    try host.eval("globalThis.soon = setTimeout(() => {}, 0);", "tick-soon.js");
+    try std.testing.expectEqual(last.addDuration(engine_frame).nanoseconds, tickDue(host, last).?.nanoseconds);
+    try host.eval("clearTimeout(soon); setTimeout(() => {}, 60000);", "tick-late.js");
+    try std.testing.expect(tickDue(host, last).?.nanoseconds > last.addDuration(engine_frame).nanoseconds);
 }
 
 fn sendQuit(ch: *Channel) !void {
