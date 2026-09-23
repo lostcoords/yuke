@@ -348,9 +348,9 @@ export const builtins = {
       }, required: [], additionalProperties: false }, execute: jobs,
     });
     builtin(ctx, "skill", {
-      description: "Load the full instructions for a skill listed in the system prompt. Use this tool when the task matches the skill description.",
+      description: "Load one listed skill by name. Skip if its instructions are already in the transcript.",
       parameters: { type: "object", properties: {
-        name: { type: "string", description: "Pass the name from an available_skills entry." },
+        name: { type: "string", description: "Name from an available_skills entry." },
       }, required: ["name"], additionalProperties: false }, execute: skill,
     });
 
